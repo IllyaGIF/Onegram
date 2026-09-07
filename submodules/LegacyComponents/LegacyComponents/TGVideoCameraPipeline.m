@@ -1055,10 +1055,26 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
 - (void)_enableVideoStabilization
 {
     AVCaptureConnection *videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
-    if ([videoConnection respondsToSelector:NSSelectorFromString(@"setPreferredVideoStabilizationMode:")])
-        [videoConnection setValue:@1 forKey:@"preferredVideoStabilizationMode"];
-    else if ([videoConnection respondsToSelector:@selector(setEnablesVideoStabilizationWhenAvailable:)])
+    if (videoConnection == nil)
+        return;
+
+    SEL supportedModeSelector = NSSelectorFromString(@"isVideoStabilizationModeSupported:");
+    SEL preferredModeSelector = NSSelectorFromString(@"setPreferredVideoStabilizationMode:");
+    bool stabilizationConfigured = false;
+    if ([videoConnection respondsToSelector:supportedModeSelector] && [videoConnection respondsToSelector:preferredModeSelector])
+    {
+        BOOL (*isModeSupported)(id, SEL, NSInteger) = (BOOL (*)(id, SEL, NSInteger))[videoConnection methodForSelector:supportedModeSelector];
+        void (*setPreferredMode)(id, SEL, NSInteger) = (void (*)(id, SEL, NSInteger))[videoConnection methodForSelector:preferredModeSelector];
+        if (isModeSupported(videoConnection, supportedModeSelector, 1))
+        {
+            setPreferredMode(videoConnection, preferredModeSelector, 1);
+            stabilizationConfigured = true;
+        }
+    }
+    if (!stabilizationConfigured && [videoConnection respondsToSelector:@selector(isVideoStabilizationSupported)] && [videoConnection isVideoStabilizationSupported] && [videoConnection respondsToSelector:@selector(setEnablesVideoStabilizationWhenAvailable:)])
+    {
         [videoConnection setEnablesVideoStabilizationWhenAvailable:true];
+    }
 }
 
 - (void)_reconfigureDevice:(AVCaptureDevice *)device withBlock:(void (^)(AVCaptureDevice *device))block

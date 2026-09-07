@@ -58,16 +58,19 @@ const CGFloat TGMusicPlaylistCellHeight = 56.0f;
         self.selectedBackgroundView.backgroundColor = TGSelectionColor();
         
         _titleLabel = [[UILabel alloc] init];
+        _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = [UIColor blackColor];
         _titleLabel.font = TGSystemFontOfSize(16.0f);
         [self.contentView addSubview:_titleLabel];
         
         _performerLabel = [[UILabel alloc] init];
+        _performerLabel.backgroundColor = [UIColor clearColor];
         _performerLabel.textColor = UIColorRGB(0x8b8b8b);
         _performerLabel.font = TGSystemFontOfSize(13.0f);
         [self.contentView addSubview:_performerLabel];
         
         _durationLabel = [[UILabel alloc] init];
+        _durationLabel.backgroundColor = [UIColor clearColor];
         _durationLabel.textColor = UIColorRGB(0x8b8b8b);
         _durationLabel.font = TGSystemFontOfSize(13.0f);
         [self.contentView addSubview:_durationLabel];

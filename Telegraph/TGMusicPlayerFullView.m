@@ -238,27 +238,27 @@
         [_controlsView addSubview:_scrubbingArea];
         
         _positionLabel = [[UILabel alloc] init];
-        _positionLabel.backgroundColor = _controlsView.backgroundColor;
+        _positionLabel.backgroundColor = [UIColor clearColor];
         _positionLabel.textColor = presentation.pallete.menuSecondaryTextColor;
         _positionLabel.font = TGSystemFontOfSize(13.0f);
         [_controlsView addSubview:_positionLabel];
         _positionLabelValue = INT_MIN;
         
         _durationLabel = [[UILabel alloc] init];
-        _durationLabel.backgroundColor = _controlsView.backgroundColor;
+        _durationLabel.backgroundColor = [UIColor clearColor];
         _durationLabel.textColor = presentation.pallete.menuSecondaryTextColor;
         _durationLabel.font = TGSystemFontOfSize(13.0f);
         [_controlsView addSubview:_durationLabel];
         _durationLabelValue = INT_MIN;
         
         _titleLabel = [[UILabel alloc] init];
-        _titleLabel.backgroundColor = _controlsView.backgroundColor;
+        _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = presentation.pallete.menuTextColor;
         _titleLabel.font = TGMediumSystemFontOfSize(16.0f);
         [_controlsView addSubview:_titleLabel];
         
         _performerLabel = [[UILabel alloc] init];
-        _performerLabel.backgroundColor = _controlsView.backgroundColor;
+        _performerLabel.backgroundColor = [UIColor clearColor];
         _performerLabel.textColor = presentation.pallete.menuSecondaryTextColor;
         _performerLabel.font = TGSystemFontOfSize(12.0f);
         [_controlsView addSubview:_performerLabel];
@@ -1017,7 +1017,10 @@
 
 - (CGSize)collectionView:(PSUICollectionView *)collectionView layout:(PSUICollectionViewLayout *)__unused collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)__unused indexPath
 {
-    return CGSizeMake(collectionView.frame.size.width, TGMusicPlaylistCellHeight);
+    CGFloat width = collectionView.frame.size.width;
+    if (iosMajorVersion() < 7)
+        width = MAX(1.0f, width - 1.0f);
+    return CGSizeMake(width, TGMusicPlaylistCellHeight);
 }
 
 - (bool)reversePlaylistForOrderType:(TGMusicPlayerOrderType)orderType

@@ -99,6 +99,22 @@ static int64_t TGModernUserReadEmojiStatusDocumentId(NSInputStream *is, int32_t 
     return 0;
 }
 
+static int32_t TGModernUserReadNameColorId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    if (signature == (int32_t)0xb54b5acf)
+    {
+        int32_t flags = [is readInt32];
+        int32_t colorId = -1;
+        if (flags & (1 << 0))
+            colorId = [is readInt32];
+        if (flags & (1 << 1))
+            [is readInt64];
+        return colorId;
+    }
+    TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+    return -1;
+}
+
 static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t vectorMarker = [is readInt32];
@@ -124,6 +140,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLUser$modernUser *object = [[TLUser$modernUser alloc] init];
+    object.nameColorId = -1;
     
     object.flags = [is readInt32];
     int32_t flags2 = 0;
@@ -262,12 +279,9 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
     if (hasModernFlags2 && (flags2 & (1 << 8)))
     {
         int32_t signature = [is readInt32];
-        if (signature == 0)
+        if (signature != 0)
         {
-        }
-        else
-        {
-            TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+            object.nameColorId = TGModernUserReadNameColorId(is, signature, environment, error);
             if (error != nil && *error != nil)
             {
                 TGLog(@"AUTH modernUser id=%d color failed sig=0x%x error=%@", object.n_id, signature, *error);

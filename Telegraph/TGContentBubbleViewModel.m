@@ -1765,11 +1765,6 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     CGFloat commentsFooterHeight = [self discussionCommentsFooterHeight];
     bool classicIOS6Style = [TGPresentation classicIOS6Style];
     CGFloat classicOutgoingTailInset = classicIOS6Style && !_incomingAppearance ? 4.0f : 0.0f;
-    bool shouldUseWideBubble = _message.text.length >= 80 || _message.mediaAttachments.count != 0;
-    if (shouldUseWideBubble)
-    {
-        backgroundWidth = MAX(backgroundWidth, MIN(maximumAvailableWidth, floorf(containerSize.width * 0.75f)));
-    }
     if (commentsFooterHeight > FLT_EPSILON)
     {
         // The attached footer belongs to this exact bubble.  Make very short

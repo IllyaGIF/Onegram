@@ -46,9 +46,11 @@ typedef enum {
 
 int32_t TGMessageModernConversationItemLocalUserId = 0;
 
-static UIColor *coloredNameForUid(int uid, __unused int currentUserId)
+static UIColor *coloredNameForUser(TGUser *user, bool dark)
 {
-    return [[TGInterfaceAssets instance] userColor:uid];
+    int64_t userId = user.modernUserId != 0 ? user.modernUserId : user.uid;
+    int colorIndex = user.nameColorId >= 0 && user.nameColorId < 7 ? user.nameColorId : [[TGInterfaceAssets instance] userColorIndexForId:userId];
+    return [[TGInterfaceAssets instance] userColorForIndex:colorIndex dark:dark];
 }
 
 @interface TGMessageModernConversationItem () <TGModernCollectionRelativeBoundsObserver, TGModernCollectionPointInsideSolver>
@@ -689,7 +691,7 @@ static UIColor *coloredNameForUid(int uid, __unused int currentUserId)
     } else if ([author isKindOfClass:[TGUser class]]) {
         TGUser *user = author;
         [model setAuthorAvatarUrl:user.photoFullUrlSmall];
-        [model setAuthorNameColor:coloredNameForUid(user.uid, TGMessageModernConversationItemLocalUserId)];
+        [model setAuthorNameColor:coloredNameForUser(user, _context.presentation.pallete.isDark)];
     } else if (_message.authorSignature != nil) {
         [model setAuthorSignature:_message.authorSignature];
     }

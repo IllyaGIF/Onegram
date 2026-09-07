@@ -113,6 +113,7 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
 {
     NSArray *_reactions;
     NSArray *_buttons;
+    UIScrollView *_scrollView;
 }
 
 - (instancetype)initWithReactions:(NSArray *)reactions
@@ -121,6 +122,9 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
     if (self != nil)
     {
         _reactions = [reactions copy];
+        _scrollView = [[UIScrollView alloc] init];
+        _scrollView.scrollsToTop = false;
+        [self addSubview:_scrollView];
         NSMutableArray *buttons = [[NSMutableArray alloc] init];
         NSInteger index = 0;
         for (NSString *reaction in _reactions)
@@ -132,7 +136,7 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
             [button setTitle:reaction forState:UIControlStateNormal];
             [button setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
             [button addTarget:self action:@selector(reactionPressed:) forControlEvents:UIControlEventTouchUpInside];
-            [self addSubview:button];
+            [_scrollView addSubview:button];
             [buttons addObject:button];
         }
         _buttons = buttons;
@@ -143,7 +147,10 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
 - (void)reactionPressed:(UIButton *)button
 {
     if (button.tag >= 0 && button.tag < (NSInteger)_reactions.count && self.reactionSelected != nil)
+    {
+        _scrollView.userInteractionEnabled = false;
         self.reactionSelected([_reactions objectAtIndex:(NSUInteger)button.tag]);
+    }
 }
 
 - (bool)requiresDivider
@@ -151,22 +158,75 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
     return false;
 }
 
-- (CGFloat)preferredHeightForWidth:(CGFloat)__unused width screenHeight:(CGFloat)__unused screenHeight
+- (CGFloat)preferredHeightForWidth:(CGFloat)__unused width screenHeight:(CGFloat)screenHeight
 {
     NSUInteger rows = MAX((NSUInteger)1, (_buttons.count + 5) / 6);
-    return 12.0f + rows * 46.0f;
+    return MIN(12.0f + rows * 46.0f, MAX(58.0f, CGFloor(screenHeight * 0.5f)));
 }
 
 - (void)layoutSubviews
 {
     [super layoutSubviews];
-    CGFloat cellWidth = floor(self.bounds.size.width / 6.0f);
+    _scrollView.frame = self.bounds;
+    _scrollView.contentSize = CGSizeMake(self.bounds.size.width, 12.0f + ((_buttons.count + 5) / 6) * 46.0f);
+    CGFloat cellWidth = CGFloor(self.bounds.size.width / 6.0f);
     [_buttons enumerateObjectsUsingBlock:^(UIButton *button, NSUInteger index, __unused BOOL *stop)
     {
         NSUInteger row = index / 6;
         NSUInteger column = index % 6;
         button.frame = CGRectMake(column * cellWidth, 6.0f + row * 46.0f, cellWidth, 44.0f);
     }];
+}
+
+@end
+
+@interface TGIOS6ReactionStatusItemView : TGMenuSheetItemView
+
+- (instancetype)initWithText:(NSString *)text loading:(bool)loading;
+
+@end
+
+@implementation TGIOS6ReactionStatusItemView
+{
+    UILabel *_label;
+    UIActivityIndicatorView *_indicator;
+}
+
+- (instancetype)initWithText:(NSString *)text loading:(bool)loading
+{
+    self = [super initWithType:TGMenuSheetItemTypeDefault];
+    if (self != nil)
+    {
+        _label = [[UILabel alloc] init];
+        _label.backgroundColor = [UIColor clearColor];
+        _label.font = [UIFont systemFontOfSize:15.0f];
+        _label.textColor = [UIColor darkGrayColor];
+        _label.textAlignment = NSTextAlignmentCenter;
+        _label.numberOfLines = 0;
+        _label.text = text;
+        [self addSubview:_label];
+        if (loading)
+        {
+            _indicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+            [_indicator startAnimating];
+            [self addSubview:_indicator];
+        }
+    }
+    return self;
+}
+
+- (CGFloat)preferredHeightForWidth:(CGFloat)width screenHeight:(CGFloat)__unused screenHeight
+{
+    CGSize size = [_label.text sizeWithFont:_label.font constrainedToSize:CGSizeMake(MAX(1.0f, width - 32.0f), 200.0f) lineBreakMode:NSLineBreakByWordWrapping];
+    return MAX(64.0f, CGCeil(size.height) + 32.0f + (_indicator != nil ? 28.0f : 0.0f));
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    CGFloat top = _indicator != nil ? 40.0f : 16.0f;
+    _indicator.center = CGPointMake(self.bounds.size.width / 2.0f, 23.0f);
+    _label.frame = CGRectMake(16.0f, top, MAX(1.0f, self.bounds.size.width - 32.0f), MAX(1.0f, self.bounds.size.height - top - 16.0f));
 }
 
 @end
@@ -484,6 +544,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     NSMutableArray *_items;
     bool _ios6DidRefreshRecentReactions;
+    SMetaDisposable *_ios6ReactionMenuDisposable;
+    NSObject *_ios6ReactionMenuToken;
     
     NSMutableSet *_collectionRegisteredIdentifiers;
     
@@ -783,6 +845,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)dealloc
 {
+    [_ios6ReactionMenuDisposable dispose];
     [_actionHandle reset];
     [_companion unbindController];
     @synchronized (_ios4LifetimeReference)
@@ -6141,6 +6204,13 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                     }
 
                     [controller setItemViews:itemViews animated:false];
+                    CGRect contextSourceRect = contentFrame;
+                    if (TGIsPad() && !CGRectIsNull(contextSourceRect) && !CGRectIsEmpty(contextSourceRect))
+                        contextSourceRect = CGRectMake(CGRectGetMidX(contextSourceRect), CGRectGetMidY(contextSourceRect), 1.0f, 1.0f);
+                    controller.sourceRect = ^CGRect
+                    {
+                        return contextSourceRect;
+                    };
                     [controller presentInViewController:self sourceView:self.view animated:true];
 
                     height = controller.menuHeight + controller.safeAreaInset.bottom;
@@ -12001,50 +12071,28 @@ static UIView *_findBackArrow(UIView *view)
     } completed:nil];
 }
 
-- (NSArray *)_ios6DefaultReactionEmojis
-{
-    return @[ @"👍", @"🙏", @"❤", @"💋", @"👎", @"🔥",
-              @"🥰", @"🤬", @"👏", @"🤔", @"😘", @"😁",
-              @"🎉", @"🤗", @"🤢", @"💩", @"🤣", @"😭" ];
-}
-
-- (NSDictionary *)_ios6DefaultReactionPolicy
-{
-    return @{ @"mode": @"all", @"emojis": @[] };
-}
-
 - (SSignal *)_ios6GlobalReactionPolicySignal
 {
     @synchronized([TGModernConversationController class])
     {
-        if (TGIOS6CachedGlobalReactionEmojis.count != 0)
+        if (TGIOS6CachedGlobalReactionEmojis != nil)
             return [SSignal single:@{ @"mode": @"some", @"emojis": TGIOS6CachedGlobalReactionEmojis }];
     }
 
     TLRPCmessages_getAvailableReactions_manual *request = [[TLRPCmessages_getAvailableReactions_manual alloc] init];
     request.hashValue = 0;
 
-    TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
-    return [[[[TGTelegramNetworking instance] requestSignal:request] map:^id(TLmessages_AvailableReactions_manual *result)
+    return [[[TGTelegramNetworking instance] requestSignal:request] mapToSignal:^SSignal *(TLmessages_AvailableReactions_manual *result)
     {
-        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+        if (![result isKindOfClass:[TLmessages_AvailableReactions_manual class]] || result.activeEmojis == nil)
+            return [SSignal fail:[NSError errorWithDomain:@"TGReactionPolicy" code:1 userInfo:nil]];
         NSArray *emojis = result.activeEmojis;
-        if (emojis.count == 0)
-            emojis = [strongSelf _ios6DefaultReactionEmojis];
-        if (emojis == nil)
-            emojis = @[];
         @synchronized([TGModernConversationController class])
         {
             TGIOS6CachedGlobalReactionEmojis = [emojis copy];
         }
         IOS6_NOOP_LOG(@"FEATURE REACTION policy.global count=%d", (int)emojis.count);
-        return @{ @"mode": @"some", @"emojis": emojis };
-    }] catch:^SSignal *(id error)
-    {
-        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-        NSArray *fallback = [strongSelf _ios6DefaultReactionEmojis];
-        IOS6_NOOP_LOG(@"FEATURE REACTION policy.global.error error=%@", error);
-        return [SSignal single:@{ @"mode": @"some", @"emojis": fallback ?: @[] }];
+        return [SSignal single:@{ @"mode": @"some", @"emojis": emojis }];
     }];
 }
 
@@ -12093,11 +12141,13 @@ static UIView *_findBackArrow(UIView *view)
             NSString *mode = [policy objectForKey:@"mode"];
             if ([mode isEqualToString:@"none"] || [mode isEqualToString:@"some"])
                 return [SSignal single:policy];
-            return strongSelf == nil ? [SSignal single:@{ @"mode": @"some", @"emojis": @[] }] : [strongSelf _ios6GlobalReactionPolicySignal];
+            if (![mode isEqualToString:@"all"] || strongSelf == nil)
+                return [SSignal fail:[NSError errorWithDomain:@"TGReactionPolicy" code:2 userInfo:nil]];
+            return [strongSelf _ios6GlobalReactionPolicySignal];
         }];
     }
 
-    return [[[resolvedSignal map:^id(NSDictionary *policy)
+    return [[resolvedSignal map:^id(NSDictionary *policy)
     {
         if (policy != nil)
         {
@@ -12107,12 +12157,7 @@ static UIView *_findBackArrow(UIView *view)
             }
         }
         IOS6_NOOP_LOG(@"FEATURE REACTION policy.peer peer=%lld mode=%@ count=%d", peerId, [policy objectForKey:@"mode"], (int)[[policy objectForKey:@"emojis"] count]);
-        return policy ?: [self _ios6DefaultReactionPolicy];
-    }] catch:^SSignal *(id error)
-    {
-        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-        IOS6_NOOP_LOG(@"FEATURE REACTION policy.peer.error peer=%lld error=%@", peerId, error);
-        return strongSelf == nil ? [SSignal single:@{ @"mode": @"some", @"emojis": @[] }] : [strongSelf _ios6GlobalReactionPolicySignal];
+        return policy;
     }] take:1];
 }
 
@@ -12144,17 +12189,19 @@ static UIView *_findBackArrow(UIView *view)
         if (strongSelf != nil)
         {
             NSNumber *peerKey = @([strongSelf->_companion requestPeerId]);
-            @synchronized([TGModernConversationController class])
+            NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+            bool invalidReaction = [errorType isEqualToString:@"REACTION_INVALID"] || [errorType isEqualToString:@"REACTIONS_TOO_MANY"];
+            if (invalidReaction)
             {
-                NSDictionary *policy = [TGIOS6ReactionPolicyCache() objectForKey:peerKey];
-                NSMutableArray *emojis = [[policy objectForKey:@"emojis"] mutableCopy];
-                if (reaction.length != 0 && emojis != nil && [emojis containsObject:reaction])
+                @synchronized([TGModernConversationController class])
                 {
-                    [emojis removeObject:reaction];
-                    [TGIOS6ReactionPolicyCache() setObject:@{ @"mode": @"some", @"emojis": emojis } forKey:peerKey];
+                    [TGIOS6ReactionPolicyCache() removeObjectForKey:peerKey];
+                    TGIOS6CachedGlobalReactionEmojis = nil;
                 }
             }
-            NSString *message = reaction.length == 0 ? @"Не удалось убрать реакцию" : @"Эта реакция недоступна в этом чате";
+            NSString *message = reaction.length == 0 ? @"Не удалось убрать реакцию" : @"Не удалось отправить реакцию";
+            if (errorType.length != 0)
+                message = [NSString stringWithFormat:@"%@: %@", message, errorType];
             [TGCustomAlertView presentAlertWithTitle:nil message:message cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
         }
     } completed:nil];
@@ -12217,72 +12264,89 @@ static UIView *_findBackArrow(UIView *view)
 
 - (void)_ios6ShowReactionMenuForMessage:(TGMessage *)message
 {
-    if (message == nil)
+    if (message == nil || _ios6ReactionMenuToken != nil)
         return;
 
+    NSObject *token = [[NSObject alloc] init];
+    _ios6ReactionMenuToken = token;
+    SMetaDisposable *disposable = [[SMetaDisposable alloc] init];
+    [_ios6ReactionMenuDisposable dispose];
+    _ios6ReactionMenuDisposable = disposable;
+
     TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
-    [[[[self _ios6ReactionPolicySignal] take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(NSDictionary *policy)
+    bool hasExistingController = _contextMenuController != nil;
+    TGMenuSheetController *controller = _contextMenuController ?: [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
+    _contextMenuController = controller;
+    controller.dismissesByOutsideTap = true;
+    controller.requiuresDimView = true;
+    controller.inhibitPopoverPresentation = true;
+    controller.requiresShadow = true;
+    controller.stickWithSpecifiedParentController = TGIsPad();
+    controller.willDismiss = ^(__unused bool manual)
     {
         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-        if (strongSelf == nil)
+        if (strongSelf == nil || strongSelf->_ios6ReactionMenuToken != token)
+            return;
+        strongSelf->_ios6ReactionMenuToken = nil;
+        [strongSelf->_ios6ReactionMenuDisposable dispose];
+        strongSelf->_ios6ReactionMenuDisposable = nil;
+        strongSelf->_contextMenuController = nil;
+    };
+
+    TGMenuSheetButtonItemView *cancel = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
+    {
+        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+        if (strongSelf != nil && strongSelf->_ios6ReactionMenuToken == token)
+        {
+            TGMenuSheetController *menuController = strongSelf->_contextMenuController;
+            [menuController dismissAnimated:true];
+        }
+    }];
+    TGIOS6ReactionStatusItemView *loading = [[TGIOS6ReactionStatusItemView alloc] initWithText:TGLocalized(@"Channel.NotificationLoading") loading:true];
+    [controller setItemViews:@[ loading, cancel ] animated:hasExistingController];
+    if (!hasExistingController)
+        [controller presentInViewController:self sourceView:self.view animated:true];
+
+    [disposable setDisposable:[[[[self _ios6ReactionPolicySignal] take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(NSDictionary *policy)
+    {
+        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+        if (strongSelf == nil || strongSelf->_ios6ReactionMenuToken != token)
             return;
 
+        TGMenuSheetController *menuController = strongSelf->_contextMenuController;
         NSString *mode = [policy objectForKey:@"mode"];
         NSArray *reactions = [policy objectForKey:@"emojis"];
-        if ([mode isEqualToString:@"none"])
+        if ([mode isEqualToString:@"none"] || reactions.count == 0)
         {
-            [strongSelf->_contextMenuController dismissAnimated:true];
-            strongSelf->_contextMenuController = nil;
-            [TGCustomAlertView presentAlertWithTitle:nil message:@"В этом чате реакции отключены" cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+            NSString *text = [mode isEqualToString:@"none"] ? @"В этом чате реакции отключены" : @"Нет доступных обычных реакций";
+            TGIOS6ReactionStatusItemView *status = [[TGIOS6ReactionStatusItemView alloc] initWithText:text loading:false];
+            [menuController setItemViews:@[ status, cancel ] animated:true];
             return;
         }
-        if ([mode isEqualToString:@"some"] && reactions.count == 0)
-        {
-            [strongSelf->_contextMenuController dismissAnimated:true];
-            strongSelf->_contextMenuController = nil;
-            [TGCustomAlertView presentAlertWithTitle:nil message:@"В этом чате доступны только кастомные реакции" cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
-            return;
-        }
-        if (reactions.count == 0)
-            reactions = [strongSelf _ios6DefaultReactionEmojis];
-        if (reactions.count > 24)
-            reactions = [reactions subarrayWithRange:NSMakeRange(0, 24)];
 
-        bool hasExistingController = strongSelf->_contextMenuController != nil;
-        TGMenuSheetController *controller = strongSelf->_contextMenuController ?: [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-        controller.dismissesByOutsideTap = true;
-        controller.requiuresDimView = true;
-        controller.inhibitPopoverPresentation = true;
-        controller.requiresShadow = true;
-
-        IOS6_NOOP_LOG(@"FEATURE REACTION menu.open mid=%d reuse=%d count=%d", message.mid, hasExistingController ? 1 : 0, (int)reactions.count);
-
-        __weak TGMenuSheetController *weakController = controller;
         TGIOS6ReactionPickerItemView *picker = [[TGIOS6ReactionPickerItemView alloc] initWithReactions:reactions];
         picker.reactionSelected = ^(NSString *selectedReaction)
         {
-            IOS6_NOOP_LOG(@"FEATURE REACTION menu.select mid=%d emoji=%@", message.mid, selectedReaction);
             TGModernConversationController *innerSelf = TGModernConversationControllerResolveReference(weakSelf);
-            if (innerSelf != nil)
-                [innerSelf _ios6SendReaction:selectedReaction messageId:message.mid];
-            [weakController dismissAnimated:true];
+            if (innerSelf == nil || innerSelf->_ios6ReactionMenuToken != token)
+                return;
+            TGMenuSheetController *selectedMenuController = innerSelf->_contextMenuController;
+            [selectedMenuController dismissAnimated:true];
+            [innerSelf _ios6SendReaction:selectedReaction messageId:message.mid];
         };
-
-        TGMenuSheetButtonItemView *cancel = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
-        {
-            [weakController dismissAnimated:true];
-        }];
-
-        [controller setItemViews:@[ picker, cancel ] animated:hasExistingController];
-        if (!hasExistingController)
-        {
-            strongSelf->_contextMenuController = controller;
-            [controller presentInViewController:strongSelf sourceView:strongSelf.view animated:true];
-        }
+        [menuController setItemViews:@[ picker, cancel ] animated:true];
     } error:^(id error)
     {
-        IOS6_NOOP_LOG(@"FEATURE REACTION menu.error mid=%d error=%@", message.mid, error);
-    } completed:nil];
+        TGLog(@"REACTION policy.error mid=%d error=%@", message.mid, error);
+        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+        if (strongSelf == nil || strongSelf->_ios6ReactionMenuToken != token)
+            return;
+        NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+        NSString *text = errorType.length == 0 ? @"Не удалось загрузить реакции" : [NSString stringWithFormat:@"Не удалось загрузить реакции: %@", errorType];
+        TGIOS6ReactionStatusItemView *status = [[TGIOS6ReactionStatusItemView alloc] initWithText:text loading:false];
+        TGMenuSheetController *menuController = strongSelf->_contextMenuController;
+        [menuController setItemViews:@[ status, cancel ] animated:true];
+    } completed:nil]];
 }
 
 #pragma mark -
@@ -12349,7 +12413,8 @@ static UIView *_findBackArrow(UIView *view)
             {
                 if (reactionMessageItem != nil)
                 {
-                    _contextMenuController.ignoreNextDismissal = true;
+                    TGMenuSheetController *menuController = _contextMenuController;
+                    menuController.ignoreNextDismissal = _menuContainerView.isShowingMenu;
                     [self _ios6ShowReactionMenuForMessage:reactionMessageItem->_message];
                 }
             }
@@ -13925,7 +13990,10 @@ static UIView *_findBackArrow(UIView *view)
         
         CGRect (^sourceRect)(void) = ^CGRect
         {
-            return [self sourceRectForMessageId:messageIndex.messageId peerId:messageIndex.peerId];
+            CGRect rect = [self sourceRectForMessageId:messageIndex.messageId peerId:messageIndex.peerId];
+            if (TGIsPad() && !CGRectIsNull(rect) && !CGRectIsEmpty(rect))
+                rect = CGRectMake(CGRectGetMidX(rect), CGRectGetMidY(rect), 1.0f, 1.0f);
+            return rect;
         };
         
         NSString *actionButtonTitle = TGLocalized(@"ShareMenu.CopyShareLink");

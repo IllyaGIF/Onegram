@@ -109,6 +109,8 @@ typedef enum {
 
 @property (nonatomic) bool botInlineGeo;
 @property (nonatomic) int64_t emojiStatusDocumentId;
+@property (nonatomic) int64_t modernUserId;
+@property (nonatomic) int32_t nameColorId;
 
 @property (nonatomic, readonly) bool isBot;
 @property (nonatomic, readonly) bool isDeleted;

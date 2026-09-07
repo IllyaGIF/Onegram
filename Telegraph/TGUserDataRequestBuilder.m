@@ -110,6 +110,10 @@
                     // status that was fetched from the complete self user.
                     updatedUser.isPremium = originalUser.isPremium;
                     updatedUser.emojiStatusDocumentId = originalUser.emojiStatusDocumentId;
+                    if (updatedUser.modernUserId == 0)
+                        updatedUser.modernUserId = originalUser.modernUserId;
+                    if (updatedUser.nameColorId < 0)
+                        updatedUser.nameColorId = originalUser.nameColorId;
                 }
                 
                 [updateUsers addObject:updatedUser];

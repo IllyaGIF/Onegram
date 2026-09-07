@@ -1350,12 +1350,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     return [self channelMembers:peerId accessHash:accessHash filter:filter offset:offset count:count hash:0];
 }
     
-+ (SSignal *)channelMembers:(int64_t)peerId accessHash:(int64_t)accessHash filter:(TLChannelParticipantsFilter *)filter offset:(NSUInteger)offset count:(NSUInteger)count hash:(int32_t)hash {
-    if (TGIOS6ChannelPeerIdIsModernRawChannel(peerId, accessHash)) {
-        IOS6Trace(@"TRACE skip channels.getParticipants modern peer=%lld channel=%lld hash=%lld offset=%d count=%d filter=%@", peerId, TGIOS6ChannelIdFromPeerId(peerId, accessHash), accessHash, (int)offset, (int)count, NSStringFromClass([filter class]));
-        return [SSignal single:@{@"memberDatas": @{}, @"users": @[], @"count": @0}];
-    }
-    
++ (SSignal *)channelMembers:(int64_t)peerId accessHash:(int64_t)accessHash filter:(TLChannelParticipantsFilter *)filter offset:(NSUInteger)offset count:(NSUInteger)count hash:(int64_t)hash {
     TLRPCchannels_getParticipants$channels_getParticipants *getParticipants = [[TLRPCchannels_getParticipants$channels_getParticipants alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
     inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
@@ -1433,7 +1428,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     return [self channelAdmins:peerId accessHash:accessHash offset:offset count:count hash:0];
 }
 
-+ (SSignal *)channelAdmins:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count hash:(int32_t)hash {
++ (SSignal *)channelAdmins:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count hash:(int64_t)hash {
     return [self channelMembers:peerId accessHash:accessHash filter:[[TLChannelParticipantsFilter$channelParticipantsAdmins alloc] init] offset:offset count:count hash:hash];
 }
 

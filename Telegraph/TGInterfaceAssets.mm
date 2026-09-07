@@ -43,26 +43,50 @@ static std::map<int64_t, int> gidToColor;
 
 - (UIColor *)userColor:(int)uid
 {
-    static __strong UIColor *userColors[8];
-    
+    return [self userColorForIndex:[self userColorIndex:uid]];
+}
+
+- (UIColor *)userColorForIndex:(int)index
+{
+    return [self userColorForIndex:index dark:false];
+}
+
+- (UIColor *)userColorForIndex:(int)index dark:(bool)dark
+{
+    static __strong UIColor *lightColors[7];
+    static __strong UIColor *darkColors[7];
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        userColors[0] = UIColorRGB(0xfc5c51); // red
-        userColors[1] = UIColorRGB(0xfa790f); // orange
-        userColors[2] = UIColorRGB(0x895dd5); // violet
-        userColors[3] = UIColorRGB(0x0fb297); // green
-        userColors[4] = UIColorRGB(0x00c1a6); // cyan
-        userColors[5] = UIColorRGB(0x3ca5ec); // light blue
-        userColors[6] = UIColorRGB(0x3d72ed); // blue
+        lightColors[0] = UIColorRGB(0xfc5c51);
+        lightColors[1] = UIColorRGB(0xfa790f);
+        lightColors[2] = UIColorRGB(0x895dd5);
+        lightColors[3] = UIColorRGB(0x0fb297);
+        lightColors[4] = UIColorRGB(0x0fc9d6);
+        lightColors[5] = UIColorRGB(0x3ca5ec);
+        lightColors[6] = UIColorRGB(0xd54faf);
+        darkColors[0] = UIColorRGB(0xff8e86);
+        darkColors[1] = UIColorRGB(0xffa357);
+        darkColors[2] = UIColorRGB(0xb18fff);
+        darkColors[3] = UIColorRGB(0x4dd6bf);
+        darkColors[4] = UIColorRGB(0x45e8d1);
+        darkColors[5] = UIColorRGB(0x7ac9ff);
+        darkColors[6] = UIColorRGB(0xff7fd5);
     });
-    
-    return userColors[[self userColorIndex:uid]];
+    if (index < 0 || index >= 7)
+        index = 0;
+    return dark ? darkColors[index] : lightColors[index];
 }
 
 - (int)userColorIndex:(int)uid
 {
-    return uid % 7;
+    return [self userColorIndexForId:uid];
+}
+
+- (int)userColorIndexForId:(int64_t)uid
+{
+    int index = (int)(uid % 7);
+    return index < 0 ? index + 7 : index;
 }
 
 - (int)groupColorIndex:(int64_t)groupId
