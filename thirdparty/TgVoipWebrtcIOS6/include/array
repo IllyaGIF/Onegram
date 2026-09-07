@@ -1,0 +1,8 @@
+#ifndef TGIOS6_STD_ARRAY_COMPAT_H
+#define TGIOS6_STD_ARRAY_COMPAT_H
+#include <tr1/array>
+namespace std {
+template <class T, size_t N>
+using array = tr1::array<T, N>;
+}
+#endif
