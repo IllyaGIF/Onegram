@@ -557,6 +557,8 @@ static const NSUInteger loadMoreMemberCount = 100;
                         }
                     }
                     
+                    int32_t memberCount = [dict[@"count"] intValue];
+                    data = [data updateManagementCount:data.managementCount blacklistCount:data.blacklistCount bannedCount:data.bannedCount memberCount:memberCount];
                     return [data updateGeneralMembers:sortedMemberDatas];
                 }];
             }]] then:loadMoreMembersSignal];
@@ -568,6 +570,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                 [strongSelf->_usersHeaderItem setTitle:[strongSelf titleStringForMemberCount:[dict[@"count"] intValue]]];
                 
                 NSInteger memberCount = [dict[@"count"] integerValue];
+                strongSelf->_memberCount = (int32_t)memberCount;
                 
                 bool sortUsersByPresence = memberCount != 0 && memberCount <= 200;
                 if (strongSelf->_sortUsersByPresence != sortUsersByPresence) {
@@ -2434,7 +2437,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     _searchBarOverlay.backgroundColor = self.presentation.pallete.barBackgroundColor;
     _searchBarOverlay.userInteractionEnabled = false;
     
-    _searchBarWrapper = [[UIView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, self.navigationController.view.frame.size.width, searchBarHeight)];
+    _searchBarWrapper = [[UIView alloc] initWithFrame:CGRectMake(0.0f, -searchBarHeight, self.navigationController.view.frame.size.width, searchBarHeight)];
     _searchBarWrapper.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     _searchBarWrapper.backgroundColor = self.presentation.pallete.backgroundColor;
     [self.view addSubview:_searchBarWrapper];
@@ -2480,7 +2483,7 @@ static const NSUInteger loadMoreMemberCount = 100;
         
         CGRect frame = _searchBarWrapper.frame;
         CGFloat headerInset = !UIEdgeInsetsEqualToEdgeInsets(self.controllerSafeAreaInset, UIEdgeInsetsZero) ? self.controllerSafeAreaInset.top : 20.0f;
-        frame.size.height = 44 + headerInset;
+        frame.size.height = TGIsPad() ? 44.0f : 44.0f + headerInset;
         
         if (!_searchMixin.isActive) {
             frame.origin.y = -frame.size.height;
@@ -2510,7 +2513,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     {
         CGFloat inset = !UIEdgeInsetsEqualToEdgeInsets(self.controllerSafeAreaInset, UIEdgeInsetsZero) ? self.controllerSafeAreaInset.top : 20.0f;
         CGRect frame = _searchBarWrapper.frame;
-        frame.size.height = 44 + inset;
+        frame.size.height = TGIsPad() ? 44.0f : 44.0f + inset;
         if (hidden)
         {
             frame.origin.y = -frame.size.height;

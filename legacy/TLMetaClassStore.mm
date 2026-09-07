@@ -5266,6 +5266,14 @@ static void CodexSkipBytesVector(NSInputStream *is)
     TLChannelParticipant *result = nil;
     switch (signature)
     {
+        case (int32_t)0xc00c07c0:
+        {
+            TLChannelParticipant$channelParticipant *participant = [[TLChannelParticipant$channelParticipant alloc] init];
+            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.date = [is readInt32];
+            result = participant;
+            break;
+        }
         case (int32_t)0x1bd54456:
         {
             flags = [is readInt32];
@@ -5274,6 +5282,16 @@ static void CodexSkipBytesVector(NSInputStream *is)
             participant.date = [is readInt32];
             if (flags & (1 << 0)) [is readInt32];
             if (flags & (1 << 2)) [is readString];
+            result = participant;
+            break;
+        }
+        case (int32_t)0x35a8bfa7:
+        {
+            flags = [is readInt32];
+            TLChannelParticipant$channelParticipantSelf *participant = [[TLChannelParticipant$channelParticipantSelf alloc] init];
+            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.date = [is readInt32];
             result = participant;
             break;
         }
@@ -5311,6 +5329,18 @@ static void CodexSkipBytesVector(NSInputStream *is)
             participant.date = [is readInt32];
             participant.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
             if (flags & (1 << 2)) [is readString];
+            result = participant;
+            break;
+        }
+        case (int32_t)0x6df8014e:
+        {
+            flags = [is readInt32];
+            TLChannelParticipant$channelParticipantBanned *participant = [[TLChannelParticipant$channelParticipantBanned alloc] init];
+            participant.flags = flags;
+            CodexReadObject(is, environment, error);
+            participant.kicked_by = TGModernLegacyIdForModernId([is readInt64]);
+            participant.date = [is readInt32];
+            participant.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
             result = participant;
             break;
         }
@@ -8303,10 +8333,13 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e0b5b6a, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc776ba4e, [[TLCodexModernChannelMessagesParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9ab0feaf, [[TLCodexModernChannelsParticipantsParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc00c07c0, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1bd54456, [[TLCodexModernChannelParticipantParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x35a8bfa7, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa9478a1a, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2fe601d3, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x34c3bb53, [[TLCodexModernChannelParticipantParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6df8014e, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd5f0ad91, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b03f006, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71701da9, [[TLCodexForumTopicParser alloc] init]));

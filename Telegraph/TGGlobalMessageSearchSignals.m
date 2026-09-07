@@ -40,6 +40,30 @@ static inline bool TGIOS6SearchPeerIdIsModernRawChannel(int64_t peerId)
     return TGIOS6SearchPeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
 }
 
+static inline int64_t TGIOS6SearchChannelIdFromPeerId(int64_t peerId)
+{
+    NSData *apiIdData = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6ApiChannelId")];
+    int64_t apiChannelId = 0;
+    if (apiIdData.length == sizeof(int64_t))
+        [apiIdData getBytes:&apiChannelId length:sizeof(apiChannelId)];
+    if (apiChannelId > 0)
+        return apiChannelId;
+
+    if (TGIOS6SearchPeerIdIsModernRawChannel(peerId))
+        return -peerId - 4294967296LL;
+
+    int32_t channelId = TGChannelIdFromPeerId(peerId);
+    return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
+}
+
+static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int64_t accessHash)
+{
+    TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
+    if (conversation != nil && conversation.accessHash != 0)
+        return conversation.accessHash;
+    return accessHash;
+}
+
 @implementation TGGlobalMessageSearchSignals
 
 + (SSignal *)search:(NSString *)query includeMessages:(bool)includeMessages itemMapping:(id (^)(id))itemMapping
@@ -690,8 +714,8 @@ static inline bool TGIOS6SearchPeerIdIsModernRawChannel(int64_t peerId)
 + (SSignal *)searchChannelMembers:(NSString *)query peerId:(int64_t)peerId accessHash:(int64_t)accessHash section:(TGGlobalMessageSearchMembersSection)section {
     TLRPCchannels_getParticipants$channels_getParticipants *getParticipants = [[TLRPCchannels_getParticipants$channels_getParticipants alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
-    inputChannel.access_hash = accessHash;
+    inputChannel.channel_id = TGIOS6SearchChannelIdFromPeerId(peerId);
+    inputChannel.access_hash = TGIOS6SearchChannelAccessHashForPeerId(peerId, accessHash);
     getParticipants.channel = inputChannel;
     
     switch (section) {

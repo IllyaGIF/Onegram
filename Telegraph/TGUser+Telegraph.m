@@ -213,6 +213,8 @@ int extractUserLinkFromUpdate(TLUpdate$updateContactLink *linkUpdate)
             self.minimalRepresentation = concreteUser.flags & (1 << 20);
             self.botInlineGeo = concreteUser.flags & (1 << 21);
             self.emojiStatusDocumentId = concreteUser.emojiStatusDocumentId;
+            self.modernUserId = concreteUser.n_id_long != 0 ? concreteUser.n_id_long : concreteUser.n_id;
+            self.nameColorId = concreteUser.nameColorId;
         }
         else if ([user isKindOfClass:[TLUser$userEmpty class]])
         {

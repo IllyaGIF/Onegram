@@ -318,7 +318,7 @@
 {
     [super layoutSubviews];
     
-    self.backgroundColor = [UIColor whiteColor];
+    self.backgroundColor = _presentation.pallete.barBackgroundColor;
     
     _minimizedBar.frame = CGRectMake(0.0f, 0.0f, self.frame.size.width, 37.0f);
     CGFloat separatorHeight = TGScreenPixel;
@@ -401,9 +401,13 @@
     TGMusicPlayerController *controller = [[TGMusicPlayerController alloc] init];
     controller.presentation = _presentation;
     UIViewController *rootController = _navigationController.parentViewController;
+    if (rootController == nil)
+        rootController = _navigationController;
     [rootController.view endEditing:true];
     
     [rootController addChildViewController:controller];
+    controller.view.frame = rootController.view.bounds;
+    controller.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [rootController.view addSubview:controller.view];
 }
 

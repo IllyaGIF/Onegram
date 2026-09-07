@@ -15,6 +15,7 @@
 #import "TLMessageContainer.h"
 #import "TLRpcResult.h"
 #import "TLRPCphone_sendSignalingData.h"
+#import "TLRPCmessages_sendMessage_manual.h"
 #import "../../../Telegraph/IOS6FeatureProbe.h"
 
 #import "TLResPQ$resPQ_manual.h"
@@ -1099,6 +1100,73 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (error != NULL && *error != nil)
         *error = nil;
     IOS6_NOOP_LOG(@"AUTH parsed modern config sig=0x%x dc=%d dcOptions=%d flags=%d", signature, result.this_dc, (int)result.dc_options.count, flags);
+    return result;
+}
+
+@end
+
+@interface TLCodexAvailableReactionParser : TLAvailableReaction_manual
+@end
+
+@implementation TLCodexAvailableReactionParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLAvailableReaction_manual *result = [[TLAvailableReaction_manual alloc] init];
+    int32_t flags = [is readInt32];
+    result.inactive = (flags & (1 << 0)) != 0;
+    result.premium = (flags & (1 << 2)) != 0;
+    result.reaction = [is readString];
+    [is readString];
+    for (int i = 0; i < ((flags & (1 << 1)) != 0 ? 7 : 5); i++)
+    {
+        CodexReadObject(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+    }
+    return result;
+}
+
+@end
+
+@interface TLCodexAvailableReactionsParser : TLmessages_AvailableReactions_manual
+@end
+
+@implementation TLCodexAvailableReactionsParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    [is readInt32];
+    int32_t marker = [is readInt32];
+    int32_t count = [is readInt32];
+    if (marker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR || count < 0 || count > 10000)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"TLAvailableReactions" code:1 userInfo:nil];
+        return nil;
+    }
+
+    TLmessages_AvailableReactions_manual *result = [[TLmessages_AvailableReactions_manual alloc] init];
+    NSMutableArray *reactions = [[NSMutableArray alloc] init];
+    NSMutableArray *emojis = [[NSMutableArray alloc] init];
+    for (int32_t i = 0; i < count; i++)
+    {
+        id reaction = CodexReadObject(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        if (![reaction isKindOfClass:[TLAvailableReaction_manual class]])
+        {
+            if (error != NULL)
+                *error = [NSError errorWithDomain:@"TLAvailableReactions" code:2 userInfo:nil];
+            return nil;
+        }
+        TLAvailableReaction_manual *availableReaction = reaction;
+        [reactions addObject:availableReaction];
+        if (!availableReaction.inactive && availableReaction.reaction.length != 0 && ![emojis containsObject:availableReaction.reaction])
+            [emojis addObject:availableReaction.reaction];
+    }
+    result.reactions = reactions;
+    result.activeEmojis = emojis;
     return result;
 }
 
@@ -5761,6 +5829,16 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result = participant;
             break;
         }
+        case (int32_t)0x35a8bfa7:
+        {
+            flags = [is readInt32];
+            TLChannelParticipant$channelParticipantSelf *participant = [[TLChannelParticipant$channelParticipantSelf alloc] init];
+            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.date = [is readInt32];
+            result = participant;
+            break;
+        }
         case (int32_t)0xa9478a1a:
         {
             flags = [is readInt32];
@@ -5795,6 +5873,18 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             participant.date = [is readInt32];
             participant.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
             if (flags & (1 << 2)) [is readString];
+            result = participant;
+            break;
+        }
+        case (int32_t)0x6df8014e:
+        {
+            flags = [is readInt32];
+            TLChannelParticipant$channelParticipantBanned *participant = [[TLChannelParticipant$channelParticipantBanned alloc] init];
+            participant.flags = flags;
+            CodexReadObject(is, environment, error);
+            participant.kicked_by = TGModernLegacyIdForModernId([is readInt64]);
+            participant.date = [is readInt32];
+            participant.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
             result = participant;
             break;
         }
@@ -9546,9 +9636,11 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9ab0feaf, [[TLCodexModernChannelsParticipantsParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc00c07c0, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1bd54456, [[TLCodexModernChannelParticipantParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x35a8bfa7, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa9478a1a, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2fe601d3, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x34c3bb53, [[TLCodexModernChannelParticipantParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6df8014e, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd5f0ad91, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b03f006, [[TLCodexModernChannelParticipantParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71701da9, [[TLCodexForumTopicParser alloc] init]));
@@ -10232,9 +10324,9 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers[(int32_t)0xffda656d] = [[TLCodexSkipObjectParser alloc] init];
         manualObjectParsers[(int32_t)0x1839490f] = [[TLCodexSkipObjectParser alloc] init];
         manualObjectParsers[(int32_t)0x31bd492d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc077ec01] = [[TLCodexSkipObjectParser alloc] init];
+        manualObjectParsers[(int32_t)0xc077ec01] = [[TLCodexAvailableReactionParser alloc] init];
         manualObjectParsers[(int32_t)0x9f071957] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x768e3aad] = [[TLCodexSkipObjectParser alloc] init];
+        manualObjectParsers[(int32_t)0x768e3aad] = [[TLCodexAvailableReactionsParser alloc] init];
         manualObjectParsers[(int32_t)0xd08ce645] = [[TLCodexSkipObjectParser alloc] init];
         manualObjectParsers[(int32_t)0x90c467d1] = [[TLCodexSkipObjectParser alloc] init];
         manualObjectParsers[(int32_t)0xb06fdbdf] = [[TLCodexSkipObjectParser alloc] init];
