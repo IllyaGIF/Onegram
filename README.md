@@ -4,9 +4,9 @@ Onegram is an unofficial Telegram client for legacy iOS devices.
 
 The project brings modern Telegram functionality to devices and iOS versions that are no longer supported by the official Telegram client, with a particular focus on keeping old hardware usable instead of simply dropping unsupported APIs and features.
 
-Onegram 1.0 supports **iOS 4.3–10** and includes a full compatibility layer for running a large part of the modern client functionality even on an **iPhone 4 with iOS 4.3**.
+Onegram supports **iOS 4.3–10** and includes a full compatibility layer for running a large part of the modern client functionality even on an **iPhone 4 with iOS 4.3**.
 
-## Onegram 1.0
+## Onegram
 
 Version 1.0 is the largest Onegram update so far.
 
