@@ -5,6 +5,7 @@
 #import "TLMessageAction.h"
 #import "TLPeer.h"
 #import "TLUser$modernUser.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
 //messageService flags:# out:flags.1?true mentioned:flags.4?true media_unread:flags.5?true silent:flags.13?true post:flags.14?true id:int from_id:flags.8?int to_id:Peer date:int action:MessageAction = Message;
 
@@ -37,14 +38,14 @@ static NSArray *TGModernServiceReadObjectVector(NSInputStream *is, id<TLSerializ
     return objects;
 }
 
-static int32_t TGModernServicePeerLegacyId(TLPeer *peer)
+static int64_t TGModernServicePeerLegacyId(TLPeer *peer)
 {
     if ([peer isKindOfClass:[TLPeer$peerUser class]])
         return ((TLPeer$peerUser *)peer).user_id;
     if ([peer isKindOfClass:[TLPeer$peerChat class]])
-        return -((TLPeer$peerChat *)peer).chat_id;
+        return TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
     if ([peer isKindOfClass:[TLPeer$peerChannel class]])
-        return 0;
+        return TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
     return 0;
 }
 
@@ -152,7 +153,8 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
     TLMessage$modernMessageService *result = [[TLMessage$modernMessageService alloc] init];
     
     int32_t flags = [is readInt32];
-    bool isModernMessageService = signature == (int32_t)0x2b085862 || signature == (int32_t)0x7a800e0a || signature == (int32_t)0x6a3ac8ea;
+    bool isLayer181MessageService = signature == (int32_t)0x2b085862;
+    bool isModernMessageService = isLayer181MessageService || signature == (int32_t)0x7a800e0a || signature == (int32_t)0x6a3ac8ea;
     
     result.flags = flags;
     result.n_id = [is readInt32];
@@ -164,7 +166,8 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
             TLPeer *fromPeer = TGModernServiceReadPeerCompat(is, environment, error);
             if (error != nil && *error != nil)
                 return nil;
-            result.from_id = TGModernServicePeerLegacyId(fromPeer);
+            result.senderPeerId = TGModernServicePeerLegacyId(fromPeer);
+            result.from_id = TGPeerIdIsUser(result.senderPeerId) ? (int32_t)result.senderPeerId : 0;
         }
         else
             result.from_id = [is readInt32];
@@ -175,7 +178,7 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
         return nil;
     }
     
-    if (isModernMessageService && (flags & (1 << 28)))
+    if (isModernMessageService && !isLayer181MessageService && (flags & (1 << 28)))
     {
         TGModernServiceReadObject(is, environment, error);
         if (error != nil && *error != nil)
@@ -219,7 +222,7 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
         }
     }
     
-    if (isModernMessageService && (flags & (1 << 20)))
+    if (isModernMessageService && !isLayer181MessageService && (flags & (1 << 20)))
     {
         TGModernServiceReadObject(is, environment, error);
         if (error != nil && *error != nil)

@@ -2962,7 +2962,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     _ios6AllDialogItemsLastRefreshTime = now;
     TGDialogListController *controller = self;
     TGTelegraphDialogListCompanion *dialogListCompanion = [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]] ? (TGTelegraphDialogListCompanion *)_dialogListCompanion : nil;
-    [TGDatabaseInstance() loadConversationListFromDate:INT32_MAX limit:4096 excludeConversationIds:@[] folderId:-1 completion:^(NSArray *result, __unused bool loadedAllRegular)
+    [TGDatabaseInstance() loadConversationListFromDate:INT32_MAX limit:0 excludeConversationIds:@[] folderId:-1 completion:^(NSArray *result, __unused bool loadedAllRegular)
     {
         if (dialogListCompanion != nil)
         {
@@ -3355,7 +3355,11 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     {
         for (id item in _listModel)
         {
-            if ([item isKindOfClass:[TGConversation class]] && ![self ios6IsArchivedConversation:item] && [self ios6ConversationIsUnread:(TGConversation *)item])
+            if (![item isKindOfClass:[TGConversation class]] || [self ios6IsArchivedConversation:item])
+                continue;
+            TGConversation *conversation = (TGConversation *)item;
+            [self ios6EnsureDialogListDataForConversation:conversation];
+            if ([self ios6ConversationIsUnread:conversation] && ![conversation.dialogListData[@"mute"] boolValue])
                 count++;
         }
         return count;
@@ -3368,7 +3372,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         if ([self ios6Conversation:conversation matchesDialogFilter:filter])
         {
             [self ios6EnsureDialogListDataForConversation:conversation];
-            if ([self ios6ConversationIsUnread:conversation])
+            if ([self ios6ConversationIsUnread:conversation] && ![conversation.dialogListData[@"mute"] boolValue])
                 count++;
         }
     }
@@ -3633,7 +3637,9 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         if ([self ios6IsArchivedConversation:item])
         {
             TGConversation *conversation = (TGConversation *)item;
-            count += conversation.unreadCount + MAX(0, conversation.serviceUnreadCount);
+            [self ios6EnsureDialogListDataForConversation:conversation];
+            if (![conversation.dialogListData[@"mute"] boolValue])
+                count += conversation.unreadCount + MAX(0, conversation.serviceUnreadCount);
         }
     }
     return count;

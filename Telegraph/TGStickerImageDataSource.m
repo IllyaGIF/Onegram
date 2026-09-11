@@ -19,6 +19,8 @@
 
 #import "TGAppDelegate.h"
 
+#import <pthread.h>
+
 static TGWorkerPool *workerPool()
 {
     static TGWorkerPool *instance = nil;
@@ -97,6 +99,7 @@ static void TGStickerCompleteLoadTask()
     bool _queueCancelled;
     bool _queueSlotStarted;
     bool _queueSlotCompleted;
+    pthread_mutex_t _queueMutex;
 }
 
 - (bool)beginQueueSlot;
@@ -106,14 +109,20 @@ static void TGStickerCompleteLoadTask()
 
 @implementation TGStickerImageLoadTask
 
+- (id)init
+{
+    self = [super init];
+    if (self != nil)
+        pthread_mutex_init(&_queueMutex, NULL);
+    return self;
+}
+
 - (bool)beginQueueSlot
 {
-    bool shouldStart = false;
-    @synchronized(self)
-    {
-        _queueSlotStarted = true;
-        shouldStart = !_queueCancelled;
-    }
+    pthread_mutex_lock(&_queueMutex);
+    _queueSlotStarted = true;
+    bool shouldStart = !_queueCancelled;
+    pthread_mutex_unlock(&_queueMutex);
     if (!shouldStart)
         [self completeQueueSlot];
     return shouldStart;
@@ -122,26 +131,23 @@ static void TGStickerCompleteLoadTask()
 - (void)completeQueueSlot
 {
     bool shouldComplete = false;
-    @synchronized(self)
+    pthread_mutex_lock(&_queueMutex);
+    if (_queueSlotStarted && !_queueSlotCompleted)
     {
-        if (_queueSlotStarted && !_queueSlotCompleted)
-        {
-            _queueSlotCompleted = true;
-            shouldComplete = true;
-        }
+        _queueSlotCompleted = true;
+        shouldComplete = true;
     }
+    pthread_mutex_unlock(&_queueMutex);
     if (shouldComplete)
         TGStickerCompleteLoadTask();
 }
 
 - (void)cancel
 {
-    bool slotStarted = false;
-    @synchronized(self)
-    {
-        _queueCancelled = true;
-        slotStarted = _queueSlotStarted;
-    }
+    pthread_mutex_lock(&_queueMutex);
+    _queueCancelled = true;
+    bool slotStarted = _queueSlotStarted;
+    pthread_mutex_unlock(&_queueMutex);
     [super cancel];
     if (slotStarted)
         [self completeQueueSlot];
@@ -150,6 +156,7 @@ static void TGStickerCompleteLoadTask()
 - (void)dealloc
 {
     [self completeQueueSlot];
+    pthread_mutex_destroy(&_queueMutex);
 }
 
 @end

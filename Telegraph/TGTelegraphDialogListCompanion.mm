@@ -139,9 +139,6 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
 
     bool _ios6FolderPreloadActive;
     bool _ios6FolderPreloadRequestInFlight;
-    int _ios6FolderPreloadNoGrowthRounds;
-    int _ios6FolderPreloadRounds;
-    NSUInteger _ios6FolderPreloadLastCount;
 }
 
 @property (nonatomic, strong) NSMutableArray *conversationList;
@@ -308,8 +305,7 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
         [ActionStageInstance() watchForPath:@"/tg/broadcastConversations" watcher:self];
         [ActionStageInstance() watchForGenericPath:@"/tg/dialoglist/@" watcher:self];
         [ActionStageInstance() watchForPath:@"/tg/userdatachanges" watcher:self];
-        [ActionStageInstance() watchForPath:@"/tg/unreadCount" watcher:self];
-        //[ActionStageInstance() watchForPath:@"/tg/unreadChatsCount" watcher:self];
+        [ActionStageInstance() watchForPath:@"/tg/unreadChatsCount" watcher:self];
         [ActionStageInstance() watchForPath:@"/tg/conversation/*/typing" watcher:self];
         [ActionStageInstance() watchForPath:@"/tg/contactlist" watcher:self];
         [ActionStageInstance() watchForPath:@"/databasePasswordChanged" watcher:self];
@@ -324,17 +320,8 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
          
          (void)0;
          
-         int unreadCount = [TGDatabaseInstance() databaseState].unreadCount;
-         
+         [TGDatabaseInstance() transactionCalculateUnreadChats];
          (void)0;
-        [self actionStageResourceDispatched:@"/tg/unreadCount" resource:[[SGraphObjectNode alloc] initWithObject:[NSNumber numberWithInt:unreadCount]] arguments:@{@"previous": @true}];
-         (void)0;
-        
-//        int unreadCount = [TGDatabaseInstance() databaseState].unreadCount;
-//        [self actionStageResourceDispatched:@"/tg/unreadCount" resource:[[SGraphObjectNode alloc] initWithObject:@(unreadCount)] arguments:@{@"previous": @true}];
-//
-//        int unreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
-//        [self actionStageResourceDispatched:@"/tg/unreadChatsCount" resource:[[SGraphObjectNode alloc] initWithObject:@(unreadChatsCount)] arguments:@{@"previous": @true}];
         
         [_adItemDisposable setDisposable:nil];
         _loadedAd = false;
@@ -772,7 +759,6 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
     }
 
     _ios6FolderPreloadRequestInFlight = true;
-    _ios6FolderPreloadRounds++;
     [self loadMoreItems:40];
 }
 
@@ -793,9 +779,6 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
 
     _ios6FolderPreloadActive = true;
     _ios6FolderPreloadRequestInFlight = false;
-    _ios6FolderPreloadNoGrowthRounds = 0;
-    _ios6FolderPreloadRounds = 0;
-    _ios6FolderPreloadLastCount = _conversationList.count;
     [self ios6ContinueFolderDialogPreload];
 }
 
@@ -817,9 +800,6 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
         _loadedAd = false;
         _ios6FolderPreloadActive = false;
         _ios6FolderPreloadRequestInFlight = false;
-        _ios6FolderPreloadNoGrowthRounds = 0;
-        _ios6FolderPreloadRounds = 0;
-        _ios6FolderPreloadLastCount = 0;
         
         dispatch_async(dispatch_get_main_queue(), ^
         {
@@ -1700,7 +1680,7 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
                 [combinedItems addObjectsFromArray:_archiveConversationList];
                 _canLoadMore = previousCanLoadMore;
                 [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:archivePeerIds]];
-                uint8_t archivePeerIdsComplete = rawLoadedItemsCount < ios6ExpectedPageSize ? 1 : 0;
+                uint8_t archivePeerIdsComplete = 1;
                 [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:[NSData dataWithBytes:&archivePeerIdsComplete length:1]];
                 IOS6Trace(@"FULL ui.dialog.archive.separate main=%d archive=%d", (int)_conversationList.count, (int)_archiveConversationList.count);
                 TGDispatchOnMainThread(^{
@@ -1750,6 +1730,8 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
             }
             if (ios6ArchiveListRequest)
                 canLoadMore = previousCanLoadMore;
+            else if ([path isEqualToString:@"/tg/dialoglist/(0)"])
+                canLoadMore = [TGDatabaseInstance() customProperty:@"dialogListLoaded"].length == 0;
             IOS6Trace(@"FULL ui.dialog.actorCompleted.canLoadMore raw=%d expected=%d added=%d result=%d archive=%d", rawLoadedItemsCount, ios6ExpectedPageSize, (int)loadedItems.count, canLoadMore ? 1 : 0, ios6ArchiveListRequest ? 1 : 0);
             
             [_conversationList sortUsingComparator:^NSComparisonResult(id<TGDialogListItem> conversation1, id<TGDialogListItem> conversation2)
@@ -1825,16 +1807,8 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
             }
             if (!ios6ArchiveListRequest && _ios6FolderPreloadActive)
             {
-                NSUInteger currentCount = _conversationList.count;
-                if (currentCount > _ios6FolderPreloadLastCount)
-                    _ios6FolderPreloadNoGrowthRounds = 0;
-                else
-                    _ios6FolderPreloadNoGrowthRounds++;
-                _ios6FolderPreloadLastCount = currentCount;
                 _ios6FolderPreloadRequestInFlight = false;
-
-
-                if (!_canLoadMore || _ios6FolderPreloadNoGrowthRounds >= 2)
+                if (!_canLoadMore)
                 {
                     _ios6FolderPreloadActive = false;
                 }
@@ -2377,18 +2351,21 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
     {
         [self actorCompleted:ASStatusSuccess path:path result:resource];
     }
-    else if ([path isEqualToString:@"/tg/unreadCount"])
+    else if ([path isEqualToString:@"/tg/unreadChatsCount"])
     {
-        dispatch_async(dispatch_get_main_queue(), ^ // request to controller
+        dispatch_async(dispatch_get_main_queue(), ^
         {
-            [TGDatabaseInstance() dispatchOnDatabaseThread:^ // request to database
+            [TGDatabaseInstance() dispatchOnDatabaseThread:^
             {
-                int unreadCount = [TGDatabaseInstance() databaseState].unreadCount;
+                int unreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
+                int unreadChannelsCount = [TGDatabaseInstance() unreadChannelsCount];
+                if (unreadChatsCount == INT_MIN || unreadChannelsCount == INT_MIN)
+                    return;
+                int unreadCount = unreadChatsCount + unreadChannelsCount;
                 TGDispatchOnMainThread(^
                 {
-                    if (![arguments[@"previous"] boolValue]) {
+                    if (![arguments[@"previous"] boolValue])
                         [[UIApplication sharedApplication] setApplicationIconBadgeNumber:unreadCount];
-                    }
                     if (unreadCount == 0)
                         [[UIApplication sharedApplication] cancelAllLocalNotifications];
                     
@@ -2401,28 +2378,6 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
             } synchronous:false];
         });
     }
-//    else if ([path isEqualToString:@"/tg/unreadChatsCount"])
-//    {
-//        dispatch_async(dispatch_get_main_queue(), ^ // request to controller
-//        {
-//            [TGDatabaseInstance() dispatchOnDatabaseThread:^ // request to database
-//            {
-//                int unreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
-//                int unreadChannelsCount = [TGDatabaseInstance() unreadChannelsCount];
-//                TGDispatchOnMainThread(^
-//                {
-//                    //if (![arguments[@"previous"] boolValue]) {
-//                    //    [[UIApplication sharedApplication] setApplicationIconBadgeNumber:unreadCount];
-//                    //}
-//                    //if (unreadCount == 0)
-//                    //    [[UIApplication sharedApplication] cancelAllLocalNotifications];
-//                    
-//                    //self.unreadCount = unreadCount;
-//                    [TGAppDelegateInstance.rootController.mainTabsController setUnreadCount:unreadChatsCount + unreadChannelsCount];
-//                });
-//            } synchronous:false];
-//        });
-//    }
     else if ([path hasPrefix:@"/tg/peerSettings/"])
     {
         NSMutableArray *updatedIndices = [[NSMutableArray alloc] init];
@@ -2431,6 +2386,7 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
         int64_t peerId = [[path substringWithRange:NSMakeRange(18, path.length - 1 - 18)] longLongValue];
         bool isPrivateDefault = peerId == INT_MAX - 1;
         bool isGroupDefault = peerId == INT_MAX - 2;
+        bool isChannelDefault = peerId == INT_MAX - 4;
         
         int count = (int)_conversationList.count;
         for (int i = 0; i < count; i++)
@@ -2446,7 +2402,12 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
                     mutePeerId = [conversation.chatParticipants.chatParticipantUids[0] intValue];
             }
             
-            if (mutePeerId == peerId || (TGPeerIdIsUser(mutePeerId) && isPrivateDefault) || (!TGPeerIdIsUser(mutePeerId) && isGroupDefault))
+            bool isBroadcastChannel = TGPeerIdIsChannel(mutePeerId) && conversation.isChannel && !conversation.isChannelGroup;
+            bool usesPrivateDefault = TGPeerIdIsUser(mutePeerId);
+            bool usesChannelDefault = isBroadcastChannel;
+            bool usesGroupDefault = !usesPrivateDefault && !usesChannelDefault;
+            
+            if (mutePeerId == peerId || (usesPrivateDefault && isPrivateDefault) || (usesGroupDefault && isGroupDefault) || (usesChannelDefault && isChannelDefault))
             {
                 TGConversation *newConversation = [conversation copy];
                 NSMutableDictionary *newData = [conversation.dialogListData mutableCopy];
@@ -2471,6 +2432,7 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
                 [dialogListController dialogListItemsChanged:nil insertedItems:nil updatedIndices:updatedIndices updatedItems:updatedItems removedIndices:nil];
             });
         }
+        [TGDatabaseInstance() transactionCalculateUnreadChats];
     }
     else if ([path isEqualToString:@"/tg/contactlist"])
     {

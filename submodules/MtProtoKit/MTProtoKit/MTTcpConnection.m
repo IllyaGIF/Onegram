@@ -8,6 +8,7 @@
 #import "MTNetworkUsageCalculationInfo.h"
 
 #import "GCDAsyncSocket.h"
+#import "MTOnegramProxyTLSRoots.h"
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <netinet/tcp.h>
@@ -125,11 +126,136 @@ typedef enum {
     MTTcpSocksReceiveBindAddrDomainNameLength,
     MTTcpSocksReceiveBindAddrDomainName,
     MTTcpSocksReceiveBindAddrPort,
-    MTTcpSocksReceiveAuthResponse
+    MTTcpSocksReceiveAuthResponse,
+    MTTcpOnegramWebSocketHttpHeader = 1000,
+    MTTcpOnegramWebSocketFrameHeader,
+    MTTcpOnegramWebSocketFrameLength16,
+    MTTcpOnegramWebSocketFrameLength64,
+    MTTcpOnegramWebSocketFramePayload
 } MTTcpReadTags;
 
 static const NSTimeInterval MTMinTcpResponseTimeout = 12.0;
 static const NSUInteger MTTcpProgressCalculationThreshold = 4096;
+static const NSUInteger MTOnegramWebSocketMaxMessageLength = 16 * 1024 * 1024;
+static NSString *const MTOnegramCfProxyDomains[] =
+{
+    @"pclead.co.uk",
+    @"offshor.co.uk",
+    @"cakeisalie.co.uk",
+    @"noskomnadzor.co.uk",
+    @"lovetrue.co.uk",
+    @"sorokdva.co.uk",
+    @"pyatdesyatdva.co.uk",
+    @"kartoshka.co.uk",
+    @"sorokodin.co.uk",
+    @"pyatdesyatodin.co.uk",
+    @"notelega.co.uk",
+    @"ebally.co.uk",
+    @"nebally.co.uk",
+    @"havegreatday.co.uk",
+    @"pomogite.co.uk",
+    @"fixtelega.co.uk",
+    @"sadnews.co.uk",
+    @"onedaychamp.co.uk",
+    @"stopblocking.co.uk",
+    @"nothingthere.co.uk"
+};
+static const NSInteger MTOnegramCfProxyDomainCount = sizeof(MTOnegramCfProxyDomains) / sizeof(MTOnegramCfProxyDomains[0]);
+static const NSInteger MTOnegramCfProxyAttemptCount = MTOnegramCfProxyDomainCount;
+
+static NSString *MTOnegramBase64(NSData *data)
+{
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if (data.length == 0)
+        return @"";
+
+    const uint8_t *bytes = data.bytes;
+    NSUInteger length = data.length;
+    NSMutableString *result = [[NSMutableString alloc] initWithCapacity:((length + 2) / 3) * 4];
+    for (NSUInteger index = 0; index < length; index += 3)
+    {
+        uint32_t value = ((uint32_t)bytes[index]) << 16;
+        if (index + 1 < length)
+            value |= ((uint32_t)bytes[index + 1]) << 8;
+        if (index + 2 < length)
+            value |= bytes[index + 2];
+
+        [result appendFormat:@"%c", table[(value >> 18) & 63]];
+        [result appendFormat:@"%c", table[(value >> 12) & 63]];
+        if (index + 1 < length)
+            [result appendFormat:@"%c", table[(value >> 6) & 63]];
+        else
+            [result appendString:@"="];
+        if (index + 2 < length)
+            [result appendFormat:@"%c", table[value & 63]];
+        else
+            [result appendString:@"="];
+    }
+    return result;
+}
+
+static NSData *MTOnegramWebSocketFrame(NSData *payload, uint8_t opcode)
+{
+    NSUInteger length = payload.length;
+    NSMutableData *result = [[NSMutableData alloc] initWithCapacity:length + 14];
+    uint8_t first = (uint8_t)(0x80 | (opcode & 0x0f));
+    [result appendBytes:&first length:1];
+
+    if (length < 126)
+    {
+        uint8_t second = (uint8_t)(0x80 | length);
+        [result appendBytes:&second length:1];
+    }
+    else if (length <= 0xffff)
+    {
+        uint8_t second = 0x80 | 126;
+        uint16_t value = htons((uint16_t)length);
+        [result appendBytes:&second length:1];
+        [result appendBytes:&value length:2];
+    }
+    else
+    {
+        uint8_t second = 0x80 | 127;
+        uint64_t value = (uint64_t)length;
+        uint8_t encoded[8];
+        for (int index = 0; index < 8; index++)
+            encoded[index] = (uint8_t)((value >> ((7 - index) * 8)) & 0xff);
+        [result appendBytes:&second length:1];
+        [result appendBytes:encoded length:8];
+    }
+
+    uint8_t mask[4];
+    arc4random_buf(mask, sizeof(mask));
+    [result appendBytes:mask length:4];
+
+    if (length != 0)
+    {
+        NSMutableData *masked = [[NSMutableData alloc] initWithLength:length];
+        const uint8_t *source = payload.bytes;
+        uint8_t *destination = masked.mutableBytes;
+        for (NSUInteger index = 0; index < length; index++)
+            destination[index] = source[index] ^ mask[index & 3];
+        [result appendData:masked];
+    }
+    return result;
+}
+
+static bool MTOnegramControlBytesAllowed(const uint8_t *bytes)
+{
+    if (bytes[0] == 0xef)
+        return false;
+
+    uint32_t first = 0;
+    memcpy(&first, bytes, 4);
+    if (first == 0x44414548 || first == 0x54534f50 || first == 0x20544547 || first == 0xeeeeeeee || first == 0xdddddddd)
+        return false;
+    if (bytes[0] == 0x16 && bytes[1] == 0x03 && bytes[2] == 0x01 && bytes[3] == 0x02)
+        return false;
+
+    uint32_t second = 0;
+    memcpy(&second, bytes + 4, 4);
+    return second != 0;
+}
 
 struct ctr_state {
     unsigned char ivec[16];  /* ivec[0..7] is the IV, ivec[8..15] is the big-endian counter */
@@ -174,12 +300,44 @@ struct ctr_state {
     NSString *_mtpIp;
     int32_t _mtpPort;
     NSData *_mtpSecret;
+
+    __weak MTContext *_context;
+    bool _onegramWebSocket;
+    bool _onegramWebSocketReady;
+    NSInteger _onegramWebSocketAttempt;
+    NSString *_onegramWebSocketDomain;
+    NSString *_onegramWebSocketPath;
+    NSString *_onegramWebSocketKey;
+    uint8_t _onegramWebSocketFrameOpcode;
+    uint8_t _onegramWebSocketFragmentOpcode;
+    bool _onegramWebSocketFrameFin;
+    NSUInteger _onegramWebSocketFrameLength;
+    NSMutableData *_onegramWebSocketFragment;
+    NSMutableData *_onegramWebSocketTransportBuffer;
     
     MTMetaDisposable *_resolveDisposable;
 }
 
 @property (nonatomic) int64_t packetHeadDecodeToken;
 @property (nonatomic, strong) id packetProgressToken;
+
+- (NSInteger)onegramWebSocketDatacenterId;
+- (bool)onegramWebSocketTesting;
+- (NSInteger)onegramWebSocketDirectAttemptCount;
+- (bool)onegramWebSocketCfAttempt:(NSInteger)attempt;
+- (NSString *)onegramWebSocketDomainForAttempt:(NSInteger)attempt;
+- (NSString *)onegramWebSocketTargetForAttempt:(NSInteger)attempt;
+- (void)onegramPrepareSocket;
+- (void)onegramWebSocketAttemptsExhausted;
+- (void)onegramStartWebSocketAttempt;
+- (void)onegramWebSocketAttemptFailed;
+- (void)onegramWebSocketOpened;
+- (void)onegramReadNextWebSocketFrame;
+- (void)onegramReadWebSocketPayload;
+- (void)onegramSendWebSocketPayload:(NSData *)payload opcode:(uint8_t)opcode;
+- (void)onegramDeliverPacketData:(NSData *)packetData;
+- (void)onegramProcessTransportFrame:(NSData *)rawData;
+- (void)onegramHandleWebSocketFramePayload:(NSData *)payload;
 
 @end
 
@@ -208,6 +366,7 @@ struct ctr_state {
         _internalId = [[MTInternalId(MTTcpConnection) alloc] init];
         
         _address = address;
+        _context = context;
         
         _interface = interface;
         _usageCalculationInfo = usageCalculationInfo;
@@ -216,7 +375,9 @@ struct ctr_state {
             _firstPacketControlByte = [context.apiEnvironment tcpPayloadPrefix];
         }
         
-        if (context.apiEnvironment.socksProxySettings != nil) {
+        if (context.apiEnvironment.onegramWebSocketEnabled) {
+            _onegramWebSocket = true;
+        } else if (context.apiEnvironment.socksProxySettings != nil) {
             if (context.apiEnvironment.socksProxySettings.secret != nil) {
                 _mtpIp = context.apiEnvironment.socksProxySettings.ip;
                 _mtpPort = context.apiEnvironment.socksProxySettings.port;
@@ -236,6 +397,8 @@ struct ctr_state {
         } else if ([MTSocksProxySettings secretSupportsExtendedPadding:_address.secret]) {
             _useIntermediateFormat = true;
         }
+        if (_onegramWebSocket)
+            _useIntermediateFormat = false;
         
         _resolveDisposable = [[MTMetaDisposable alloc] init];
         
@@ -291,12 +454,404 @@ struct ctr_state {
     } synchronous:true];
 }
 
+- (NSInteger)onegramWebSocketDatacenterId
+{
+    NSInteger value = _datacenterTag;
+    if (value < 0)
+        value = -value;
+    if (value >= 10000)
+        value -= 10000;
+    return value;
+}
+
+- (bool)onegramWebSocketTesting
+{
+    NSInteger value = _datacenterTag;
+    if (value < 0)
+        value = -value;
+    return value >= 10000;
+}
+
+- (NSInteger)onegramWebSocketDirectAttemptCount
+{
+    NSInteger dc = [self onegramWebSocketDatacenterId];
+    return dc == 2 || dc == 4 ? 2 : 0;
+}
+
+- (bool)onegramWebSocketCfAttempt:(NSInteger)attempt
+{
+    if ([self onegramWebSocketTesting])
+        return false;
+    return attempt >= [self onegramWebSocketDirectAttemptCount];
+}
+
+- (NSString *)onegramWebSocketDomainForAttempt:(NSInteger)attempt
+{
+    NSInteger dc = [self onegramWebSocketDatacenterId];
+    NSInteger directAttemptCount = [self onegramWebSocketDirectAttemptCount];
+    if (attempt < directAttemptCount)
+    {
+        bool media = _datacenterTag < 0;
+        bool alternate = (attempt & 1) != 0;
+        bool suffix = media ? !alternate : alternate;
+        if (suffix)
+            return [NSString stringWithFormat:@"kws%d-1.web.telegram.org", (int)dc];
+        return [NSString stringWithFormat:@"kws%d.web.telegram.org", (int)dc];
+    }
+
+    if ([self onegramWebSocketTesting])
+        return nil;
+
+    NSInteger cfAttempt = attempt - directAttemptCount;
+    if (cfAttempt < 0 || cfAttempt >= MTOnegramCfProxyAttemptCount || MTOnegramCfProxyDomainCount == 0)
+        return nil;
+
+    NSInteger domainIndex = (dc * 3 + cfAttempt) % MTOnegramCfProxyDomainCount;
+    return [NSString stringWithFormat:@"kws%d.%@", (int)dc, MTOnegramCfProxyDomains[domainIndex]];
+}
+
+- (NSString *)onegramWebSocketTargetForAttempt:(NSInteger)attempt
+{
+    NSInteger dc = [self onegramWebSocketDatacenterId];
+    if (attempt < [self onegramWebSocketDirectAttemptCount])
+        return dc == 2 || dc == 4 ? @"149.154.167.220" : nil;
+    return [self onegramWebSocketDomainForAttempt:attempt];
+}
+
+- (void)onegramPrepareSocket
+{
+    GCDAsyncSocket *oldSocket = _socket;
+    if (oldSocket != nil)
+    {
+        oldSocket.delegate = nil;
+        [oldSocket disconnect];
+    }
+
+    _socket = [[GCDAsyncSocket alloc] initWithDelegate:self delegateQueue:[[MTTcpConnection tcpQueue] nativeQueue]];
+    _socket.usageCalculationInfo = _usageCalculationInfo;
+}
+
+- (void)onegramWebSocketAttemptsExhausted
+{
+    if (_closed)
+        return;
+
+    [self closeAndNotify];
+}
+
+- (void)onegramStartWebSocketAttempt
+{
+    if (_closed)
+        return;
+
+    NSInteger dc = [self onegramWebSocketDatacenterId];
+    bool testing = [self onegramWebSocketTesting];
+    NSString *domain = [self onegramWebSocketDomainForAttempt:_onegramWebSocketAttempt];
+    NSString *target = [self onegramWebSocketTargetForAttempt:_onegramWebSocketAttempt];
+    if (domain == nil || target == nil)
+    {
+        [self onegramWebSocketAttemptsExhausted];
+        return;
+    }
+
+    _onegramWebSocketDomain = domain;
+    _onegramWebSocketPath = testing ? @"/apiws_test" : @"/apiws";
+    _onegramWebSocketReady = false;
+    _onegramWebSocketKey = nil;
+    _onegramWebSocketFragment = nil;
+    _onegramWebSocketTransportBuffer = nil;
+    [self onegramPrepareSocket];
+
+    NSError *error = nil;
+    if (![_socket connectToHost:target onPort:443 viaInterface:_interface withTimeout:5 error:&error] || error != nil)
+        [self onegramWebSocketAttemptFailed];
+}
+
+- (void)onegramWebSocketAttemptFailed
+{
+    if (_closed || !_onegramWebSocket)
+        return;
+
+    _onegramWebSocketAttempt++;
+    if ([self onegramWebSocketDomainForAttempt:_onegramWebSocketAttempt] != nil && [self onegramWebSocketTargetForAttempt:_onegramWebSocketAttempt] != nil)
+        [self onegramStartWebSocketAttempt];
+    else
+        [self onegramWebSocketAttemptsExhausted];
+}
+
+- (void)onegramWebSocketOpened
+{
+    _onegramWebSocketReady = true;
+    if (_connectionOpened)
+        _connectionOpened();
+    id<MTTcpConnectionDelegate> delegate = _delegate;
+    if ([delegate respondsToSelector:@selector(tcpConnectionOpened:)])
+        [delegate tcpConnectionOpened:self];
+    [self onegramReadNextWebSocketFrame];
+}
+
+- (void)onegramReadNextWebSocketFrame
+{
+    if (_closed || !_onegramWebSocketReady || _socket == nil)
+        return;
+    [_socket readDataToLength:2 withTimeout:-1 tag:MTTcpOnegramWebSocketFrameHeader];
+}
+
+- (void)onegramReadWebSocketPayload
+{
+    if (_onegramWebSocketFrameLength > MTOnegramWebSocketMaxMessageLength)
+    {
+        [self closeAndNotify];
+        return;
+    }
+
+    if (_onegramWebSocketFrameLength == 0)
+        [self onegramHandleWebSocketFramePayload:[NSData data]];
+    else
+        [_socket readDataToLength:_onegramWebSocketFrameLength withTimeout:-1 tag:MTTcpOnegramWebSocketFramePayload];
+}
+
+- (void)onegramSendWebSocketPayload:(NSData *)payload opcode:(uint8_t)opcode
+{
+    if (_socket == nil || !_onegramWebSocketReady)
+        return;
+    [_socket writeData:MTOnegramWebSocketFrame(payload ?: [NSData data], opcode) withTimeout:-1 tag:0];
+}
+
+- (void)onegramDeliverPacketData:(NSData *)packetData
+{
+    [_responseTimeoutTimer invalidate];
+    _responseTimeoutTimer = nil;
+    _packetHeadDecodeToken = -1;
+    _packetProgressToken = nil;
+
+    if (packetData.length % 4 != 0)
+    {
+        int32_t realLength = ((int32_t)packetData.length) & (~3);
+        packetData = [packetData subdataWithRange:NSMakeRange(0, (NSUInteger)realLength)];
+    }
+
+    bool ignorePacket = false;
+    if (packetData.length >= 4)
+    {
+        int32_t header = 0;
+        [packetData getBytes:&header length:4];
+        if (header == 0xffffffff)
+        {
+            if (packetData.length >= 8)
+            {
+                int32_t ackId = 0;
+                [packetData getBytes:&ackId range:NSMakeRange(4, 4)];
+                ackId &= ((uint32_t)0xffffffff ^ (uint32_t)(((uint32_t)1) << 31));
+                ackId = (int32_t)OSSwapInt32(ackId);
+                id<MTTcpConnectionDelegate> delegate = _delegate;
+                if ([delegate respondsToSelector:@selector(tcpConnectionReceivedQuickAck:quickAck:)])
+                    [delegate tcpConnectionReceivedQuickAck:self quickAck:ackId];
+                ignorePacket = true;
+            }
+        }
+        else if (header == 0 && packetData.length < 16)
+        {
+            ignorePacket = true;
+        }
+    }
+
+    if (!ignorePacket)
+    {
+        if (_connectionReceivedData)
+            _connectionReceivedData(packetData);
+        id<MTTcpConnectionDelegate> delegate = _delegate;
+        if ([delegate respondsToSelector:@selector(tcpConnectionReceivedData:data:)])
+            [delegate tcpConnectionReceivedData:self data:packetData];
+    }
+}
+
+- (void)onegramProcessTransportFrame:(NSData *)rawData
+{
+    if (_incomingAesCtr == nil || rawData.length == 0)
+        return;
+
+    NSMutableData *decryptedData = [[NSMutableData alloc] initWithLength:rawData.length];
+    [_incomingAesCtr encryptIn:rawData.bytes out:decryptedData.mutableBytes len:rawData.length];
+    if (_onegramWebSocketTransportBuffer == nil)
+        _onegramWebSocketTransportBuffer = [[NSMutableData alloc] init];
+    [_onegramWebSocketTransportBuffer appendData:decryptedData];
+    if (_onegramWebSocketTransportBuffer.length > MTOnegramWebSocketMaxMessageLength)
+    {
+        [self closeAndNotify];
+        return;
+    }
+
+    const uint8_t *bytes = _onegramWebSocketTransportBuffer.bytes;
+    NSUInteger totalLength = _onegramWebSocketTransportBuffer.length;
+    NSUInteger offset = 0;
+
+    while (offset < totalLength)
+    {
+        NSUInteger remaining = totalLength - offset;
+        if (_useIntermediateFormat)
+        {
+            if (remaining < 4)
+                break;
+
+            int32_t length = 0;
+            memcpy(&length, bytes + offset, 4);
+            if ((length & 0x80000000) != 0)
+            {
+                int32_t ackId = length & 0x7fffffff;
+                ackId = (int32_t)OSSwapInt32(ackId);
+                id<MTTcpConnectionDelegate> delegate = _delegate;
+                if ([delegate respondsToSelector:@selector(tcpConnectionReceivedQuickAck:quickAck:)])
+                    [delegate tcpConnectionReceivedQuickAck:self quickAck:ackId];
+                offset += 4;
+                continue;
+            }
+
+            if (length <= 0 || (NSUInteger)length > MTOnegramWebSocketMaxMessageLength)
+            {
+                [self closeAndNotify];
+                return;
+            }
+            if ((NSUInteger)length > remaining - 4)
+                break;
+
+            NSData *packet = [_onegramWebSocketTransportBuffer subdataWithRange:NSMakeRange(offset + 4, (NSUInteger)length)];
+            [self onegramDeliverPacketData:packet];
+            offset += 4 + (NSUInteger)length;
+        }
+        else
+        {
+            if (remaining < 1)
+                break;
+
+            uint8_t marker = bytes[offset];
+            if ((marker & 0x80) != 0)
+            {
+                if (remaining < 4)
+                    break;
+                int32_t ackId = 0;
+                ((uint8_t *)&ackId)[0] = bytes[offset];
+                memcpy(((uint8_t *)&ackId) + 1, bytes + offset + 1, 3);
+                ackId = (int32_t)OSSwapInt32(ackId);
+                ackId &= 0x7fffffff;
+                id<MTTcpConnectionDelegate> delegate = _delegate;
+                if ([delegate respondsToSelector:@selector(tcpConnectionReceivedQuickAck:quickAck:)])
+                    [delegate tcpConnectionReceivedQuickAck:self quickAck:ackId];
+                offset += 4;
+                continue;
+            }
+
+            NSUInteger headerLength = 1;
+            NSUInteger packetLength = 0;
+            if (marker == 0x7f)
+            {
+                if (remaining < 4)
+                    break;
+                uint32_t quarterLength = 0;
+                memcpy(&quarterLength, bytes + offset + 1, 3);
+                packetLength = (NSUInteger)quarterLength * 4;
+                headerLength = 4;
+            }
+            else if (marker >= 1 && marker <= 0x7e)
+            {
+                packetLength = (NSUInteger)marker * 4;
+            }
+            else
+            {
+                [self closeAndNotify];
+                return;
+            }
+
+            if (packetLength == 0 || packetLength > MTOnegramWebSocketMaxMessageLength)
+            {
+                [self closeAndNotify];
+                return;
+            }
+            if (packetLength > remaining - headerLength)
+                break;
+
+            NSData *packet = [_onegramWebSocketTransportBuffer subdataWithRange:NSMakeRange(offset + headerLength, packetLength)];
+            [self onegramDeliverPacketData:packet];
+            offset += headerLength + packetLength;
+        }
+    }
+
+    if (offset != 0)
+        [_onegramWebSocketTransportBuffer replaceBytesInRange:NSMakeRange(0, offset) withBytes:NULL length:0];
+}
+
+- (void)onegramHandleWebSocketFramePayload:(NSData *)payload
+{
+    NSData *effectivePayload = payload;
+
+    uint8_t opcode = _onegramWebSocketFrameOpcode;
+    if (opcode == 0x8)
+    {
+        if (_socket != nil && _onegramWebSocketReady)
+            [_socket writeData:MTOnegramWebSocketFrame(effectivePayload.length <= 125 ? effectivePayload : [NSData data], 0x8) withTimeout:2 tag:0];
+        [self closeAndNotify];
+        return;
+    }
+    if (opcode == 0x9)
+    {
+        [self onegramSendWebSocketPayload:effectivePayload opcode:0xA];
+        [self onegramReadNextWebSocketFrame];
+        return;
+    }
+    if (opcode == 0xA)
+    {
+        [self onegramReadNextWebSocketFrame];
+        return;
+    }
+
+    if (opcode == 0x1 || opcode == 0x2)
+    {
+        if (_onegramWebSocketFrameFin)
+        {
+            [self onegramProcessTransportFrame:effectivePayload];
+        }
+        else
+        {
+            _onegramWebSocketFragmentOpcode = opcode;
+            _onegramWebSocketFragment = [[NSMutableData alloc] initWithData:effectivePayload];
+        }
+    }
+    else if (opcode == 0x0 && _onegramWebSocketFragment != nil)
+    {
+        [_onegramWebSocketFragment appendData:effectivePayload];
+        if (_onegramWebSocketFragment.length > MTOnegramWebSocketMaxMessageLength)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        if (_onegramWebSocketFrameFin)
+        {
+            NSData *message = [_onegramWebSocketFragment copy];
+            uint8_t fragmentOpcode = _onegramWebSocketFragmentOpcode;
+            _onegramWebSocketFragment = nil;
+            _onegramWebSocketFragmentOpcode = 0;
+            if (fragmentOpcode == 0x1 || fragmentOpcode == 0x2)
+                [self onegramProcessTransportFrame:message];
+        }
+    }
+
+    if (!_closed)
+        [self onegramReadNextWebSocketFrame];
+}
+
 - (void)start
 {
     [[MTTcpConnection tcpQueue] dispatchOnQueue:^
     {
         if (_socket == nil)
         {
+            if (_onegramWebSocket)
+            {
+                _onegramWebSocketAttempt = 0;
+                [self onegramStartWebSocketAttempt];
+                return;
+            }
+
             _socket = [[GCDAsyncSocket alloc] initWithDelegate:self delegateQueue:[[MTTcpConnection tcpQueue] nativeQueue]];
             _socket.usageCalculationInfo = _usageCalculationInfo;
             
@@ -438,7 +993,7 @@ struct ctr_state {
     {
         if (!_closed)
         {
-            if (_socket != nil)
+            if (_socket != nil && (!_onegramWebSocket || _onegramWebSocketReady))
             {
                 NSUInteger completeDataLength = 0;
                 
@@ -493,7 +1048,10 @@ struct ctr_state {
                     if (!_addedControlHeader) {
                         _addedControlHeader = true;
                         uint8_t controlBytes[64];
-                        arc4random_buf(controlBytes, 64);
+                        do
+                        {
+                            arc4random_buf(controlBytes, 64);
+                        } while (_onegramWebSocket && !MTOnegramControlBytesAllowed(controlBytes));
                         
                         int32_t controlVersion;
                         if (_useIntermediateFormat) {
@@ -503,7 +1061,14 @@ struct ctr_state {
                         }
                         
                         memcpy(controlBytes + 56, &controlVersion, 4);
-                        int16_t datacenterTag = (int16_t)_datacenterTag;
+                        NSInteger datacenterValue = _datacenterTag;
+                        if (_onegramWebSocket)
+                        {
+                            datacenterValue = [self onegramWebSocketDatacenterId];
+                            if (_datacenterTag < 0)
+                                datacenterValue = -datacenterValue;
+                        }
+                        int16_t datacenterTag = (int16_t)datacenterValue;
                         memcpy(controlBytes + 60, &datacenterTag, 2);
                         
                         uint8_t controlBytesReversed[64];
@@ -518,10 +1083,12 @@ struct ctr_state {
                         NSData *incomingAesIv = [[NSData alloc] initWithBytes:controlBytesReversed + 8 + 32 length:16];
 
                         NSData *effectiveSecret = nil;
-                        if (_mtpSecret != nil) {
-                            effectiveSecret = _mtpSecret;
-                        } else if (_address.secret != nil) {
-                            effectiveSecret = _address.secret;
+                        if (!_onegramWebSocket) {
+                            if (_mtpSecret != nil) {
+                                effectiveSecret = _mtpSecret;
+                            } else if (_address.secret != nil) {
+                                effectiveSecret = _address.secret;
+                            }
                         }
                         if (effectiveSecret.length != 16 && effectiveSecret.length != 17) {
                             effectiveSecret = nil;
@@ -561,12 +1128,28 @@ struct ctr_state {
                         
                         [_outgoingAesCtr encryptIn:packetData.bytes out:outData.mutableBytes + 64 len:packetData.length];
                         
-                        [_socket writeData:outData withTimeout:-1 tag:0];
+                        if (_onegramWebSocket)
+                        {
+                            NSData *controlData = [outData subdataWithRange:NSMakeRange(0, 64)];
+                            [self onegramSendWebSocketPayload:controlData opcode:0x2];
+                            if (outData.length > 64)
+                            {
+                                NSData *bodyData = [outData subdataWithRange:NSMakeRange(64, outData.length - 64)];
+                                [self onegramSendWebSocketPayload:bodyData opcode:0x2];
+                            }
+                        }
+                        else
+                        {
+                            [_socket writeData:outData withTimeout:-1 tag:0];
+                        }
                     } else {
                         NSMutableData *encryptedData = [[NSMutableData alloc] initWithLength:packetData.length];
                         [_outgoingAesCtr encryptIn:packetData.bytes out:encryptedData.mutableBytes len:packetData.length];
                         
-                        [_socket writeData:encryptedData withTimeout:-1 tag:0];
+                        if (_onegramWebSocket)
+                            [self onegramSendWebSocketPayload:encryptedData opcode:0x2];
+                        else
+                            [_socket writeData:encryptedData withTimeout:-1 tag:0];
                     }
                 }
                 
@@ -702,6 +1285,128 @@ struct ctr_state {
     }
 #endif
     
+    if (tag == MTTcpOnegramWebSocketHttpHeader)
+    {
+        NSString *response = [[NSString alloc] initWithData:rawData encoding:NSUTF8StringEncoding];
+        NSArray *lines = [response componentsSeparatedByString:@"\r\n"];
+        NSString *statusLine = lines.count == 0 ? @"" : [lines objectAtIndex:0];
+        NSString *accept = nil;
+        for (NSString *line in lines)
+        {
+            NSRange separator = [line rangeOfString:@":"];
+            if (separator.location == NSNotFound)
+                continue;
+            NSString *name = [[line substringToIndex:separator.location] lowercaseString];
+            if ([name isEqualToString:@"sec-websocket-accept"])
+                accept = [[line substringFromIndex:separator.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+
+        NSString *source = [NSString stringWithFormat:@"%@258EAFA5-E914-47DA-95CA-C5AB0DC85B11", _onegramWebSocketKey ?: @""];
+        NSData *expectedDigest = MTSha1([source dataUsingEncoding:NSUTF8StringEncoding]);
+        NSString *expectedAccept = MTOnegramBase64(expectedDigest);
+        bool valid = [statusLine rangeOfString:@" 101 "].location != NSNotFound && accept.length != 0 && [accept isEqualToString:expectedAccept];
+        if (!valid)
+        {
+            [self onegramWebSocketAttemptFailed];
+            return;
+        }
+
+        [self onegramWebSocketOpened];
+        return;
+    }
+    else if (tag == MTTcpOnegramWebSocketFrameHeader)
+    {
+        if (rawData.length != 2)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        const uint8_t *bytes = rawData.bytes;
+        if ((bytes[0] & 0x70) != 0 || (bytes[1] & 0x80) != 0)
+        {
+            [self closeAndNotify];
+            return;
+        }
+
+        _onegramWebSocketFrameFin = (bytes[0] & 0x80) != 0;
+        _onegramWebSocketFrameOpcode = bytes[0] & 0x0f;
+        uint8_t opcode = _onegramWebSocketFrameOpcode;
+        if (opcode != 0x0 && opcode != 0x1 && opcode != 0x2 && opcode != 0x8 && opcode != 0x9 && opcode != 0xA)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        if ((opcode == 0x0 && _onegramWebSocketFragment == nil) || ((opcode == 0x1 || opcode == 0x2) && _onegramWebSocketFragment != nil))
+        {
+            [self closeAndNotify];
+            return;
+        }
+
+        uint8_t length = bytes[1] & 0x7f;
+        if (opcode >= 0x8 && (!_onegramWebSocketFrameFin || length >= 126))
+        {
+            [self closeAndNotify];
+            return;
+        }
+        if (length < 126)
+        {
+            _onegramWebSocketFrameLength = length;
+            [self onegramReadWebSocketPayload];
+        }
+        else if (length == 126)
+        {
+            [_socket readDataToLength:2 withTimeout:-1 tag:MTTcpOnegramWebSocketFrameLength16];
+        }
+        else
+        {
+            [_socket readDataToLength:8 withTimeout:-1 tag:MTTcpOnegramWebSocketFrameLength64];
+        }
+        return;
+    }
+    else if (tag == MTTcpOnegramWebSocketFrameLength16)
+    {
+        if (rawData.length != 2)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        uint16_t value = 0;
+        memcpy(&value, rawData.bytes, 2);
+        _onegramWebSocketFrameLength = ntohs(value);
+        [self onegramReadWebSocketPayload];
+        return;
+    }
+    else if (tag == MTTcpOnegramWebSocketFrameLength64)
+    {
+        if (rawData.length != 8)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        const uint8_t *bytes = rawData.bytes;
+        if ((bytes[0] & 0x80) != 0)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        uint64_t value = 0;
+        for (int index = 0; index < 8; index++)
+            value = (value << 8) | bytes[index];
+        if (value > MTOnegramWebSocketMaxMessageLength)
+        {
+            [self closeAndNotify];
+            return;
+        }
+        _onegramWebSocketFrameLength = (NSUInteger)value;
+        [self onegramReadWebSocketPayload];
+        return;
+    }
+    else if (tag == MTTcpOnegramWebSocketFramePayload)
+    {
+        [self onegramHandleWebSocketFramePayload:rawData];
+        return;
+    }
+
     if (tag == MTTcpSocksLogin) {
         if (rawData.length != sizeof(struct socks5_ident_resp)) {
             if (MTLogEnabled()) {
@@ -1112,6 +1817,22 @@ struct ctr_state {
     }
 #endif
     
+    if (_onegramWebSocket)
+    {
+        NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithObject:_onegramWebSocketDomain forKey:(NSString *)kCFStreamSSLPeerName];
+#if TARGET_OS_IPHONE
+        if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+        {
+            NSData *trustedCertificates = [NSData dataWithBytes:MTOnegramProxyTLSRoots length:sizeof(MTOnegramProxyTLSRoots) - 1];
+            [settings setObject:@YES forKey:GCDAsyncSocketUseOpenSSL];
+            [settings setObject:trustedCertificates forKey:GCDAsyncSocketOpenSSLTrustedCertificates];
+            [settings setObject:@([_context globalTime]) forKey:GCDAsyncSocketOpenSSLVerificationTime];
+        }
+#endif
+        [_socket startTLS:settings];
+        return;
+    }
+
     if (_socksIp != nil) {
         
     } else {
@@ -1121,6 +1842,21 @@ struct ctr_state {
         if ([delegate respondsToSelector:@selector(tcpConnectionOpened:)])
             [delegate tcpConnectionOpened:self];
     }
+}
+
+- (void)socketDidSecure:(GCDAsyncSocket *)sock
+{
+    if (!_onegramWebSocket || sock != _socket || _closed)
+        return;
+
+    uint8_t randomBytes[16];
+    arc4random_buf(randomBytes, sizeof(randomBytes));
+    _onegramWebSocketKey = MTOnegramBase64([NSData dataWithBytes:randomBytes length:sizeof(randomBytes)]);
+
+    NSString *request = [NSString stringWithFormat:@"GET %@ HTTP/1.1\r\nHost: %@\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %@\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n", _onegramWebSocketPath, _onegramWebSocketDomain, _onegramWebSocketKey];
+    [_socket writeData:[request dataUsingEncoding:NSUTF8StringEncoding] withTimeout:5 tag:0];
+    NSData *headerTerminator = [@"\r\n\r\n" dataUsingEncoding:NSASCIIStringEncoding];
+    [_socket readDataToData:headerTerminator withTimeout:5 maxLength:32768 tag:MTTcpOnegramWebSocketHttpHeader];
 }
 
 - (void)socketDidDisconnect:(GCDAsyncSocket *)__unused socket withError:(NSError *)error
@@ -1137,6 +1873,12 @@ struct ctr_state {
                               error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
     }
 #endif
+
+    if (_onegramWebSocket && !_onegramWebSocketReady && !_closed)
+    {
+        [self onegramWebSocketAttemptFailed];
+        return;
+    }
 
     if (error != nil) {
         if (MTLogEnabled()) {

@@ -13,24 +13,19 @@ typedef void (*TGWeakDestroyFunction)(id *);
 typedef void (*TGWeakCopyFunction)(id *, id *);
 typedef void (*TGWeakMoveFunction)(id *, id *);
 
-typedef struct TGWeakRuntimeFrame
+typedef struct
 {
-    id target;
-    Class methodClass;
-    struct TGWeakRuntimeFrame *previous;
-} TGWeakRuntimeFrame;
+    CFMutableDictionaryRef releaseClasses;
+    CFMutableDictionaryRef deallocClasses;
+} TGWeakThreadState;
 
 static pthread_once_t TGWeakRuntimeOnce = PTHREAD_ONCE_INIT;
 static pthread_mutex_t TGWeakRuntimeMutex;
 static pthread_cond_t TGWeakRuntimeCondition;
-static pthread_key_t TGWeakReleaseFrameKey;
-static pthread_key_t TGWeakDeallocFrameKey;
+static pthread_key_t TGWeakRuntimeThreadKey;
 static CFMutableDictionaryRef TGWeakRuntimeReferences;
-static CFMutableBagRef TGWeakRuntimeReleases;
-static CFMutableDictionaryRef TGWeakRuntimeReleaseImplementations;
-static CFMutableDictionaryRef TGWeakRuntimeDeallocImplementations;
-static CFMutableDictionaryRef TGWeakRuntimeReleaseImplementationClasses;
-static CFMutableDictionaryRef TGWeakRuntimeDeallocImplementationClasses;
+static CFMutableSetRef TGWeakRuntimeSwizzledClasses;
+static CFMutableBagRef TGWeakRuntimeReleasing;
 static TGWeakLoadRetainedFunction TGNativeLoadWeakRetained;
 static TGWeakLoadFunction TGNativeLoadWeak;
 static TGWeakStoreFunction TGNativeStoreWeak;
@@ -39,26 +34,89 @@ static TGWeakDestroyFunction TGNativeDestroyWeak;
 static TGWeakCopyFunction TGNativeCopyWeak;
 static TGWeakMoveFunction TGNativeMoveWeak;
 static SEL TGWeakReleaseSelector;
+static SEL TGWeakOriginalReleaseSelector;
 static SEL TGWeakDeallocSelector;
+static SEL TGWeakOriginalDeallocSelector;
 
 static void TGWeakReleaseHook(id target, SEL selector);
 static void TGWeakDeallocHook(id target, SEL selector);
 
-static Method TGWeakOwnMethod(Class cls, SEL selector)
+static void TGWeakThreadStateDestroy(void *pointer)
 {
-    unsigned int count = 0;
-    Method *methods = class_copyMethodList(cls, &count);
-    Method result = NULL;
-    for (unsigned int i = 0; i < count; i++)
+    TGWeakThreadState *state = (TGWeakThreadState *)pointer;
+    if (state == NULL)
+        return;
+    if (state->releaseClasses != NULL)
+        CFRelease(state->releaseClasses);
+    if (state->deallocClasses != NULL)
+        CFRelease(state->deallocClasses);
+    free(state);
+}
+
+static TGWeakThreadState *TGWeakGetThreadState(void)
+{
+    TGWeakThreadState *state = (TGWeakThreadState *)pthread_getspecific(TGWeakRuntimeThreadKey);
+    if (state == NULL)
     {
-        if (method_getName(methods[i]) == selector)
-        {
-            result = methods[i];
-            break;
-        }
+        state = (TGWeakThreadState *)calloc(1, sizeof(TGWeakThreadState));
+        if (state == NULL)
+            abort();
+        state->releaseClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+        state->deallocClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+        if (state->releaseClasses == NULL || state->deallocClasses == NULL)
+            abort();
+        if (pthread_setspecific(TGWeakRuntimeThreadKey, state) != 0)
+            abort();
     }
-    free(methods);
-    return result;
+    return state;
+}
+
+static Class TGWeakTopClassImplementingMethod(Class startClass, SEL selector)
+{
+    if (startClass == Nil)
+        return Nil;
+
+    IMP implementation = class_getMethodImplementation(startClass, selector);
+    Class previousClass = startClass;
+    Class currentClass = class_getSuperclass(previousClass);
+    while (currentClass != Nil)
+    {
+        if (implementation != class_getMethodImplementation(currentClass, selector))
+            break;
+        previousClass = currentClass;
+        currentClass = class_getSuperclass(currentClass);
+    }
+    return previousClass;
+}
+
+static void TGWeakSwizzleClassLocked(Class cls, SEL selector, SEL originalSelector, IMP hook)
+{
+    Method method = class_getInstanceMethod(cls, selector);
+    if (method == NULL)
+        abort();
+
+    IMP originalImplementation = method_getImplementation(method);
+    const char *types = method_getTypeEncoding(method);
+    if (!class_addMethod(cls, originalSelector, originalImplementation, types))
+    {
+        Method ownMethod = class_getInstanceMethod(cls, originalSelector);
+        if (ownMethod == NULL)
+            abort();
+    }
+    class_replaceMethod(cls, selector, hook, types);
+}
+
+static void TGWeakEnsureHooksLocked(id object)
+{
+    Class cls = object_getClass(object);
+    if (cls == Nil)
+        abort();
+    if (CFSetContainsValue(TGWeakRuntimeSwizzledClasses, cls))
+        return;
+
+    TGWeakSwizzleClassLocked(cls, TGWeakReleaseSelector, TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
+    TGWeakSwizzleClassLocked(cls, TGWeakDeallocSelector, TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
+    CFSetAddValue(TGWeakRuntimeSwizzledClasses, cls);
 }
 
 static void TGWeakClearLocation(const void *value, void *context)
@@ -68,208 +126,69 @@ static void TGWeakClearLocation(const void *value, void *context)
     *location = nil;
 }
 
-static void TGWeakZeroObjectLocked(id object)
-{
-    CFSetRef locations = (CFSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, object);
-    if (locations != NULL)
-        CFSetApplyFunction(locations, TGWeakClearLocation, NULL);
-    CFDictionaryRemoveValue(TGWeakRuntimeReferences, object);
-    pthread_cond_broadcast(&TGWeakRuntimeCondition);
-}
-
-static Class TGWeakMethodOwner(Class startClass, SEL selector, IMP implementation)
-{
-    Class currentClass = startClass;
-    while (currentClass != Nil)
-    {
-        Method method = TGWeakOwnMethod(currentClass, selector);
-        if (method != NULL && method_getImplementation(method) == implementation)
-            return currentClass;
-        currentClass = class_getSuperclass(currentClass);
-    }
-    return Nil;
-}
-
-static IMP TGWeakOriginalImplementationLocked(Class startClass, SEL selector, IMP hook, CFMutableDictionaryRef implementations, CFMutableDictionaryRef implementationClasses, Class *implementationClass)
-{
-    Class currentClass = startClass;
-    while (currentClass != Nil)
-    {
-        IMP implementation = (IMP)CFDictionaryGetValue(implementations, currentClass);
-        if (implementation != NULL)
-        {
-            Class ownerClass = (Class)CFDictionaryGetValue(implementationClasses, currentClass);
-            if (ownerClass == Nil)
-                ownerClass = TGWeakMethodOwner(currentClass, selector, implementation);
-            if (ownerClass == Nil)
-                ownerClass = currentClass;
-            if (implementationClass != NULL)
-                *implementationClass = ownerClass;
-            return implementation;
-        }
-
-        Method ownMethod = TGWeakOwnMethod(currentClass, selector);
-        if (ownMethod != NULL)
-        {
-            implementation = method_getImplementation(ownMethod);
-            if (implementation != hook)
-            {
-                if (implementationClass != NULL)
-                    *implementationClass = currentClass;
-                return implementation;
-            }
-        }
-
-        currentClass = class_getSuperclass(currentClass);
-    }
-    return NULL;
-}
-
-static IMP TGWeakInstallHookLocked(Class cls, SEL selector, IMP hook, CFMutableDictionaryRef implementations, CFMutableDictionaryRef implementationClasses)
-{
-    IMP storedImplementation = (IMP)CFDictionaryGetValue(implementations, cls);
-    if (storedImplementation != NULL)
-        return storedImplementation;
-
-    Method method = class_getInstanceMethod(cls, selector);
-    if (method == NULL)
-        return NULL;
-
-    const char *types = method_getTypeEncoding(method);
-    Method ownMethod = TGWeakOwnMethod(cls, selector);
-    IMP originalImplementation = NULL;
-    Class originalImplementationClass = Nil;
-
-    if (ownMethod != NULL)
-    {
-        IMP implementation = method_getImplementation(ownMethod);
-        if (implementation != hook)
-        {
-            originalImplementation = implementation;
-            originalImplementationClass = cls;
-        }
-    }
-    else
-    {
-        IMP inheritedImplementation = method_getImplementation(method);
-        if (inheritedImplementation != hook)
-        {
-            originalImplementation = inheritedImplementation;
-            originalImplementationClass = TGWeakMethodOwner(class_getSuperclass(cls), selector, inheritedImplementation);
-        }
-        else
-        {
-            Class currentClass = class_getSuperclass(cls);
-            while (currentClass != Nil)
-            {
-                originalImplementation = (IMP)CFDictionaryGetValue(implementations, currentClass);
-                if (originalImplementation != NULL)
-                {
-                    originalImplementationClass = (Class)CFDictionaryGetValue(implementationClasses, currentClass);
-                    break;
-                }
-                currentClass = class_getSuperclass(currentClass);
-            }
-        }
-    }
-
-    if (originalImplementation == NULL)
-        return NULL;
-    if (originalImplementationClass == Nil)
-        originalImplementationClass = cls;
-
-    CFDictionarySetValue(implementations, cls, (const void *)originalImplementation);
-    CFDictionarySetValue(implementationClasses, cls, originalImplementationClass);
-
-    if (ownMethod != NULL)
-    {
-        class_replaceMethod(cls, selector, hook, types);
-    }
-    else if (!class_addMethod(cls, selector, hook, types))
-    {
-        Method currentMethod = TGWeakOwnMethod(cls, selector);
-        if (currentMethod == NULL || method_getImplementation(currentMethod) != hook)
-        {
-            CFDictionaryRemoveValue(implementations, cls);
-            CFDictionaryRemoveValue(implementationClasses, cls);
-            return NULL;
-        }
-    }
-
-    return originalImplementation;
-}
-
 static void TGWeakReleaseHook(id target, SEL selector)
 {
-    TGWeakRuntimeFrame *previousFrame = (TGWeakRuntimeFrame *)pthread_getspecific(TGWeakReleaseFrameKey);
-    Class searchClass = object_getClass(target);
-    if (previousFrame != NULL && previousFrame->target == target)
-        searchClass = class_getSuperclass(previousFrame->methodClass);
+    TGWeakThreadState *state = TGWeakGetThreadState();
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
-    Class methodClass = Nil;
-    IMP originalRelease = TGWeakOriginalImplementationLocked(searchClass, TGWeakReleaseSelector, (IMP)TGWeakReleaseHook, TGWeakRuntimeReleaseImplementations, TGWeakRuntimeReleaseImplementationClasses, &methodClass);
-    if (originalRelease == NULL)
-    {
-        pthread_mutex_unlock(&TGWeakRuntimeMutex);
-        abort();
-    }
-    CFBagAddValue(TGWeakRuntimeReleases, target);
+    CFBagAddValue(TGWeakRuntimeReleasing, target);
     pthread_mutex_unlock(&TGWeakRuntimeMutex);
 
-    TGWeakRuntimeFrame frame;
-    frame.target = target;
-    frame.methodClass = methodClass;
-    frame.previous = previousFrame;
-    pthread_setspecific(TGWeakReleaseFrameKey, &frame);
+    Class lastClass = (Class)CFDictionaryGetValue(state->releaseClasses, target);
+    Class targetClass = lastClass == Nil ? object_getClass(target) : class_getSuperclass(lastClass);
+    if (targetClass != Nil)
+        targetClass = TGWeakTopClassImplementingMethod(targetClass, TGWeakOriginalReleaseSelector);
 
-    ((void (*)(id, SEL))originalRelease)(target, selector);
+    if (targetClass == Nil || !class_respondsToSelector(targetClass, TGWeakOriginalReleaseSelector))
+    {
+        targetClass = object_getClass(target);
+        if (targetClass != Nil)
+            targetClass = TGWeakTopClassImplementingMethod(targetClass, TGWeakOriginalReleaseSelector);
+    }
 
-    pthread_setspecific(TGWeakReleaseFrameKey, previousFrame);
+    if (targetClass == Nil || !class_respondsToSelector(targetClass, TGWeakOriginalReleaseSelector))
+        abort();
+
+    CFDictionarySetValue(state->releaseClasses, target, targetClass);
+
+    IMP implementation = class_getMethodImplementation(targetClass, TGWeakOriginalReleaseSelector);
+    if (implementation == NULL)
+        abort();
+    ((void (*)(id, SEL))implementation)(target, selector);
+
+    CFDictionaryRemoveValue(state->releaseClasses, target);
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
-    CFBagRemoveValue(TGWeakRuntimeReleases, target);
+    CFBagRemoveValue(TGWeakRuntimeReleasing, target);
     pthread_cond_broadcast(&TGWeakRuntimeCondition);
     pthread_mutex_unlock(&TGWeakRuntimeMutex);
 }
 
 static void TGWeakDeallocHook(id target, SEL selector)
 {
-    TGWeakRuntimeFrame *previousFrame = (TGWeakRuntimeFrame *)pthread_getspecific(TGWeakDeallocFrameKey);
-    Class searchClass = object_getClass(target);
-    if (previousFrame != NULL && previousFrame->target == target)
-        searchClass = class_getSuperclass(previousFrame->methodClass);
+    TGWeakThreadState *state = TGWeakGetThreadState();
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
-    TGWeakZeroObjectLocked(target);
-    Class methodClass = Nil;
-    IMP originalDealloc = TGWeakOriginalImplementationLocked(searchClass, TGWeakDeallocSelector, (IMP)TGWeakDeallocHook, TGWeakRuntimeDeallocImplementations, TGWeakRuntimeDeallocImplementationClasses, &methodClass);
+    CFSetRef locations = (CFSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, target);
+    if (locations != NULL)
+        CFSetApplyFunction(locations, TGWeakClearLocation, NULL);
+    CFDictionaryRemoveValue(TGWeakRuntimeReferences, target);
+    pthread_cond_broadcast(&TGWeakRuntimeCondition);
     pthread_mutex_unlock(&TGWeakRuntimeMutex);
 
-    if (originalDealloc == NULL)
+    Class lastClass = (Class)CFDictionaryGetValue(state->deallocClasses, target);
+    Class targetClass = lastClass == Nil ? object_getClass(target) : class_getSuperclass(lastClass);
+    targetClass = TGWeakTopClassImplementingMethod(targetClass, TGWeakOriginalDeallocSelector);
+    if (targetClass == Nil)
         abort();
+    CFDictionarySetValue(state->deallocClasses, target, targetClass);
 
-    TGWeakRuntimeFrame frame;
-    frame.target = target;
-    frame.methodClass = methodClass;
-    frame.previous = previousFrame;
-    pthread_setspecific(TGWeakDeallocFrameKey, &frame);
-
-    ((void (*)(id, SEL))originalDealloc)(target, selector);
-
-    pthread_setspecific(TGWeakDeallocFrameKey, previousFrame);
-}
-
-static void TGWeakEnsureHooksLocked(id object)
-{
-    Class cls = object_getClass(object);
-    if (cls == Nil)
+    IMP implementation = class_getMethodImplementation(targetClass, TGWeakOriginalDeallocSelector);
+    if (implementation == NULL)
         abort();
+    ((void (*)(id, SEL))implementation)(target, selector);
 
-    if (TGWeakInstallHookLocked(cls, TGWeakReleaseSelector, (IMP)TGWeakReleaseHook, TGWeakRuntimeReleaseImplementations, TGWeakRuntimeReleaseImplementationClasses) == NULL)
-        abort();
-    if (TGWeakInstallHookLocked(cls, TGWeakDeallocSelector, (IMP)TGWeakDeallocHook, TGWeakRuntimeDeallocImplementations, TGWeakRuntimeDeallocImplementationClasses) == NULL)
-        abort();
+    CFDictionaryRemoveValue(state->deallocClasses, target);
 }
 
 static void TGWeakRuntimeInitialize(void)
@@ -282,39 +201,40 @@ static void TGWeakRuntimeInitialize(void)
     TGNativeCopyWeak = (TGWeakCopyFunction)dlsym(RTLD_NEXT, "objc_copyWeak");
     TGNativeMoveWeak = (TGWeakMoveFunction)dlsym(RTLD_NEXT, "objc_moveWeak");
 
-    if (TGNativeLoadWeakRetained == NULL || TGNativeStoreWeak == NULL)
-    {
-        TGNativeLoadWeakRetained = NULL;
-        TGNativeLoadWeak = NULL;
-        TGNativeStoreWeak = NULL;
-        TGNativeInitWeak = NULL;
-        TGNativeDestroyWeak = NULL;
-        TGNativeCopyWeak = NULL;
-        TGNativeMoveWeak = NULL;
+    if (TGNativeLoadWeakRetained != NULL && TGNativeStoreWeak != NULL)
+        return;
 
-        pthread_mutexattr_t attributes;
-        pthread_mutexattr_init(&attributes);
-        pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
-        pthread_mutex_init(&TGWeakRuntimeMutex, &attributes);
-        pthread_mutexattr_destroy(&attributes);
-        pthread_cond_init(&TGWeakRuntimeCondition, NULL);
-        if (pthread_key_create(&TGWeakReleaseFrameKey, NULL) != 0)
-            abort();
-        if (pthread_key_create(&TGWeakDeallocFrameKey, NULL) != 0)
-            abort();
+    TGNativeLoadWeakRetained = NULL;
+    TGNativeLoadWeak = NULL;
+    TGNativeStoreWeak = NULL;
+    TGNativeInitWeak = NULL;
+    TGNativeDestroyWeak = NULL;
+    TGNativeCopyWeak = NULL;
+    TGNativeMoveWeak = NULL;
 
-        TGWeakRuntimeReferences = CFDictionaryCreateMutable(NULL, 0, NULL, &kCFTypeDictionaryValueCallBacks);
-        TGWeakRuntimeReleases = CFBagCreateMutable(NULL, 0, NULL);
-        TGWeakRuntimeReleaseImplementations = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-        TGWeakRuntimeDeallocImplementations = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-        TGWeakRuntimeReleaseImplementationClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-        TGWeakRuntimeDeallocImplementationClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-        if (TGWeakRuntimeReferences == NULL || TGWeakRuntimeReleases == NULL || TGWeakRuntimeReleaseImplementations == NULL || TGWeakRuntimeDeallocImplementations == NULL || TGWeakRuntimeReleaseImplementationClasses == NULL || TGWeakRuntimeDeallocImplementationClasses == NULL)
-            abort();
+    pthread_mutexattr_t attributes;
+    if (pthread_mutexattr_init(&attributes) != 0)
+        abort();
+    if (pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE) != 0)
+        abort();
+    if (pthread_mutex_init(&TGWeakRuntimeMutex, &attributes) != 0)
+        abort();
+    pthread_mutexattr_destroy(&attributes);
+    if (pthread_cond_init(&TGWeakRuntimeCondition, NULL) != 0)
+        abort();
+    if (pthread_key_create(&TGWeakRuntimeThreadKey, TGWeakThreadStateDestroy) != 0)
+        abort();
 
-        TGWeakReleaseSelector = sel_registerName("release");
-        TGWeakDeallocSelector = sel_registerName("dealloc");
-    }
+    TGWeakRuntimeReferences = CFDictionaryCreateMutable(NULL, 0, NULL, &kCFTypeDictionaryValueCallBacks);
+    TGWeakRuntimeSwizzledClasses = CFSetCreateMutable(NULL, 0, NULL);
+    TGWeakRuntimeReleasing = CFBagCreateMutable(NULL, 0, NULL);
+    if (TGWeakRuntimeReferences == NULL || TGWeakRuntimeSwizzledClasses == NULL || TGWeakRuntimeReleasing == NULL)
+        abort();
+
+    TGWeakReleaseSelector = sel_registerName("release");
+    TGWeakOriginalReleaseSelector = sel_registerName("tg_ios4_originalRelease");
+    TGWeakDeallocSelector = sel_registerName("dealloc");
+    TGWeakOriginalDeallocSelector = sel_registerName("tg_ios4_originalDealloc");
 }
 
 static void TGWeakRuntimeEnsureInitialized(void)
@@ -322,28 +242,22 @@ static void TGWeakRuntimeEnsureInitialized(void)
     pthread_once(&TGWeakRuntimeOnce, TGWeakRuntimeInitialize);
 }
 
-static void TGWeakUnregisterLocationLocked(id *location)
+static void TGWeakUnregisterLocation(id *location)
 {
+    pthread_mutex_lock(&TGWeakRuntimeMutex);
     id object = *location;
-    if (object == nil)
-        return;
-
-    while (*location == object && CFBagContainsValue(TGWeakRuntimeReleases, object))
-        pthread_cond_wait(&TGWeakRuntimeCondition, &TGWeakRuntimeMutex);
-
-    object = *location;
-    if (object == nil)
-        return;
-
-    CFMutableSetRef locations = (CFMutableSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, object);
-    if (locations != NULL)
-        CFSetRemoveValue(locations, location);
+    if (object != nil)
+    {
+        CFMutableSetRef locations = (CFMutableSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, object);
+        if (locations != NULL)
+            CFSetRemoveValue(locations, location);
+    }
+    pthread_mutex_unlock(&TGWeakRuntimeMutex);
 }
 
-static void TGWeakRegisterLocationLocked(id *location, id object)
+static void TGWeakRegisterLocation(id *location, id object)
 {
-    TGWeakEnsureHooksLocked(object);
-
+    pthread_mutex_lock(&TGWeakRuntimeMutex);
     CFMutableSetRef locations = (CFMutableSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, object);
     if (locations == NULL)
     {
@@ -354,6 +268,8 @@ static void TGWeakRegisterLocationLocked(id *location, id object)
         CFRelease(locations);
     }
     CFSetAddValue(locations, location);
+    TGWeakEnsureHooksLocked(object);
+    pthread_mutex_unlock(&TGWeakRuntimeMutex);
 }
 
 id objc_storeWeak(id *location, id value)
@@ -362,14 +278,10 @@ id objc_storeWeak(id *location, id value)
     if (TGNativeStoreWeak != NULL)
         return TGNativeStoreWeak(location, value);
 
-    id retainedValue = [value retain];
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    TGWeakUnregisterLocationLocked(location);
+    TGWeakUnregisterLocation(location);
     *location = value;
     if (value != nil)
-        TGWeakRegisterLocationLocked(location, value);
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
-    [retainedValue release];
+        TGWeakRegisterLocation(location, value);
     return value;
 }
 
@@ -403,7 +315,7 @@ id objc_loadWeakRetained(id *location)
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
     id value = *location;
-    while (value != nil && CFBagContainsValue(TGWeakRuntimeReleases, value))
+    while (value != nil && CFBagContainsValue(TGWeakRuntimeReleasing, value))
     {
         pthread_cond_wait(&TGWeakRuntimeCondition, &TGWeakRuntimeMutex);
         value = *location;

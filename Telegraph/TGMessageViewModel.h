@@ -11,6 +11,7 @@
 @class TGUser;
 @class TGMessage;
 @class TGModernViewContext;
+@class TGConversation;
 @class TGMessageGroupedLayout;
 @class TGModernLetteredAvatarViewModel;
 @class TGMessageViewModel;
@@ -45,6 +46,7 @@ extern "C" {
 void TGMessageViewModelLayoutSetPreferredTextFontSize(CGFloat fontSize);
 const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants();
 void TGUpdateMessageViewModelLayoutConstants(CGFloat baseFontPointSize);
+bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, TGModernViewContext *context);
     
 #ifdef __cplusplus
 }

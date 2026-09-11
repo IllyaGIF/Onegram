@@ -231,8 +231,9 @@ static NSData *TGProxySecretData(NSString *secret)
     [TGDatabaseInstance() setCustomProperty:@"socksProxyData" value:data];
     
     MTSocksProxySettings *settings = [[MTSocksProxySettings alloc] initWithIp:proxy.server port:(uint16_t)proxy.port username:proxy.username password:proxy.password secret:TGProxySecretData(proxy.secret)];
+    MTSocksProxySettings *effectiveSettings = [[TGTelegramNetworking instance] onegramWebSocketProxyEnabled] ? nil : (inactive ? nil : settings);
     [[[TGTelegramNetworking instance] context] updateApiEnvironment:^MTApiEnvironment *(MTApiEnvironment *apiEnvironment) {
-        return [apiEnvironment withUpdatedSocksProxySettings:inactive ? nil : settings];
+        return [apiEnvironment withUpdatedSocksProxySettings:effectiveSettings];
     }];
     
     currentPipe.sink(inactive ? nil : proxy);

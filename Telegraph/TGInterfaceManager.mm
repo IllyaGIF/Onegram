@@ -246,12 +246,12 @@
 
 static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversationCompanion(TGIOS6ForumTopicConversationCompanionReference *reference)
 {
-    TGIOS6ForumTopicConversationCompanion *result = nil;
+    if (reference == nil)
+        return nil;
     @synchronized (reference)
     {
-        result = reference.value;
+        return reference.value;
     }
-    return result;
 }
 
 @interface TGIOS6ForumTopicConversationCompanion : TGChannelConversationCompanion
@@ -318,6 +318,11 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
 - (int32_t)forumTopicId
 {
     return _ios6TopicId;
+}
+
+- (void)_validatePts
+{
+    return;
 }
 
 - (void)setDiscussionThread:(bool)discussionThread
@@ -1443,7 +1448,7 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
         self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Назад" style:UIBarButtonItemStylePlain target:nil action:nil];
 
         TGIOS6ForumTopicsControllerReference *reference = _ios4LifetimeReference;
-        _presentationDisposable = [[TGPresentation signal] startWithNext:^(TGPresentation *presentation)
+        _presentationDisposable = [[[TGPresentation signal] deliverOn:[SQueue mainQueue]] startWithNext:^(TGPresentation *presentation)
         {
             TGIOS6ForumTopicsController *strongSelf = TGIOS6ResolveForumTopicsController(reference);
             if (strongSelf != nil)
@@ -3252,7 +3257,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         }
         else
         {
-            if ([TGCallUtils isOnPhoneCall])
+            if ([TGCallUtils canCheckPhoneCallState] && [TGCallUtils isOnPhoneCall])
             {
                 [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Call.ConnectionErrorTitle") message:TGLocalized(@"Call.PhoneCallInProgressMessage") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
             }

@@ -545,8 +545,14 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             //self.unread = concreteMessage.flags & 1;
             self.outgoing = concreteMessage.flags & 2;
             self.fromUid = concreteMessage.from_id;
-            if ([desc isKindOfClass:[TLMessage$modernMessage class]] && self.fromUid > 0)
-                self.fromUid = TGModernLegacyIdForModernId(self.fromUid);
+            if ([desc isKindOfClass:[TLMessage$modernMessage class]])
+            {
+                int64_t senderPeerId = ((TLMessage$modernMessage *)desc).senderPeerId;
+                if (senderPeerId != 0)
+                    self.fromUid = senderPeerId;
+                else if (self.fromUid > 0)
+                    self.fromUid = TGModernLegacyIdForModernId(self.fromUid);
+            }
             
             self.text = concreteMessage.message;
             self.date = concreteMessage.date;
@@ -806,8 +812,8 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             self.mid = concreteMessage.n_id;
             //self.unread = concreteMessage.flags & 1;
             self.outgoing = concreteMessage.flags & 2;
-            self.fromUid = concreteMessage.from_id;
-            if (self.fromUid > 0)
+            self.fromUid = concreteMessage.senderPeerId != 0 ? concreteMessage.senderPeerId : concreteMessage.from_id;
+            if (concreteMessage.senderPeerId == 0 && self.fromUid > 0)
                 self.fromUid = TGModernLegacyIdForModernId(self.fromUid);
             
             self.text = @"";

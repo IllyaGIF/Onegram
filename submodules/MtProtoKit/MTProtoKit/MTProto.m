@@ -2813,12 +2813,16 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
     [[MTProto managerQueue] dispatchOnQueue:^{
         NSString *previousLangPackCode = _apiEnvironment.langPackCode;
         MTSocksProxySettings *previousSocksProxySettings = _apiEnvironment.socksProxySettings;
+        bool previousOnegramWebSocketEnabled = _apiEnvironment.onegramWebSocketEnabled;
         
         _apiEnvironment = apiEnvironment;
         
         bool resetConnection = false;
         
         if ((_apiEnvironment.socksProxySettings != nil) != (previousSocksProxySettings != nil) || (previousSocksProxySettings != nil && ![_apiEnvironment.socksProxySettings isEqual:previousSocksProxySettings])) {
+            resetConnection = true;
+        }
+        if (_apiEnvironment.onegramWebSocketEnabled != previousOnegramWebSocketEnabled) {
             resetConnection = true;
         }
         

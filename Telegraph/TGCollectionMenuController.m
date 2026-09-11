@@ -531,23 +531,20 @@ positionAtIndexPath:(NSIndexPath *)indexPath
         registeredIdentifiers:_collectionRegisteredIdentifiers
                  forIndexPath:indexPath];
         
-        if (iosMajorVersion() <= 8)
-        {
-            if (itemView.boundItem != nil)
-                [itemView.boundItem unbindView];
-            
-            itemView.safeAreaInset = self.controllerSafeAreaInset;
-            
-            [self updateItem:item
-                    itemView:itemView
-         positionAtIndexPath:indexPath
-              ignoreDragging:false
-                    animated:false];
-            
-            [item bindView:itemView];
-            
-            [collectionView setupCellForEditing:itemView];
-        }
+        if (itemView.boundItem != nil)
+            [itemView.boundItem unbindView];
+        
+        itemView.safeAreaInset = self.controllerSafeAreaInset;
+        
+        [self updateItem:item
+                itemView:itemView
+     positionAtIndexPath:indexPath
+          ignoreDragging:false
+                animated:false];
+        
+        [item bindView:itemView];
+        
+        [collectionView setupCellForEditing:itemView];
         
         return itemView;
     }
@@ -556,8 +553,8 @@ positionAtIndexPath:(NSIndexPath *)indexPath
                                                      forIndexPath:indexPath];
 }
 
-- (void)collectionView:(TGCollectionMenuView *)collectionView
-       willDisplayCell:(PSUICollectionViewCell *)cell
+- (void)collectionView:(TGCollectionMenuView *)__unused collectionView
+       willDisplayCell:(PSUICollectionViewCell *)__unused cell
     forItemAtIndexPath:(NSIndexPath *)indexPath
 {
     if (iosMajorVersion() >= 8)
@@ -571,27 +568,7 @@ positionAtIndexPath:(NSIndexPath *)indexPath
         : nil;
         
         if (item != nil)
-        {
-            TGCollectionItemView *itemView =
-            (TGCollectionItemView *)cell;
-            
-            if (itemView.boundItem != nil)
-                [itemView.boundItem unbindView];
-            
-            itemView.safeAreaInset = self.controllerSafeAreaInset;
-            
-            [self updateItem:item
-                    itemView:itemView
-         positionAtIndexPath:indexPath
-              ignoreDragging:false
-                    animated:false];
-            
-            [item bindView:itemView];
-            
-            [collectionView setupCellForEditing:itemView];
-            
             [self willDisplayItem:item];
-        }
     }
 }
 
@@ -623,8 +600,18 @@ sizeForItemAtIndexPath:(NSIndexPath *)indexPath
     
     if (item != nil)
     {
-        return [item itemSizeForContainerSize:layoutSize
-                                safeAreaInset:[TGViewController safeAreaInsetForOrientation:orientation]];
+        CGSize itemSize = [item itemSizeForContainerSize:layoutSize
+                                           safeAreaInset:[TGViewController safeAreaInsetForOrientation:orientation]];
+        if (iosMajorVersion() < 7)
+        {
+            UIEdgeInsets sectionInsets = UIEdgeInsetsZero;
+            if (indexPath.section < (NSInteger)_menuSections.sections.count)
+                sectionInsets = ((TGCollectionMenuSection *)_menuSections.sections[indexPath.section]).insets;
+            CGFloat maximumWidth = MAX(TGScreenPixel, collectionView.bounds.size.width - sectionInsets.left - sectionInsets.right - TGScreenPixel);
+            if (itemSize.width >= maximumWidth)
+                itemSize.width = maximumWidth;
+        }
+        return itemSize;
     }
     
     return CGSizeZero;

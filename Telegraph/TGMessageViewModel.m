@@ -27,6 +27,15 @@ void TGMessageViewModelLayoutSetPreferredTextFontSize(CGFloat fontSize)
     preferredTextFontSize = fontSize;
 }
 
+bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, TGModernViewContext *context)
+{
+    if (author == nil)
+        return false;
+    TGConversation *conversation = [context conversation];
+    bool currentBroadcastChannel = author.isChannel && !author.isChannelGroup && conversation != nil && author.conversationId == conversation.conversationId;
+    return !currentBroadcastChannel || context.isAdminLog || context.isSavedMessages || context.isFeed;
+}
+
 static TGMessageViewModelLayoutConstants currentMessageViewModelLayoutConstants;
 
 const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants()
@@ -352,6 +361,12 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 
 - (void)dealloc
 {
+    _replyPanGestureRecognizer.delegate = nil;
+    [_replyPanGestureRecognizer removeTarget:self action:@selector(replyPanGesture:)];
+    [_replyPanGestureRecognizer.view removeGestureRecognizer:_replyPanGestureRecognizer];
+    _boundAvatarTapRecognizer.delegate = nil;
+    [_boundAvatarTapRecognizer removeTarget:self action:@selector(avatarTapGesture:)];
+    [_boundAvatarTapRecognizer.view removeGestureRecognizer:_boundAvatarTapRecognizer];
     [self invalidateLifetimeReference];
     _ios6CommentsButtonModel.pressed = nil;
 }
@@ -393,7 +408,7 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
             [self addSubmodel:_avatarModel];
         } else if ([authorPeer isKindOfClass:[TGConversation class]]) {
             TGConversation *author = authorPeer;
-            if (!author.isChannel || author.isChannelGroup || context.isAdminLog || context.isSavedMessages || context.isFeed)
+            if (TGMessageViewModelShouldDisplayConversationAvatar(author, context))
             {
                 _firstName = author.chatTitle;
                 _avatarModel = [[TGModernLetteredAvatarViewModel alloc] initWithSize:CGSizeMake(38.0f, 38.0f) placeholder:placeholder];
@@ -844,11 +859,14 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 {
     if (_avatarModel != nil)
     {
+        [_boundAvatarTapRecognizer removeTarget:self action:@selector(avatarTapGesture:)];
         [[_avatarModel boundView] removeGestureRecognizer:_boundAvatarTapRecognizer];
         _boundAvatarTapRecognizer = nil;
     }
     
     _replyPanOffset = 0.0f;
+    _replyPanGestureRecognizer.delegate = nil;
+    [_replyPanGestureRecognizer removeTarget:self action:@selector(replyPanGesture:)];
     [_replyPanGestureRecognizer.view removeGestureRecognizer:_replyPanGestureRecognizer];
     _replyPanGestureRecognizer = nil;
     

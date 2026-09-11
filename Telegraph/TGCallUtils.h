@@ -17,6 +17,7 @@ UIImage *TGCallIdenticonImage(NSData *data, NSData *additionalData, CGSize size)
 
 @interface TGCallUtils : NSObject
 
++ (bool)canCheckPhoneCallState;
 + (bool)isOnPhoneCall;
 
 @end

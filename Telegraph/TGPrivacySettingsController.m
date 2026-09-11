@@ -213,7 +213,6 @@
     
     if (!_receivedAccountSettings)
     {
-        _receivedAccountSettings = true;
         if (_activityIndicator == nil)
         {
             _activityIndicator = [[TGActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
@@ -578,6 +577,7 @@
     {
         TGDispatchOnMainThread(^
         {
+            _receivedAccountSettings = true;
             if (status == ASStatusSuccess)
             {
                 [self setAccountSettings:result];

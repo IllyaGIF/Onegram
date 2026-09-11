@@ -33,6 +33,17 @@ static inline bool TGIOS6DialogPeerIdLooksLikeModernRawChannel(int64_t peerId)
     return peerId <= ((int64_t)INT32_MIN) * 3 && peerId > ((int64_t)INT32_MIN) * 4;
 }
 
+static bool TGIOS6DialogIsMuted(TLDialog$dialogMeta *dialog, int64_t peerId)
+{
+    if ([dialog.notify_settings isKindOfClass:[TLPeerNotifySettings$peerNotifySettings class]])
+    {
+        TLPeerNotifySettings$peerNotifySettings *settings = (TLPeerNotifySettings$peerNotifySettings *)dialog.notify_settings;
+        if (settings.flags & (1 << 2))
+            return settings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime];
+    }
+    return [TGDatabaseInstance() isPeerMuted:peerId];
+}
+
 static void TGIOS6DListMismatchLog(NSString *format, ...)
 {
     // Private remote diagnostics are disabled in the public source snapshot.
@@ -41,7 +52,7 @@ static void TGIOS6DListMismatchLog(NSString *format, ...)
 
 static void TGIOS6EnsureDialogListCacheVersion()
 {
-    const int32_t currentVersion = 6;
+    const int32_t currentVersion = 7;
     NSData *data = [TGDatabaseInstance() customProperty:@"ios6DialogListCacheVersion"];
     int32_t storedVersion = 0;
     if (data.length == 4)
@@ -167,11 +178,16 @@ static void TGIOS6EnsureDialogListCacheVersion()
                         _lastRequestedLimit = 50;
                         TGLog(@"ARCHIVE localCache.refreshRemote count=%d date=%d", (int)filteredResult.count, dateValue);
                         IOS6Trace(@"FULL archive.localCache.refreshRemote count=%d date=%d", (int)filteredResult.count, dateValue);
-                        self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:0 limit:_lastRequestedLimit requestBuilder:self];
+                        self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:0 limit:_lastRequestedLimit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
                     }];
                 }
             } else {
                 IOS6Trace(@"FULL dialogList.execute.remotePage reason=localEmpty local=%d loadedAll=%d dialogListLoaded=%d", (int)filteredResult.count, loadedAllRegular ? 1 : 0, dialogListLoaded ? 1 : 0);
+                if (_folderId == 0 && dialogListLoaded && loadedAllRegular)
+                {
+                    [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:@[]]];
+                    return;
+                }
                 NSData *data = [TGDatabaseInstance() customProperty:@"dialogListRemoteOffset"];
                 TGDialogListRemoteOffset *remoteOffset = nil;
                 if (data.length != 0) {
@@ -192,7 +208,7 @@ static void TGIOS6EnsureDialogListCacheVersion()
                     TGLog(@"Requesting dialog list with offset = %@", remoteOffset);
                     IOS6Trace(@"FULL dialogList.execute.page offset=%@ exclude=%d", remoteOffset, (int)((NSArray *)options[@"excludeConversationIds"]).count);
                     _lastRequestedLimit = localLimit;
-                    self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:remoteOffset limit:_lastRequestedLimit requestBuilder:self];
+                    self.cancelToken = [TGTelegraphInstance doRequestDialogsListWithOffset:remoteOffset limit:_lastRequestedLimit folderId:_folderId requestArchive:(_folderId == 0) requestBuilder:self];
                 }];
             }
         }];
@@ -383,7 +399,7 @@ static void TGIOS6EnsureDialogListCacheVersion()
                             [TGDatabaseInstance() storePeerNotificationSettings:conversation.conversationId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
                         }
                         
-                        if (conversation.unreadMark || conversation.unreadCount > 0)
+                        if ((conversation.unreadMark || conversation.unreadCount > 0) && !TGIOS6DialogIsMuted(dialog, conversation.conversationId))
                             unreadChatsCount++;
                     }
                 }
@@ -467,7 +483,7 @@ static void TGIOS6EnsureDialogListCacheVersion()
                             [TGDatabaseInstance() storePeerNotificationSettings:conversation.conversationId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
                         }
                         
-                        if (conversation.unreadMark || conversation.unreadCount > 0)
+                        if ((conversation.unreadMark || conversation.unreadCount > 0) && !TGIOS6DialogIsMuted(dialog, conversation.conversationId))
                             unreadChatsCount++;
                     }
                 }
@@ -542,7 +558,7 @@ static void TGIOS6EnsureDialogListCacheVersion()
                             [TGDatabaseInstance() storePeerNotificationSettings:conversation.conversationId soundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted writeToActionQueue:false completion:nil];
                         }
                         
-                        if (conversation.unreadMark || conversation.unreadCount > 0)
+                        if ((conversation.unreadMark || conversation.unreadCount > 0) && !TGIOS6DialogIsMuted(dialog, conversation.conversationId))
                             unreadChannelsCount++;
                     }
                     else
@@ -684,10 +700,7 @@ static void TGIOS6EnsureDialogListCacheVersion()
                 }
                 
                 if (message != nil && (dialog.flags & (1 << 2)) == 0) {
-                    TGDialogListRemoteOffset *currentOffset = [[TGDialogListRemoteOffset alloc] initWithDate:(int32_t)message.date peerId:peerId accessHash:accessHash messageId:message.mid];
-                    if (remoteOffset == nil || [currentOffset compare:remoteOffset] == NSOrderedAscending) {
-                        remoteOffset = currentOffset;
-                    }
+                    remoteOffset = [[TGDialogListRemoteOffset alloc] initWithDate:(int32_t)message.date peerId:peerId accessHash:accessHash messageId:message.mid];
                 }
             } else if ([baseDialog isKindOfClass:[TLDialog$dialogFeedMeta class]]) {
                 TLDialog$dialogFeedMeta *dialog = (TLDialog$dialogFeedMeta *)baseDialog;
@@ -803,7 +816,7 @@ static void TGIOS6EnsureDialogListCacheVersion()
         
         [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
         
-        bool remoteListFullyLoaded = dialogs.dialogs.count == 0 || (_lastRequestedLimit > 0 && dialogs.dialogs.count < _lastRequestedLimit);
+        bool remoteListFullyLoaded = [dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogs class]];
         IOS6Trace(@"FULL dialogList.loadedFlag replace=%d dialogs=%d limit=%d fully=%d", _replaceList ? 1 : 0, (int)dialogs.dialogs.count, _lastRequestedLimit, remoteListFullyLoaded ? 1 : 0);
         if (_folderId == 0)
         {
@@ -852,15 +865,8 @@ static void TGIOS6EnsureDialogListCacheVersion()
     {
         if (result.count != 0 || _replaceList)
         {
-            if (_replaceList)
-            {
-                uint8_t loaded = 1;
-                [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:[[NSData alloc] initWithBytes:&loaded length:1]];
-            }
-            else
-            {
+            if (_folderId == 0)
                 [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:[NSData data]];
-            }
             TGLog(@"DIALOGS fallback local items=%d path=%@", (int)result.count, self.path);
             [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphListNode alloc] initWithItems:result]];
         }

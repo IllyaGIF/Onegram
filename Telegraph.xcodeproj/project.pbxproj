@@ -15,6 +15,12 @@
 		09034EC01EE1725B006997DB /* ModernContactListInviteIcon@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = 09034EBC1EE1725B006997DB /* ModernContactListInviteIcon@2x.png */; };
 		09034EC11EE1725B006997DB /* ModernContactListInviteIcon@3x.png in Resources */ = {isa = PBXBuildFile; fileRef = 09034EBD1EE1725B006997DB /* ModernContactListInviteIcon@3x.png */; };
 		09034ECD1EE190BD006997DB /* SFCompactRounded-Semibold.otf in Resources */ = {isa = PBXBuildFile; fileRef = 09034ECC1EE190BD006997DB /* SFCompactRounded-Semibold.otf */; };
+		A12609080000000000000102 /* NotoSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A12609080000000000000101 /* NotoSans-Regular.ttf */; };
+		A12609080000000000000104 /* NotoSansMath-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A12609080000000000000103 /* NotoSansMath-Regular.ttf */; };
+		A12609080000000000000106 /* NotoSansSymbols2-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A12609080000000000000105 /* NotoSansSymbols2-Regular.ttf */; };
+		A12609080000000000000108 /* OnegramEmoji.pack in Resources */ = {isa = PBXBuildFile; fileRef = A12609080000000000000107 /* OnegramEmoji.pack */; };
+		A12609080000000000000110 /* OnegramEmojiIndex.plist in Resources */ = {isa = PBXBuildFile; fileRef = A12609080000000000000109 /* OnegramEmojiIndex.plist */; };
+		A12609080000000000000004 /* OnegramEmoji-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = A12609080000000000000003 /* OnegramEmoji-OFL.txt */; };
 		09053D7020A5CB810029652D /* ocr_nn.bin in Resources */ = {isa = PBXBuildFile; fileRef = 09053D6F20A5CB810029652D /* ocr_nn.bin */; };
 		090671AE1F62E30200CCF2F5 /* TGLocationMessageViewModel.h in Headers */ = {isa = PBXBuildFile; fileRef = 090671AC1F62E30200CCF2F5 /* TGLocationMessageViewModel.h */; };
 		090671AF1F62E30200CCF2F5 /* TGLocationMessageViewModel.m in Sources */ = {isa = PBXBuildFile; fileRef = 090671AD1F62E30200CCF2F5 /* TGLocationMessageViewModel.m */; };
@@ -4668,18 +4674,6 @@
 		D0FFBDDF1BAB0E7300F532C9 /* TGChannelMembersController.h in Headers */ = {isa = PBXBuildFile; fileRef = D0FFBDDD1BAB0E7300F532C9 /* TGChannelMembersController.h */; };
 		D0FFBDE01BAB0E7300F532C9 /* TGChannelMembersController.m in Sources */ = {isa = PBXBuildFile; fileRef = D0FFBDDE1BAB0E7300F532C9 /* TGChannelMembersController.m */; };
 		F4A100011000000000000001 /* TGIOS4WeakRuntime.m in Sources */ = {isa = PBXBuildFile; fileRef = F4A100021000000000000002 /* TGIOS4WeakRuntime.m */; settings = {COMPILER_FLAGS = "-fno-objc-arc"; }; };
-		FD2200000000000000000001 /* TGFuckDPIController.m in Sources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000022 /* TGFuckDPIController.m */; };
-		FD2200000000000000000002 /* TGFuckDPILog.m in Sources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000024 /* TGFuckDPILog.m */; };
-		FD2200000000000000000003 /* TGFuckDPILogController.m in Sources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000026 /* TGFuckDPILogController.m */; };
-		FD2200000000000000000004 /* TGFuckDPIProfilesController.m in Sources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000028 /* TGFuckDPIProfilesController.m */; };
-		FD2200000000000000000005 /* TGNekroCommand.m in Sources */ = {isa = PBXBuildFile; fileRef = FD220000000000000000002A /* TGNekroCommand.m */; };
-		FD2200000000000000000006 /* TGRouteCoordinator.m in Sources */ = {isa = PBXBuildFile; fileRef = FD220000000000000000002C /* TGRouteCoordinator.m */; };
-		FD2200000000000000000007 /* TGWarpProfileStore.m in Sources */ = {isa = PBXBuildFile; fileRef = FD220000000000000000002E /* TGWarpProfileStore.m */; };
-		FD2200000000000000000010 /* WARP_STR1606.conf in Resources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000030 /* WARP_STR1606.conf */; };
-		FD2200000000000000000011 /* WARP_STR4718.conf in Resources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000031 /* WARP_STR4718.conf */; };
-		FD2200000000000000000012 /* WARP_STR7521.conf in Resources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000032 /* WARP_STR7521.conf */; };
-		FD2200000000000000000013 /* WARP_STR8986.conf in Resources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000033 /* WARP_STR8986.conf */; };
-		FD2200000000000000000014 /* WARP_STR9433.conf in Resources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000034 /* WARP_STR9433.conf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -4848,6 +4842,12 @@
 		09034EBC1EE1725B006997DB /* ModernContactListInviteIcon@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = "ModernContactListInviteIcon@2x.png"; path = "Resources/ModernContactListInviteIcon@2x.png"; sourceTree = "<group>"; };
 		09034EBD1EE1725B006997DB /* ModernContactListInviteIcon@3x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = "ModernContactListInviteIcon@3x.png"; path = "Resources/ModernContactListInviteIcon@3x.png"; sourceTree = "<group>"; };
 		09034ECC1EE190BD006997DB /* SFCompactRounded-Semibold.otf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "SFCompactRounded-Semibold.otf"; path = "Resources/SFCompactRounded-Semibold.otf"; sourceTree = "<group>"; };
+		A12609080000000000000101 /* NotoSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "NotoSans-Regular.ttf"; path = "Resources/NotoSans-Regular.ttf"; sourceTree = "<group>"; };
+		A12609080000000000000103 /* NotoSansMath-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "NotoSansMath-Regular.ttf"; path = "Resources/NotoSansMath-Regular.ttf"; sourceTree = "<group>"; };
+		A12609080000000000000105 /* NotoSansSymbols2-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "NotoSansSymbols2-Regular.ttf"; path = "Resources/NotoSansSymbols2-Regular.ttf"; sourceTree = "<group>"; };
+		A12609080000000000000107 /* OnegramEmoji.pack */ = {isa = PBXFileReference; lastKnownFileType = file; name = "OnegramEmoji.pack"; path = "Resources/OnegramEmoji.pack"; sourceTree = "<group>"; };
+		A12609080000000000000109 /* OnegramEmojiIndex.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "OnegramEmojiIndex.plist"; path = "Resources/OnegramEmojiIndex.plist"; sourceTree = "<group>"; };
+		A12609080000000000000003 /* OnegramEmoji-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = "OnegramEmoji-OFL.txt"; path = "Resources/OnegramEmoji-OFL.txt"; sourceTree = "<group>"; };
 		09053D6F20A5CB810029652D /* ocr_nn.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; name = ocr_nn.bin; path = thirdparty/ocr/ocr_nn.bin; sourceTree = SOURCE_ROOT; };
 		090671AC1F62E30200CCF2F5 /* TGLocationMessageViewModel.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGLocationMessageViewModel.h; sourceTree = "<group>"; };
 		090671AD1F62E30200CCF2F5 /* TGLocationMessageViewModel.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGLocationMessageViewModel.m; sourceTree = "<group>"; };
@@ -11122,25 +11122,6 @@
 		D0FFBDDE1BAB0E7300F532C9 /* TGChannelMembersController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGChannelMembersController.m; sourceTree = "<group>"; };
 		F0726C0DEC0DEC0DEC0D0001 /* TGIOS6LinkCompat.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGIOS6LinkCompat.m; sourceTree = "<group>"; };
 		F4A100021000000000000002 /* TGIOS4WeakRuntime.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGIOS4WeakRuntime.m; sourceTree = "<group>"; };
-		FD2200000000000000000021 /* TGFuckDPIController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGFuckDPIController.h; sourceTree = "<group>"; };
-		FD2200000000000000000022 /* TGFuckDPIController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGFuckDPIController.m; sourceTree = "<group>"; };
-		FD2200000000000000000023 /* TGFuckDPILog.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGFuckDPILog.h; sourceTree = "<group>"; };
-		FD2200000000000000000024 /* TGFuckDPILog.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGFuckDPILog.m; sourceTree = "<group>"; };
-		FD2200000000000000000025 /* TGFuckDPILogController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGFuckDPILogController.h; sourceTree = "<group>"; };
-		FD2200000000000000000026 /* TGFuckDPILogController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGFuckDPILogController.m; sourceTree = "<group>"; };
-		FD2200000000000000000027 /* TGFuckDPIProfilesController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGFuckDPIProfilesController.h; sourceTree = "<group>"; };
-		FD2200000000000000000028 /* TGFuckDPIProfilesController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGFuckDPIProfilesController.m; sourceTree = "<group>"; };
-		FD2200000000000000000029 /* TGNekroCommand.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGNekroCommand.h; sourceTree = "<group>"; };
-		FD220000000000000000002A /* TGNekroCommand.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGNekroCommand.m; sourceTree = "<group>"; };
-		FD220000000000000000002B /* TGRouteCoordinator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGRouteCoordinator.h; sourceTree = "<group>"; };
-		FD220000000000000000002C /* TGRouteCoordinator.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGRouteCoordinator.m; sourceTree = "<group>"; };
-		FD220000000000000000002D /* TGWarpProfileStore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TGWarpProfileStore.h; sourceTree = "<group>"; };
-		FD220000000000000000002E /* TGWarpProfileStore.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TGWarpProfileStore.m; sourceTree = "<group>"; };
-		FD2200000000000000000030 /* WARP_STR1606.conf */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = WARP_STR1606.conf; sourceTree = "<group>"; };
-		FD2200000000000000000031 /* WARP_STR4718.conf */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = WARP_STR4718.conf; sourceTree = "<group>"; };
-		FD2200000000000000000032 /* WARP_STR7521.conf */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = WARP_STR7521.conf; sourceTree = "<group>"; };
-		FD2200000000000000000033 /* WARP_STR8986.conf */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = WARP_STR8986.conf; sourceTree = "<group>"; };
-		FD2200000000000000000034 /* WARP_STR9433.conf */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = WARP_STR9433.conf; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -18585,7 +18566,6 @@
 		D08805A1156E8F3600311537 = {
 			isa = PBXGroup;
 			children = (
-				FD2200000000000000000090 /* Modules/NekroEngine */,
 				D0B9B19419CA324D0020C9CF /* LaunchScreen.xib */,
 				D0DAA484197496240036E709 /* Icon-76.png */,
 				D0C6748E1CB8640400183765 /* Icon-167.png */,
@@ -19116,6 +19096,12 @@
 				D04B4F561EEAD2B500711AF6 /* LoginCodeOtherDevice@3x.png */,
 				091860CA1EE7140D00496CFE /* ModernContactListInviteFriendsIcon@3x.png */,
 				09034ECC1EE190BD006997DB /* SFCompactRounded-Semibold.otf */,
+				A12609080000000000000101 /* NotoSans-Regular.ttf */,
+				A12609080000000000000103 /* NotoSansMath-Regular.ttf */,
+				A12609080000000000000105 /* NotoSansSymbols2-Regular.ttf */,
+				A12609080000000000000107 /* OnegramEmoji.pack */,
+				A12609080000000000000109 /* OnegramEmojiIndex.plist */,
+				A12609080000000000000003 /* OnegramEmoji-OFL.txt */,
 				09034EBA1EE1725B006997DB /* ModernContactListAddMemberIcon@2x.png */,
 				09034EBB1EE1725B006997DB /* ModernContactListAddMemberIcon@3x.png */,
 				09034EBC1EE1725B006997DB /* ModernContactListInviteIcon@2x.png */,
@@ -21704,48 +21690,6 @@
 			name = Tabs;
 			sourceTree = "<group>";
 		};
-		FD2200000000000000000090 /* Modules/NekroEngine */ = {
-			isa = PBXGroup;
-			children = (
-				FD2200000000000000000091 /* FuckDPI */,
-				FD2200000000000000000092 /* Profiles */,
-			);
-			path = Modules/NekroEngine;
-			sourceTree = "<group>";
-		};
-		FD2200000000000000000091 /* FuckDPI */ = {
-			isa = PBXGroup;
-			children = (
-				FD2200000000000000000021 /* TGFuckDPIController.h */,
-				FD2200000000000000000022 /* TGFuckDPIController.m */,
-				FD2200000000000000000023 /* TGFuckDPILog.h */,
-				FD2200000000000000000024 /* TGFuckDPILog.m */,
-				FD2200000000000000000025 /* TGFuckDPILogController.h */,
-				FD2200000000000000000026 /* TGFuckDPILogController.m */,
-				FD2200000000000000000027 /* TGFuckDPIProfilesController.h */,
-				FD2200000000000000000028 /* TGFuckDPIProfilesController.m */,
-				FD2200000000000000000029 /* TGNekroCommand.h */,
-				FD220000000000000000002A /* TGNekroCommand.m */,
-				FD220000000000000000002B /* TGRouteCoordinator.h */,
-				FD220000000000000000002C /* TGRouteCoordinator.m */,
-				FD220000000000000000002D /* TGWarpProfileStore.h */,
-				FD220000000000000000002E /* TGWarpProfileStore.m */,
-			);
-			path = FuckDPI;
-			sourceTree = "<group>";
-		};
-		FD2200000000000000000092 /* Profiles */ = {
-			isa = PBXGroup;
-			children = (
-				FD2200000000000000000030 /* WARP_STR1606.conf */,
-				FD2200000000000000000031 /* WARP_STR4718.conf */,
-				FD2200000000000000000032 /* WARP_STR7521.conf */,
-				FD2200000000000000000033 /* WARP_STR8986.conf */,
-				FD2200000000000000000034 /* WARP_STR9433.conf */,
-			);
-			path = Profiles;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXHeadersBuildPhase section */
@@ -23458,7 +23402,6 @@
 				D08805A8156E8F3600311537 /* Sources */,
 				D08805A9156E8F3600311537 /* Frameworks */,
 				D08805AA156E8F3600311537 /* Resources */,
-				FD2200000000000000000099 /* Build FuckDPID */,
 				932E96A716946F6A00D6EC55 /* ShellScript */,
 				A16C0DE70000000000000002 /* Mark App as iOS 7 SDK Linked */,
 				687751281A16D79400AC673F /* Headers */,
@@ -23797,11 +23740,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FD2200000000000000000010 /* WARP_STR1606.conf in Resources */,
-				FD2200000000000000000011 /* WARP_STR4718.conf in Resources */,
-				FD2200000000000000000012 /* WARP_STR7521.conf in Resources */,
-				FD2200000000000000000013 /* WARP_STR8986.conf in Resources */,
-				FD2200000000000000000014 /* WARP_STR9433.conf in Resources */,
 				A314366525BADC0D00000001 /* ZikfolvStatusBadge@2x.png in Resources */,
 				C0D6A0012026072000000001 /* ClassicIOS6 in Resources */,
 				D02660321F34A5D5000E2DC5 /* LegacyComponentsResources.bundle in Resources */,
@@ -23873,6 +23811,12 @@
 				935B6E261628540C00A2E265 /* SearchInputField@2x.png in Resources */,
 				09E97B691F97E63B00526020 /* SettingsDataIcon@3x.png in Resources */,
 				09034ECD1EE190BD006997DB /* SFCompactRounded-Semibold.otf in Resources */,
+				A12609080000000000000102 /* NotoSans-Regular.ttf in Resources */,
+				A12609080000000000000104 /* NotoSansMath-Regular.ttf in Resources */,
+				A12609080000000000000106 /* NotoSansSymbols2-Regular.ttf in Resources */,
+				A12609080000000000000108 /* OnegramEmoji.pack in Resources */,
+				A12609080000000000000110 /* OnegramEmojiIndex.plist in Resources */,
+				A12609080000000000000004 /* OnegramEmoji-OFL.txt in Resources */,
 				934D0A971632543E0090BCD0 /* LinkFull@2x.png in Resources */,
 				09361CF71E7263AD007ED29C /* CallInfoIcon@3x.png in Resources */,
 				09F2A0921EB8CEAF00653F24 /* InstantViewSettingsIcon@2x.png in Resources */,
@@ -24479,23 +24423,6 @@
 			shellPath = /bin/sh;
 			shellScript = "EXECUTABLE=\"${TARGET_BUILD_DIR}/${EXECUTABLE_PATH}\"\nif [ -f \"$EXECUTABLE\" ]; then\n    /usr/bin/python \"${SRCROOT}/tools/patch_ios7_sdk_version.py\" \"$EXECUTABLE\"\nelse\n    echo \"warning: Onegram iOS 7 SDK marker patch skipped; executable not found: $EXECUTABLE\"\nfi\n";
 		};
-		FD2200000000000000000099 /* Build FuckDPID */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Build FuckDPID";
-			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/FuckDPID",
-				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/FuckDPIBridgeD",
-				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/InstallFuckDPI.sh",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "sh \"${SRCROOT}/tools/build_fuckdpid.sh\"\n";
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -24611,13 +24538,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				FD2200000000000000000001 /* TGFuckDPIController.m in Sources */,
-				FD2200000000000000000002 /* TGFuckDPILog.m in Sources */,
-				FD2200000000000000000003 /* TGFuckDPILogController.m in Sources */,
-				FD2200000000000000000004 /* TGFuckDPIProfilesController.m in Sources */,
-				FD2200000000000000000005 /* TGNekroCommand.m in Sources */,
-				FD2200000000000000000006 /* TGRouteCoordinator.m in Sources */,
-				FD2200000000000000000007 /* TGWarpProfileStore.m in Sources */,
 				C011CA110000000000000001 /* TGCallWebrtcRuntimeIOS6.mm in Sources */,
 				D0876FE6196F4C33005740CE /* TGGenericPeerMediaGalleryModel.m in Sources */,
 				68B63CB91BB2596200205AC3 /* TGBridgeReplyMessageMediaAttachment+TGReplyMessageMediaAttachment.m in Sources */,

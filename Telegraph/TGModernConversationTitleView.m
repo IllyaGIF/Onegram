@@ -10,6 +10,7 @@
 #import "TGAppDelegate.h"
 
 #import "TGPresentation.h"
+#import "TGReusableLabel.h"
 
 const NSTimeInterval typingIntervalFirst = 0.16;
 const NSTimeInterval typingIntervalSecond = 0.14;
@@ -31,7 +32,7 @@ static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *pres
 
 @interface TGModernConversationTitleView ()
 {
-    UILabel *_titleLabel;
+    TGReusableLabel *_titleLabel;
     UILabel *_statusLabel;
     
     UILabel *_titleModalProgressLabel;
@@ -127,16 +128,17 @@ static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *pres
     return CGSizeMake(1, 1);
 }
 
-- (UILabel *)titleLabel
+- (TGReusableLabel *)titleLabel
 {
     if (_titleLabel == nil)
     {
-        _titleLabel = [[UILabel alloc] init];
+        _titleLabel = [[TGReusableLabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = TGClassicAwareNavigationTitleColor(_presentation);
         _titleLabel.shadowColor = [UIColor clearColor];
         _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
         _titleLabel.font = TGBoldSystemFontOfSize(17.0f);
+        _titleLabel.numberOfLines = 1;
         [self addSubview:_titleLabel];
     }
     

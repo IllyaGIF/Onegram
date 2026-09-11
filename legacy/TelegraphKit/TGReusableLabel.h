@@ -98,6 +98,7 @@ typedef enum {
 @interface TGReusableLabelLayoutData : NSObject
 
 @property (nonatomic) CGSize size;
+@property (nonatomic, readonly) CGFloat drawingWidth;
 
 - (NSString *)linkAtPoint:(CGPoint)point topRegion:(CGRect *)topRegion middleRegion:(CGRect *)middleRegion bottomRegion:(CGRect *)bottomRegion hiddenLink:(bool *)hiddenLink linkText:(__autoreleasing NSString **)linkText;
 - (void)enumerateSearchRegionsForString:(NSString *)string withBlock:(void (^)(CGRect))block;

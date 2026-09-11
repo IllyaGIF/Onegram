@@ -7,12 +7,266 @@
 #include <tr1/unordered_map>
 #include <vector>
 
+typedef struct
+{
+    CGFloat ascent;
+    CGFloat descent;
+    CGFloat width;
+} TGEmojiRunContext;
+
+typedef struct
+{
+    NSRange sourceRange;
+    NSRange displayRange;
+} TGEmojiIndexMapping;
+
+static const CGFloat TGOnegramEmojiScale = 0.8f;
+static const CGFloat TGOnegramEmojiSpacing = 0.10f;
+
+static void TGEmojiRunDeallocate(void *refCon)
+{
+    if (refCon != NULL)
+        free(refCon);
+}
+
+static CGFloat TGEmojiRunGetAscent(void *refCon)
+{
+    return refCon == NULL ? 0.0f : ((TGEmojiRunContext *)refCon)->ascent;
+}
+
+static CGFloat TGEmojiRunGetDescent(void *refCon)
+{
+    return refCon == NULL ? 0.0f : ((TGEmojiRunContext *)refCon)->descent;
+}
+
+static CGFloat TGEmojiRunGetWidth(void *refCon)
+{
+    return refCon == NULL ? 0.0f : ((TGEmojiRunContext *)refCon)->width;
+}
+
+static bool TGNativeEmojiMetrics(CGFloat fontSize, CGFloat *ascent, CGFloat *descent, CGFloat *width)
+{
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSMutableDictionary alloc] init];
+    });
+
+    NSNumber *cacheKey = [NSNumber numberWithInt:(int)lrintf(fontSize * 10.0f)];
+    NSDictionary *cached = nil;
+    @synchronized(cache)
+    {
+        cached = [cache objectForKey:cacheKey];
+    }
+
+    if (cached != nil)
+    {
+        if (ascent != NULL)
+            *ascent = [[cached objectForKey:@"ascent"] floatValue];
+        if (descent != NULL)
+            *descent = [[cached objectForKey:@"descent"] floatValue];
+        if (width != NULL)
+            *width = [[cached objectForKey:@"width"] floatValue];
+        return true;
+    }
+
+    CTFontRef emojiFont = CTFontCreateWithName(CFSTR("AppleColorEmoji"), fontSize, NULL);
+    if (emojiFont == NULL)
+        return false;
+
+    NSDictionary *attributes = [NSDictionary dictionaryWithObject:(__bridge id)emojiFont forKey:(__bridge NSString *)kCTFontAttributeName];
+    NSAttributedString *sample = [[NSAttributedString alloc] initWithString:@"\U0001F600" attributes:attributes];
+    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)sample);
+
+    CGFloat measuredAscent = 0.0f;
+    CGFloat measuredDescent = 0.0f;
+    CGFloat measuredWidth = 0.0f;
+    if (line != NULL)
+    {
+        CFArrayRef runs = CTLineGetGlyphRuns(line);
+        if (CFArrayGetCount(runs) != 0)
+        {
+            CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(runs, 0);
+            CFIndex glyphCount = CTRunGetGlyphCount(run);
+            if (glyphCount != 0)
+                measuredWidth = (CGFloat)CTRunGetTypographicBounds(run, CFRangeMake(0, glyphCount), &measuredAscent, &measuredDescent, NULL);
+        }
+        CFRelease(line);
+    }
+    CFRelease(emojiFont);
+
+    if (measuredAscent <= 0.0f || measuredWidth <= 0.0f)
+        return false;
+
+    NSDictionary *result = [NSDictionary dictionaryWithObjectsAndKeys:
+        [NSNumber numberWithFloat:measuredAscent], @"ascent",
+        [NSNumber numberWithFloat:measuredDescent], @"descent",
+        [NSNumber numberWithFloat:measuredWidth], @"width",
+        nil];
+    @synchronized(cache)
+    {
+        [cache setObject:result forKey:cacheKey];
+    }
+
+    if (ascent != NULL)
+        *ascent = measuredAscent;
+    if (descent != NULL)
+        *descent = measuredDescent;
+    if (width != NULL)
+        *width = measuredWidth;
+    return true;
+}
+
+static NSUInteger TGDisplayIndexForSourceIndex(const std::vector<TGEmojiIndexMapping> *mappings, NSUInteger sourceIndex, bool endBoundary)
+{
+    if (mappings == NULL || mappings->empty())
+        return sourceIndex;
+
+    NSUInteger removed = 0;
+    for (std::vector<TGEmojiIndexMapping>::const_iterator it = mappings->begin(); it != mappings->end(); ++it)
+    {
+        NSUInteger sourceStart = it->sourceRange.location;
+        NSUInteger sourceEnd = NSMaxRange(it->sourceRange);
+
+        if (sourceIndex <= sourceStart)
+            break;
+
+        if (sourceIndex >= sourceEnd)
+        {
+            if (it->sourceRange.length > 1)
+                removed += it->sourceRange.length - 1;
+            continue;
+        }
+
+        return it->displayRange.location + (endBoundary ? 1 : 0);
+    }
+
+    return sourceIndex >= removed ? sourceIndex - removed : 0;
+}
+
+static NSRange TGDisplayRangeForSourceRange(const std::vector<TGEmojiIndexMapping> *mappings, NSRange sourceRange)
+{
+    if (sourceRange.location == NSNotFound)
+        return sourceRange;
+
+    NSUInteger start = TGDisplayIndexForSourceIndex(mappings, sourceRange.location, false);
+    NSUInteger end = TGDisplayIndexForSourceIndex(mappings, NSMaxRange(sourceRange), true);
+    if (end < start)
+        end = start;
+    return NSMakeRange(start, end - start);
+}
+
+static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NSString *text, CGFloat fontSize, CGFloat fontAscent, CGFloat fontDescent, std::vector<TGEmojiIndexMapping> *mappings)
+{
+    if (mappings != NULL)
+        mappings->clear();
+    if (string.length == 0 || text.length == 0)
+        return;
+
+    NSMutableArray *emojiRanges = [[NSMutableArray alloc] init];
+    NSMutableArray *emojiValues = [[NSMutableArray alloc] init];
+    NSUInteger sourceIndex = 0;
+    NSUInteger removed = 0;
+
+    while (sourceIndex < text.length)
+    {
+        NSRange emojiRange = NSMakeRange(0, 0);
+        if (TGEmojiPackMatchAtIndex(text, sourceIndex, &emojiRange))
+        {
+            NSString *emoji = [text substringWithRange:emojiRange];
+            if (TGEmojiNeedsPack(emoji))
+            {
+                [emojiRanges addObject:[NSValue valueWithRange:emojiRange]];
+                [emojiValues addObject:emoji];
+                if (mappings != NULL)
+                {
+                    TGEmojiIndexMapping mapping;
+                    mapping.sourceRange = emojiRange;
+                    mapping.displayRange = NSMakeRange(emojiRange.location - removed, 1);
+                    mappings->push_back(mapping);
+                }
+                if (emojiRange.length > 1)
+                    removed += emojiRange.length - 1;
+            }
+            sourceIndex = NSMaxRange(emojiRange);
+        }
+        else
+        {
+            sourceIndex++;
+        }
+    }
+
+    CGFloat sourceHeight = MAX(1.0f, fontAscent + fontDescent);
+    CGFloat emojiAscent = 0.0f;
+    CGFloat emojiDescent = 0.0f;
+    CGFloat emojiWidth = 0.0f;
+    if (!TGNativeEmojiMetrics(fontSize, &emojiAscent, &emojiDescent, &emojiWidth))
+    {
+        CGFloat emojiSize = MAX(1.0f, fontSize) * TGOnegramEmojiScale;
+        emojiDescent = emojiSize * fontDescent / sourceHeight;
+        emojiAscent = emojiSize - emojiDescent;
+        emojiWidth = emojiSize;
+    }
+    else
+    {
+        emojiAscent *= TGOnegramEmojiScale;
+        emojiDescent *= TGOnegramEmojiScale;
+        emojiWidth *= TGOnegramEmojiScale;
+    }
+
+    for (NSInteger index = (NSInteger)emojiRanges.count - 1; index >= 0; index--)
+    {
+        NSRange sourceRange = [[emojiRanges objectAtIndex:(NSUInteger)index] rangeValue];
+        NSString *emoji = [emojiValues objectAtIndex:(NSUInteger)index];
+        NSDictionary *baseAttributes = sourceRange.location < string.length ? [string attributesAtIndex:sourceRange.location effectiveRange:NULL] : nil;
+        NSMutableAttributedString *replacement = [[NSMutableAttributedString alloc] initWithString:@"\uFFFC" attributes:baseAttributes];
+
+        CGFloat trailingSpacing = 0.0f;
+        if ((NSUInteger)index + 1 < emojiRanges.count)
+        {
+            NSRange nextRange = [[emojiRanges objectAtIndex:(NSUInteger)index + 1] rangeValue];
+            if (NSMaxRange(sourceRange) == nextRange.location)
+                trailingSpacing = MAX(1.0f, fontSize * TGOnegramEmojiSpacing);
+        }
+
+        TGEmojiRunContext *context = (TGEmojiRunContext *)malloc(sizeof(TGEmojiRunContext));
+        if (context == NULL)
+            continue;
+        context->ascent = emojiAscent;
+        context->descent = emojiDescent;
+        context->width = MAX(1.0f, emojiAscent + emojiDescent) + trailingSpacing;
+
+        CTRunDelegateCallbacks callbacks;
+        callbacks.version = kCTRunDelegateVersion1;
+        callbacks.dealloc = TGEmojiRunDeallocate;
+        callbacks.getAscent = TGEmojiRunGetAscent;
+        callbacks.getDescent = TGEmojiRunGetDescent;
+        callbacks.getWidth = TGEmojiRunGetWidth;
+
+        CTRunDelegateRef delegate = CTRunDelegateCreate(&callbacks, context);
+        if (delegate == NULL)
+        {
+            free(context);
+            continue;
+        }
+
+        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), kCTRunDelegateAttributeName, delegate);
+        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), CFSTR("TGOnegramEmoji"), (__bridge CFStringRef)emoji);
+        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), CFSTR("TGOnegramEmojiTrailingSpacing"), (__bridge CFNumberRef)[NSNumber numberWithFloat:trailingSpacing]);
+        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), kCTForegroundColorAttributeName, [UIColor clearColor].CGColor);
+        [string replaceCharactersInRange:sourceRange withAttributedString:replacement];
+        CFRelease(delegate);
+    }
+}
+
 @interface TGReusableLabelLayoutData ()
 {
     std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > _lineOffsets;
     std::vector<TGLinePosition> _lineOrigins;
     
     std::vector<TGLinkData> _links;
+    std::vector<TGEmojiIndexMapping> _emojiMappings;
 }
 
 @property (nonatomic, strong) NSArray *textLines;
@@ -24,11 +278,16 @@
 @property (nonatomic) CGFloat fontLineSpacing;
 
 - (std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > *)lineOffsets;
+- (std::vector<TGEmojiIndexMapping> *)emojiMappings;
 
 @end
 
 @implementation TGReusableLabelLayoutData
 
+- (CGFloat)drawingWidth
+{
+    return _drawingSize.width;
+}
 
 - (std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > *)lineOffsets
 {
@@ -43,6 +302,11 @@
 - (std::vector<TGLinkData> *)links
 {
     return &_links;
+}
+
+- (std::vector<TGEmojiIndexMapping> *)emojiMappings
+{
+    return &_emojiMappings;
 }
 
 - (NSString *)linkAtPoint:(CGPoint)point topRegion:(CGRect *)topRegion middleRegion:(CGRect *)middleRegion bottomRegion:(CGRect *)bottomRegion hiddenLink:(bool *)hiddenLink linkText:(NSString *__autoreleasing *)linkText
@@ -106,8 +370,8 @@
             
             CFRange lineRange = CTLineGetStringRange(line);
             CGPoint lineOrigin = CGPointMake(_lineOrigins[lineIndex].horizontalOffset, _lineOrigins[lineIndex].offset);
-            
-            NSRange intersectionRange = NSIntersectionRange(range, NSMakeRange(lineRange.location, lineRange.length));
+            NSRange displayRange = TGDisplayRangeForSourceRange(&_emojiMappings, range);
+            NSRange intersectionRange = NSIntersectionRange(displayRange, NSMakeRange(lineRange.location, lineRange.length));
             if (intersectionRange.length != 0)
             {
                 CGFloat startX = 0.0f;
@@ -231,6 +495,27 @@
         _text = text;
         [self setNeedsDisplay];
     }
+}
+
+- (CGSize)sizeThatFits:(CGSize)size
+{
+    if (_text.length == 0 || _font == nil)
+        return CGSizeZero;
+
+    if (iosMajorVersion() < 7)
+    {
+        CTFontRef coreTextFont = TGCoreTextFontForUIFont(_font);
+        if (coreTextFont != NULL)
+        {
+            TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:_text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:_textColor ?: [UIColor blackColor] linkColor:nil frame:CGRectZero orMaxWidth:size.width flags:TGReusableLabelLayoutMultiline textAlignment:_textAlignment outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:_numberOfLines <= 0 ? 0 : (NSUInteger)_numberOfLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
+            CFRelease(coreTextFont);
+            if (layout != nil)
+                return CGSizeMake(MIN(size.width, CGCeil(layout.drawingSize.width)), MIN(size.height, CGCeil(layout.size.height)));
+        }
+    }
+
+    CGSize result = [_text sizeWithFont:_font constrainedToSize:size lineBreakMode:(_numberOfLines == 1 ? NSLineBreakByTruncatingTail : NSLineBreakByWordWrapping)];
+    return CGSizeMake(CGCeil(result.width), CGCeil(result.height));
 }
 
 + (void)preloadData
@@ -477,6 +762,13 @@
         }
     }
     
+    TGPrepareEmojiAttributedString(string, text, fontSize, fontAscent, fontDescent, [layout emojiMappings]);
+    if (pLinkRanges != NULL)
+    {
+        for (int i = 0; i < linkRangeActualCount; i++)
+            pLinkRanges[i] = TGDisplayRangeForSourceRange([layout emojiMappings], pLinkRanges[i]);
+    }
+
     NSArray *resultLines = nil;
     std::vector<TGLinePosition> *pLineOrigins = layout.lineOrigins;
     bool resultHadRTL = false;
@@ -538,7 +830,7 @@
                 
                 if (maxNumberOfLines != 0 && textLines.count == maxNumberOfLines - 1)
                 {
-                    CTLineRef originalLine = CTTypesetterCreateLineWithOffset(typesetter, CFRangeMake(lastIndex, MAX(lineCharacterCount, (CFIndex)text.length - lastIndex)), 100.0);
+                    CTLineRef originalLine = CTTypesetterCreateLineWithOffset(typesetter, CFRangeMake(lastIndex, MAX(lineCharacterCount, (CFIndex)string.length - lastIndex)), 100.0);
                     
                     if (CTLineGetTypographicBounds(originalLine, NULL, NULL, NULL) - (float)CTLineGetTrailingWhitespaceWidth(originalLine) <= currentMaxWidth)
                         line = originalLine;
@@ -776,7 +1068,8 @@
             
             for (std::vector<TGLinkData>::iterator it = linksBegin; it != linksEnd; it++)
             {
-                NSRange intersectionRange = NSIntersectionRange(it->range, NSMakeRange(lineRange.location, lineRange.length));
+                NSRange displayLinkRange = TGDisplayRangeForSourceRange([layout emojiMappings], it->range);
+                NSRange intersectionRange = NSIntersectionRange(displayLinkRange, NSMakeRange(lineRange.location, lineRange.length));
                 if (intersectionRange.length != 0)
                 {
                     CGFloat startX = 0.0f;
@@ -800,7 +1093,7 @@
                                 CTRunGetStringIndices(run, CFRangeMake(0, 1), &startIndex);
                                 CTRunGetStringIndices(run, CFRangeMake(glyphCount - 1, 1), &endIndex);
                                 
-                                if (startIndex >= (CFIndex)it->range.location && endIndex < (CFIndex)(it->range.location + it->range.length))
+                                if (startIndex >= (CFIndex)displayLinkRange.location && endIndex < (CFIndex)(displayLinkRange.location + displayLinkRange.length))
                                 {
                                     CGPoint leftPosition = CGPointZero;
                                     CGPoint rightPosition = CGPointZero;
@@ -889,12 +1182,28 @@
     CGContextRef context = UIGraphicsGetCurrentContext();
     if (!richText)
     {
-        CGContextSetFillColorWithColor(context, ((highlighted && highlightedColor != nil) ? highlightedColor : textColor).CGColor);
-        
+        UIColor *effectiveColor = (highlighted && highlightedColor != nil) ? highlightedColor : textColor;
         UIColor *shadow = highlighted ? nil : shadowColor;
+
+        if (iosMajorVersion() < 7)
+        {
+            CTFontRef coreTextFont = TGCoreTextFontForUIFont(font);
+            if (coreTextFont != NULL)
+            {
+                TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:effectiveColor linkColor:nil frame:CGRectZero orMaxWidth:rect.size.width flags:TGReusableLabelLayoutMultiline textAlignment:NSTextAlignmentLeft outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:numberOfLines <= 0 ? 0 : (NSUInteger)numberOfLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
+                CFRelease(coreTextFont);
+                if (layout != nil)
+                {
+                    [TGReusableLabel drawRichTextInRect:rect precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:shadow shadowOffset:shadowOffset];
+                    return;
+                }
+            }
+        }
+
+        CGContextSetFillColorWithColor(context, effectiveColor.CGColor);
         if (shadowColor != nil)
             CGContextSetShadowWithColor(context, shadowOffset, 0, shadow.CGColor);
-        
+
         CGRect textRect = rect;
         [text drawInRect:textRect withFont:font lineBreakMode:(numberOfLines == 0 ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail)];
     }
@@ -974,6 +1283,37 @@
         
         CGContextSetTextPosition(context, lineOrigin.x, lineOrigin.y);
         CTLineDraw(line, context);
+
+        CFArrayRef glyphRuns = CTLineGetGlyphRuns(line);
+        CFIndex glyphRunCount = CFArrayGetCount(glyphRuns);
+        for (CFIndex runIndex = 0; runIndex < glyphRunCount; runIndex++)
+        {
+            CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(glyphRuns, runIndex);
+            CFDictionaryRef attributes = CTRunGetAttributes(run);
+            CFStringRef emojiValue = (CFStringRef)CFDictionaryGetValue(attributes, CFSTR("TGOnegramEmoji"));
+            CFNumberRef trailingSpacingValue = (CFNumberRef)CFDictionaryGetValue(attributes, CFSTR("TGOnegramEmojiTrailingSpacing"));
+            CFIndex emojiGlyphCount = CTRunGetGlyphCount(run);
+            if (emojiValue == NULL || emojiGlyphCount == 0)
+                continue;
+
+            CGPoint runPosition = CGPointZero;
+            CTRunGetPositions(run, CFRangeMake(0, 1), &runPosition);
+            CGFloat ascent = 0.0f;
+            CGFloat descent = 0.0f;
+            CGFloat runWidth = (CGFloat)CTRunGetTypographicBounds(run, CFRangeMake(0, emojiGlyphCount), &ascent, &descent, NULL);
+            CGFloat imageSize = MAX(1.0f, ascent + descent);
+            CGFloat trailingSpacing = 0.0f;
+            if (trailingSpacingValue != NULL)
+                CFNumberGetValue(trailingSpacingValue, kCFNumberCGFloatType, &trailingSpacing);
+            CGFloat contentWidth = MAX(1.0f, runWidth - trailingSpacing);
+            UIImage *emojiImage = TGEmojiImageOfSize((__bridge NSString *)emojiValue, imageSize);
+            if (emojiImage != nil)
+            {
+                CGFloat imageX = lineOrigin.x + runPosition.x + (contentWidth - imageSize) / 2.0f;
+                CGFloat imageY = lineOrigin.y - ascent;
+                [emojiImage drawInRect:CGRectMake(imageX, imageY, imageSize, imageSize)];
+            }
+        }
     }
 
     CGContextRestoreGState(context);

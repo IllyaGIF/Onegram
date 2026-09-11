@@ -43,12 +43,14 @@
 @property (nonatomic) NSDictionary *datacenterAddressOverrides;
 
 @property (nonatomic, strong, readonly) MTSocksProxySettings *socksProxySettings;
+@property (nonatomic, readonly) bool onegramWebSocketEnabled;
 @property (nonatomic, strong, readonly) MTNetworkSettings *networkSettings;
 
 @property (nonatomic, copy) void (^passwordInputHandler)();
 
 - (MTApiEnvironment *)withUpdatedLangPackCode:(NSString *)langPackCode;
 - (MTApiEnvironment *)withUpdatedSocksProxySettings:(MTSocksProxySettings *)socksProxySettings;
+- (MTApiEnvironment *)withUpdatedOnegramWebSocketEnabled:(bool)onegramWebSocketEnabled;
 - (MTApiEnvironment *)withUpdatedNetworkSettings:(MTNetworkSettings *)networkSettings;
 
 @end

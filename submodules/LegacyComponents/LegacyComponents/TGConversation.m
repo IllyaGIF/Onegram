@@ -459,12 +459,21 @@
 
 @implementation TGConversation
 
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        _nameColorId = -1;
+    return self;
+}
+
 - (instancetype)initWithConversationId:(int64_t)conversationId unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount
 {
     self = [super init];
     if (self != nil)
     {
         _conversationId = conversationId;
+        _nameColorId = -1;
         _unreadCount = unreadCount;
         _serviceUnreadCount = serviceUnreadCount;
     }
@@ -491,6 +500,7 @@
         _maxOutgoingReadDate = [coder decodeInt32ForCKey:"mrod"];
         _about = [coder decodeStringForCKey:"about"];
         _username = [coder decodeStringForCKey:"username"];
+        _nameColorId = [coder decodeInt32ForCKey:"nci"] - 1;
         _outgoing = [coder decodeInt32ForCKey:"out"];
         _unread = [coder decodeInt32ForCKey:"unr"];
         _deliveryError = [coder decodeInt32ForCKey:"der"];
@@ -514,6 +524,7 @@
         _channelRole = [coder decodeInt32ForCKey:"role"];
         _channelIsReadOnly = [coder decodeInt32ForCKey:"ro"];
         _flags = [coder decodeInt64ForCKey:"flags"];
+        _flags &= ~TGConversationFlagHasExplicitContent;
         _leftChat = [coder decodeInt32ForCKey:"lef"];
         _kickedFromChat = [coder decodeInt32ForCKey:"kk"];
         _isChat = false;
@@ -523,7 +534,7 @@
         _isBroadcast = false;
         _migratedToChannelId = [coder decodeInt32ForCKey:"mtci"];
         _migratedToChannelAccessHash = [coder decodeInt64ForCKey:"mtch"];
-        _restrictionReason = [coder decodeStringForCKey:"rr"];
+        _restrictionReason = nil;
         _pinnedMessageId = [coder decodeInt32ForCKey:"pmi"];
         _chatCreationDate = [coder decodeInt32ForCKey:"ccd"];
         _pinnedDate = [coder decodeInt32ForCKey:"pdt"];
@@ -557,6 +568,7 @@
     [coder encodeInt32:_maxOutgoingReadDate forCKey:"mrod"];
     [coder encodeString:_about forCKey:"about"];
     [coder encodeString:_username forCKey:"username"];
+    [coder encodeInt32:_nameColorId + 1 forCKey:"nci"];
     [coder encodeInt32:_outgoing ? 1 : 0 forCKey:"out"];
     [coder encodeInt32:_unread ? 1 : 0 forCKey:"unr"];
     [coder encodeInt32:_deliveryError ? 1 : 0 forCKey:"der"];
@@ -613,6 +625,7 @@
     conversation.maxOutgoingReadDate = _maxOutgoingReadDate;
     conversation.about = _about;
     conversation.username = _username;
+    conversation.nameColorId = _nameColorId;
     conversation.outgoing = _outgoing;
     conversation.unread = _unread;
     conversation.deliveryError = _deliveryError;
@@ -728,7 +741,7 @@
 
 - (BOOL)isEqualToConversation:(TGConversation *)other
 {
-    if (_conversationId != other.conversationId || _outgoing != other.outgoing || _messageDate != other.messageDate || _fromUid != other.fromUid || ![_text isEqualToString:other.text] || _unreadCount != other.unreadCount || _serviceUnreadCount != other.serviceUnreadCount || _unread != other.unread || _isChat != other.isChat || _isArchived != other.isArchived || _deliveryError != other.deliveryError || _deliveryState != other.deliveryState)
+    if (_conversationId != other.conversationId || _outgoing != other.outgoing || _messageDate != other.messageDate || _fromUid != other.fromUid || ![_text isEqualToString:other.text] || _unreadCount != other.unreadCount || _serviceUnreadCount != other.serviceUnreadCount || _unread != other.unread || _isChat != other.isChat || _isArchived != other.isArchived || _deliveryError != other.deliveryError || _deliveryState != other.deliveryState || _nameColorId != other.nameColorId)
         return false;
     
     if (_media.count != other.media.count)
@@ -816,7 +829,7 @@
 
 - (BOOL)isEqualToConversationIgnoringMessage:(TGConversation *)other
 {
-    if (_conversationId != other.conversationId || _isChat != other.isChat)
+    if (_conversationId != other.conversationId || _isChat != other.isChat || _nameColorId != other.nameColorId)
         return false;
     
     if (_isChat)
@@ -1068,6 +1081,8 @@
     self.accessHash = conversation.accessHash;
     self.about = conversation.about;
     self.username = conversation.username;
+    if (!conversation.isChannel || !conversation.isMin || conversation.nameColorId >= 0)
+        self.nameColorId = conversation.nameColorId;
     self.chatTitle = conversation.chatTitle;
     self.chatPhotoSmall = conversation.chatPhotoSmall;
     self.chatPhotoMedium = conversation.chatPhotoMedium;
@@ -1108,6 +1123,8 @@
     _chatPhotoFileReferenceSmall = channel.chatPhotoFileReferenceSmall;
     _chatPhotoFileReferenceBig = channel.chatPhotoFileReferenceBig;
     _username = channel.username;
+    if (!channel.isMin || channel.nameColorId >= 0)
+        _nameColorId = channel.nameColorId;
     if (channel.accessHash != 0 && _accessHash != channel.accessHash) {
         _accessHash = channel.accessHash;
     }
@@ -1184,15 +1201,11 @@
 }
 
 - (bool)hasExplicitContent {
-    return _flags & TGConversationFlagHasExplicitContent;
+    return false;
 }
 
-- (void)setHasExplicitContent:(bool)hasExplicitContent {
-    if (hasExplicitContent) {
-        _flags |= TGConversationFlagHasExplicitContent;
-    } else {
-        _flags &= ~TGConversationFlagHasExplicitContent;
-    }
+- (void)setHasExplicitContent:(bool)__unused hasExplicitContent {
+    _flags &= ~TGConversationFlagHasExplicitContent;
 }
 
 - (bool)hasAdmins {

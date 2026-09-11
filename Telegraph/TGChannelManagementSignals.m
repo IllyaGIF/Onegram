@@ -92,6 +92,31 @@ static inline void TGIOS6MarkChannelInvalidPeer(int64_t peerId, NSString *reason
     TGLog(@"FULL channel.markInvalidPeer peer=%lld reason=%@", peerId, reason);
 }
 
+static void TGIOS6StoreChannelHistoryChats(NSArray *chats)
+{
+    if (chats.count == 0)
+        return;
+
+    NSMutableArray *channels = [[NSMutableArray alloc] init];
+    for (TLChat *chat in chats)
+    {
+        TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chat];
+        if (conversation == nil || !TGPeerIdIsChannel(conversation.conversationId))
+            continue;
+
+        int64_t apiChannelId = TGIOS6ApiChannelIdForConversation(conversation);
+        if (apiChannelId > 0)
+        {
+            [TGDatabaseInstance() setConversationCustomProperty:conversation.conversationId name:murMurHash32(@"ios6ApiChannelId") value:[NSData dataWithBytes:&apiChannelId length:sizeof(apiChannelId)]];
+            [TGDatabaseInstance() setConversationCustomProperty:conversation.conversationId name:murMurHash32(@"ios6InvalidPeer") value:nil];
+        }
+        [channels addObject:conversation];
+    }
+
+    if (channels.count != 0)
+        [TGDatabaseInstance() updateChannels:channels];
+}
+
 @implementation TGChannelManagementSignals
 
 + (SSignal *)makeChannelWithTitle:(NSString *)title about:(NSString *)about group:(bool)group
@@ -298,6 +323,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         
         return [[[[TGTelegramNetworking instance] requestSignal:getHistory] mapToSignal:^SSignal *(TLmessages_Messages *messages) {
             [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
+            TGIOS6StoreChannelHistoryChats(messages.chats);
             IOS6Trace(@"TRACE channelHistoryAround success peer=%lld messages=%d chats=%d users=%d response=%@", peerId, (int)messages.messages.count, (int)messages.chats.count, (int)messages.users.count, NSStringFromClass([messages class]));
             
             int32_t pts = 0;
@@ -386,6 +412,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         
         return [[[[TGTelegramNetworking instance] requestSignal:getHistory] mapToSignal:^SSignal *(TLmessages_Messages *messages) {
             [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
+            TGIOS6StoreChannelHistoryChats(messages.chats);
             IOS6Trace(@"TRACE channelHistoryTail success peer=%lld messages=%d chats=%d users=%d response=%@", peerId, (int)messages.messages.count, (int)messages.chats.count, (int)messages.users.count, NSStringFromClass([messages class]));
             int32_t pts = 0;
             NSArray *collapsed = nil;
@@ -528,6 +555,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     
     return [[[[[TGTelegramNetworking instance] requestSignal:request] mapToSignal:^SSignal *(TLmessages_Messages *messages) {
         [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
+        TGIOS6StoreChannelHistoryChats(messages.chats);
         IOS6Trace(@"TRACE channelHole success peer=%lld messages=%d chats=%d users=%d response=%@", peerId, (int)messages.messages.count, (int)messages.chats.count, (int)messages.users.count, NSStringFromClass([messages class]));
         int32_t pts = 0;
         NSArray *collapsed = nil;

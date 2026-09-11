@@ -143,7 +143,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                                                                                                            (__bridge id)kSecAttrService: @"org.mtproto.MTKeychain",
                                                                                                            (__bridge id)kSecAttrAccount: [[NSString alloc] initWithFormat:@"MTKeychain:%@", name],
 #if TARGET_OS_IPHONE
-                                                                                                           (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAlwaysThisDeviceOnly,
+                                                                                                           (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
 #endif
                                                                                                            (__bridge id)kSecReturnData: (id)kCFBooleanTrue,
                                                                                                            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne
@@ -164,7 +164,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                 }
                 else
                 {
-                    keychainReadQuery[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+                    keychainReadQuery[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAlwaysThisDeviceOnly;
                     readStatus = SecItemCopyMatching((__bridge CFDictionaryRef)keychainReadQuery, (CFTypeRef *)&keyData);
                     if (readStatus == noErr && keyData != NULL)
                     {

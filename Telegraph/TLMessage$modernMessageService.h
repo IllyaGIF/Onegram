@@ -7,6 +7,7 @@
 
 @property (nonatomic) int32_t flags;
 @property (nonatomic) int32_t from_id;
+@property (nonatomic) int64_t senderPeerId;
 @property (nonatomic) TLPeer *to_id;
 @property (nonatomic) int32_t reply_to_msg_id;
 @property (nonatomic) int32_t date;

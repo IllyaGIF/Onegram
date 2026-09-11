@@ -1,6 +1,13 @@
 #import <UIKit/UIKit.h>
 #import <CoreText/CoreText.h>
 
+typedef NS_ENUM(NSInteger, TGEmojiRenderMode)
+{
+    TGEmojiRenderModeStockOnly = 0,
+    TGEmojiRenderModeNewOnly = 1,
+    TGEmojiRenderModeCombined = 2
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -13,6 +20,13 @@ UIFont *TGMediumSystemFontOfSize(CGFloat size);
 UIFont *TGSemiboldSystemFontOfSize(CGFloat size);
 UIFont *TGItalicSystemFontOfSize(CGFloat size);
 UIFont *TGFixedSystemFontOfSize(CGFloat size);
+UIFont *TGEmojiFontOfSize(CGFloat size);
+UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size);
+TGEmojiRenderMode TGCurrentEmojiRenderMode(void);
+void TGSetEmojiRenderMode(TGEmojiRenderMode mode);
+bool TGEmojiPackMatchAtIndex(NSString *text, NSUInteger index, NSRange *range);
+bool TGEmojiNeedsPack(NSString *emoji);
+CTFontRef TGCoreTextFontForUIFont(UIFont *font);
 
 CTFontRef TGCoreTextSystemFontOfSize(CGFloat size);
 CTFontRef TGCoreTextMediumFontOfSize(CGFloat size);

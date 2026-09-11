@@ -173,6 +173,9 @@ typedef enum {
 
 - (SSignal *)socksProxySettings;
 
+- (bool)onegramWebSocketProxyEnabled;
+- (void)setOnegramWebSocketProxyEnabled:(bool)enabled;
+
 @end
 
 @interface MTRequest (LegacyTL)

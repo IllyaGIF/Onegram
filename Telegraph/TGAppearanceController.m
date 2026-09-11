@@ -23,6 +23,7 @@
 
 #import "TGWallpaperListController.h"
 #import "TGAppearanceAutoNightController.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGFont.h"
 
 @interface TGAppearanceController () <ASWatcher>
 {
@@ -39,6 +40,9 @@
     TGDisclosureActionCollectionItem *_autoNightItem;
     TGSwitchCollectionItem *_newGesturesItem;
     TGSwitchCollectionItem *_classicIOS6StyleItem;
+    TGCheckCollectionItem *_emojiStockItem;
+    TGCheckCollectionItem *_emojiNewItem;
+    TGCheckCollectionItem *_emojiCombinedItem;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -131,6 +135,15 @@
         ]];
         [self.menuSections addSection:interfaceStyleSection];
         
+        TGCollectionMenuSection *emojiSection = [[TGCollectionMenuSection alloc] initWithItems:@
+        [
+         [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.Emoji")],
+         _emojiStockItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.EmojiStockOnly") action:@selector(emojiStockPressed)],
+         _emojiNewItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.EmojiNewOnly") action:@selector(emojiNewPressed)],
+         _emojiCombinedItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.EmojiCombined") action:@selector(emojiCombinedPressed)]
+        ]];
+        [self.menuSections addSection:emojiSection];
+
         TGCollectionMenuSection *themeSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ColorTheme")],
@@ -142,6 +155,7 @@
         [self.menuSections addSection:themeSection];
 
         [self updateSelection];
+        [self updateEmojiSelection];
         
         [ActionStageInstance() watchForPaths:@[@"/tg/assets/currentWallpaperInfo"] watcher:self];
     }
@@ -314,6 +328,32 @@
     [self setPallete:pallete applyColorWallpaper:true];
 }
 
+- (void)updateEmojiRenderMode:(TGEmojiRenderMode)mode
+{
+    if (TGCurrentEmojiRenderMode() == mode)
+        return;
+
+    TGSetEmojiRenderMode(mode);
+    [self updateEmojiSelection];
+    [_previewItem refreshMetrics];
+    [self.collectionView reloadData];
+}
+
+- (void)emojiStockPressed
+{
+    [self updateEmojiRenderMode:TGEmojiRenderModeStockOnly];
+}
+
+- (void)emojiNewPressed
+{
+    [self updateEmojiRenderMode:TGEmojiRenderModeNewOnly];
+}
+
+- (void)emojiCombinedPressed
+{
+    [self updateEmojiRenderMode:TGEmojiRenderModeCombined];
+}
+
 - (void)setPallete:(TGPresentationPallete *)pallete applyColorWallpaper:(bool)applyColorWallpaper
 {
     if (applyColorWallpaper)
@@ -370,6 +410,14 @@
     _dayItem.isChecked = [savedPallete isMemberOfClass:[TGDayPresentationPallete class]];
     _nightItem.isChecked = [savedPallete isMemberOfClass:[TGNightPresentationPallete class]];
     _nightBlueItem.isChecked = [savedPallete isMemberOfClass:[TGNightBluePresentationPallete class]];
+}
+
+- (void)updateEmojiSelection
+{
+    TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
+    _emojiStockItem.isChecked = mode == TGEmojiRenderModeStockOnly;
+    _emojiNewItem.isChecked = mode == TGEmojiRenderModeNewOnly;
+    _emojiCombinedItem.isChecked = mode == TGEmojiRenderModeCombined;
 }
 
 - (NSArray *)messages

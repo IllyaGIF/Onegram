@@ -1,3 +1,7 @@
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include "../../../../thirdparty/TgVoipWebrtcIOS6/openssl-ios5/include/openssl/opensslconf.h"
+#else
 /* opensslconf.h */
 /* WARNING: Generated automatically from opensslconf.h.in by Configure. */
 
@@ -271,4 +275,6 @@ extern "C" {
 #endif /* HEADER_DES_LOCL_H */
 #ifdef  __cplusplus
 }
+#endif
+
 #endif

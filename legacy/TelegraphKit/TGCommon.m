@@ -423,7 +423,7 @@ static bool TGIOS6MessageIsDiagnosticBreadcrumb(NSString *message)
     NSArray *tokens = @[
         @"phone_requestCall", @"phone_acceptCall", @"phone_confirmCall",
         @"phone_discardCall", @"phone_receivedCall", @"phone_sendSignalingData",
-        @"CALL_", @"PHONE_", @"PEER_ID_INVALID", @"error:", @"rpcError"
+        @"CALL ", @"CALL_", @"PHONE_", @"PEER_ID_INVALID", @"error:", @"rpcError"
     ];
     for (NSString *token in tokens)
     {
@@ -442,7 +442,7 @@ static bool TGIOS6NativeMessageIsUseful(const char *bytes)
         "IOS6",
         "phone_requestCall", "phone_acceptCall", "phone_confirmCall",
         "phone_discardCall", "phone_receivedCall", "phone_sendSignalingData",
-        "CALL_", "PHONE_", "PEER_ID_INVALID", "error:", "rpcError",
+        "CALL ", "CALL_", "PHONE_", "PEER_ID_INVALID", "error:", "rpcError",
         "SIGSEGV", "SIGABRT", "exception", "fatal"
     };
     const size_t tokenCount = sizeof(tokens) / sizeof(tokens[0]);

@@ -10,6 +10,7 @@
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "TGReusableLabel.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGDocumentMediaAttachment.h"
 #import <QuartzCore/QuartzCore.h>
 
@@ -37,7 +38,7 @@ static const int32_t TGMarkedUserId = 314366525;
 @interface TGUserInfoCollectionItemView () <UITextFieldDelegate>
 {
     TGLetteredAvatarView *_avatarView;
-    UILabel *_nameLabel;
+    TGReusableLabel *_nameLabel;
     UILabel *_statusLabel;
     UILabel *_phoneLabel;
     UILabel *_usernameLabel;
@@ -95,11 +96,10 @@ static const int32_t TGMarkedUserId = 314366525;
         [_avatarView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(avatarTapGesture:)]];
         [self addSubview:_avatarView];
         
-        _nameLabel = [[UILabel alloc] init];
+        _nameLabel = [[TGReusableLabel alloc] init];
         _nameLabel.backgroundColor = [UIColor clearColor];
         _nameLabel.textColor = [UIColor blackColor];
         _nameLabel.font = TGMediumSystemFontOfSize(20);
-        _nameLabel.lineBreakMode = NSLineBreakByTruncatingTail;
         _nameLabel.numberOfLines = 1;
         [self addSubview:_nameLabel];
         

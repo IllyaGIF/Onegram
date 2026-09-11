@@ -187,6 +187,7 @@ typedef enum {
 
 @property (nonatomic, strong) NSString *about;
 @property (nonatomic, strong) NSString *username;
+@property (nonatomic) int32_t nameColorId;
 
 @property (nonatomic) id additionalProperties;
 

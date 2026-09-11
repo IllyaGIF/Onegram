@@ -99,6 +99,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 {
     if (emoji.length == 0)
         return nil;
+
     static NSCache *cache = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
@@ -106,15 +107,22 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
         cache = [[NSCache alloc] init];
         cache.countLimit = 64;
     });
+
     NSString *countText = count <= 1 ? nil : (count >= 1000 ? [NSString stringWithFormat:@"%dK", (int)MAX(1, count / 1000)] : [NSString stringWithFormat:@"%d", (int)count]);
-    NSString *displayText = countText.length == 0 ? emoji : [NSString stringWithFormat:@"%@ %@", emoji, countText];
-    NSString *cacheKey = [NSString stringWithFormat:@"%@/%d", displayText, selected ? 1 : 0];
+    NSString *cacheKey = [NSString stringWithFormat:@"%@/%@/%d", emoji, countText ?: @"", selected ? 1 : 0];
     UIImage *image = [cache objectForKey:cacheKey];
     if (image != nil)
         return image;
+
     UIFont *font = TGSystemFontOfSize(12.0f);
-    CGSize textSize = [displayText sizeWithFont:font];
-    CGSize size = CGSizeMake(MAX(30.0f, MIN(160.0f, ceil(textSize.width) + 14.0f)), 22.0f);
+    UIFont *emojiFont = TGEmojiFontOfSize(12.0f);
+    UIImage *emojiImage = TGEmojiImageOfSize(emoji, 15.0f);
+    CGSize emojiSize = emojiImage == nil ? [emoji sizeWithFont:emojiFont] : CGSizeMake(15.0f, 15.0f);
+    CGSize countSize = countText.length == 0 ? CGSizeZero : [countText sizeWithFont:font];
+    CGFloat contentWidth = ceilf(emojiSize.width);
+    if (countText.length != 0)
+        contentWidth += 3.0f + ceilf(countSize.width);
+    CGSize size = CGSizeMake(MAX(30.0f, MIN(160.0f, contentWidth + 14.0f)), 22.0f);
     UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
     UIColor *backgroundColor = selected ? [UIColor colorWithRed:0.0f green:0.48f blue:0.92f alpha:0.34f] : [UIColor colorWithWhite:0.0f alpha:0.10f];
@@ -123,20 +131,16 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     CGContextAddPath(context, path.CGPath);
     CGContextFillPath(context);
     [[UIColor colorWithWhite:0.55f alpha:1.0f] set];
-    if (countText.length == 0)
-    {
-        CGRect emojiRect = CGRectMake(7.0f, roundf((size.height - textSize.height) / 2.0f) + 1.0f, size.width - 14.0f, textSize.height);
-        [emoji drawInRect:emojiRect withFont:font lineBreakMode:UILineBreakModeClip alignment:UITextAlignmentCenter];
-    }
+
+    CGFloat contentX = roundf((size.width - contentWidth) / 2.0f);
+    CGRect emojiRect = CGRectMake(contentX, roundf((size.height - emojiSize.height) / 2.0f), ceilf(emojiSize.width), emojiSize.height);
+    if (emojiImage != nil)
+        [emojiImage drawInRect:emojiRect];
     else
-    {
-        CGSize emojiSize = [emoji sizeWithFont:font];
-        CGSize countSize = [countText sizeWithFont:font];
-        CGFloat contentWidth = ceilf(emojiSize.width) + 3.0f + ceilf(countSize.width);
-        CGFloat contentX = roundf((size.width - contentWidth) / 2.0f);
-        [emoji drawInRect:CGRectMake(contentX, roundf((size.height - emojiSize.height) / 2.0f) + 1.0f, ceilf(emojiSize.width), emojiSize.height) withFont:font lineBreakMode:UILineBreakModeClip alignment:UITextAlignmentLeft];
+        [emoji drawInRect:CGRectOffset(emojiRect, 0.0f, 1.0f) withFont:emojiFont lineBreakMode:UILineBreakModeClip alignment:UITextAlignmentLeft];
+    if (countText.length != 0)
         [countText drawInRect:CGRectMake(contentX + ceilf(emojiSize.width) + 3.0f, roundf((size.height - countSize.height) / 2.0f), ceilf(countSize.width), countSize.height) withFont:font lineBreakMode:UILineBreakModeClip alignment:UITextAlignmentLeft];
-    }
+
     image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     [cache setObject:image forKey:cacheKey];
@@ -339,7 +343,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
         _hasAvatar = authorPeer != nil && [authorPeer isKindOfClass:[TGUser class]];
         if ([authorPeer isKindOfClass:[TGConversation class]]) {
             TGConversation *conversationAuthor = (TGConversation *)authorPeer;
-            if (!conversationAuthor.isChannel || conversationAuthor.isChannelGroup || context.isAdminLog || context.isSavedMessages || context.isFeed) {
+            if (TGMessageViewModelShouldDisplayConversationAvatar(conversationAuthor, context)) {
                 _hasAvatar = true;
             }
         }
