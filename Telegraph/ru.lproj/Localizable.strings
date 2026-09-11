@@ -2869,6 +2869,10 @@ Unused sets are archived when you add more.";
 "Appearance.InterfaceStyle" = "СТИЛЬ ИНТЕРФЕЙСА";
 "Appearance.NewGestures" = "Новые жесты";
 "Appearance.ClassicIOS6Style" = "Классический стиль iOS 6";
+"Appearance.Emoji" = "ЭМОДЗИ";
+"Appearance.EmojiStockOnly" = "Только стандартные";
+"Appearance.EmojiNewOnly" = "Только новые";
+"Appearance.EmojiCombined" = "Объединённые";
 "Appearance.ThemeDayClassic" = "Классическая";
 "Appearance.ThemeDay" = "Дневная";
 "Appearance.ThemeNight" = "Ночная";
@@ -2880,7 +2884,14 @@ Unused sets are archived when you add more.";
 "Appearance.AccentColor" = "Цвет элементов";
 "Appearance.PickAccentColor" = "Выберите цвет";
 "Settings.Donate" = "Донат";
-"Settings.DonateInfo" = "Поддержите Onegram, чтобы помогать развивать и поддерживать приложение. На странице доната можно выбрать любую сумму — поддержка полностью добровольная.";
+"Settings.DonateInfo" = "Поддержите Onegram, чтобы помогать развивать и поддерживать приложение. На странице доната можно выбрать любую сумму поддержка полностью добровольная.";
 "Settings.DonateButton" = "Открыть страницу доната";
 
 "Profile.Music" = "Музыка";
+
+"OnegramProxy.Title" = "Onegram Proxy";
+"OnegramProxy.Enabled" = "Включить Onegram Proxy";
+"OnegramProxy.Transport" = "Транспорт";
+"OnegramProxy.Fallback" = "Резерв";
+"OnegramProxy.Endpoint" = "Сервер";
+"OnegramProxy.Footer" = "Маршрутизирует соединения Telegram через WebSocket серверы Telegram. Если WebSocket недоступен, Onegram возвращается к прямому TCP. Root-helper, VPN и фоновый демон не нужны.";

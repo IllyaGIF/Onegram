@@ -238,10 +238,14 @@ NSString *const TGShareCollectionCellIdentifier = @"TGShareCollectionCell";
         _selectedCircleView.center = _avatarView.center;
         _checkView.frame = CGRectMake(self.bounds.size.width / 2.0f + 30.0f - _checkView.frame.size.width + 6.0f, 60.0f - _checkView.frame.size.height + 6.0f, _checkView.frame.size.width, _checkView.frame.size.height);
 
+        CGFloat titleY = CGRectGetMaxY(_avatarView.frame) + 4.0f;
         if (_singleWord)
-            _titleLabel.frame = CGRectMake((self.frame.size.width - _titleLabel.frame.size.width) / 2.0f, 64.0f, _titleLabel.frame.size.width, _titleLabel.frame.size.height);
+            _titleLabel.frame = CGRectMake((self.bounds.size.width - _titleLabel.frame.size.width) / 2.0f, titleY, _titleLabel.frame.size.width, ceilf(_titleLabel.font.lineHeight));
         else
-            _titleLabel.frame = CGRectMake(0.0f, 64.0f, self.bounds.size.width, _titleLabel.frame.size.height);
+        {
+            CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(self.bounds.size.width, CGFLOAT_MAX)];
+            _titleLabel.frame = CGRectMake(0.0f, titleY, self.bounds.size.width, ceilf(titleSize.height));
+        }
     }];
 }
 

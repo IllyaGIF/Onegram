@@ -2,6 +2,7 @@
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 100000
 #import <CallKit/Callkit.h>
+#import <AVFoundation/AVFoundation.h>
 
 #import <libkern/OSAtomic.h>
 
@@ -9,6 +10,17 @@
 #import "TGAppDelegate.h"
 
 #import "TGCallSession.h"
+
+static void TGCallKitConfigureAudioSession(void)
+{
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    NSError *error = nil;
+    [session setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionAllowBluetooth error:&error];
+    error = nil;
+    [session setMode:AVAudioSessionModeVoiceChat error:&error];
+    error = nil;
+    [session setPreferredIOBufferDuration:0.005 error:&error];
+}
 
 @interface TGCallKitAdapter () <CXProviderDelegate>
 {
@@ -170,23 +182,15 @@
     update.supportsUngrouping = false;
     update.supportsDTMF = false;
     
-    SVariable *audioSessionActivated = [[SVariable alloc] init];
-    [audioSessionActivated set:[SSignal single:@false]];
-    [audioSessionActivated set:_audioSessionActivationPipe.signalProducer()];
-    session.audioSessionActivated = audioSessionActivated;
-    
-    [session setupAudioSession:^
+    TGDispatchOnMainThread(^
     {
-        TGDispatchOnMainThread(^
+        [[self provider] reportNewIncomingCallWithUUID:uuid update:update completion:^(NSError *error)
         {
-            [[self provider] reportNewIncomingCallWithUUID:uuid update:update completion:^(NSError *error)
-            {
-                bool silent = ([error.domain isEqualToString:CXErrorDomainIncomingCall] && error.code == CXErrorCodeIncomingCallErrorFilteredByDoNotDisturb);
-                if (completion != nil)
-                    completion(silent);
-            }];
-        });
-    }];
+            bool silent = ([error.domain isEqualToString:CXErrorDomainIncomingCall] && error.code == CXErrorCodeIncomingCallErrorFilteredByDoNotDisturb);
+            if (completion != nil)
+                completion(silent);
+        }];
+    });
 }
 
 - (CXHandle *)_handleForPeerId:(int64_t)peerId outUser:(TGUser **)outUser
@@ -222,8 +226,8 @@
     
     TGDispatchOnMainThread(^
     {
+        TGCallKitConfigureAudioSession();
         [session markCallAcceptedTime];
-        [session setupAudioSession:nil];
         [action fulfill];
     });
 }
@@ -239,6 +243,7 @@
     
     TGDispatchOnMainThread(^
     {
+        TGCallKitConfigureAudioSession();
         __weak TGCallKitAdapter *weakSelf = self;
         session.onStartedConnecting = ^{
             __strong TGCallKitAdapter *strongSelf = weakSelf;
@@ -289,13 +294,11 @@
 
 - (void)provider:(CXProvider *)__unused provider didActivateAudioSession:(AVAudioSession *)__unused audioSession
 {
-    TGLog(@"CallKitAdapter: did activate audio session");
     _audioSessionActivationPipe.sink(@true);
 }
 
 - (void)provider:(CXProvider *)__unused provider didDeactivateAudioSession:(AVAudioSession *)__unused audioSession
 {
-    TGLog(@"CallKitAdapter: did deactivate audio session");
     [TGCallSession resetAudioSession];
     _audioSessionDeactivationPipe.sink(@true);
 }
@@ -306,6 +309,11 @@
     [_sessions setObject:session forKey:uuid];
     OSSpinLockUnlock(&_sessionsLock);
     
+    SVariable *audioSessionActivated = [[SVariable alloc] init];
+    [audioSessionActivated set:[SSignal single:@false]];
+    [audioSessionActivated set:_audioSessionActivationPipe.signalProducer()];
+    session.audioSessionActivated = audioSessionActivated;
+
     SVariable *audioSessionDeactivated = [[SVariable alloc] init];
     [audioSessionDeactivated set:[SSignal single:@false]];
     [audioSessionDeactivated set:_audioSessionDeactivationPipe.signalProducer()];

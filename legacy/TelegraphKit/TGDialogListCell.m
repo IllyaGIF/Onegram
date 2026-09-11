@@ -37,6 +37,38 @@ static CGFloat TGDialogListContentOffset(void)
     return TGDialogListClassicIOS6Style() ? 72.0f : 80.0f;
 }
 
+static TGReusableLabelLayoutData *TGDialogListTextLayout(NSString *text, UIFont *font, UIColor *color, CGFloat width, NSUInteger maxLines, NSTextAlignment alignment)
+{
+    if (text.length == 0 || font == nil || width <= 0.0f)
+        return nil;
+
+    CTFontRef coreTextFont = TGCoreTextFontForUIFont(font);
+    if (coreTextFont == NULL)
+        return nil;
+
+    TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:color == nil ? [UIColor blackColor] : color linkColor:nil frame:CGRectZero orMaxWidth:width flags:TGReusableLabelLayoutMultiline textAlignment:alignment outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:maxLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
+    CFRelease(coreTextFont);
+    return layout;
+}
+
+static CGSize TGDialogListTextSize(NSString *text, UIFont *font, CGFloat width, NSUInteger maxLines)
+{
+    TGReusableLabelLayoutData *layout = TGDialogListTextLayout(text, font, [UIColor blackColor], width, maxLines, NSTextAlignmentLeft);
+    if (layout == nil)
+        return CGSizeZero;
+
+    CGSize size = layout.size;
+    size.width = MIN(width, CGCeil(layout.drawingWidth));
+    return size;
+}
+
+static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UIColor *color, NSUInteger maxLines, NSTextAlignment alignment)
+{
+    TGReusableLabelLayoutData *layout = TGDialogListTextLayout(text, font, color, rect.size.width, maxLines, alignment);
+    if (layout != nil)
+        [TGReusableLabel drawRichTextInRect:rect precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:nil shadowOffset:CGSizeZero];
+}
+
 @interface TGDialogListTextView : UIView
 {
     NSDictionary *_textAttributes;
@@ -134,6 +166,7 @@ static CGFloat TGDialogListContentOffset(void)
     CGRect textFrame = CGRectOffset(_textFrame, -frame.origin.x, -frame.origin.y);
     CGRect authorNameFrame = CGRectOffset(_authorNameFrame, -frame.origin.x, -frame.origin.y);
     CGRect typingFrame = CGRectOffset(_typingFrame, -frame.origin.x, -frame.origin.y);
+    bool useStableTextDrawing = iosMajorVersion() >= 7;
     
     if (_isEncrypted)
     {
@@ -144,7 +177,7 @@ static CGFloat TGDialogListContentOffset(void)
     CGContextSetFillColorWithColor(context, _isEncrypted ? _presentation.pallete.dialogEncryptedColor.CGColor : _presentation.pallete.dialogTitleColor.CGColor);
     if (CGRectIntersectsRect(rect, titleFrame))
     {
-        if (iosMajorVersion() >= 7 && _presentation != nil)
+        if (iosMajorVersion() >= 7 && !useStableTextDrawing && _presentation != nil)
         {
             NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
             style.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -160,8 +193,7 @@ static CGFloat TGDialogListContentOffset(void)
         }
         else
         {
-            CGSize titleSize = [_title sizeWithFont:_titleFont];
-            [_title drawInRect:CGRectMake(titleFrame.origin.x, titleFrame.origin.y, MIN(titleSize.width, titleFrame.size.width), titleFrame.size.height) withFont:_titleFont lineBreakMode:NSLineBreakByTruncatingTail alignment:NSTextAlignmentLeft];
+            TGDialogListDrawText(_title, titleFrame, _titleFont, _isEncrypted ? _presentation.pallete.dialogEncryptedColor : _presentation.pallete.dialogTitleColor, 1, NSTextAlignmentLeft);
         }
     }
     
@@ -169,14 +201,13 @@ static CGFloat TGDialogListContentOffset(void)
     {
         CGContextSetFillColorWithColor(context, _actionTextColor.CGColor);
         
-        if (iosMajorVersion() >= 7)
+        if (iosMajorVersion() >= 7 && !useStableTextDrawing)
         {
             [_typingText drawWithRect:typingFrame options:NSStringDrawingUsesLineFragmentOrigin attributes:_typingAttributes context:nil];
         }
         else
         {
-            CGSize typingSize = [_typingText sizeWithFont:_textFont];
-            [_typingText drawInRect:CGRectMake(typingFrame.origin.x, typingFrame.origin.y, MIN(typingSize.width, typingFrame.size.width), typingFrame.size.height) withFont:_textFont lineBreakMode:NSLineBreakByClipping];
+            TGDialogListDrawText(_typingText, typingFrame, _textFont, _actionTextColor, 1, NSTextAlignmentLeft);
         }
     }
     else
@@ -191,13 +222,13 @@ static CGFloat TGDialogListContentOffset(void)
                 textFrame = CGRectMake(textFrame.origin.x + 19, textFrame.origin.y, textFrame.size.width - 19, textFrame.size.height);
             }
             
-            if (iosMajorVersion() >= 7)
+            if (iosMajorVersion() >= 7 && !useStableTextDrawing)
             {
                 [_text drawWithRect:textFrame options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine attributes:_textAttributes context:nil];
             }
             else
             {
-                [_text drawInRect:textFrame withFont:_textFont lineBreakMode:NSLineBreakByTruncatingTail alignment:NSTextAlignmentLeft];
+                TGDialogListDrawText(_text, textFrame, _textFont, _textColor, textFrame.size.height >= 30.0f ? 2 : 1, NSTextAlignmentLeft);
             }
             
             //CGContextFillRect(context, textFrame);
@@ -208,7 +239,7 @@ static CGFloat TGDialogListContentOffset(void)
             CGContextSetFillColorWithColor(context, _authorNameColor == nil ? [UIColor blackColor].CGColor : [_authorNameColor CGColor]);
             if (CGRectIntersectsRect(rect, authorNameFrame))
             {
-                if (iosMajorVersion() >= 7)
+                if (iosMajorVersion() >= 7 && !useStableTextDrawing)
                 {
                     NSDictionary *attributes = nil;
                     NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
@@ -225,8 +256,7 @@ static CGFloat TGDialogListContentOffset(void)
                 }
                 else
                 {
-                    CGSize authorNameSize = [_authorName sizeWithFont:_authorNameFont];
-                    [_authorName drawInRect:CGRectMake(authorNameFrame.origin.x, authorNameFrame.origin.y, MIN(authorNameSize.width, authorNameFrame.size.width), authorNameFrame.size.height) withFont:_authorNameFont lineBreakMode:NSLineBreakByTruncatingTail alignment:NSTextAlignmentRight];
+                    TGDialogListDrawText(_authorName, authorNameFrame, _authorNameFont, _authorNameColor == nil ? [UIColor blackColor] : _authorNameColor, 1, useStableTextDrawing ? NSTextAlignmentLeft : NSTextAlignmentRight);
                 }
                 
                 //CGContextFillRect(context, authorNameFrame);
@@ -2183,7 +2213,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             titleLabelWidth -= _premiumIcon.bounds.size.width + 10.0f;
         }
         
-        titleLabelWidth = MIN(titleLabelWidth, [_titleText sizeWithFont:_textView.titleFont].width);
+        titleLabelWidth = MIN(titleLabelWidth, TGDialogListTextSize(_titleText, _textView.titleFont, 10000.0f, 1).width);
         
         TG_TIMESTAMP_MEASURE(cellLayout);
         
@@ -2205,7 +2235,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         if (_typingDotsContainer.superview != nil)
         {
-            CGSize typingSize = [_textView.typingText sizeWithFont:_textView.textFont constrainedToSize:typingRect.size lineBreakMode:NSLineBreakByTruncatingTail];
+            CGSize typingSize = TGDialogListTextSize(_textView.typingText, _textView.textFont, typingRect.size.width, 1);
             
             CGRect typingDotsFrame = _typingDotsContainer.frame;
             typingDotsFrame.origin.x = TGIsRTL() ? messageRect.origin.x : (typingRect.origin.x + typingSize.width);
@@ -2217,7 +2247,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         {
             _textView.authorNameFrame = CGRectMake(contentX, 29.0f + TGScreenPixel, size.width - contentX - 4.0f - rightPadding, 20);
             
-            messageRect.origin.y += iosMajorVersion() >= 7 ? (10 + TGScreenPixel) : 17;
+            messageRect.origin.y += iosMajorVersion() >= 7 ? (16 + TGScreenPixel) : 17;
             messageRect.size.height -= 12;
         }
         
@@ -2225,7 +2255,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         titleRect.size.width = titleLabelWidth;
         
-        if (_authorName != nil && !_hideAuthorName && [_messageText sizeWithFont:_textView.textFont constrainedToSize:messageRect.size].height < 20)
+        if (iosMajorVersion() < 7 && _authorName != nil && !_hideAuthorName && TGDialogListTextSize(_messageText, _textView.textFont, messageRect.size.width, 2).height < 20)
             messageRect.origin.y += 9;
         
         if (_isVerified) {

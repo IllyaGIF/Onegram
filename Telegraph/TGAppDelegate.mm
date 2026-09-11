@@ -30,7 +30,6 @@
 #import "IOS6NotificationProbe.h"
 #import "TGApplyUpdatesActor.h"
 #import "TGPresentation.h"
-#import "../Modules/NekroEngine/FuckDPI/TGRouteCoordinator.h"
 
 @implementation NSArray (TGIOS6FirstObject)
 
@@ -886,9 +885,10 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
 #if __DARWIN_UNIX03
                 uintptr_t pc = (uintptr_t)ucontext->uc_mcontext->__ss.__pc;
                 uintptr_t lr = (uintptr_t)ucontext->uc_mcontext->__ss.__lr;
+                uintptr_t sp = (uintptr_t)ucontext->uc_mcontext->__ss.__sp;
                 TGIOS6WriteRegisterLine(fd, "pc", pc);
                 TGIOS6WriteRegisterLine(fd, "lr", lr);
-                TGIOS6WriteRegisterLine(fd, "sp", (uintptr_t)ucontext->uc_mcontext->__ss.__sp);
+                TGIOS6WriteRegisterLine(fd, "sp", sp);
                 TGIOS6WriteRegisterLine(fd, "fp", (uintptr_t)ucontext->uc_mcontext->__ss.__r[7]);
                 TGIOS6WriteRegisterLine(fd, "r0", (uintptr_t)ucontext->uc_mcontext->__ss.__r[0]);
                 TGIOS6WriteRegisterLine(fd, "r1", (uintptr_t)ucontext->uc_mcontext->__ss.__r[1]);
@@ -905,9 +905,10 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
 #else
                 uintptr_t pc = (uintptr_t)ucontext->uc_mcontext->ss.pc;
                 uintptr_t lr = (uintptr_t)ucontext->uc_mcontext->ss.lr;
+                uintptr_t sp = (uintptr_t)ucontext->uc_mcontext->ss.sp;
                 TGIOS6WriteRegisterLine(fd, "pc", pc);
                 TGIOS6WriteRegisterLine(fd, "lr", lr);
-                TGIOS6WriteRegisterLine(fd, "sp", (uintptr_t)ucontext->uc_mcontext->ss.sp);
+                TGIOS6WriteRegisterLine(fd, "sp", sp);
                 TGIOS6WriteRegisterLine(fd, "fp", (uintptr_t)ucontext->uc_mcontext->ss.r[7]);
                 TGIOS6WriteRegisterLine(fd, "r0", (uintptr_t)ucontext->uc_mcontext->ss.r[0]);
                 TGIOS6WriteRegisterLine(fd, "r1", (uintptr_t)ucontext->uc_mcontext->ss.r[1]);
@@ -929,6 +930,20 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 if (TGIOS6ExecutableImageBase != 0 && lr >= TGIOS6ExecutableImageBase && lr < TGIOS6ExecutableImageEnd)
                 {
                     TGIOS6WriteRegisterLine(fd, "lr_app_offset", lr - TGIOS6ExecutableImageBase);
+                }
+                if (TGIOS6ExecutableImageBase != 0 && sp != 0)
+                {
+                    const uintptr_t *stackWords = (const uintptr_t *)sp;
+                    int stackAppCount = 0;
+                    for (int i = 0; i < 64 && stackAppCount < 20; i++)
+                    {
+                        uintptr_t candidate = stackWords[i];
+                        if (candidate >= TGIOS6ExecutableImageBase && candidate < TGIOS6ExecutableImageEnd)
+                        {
+                            TGIOS6WriteRegisterLine(fd, "stack_app", (uintptr_t)((intptr_t)candidate - TGIOS6ExecutableImageSlide));
+                            stackAppCount++;
+                        }
+                    }
                 }
 #elif defined(__i386__)
 #if __DARWIN_UNIX03
@@ -1449,12 +1464,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
-    {
-        [TGRouteCoordinator checkAndAutoStart];
-    });
-    
     bool ios6ColdBackgroundApplicationLaunch =
     [[UIDevice currentDevice].systemVersion intValue] <= 6 &&
     application.applicationState == UIApplicationStateBackground;
@@ -2150,7 +2159,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        int unreadCount = [TGDatabaseInstance() databaseState].unreadCount;
+        int unreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
+        int unreadChannelsCount = [TGDatabaseInstance() unreadChannelsCount];
+        int unreadCount = MAX(0, unreadChatsCount) + MAX(0, unreadChannelsCount);
         dispatch_async(dispatch_get_main_queue(), ^
         {
             [[UIApplication sharedApplication] setApplicationIconBadgeNumber:unreadCount];
@@ -2894,7 +2905,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     _inBackground = true;
 
-    [TGRouteCoordinator stopForBackground];
 
     _ios6NotificationTransportAllowedForBackgroundSession = TGIOS6BackgroundNotificationsEnabled() || TGTelegraphInstance.callManager.hasActiveCall;
 
@@ -3061,6 +3071,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }
     
     [[TGTelegramNetworking instance] resume];
+    [TGDatabaseInstance() processAndScheduleMute];
 }
 
 - (void)applicationDidBecomeActive:(UIApplication *)__unused application

@@ -518,7 +518,7 @@ static CTFontRef textFontForSize(CGFloat size)
         _hasAvatar = authorPeer != nil && ![authorPeer isKindOfClass:[TGConversation class]];
         if ([authorPeer isKindOfClass:[TGConversation class]]) {
             TGConversation *conversationAuthor = (TGConversation *)authorPeer;
-            if (!conversationAuthor.isChannel || conversationAuthor.isChannelGroup || context.isAdminLog || context.isSavedMessages || context.isFeed) {
+            if (TGMessageViewModelShouldDisplayConversationAvatar(conversationAuthor, context)) {
                 _hasAvatar = true;
             }
         }
@@ -1534,6 +1534,13 @@ static CTFontRef textFontForSize(CGFloat size)
 }
 
 - (void)dealloc {
+    _boundDoubleTapRecognizer.delegate = nil;
+    [_boundDoubleTapRecognizer removeTarget:self action:@selector(messageDoubleTapGesture:)];
+    _boundBackgroundDoubleTapRecognizer.delegate = nil;
+    [_boundBackgroundDoubleTapRecognizer removeTarget:self action:@selector(backgroundDoubleTapGesture:)];
+    TGMessageImageViewContainer *imageContainer = (TGMessageImageViewContainer *)[_imageModel boundView];
+    if ([imageContainer isKindOfClass:[TGMessageImageViewContainer class]])
+        imageContainer.imageView.delegate = nil;
     [self invalidateLifetimeReference];
     [_callbackButtonInProgressDisposable dispose];
 }
@@ -1822,14 +1829,16 @@ static CTFontRef textFontForSize(CGFloat size)
     
     [[_imageModel boundView] removeGestureRecognizer:_boundDoubleTapRecognizer];
     _boundDoubleTapRecognizer.delegate = nil;
+    [_boundDoubleTapRecognizer removeTarget:self action:@selector(messageDoubleTapGesture:)];
     _boundDoubleTapRecognizer = nil;
     
-    ((TGMessageImageViewContainer *)[_imageModel boundView]).imageView.delegate = self;
+    ((TGMessageImageViewContainer *)[_imageModel boundView]).imageView.delegate = nil;
     
     if (_backgroundModel != nil)
     {
         [[_backgroundModel boundView] removeGestureRecognizer:_boundBackgroundDoubleTapRecognizer];
         _boundBackgroundDoubleTapRecognizer.delegate = nil;
+        [_boundBackgroundDoubleTapRecognizer removeTarget:self action:@selector(backgroundDoubleTapGesture:)];
         _boundBackgroundDoubleTapRecognizer = nil;
     }
     

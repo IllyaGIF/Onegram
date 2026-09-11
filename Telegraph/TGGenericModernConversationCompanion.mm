@@ -1109,7 +1109,7 @@ static TGGenericModernConversationCompanion *TGIOS4ResolveGenericModernConversat
         @"downloadManagerStateChanged",
         @"/as/media/imageThumbnailUpdated",
         @"/tg/service/synchronizationstate",
-        @"/tg/unreadCount",
+        @"/tg/unreadChatsCount",
         @"/tg/assets/currentWallpaperInfo",
         @"/tg/conversation/historyCleared",
         @"/tg/removedMediasForMessageIds",
@@ -6254,19 +6254,22 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         
         [self _updateNetworkState:stateString];
     }
-    else if ([path isEqualToString:@"/tg/unreadCount"])
+    else if ([path isEqualToString:@"/tg/unreadChatsCount"])
     {
         if ([self _shouldDisplayProcessUnreadCount])
         {
-            dispatch_async(dispatch_get_main_queue(), ^ // request to controller
+            dispatch_async(dispatch_get_main_queue(), ^
             {
-                [TGDatabaseInstance() dispatchOnDatabaseThread:^ // request to database
+                [TGDatabaseInstance() dispatchOnDatabaseThread:^
                 {
-                    int unreadCount = [TGDatabaseInstance() databaseState].unreadCount;
+                    int unreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
+                    int unreadChannelsCount = [TGDatabaseInstance() unreadChannelsCount];
+                    if (unreadChatsCount == INT_MIN || unreadChannelsCount == INT_MIN)
+                        return;
                     TGDispatchOnMainThread(^
                     {
                         TGModernConversationController *controller = self.controller;
-                        [controller setGlobalUnreadCount:unreadCount];
+                        [controller setGlobalUnreadCount:unreadChatsCount + unreadChannelsCount];
                     });
                 } synchronous:false];
             });

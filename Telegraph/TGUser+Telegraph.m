@@ -206,8 +206,8 @@ int extractUserLinkFromUpdate(TLUpdate$updateContactLink *linkUpdate)
             
             self.isVerified = concreteUser.flags & (1 << 17);
             self.isPremium = concreteUser.flags & (1 << 28);
-            self.hasExplicitContent = concreteUser.flags & (1 << 18);
-            self.restrictionReason = concreteUser.restriction_reason;
+            self.hasExplicitContent = false;
+            self.restrictionReason = nil;
             self.contextBotPlaceholder = concreteUser.inlineBotPlaceholder;
             self.isContextBot = concreteUser.flags & (1 << 19);
             self.minimalRepresentation = concreteUser.flags & (1 << 20);

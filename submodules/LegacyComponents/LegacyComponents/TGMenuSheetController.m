@@ -89,6 +89,9 @@ typedef enum
     bool _nativeDismissalManual;
     void (^_nativeDismissCompletion)(void);
 }
+
+- (void)_updateLegacyPopoverContentSizeAnimated:(bool)animated;
+
 @end
 
 @implementation TGMenuSheetController
@@ -254,6 +257,26 @@ typedef enum
     objc_setAssociatedObject(actionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
+- (void)_updateLegacyPopoverContentSizeAnimated:(bool)animated
+{
+    if (!TGIsPad() || iosMajorVersion() >= 7 || _forceFullScreen || _sheetView == nil)
+        return;
+
+    _sheetView.menuWidth = TGMenuSheetPadMenuWidth;
+    CGSize menuSize = _sheetView.menuSize;
+    self.contentSizeForViewInPopover = menuSize;
+
+    if (_popoverController != nil)
+        [_popoverController setPopoverContentSize:menuSize animated:animated];
+
+    if (_containerView != nil)
+    {
+        _sheetView.frame = CGRectMake(0.0f, 0.0f, menuSize.width, menuSize.height);
+        _containerView.frame = _sheetView.bounds;
+        [_sheetView layoutSubviews];
+    }
+}
+
 - (instancetype)initWithContext:(id<LegacyComponentsContext>)context dark:(bool)dark
 {
     self = [super init];
@@ -285,9 +308,15 @@ typedef enum
 
 - (void)dealloc
 {
+    [_dimView removeTarget:self action:@selector(dimViewPressed) forControlEvents:UIControlEventTouchUpInside];
     _nativeActionSheet.delegate = nil;
     if (_nativeActionSheet != nil)
         objc_setAssociatedObject(_nativeActionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (iosMajorVersion() < 5)
+    {
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillShowNotification object:nil];
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:UIKeyboardWillHideNotification object:nil];
+    }
     [_disposables dispose];
     [_sizeClassDisposable dispose];
 }
@@ -303,17 +332,21 @@ typedef enum
         self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     }
     
-    __weak TGMenuSheetController *weakSelf = self;
-    _sizeClassDisposable = [[SMetaDisposable alloc] init];
-    [_sizeClassDisposable setDisposable:[[_context sizeClassSignal] startWithNext:^(NSNumber *next)
+    _sizeClass = [_context currentSizeClass];
+    if (iosMajorVersion() >= 8)
     {
-        __strong TGMenuSheetController *strongSelf = weakSelf;
-        if (strongSelf == nil)
-            return;
-        
-        UIUserInterfaceSizeClass sizeClass = next.integerValue;
-        [strongSelf updateTraitsWithSizeClass:sizeClass];
-    }]];
+        __weak TGMenuSheetController *weakSelf = self;
+        _sizeClassDisposable = [[SMetaDisposable alloc] init];
+        [_sizeClassDisposable setDisposable:[[_context sizeClassSignal] startWithNext:^(NSNumber *next)
+        {
+            __strong TGMenuSheetController *strongSelf = weakSelf;
+            if (strongSelf == nil)
+                return;
+            
+            UIUserInterfaceSizeClass sizeClass = next.integerValue;
+            [strongSelf updateTraitsWithSizeClass:sizeClass];
+        }]];
+    }
     
     _containerView = [[TGMenuSheetContainerView alloc] initWithFrame:CGRectZero];
     [self.view addSubview:_containerView];
@@ -336,7 +369,15 @@ typedef enum
     
     [_containerView addSubview:_sheetView];
     
-    _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+    if (iosMajorVersion() >= 5)
+    {
+        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+    }
+    else
+    {
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillShowNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillHideNotification object:nil];
+    }
 }
 
 - (void)setRequiresShadow:(bool)requiresShadow
@@ -351,9 +392,18 @@ typedef enum
 
 - (void)setRequiuresDimView:(bool)requiuresDimView
 {
+    if (_requiuresDimView == requiuresDimView)
+        return;
+    
     _requiuresDimView = requiuresDimView;
     
-    if (_requiuresDimView && _itemViews.count > 0 && _containerView != nil)
+    if (!_requiuresDimView)
+    {
+        [_dimView removeTarget:self action:@selector(dimViewPressed) forControlEvents:UIControlEventTouchUpInside];
+        [_dimView removeFromSuperview];
+        _dimView = nil;
+    }
+    else if (_itemViews.count > 0 && _containerView != nil && _dimView == nil)
     {
         _dimView = [[TGMenuSheetDimView alloc] initWithActionMenuView:_sheetView];
         _dimView.alpha = 0.0f;
@@ -410,7 +460,10 @@ typedef enum
         if (strongSelf == nil)
             return;
         
-        [strongSelf repositionMenuWithReferenceSize:[strongSelf->_context fullscreenBounds].size];
+        if ([strongSelf sizeClass] == UIUserInterfaceSizeClassRegular && !strongSelf->_forceFullScreen)
+            [strongSelf _updateLegacyPopoverContentSizeAnimated:true];
+        else
+            [strongSelf repositionMenuWithReferenceSize:[strongSelf->_context fullscreenBounds].size];
     };
     
     if (animated && (compact || _forceFullScreen))
@@ -599,7 +652,9 @@ typedef enum
     }
     else
     {
+        [self _updateLegacyPopoverContentSizeAnimated:false];
         _popoverController = [[UIPopoverController alloc] initWithContentViewController:self];
+        [self _updateLegacyPopoverContentSizeAnimated:false];
         
         UIColor *backgroundColor = self.pallete != nil ? self.pallete.backgroundColor : [UIColor whiteColor];
         if ([_popoverController respondsToSelector:@selector(setBackgroundColor:)])
@@ -1108,9 +1163,16 @@ typedef enum
         CGSize menuSize = _sheetView.menuSize;
         if (iosMajorVersion() >= 7)
             self.preferredContentSize = menuSize;
-        _sheetView.frame = CGRectMake(0, 0, menuSize.width, self.view.frame.size.height);
+        else
+            self.contentSizeForViewInPopover = menuSize;
+
+        CGFloat sheetHeight = iosMajorVersion() < 7 ? menuSize.height : self.view.frame.size.height;
+        _sheetView.frame = CGRectMake(0, 0, menuSize.width, sheetHeight);
         _containerView.frame = _sheetView.bounds;
         _dimView.frame = CGRectZero;
+
+        if (iosMajorVersion() < 7 && _popoverController != nil)
+            [_popoverController setPopoverContentSize:menuSize animated:false];
     }
     else
     {

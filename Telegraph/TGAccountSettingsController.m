@@ -21,6 +21,8 @@
 #import "TGButtonCollectionItem.h"
 #import "TGWallpapersCollectionItem.h"
 #import "TGVariantCollectionItem.h"
+#import "TGSwitchCollectionItem.h"
+#import "TGCommentCollectionItem.h"
 #import "TGVersionCollectionItem.h"
 
 #import "TGWallpaperListController.h"
@@ -73,7 +75,7 @@
 #import "../legacy/TelegraphKit/TGCommon.h"
 #import "TGProxySetupController.h"
 #import "TGPassportRequestController.h"
-#import "../Modules/NekroEngine/FuckDPI/TGFuckDPIController.h"
+#import "TGTelegramNetworking.h"
 
 #import "TGTwoStepConfigSignal.h"
 
@@ -796,6 +798,69 @@
 
 @end
 
+@interface TGOnegramProxyController : TGCollectionMenuController
+{
+    TGSwitchCollectionItem *_enabledItem;
+    TGVariantCollectionItem *_transportItem;
+    TGVariantCollectionItem *_fallbackItem;
+    TGVariantCollectionItem *_endpointItem;
+}
+@end
+
+@implementation TGOnegramProxyController
+
+- (id)init
+{
+    self = [super init];
+    if (self != nil)
+    {
+        [self setTitleText:TGLocalized(@"OnegramProxy.Title")];
+
+        bool enabled = [[TGTelegramNetworking instance] onegramWebSocketProxyEnabled];
+        _enabledItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Enabled") isOn:enabled];
+        _enabledItem.toggled = ^(bool value, TGSwitchCollectionItem *__unused item)
+        {
+            [[TGTelegramNetworking instance] setOnegramWebSocketProxyEnabled:value];
+        };
+
+        _transportItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Transport") variant:@"WebSocket" action:NULL];
+        _transportItem.hideArrow = true;
+        _transportItem.selectable = false;
+        _transportItem.highlightable = false;
+
+        _fallbackItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Fallback") variant:@"TCP" action:NULL];
+        _fallbackItem.hideArrow = true;
+        _fallbackItem.selectable = false;
+        _fallbackItem.highlightable = false;
+
+        _endpointItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Endpoint") variant:@"kws*.web.telegram.org" action:NULL];
+        _endpointItem.hideArrow = true;
+        _endpointItem.selectable = false;
+        _endpointItem.highlightable = false;
+
+        TGCollectionMenuSection *mainSection = [[TGCollectionMenuSection alloc] initWithItems:@[
+            _enabledItem,
+            _transportItem,
+            _fallbackItem,
+            _endpointItem,
+            [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"OnegramProxy.Footer")]
+        ]];
+        UIEdgeInsets topSectionInsets = mainSection.insets;
+        topSectionInsets.top = 32.0f;
+        mainSection.insets = topSectionInsets;
+        [self.menuSections addSection:mainSection];
+    }
+    return self;
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [_enabledItem setIsOn:[[TGTelegramNetworking instance] onegramWebSocketProxyEnabled] animated:false];
+}
+
+@end
+
 @interface TGAccountSettingsController () <UIAlertViewDelegate>
 {
     int32_t _uid;
@@ -803,7 +868,7 @@
     bool _editing;
     
     TGCollectionMenuSection *_logsSection;
-    TGCollectionMenuSection *_fuckDPISection;
+    TGCollectionMenuSection *_onegramProxySection;
     TGCollectionMenuSection *_headerSection;
     TGCollectionMenuSection *_settingsSection;
     TGCollectionMenuSection *_shortcutSection;
@@ -818,7 +883,7 @@
     TGButtonCollectionItem *_setUsernameItem;
     
     TGDisclosureActionCollectionItem *_logsItem;
-    TGDisclosureActionCollectionItem *_fuckDPIItem;
+    TGDisclosureActionCollectionItem *_onegramProxyItem;
     TGDisclosureActionCollectionItem *_profileMusicItem;
     TGDocumentMediaAttachment *_profileMusicDocument;
     NSArray *_profileMusicDocuments;
@@ -834,6 +899,7 @@
     TGDisclosureActionCollectionItem *_stickerSettingsItem;
     TGDisclosureActionCollectionItem *_clearChatListCacheItem;
     TGDisclosureActionCollectionItem *_developerChannelItem;
+    TGVersionCollectionItem *_versionItem;
     
     TGCollectionMenuSection *_otherSection;
     TGDisclosureActionCollectionItem *_passportItem;
@@ -893,10 +959,10 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem]];
         [self.menuSections addSection:_logsSection];
 
-        _fuckDPIItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"FuckDPI" action:@selector(fuckDPIPressed)];
-        _fuckDPIItem.deselectAutomatically = true;
-        _fuckDPISection = [[TGCollectionMenuSection alloc] initWithItems:@[_fuckDPIItem]];
-        [self.menuSections addSection:_fuckDPISection];
+        _onegramProxyItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Title") action:@selector(onegramProxyPressed)];
+        _onegramProxyItem.deselectAutomatically = true;
+        _onegramProxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_onegramProxyItem]];
+        [self.menuSections addSection:_onegramProxySection];
         
         _proxyItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Proxy") action:@selector(proxyPressed)];
         _proxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_proxyItem]];
@@ -983,9 +1049,15 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         
         _developerChannelItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Канал разраба" action:@selector(developerChannelPressed)];
         _developerChannelItem.deselectAutomatically = true;
+
+        NSDictionary *bundleInfo = [[NSBundle mainBundle] infoDictionary];
+        NSString *version = [bundleInfo objectForKey:@"CFBundleShortVersionString"];
+        NSString *build = [bundleInfo objectForKey:@"CFBundleVersion"];
+        _versionItem = [[TGVersionCollectionItem alloc] initWithVersion:[NSString stringWithFormat:@"Onegram %@v build %@", version ?: @"", build ?: @""]];
         
         TGCollectionMenuSection *infoSection = [[TGCollectionMenuSection alloc] initWithItems:@[
-            _developerChannelItem
+            _developerChannelItem,
+            _versionItem
         ]];
         [self.menuSections addSection:infoSection];
    
@@ -1642,9 +1714,9 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     [self.navigationController pushViewController:controller animated:true];
 }
 
-- (void)fuckDPIPressed
+- (void)onegramProxyPressed
 {
-    TGFuckDPIController *controller = [[TGFuckDPIController alloc] init];
+    TGOnegramProxyController *controller = [[TGOnegramProxyController alloc] init];
     [self.navigationController pushViewController:controller animated:true];
 }
 

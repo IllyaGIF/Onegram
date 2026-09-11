@@ -12,7 +12,7 @@
     
     NSMutableDictionary *_channelStateDisposables;
     
-    NSMutableArray *_uncommitedPeerIds;
+    NSMutableSet *_uncommitedPeerIds;
 }
 
 @end
@@ -23,7 +23,7 @@
     self = [super init];
     if (self != nil) {
         _channelStateDisposables = [[NSMutableDictionary alloc] init];
-        _uncommitedPeerIds = [[NSMutableArray alloc] init];
+        _uncommitedPeerIds = [[NSMutableSet alloc] init];
         
         _channels = [[NSMutableArray alloc] initWithArray:channels];
         [_channels sortUsingComparator:^NSComparisonResult(TGConversation *lhs, TGConversation *rhs) {
@@ -73,25 +73,23 @@
         [_channels addObject:conversation];
     }
     
-    if (![_uncommitedPeerIds containsObject:@(conversation.conversationId)]) {
-        [_uncommitedPeerIds addObject:@(conversation.conversationId)];
-    }
+    [_uncommitedPeerIds addObject:@(conversation.conversationId)];
     
     return true;
 }
 
 - (void)commitUpdatedChannels {
-    NSMutableArray *channels = [[NSMutableArray alloc] init];
-    for (NSNumber *nPeerId in _uncommitedPeerIds) {
-        for (TGConversation *conversation in _channels) {
-            if (conversation.conversationId == [nPeerId longLongValue]) {
-                [channels addObject:conversation];
-                break;
-            }
-        }
-    }
-    
+    if (_uncommitedPeerIds.count == 0)
+        return;
+
+    NSSet *peerIds = [_uncommitedPeerIds copy];
     [_uncommitedPeerIds removeAllObjects];
+
+    NSMutableArray *channels = [[NSMutableArray alloc] initWithCapacity:peerIds.count];
+    for (TGConversation *conversation in _channels) {
+        if ([peerIds containsObject:@(conversation.conversationId)])
+            [channels addObject:conversation];
+    }
 
     if (channels.count != 0) {
         [ActionStageInstance() dispatchResource:@"/tg/conversations" resource:[[SGraphObjectNode alloc] initWithObject:channels]];

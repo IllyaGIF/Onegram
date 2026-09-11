@@ -34,6 +34,7 @@
 #import "TGUser+Telegraph.h"
 #import "TLUser$modernUser.h"
 #import "TGConversation+Telegraph.h"
+#import "TGMessage+Telegraph.h"
 
 #import "TGLogoutRequestBuilder.h"
 #import "TGSendCodeRequestBuilder.h"
@@ -276,6 +277,66 @@ static void TGIOS6LogArchiveDialogs(TLmessages_Dialogs *dialogs, NSString *reaso
     }
 }
 
+static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *dialogs)
+{
+    NSMutableDictionary *messages = [[NSMutableDictionary alloc] init];
+    for (TLMessage *messageDesc in dialogs.messages)
+    {
+        TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
+        if (message.mid != 0 && message.cid != 0)
+            messages[[NSString stringWithFormat:@"%lld:%d", message.cid, message.mid]] = message;
+    }
+
+    TGDialogListRemoteOffset *result = nil;
+    for (TLDialog *baseDialog in dialogs.dialogs)
+    {
+        if (![baseDialog isKindOfClass:[TLDialog$dialogMeta class]])
+            continue;
+
+        TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
+        if ((dialog.flags & (1 << 2)) != 0)
+            continue;
+
+        int64_t peerId = TGIOS6ArchivePeerIdAndType(dialog.peer, NULL, NULL);
+        if (peerId == 0)
+            continue;
+
+        TGMessage *message = messages[[NSString stringWithFormat:@"%lld:%d", peerId, dialog.top_message]];
+        if (message == nil)
+            continue;
+
+        int64_t accessHash = 0;
+        if ([dialog.peer isKindOfClass:[TLPeer$peerUser class]])
+        {
+            int32_t userId = ((TLPeer$peerUser *)dialog.peer).user_id;
+            for (TLUser *user in dialogs.users)
+            {
+                if ([user isKindOfClass:[TLUser$modernUser class]] && ((TLUser$modernUser *)user).n_id == userId)
+                {
+                    accessHash = ((TLUser$modernUser *)user).access_hash;
+                    break;
+                }
+            }
+        }
+        else if ([dialog.peer isKindOfClass:[TLPeer$peerChannel class]])
+        {
+            for (TLChat *chatDesc in dialogs.chats)
+            {
+                TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
+                if (conversation.conversationId == peerId)
+                {
+                    accessHash = conversation.accessHash;
+                    break;
+                }
+            }
+        }
+
+        result = [[TGDialogListRemoteOffset alloc] initWithDate:(int32_t)message.date peerId:peerId accessHash:accessHash messageId:message.mid];
+    }
+
+    return result;
+}
+
 static NSArray *TGIOS6ArchivePeerIdsFromDialogs(TLmessages_Dialogs *dialogs)
 {
     NSMutableArray *peerIds = [[NSMutableArray alloc] init];
@@ -307,6 +368,8 @@ static void TGIOS6StoreArchivePeerIds(TLmessages_Dialogs *dialogs, NSString *rea
 {
     NSArray *peerIds = TGIOS6ArchivePeerIdsFromDialogs(dialogs);
     [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:peerIds]];
+    uint8_t complete = 1;
+    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:[NSData dataWithBytes:&complete length:1]];
     TGLog(@"ARCHIVE peerIds.saved reason=%@ count=%d ids=%@", reason ?: @"archive", (int)peerIds.count, peerIds);
     [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
 }
@@ -712,6 +775,7 @@ typedef std::map<int, std::pair<TGUser *, int > >::iterator UserDataToDispatchIt
 
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder completion:(void (^)(TLmessages_Dialogs *))completion failure:(void (^)(void))failure;
+- (NSObject *)ios6RequestDialogsListPageWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestBuilder:(TGDialogListRequestBuilder *)requestBuilder accumulatedDialogs:(NSMutableArray *)accumulatedDialogs accumulatedMessages:(NSMutableArray *)accumulatedMessages accumulatedChats:(NSMutableArray *)accumulatedChats accumulatedUsers:(NSMutableArray *)accumulatedUsers completion:(void (^)(TLmessages_Dialogs *))completion failure:(void (^)(void))failure;
 
 @property (nonatomic) bool willDispatchUserData;
 @property (nonatomic) bool willDispatchUserPresence;
@@ -3313,6 +3377,19 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder
 {
+    if (folderId == 1)
+    {
+        return [self doRequestDialogsListWithOffset:offset limit:limit folderId:folderId requestArchive:requestArchive requestBuilder:requestBuilder completion:^(TLmessages_Dialogs *dialogs)
+        {
+            if (requestBuilder != nil)
+                [requestBuilder dialogListRequestSuccess:dialogs];
+        } failure:^
+        {
+            if (requestBuilder != nil)
+                [requestBuilder dialogListRequestFailed];
+        }];
+    }
+
     IOS6Trace(@"TRACE dialogs request folder=%d offsetDate=%d offsetPeer=%lld offsetAccess=%lld offsetMid=%d limit=%d", folderId, offset.date, offset.peerId, offset.accessHash, offset.messageId, limit);
     IOS6Trace(@"FULL RPC dialogs.request folder=%d offsetDate=%d offsetPeer=%lld offsetAccess=%lld offsetMid=%d limit=%d", folderId, offset.date, offset.peerId, offset.accessHash, offset.messageId, limit);
     TLRPCmessages_getDialogs *getDialogs = [[TLRPCmessages_getDialogs alloc] init];
@@ -3372,11 +3449,11 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
                 {
                     TGIOS6StoreArchivePeerIds(archiveDialogs, @"startup");
                     [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
-                    [requestBuilder dialogListRequestSuccess:dialogs];
                 } failure:^
                 {
-                    [requestBuilder dialogListRequestSuccess:dialogs];
+                    [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
                 }];
+                [requestBuilder dialogListRequestSuccess:dialogs];
             }
             else if (requestBuilder != nil)
             {
@@ -3393,7 +3470,16 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder completion:(void (^)(TLmessages_Dialogs *))completion failure:(void (^)(void))failure
+- (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)__unused requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder completion:(void (^)(TLmessages_Dialogs *))completion failure:(void (^)(void))failure
+{
+    NSMutableArray *accumulatedDialogs = [[NSMutableArray alloc] init];
+    NSMutableArray *accumulatedMessages = [[NSMutableArray alloc] init];
+    NSMutableArray *accumulatedChats = [[NSMutableArray alloc] init];
+    NSMutableArray *accumulatedUsers = [[NSMutableArray alloc] init];
+    return [self ios6RequestDialogsListPageWithOffset:offset limit:limit folderId:folderId requestBuilder:requestBuilder accumulatedDialogs:accumulatedDialogs accumulatedMessages:accumulatedMessages accumulatedChats:accumulatedChats accumulatedUsers:accumulatedUsers completion:completion failure:failure];
+}
+
+- (NSObject *)ios6RequestDialogsListPageWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestBuilder:(TGDialogListRequestBuilder *)requestBuilder accumulatedDialogs:(NSMutableArray *)accumulatedDialogs accumulatedMessages:(NSMutableArray *)accumulatedMessages accumulatedChats:(NSMutableArray *)accumulatedChats accumulatedUsers:(NSMutableArray *)accumulatedUsers completion:(void (^)(TLmessages_Dialogs *))completion failure:(void (^)(void))failure
 {
     TLRPCmessages_getDialogs *getDialogs = [[TLRPCmessages_getDialogs alloc] init];
     getDialogs.flags |= (1 << 1);
@@ -3407,23 +3493,57 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     getDialogs.hash = 0;
     if (folderId != 0)
         TGLog(@"ARCHIVE request archiveRpc=1 flags=0x%08x folder_id=%d limit=%d offsetDate=%d offsetPeer=%lld offsetMid=%d", getDialogs.flags, getDialogs.folder_id, getDialogs.limit, getDialogs.offset_date, offset.peerId, getDialogs.offset_id);
-    
+
     return [[TGTelegramNetworking instance] performRpc:getDialogs completionBlock:^(TLmessages_Dialogs *dialogs, __unused int64_t responseTime, MTRpcError *error)
     {
-        if (error == nil)
-        {
-            IOS6Trace(@"TRACE dialogs archive success folder=%d dialogs=%d", folderId, (int)dialogs.dialogs.count);
-            IOS6Trace(@"FULL RPC dialogs.archiveSuccess folder=%d dialogs=%d", folderId, (int)dialogs.dialogs.count);
-            if (completion != nil)
-                completion(dialogs);
-        }
-        else
+        if (error != nil)
         {
             IOS6Trace(@"TRACE dialogs archive failed folder=%d code=%d text=%@", folderId, error.errorCode, error.errorDescription);
             IOS6Trace(@"FULL RPC dialogs.archiveFailed folder=%d code=%d text=%@", folderId, error.errorCode, error.errorDescription);
             if (failure != nil)
                 failure();
+            return;
         }
+
+        IOS6Trace(@"TRACE dialogs archive success folder=%d dialogs=%d", folderId, (int)dialogs.dialogs.count);
+        IOS6Trace(@"FULL RPC dialogs.archiveSuccess folder=%d dialogs=%d", folderId, (int)dialogs.dialogs.count);
+
+        if (folderId != 1)
+        {
+            if (completion != nil)
+                completion(dialogs);
+            return;
+        }
+
+        [accumulatedDialogs addObjectsFromArray:dialogs.dialogs ?: @[]];
+        [accumulatedMessages addObjectsFromArray:dialogs.messages ?: @[]];
+        [accumulatedChats addObjectsFromArray:dialogs.chats ?: @[]];
+        [accumulatedUsers addObjectsFromArray:dialogs.users ?: @[]];
+
+        if ([dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogsSlice class]])
+        {
+            TGDialogListRemoteOffset *nextOffset = TGIOS6DialogsRemoteOffset(dialogs);
+            if (nextOffset == nil || [nextOffset compare:offset] == NSOrderedSame)
+            {
+                TGLog(@"ARCHIVE pagination failed offset=%@ dialogs=%d", offset, (int)dialogs.dialogs.count);
+                if (failure != nil)
+                    failure();
+                return;
+            }
+
+            NSObject *nextToken = [self ios6RequestDialogsListPageWithOffset:nextOffset limit:limit folderId:folderId requestBuilder:requestBuilder accumulatedDialogs:accumulatedDialogs accumulatedMessages:accumulatedMessages accumulatedChats:accumulatedChats accumulatedUsers:accumulatedUsers completion:completion failure:failure];
+            if (requestBuilder != nil)
+                requestBuilder.cancelToken = nextToken;
+            return;
+        }
+
+        TLmessages_Dialogs$messages_dialogs *completeDialogs = [[TLmessages_Dialogs$messages_dialogs alloc] init];
+        completeDialogs.dialogs = accumulatedDialogs;
+        completeDialogs.messages = accumulatedMessages;
+        completeDialogs.chats = accumulatedChats;
+        completeDialogs.users = accumulatedUsers;
+        if (completion != nil)
+            completion(completeDialogs);
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 

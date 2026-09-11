@@ -1236,13 +1236,6 @@
     
     [session startWithSignal:[self requestCallWithPeerId:peerId uuid:uuid session:session]];
     
-    if ([TGCallManager useCallKit])
-    {
-        [_queue dispatch:^{
-            [_callKitAdapter addCallSession:session uuid:uuid];
-        }];
-    }
-    
     return session;
 }
 

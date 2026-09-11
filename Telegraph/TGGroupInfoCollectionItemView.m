@@ -16,6 +16,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGTextField.h"
 
 #import "TGPresentation.h"
+#import "TGReusableLabel.h"
 
 @interface TGGroupInfoCollectionItemView ()
 {
@@ -31,7 +32,7 @@
     
     UIImageView *_verifiedIcon;
     
-    UILabel *_titleLabel;
+    TGReusableLabel *_titleLabel;
     TGTextField *_titleField;
     UIView *_editingSeparator;
     
@@ -57,11 +58,10 @@
         _avatarIconView = [[UIImageView alloc] init];
         [_avatarView addSubview:_avatarIconView];
         
-        _titleLabel = [[UILabel alloc] init];
+        _titleLabel = [[TGReusableLabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = [UIColor blackColor];
         _titleLabel.font = TGBoldSystemFontOfSize(20);
-        _titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
         _titleLabel.numberOfLines = 2;
         [self addSubview:_titleLabel];
     }

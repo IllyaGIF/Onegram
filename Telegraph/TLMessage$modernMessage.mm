@@ -4,6 +4,7 @@
 #import "TLPeer.h"
 #import "IOS6FeatureProbe.h"
 #import "TLUser$modernUser.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
 static id<TLObject> TGModernReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
@@ -211,14 +212,14 @@ static NSDictionary *TGModernReadMessageRepliesCompat(NSInputStream *is, id<TLSe
     };
 }
 
-static int32_t TGModernPeerLegacyId(TLPeer *peer)
+static int64_t TGModernPeerLegacyId(TLPeer *peer)
 {
     if ([peer isKindOfClass:[TLPeer$peerUser class]])
         return ((TLPeer$peerUser *)peer).user_id;
     if ([peer isKindOfClass:[TLPeer$peerChat class]])
-        return -((TLPeer$peerChat *)peer).chat_id;
+        return TGPeerIdFromGroupId(((TLPeer$peerChat *)peer).chat_id);
     if ([peer isKindOfClass:[TLPeer$peerChannel class]])
-        return 0;
+        return TGPeerIdFromChannelId(((TLPeer$peerChannel *)peer).channel_id);
     return 0;
 }
 
@@ -340,6 +341,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     int32_t flags = [is readInt32];
     int32_t flags2 = 0;
     bool hasModernFlags2 = signature == (int32_t)0x94345242 || signature == (int32_t)0x96fdbbe9 || signature == (int32_t)0x7600b9d3 || signature == (int32_t)0x95ef6f2b || signature == (int32_t)0x6a26cb37 || signature == (int32_t)0xd0bbd081 || signature == (int32_t)0x003e38e7 || signature == (int32_t)0xd9a7d88a || signature == (int32_t)0xd18fd1bb || signature == (int32_t)0xff86154d || signature == (int32_t)0xbb294f27 || signature == (int32_t)0x65fdf943 || signature == (int32_t)0x6a4ced37 || signature == (int32_t)0x6236ae4a || signature == (int32_t)0xd8a8d820;
+    bool isLayer181Message = signature == (int32_t)0x94345242;
     bool usesModernPeerObjects = hasModernFlags2;
     bool isLatestLongPeerMessage = signature == (int32_t)0x7600b9d3;
     if (hasModernFlags2)
@@ -355,7 +357,8 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
             TLPeer *fromPeer = TGModernReadPeerCompat(is, environment, error);
             if (error != nil && *error != nil)
                 return nil;
-            result.from_id = TGModernPeerLegacyId(fromPeer);
+            result.senderPeerId = TGModernPeerLegacyId(fromPeer);
+            result.from_id = TGPeerIdIsUser(result.senderPeerId) ? (int32_t)result.senderPeerId : 0;
         }
         else
             result.from_id = [is readInt32];
@@ -364,7 +367,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     if (hasModernFlags2 && (flags & (1 << 29)))
         [is readInt32];
     
-    if (hasModernFlags2 && (flags2 & (1 << 12)))
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 12)))
         [is readString];
     
     result.to_id = TGModernReadPeerCompat(is, environment, error);
@@ -397,7 +400,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
         [is readInt64];
     }
     
-    if (hasModernFlags2 && (flags2 & (1 << 19)))
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 19)))
     {
         TGModernReadObject(is, environment, error);
         if (error != nil && *error != nil)
@@ -447,20 +450,9 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     
     if (flags & (1 << 7))
     {
-        __unused int32_t entitiesSignature = [is readInt32];
-        int32_t count = [is readInt32];
-        NSMutableArray *entities = [[NSMutableArray alloc] init];
-        for (int32_t i = 0; i < count; i++)
-        {
-            int32_t signature = [is readInt32];
-            id entity = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
-            if (error != nil && *error != nil) {
-                return nil;
-            }
-            if (entity != nil)
-                [entities addObject:entity];
-        }
-        result.entities = entities;
+        result.entities = TGModernReadObjectVector(is, environment, error);
+        if (error != nil && *error != nil)
+            return nil;
     }
     
     if (flags & (1 << 10)) {
@@ -532,25 +524,25 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
             return nil;
     }
     
-    if (hasModernFlags2 && (flags2 & (1 << 5)))
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 5)))
         [is readInt32];
     
-    if (hasModernFlags2 && (flags2 & (1 << 6)))
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 6)))
         [is readInt64];
     
-    if (hasModernFlags2 && (flags2 & (1 << 7))) {
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 7))) {
         TGModernReadSuggestedPostCompat(is, environment, error);
         if (error != nil && *error != nil)
             return nil;
     }
     
-    if (hasModernFlags2 && (flags2 & (1 << 10)))
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 10)))
         [is readInt32];
     
-    if (hasModernFlags2 && (flags2 & (1 << 11)))
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 11)))
         [is readString];
     
-    if (hasModernFlags2 && (flags2 & (1 << 13))) {
+    if (hasModernFlags2 && !isLayer181Message && (flags2 & (1 << 13))) {
         TGModernReadRichMessageCompat(is, environment, error);
         if (error != nil && *error != nil)
             return nil;

@@ -616,7 +616,6 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                         rpcResult = request.responseParser(unwrappedData);
                         if (rpcResult == nil)
                         {
-                            NSLog(@"AUTH parseFail messageId=%" PRId64 " bytesLength=%lu", request.requestContext.messageId, (unsigned long)unwrappedData.length);
                             rpcError = [[MTRpcError alloc] initWithErrorCode:500 errorDescription:@"TL_PARSING_ERROR"];
                         }
                     }

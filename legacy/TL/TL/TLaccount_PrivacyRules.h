@@ -10,6 +10,7 @@
 @interface TLaccount_PrivacyRules : NSObject <TLObject>
 
 @property (nonatomic, retain) NSArray *rules;
+@property (nonatomic, retain) NSArray *chats;
 @property (nonatomic, retain) NSArray *users;
 
 @end

@@ -254,8 +254,8 @@
     _avatarView.center = CGPointMake(CGFloor(self.bounds.size.width / 2.0f), _avatarView.center.y);
     _selectedCircleView.center = _avatarView.center;
     
-    CGSize titleSize = [_titleLabel.text sizeWithFont:_titleLabel.font];
-    _titleLabel.frame = CGRectMake(0.0f, 64.0f, self.bounds.size.width, titleSize.height);
+    CGFloat titleHeight = ceilf(_titleLabel.font.lineHeight);
+    _titleLabel.frame = CGRectMake(0.0f, CGRectGetMaxY(_avatarView.frame) + 4.0f, self.bounds.size.width, titleHeight);
     
     _checkView.frame = CGRectMake(self.bounds.size.width / 2.0f + 30.0f - _checkView.frame.size.width + 6.0f, 60.0f - _checkView.frame.size.height + 6.0f, _checkView.frame.size.width, _checkView.frame.size.height);
 }

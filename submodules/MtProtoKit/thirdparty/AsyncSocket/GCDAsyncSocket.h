@@ -65,6 +65,12 @@ extern NSString *const GCDAsyncSocketErrorDomain;
 extern NSString *const GCDAsyncSocketQueueName;
 extern NSString *const GCDAsyncSocketThreadName;
 
+#if TARGET_OS_IPHONE
+extern NSString *const GCDAsyncSocketUseOpenSSL;
+extern NSString *const GCDAsyncSocketOpenSSLTrustedCertificates;
+extern NSString *const GCDAsyncSocketOpenSSLVerificationTime;
+#endif
+
 #if SECURE_TRANSPORT_MAYBE_AVAILABLE
 extern NSString *const GCDAsyncSocketSSLCipherSuites;
 #if TARGET_OS_IPHONE
@@ -143,6 +149,11 @@ typedef enum GCDAsyncSocketError GCDAsyncSocketError;
 	GCDAsyncSocketPreBuffer *sslPreBuffer;
 	size_t sslWriteCachedLength;
 	OSStatus sslErrCode;
+#endif
+#if TARGET_OS_IPHONE
+	void *openSSLContext;
+	void *openSSLConnection;
+	int openSSLErrCode;
 #endif
 	
 	id userData;

@@ -91,6 +91,79 @@ static NSString *TGIOS6MessageDisplayedReactionSummary(TGMessage *message)
     return nil;
 }
 
+static NSString *TGIOS6ReactionKey(NSString *reaction)
+{
+    if (reaction.length == 0)
+        return nil;
+    return [[reaction stringByReplacingOccurrencesOfString:@"\uFE0F" withString:@""] stringByReplacingOccurrencesOfString:@"\uFE0E" withString:@""];
+}
+
+static NSString *TGIOS6ReactionSummaryByApplyingReaction(NSString *summary, NSString *chosenReaction, NSString *reaction)
+{
+    NSMutableArray *orderedKeys = [[NSMutableArray alloc] init];
+    NSMutableDictionary *emojiByKey = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *countByKey = [[NSMutableDictionary alloc] init];
+
+    for (NSString *part in [summary componentsSeparatedByString:@"  "])
+    {
+        NSRange separator = [part rangeOfString:@" " options:NSBackwardsSearch];
+        NSString *emoji = separator.location == NSNotFound ? part : [part substringToIndex:separator.location];
+        NSInteger count = separator.location == NSNotFound ? 1 : MAX(1, [[part substringFromIndex:separator.location + 1] integerValue]);
+        NSString *key = TGIOS6ReactionKey(emoji);
+        if (key.length == 0)
+            continue;
+
+        if ([countByKey objectForKey:key] == nil)
+        {
+            [orderedKeys addObject:key];
+            [emojiByKey setObject:emoji forKey:key];
+            [countByKey setObject:@(count) forKey:key];
+        }
+        else
+        {
+            NSInteger previousCount = [[countByKey objectForKey:key] integerValue];
+            [countByKey setObject:@(MAX(previousCount, count)) forKey:key];
+        }
+    }
+
+    NSString *previousKey = TGIOS6ReactionKey(chosenReaction);
+    NSString *newKey = TGIOS6ReactionKey(reaction);
+    if (!TGObjectCompare(previousKey, newKey))
+    {
+        if (previousKey.length != 0)
+        {
+            NSInteger count = [[countByKey objectForKey:previousKey] integerValue];
+            if (count > 1)
+                [countByKey setObject:@(count - 1) forKey:previousKey];
+            else if (count == 1)
+            {
+                [countByKey removeObjectForKey:previousKey];
+                [emojiByKey removeObjectForKey:previousKey];
+                [orderedKeys removeObject:previousKey];
+            }
+        }
+
+        if (newKey.length != 0)
+        {
+            NSInteger count = [[countByKey objectForKey:newKey] integerValue];
+            if (count == 0)
+                [orderedKeys addObject:newKey];
+            [emojiByKey setObject:reaction forKey:newKey];
+            [countByKey setObject:@(count + 1) forKey:newKey];
+        }
+    }
+
+    NSMutableArray *parts = [[NSMutableArray alloc] init];
+    for (NSString *key in orderedKeys)
+    {
+        NSString *emoji = [emojiByKey objectForKey:key];
+        NSInteger count = [[countByKey objectForKey:key] integerValue];
+        if (emoji.length != 0 && count > 0)
+            [parts addObject:[NSString stringWithFormat:@"%@ %d", emoji, (int)count]];
+    }
+    return [parts componentsJoinedByString:@"  "];
+}
+
 static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
 {
     static dispatch_once_t onceToken;
@@ -131,10 +204,18 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
         {
             UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
             button.tag = index++;
-            UIFont *emojiFont = [UIFont fontWithName:@"AppleColorEmoji" size:27.0f];
-            button.titleLabel.font = emojiFont ?: [UIFont systemFontOfSize:27.0f];
-            [button setTitle:reaction forState:UIControlStateNormal];
-            [button setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+            UIImage *emojiImage = TGEmojiImageOfSize(reaction, 30.0f);
+            if (emojiImage != nil)
+            {
+                [button setImage:emojiImage forState:UIControlStateNormal];
+                button.imageView.contentMode = UIViewContentModeCenter;
+            }
+            else
+            {
+                button.titleLabel.font = TGEmojiFontOfSize(27.0f);
+                [button setTitle:reaction forState:UIControlStateNormal];
+                [button setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+            }
             [button addTarget:self action:@selector(reactionPressed:) forControlEvents:UIControlEventTouchUpInside];
             [_scrollView addSubview:button];
             [buttons addObject:button];
@@ -12161,6 +12242,38 @@ static UIView *_findBackArrow(UIView *view)
     }] take:1];
 }
 
+- (void)_ios6ApplyConfirmedReaction:(NSString *)reaction messageId:(int32_t)messageId
+{
+    int64_t peerId = [_companion requestPeerId];
+    TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
+    if (storedMessage == nil)
+        return;
+
+    id value = [storedMessage.contentProperties objectForKey:@"ios6ReactionSummary"];
+    NSString *summary = nil;
+    NSString *chosenReaction = nil;
+    if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
+    {
+        summary = ((TGMessageReactionSummaryContentProperty *)value).summary;
+        chosenReaction = ((TGMessageReactionSummaryContentProperty *)value).chosenReaction;
+    }
+    else if ([value isKindOfClass:[NSString class]])
+    {
+        summary = value;
+    }
+
+    NSString *updatedSummary = TGIOS6ReactionSummaryByApplyingReaction(summary, chosenReaction, reaction);
+    NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:storedMessage.contentProperties ?: @{}];
+    if (updatedSummary.length != 0)
+        [properties setObject:[[TGMessageReactionSummaryContentProperty alloc] initWithSummary:updatedSummary chosenReaction:reaction] forKey:@"ios6ReactionSummary"];
+    else
+        [properties removeObjectForKey:@"ios6ReactionSummary"];
+    storedMessage.contentProperties = properties;
+
+    TGDatabaseUpdateMessageWithMessage *update = [[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:peerId messageId:messageId message:storedMessage dispatchEdited:true];
+    [TGDatabaseInstance() transactionUpdateMessages:@[ update ] updateConversationDatas:nil];
+}
+
 - (void)_ios6SendReaction:(NSString *)reaction messageId:(int32_t)messageId
 {
     if (messageId <= 0)
@@ -12181,7 +12294,10 @@ static UIView *_findBackArrow(UIView *view)
             [[TGTelegramNetworking instance] addUpdates:updates];
         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
         if (strongSelf != nil)
+        {
+            [strongSelf _ios6ApplyConfirmedReaction:reaction messageId:messageId];
             [strongSelf _ios6RefreshReactionForMessageId:messageId];
+        }
     } error:^(id error)
     {
         IOS6_NOOP_LOG(@"FEATURE REACTION send.error mid=%d emoji=%@ error=%@", messageId, reaction.length == 0 ? @"(remove)" : reaction, error);

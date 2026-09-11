@@ -2870,6 +2870,10 @@ Unused sets are archived when you add more.";
 "Appearance.InterfaceStyle" = "INTERFACE STYLE";
 "Appearance.NewGestures" = "New Gestures";
 "Appearance.ClassicIOS6Style" = "Classic iOS 6 Style";
+"Appearance.Emoji" = "EMOJI";
+"Appearance.EmojiStockOnly" = "Stock Only";
+"Appearance.EmojiNewOnly" = "New Only";
+"Appearance.EmojiCombined" = "Combined";
 "Appearance.ThemeDayClassic" = "Day Classic";
 "Appearance.ThemeDay" = "Day";
 "Appearance.ThemeNight" = "Night";
@@ -3413,3 +3417,10 @@ Unused sets are archived when you add more.";
 "Settings.DonateButton" = "Open donation page";
 
 "Profile.Music" = "Music";
+
+"OnegramProxy.Title" = "Onegram Proxy";
+"OnegramProxy.Enabled" = "Enable Onegram Proxy";
+"OnegramProxy.Transport" = "Transport";
+"OnegramProxy.Fallback" = "Fallback";
+"OnegramProxy.Endpoint" = "Endpoint";
+"OnegramProxy.Footer" = "Routes Telegram connections through Telegram WebSocket endpoints. If WebSocket is unavailable, Onegram falls back to direct TCP. No root helper, VPN or background daemon is required.";

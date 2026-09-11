@@ -88,7 +88,7 @@
         return;
     }
 
-    if (displayPeer.photoUrlSmall.length == 0)
+    if (displayPeer.photoFullUrlSmall.length == 0)
     {
         if (_legacyMode)
         {
@@ -126,10 +126,12 @@
         
         if (context != NULL)
         {
+            UIColor *topColor = UIColorRGB(0x466f92);
+            UIColor *bottomColor = UIColorRGB(0x244f74);
             CGColorRef colors[2] =
             {
-                UIColorRGB(0x466f92).CGColor,
-                UIColorRGB(0x244f74).CGColor
+                topColor.CGColor,
+                bottomColor.CGColor
             };
             
             CFArrayRef colorsArray =
@@ -197,7 +199,7 @@
     SSignal *smallSignal =
     [[TGMediaSignals avatarPathWithReference:
       [[TGImageFileReference alloc]
-       initWithUrl:state.peer.photoFullUrlSmall]]
+       initWithUrl:displayPeer.photoFullUrlSmall]]
      map:^UIImage *(NSString *path)
      {
          UIImage *image =

@@ -430,6 +430,20 @@ static NSArray *CodexReadObjectVector(NSInputStream *is, id<TLSerializationEnvir
     return CodexReadObjectVectorWithMarker(is, vectorMarker, environment, error);
 }
 
+static NSArray *CodexReadObjectVectorWithRole(NSInputStream *is, NSString *role, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    NSString *previousRole = CodexCurrentVectorRole;
+    CodexCurrentVectorRole = role;
+    NSArray *result = CodexReadObjectVector(is, environment, error);
+    if (error != NULL && *error != nil)
+    {
+        NSString *description = (*error).localizedDescription ?: @"TL vector parse failed";
+        *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"%@: %@", role ?: @"vector", description]}];
+    }
+    CodexCurrentVectorRole = previousRole;
+    return result;
+}
+
 static NSArray *CodexReadMaybeDoubleObjectVectorWithMarker(NSInputStream *is, int32_t vectorMarker, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
@@ -499,59 +513,67 @@ static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vecto
     return array;
 }
 
-static NSArray *CodexReadUpdateVectorSkippingSmallJunk(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static NSArray *CodexReadStrictObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     int32_t vectorMarker = [is readInt32];
-    int32_t count = 0;
-    if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
-        count = [is readInt32];
-    else if (vectorMarker >= 0 && vectorMarker <= 10000)
-        count = vectorMarker;
-    else
+    if (vectorMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
     {
-        IOS6_NOOP_LOG(@"AUTH expected update vector/count, got 0x%x manual=0x%08x parser=%@", vectorMarker, CodexCurrentManualSignature, CodexCurrentManualParser);
-        id object = TLMetaClassStore::constructObject(is, vectorMarker, environment, nil, error);
-        if (error != NULL && *error != nil)
-            *error = nil;
-        return object == nil ? @[] : @[ object ];
+        if (error != NULL)
+        {
+            NSString *description = [NSString stringWithFormat:@"Expected vector constructor, got %08x", vectorMarker];
+            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+        }
+        return nil;
     }
-    
-    NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
+
+    int32_t count = [is readInt32];
+    if (count < 0)
+    {
+        if (error != NULL)
+        {
+            NSString *description = [NSString stringWithFormat:@"Invalid vector count %d", count];
+            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+        }
+        return nil;
+    }
+
+    NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
     for (int32_t i = 0; i < count; i++)
     {
-        bool itemFailed = false;
-        int32_t objectSignature = 0;
-        @autoreleasepool
-        {
-            NSError *itemError = nil;
-            objectSignature = [is readInt32];
-            if (objectSignature > 0 && objectSignature < 0x01000000)
-            {
-                IOS6_NOOP_LOG(@"AUTH skipped small junk in update vector index=%d/%d word=0x%08x manual=0x%08x parser=%@", i, count, objectSignature, CodexCurrentManualSignature, CodexCurrentManualParser);
-                continue;
-            }
-            
-            id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
-            if (object != nil)
-                [array addObject:object];
-            if (itemError != nil)
-            {
-                itemFailed = true;
-                IOS6_NOOP_LOG(@"AUTH update vector failed index=%d/%d sig=0x%08x manual=0x%08x parser=%@ error=%@", i, count, objectSignature, CodexCurrentManualSignature, CodexCurrentManualParser, itemError);
-                CodexReportCritical(@"tl_update_vector_failed", [NSString stringWithFormat:@"index=%d/%d sig=0x%08x sigName=%@ manual=0x%08x manualName=%@ parser=%@ vectorRole=%@ lastCompleted=0x%08x lastCompletedName=%@ lastParser=%@ error=%@", i, count, objectSignature, stringForHash(objectSignature), CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, CodexCurrentVectorRole, CodexLastCompletedManualSignature, stringForHash(CodexLastCompletedManualSignature), CodexLastCompletedManualParser, itemError]);
-            }
-        }
-        if (itemFailed)
+        NSError *itemError = nil;
+        int32_t objectSignature = [is readInt32];
+        id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
+        if (itemError != nil)
         {
             if (error != NULL)
-            {
-                NSString *description = [NSString stringWithFormat:@"Update vector item %d/%d with signature %08x could not be parsed", i, count, objectSignature];
-                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
-            }
-            break;
+                *error = itemError;
+            return nil;
         }
+        if (object != nil)
+            [array addObject:object];
     }
     return array;
+}
+
+static NSArray *CodexReadStrictObjectVectorWithRole(NSInputStream *is, NSString *role, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    NSString *previousRole = CodexCurrentVectorRole;
+    CodexCurrentVectorRole = role;
+    NSArray *result = nil;
+    @try
+    {
+        result = CodexReadStrictObjectVector(is, environment, error);
+    }
+    @finally
+    {
+        CodexCurrentVectorRole = previousRole;
+    }
+    if (error != NULL && *error != nil)
+    {
+        NSString *description = (*error).localizedDescription ?: @"TL vector parse failed";
+        *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"%@: %@", role ?: @"vector", description]}];
+    }
+    return result;
 }
 
 static NSArray *CodexReadObjectVectorOrSingle(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
@@ -5578,7 +5600,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLCodexModernMessagesParser *result = [[TLCodexModernMessagesParser alloc] init];
-    result.messages = CodexReadObjectVector(is, environment, error);
+    result.messages = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.messages", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at messages error=%@", *error);
@@ -5586,7 +5608,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     }
     if (signature == (int32_t)0x1d73e7ea)
     {
-        NSArray *topics = CodexReadObjectVector(is, environment, error);
+        NSArray *topics = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.topics", environment, error);
         if (error != nil && *error != nil)
         {
             IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at topics messages=%d error=%@", (int)result.messages.count, *error);
@@ -5594,19 +5616,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         }
         IOS6_NOOP_LOG(@"DIALOGS messages.messages topics=%d", (int)topics.count);
     }
-    result.chats = CodexReadObjectVector(is, environment, error);
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.chats", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at chats messages=%d error=%@", (int)result.messages.count, *error);
         return nil;
     }
-    result.users = CodexReadObjectVector(is, environment, error);
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.users", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at users messages=%d chats=%d error=%@", (int)result.messages.count, (int)result.chats.count, *error);
-        *error = nil;
-        result.users = @[];
-        return result;
+        return nil;
     }
     
     IOS6_NOOP_LOG(@"DIALOGS messages.messages messages=%d chats=%d users=%d", (int)result.messages.count, (int)result.chats.count, (int)result.users.count);
@@ -5636,7 +5656,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             return nil;
     }
     
-    result.messages = CodexReadObjectVector(is, environment, error);
+    result.messages = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.messages", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at messages count=%d flags=%d error=%@", result.count, flags, *error);
@@ -5644,7 +5664,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     }
     if (signature == (int32_t)0x5f206716)
     {
-        NSArray *topics = CodexReadObjectVector(is, environment, error);
+        NSArray *topics = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.topics", environment, error);
         if (error != nil && *error != nil)
         {
             IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at topics count=%d messages=%d flags=%d error=%@", result.count, (int)result.messages.count, flags, *error);
@@ -5652,19 +5672,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         }
         IOS6_NOOP_LOG(@"DIALOGS messagesSlice topics=%d", (int)topics.count);
     }
-    result.chats = CodexReadObjectVector(is, environment, error);
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.chats", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at chats count=%d messages=%d flags=%d error=%@", result.count, (int)result.messages.count, flags, *error);
         return nil;
     }
-    result.users = CodexReadObjectVector(is, environment, error);
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.users", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at users count=%d messages=%d chats=%d flags=%d error=%@", result.count, (int)result.messages.count, (int)result.chats.count, flags, *error);
-        *error = nil;
-        result.users = @[];
-        return result;
+        return nil;
     }
     
     IOS6_NOOP_LOG(@"DIALOGS messagesSlice count=%d messages=%d chats=%d users=%d flags=%d", result.count, (int)result.messages.count, (int)result.chats.count, (int)result.users.count, flags);
@@ -6596,6 +6614,28 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
+@interface TLCodexModernPrivacyRulesParser : TLaccount_PrivacyRules$account_privacyRules
+@end
+
+@implementation TLCodexModernPrivacyRulesParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLaccount_PrivacyRules$account_privacyRules *result = [[TLaccount_PrivacyRules$account_privacyRules alloc] init];
+    result.rules = CodexReadObjectVectorWithRole(is, @"privacy.rules", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.chats = CodexReadObjectVectorWithRole(is, @"privacy.chats", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.users = CodexReadObjectVectorWithRole(is, @"privacy.users", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    return result;
+}
+
+@end
+
 @interface TLCodexModernChannelMessagesParser : TLmessages_Messages$messages_channelMessages
 @end
 
@@ -6611,28 +6651,28 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (flags & (1 << 2))
         [is readInt32];
     
-    result.messages = CodexReadObjectVector(is, environment, error);
+    result.messages = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.messages", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at messages count=%d flags=%d error=%@", result.count, flags, *error);
         return nil;
     }
     
-    NSArray *topics = CodexReadObjectVector(is, environment, error);
+    NSArray *topics = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.topics", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at topics count=%d messages=%d flags=%d error=%@", result.count, (int)result.messages.count, flags, *error);
         return nil;
     }
     
-    result.chats = CodexReadObjectVector(is, environment, error);
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.chats", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at chats count=%d messages=%d topics=%d flags=%d error=%@", result.count, (int)result.messages.count, (int)topics.count, flags, *error);
         return nil;
     }
     
-    result.users = CodexReadObjectVector(is, environment, error);
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.users", environment, error);
     if (error != nil && *error != nil)
     {
         IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at users count=%d messages=%d topics=%d chats=%d flags=%d error=%@", result.count, (int)result.messages.count, (int)topics.count, (int)result.chats.count, flags, *error);
@@ -7477,6 +7517,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLChat$channel *result = [[TLChat$channel alloc] init];
+    result.name_color_id = -1;
     int32_t flags = [is readInt32];
     int32_t flags2 = [is readInt32];
     result.flags = flags;
@@ -7512,7 +7553,19 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
     }
     if (flags2 & (1 << 7))
-        CodexReadObject(is, environment, error);
+    {
+        int32_t colorSignature = [is readInt32];
+        if (colorSignature == (int32_t)0xb54b5acf)
+        {
+            int32_t colorFlags = [is readInt32];
+            if (colorFlags & (1 << 0))
+                result.name_color_id = [is readInt32];
+            if (colorFlags & (1 << 1))
+                [is readInt64];
+        }
+        else
+            TLMetaClassStore::constructObject(is, colorSignature, environment, nil, error);
+    }
     if (flags2 & (1 << 8))
         CodexReadObject(is, environment, error);
     if (flags2 & (1 << 9))
@@ -7590,7 +7643,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
     TLCodexModernChannelFullParser *result = [[TLCodexModernChannelFullParser alloc] init];
     int32_t flags = [is readInt32];
     int32_t flags2 = 0;
-    bool isModernChannelFull = signature == (int32_t)0xa04e8d3a;
+    bool isModernChannelFull = signature == (int32_t)0xbbab348d || signature == (int32_t)0xa04e8d3a || signature == (int32_t)0xe4e0b29d;
     if (isModernChannelFull)
         flags2 = [is readInt32];
     int64_t channelId = [is readInt64];
@@ -7651,19 +7704,19 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
     if (flags & (1 << 28)) { [is readInt32]; CodexReadInt64Vector(is); }
     if (flags & (1 << 29)) CodexReadObject(is, environment, error);
     if (flags & (1 << 30)) TLCodexStoreChatReactionPolicy(result, TLCodexReadChatReactionPolicy(is, environment, error));
+    if (flags2 & (1 << 13)) [is readInt32];
     if (flags2 & (1 << 4)) CodexReadObject(is, environment, error);
     if (flags2 & (1 << 7)) CodexReadObject(is, environment, error);
     if (flags2 & (1 << 8)) [is readInt32];
     if (flags2 & (1 << 9)) [is readInt32];
     if (flags2 & (1 << 10)) CodexReadObject(is, environment, error);
-    if (flags2 & (1 << 13)) [is readInt32];
-    if (isModernChannelFull)
+    if (signature != (int32_t)0xbbab348d)
     {
         if (flags2 & (1 << 17)) CodexReadObject(is, environment, error);
         if (flags2 & (1 << 18)) [is readInt32];
         if (flags2 & (1 << 21)) [is readInt64];
         if (flags2 & (1 << 22)) CodexReadObject(is, environment, error);
-        if (flags2 & (1 << 23)) [is readInt64];
+        if (signature != (int32_t)0xe4e0b29d && (flags2 & (1 << 23))) [is readInt64];
     }
     IOS6_NOOP_LOG(@"DIALOGS channelFull sig=0x%08x id=%d flags=0x%08x flags2=0x%08x bots=%d", signature, result.n_id, flags, flags2, (int)result.bot_info.count);
     return result;
@@ -7738,25 +7791,37 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
 
 @end
 
-static void CodexSkipNotificationSound(NSInputStream *is)
+static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleasing *legacySound, __autoreleasing NSError **error)
 {
+    if (legacySound != NULL)
+        *legacySound = nil;
+
     int32_t signature = [is readInt32];
     switch (signature)
     {
         case (int32_t)0x97e8bebe:
+            if (legacySound != NULL)
+                *legacySound = @"default";
+            return true;
         case (int32_t)0x6f0c34df:
-        case (int32_t)0xff68ab47:
-            break;
+            if (legacySound != NULL)
+                *legacySound = @"";
+            return true;
         case (int32_t)0x830b9ae4:
+        {
             [is readString];
-            [is readString];
-            break;
+            NSString *data = [is readString];
+            if (legacySound != NULL)
+                *legacySound = data;
+            return true;
+        }
         case (int32_t)0xff6c8049:
             [is readInt64];
-            break;
+            return true;
         default:
-            IOS6_NOOP_LOG(@"AUTH unknown NotificationSound sig=0x%08x", signature);
-            break;
+            if (error != NULL)
+                *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Unknown NotificationSound constructor %08x", signature]}];
+            return false;
     }
 }
 
@@ -7765,7 +7830,7 @@ static void CodexSkipNotificationSound(NSInputStream *is)
 
 @implementation TLCodexModernPeerNotifySettingsParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLPeerNotifySettings$peerNotifySettings *result = [[TLPeerNotifySettings$peerNotifySettings alloc] init];
     int32_t flags = [is readInt32];
@@ -7777,21 +7842,44 @@ static void CodexSkipNotificationSound(NSInputStream *is)
     if (flags & (1 << 2))
         result.mute_until = [is readInt32];
     if (flags & (1 << 3))
-        CodexSkipNotificationSound(is);
+    {
+        NSString *sound = nil;
+        if (!CodexReadNotificationSound(is, &sound, error))
+            return nil;
+        if (sound != nil)
+            result.sound = sound;
+        else
+            result.flags &= ~(1 << 3);
+    }
     if (flags & (1 << 4))
-        CodexSkipNotificationSound(is);
+    {
+        if (!CodexReadNotificationSound(is, NULL, error))
+            return nil;
+    }
     if (flags & (1 << 5))
-        CodexSkipNotificationSound(is);
+    {
+        if (!CodexReadNotificationSound(is, NULL, error))
+            return nil;
+    }
     if (flags & (1 << 6))
         [is readInt32];
     if (flags & (1 << 7))
         [is readInt32];
     if (flags & (1 << 8))
-        CodexSkipNotificationSound(is);
+    {
+        if (!CodexReadNotificationSound(is, NULL, error))
+            return nil;
+    }
     if (flags & (1 << 9))
-        CodexSkipNotificationSound(is);
+    {
+        if (!CodexReadNotificationSound(is, NULL, error))
+            return nil;
+    }
     if (flags & (1 << 10))
-        CodexSkipNotificationSound(is);
+    {
+        if (!CodexReadNotificationSound(is, NULL, error))
+            return nil;
+    }
     return result;
 }
 
@@ -7971,7 +8059,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 
 @implementation TLCodexUpdateMessageReactionsParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     int32_t flags = [is readInt32];
     TLUpdate$updateMessageReactionsCodex *result = [[TLUpdate$updateMessageReactionsCodex alloc] init];
@@ -7979,7 +8067,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     result.msg_id = [is readInt32];
     if (flags & (1 << 0))
         [is readInt32];
-    if (flags & (1 << 1))
+    if (signature == (int32_t)0x1e297bfa && (flags & (1 << 1)))
         CodexReadObject(is, environment, error);
     NSString *chosenReaction = nil;
     result.reactionSummary = TLCodexReadReactionSummary(is, environment, &chosenReaction, error);
@@ -8757,44 +8845,42 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     {
         TLUpdates$updateShort *result = [[TLUpdates$updateShort alloc] init];
         result.update = (TLUpdate *)CodexReadObject(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
         result.date = [is readInt32];
-        if (error != NULL && *error != nil && [[*error localizedDescription] rangeOfString:@"Object with name"].location != NSNotFound)
-        {
-            IOS6_NOOP_LOG(@"AUTH updateShort ignored unsupported materialized update error=%@", *error);
-            *error = nil;
-            result.update = nil;
-        }
         IOS6_NOOP_LOG(@"AUTH updateShort date=%d update=%@", result.date, result.update);
         return result;
     }
-    
+
     if (signature == (int32_t)0x725b04c3)
     {
         TLUpdates$updatesCombined *result = [[TLUpdates$updatesCombined alloc] init];
-        NSString *previousVectorRole = CodexCurrentVectorRole;
-        CodexCurrentVectorRole = @"updatesCombined.updates";
-        result.updates = CodexReadUpdateVectorSkippingSmallJunk(is, environment, error);
-        CodexCurrentVectorRole = @"updatesCombined.users";
-        result.users = CodexReadObjectVector(is, environment, error);
-        CodexCurrentVectorRole = @"updatesCombined.chats";
-        result.chats = CodexReadObjectVector(is, environment, error);
-        CodexCurrentVectorRole = previousVectorRole;
+        result.updates = CodexReadStrictObjectVectorWithRole(is, @"updatesCombined.updates", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.users = CodexReadStrictObjectVectorWithRole(is, @"updatesCombined.users", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.chats = CodexReadStrictObjectVectorWithRole(is, @"updatesCombined.chats", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
         result.date = [is readInt32];
         result.seq_start = [is readInt32];
         result.seq = [is readInt32];
         IOS6_NOOP_LOG(@"AUTH updatesCombined updates=%d users=%d chats=%d date=%d seq=%d", (int)result.updates.count, (int)result.users.count, (int)result.chats.count, result.date, result.seq);
         return result;
     }
-    
+
     TLUpdates$updates *result = [[TLUpdates$updates alloc] init];
-    NSString *previousVectorRole = CodexCurrentVectorRole;
-    CodexCurrentVectorRole = @"updates.updates";
-    result.updates = CodexReadUpdateVectorSkippingSmallJunk(is, environment, error);
-    CodexCurrentVectorRole = @"updates.users";
-    result.users = CodexReadObjectVector(is, environment, error);
-    CodexCurrentVectorRole = @"updates.chats";
-    result.chats = CodexReadObjectVector(is, environment, error);
-    CodexCurrentVectorRole = previousVectorRole;
+    result.updates = CodexReadStrictObjectVectorWithRole(is, @"updates.updates", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"updates.users", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"updates.chats", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
     result.date = [is readInt32];
     result.seq = [is readInt32];
     IOS6_NOOP_LOG(@"AUTH updates updates=%d users=%d chats=%d date=%d seq=%d", (int)result.updates.count, (int)result.users.count, (int)result.chats.count, result.date, result.seq);
@@ -8813,72 +8899,48 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     if (signature == (int32_t)0xa8fb1981)
     {
         TLupdates_Difference$updates_differenceSlice *result = [[TLupdates_Difference$updates_differenceSlice alloc] init];
-        @try
-        {
-            NSString *previousVectorRole = CodexCurrentVectorRole;
-            CodexCurrentVectorRole = @"differenceSlice.messages";
-            result.n_new_messages = CodexReadObjectVector(is, environment, error);
-            CodexCurrentVectorRole = @"differenceSlice.encrypted";
-            result.n_new_encrypted_messages = CodexReadObjectVector(is, environment, error);
-            CodexCurrentVectorRole = @"differenceSlice.updates";
-            result.other_updates = CodexReadUpdateVectorSkippingSmallJunk(is, environment, error);
-            CodexCurrentVectorRole = @"differenceSlice.chats";
-            result.chats = CodexReadObjectVector(is, environment, error);
-            CodexCurrentVectorRole = @"differenceSlice.users";
-            result.users = CodexReadObjectVector(is, environment, error);
-            CodexCurrentVectorRole = @"differenceSlice.state";
-            result.intermediate_state = CodexReadUpdatesStateCompat(is, environment, error);
-            CodexCurrentVectorRole = previousVectorRole;
-        }
-        @catch (NSException *exception)
-        {
-            if ([exception.reason rangeOfString:@"end of stream"].location != NSNotFound && result.n_new_messages != nil && result.other_updates != nil && result.chats != nil && result.users != nil)
-            {
-                if (result.intermediate_state == nil)
-                    result.intermediate_state = CodexLastReadUpdatesState;
-                if (error != NULL)
-                    *error = nil;
-                IOS6_NOOP_LOG(@"AUTH updates.differenceSlice accepted EOF after state messages=%d other=%d chats=%d users=%d", (int)result.n_new_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
-                return result;
-            }
-            @throw;
-        }
-        IOS6_NOOP_LOG(@"AUTH updates.differenceSlice messages=%d encrypted=%d other=%d chats=%d users=%d error=%@", (int)result.n_new_messages.count, (int)result.n_new_encrypted_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count, error != NULL ? *error : nil);
+        result.n_new_messages = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.messages", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.n_new_encrypted_messages = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.encrypted", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.other_updates = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.updates", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.chats = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.chats", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.users = CodexReadStrictObjectVectorWithRole(is, @"differenceSlice.users", environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.intermediate_state = CodexReadUpdatesStateCompat(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        IOS6_NOOP_LOG(@"AUTH updates.differenceSlice messages=%d encrypted=%d other=%d chats=%d users=%d", (int)result.n_new_messages.count, (int)result.n_new_encrypted_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
         return result;
     }
-    
+
     TLupdates_Difference$updates_difference *result = [[TLupdates_Difference$updates_difference alloc] init];
-    @try
-    {
-        NSString *previousVectorRole = CodexCurrentVectorRole;
-        CodexCurrentVectorRole = @"difference.messages";
-        result.n_new_messages = CodexReadObjectVector(is, environment, error);
-        CodexCurrentVectorRole = @"difference.encrypted";
-        result.n_new_encrypted_messages = CodexReadObjectVector(is, environment, error);
-        CodexCurrentVectorRole = @"difference.updates";
-        result.other_updates = CodexReadUpdateVectorSkippingSmallJunk(is, environment, error);
-        CodexCurrentVectorRole = @"difference.chats";
-        result.chats = CodexReadObjectVector(is, environment, error);
-        CodexCurrentVectorRole = @"difference.users";
-        result.users = CodexReadObjectVector(is, environment, error);
-        CodexCurrentVectorRole = @"difference.state";
-        result.state = CodexReadUpdatesStateCompat(is, environment, error);
-        CodexCurrentVectorRole = previousVectorRole;
-    }
-    @catch (NSException *exception)
-    {
-        if ([exception.reason rangeOfString:@"end of stream"].location != NSNotFound && result.n_new_messages != nil && result.other_updates != nil && result.chats != nil && result.users != nil)
-        {
-            if (result.state == nil)
-                result.state = CodexLastReadUpdatesState;
-            if (error != NULL)
-                *error = nil;
-            IOS6_NOOP_LOG(@"AUTH updates.difference accepted EOF after state messages=%d other=%d chats=%d users=%d", (int)result.n_new_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
-            return result;
-        }
-        @throw;
-    }
-    IOS6_NOOP_LOG(@"AUTH updates.difference messages=%d encrypted=%d other=%d chats=%d users=%d error=%@", (int)result.n_new_messages.count, (int)result.n_new_encrypted_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count, error != NULL ? *error : nil);
+    result.n_new_messages = CodexReadStrictObjectVectorWithRole(is, @"difference.messages", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.n_new_encrypted_messages = CodexReadStrictObjectVectorWithRole(is, @"difference.encrypted", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.other_updates = CodexReadStrictObjectVectorWithRole(is, @"difference.updates", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"difference.chats", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"difference.users", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.state = CodexReadUpdatesStateCompat(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    IOS6_NOOP_LOG(@"AUTH updates.difference messages=%d encrypted=%d other=%d chats=%d users=%d", (int)result.n_new_messages.count, (int)result.n_new_encrypted_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
@@ -8897,18 +8959,20 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     result.pts = [is readInt32];
     if (flags & (1 << 1))
         result.timeout = [is readInt32];
-    
-    result.n_new_messages = CodexReadObjectVector(is, environment, error);
+
+    result.n_new_messages = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.messages", environment, error);
     if (error != NULL && *error != nil)
         return nil;
-    result.other_updates = CodexReadUpdateVectorSkippingSmallJunk(is, environment, error);
+    result.other_updates = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.updates", environment, error);
     if (error != NULL && *error != nil)
         return nil;
-    result.chats = CodexReadObjectVector(is, environment, error);
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.chats", environment, error);
     if (error != NULL && *error != nil)
         return nil;
-    result.users = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"AUTH channelDifference pts=%d messages=%d updates=%d chats=%d users=%d error=%@", result.pts, (int)result.n_new_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count, error != NULL ? *error : nil);
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.users", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    IOS6_NOOP_LOG(@"AUTH channelDifference pts=%d messages=%d updates=%d chats=%d users=%d", result.pts, (int)result.n_new_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
@@ -8927,7 +8991,10 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     if (flags & (1 << 1))
         result.timeout = [is readInt32];
     id dialog = CodexReadObject(is, environment, error);
-    if ([dialog isKindOfClass:[TLDialog$dialogMeta class]]) {
+    if (error != NULL && *error != nil)
+        return nil;
+    if ([dialog isKindOfClass:[TLDialog$dialogMeta class]])
+    {
         TLDialog$dialogMeta *dialogMeta = (TLDialog$dialogMeta *)dialog;
         result.pts = dialogMeta.pts;
         result.top_message = dialogMeta.top_message;
@@ -8936,10 +9003,16 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
         result.read_inbox_max_id = dialogMeta.read_inbox_max_id;
         result.read_outbox_max_id = dialogMeta.read_outbox_max_id;
     }
-    result.messages = CodexReadObjectVector(is, environment, error);
-    result.chats = CodexReadObjectVector(is, environment, error);
-    result.users = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"AUTH channelDifferenceTooLong pts=%d top=%d messages=%d chats=%d users=%d error=%@", result.pts, result.top_message, (int)result.messages.count, (int)result.chats.count, (int)result.users.count, error != NULL ? *error : nil);
+    result.messages = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.messages", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.chats", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.users", environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    IOS6_NOOP_LOG(@"AUTH channelDifferenceTooLong pts=%d top=%d messages=%d chats=%d users=%d", result.pts, result.top_message, (int)result.messages.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
@@ -9344,6 +9417,7 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd0a1d008, [[TLUser$modernUser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd7c0ff9c, [[TLUser$modernUser alloc] init]));
         IOS6_NOOP_LOG(@"AUTH registered modern user parser 0xd7c0ff9c without constructor-name override");
+        objectClassesByConstructorNames[(int32_t)0x6c3e5402] = [[TLMessageEntity$messageEntityTextUrl alloc] init];
         objectClassesByConstructorNames[(int32_t)0x9fbde43f] = [[TLChat$channelMeta alloc] init];
         addHashToString((int32_t)0x9fbde43f, @"channel");
         IOS6_NOOP_LOG(@"AUTH registered modern channel meta alias 0x9fbde43f");
@@ -9468,6 +9542,7 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x76af5481, [[TLChatFull$channelFull alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbbab348d, [[TLCodexModernChannelFullParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa04e8d3a, [[TLCodexModernChannelFullParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe4e0b29d, [[TLCodexModernChannelFullParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xFC900C2B, [[TLChatParticipants$chatParticipantsForbidden alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xD91CDD54, [[TLChat$chat alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x41cbf256, [[TLCodexModernChatParser alloc] init]));
@@ -9503,7 +9578,7 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc01e857f, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc32d5b12, [[TLCodexModernUpdateDeleteChannelMessagesParser alloc] init]));
         addHashToString((int32_t)0xc32d5b12, @"updateDeleteChannelMessages");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5e1b3cb8, [[TLCodexSkipObjectParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5e1b3cb8, [[TLCodexUpdateMessageReactionsParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd6b19546, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x51e6ee4f, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xea29055d, [[TLCodexSkipObjectParser alloc] init]));
@@ -9772,7 +9847,7 @@ void TLMetaClassStore::mergeScheme(TLScheme *scheme)
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x770416af, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x37381085, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x49a6549c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50a04e45, [[TLCodexSkipObjectParser alloc] init]));
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50a04e45, [[TLCodexModernPrivacyRulesParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfffe1bac, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x65427b82, [[TLCodexSkipObjectParser alloc] init]));
         manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb8905fb2, [[TLCodexSkipObjectParser alloc] init]));
@@ -10927,7 +11002,8 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         if (error && *error != nil)
         {
             NSString *parserName = NSStringFromClass([parser class]);
-            NSString *safeDescription = [NSString stringWithFormat:@"Manual parser %@ failed for constructor %08x", parserName, signature];
+            NSString *underlyingDescription = (*error).localizedDescription ?: @"TL parse failed";
+            NSString *safeDescription = [NSString stringWithFormat:@"Manual parser %@ failed for constructor %08x: %@", parserName, signature, underlyingDescription];
             NSError *safeError = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: safeDescription}];
             *error = safeError;
             IOS6_NOOP_LOG(@"AUTH TL manual error sig=0x%08x parser=%@", signature, parserName);

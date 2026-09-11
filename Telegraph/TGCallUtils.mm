@@ -355,8 +355,16 @@ void TGCallLoggingFunction(const char *msg)
 
 @implementation TGCallUtils
 
++ (bool)canCheckPhoneCallState
+{
+    return iosMajorVersion() < 10;
+}
+
 + (bool)isOnPhoneCall
 {
+    if (![self canCheckPhoneCallState])
+        return false;
+
     CTCallCenter *callCenter = [[CTCallCenter alloc] init];
     for (CTCall *call in callCenter.currentCalls)
     {

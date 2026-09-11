@@ -57,7 +57,8 @@ typedef enum {
             _botKind = [coder decodeInt32ForCKey:"bk"];
         }
         _flags = [coder decodeInt32ForCKey:"f"];
-        _restrictionReason = [coder decodeStringForCKey:"rr"];
+        _flags &= ~TGUserFlagHasExplicitContent;
+        _restrictionReason = nil;
         if ([self isContextBot]) {
             _contextBotPlaceholder = [coder decodeStringForCKey:"cbp"];
         }
@@ -421,15 +422,11 @@ typedef enum {
 }
 
 - (bool)hasExplicitContent {
-    return _flags & TGConversationFlagHasExplicitContent;
+    return false;
 }
 
-- (void)setHasExplicitContent:(bool)hasExplicitContent {
-    if (hasExplicitContent) {
-        _flags |= TGConversationFlagHasExplicitContent;
-    } else {
-        _flags &= ~TGConversationFlagHasExplicitContent;
-    }
+- (void)setHasExplicitContent:(bool)__unused hasExplicitContent {
+    _flags &= ~TGUserFlagHasExplicitContent;
 }
 
 - (bool)minimalRepresentation {

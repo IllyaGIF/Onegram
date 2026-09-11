@@ -124,6 +124,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
     self = [super init];
     if (self != nil)
     {
+        self.nameColorId = -1;
         self.conversationId = -chatDesc.n_id;
         
         self.isChat = true;
@@ -192,6 +193,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.isChannel = true;
             self.accessHash = channel.access_hash;
             self.chatTitle = channel.title;
+            self.nameColorId = channel.name_color_id;
             if ([channel.photo isKindOfClass:[TLChatPhoto$chatPhoto class]])
             {
                 TLChatPhoto$chatPhoto *concretePhoto = (TLChatPhoto$chatPhoto *)channel.photo;
@@ -255,8 +257,8 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             
             self.postAsChannel = self.channelRole == TGChannelRoleCreator || self.channelRole == TGChannelRolePublisher;
             
-            self.hasExplicitContent = channel.flags & (1 << 9);
-            self.restrictionReason = channel.restriction_reason;
+            self.hasExplicitContent = false;
+            self.restrictionReason = nil;
             
             self.kind = (self.leftChat || self.kickedFromChat) ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
             

@@ -795,9 +795,7 @@
         
         if ([[[UIDevice currentDevice] systemVersion] intValue] <= 5)
         {
-            UIFont *emojiFont = [UIFont fontWithName:@"AppleColorEmoji"
-                                                size:_countryButton.titleLabel.font.pointSize];
-            
+            UIFont *emojiFont = TGEmojiFontOfSize(_countryButton.titleLabel.font.pointSize);
             if (emojiFont != nil)
                 _countryButton.titleLabel.font = emojiFont;
         }

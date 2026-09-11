@@ -478,7 +478,22 @@
         return;
     }
 
-    [[AVAudioSession sharedInstance] requestRecordPermission:^(BOOL granted)
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (status == AVAuthorizationStatusAuthorized)
+    {
+        if (resultBlock != nil)
+            resultBlock(true);
+        return;
+    }
+
+    if (status == AVAuthorizationStatusDenied || status == AVAuthorizationStatusRestricted)
+    {
+        if (resultBlock != nil)
+            resultBlock(false);
+        return;
+    }
+
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted)
     {
         TGDispatchOnMainThread(^
         {

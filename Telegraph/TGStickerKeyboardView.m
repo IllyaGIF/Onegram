@@ -1172,24 +1172,34 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
     }
 }
 
-- (CGSize)collectionView:(PSUICollectionView *)__unused collectionView layout:(PSUICollectionViewLayout*)__unused collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)indexPath
+- (CGSize)collectionView:(PSUICollectionView *)collectionView layout:(PSUICollectionViewLayout*)collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)indexPath
 {
     if (collectionView == _gifsCollectionView) {
         return CGSizeMake(30.0f, 30.0f);
     } else if (collectionView == _trendingCollectionView) {
-        return CGSizeMake(collectionViewLayout.collectionView.bounds.size.width, 124.0f);
+        CGFloat width = collectionViewLayout.collectionView.bounds.size.width;
+        if (iosMajorVersion() < 7)
+            width = MAX(TGScreenPixel, width - TGScreenPixel);
+        return CGSizeMake(width, 124.0f);
     } else if (collectionView == _searchCollectionView) {
         if (_searchLocalStickerPacks.count > 0 && indexPath.section != (NSInteger)_searchLocalStickerPacks.count) {
             return CGSizeMake(62.0f, 62.0f);
         } else {
-            return CGSizeMake(collectionViewLayout.collectionView.bounds.size.width, 124.0f);
+            CGFloat width = collectionViewLayout.collectionView.bounds.size.width;
+            if (iosMajorVersion() < 7)
+                width = MAX(TGScreenPixel, width - TGScreenPixel);
+            return CGSizeMake(width, 124.0f);
         }
     } else {
         if (((indexPath.section == 2 && !_groupStickersUnpinned) || (indexPath.section == [self lastGroupSection] && _groupStickersUnpinned)) && _groupDocuments.count == 0 && _showGroupPlaceholder) {
+            UIEdgeInsets insets = [self collectionView:collectionView layout:collectionViewLayout insetForSectionAtIndex:indexPath.section];
+            CGFloat width = MAX(TGScreenPixel, collectionViewLayout.collectionView.bounds.size.width - insets.left - insets.right);
+            if (iosMajorVersion() < 7)
+                width = MAX(TGScreenPixel, width - TGScreenPixel);
             NSString *text = TGLocalized(@"Stickers.GroupStickersHelp");
-            CGSize size = [text sizeWithFont:TGSystemFontOfSize(14.0f) constrainedToSize:CGSizeMake(collectionViewLayout.collectionView.bounds.size.width - 26.0f, FLT_MAX) lineBreakMode:NSLineBreakByWordWrapping];
+            CGSize size = [text sizeWithFont:TGSystemFontOfSize(14.0f) constrainedToSize:CGSizeMake(MAX(TGScreenPixel, width - 2.0f), FLT_MAX) lineBreakMode:NSLineBreakByWordWrapping];
             
-            return CGSizeMake(collectionViewLayout.collectionView.bounds.size.width, ceil(size.height) + 33.0f + 16.0f);
+            return CGSizeMake(width, ceil(size.height) + 33.0f + 16.0f);
         } else {
             return CGSizeMake(62.0f, 62.0f);
         }

@@ -357,11 +357,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 {
     if (message.mid == 0)
         return;
-    TGModernConversationController *controller = self.controller;
-    if ([[controller visibleMessageIds] containsObject:@(message.mid)])
-        [self navigateToMessageId:message.mid scrollBackMessageId:0 forceUnseenMention:false animated:true];
-    else
-        [self navigateToMessageId:message.mid scrollBackMessageId:0 forceUnseenMention:false animated:true forceLoad:true];
+    [self navigateToMessageId:message.mid scrollBackMessageId:0 forceUnseenMention:false animated:true];
 }
 
 - (void)_setPinnedMessagesMenuItemsForController:(TGMenuSheetController *)controller offset:(NSUInteger)offset animated:(bool)animated
@@ -2694,11 +2690,14 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                     for (TGMessage *message in dict[@"messages"]) {
                         if (message.mid == messageId) {
                             sortKey = message.transparentSortKey;
-                            
+                            keyExists = true;
                             break;
                         }
                     }
                 }
+                
+                if (!keyExists)
+                    return;
                 
                 [TGDatabaseInstance() addMessagesToChannel:conversationId messages:dict[@"messages"] deleteMessages:nil unimportantGroups:dict[@"unimportantGroups"] addedHoles:nil removedHoles:removedImportantHoles removedUnimportantHoles:removedUnimportantHoles updatedMessageSortKeys:nil returnGroups:false keepUnreadCounters:false skipFeedUpdate:true changedMessages:^(__unused NSArray *addedMessages, __unused NSArray *removedMessages, __unused NSDictionary *updatedMessages, __unused NSArray *addedUnimportantHoles, __unused NSArray *removedUnimportantHoles) {
                     [TGModernConversationCompanion dispatchOnMessageQueue:^{

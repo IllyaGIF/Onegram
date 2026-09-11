@@ -53,6 +53,12 @@ static UIColor *coloredNameForUser(TGUser *user, bool dark)
     return [[TGInterfaceAssets instance] userColorForIndex:colorIndex dark:dark];
 }
 
+static UIColor *coloredNameForConversation(TGConversation *conversation, bool dark)
+{
+    int colorIndex = conversation.nameColorId >= 0 && conversation.nameColorId < 7 ? conversation.nameColorId : [[TGInterfaceAssets instance] groupColorIndex:conversation.conversationId];
+    return [[TGInterfaceAssets instance] userColorForIndex:colorIndex dark:dark];
+}
+
 @interface TGMessageModernConversationItem () <TGModernCollectionRelativeBoundsObserver, TGModernCollectionPointInsideSolver>
 {
     TGMessageViewModel *_viewModel;
@@ -682,7 +688,7 @@ static UIColor *coloredNameForUser(TGUser *user, bool dark)
     if ([author isKindOfClass:[TGConversation class]]) {
         TGConversation *conversation = author;
         [model setAuthorAvatarUrl:conversation.chatPhotoFullSmall groupId:conversation.conversationId];
-        [model setAuthorNameColor:_context.presentation.pallete.chatIncomingAccentColor];
+        [model setAuthorNameColor:coloredNameForConversation(conversation, _context.presentation.pallete.isDark)];
         if (_author != nil && [_author isKindOfClass:[TGUser class]]) {
             [model setAuthorSignature:[_author displayName]];
         } else {

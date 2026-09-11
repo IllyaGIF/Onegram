@@ -67,6 +67,39 @@ static bool TGIos6IsHexString(NSString *string)
     return [string rangeOfCharacterFromSet:[hexSet invertedSet]].location == NSNotFound;
 }
 
+static NSString *TGOnegramWebSocketEnabledKey(void)
+{
+    return @"TGOnegramWebSocketEnabled";
+}
+
+static MTSocksProxySettings *TGOnegramStoredProxySettings(void)
+{
+    NSData *data = [TGDatabaseInstance() customProperty:@"socksProxyData"];
+    if (data == nil || data.length == 0)
+        return nil;
+
+    NSDictionary *dict = nil;
+    @try
+    {
+        dict = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+    }
+    @catch (__unused NSException *exception)
+    {
+        return nil;
+    }
+
+    if (![dict isKindOfClass:[NSDictionary class]] || [dict[@"inactive"] boolValue])
+        return nil;
+    NSString *ip = dict[@"ip"];
+    NSNumber *port = dict[@"port"];
+    if (![ip isKindOfClass:[NSString class]] || ip.length == 0 || ![port isKindOfClass:[NSNumber class]] || [port intValue] <= 0)
+        return nil;
+
+    NSString *secretString = dict[@"secret"];
+    NSData *secret = TGIos6IsHexString(secretString) ? [NSData dataWithHexString:secretString] : nil;
+    return [[MTSocksProxySettings alloc] initWithIp:ip port:(uint16_t)[port intValue] username:dict[@"username"] password:dict[@"password"] secret:secret];
+}
+
 static bool TGIOS6NtpUnixTime(const char *host, NSTimeInterval *unixTime)
 {
     struct addrinfo hints;
@@ -531,6 +564,11 @@ static TGTelegramNetworking *singleton = nil;
                     TGLog(@"AUTH ignoring non-hex proxy secret length=%d", (int)secretString.length);
                 apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:[[MTSocksProxySettings alloc] initWithIp:socksProxyDict[@"ip"] port:(uint16_t)[socksProxyDict[@"port"] intValue] username:socksProxyDict[@"username"] password:socksProxyDict[@"password"] secret:secret]];
             }
+        }
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:TGOnegramWebSocketEnabledKey()])
+        {
+            apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:nil];
+            apiEnvironment = [apiEnvironment withUpdatedOnegramWebSocketEnabled:true];
         }
 
         TGNetworkSettings *networkSettings = nil;
@@ -2354,6 +2392,25 @@ static TGTelegramNetworking *singleton = nil;
 
 - (NSString *)wifiUsageResetPath {
     return [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"wifi-usage-reset"];
+}
+
+- (bool)onegramWebSocketProxyEnabled
+{
+    return [[NSUserDefaults standardUserDefaults] boolForKey:TGOnegramWebSocketEnabledKey()];
+}
+
+- (void)setOnegramWebSocketProxyEnabled:(bool)enabled
+{
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:enabled forKey:TGOnegramWebSocketEnabledKey()];
+    [defaults synchronize];
+
+    MTSocksProxySettings *settings = enabled ? nil : TGOnegramStoredProxySettings();
+    [_context updateApiEnvironment:^MTApiEnvironment *(MTApiEnvironment *environment)
+    {
+        MTApiEnvironment *updated = [environment withUpdatedOnegramWebSocketEnabled:enabled];
+        return [updated withUpdatedSocksProxySettings:settings];
+    }];
 }
 
 - (SSignal *)socksProxySettings {

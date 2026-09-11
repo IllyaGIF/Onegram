@@ -852,7 +852,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         }
         
         SSignal *readySignal = [SSignal single:@true];
-        if ([TGCallKitAdapter callKitAvailable] && !_outgoing && _audioSessionActivated != nil)
+        if (_hasCallKit && _audioSessionActivated != nil)
             readySignal = _audioSessionActivated.signal;
         
         [[[[readySignal filter:^bool(NSNumber *value) {
@@ -1236,7 +1236,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
          }];
     };
     
-    if ([TGCallKitAdapter callKitAvailable])
+    if (_hasCallKit)
         block();
     else
         [self setupAudioSession:block];
@@ -1629,7 +1629,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
 
 - (void)applicationWillResignActive:(NSNotification *)__unused notification
 {
-    if ([TGCallKitAdapter callKitAvailable])
+    if (_hasCallKit)
         return;
     
     if (_playingRingtone && _audioPlayer != nil)
@@ -1638,7 +1638,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
 
 - (void)applicationDidBecomeActive:(NSNotification *)__unused notification
 {
-    if ([TGCallKitAdapter callKitAvailable])
+    if (_hasCallKit)
         return;
     
     if (_playingRingtone && _audioPlayer == nil)
@@ -1677,7 +1677,7 @@ static id<SDisposable> audioSession;
 
 - (void)resetAudioSessionIfNeeded
 {
-    if (![TGCallKitAdapter callKitAvailable])
+    if (!_hasCallKit)
         [self resetAudioSession];
 }
 

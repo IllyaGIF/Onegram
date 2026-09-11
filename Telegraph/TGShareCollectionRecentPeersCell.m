@@ -198,7 +198,7 @@ NSString *const TGShareCollectionRecentPeersCellIdentifier = @"TGShareCollection
 }
 
 - (CGSize)collectionView:(PSUICollectionView *)__unused collectionView layout:(PSUICollectionViewLayout*)__unused collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)__unused indexPath {
-    return CGSizeMake(70.0f, 80.0f);
+    return [TGShareCollectionRecentPeersCell itemSize];
 }
 
 - (UIEdgeInsets)collectionView:(PSUICollectionView *)__unused collectionView layout:(PSUICollectionViewLayout *)__unused collectionViewLayout insetForSectionAtIndex:(NSInteger)__unused section {

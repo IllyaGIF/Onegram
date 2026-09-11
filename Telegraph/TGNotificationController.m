@@ -67,6 +67,8 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
 
 @interface TGNotificationWindowViewController : TGOverlayWindowViewController
 
+@property (nonatomic, weak) TGNotificationController *notificationController;
+
 @end
 
 @interface TGNotificationItem : NSObject
@@ -141,9 +143,12 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
         
         _window = [[TGNotificationWindow alloc] initWithFrame:TGAppDelegateInstance.rootController.applicationBounds overInAppBrowser:[TGAppDelegateInstance.rootController.presentedViewController isKindOfClass:[SFSafariViewController class]]];
         _window.tag = 0xbeef;
-        _window.rootViewController = [[TGNotificationWindowViewController alloc] init];
-        [_window.rootViewController addChildViewController:self];
-        [_window.rootViewController.view addSubview:self.view];
+        TGNotificationWindowViewController *windowController = [[TGNotificationWindowViewController alloc] init];
+        windowController.notificationController = self;
+        _window.rootViewController = windowController;
+        if (iosMajorVersion() >= 5)
+            [windowController addChildViewController:self];
+        [windowController.view addSubview:self.view];
         
         __weak TGNotificationController *weakSelf = self;
         _window.pointInside = ^bool(CGPoint point)
@@ -1395,7 +1400,7 @@ static id mediaIdForAttachment(TGMediaAttachment *attachment)
 
 - (BOOL)prefersStatusBarHidden
 {
-    TGNotificationController *controller = self.childViewControllers.firstObject;
+    TGNotificationController *controller = _notificationController;
     bool viewPresented = controller.notificationView.isPresented;
     bool isHiding = controller.notificationView.isHiding;
     
@@ -1431,7 +1436,10 @@ static id mediaIdForAttachment(TGMediaAttachment *attachment)
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event
 {
-    TGNotificationController *controller = (TGNotificationController *)(self.rootViewController.childViewControllers.firstObject);
+    TGNotificationWindowViewController *windowController = (TGNotificationWindowViewController *)self.rootViewController;
+    TGNotificationController *controller = windowController.notificationController;
+    if (controller == nil)
+        return nil;
     
     CGPoint localPoint = [controller.view convertPoint:point fromView:self];
     UIView *result = [controller.view hitTest:localPoint withEvent:event];
