@@ -398,6 +398,7 @@ static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
     
     bool _didSelectMessage;
     bool _didSelectGlobalResult;
+    bool _ios6SearchPullArmed;
     
     TGMenuContainerView *_menuContainerView;
     
@@ -454,6 +455,21 @@ static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
     UILabel *_ios6FolderEmptyLabel;
     UIPanGestureRecognizer *_ios6FolderPanGestureRecognizer;
     UILongPressGestureRecognizer *_ios6ChatActionsLongPressRecognizer;
+    UIImageView *_ios6FolderSwipeSourceView;
+    UIImageView *_ios6FolderSwipeTabsView;
+    UIView *_ios6FolderSwipeIndicatorView;
+    NSInteger _ios6FolderSwipeSourceIndex;
+    NSInteger _ios6FolderSwipeTargetIndex;
+    int32_t _ios6FolderSwipeSourceFilterId;
+    int32_t _ios6FolderSwipeTargetFilterId;
+    CGPoint _ios6FolderSwipeSourceContentOffset;
+    CGRect _ios6FolderSwipeContentFrame;
+    CGRect _ios6FolderSwipeSourceIndicatorFrame;
+    CGRect _ios6FolderSwipeTargetIndicatorFrame;
+    CGFloat _ios6FolderSwipeTargetOffset;
+    bool _ios6FolderSwipeActive;
+    bool _ios6FolderSwipeFinishing;
+    bool _ios6FolderSwipePreviousViewClipsToBounds;
     NSArray *_ios6AllDialogItems;
     NSTimeInterval _ios6AllDialogItemsLastRefreshTime;
     bool _ios6AllDialogItemsLoading;
@@ -509,7 +525,15 @@ static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
 - (void)ios6UpdateNewChatListGesturesState;
 - (void)ios6NewChatListGesturesChanged:(NSNotification *)notification;
 - (NSInteger)ios6SelectedDialogFilterIndex;
-- (void)ios6SelectDialogFilterAtIndex:(NSInteger)index animated:(bool)animated movingForward:(bool)movingForward;
+- (void)ios6SelectDialogFilterAtIndex:(NSInteger)index;
+- (void)ios6CompleteDialogFilterSelectionAtIndex:(NSInteger)index;
+- (CGRect)ios6FolderSwipeTabsRect;
+- (CGRect)ios6FolderSwipeContentRect;
+- (UIImage *)ios6FolderSwipeSnapshotForRect:(CGRect)rect;
+- (void)ios6BeginFolderSwipeToIndex:(NSInteger)targetIndex translation:(CGPoint)translation;
+- (void)ios6UpdateFolderSwipeWithTranslation:(CGPoint)translation;
+- (void)ios6FinishFolderSwipeCommit:(bool)commit velocity:(CGPoint)velocity;
+- (void)ios6CancelFolderSwipeImmediately;
 - (void)ios6FolderPanGesture:(UIPanGestureRecognizer *)recognizer;
 - (void)ios6ChatActionsLongPress:(UILongPressGestureRecognizer *)recognizer;
 
@@ -1321,6 +1345,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     _ios6FolderPanGestureRecognizer.maximumNumberOfTouches = 1;
     _ios6FolderPanGestureRecognizer.cancelsTouchesInView = false;
     [self.view addGestureRecognizer:_ios6FolderPanGestureRecognizer];
+    if ([_tableView respondsToSelector:@selector(panGestureRecognizer)])
+        [_tableView.panGestureRecognizer requireGestureRecognizerToFail:_ios6FolderPanGestureRecognizer];
 
     _ios6ChatActionsLongPressRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(ios6ChatActionsLongPress:)];
     _ios6ChatActionsLongPressRecognizer.minimumPressDuration = 0.45;
@@ -1367,6 +1393,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)doUnloadView
 {
+    [self ios6CancelFolderSwipeImmediately];
+
     if (_ios6FolderPanGestureRecognizer != nil)
     {
         _ios6FolderPanGestureRecognizer.delegate = nil;
@@ -1402,10 +1430,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 {
     if (!_doNotHideSearchAutomatically)
     {
-        if (iosMajorVersion() < 5)
-            _tableView.contentOffset = CGPointMake(0.0f, -_tableView.contentInset.top + self.explicitTableInset.top);
-        else
-            _tableView.contentOffset = CGPointMake(0.0f, -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top);
+        _tableView.contentOffset = CGPointMake(0.0f, -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top);
+        _ios6SearchPullArmed = false;
     }
 }
 
@@ -2645,32 +2671,17 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     return NSNotFound;
 }
 
-- (void)ios6SelectDialogFilterAtIndex:(NSInteger)index animated:(bool)animated movingForward:(bool)movingForward
+- (void)ios6CompleteDialogFilterSelectionAtIndex:(NSInteger)index
 {
     if (index < 0 || index >= (NSInteger)_ios6DialogFilters.count)
         return;
 
     NSDictionary *filter = _ios6DialogFilters[index];
     int32_t filterId = [filter[@"id"] intValue];
-    if (filterId == _ios6SelectedDialogFilterId)
+    if (filterId != _ios6SelectedDialogFilterId)
         return;
 
-    _ios6ArchiveExpanded = false;
-
-    if (animated && _tableView != nil)
-    {
-        CATransition *transition = [CATransition animation];
-        transition.duration = 0.20;
-        transition.type = kCATransitionPush;
-        transition.subtype = movingForward ? kCATransitionFromRight : kCATransitionFromLeft;
-        transition.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
-        [_tableView.layer addAnimation:transition forKey:@"TGIOS6FolderSwipeTransition"];
-    }
-
-    _ios6SelectedDialogFilterId = filterId;
     [[NSUserDefaults standardUserDefaults] setInteger:filterId forKey:@"TGIOS6SelectedDialogFilterId"];
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
 
     NSLog(@"FOLDERS select id=%d title=%@", filterId, filter[@"title"]);
     if (filterId != 0 && [_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
@@ -2698,52 +2709,346 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
             [(TGTelegraphDialogListCompanion *)controller->_dialogListCompanion ios6PreloadAllDialogsForFolders];
         });
     }
+}
+
+- (void)ios6SelectDialogFilterAtIndex:(NSInteger)index
+{
+    if (index < 0 || index >= (NSInteger)_ios6DialogFilters.count || _ios6FolderSwipeActive || _ios6FolderSwipeFinishing)
+        return;
+
+    NSDictionary *filter = _ios6DialogFilters[index];
+    int32_t filterId = [filter[@"id"] intValue];
+    if (filterId == _ios6SelectedDialogFilterId)
+        return;
+
+    _ios6ArchiveExpanded = false;
+    _ios6SelectedDialogFilterId = filterId;
+    _ios6VisibleListCache = nil;
+    _ios6VisibleListCacheFilterId = INT32_MIN;
 
     [self reloadData:false];
     [self updateBarButtonItemsAnimated:false];
     [self resetInitialOffset];
+    [self ios6CompleteDialogFilterSelectionAtIndex:index];
+}
+
+- (CGRect)ios6FolderSwipeTabsRect
+{
+    if (_ios6FolderTabsView == nil || _ios6FolderTabsView.hidden || _ios6FolderTabsView.bounds.size.height < FLT_EPSILON)
+        return CGRectZero;
+
+    CGRect rect = [_ios6FolderTabsView convertRect:_ios6FolderTabsView.bounds toView:self.view];
+    return CGRectIntersection(rect, self.view.bounds);
+}
+
+- (CGRect)ios6FolderSwipeContentRect
+{
+    if (_tableView == nil)
+        return CGRectZero;
+
+    CGRect tableRect = [_tableView.superview convertRect:_tableView.frame toView:self.view];
+    CGRect tabsRect = [self ios6FolderSwipeTabsRect];
+    CGFloat top = CGRectGetMinY(tableRect);
+    if (!CGRectIsEmpty(tabsRect))
+        top = MAX(top, CGRectGetMaxY(tabsRect));
+
+    CGRect rect = CGRectMake(CGRectGetMinX(tableRect), top, CGRectGetWidth(tableRect), CGRectGetMaxY(tableRect) - top);
+    return CGRectIntersection(rect, self.view.bounds);
+}
+
+- (UIImage *)ios6FolderSwipeSnapshotForRect:(CGRect)rect
+{
+    if (CGRectIsEmpty(rect) || rect.size.width < 1.0f || rect.size.height < 1.0f)
+        return nil;
+
+    UIGraphicsBeginImageContextWithOptions(rect.size, true, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextTranslateCTM(context, -rect.origin.x, -rect.origin.y);
+    [self.view.layer renderInContext:context];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+- (void)ios6BeginFolderSwipeToIndex:(NSInteger)targetIndex translation:(CGPoint)translation
+{
+    if (_ios6FolderSwipeActive || _ios6FolderSwipeFinishing || targetIndex < 0 || targetIndex >= (NSInteger)_ios6DialogFilters.count)
+        return;
+
+    NSInteger sourceIndex = [self ios6SelectedDialogFilterIndex];
+    if (sourceIndex == NSNotFound || sourceIndex == targetIndex)
+        return;
+
+    NSDictionary *sourceFilter = _ios6DialogFilters[sourceIndex];
+    NSDictionary *targetFilter = _ios6DialogFilters[targetIndex];
+    int32_t sourceFilterId = [sourceFilter[@"id"] intValue];
+    int32_t targetFilterId = [targetFilter[@"id"] intValue];
+    if (sourceFilterId == targetFilterId)
+        return;
+
+    CGRect tabsRect = [self ios6FolderSwipeTabsRect];
+    CGRect contentRect = [self ios6FolderSwipeContentRect];
+    if (CGRectIsEmpty(tabsRect) || CGRectIsEmpty(contentRect))
+        return;
+
+    UIView *existingIndicator = [_ios6FolderTabsScrollView viewWithTag:6199];
+    bool indicatorWasHidden = existingIndicator.hidden;
+    existingIndicator.hidden = true;
+    UIImage *tabsImage = [self ios6FolderSwipeSnapshotForRect:tabsRect];
+    existingIndicator.hidden = indicatorWasHidden;
+    UIImage *sourceImage = [self ios6FolderSwipeSnapshotForRect:contentRect];
+    if (sourceImage == nil || tabsImage == nil)
+        return;
+
+    UIButton *sourceButton = (UIButton *)[_ios6FolderTabsScrollView viewWithTag:6100 + sourceIndex];
+    UIButton *targetButton = (UIButton *)[_ios6FolderTabsScrollView viewWithTag:6100 + targetIndex];
+    if (![sourceButton isKindOfClass:[UIButton class]] || ![targetButton isKindOfClass:[UIButton class]])
+        return;
+
+    CGRect sourceIndicatorFrame = [sourceButton convertRect:CGRectMake(5.0f, 34.0f, MAX(0.0f, sourceButton.bounds.size.width - 10.0f), 3.0f) toView:self.view];
+    CGRect targetIndicatorFrame = [targetButton convertRect:CGRectMake(5.0f, 34.0f, MAX(0.0f, targetButton.bounds.size.width - 10.0f), 3.0f) toView:self.view];
+    sourceIndicatorFrame = CGRectOffset(sourceIndicatorFrame, -tabsRect.origin.x, -tabsRect.origin.y);
+    targetIndicatorFrame = CGRectOffset(targetIndicatorFrame, -tabsRect.origin.x, -tabsRect.origin.y);
+
+    _ios6FolderSwipeSourceIndex = sourceIndex;
+    _ios6FolderSwipeTargetIndex = targetIndex;
+    _ios6FolderSwipeSourceFilterId = sourceFilterId;
+    _ios6FolderSwipeTargetFilterId = targetFilterId;
+    _ios6FolderSwipeSourceContentOffset = _tableView.contentOffset;
+    _ios6FolderSwipeContentFrame = contentRect;
+    _ios6FolderSwipeSourceIndicatorFrame = sourceIndicatorFrame;
+    _ios6FolderSwipeTargetIndicatorFrame = targetIndicatorFrame;
+    _ios6FolderSwipePreviousViewClipsToBounds = self.view.clipsToBounds;
+    self.view.clipsToBounds = true;
+
+    _ios6FolderSwipeSourceView = [[UIImageView alloc] initWithImage:sourceImage];
+    _ios6FolderSwipeSourceView.frame = contentRect;
+    _ios6FolderSwipeSourceView.userInteractionEnabled = false;
+    [self.view addSubview:_ios6FolderSwipeSourceView];
+
+    _ios6FolderSwipeTabsView = [[UIImageView alloc] initWithImage:tabsImage];
+    _ios6FolderSwipeTabsView.frame = tabsRect;
+    _ios6FolderSwipeTabsView.clipsToBounds = true;
+    _ios6FolderSwipeTabsView.userInteractionEnabled = false;
+    [self.view addSubview:_ios6FolderSwipeTabsView];
+
+    bool classicStyle = [TGPresentation classicIOS6Style];
+    _ios6FolderSwipeIndicatorView = [[UIView alloc] initWithFrame:sourceIndicatorFrame];
+    _ios6FolderSwipeIndicatorView.backgroundColor = classicStyle ? UIColorRGB(0x2b78c5) : self.presentation.pallete.accentColor;
+    _ios6FolderSwipeIndicatorView.userInteractionEnabled = false;
+    [_ios6FolderSwipeTabsView addSubview:_ios6FolderSwipeIndicatorView];
+
+    _ios6FolderSwipeActive = true;
+    _tableView.scrollEnabled = false;
+    _ios6ChatActionsLongPressRecognizer.enabled = false;
+    _ios6FolderEmptyLabel.hidden = true;
+    _ios6ArchiveExpanded = false;
+
+    _ios6SelectedDialogFilterId = targetFilterId;
+    _ios6VisibleListCache = nil;
+    _ios6VisibleListCacheFilterId = INT32_MIN;
+    [self reloadData:false];
+    [self resetInitialOffset];
+
+    CGFloat direction = targetIndex > sourceIndex ? 1.0f : -1.0f;
+    if (TGIsRTL())
+        direction = -direction;
+    _ios6FolderSwipeTargetOffset = direction * contentRect.size.width;
+
+    [self ios6UpdateFolderSwipeWithTranslation:translation];
+}
+
+- (void)ios6UpdateFolderSwipeWithTranslation:(CGPoint)translation
+{
+    if (!_ios6FolderSwipeActive || _ios6FolderSwipeFinishing || _ios6FolderSwipeSourceView == nil)
+        return;
+
+    CGFloat width = _ios6FolderSwipeContentFrame.size.width;
+    if (width < 1.0f)
+        return;
+
+    CGFloat expectedTranslation = -_ios6FolderSwipeTargetOffset;
+    CGFloat x = translation.x;
+    if (x * expectedTranslation < 0.0f)
+        x *= 0.22f;
+    if (ABS(x) > width)
+        x = x < 0.0f ? -width : width;
+
+    CGRect sourceFrame = _ios6FolderSwipeContentFrame;
+    sourceFrame.origin.x += x;
+    _ios6FolderSwipeSourceView.frame = sourceFrame;
+    _tableView.transform = CGAffineTransformMakeTranslation(_ios6FolderSwipeTargetOffset + x, 0.0f);
+
+    CGFloat progress = MIN(1.0f, ABS(x) / width);
+    CGRect fromFrame = _ios6FolderSwipeSourceIndicatorFrame;
+    CGRect toFrame = _ios6FolderSwipeTargetIndicatorFrame;
+    CGRect indicatorFrame = CGRectMake(fromFrame.origin.x + (toFrame.origin.x - fromFrame.origin.x) * progress,
+                                       fromFrame.origin.y + (toFrame.origin.y - fromFrame.origin.y) * progress,
+                                       fromFrame.size.width + (toFrame.size.width - fromFrame.size.width) * progress,
+                                       fromFrame.size.height + (toFrame.size.height - fromFrame.size.height) * progress);
+    _ios6FolderSwipeIndicatorView.frame = indicatorFrame;
+}
+
+- (void)ios6FinishFolderSwipeCommit:(bool)commit velocity:(CGPoint)velocity
+{
+    if (!_ios6FolderSwipeActive || _ios6FolderSwipeFinishing)
+        return;
+
+    _ios6FolderSwipeFinishing = true;
+
+    CGFloat width = _ios6FolderSwipeContentFrame.size.width;
+    CGFloat sourceX = _ios6FolderSwipeSourceView.frame.origin.x - _ios6FolderSwipeContentFrame.origin.x;
+    CGFloat expectedTranslation = -_ios6FolderSwipeTargetOffset;
+    CGFloat finalTranslation = commit ? expectedTranslation : 0.0f;
+    CGFloat targetTranslation = commit ? 0.0f : _ios6FolderSwipeTargetOffset;
+    CGFloat remaining = width < 1.0f ? 0.0f : ABS(finalTranslation - sourceX) / width;
+    CGFloat velocityMagnitude = ABS(velocity.x);
+    NSTimeInterval duration = MAX(0.08, MIN(0.20, 0.08 + 0.12 * remaining));
+    if (velocityMagnitude > 1.0f && width > 1.0f)
+        duration = MIN(duration, MAX(0.08, MIN(0.18, ABS(finalTranslation - sourceX) / velocityMagnitude)));
+
+    CGRect finalSourceFrame = _ios6FolderSwipeContentFrame;
+    finalSourceFrame.origin.x += finalTranslation;
+    CGRect finalIndicatorFrame = commit ? _ios6FolderSwipeTargetIndicatorFrame : _ios6FolderSwipeSourceIndicatorFrame;
+
+    TGDialogListController *controller = self;
+    [UIView animateWithDuration:duration delay:0.0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut animations:^
+    {
+        controller->_ios6FolderSwipeSourceView.frame = finalSourceFrame;
+        controller->_tableView.transform = CGAffineTransformMakeTranslation(targetTranslation, 0.0f);
+        controller->_ios6FolderSwipeIndicatorView.frame = finalIndicatorFrame;
+    } completion:^(__unused BOOL finished)
+    {
+        if (!controller->_ios6FolderSwipeFinishing)
+            return;
+
+        if (commit)
+        {
+            controller->_tableView.transform = CGAffineTransformIdentity;
+            NSInteger targetIndex = controller->_ios6FolderSwipeTargetIndex;
+            if (targetIndex >= 0 && targetIndex < (NSInteger)controller->_ios6DialogFilters.count &&
+                [controller->_ios6DialogFilters[targetIndex][@"id"] intValue] == controller->_ios6FolderSwipeTargetFilterId &&
+                controller->_ios6SelectedDialogFilterId == controller->_ios6FolderSwipeTargetFilterId)
+            {
+                [controller updateBarButtonItemsAnimated:false];
+                [controller ios6CompleteDialogFilterSelectionAtIndex:targetIndex];
+            }
+            else
+            {
+                controller->_ios6SelectedDialogFilterId = controller->_ios6FolderSwipeSourceFilterId;
+                controller->_ios6VisibleListCache = nil;
+                controller->_ios6VisibleListCacheFilterId = INT32_MIN;
+                [controller reloadData:false];
+                [controller->_tableView setContentOffset:controller->_ios6FolderSwipeSourceContentOffset animated:false];
+            }
+        }
+        else
+        {
+            controller->_ios6SelectedDialogFilterId = controller->_ios6FolderSwipeSourceFilterId;
+            controller->_ios6VisibleListCache = nil;
+            controller->_ios6VisibleListCacheFilterId = INT32_MIN;
+            [controller reloadData:false];
+            [controller->_tableView setContentOffset:controller->_ios6FolderSwipeSourceContentOffset animated:false];
+            controller->_tableView.transform = CGAffineTransformIdentity;
+        }
+
+        [controller->_ios6FolderSwipeSourceView removeFromSuperview];
+        controller->_ios6FolderSwipeSourceView = nil;
+        [controller->_ios6FolderSwipeTabsView removeFromSuperview];
+        controller->_ios6FolderSwipeTabsView = nil;
+        controller->_ios6FolderSwipeIndicatorView = nil;
+        controller.view.clipsToBounds = controller->_ios6FolderSwipePreviousViewClipsToBounds;
+        controller->_ios6FolderSwipeActive = false;
+        controller->_ios6FolderSwipeFinishing = false;
+        controller->_tableView.scrollEnabled = true;
+        [controller ios6UpdateNewChatListGesturesState];
+        controller->_ios6FolderTabsStateKey = nil;
+        [controller ios6UpdateFolderTabs];
+        [controller ios6UpdateFolderEmptyLabel];
+    }];
+}
+
+- (void)ios6CancelFolderSwipeImmediately
+{
+    if (!_ios6FolderSwipeActive && !_ios6FolderSwipeFinishing)
+        return;
+
+    [_ios6FolderSwipeSourceView.layer removeAllAnimations];
+    [_tableView.layer removeAllAnimations];
+    [_ios6FolderSwipeIndicatorView.layer removeAllAnimations];
+
+    _ios6SelectedDialogFilterId = _ios6FolderSwipeSourceFilterId;
+    _ios6VisibleListCache = nil;
+    _ios6VisibleListCacheFilterId = INT32_MIN;
+    _tableView.transform = CGAffineTransformIdentity;
+    [self reloadData:false];
+    [_tableView setContentOffset:_ios6FolderSwipeSourceContentOffset animated:false];
+
+    [_ios6FolderSwipeSourceView removeFromSuperview];
+    _ios6FolderSwipeSourceView = nil;
+    [_ios6FolderSwipeTabsView removeFromSuperview];
+    _ios6FolderSwipeTabsView = nil;
+    _ios6FolderSwipeIndicatorView = nil;
+    self.view.clipsToBounds = _ios6FolderSwipePreviousViewClipsToBounds;
+    _ios6FolderSwipeActive = false;
+    _ios6FolderSwipeFinishing = false;
+    _tableView.scrollEnabled = true;
+    [self ios6UpdateNewChatListGesturesState];
+    _ios6FolderTabsStateKey = nil;
+    [self ios6UpdateFolderTabs];
+    [self ios6UpdateFolderEmptyLabel];
 }
 
 - (void)ios6FolderPanGesture:(UIPanGestureRecognizer *)recognizer
 {
-    if (recognizer.state != UIGestureRecognizerStateEnded)
-        return;
-
     if (![self ios6NewChatListGesturesEnabled] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1)
+    {
+        if (_ios6FolderSwipeActive)
+            [self ios6FinishFolderSwipeCommit:false velocity:CGPointZero];
         return;
+    }
 
-    CGPoint translation = [recognizer translationInView:_tableView];
-    CGPoint velocity = [recognizer velocityInView:_tableView];
-
-    CGFloat horizontalDistance = ABS(translation.x);
-    CGFloat verticalDistance = ABS(translation.y);
-    CGFloat horizontalVelocity = ABS(velocity.x);
-    CGFloat verticalVelocity = ABS(velocity.y);
-    bool horizontalByDistance = horizontalDistance >= 32.0f && horizontalDistance > verticalDistance * 1.15f;
-    bool horizontalByVelocity = horizontalVelocity >= 360.0f && horizontalVelocity > verticalVelocity * 1.15f;
-    if (!horizontalByDistance && !horizontalByVelocity)
+    if (recognizer.state == UIGestureRecognizerStateBegan)
+    {
+        CGPoint velocity = [recognizer velocityInView:self.view];
+        CGFloat logicalVelocityX = TGIsRTL() ? -velocity.x : velocity.x;
+        NSInteger currentIndex = [self ios6SelectedDialogFilterIndex];
+        if (currentIndex == NSNotFound)
+            currentIndex = 0;
+        NSInteger targetIndex = currentIndex + (logicalVelocityX < 0.0f ? 1 : -1);
+        [self ios6BeginFolderSwipeToIndex:targetIndex translation:[recognizer translationInView:self.view]];
         return;
+    }
 
-    CGFloat logicalTranslationX = TGIsRTL() ? -translation.x : translation.x;
-    CGFloat logicalVelocityX = TGIsRTL() ? -velocity.x : velocity.x;
-
-    CGFloat threshold = MIN(64.0f, _tableView.bounds.size.width * 0.16f);
-    bool moveForward = logicalTranslationX < -threshold || (horizontalByVelocity && logicalVelocityX < -360.0f);
-    bool moveBackward = logicalTranslationX > threshold || (horizontalByVelocity && logicalVelocityX > 360.0f);
-    if (!moveForward && !moveBackward)
+    if (recognizer.state == UIGestureRecognizerStateChanged)
+    {
+        [self ios6UpdateFolderSwipeWithTranslation:[recognizer translationInView:self.view]];
         return;
+    }
 
-    NSInteger currentIndex = [self ios6SelectedDialogFilterIndex];
-    if (currentIndex == NSNotFound)
-        currentIndex = 0;
+    if (recognizer.state == UIGestureRecognizerStateEnded)
+    {
+        if (!_ios6FolderSwipeActive)
+            return;
 
-    NSInteger targetIndex = currentIndex + (moveForward ? 1 : -1);
-    if (targetIndex < 0 || targetIndex >= (NSInteger)_ios6DialogFilters.count)
+        CGPoint translation = [recognizer translationInView:self.view];
+        CGPoint velocity = [recognizer velocityInView:self.view];
+        CGFloat expectedTranslation = -_ios6FolderSwipeTargetOffset;
+        bool movingTowardTarget = translation.x * expectedTranslation > 0.0f;
+        bool velocityTowardTarget = velocity.x * expectedTranslation > 0.0f;
+        CGFloat width = MAX(1.0f, _ios6FolderSwipeContentFrame.size.width);
+        CGFloat progress = ABS(translation.x) / width;
+        CGFloat projectedProgress = ABS(translation.x + velocity.x * 0.16f) / width;
+        bool commit = movingTowardTarget && (progress >= 0.30f || projectedProgress >= 0.48f || (velocityTowardTarget && ABS(velocity.x) >= 520.0f));
+
+        NSLog(@"GESTURES folder interactive current=%d target=%d progress=%.3f projected=%.3f vx=%.1f commit=%d",
+            (int)_ios6FolderSwipeSourceIndex, (int)_ios6FolderSwipeTargetIndex, progress, projectedProgress, velocity.x, commit ? 1 : 0);
+        [self ios6FinishFolderSwipeCommit:commit velocity:velocity];
         return;
+    }
 
-    NSLog(@"GESTURES folder swipe current=%d target=%d dx=%.1f dy=%.1f vx=%.1f vy=%.1f",
-        (int)currentIndex, (int)targetIndex, translation.x, translation.y, velocity.x, velocity.y);
-    [self ios6SelectDialogFilterAtIndex:targetIndex animated:true movingForward:moveForward];
+    if (recognizer.state == UIGestureRecognizerStateCancelled || recognizer.state == UIGestureRecognizerStateFailed)
+        [self ios6FinishFolderSwipeCommit:false velocity:CGPointZero];
 }
 
 - (void)ios6PresentActionsForConversation:(TGConversation *)conversation fromRect:(CGRect)sourceRect
@@ -2846,6 +3151,31 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     [self ios6PresentActionsForConversation:(TGConversation *)item fromRect:sourceRect];
 }
 
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
+{
+    if (gestureRecognizer == _ios6FolderPanGestureRecognizer)
+    {
+        if (![self ios6NewChatListGesturesEnabled] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1 || _ios6FolderSwipeActive || _ios6FolderSwipeFinishing)
+            return NO;
+
+        CGPoint velocity = [(UIPanGestureRecognizer *)gestureRecognizer velocityInView:self.view];
+        CGFloat horizontalVelocity = ABS(velocity.x);
+        CGFloat verticalVelocity = ABS(velocity.y);
+        if (horizontalVelocity < 15.0f || horizontalVelocity < verticalVelocity * 1.08f)
+            return NO;
+
+        CGFloat logicalVelocityX = TGIsRTL() ? -velocity.x : velocity.x;
+        NSInteger currentIndex = [self ios6SelectedDialogFilterIndex];
+        if (currentIndex == NSNotFound)
+            currentIndex = 0;
+        NSInteger targetIndex = currentIndex + (logicalVelocityX < 0.0f ? 1 : -1);
+        if (targetIndex < 0 || targetIndex >= (NSInteger)_ios6DialogFilters.count)
+            return NO;
+    }
+
+    return YES;
+}
+
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
 {
     if (gestureRecognizer == _ios6FolderPanGestureRecognizer)
@@ -2864,12 +3194,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
 {
     if (gestureRecognizer == _ios6FolderPanGestureRecognizer || otherGestureRecognizer == _ios6FolderPanGestureRecognizer)
-    {
-        UIGestureRecognizer *other = gestureRecognizer == _ios6FolderPanGestureRecognizer ? otherGestureRecognizer : gestureRecognizer;
-        if (other == _ios6ChatActionsLongPressRecognizer)
-            return NO;
-        return YES;
-    }
+        return NO;
 
     return NO;
 }
@@ -3388,8 +3713,6 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 {
     if (![self ios6FoldersAllowed])
         return;
-    if (cpuCoreCount() == 1 && !_isOnScreen && self.navigationController != nil && self.navigationController.topViewController != self)
-        return;
     if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
     {
         NSLog(@"FOLDERS skip request: authorization not active userId=%d activated=%d",
@@ -3409,6 +3732,9 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     }
     _ios6DialogFiltersAuthorizationRetryCount = 0;
     _ios6DialogFiltersAuthorizationRetryScheduled = false;
+
+    if (cpuCoreCount() == 1 && !_isOnScreen && self.navigationController != nil && self.navigationController.topViewController != self)
+        return;
 
     NSTimeInterval now = CFAbsoluteTimeGetCurrent();
     NSTimeInterval minimumInterval = force ? 5.0 : 60.0;
@@ -3473,7 +3799,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 - (void)ios6FolderTabPressed:(UIButton *)button
 {
     NSInteger index = button.tag - 6100;
-    [self ios6SelectDialogFilterAtIndex:index animated:false movingForward:false];
+    [self ios6SelectDialogFilterAtIndex:index];
 }
 
 - (void)ios6UpdateFolderTabs
@@ -3553,6 +3879,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         if (selected)
         {
             UIView *indicator = [[UIView alloc] initWithFrame:CGRectMake(5.0f, 34.0f, width - 10.0f, 3.0f)];
+            indicator.tag = 6199;
             indicator.backgroundColor = accent;
             indicator.userInteractionEnabled = false;
             [button addSubview:indicator];
@@ -4836,6 +5163,13 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     
     if ((scrollView.isDragging || scrollView.isTracking) && _scrollingToConversationId != 0)
         _scrollingToConversationId = 0;
+
+    if ((scrollView.isDragging || scrollView.isTracking) && !_ios6SearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil)
+    {
+        CGFloat hiddenOffset = -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top;
+        if (scrollView.contentOffset.y < hiddenOffset)
+            scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, hiddenOffset);
+    }
     
     bool atTop = scrollView.contentOffset.y <= -_tableView.tableHeaderView.frame.size.height + FLT_EPSILON;
     [_atTopPromise set:[SSignal single:@(atTop)]];
@@ -4864,6 +5198,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     if (scrollView == _tableView)
     {
         _draggingStartOffset = scrollView.contentOffset.y;
+        CGFloat hiddenOffset = -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top;
+        _ios6SearchPullArmed = _searchBar != nil && scrollView.contentOffset.y <= hiddenOffset + 1.0f;
     }
     
     if (_searchMixin.isActive && scrollView == _searchMixin.searchResultsTableView)
@@ -4876,21 +5212,29 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     {
         if (targetContentOffset != NULL)
         {
-            if (targetContentOffset->y > -_tableView.contentInset.top - FLT_EPSILON && targetContentOffset->y < -_tableView.contentInset.top + 44.0f + FLT_EPSILON)
+            CGFloat shownOffset = -_tableView.contentInset.top + self.explicitTableInset.top;
+            CGFloat searchHeight = [TGSearchBar searchBarBaseHeight];
+            CGFloat hiddenOffset = shownOffset + searchHeight;
+
+            if (!_ios6SearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil && targetContentOffset->y < hiddenOffset)
             {
-                if (_draggingStartOffset < -_tableView.contentInset.top + 22.0f)
+                targetContentOffset->y = hiddenOffset;
+            }
+            else if (targetContentOffset->y > shownOffset - FLT_EPSILON && targetContentOffset->y < hiddenOffset + FLT_EPSILON)
+            {
+                if (_draggingStartOffset < shownOffset + searchHeight * 0.5f)
                 {
-                    if (targetContentOffset->y < -_tableView.contentInset.top + 44.0f * 0.2)
-                        targetContentOffset->y = -_tableView.contentInset.top;
+                    if (targetContentOffset->y < shownOffset + searchHeight * 0.2f)
+                        targetContentOffset->y = shownOffset;
                     else
-                        targetContentOffset->y = -_tableView.contentInset.top + 44.0f;
+                        targetContentOffset->y = hiddenOffset;
                 }
                 else
                 {
-                    if (targetContentOffset->y < -_tableView.contentInset.top + 44.0f * 0.8)
-                        targetContentOffset->y = -_tableView.contentInset.top;
+                    if (targetContentOffset->y < shownOffset + searchHeight * 0.8f)
+                        targetContentOffset->y = shownOffset;
                     else
-                        targetContentOffset->y = -_tableView.contentInset.top + 44.0f;
+                        targetContentOffset->y = hiddenOffset;
                 }
             }
         }
