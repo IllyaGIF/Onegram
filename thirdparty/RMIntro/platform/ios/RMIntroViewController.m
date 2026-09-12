@@ -71,6 +71,7 @@
     UIButton *_switchToDebugButton;
     
     TGModernButton *_alternativeLanguageButton;
+    UIButton *_onegramProxyButton;
     
     SMetaDisposable *_localizationsDisposable;
     TGSuggestedLocalization *_alternativeLocalizationInfo;
@@ -97,6 +98,51 @@
 
 static NSString *replaceAppTitle(NSString *string, NSString *title) {
     return [string stringByReplacingOccurrencesOfString:@"Telegram" withString:title];
+}
+
+static UIImage *RMOnegramProxyLockImage(bool enabled, bool highlighted)
+{
+    CGSize size = CGSizeMake(32.0f, 32.0f);
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef contextRef = UIGraphicsGetCurrentContext();
+    UIColor *color = enabled ? TGAccentColor() : UIColorRGB(0x7f8c97);
+    if (highlighted)
+        color = [color colorWithAlphaComponent:0.55f];
+
+    CGContextSetStrokeColorWithColor(contextRef, color.CGColor);
+    CGContextSetFillColorWithColor(contextRef, color.CGColor);
+    CGContextSetLineWidth(contextRef, 2.4f);
+    CGContextSetLineCap(contextRef, kCGLineCapRound);
+    CGContextSetLineJoin(contextRef, kCGLineJoinRound);
+
+    if (enabled)
+    {
+        CGContextMoveToPoint(contextRef, 10.0f, 14.5f);
+        CGContextAddLineToPoint(contextRef, 10.0f, 11.5f);
+        CGContextAddCurveToPoint(contextRef, 10.0f, 7.5f, 13.0f, 5.5f, 16.0f, 5.5f);
+        CGContextAddCurveToPoint(contextRef, 19.0f, 5.5f, 21.0f, 7.5f, 21.0f, 9.5f);
+        CGContextStrokePath(contextRef);
+    }
+    else
+    {
+        CGContextMoveToPoint(contextRef, 10.0f, 14.5f);
+        CGContextAddLineToPoint(contextRef, 10.0f, 11.5f);
+        CGContextAddCurveToPoint(contextRef, 10.0f, 7.5f, 12.5f, 5.5f, 16.0f, 5.5f);
+        CGContextAddCurveToPoint(contextRef, 19.5f, 5.5f, 22.0f, 7.5f, 22.0f, 11.5f);
+        CGContextAddLineToPoint(contextRef, 22.0f, 14.5f);
+        CGContextStrokePath(contextRef);
+    }
+
+    UIBezierPath *body = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(7.0f, 13.0f, 18.0f, 14.0f) cornerRadius:3.0f];
+    [body fill];
+
+    CGContextSetFillColorWithColor(contextRef, [UIColor whiteColor].CGColor);
+    CGContextFillEllipseInRect(contextRef, CGRectMake(14.5f, 17.0f, 3.0f, 3.0f));
+    CGContextFillRect(contextRef, CGRectMake(15.25f, 19.0f, 1.5f, 4.0f));
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
 }
 
 static NSString *TGIOS6Base64UrlString(NSData *data)
@@ -1039,6 +1085,30 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         [_pageControl setCurrentPageIndicatorTintColor:[UIColor colorWithWhite:.2 alpha:1]];
     [_pageControl setNumberOfPages:6];
     [self.view addSubview:_pageControl];
+
+    _onegramProxyButton = [[UIButton alloc] initWithFrame:CGRectZero];
+    _onegramProxyButton.adjustsImageWhenHighlighted = false;
+    [_onegramProxyButton addTarget:self action:@selector(onegramProxyButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_onegramProxyButton];
+    [self updateOnegramProxyButton];
+}
+
+- (void)updateOnegramProxyButton
+{
+    bool enabled = [[TGTelegramNetworking instance] onegramWebSocketProxyEnabled];
+    [_onegramProxyButton setImage:RMOnegramProxyLockImage(enabled, false) forState:UIControlStateNormal];
+    [_onegramProxyButton setImage:RMOnegramProxyLockImage(enabled, true) forState:UIControlStateHighlighted];
+    _onegramProxyButton.accessibilityLabel = @"Onegram Proxy";
+    _onegramProxyButton.accessibilityValue = enabled ? @"On" : @"Off";
+}
+
+- (void)onegramProxyButtonPressed
+{
+    TGTelegramNetworking *networking = [TGTelegramNetworking instance];
+    bool enabled = ![networking onegramWebSocketProxyEnabled];
+    [networking setOnegramWebSocketProxyEnabled:enabled];
+    [self updateOnegramProxyButton];
+    TGLog(@"ONEGRAM_PROXY intro_toggle enabled=%d", enabled ? 1 : 0);
 }
 
 - (BOOL)shouldAutorotate
@@ -1209,6 +1279,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     }
     
     _pageControl.frame = CGRectMake(0, pageControlY, self.view.bounds.size.width, 7);
+    _onegramProxyButton.frame = CGRectMake(self.view.bounds.size.width - 52.0f, statusBarHeight + 4.0f, 44.0f, 44.0f);
     _glkView.frame = CGRectChangedOriginY(_glkView.frame, glViewY - statusBarHeight);
     
     [_startButton sizeToFit];
@@ -1231,6 +1302,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 {
     [super viewWillAppear:animated];
     [self.navigationController setNavigationBarHidden:true animated:false];
+    [self updateOnegramProxyButton];
     [self layoutIntroViews];
 
     if (_displayingQrLogin)
