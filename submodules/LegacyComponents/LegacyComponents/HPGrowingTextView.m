@@ -55,15 +55,9 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     if (iosMajorVersion() < 6)
         return nil;
     
-    if (_intrinsicTextFont == nil)
-        return @{NSFontAttributeName: TGSystemFontOfSize(17)};
-    else
-    {
-        if (_intrinsicTextColor)
-            return @{NSFontAttributeName: _intrinsicTextFont, NSForegroundColorAttributeName: _intrinsicTextColor};
-        else
-            return @{NSFontAttributeName: _intrinsicTextFont};
-    }
+    UIFont *font = _intrinsicTextFont ?: TGSystemFontOfSize(17.0f);
+    UIColor *color = _intrinsicTextColor ?: [UIColor blackColor];
+    return @{NSFontAttributeName: font, NSForegroundColorAttributeName: color};
 }
 
 - (void)commonInitialiser
@@ -532,6 +526,15 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 	return _internalTextView.textColor;
 }
 
+- (void)setAccentColor:(UIColor *)accentColor
+{
+    _accentColor = accentColor;
+    if (iosMajorVersion() >= 7)
+    {
+        _internalTextView.tintColor = accentColor;
+    }
+}
+
 - (UIColor *)accentColor
 {
     if (_accentColor != nil)
@@ -634,6 +637,10 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
             
             return false;
         }
+    }
+    if (iosMajorVersion() >= 7)
+    {
+        textView.typingAttributes = [self defaultAttributes];
     }
 	
     return true;
