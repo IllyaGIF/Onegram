@@ -506,6 +506,10 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 	
 	[self setMaxNumberOfLines:_maxNumberOfLines];
 	[self setMinNumberOfLines:_minNumberOfLines];
+    if (iosMajorVersion() >= 7)
+    {
+        _internalTextView.typingAttributes = [self defaultAttributes];
+    }
 }
 
 - (UIFont *)font
@@ -517,6 +521,10 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 {
 	_internalTextView.textColor = color;
     _intrinsicTextColor = color;
+    if (iosMajorVersion() >= 7)
+    {
+        _internalTextView.typingAttributes = [self defaultAttributes];
+    }
 }
 
 - (UIColor *)textColor

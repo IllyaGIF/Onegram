@@ -23,27 +23,38 @@
 
 - (NSTextContainer *)textContainer
 {
+    if (iosMajorVersion() >= 7)
+        return [super textContainer];
     return nil;
 }
 
 - (NSTextStorage *)textStorage
 {
+    if (iosMajorVersion() >= 7)
+        return [super textStorage];
     return nil;
 }
 
 - (NSLayoutManager *)layoutManager
 {
+    if (iosMajorVersion() >= 7)
+        return [super layoutManager];
     return nil;
 }
 
 - (UIEdgeInsets)textContainerInset
 {
+    if (iosMajorVersion() >= 7)
+        return [super textContainerInset];
     return self.contentInset;
 }
 
 - (void)setTextContainerInset:(UIEdgeInsets)textContainerInset
 {
-    self.contentInset = textContainerInset;
+    if (iosMajorVersion() >= 7)
+        [super setTextContainerInset:textContainerInset];
+    else
+        self.contentInset = textContainerInset;
 }
 
 - (instancetype)initWithKeyCommandController:(TGKeyCommandController *)keyCommandController {
