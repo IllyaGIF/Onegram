@@ -13,6 +13,7 @@
     UIImageView *_arrowView;
     
     UIImageView *_variantImageView;
+    UIImageView *_iconView;
 }
 
 @end
@@ -44,6 +45,11 @@
         
         _arrowView = [[UIImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 8.0f, 14.0f)];
         [self addSubview:_arrowView];
+
+        _iconView = [[UIImageView alloc] init];
+        _iconView.contentMode = UIViewContentModeScaleAspectFit;
+        _iconView.hidden = true;
+        [self addSubview:_iconView];
     }
     return self;
 }
@@ -52,10 +58,16 @@
 {
     [super setPresentation:presentation];
     
-    _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
-    _variantLabel.textColor = presentation.pallete.collectionMenuVariantColor;
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    _titleLabel.textColor = brandedIOS6Style ? UIColorRGB(0x000000) : presentation.pallete.collectionMenuTextColor;
+    _variantLabel.textColor = brandedIOS6Style ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
     _separatorLayer.backgroundColor = presentation.pallete.collectionMenuSeparatorColor.CGColor;
-    _arrowView.image = presentation.images.collectionMenuDisclosureIcon;
+    _arrowView.image = brandedIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
+    _titleLabel.font = brandedIOS6Style ? TGBoldSystemFontOfSize(18.0f) : TGSystemFontOfSize(17.0f);
+    _titleLabel.shadowColor = brandedIOS6Style ? UIColorRGBA(0x000000, 0.2f) : nil;
+    _titleLabel.shadowOffset = brandedIOS6Style ? CGSizeMake(0.0f, 1.0f) : CGSizeZero;
+    _variantLabel.font = TGSystemFontOfSize(brandedIOS6Style ? 14.0f : 17.0f);
+    self.classicIOS6HorizontalInset = 9.0f;
 }
 
 - (void)setTitle:(NSString *)title
@@ -67,6 +79,13 @@
 - (void)setVariant:(NSString *)variant
 {
     _variantLabel.text = variant;
+    [self setNeedsLayout];
+}
+
+- (void)setIconName:(NSString *)iconName
+{
+    _iconView.image = iconName.length == 0 ? nil : ([TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ResourceImage:iconName] : [TGPresentation brandedIOS6ResourceImage:iconName]);
+    _iconView.hidden = ![TGPresentation brandedIOS6Style] || _iconView.image == nil;
     [self setNeedsLayout];
 }
 
@@ -96,16 +115,19 @@
     CGRect bounds = self.bounds;
     
     CGFloat separatorHeight = TGScreenPixel;
-    CGFloat separatorInset = 15.0f + self.safeAreaInset.left;
+    CGFloat separatorInset = ([TGPresentation brandedIOS6Style] ? 0.0f : 15.0f) + self.safeAreaInset.left;
+    _separatorLayer.hidden = [TGPresentation brandedIOS6Style];
     _separatorLayer.frame = CGRectMake(separatorInset, bounds.size.height - separatorHeight, bounds.size.width - separatorInset, separatorHeight);
     
-    CGFloat leftPadding = 15.0f + TGScreenPixel + self.safeAreaInset.left;
+    CGFloat leftPadding = ([TGPresentation brandedIOS6Style] ? 50.0f : 15.0f + TGScreenPixel) + self.safeAreaInset.left;
     
     CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(bounds.size.width - leftPadding - self.safeAreaInset.right - 10.0f, CGFLOAT_MAX)];
-    _titleLabel.frame = CGRectMake(leftPadding, 12.0f, titleSize.width, titleSize.height);
+    CGFloat titleHeight = MAX(titleSize.height, ceilf(_titleLabel.font.lineHeight));
+    _titleLabel.frame = CGRectMake(leftPadding, CGFloor((bounds.size.height - titleHeight) / 2.0f), titleSize.width, titleHeight);
     
     CGSize variantSize = [_variantLabel sizeThatFits:CGSizeMake(bounds.size.width - leftPadding - self.safeAreaInset.right - 10.0f, CGFLOAT_MAX)];
-    _variantLabel.frame = CGRectMake(bounds.size.width - 34.0f - variantSize.width - self.safeAreaInset.right, 12.0f, variantSize.width, variantSize.height);
+    CGFloat variantHeight = MAX(variantSize.height, ceilf(_variantLabel.font.lineHeight));
+    _variantLabel.frame = CGRectMake(bounds.size.width - 34.0f - variantSize.width - self.safeAreaInset.right, CGFloor((bounds.size.height - variantHeight) / 2.0f), variantSize.width, variantHeight);
     
     if (_variantImageView != nil)
     {
@@ -113,7 +135,34 @@
     }
     
     CGSize arrowSize = _arrowView.bounds.size;
-    _arrowView.frame = CGRectMake(bounds.size.width - 15.0f - arrowSize.width - self.safeAreaInset.right, 15.0f, arrowSize.width, arrowSize.height);
+    _arrowView.frame = CGRectMake(bounds.size.width - 15.0f - arrowSize.width - self.safeAreaInset.right, CGFloor((bounds.size.height - arrowSize.height) / 2.0f), arrowSize.width, arrowSize.height);
+    if ([TGPresentation brandedIOS6Style])
+    {
+        if (_iconView.image != nil)
+        {
+            _iconView.contentMode = UIViewContentModeScaleAspectFit;
+            _iconView.frame = CGRectMake(17.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 16.0f) / 2.0f) + 1.0f, 16.0f, 16.0f);
+            _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
+            _iconView.layer.shadowOpacity = 0.1f;
+            _iconView.layer.shadowRadius = 0.5f;
+            _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        }
+        _arrowView.image = [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"];
+        _arrowView.frame = CGRectMake(bounds.size.width - 23.0f - self.safeAreaInset.right - 8.0f, CGFloor((bounds.size.height - 14.0f) / 2.0f) + 1.0f, 8.0f, 14.0f);
+        CGFloat variantRightEdge = CGRectGetMinX(_arrowView.frame) - 8.0f;
+        if (_variantImageView != nil && !_variantImageView.hidden)
+        {
+            _variantImageView.frame = CGRectMake(variantRightEdge - _variantImageView.frame.size.width, CGFloor((bounds.size.height - _variantImageView.frame.size.height) / 2.0f), _variantImageView.frame.size.width, _variantImageView.frame.size.height);
+            variantRightEdge = CGRectGetMinX(_variantImageView.frame) - 8.0f;
+        }
+        else
+        {
+            CGFloat brandedVariantHeight = MAX(variantSize.height, ceilf(_variantLabel.font.lineHeight));
+            _variantLabel.frame = CGRectMake(variantRightEdge - variantSize.width, CGFloor((bounds.size.height - brandedVariantHeight) / 2.0f) + 1.0f, variantSize.width, brandedVariantHeight);
+            variantRightEdge = CGRectGetMinX(_variantLabel.frame) - 8.0f;
+        }
+        _titleLabel.frame = CGRectMake(43.0f + self.safeAreaInset.left, 7.0f, MAX(0.0f, variantRightEdge - 43.0f - self.safeAreaInset.left), 22.0f);
+    }
 }
 
 @end

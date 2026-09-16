@@ -25,6 +25,167 @@ static UIImage *TGClassicIOS6ResourceImage(NSString *name)
     return image;
 }
 
+static UIImage *TGBrandedIOS6OutgoingBubbleImage(UIImage *source)
+{
+    if (source == nil)
+        return nil;
+
+    CGSize size = source.size;
+    CGRect rect = CGRectMake(0.0f, 0.0f, size.width, size.height);
+    UIGraphicsBeginImageContextWithOptions(size, false, source.scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    [source drawInRect:rect];
+    CGContextSetBlendMode(context, kCGBlendModeColor);
+    CGContextSetFillColorWithColor(context, UIColorRGB(0x98c7ff).CGColor);
+    CGContextFillRect(context, rect);
+    [source drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+
+    CGFloat shadowHeight = MIN(14.0f, size.height);
+    CGFloat shadowTop = size.height - shadowHeight;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = {
+        1.0f, 1.0f, 1.0f, 0.0f,
+        1.0f, 1.0f, 1.0f, 1.0f
+    };
+    CGFloat locations[] = {0.0f, 1.0f};
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+    CGContextSetBlendMode(context, kCGBlendModeSoftLight);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, shadowTop), CGPointMake(0.0f, size.height), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(colorSpace);
+    [source drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+static UIImage *TGBrandedIOS6DeliveryTagImage(NSString *timeText, bool incoming, bool read)
+{
+    if (timeText.length == 0)
+        return nil;
+
+    UIFont *font = [UIFont fontWithName:@"HelveticaNeue" size:11.0f];
+    if (font == nil)
+        font = TGSystemFontOfSize(11.0f);
+
+    CGSize textSize = [timeText sizeWithFont:font];
+    CGFloat height = 20.0f;
+    CGFloat tipWidth = 7.0f;
+    CGFloat textPadding = 6.0f;
+    CGFloat checkWidth = incoming ? 0.0f : 17.0f;
+    CGFloat bodyWidth = MAX(incoming ? 38.0f : 52.0f, CGCeil(textSize.width) + textPadding * 2.0f + checkWidth);
+    CGFloat width = bodyWidth + tipWidth;
+    CGSize size = CGSizeMake(width, height);
+
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    CGFloat left = 1.0f;
+    CGFloat top = 1.0f;
+    CGFloat right = width - 1.0f;
+    CGFloat bottom = height - 2.0f;
+    CGFloat bodyLeft = incoming ? left + tipWidth : left;
+    CGFloat bodyRight = incoming ? right : right - tipWidth;
+    CGFloat radius = 5.0f;
+    CGFloat middleY = CGFloor((top + bottom) / 2.0f);
+
+    CGMutablePathRef path = CGPathCreateMutable();
+    if (incoming)
+    {
+        CGPathMoveToPoint(path, NULL, bodyLeft + 1.0f, top);
+        CGPathAddLineToPoint(path, NULL, right - radius, top);
+        CGPathAddQuadCurveToPoint(path, NULL, right, top, right, top + radius);
+        CGPathAddLineToPoint(path, NULL, right, bottom - radius);
+        CGPathAddQuadCurveToPoint(path, NULL, right, bottom, right - radius, bottom);
+        CGPathAddLineToPoint(path, NULL, bodyLeft + 1.0f, bottom);
+        CGPathAddQuadCurveToPoint(path, NULL, bodyLeft - 1.0f, bottom, bodyLeft - 3.0f, bottom - 3.0f);
+        CGPathAddLineToPoint(path, NULL, left, middleY);
+        CGPathAddLineToPoint(path, NULL, bodyLeft - 3.0f, top + 3.0f);
+        CGPathAddQuadCurveToPoint(path, NULL, bodyLeft - 1.0f, top, bodyLeft + 1.0f, top);
+    }
+    else
+    {
+        CGPathMoveToPoint(path, NULL, left + radius, top);
+        CGPathAddLineToPoint(path, NULL, bodyRight - 1.0f, top);
+        CGPathAddQuadCurveToPoint(path, NULL, bodyRight + 1.0f, top, bodyRight + 3.0f, top + 3.0f);
+        CGPathAddLineToPoint(path, NULL, right, middleY);
+        CGPathAddLineToPoint(path, NULL, bodyRight + 3.0f, bottom - 3.0f);
+        CGPathAddQuadCurveToPoint(path, NULL, bodyRight + 1.0f, bottom, bodyRight - 1.0f, bottom);
+        CGPathAddLineToPoint(path, NULL, left + radius, bottom);
+        CGPathAddQuadCurveToPoint(path, NULL, left, bottom, left, bottom - radius);
+        CGPathAddLineToPoint(path, NULL, left, top + radius);
+        CGPathAddQuadCurveToPoint(path, NULL, left, top, left + radius, top);
+    }
+    CGPathCloseSubpath(path);
+
+    CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 1.0f, UIColorRGBA(0x000000, 0.24f).CGColor);
+    CGContextAddPath(context, path);
+    CGContextSetFillColorWithColor(context, UIColorRGB(0xf4f5f6).CGColor);
+    CGContextFillPath(context);
+    CGContextRestoreGState(context);
+
+    CGContextSaveGState(context);
+    CGContextAddPath(context, path);
+    CGContextClip(context);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = {
+        1.0f, 1.0f, 1.0f, 1.0f,
+        0.91f, 0.93f, 0.95f, 1.0f
+    };
+    CGFloat locations[] = {0.0f, 1.0f};
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, top), CGPointMake(0.0f, bottom), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(colorSpace);
+    CGContextRestoreGState(context);
+
+    CGContextSaveGState(context);
+    CGContextAddPath(context, path);
+    CGContextSetStrokeColorWithColor(context, UIColorRGBA(0x8f989f, 0.82f).CGColor);
+    CGContextSetLineWidth(context, 1.0f);
+    CGContextStrokePath(context);
+    CGContextRestoreGState(context);
+
+    CGFloat textX = bodyLeft + textPadding;
+    CGFloat textY = 2.5f;
+    CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, UIColorRGBA(0xffffff, 0.90f).CGColor);
+    [UIColorRGB(0x454545) set];
+    [timeText drawAtPoint:CGPointMake(textX, textY) withFont:font];
+    CGContextRestoreGState(context);
+
+    if (!incoming)
+    {
+        CGFloat checkRight = bodyRight - 4.0f;
+        CGFloat checkY = 9.5f;
+        CGContextSaveGState(context);
+        CGContextSetStrokeColorWithColor(context, UIColorRGB(0x39b51a).CGColor);
+        CGContextSetLineWidth(context, 1.7f);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetLineJoin(context, kCGLineJoinRound);
+        CGFloat firstOffset = read ? -2.5f : 0.0f;
+        CGContextMoveToPoint(context, checkRight - 8.0f + firstOffset, checkY);
+        CGContextAddLineToPoint(context, checkRight - 5.0f + firstOffset, checkY + 2.5f);
+        CGContextAddLineToPoint(context, checkRight + firstOffset, checkY - 3.5f);
+        CGContextStrokePath(context);
+        if (read)
+        {
+            CGContextMoveToPoint(context, checkRight - 5.0f, checkY);
+            CGContextAddLineToPoint(context, checkRight - 2.0f, checkY + 2.5f);
+            CGContextAddLineToPoint(context, checkRight + 3.0f, checkY - 3.5f);
+            CGContextStrokePath(context);
+        }
+        CGContextRestoreGState(context);
+    }
+
+    CGPathRelease(path);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
 static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bool active)
 {
     CGFloat scale = [UIScreen mainScreen].scale;
@@ -999,6 +1160,85 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
     return [self _encryptedIcon:[UIColor whiteColor]];
 }
 
++ (UIImage *)brandedIOS6DeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read
+{
+    return TGBrandedIOS6DeliveryTagImage(timeText, incoming, read);
+}
+
+static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incoming, bool read)
+{
+    if (timeText.length == 0)
+        return nil;
+
+    UIFont *font = [UIFont fontWithName:@"HelveticaNeue" size:11.0f];
+    if (font == nil)
+        font = TGSystemFontOfSize(11.0f);
+
+    CGSize textSize = [timeText sizeWithFont:font];
+    CGFloat checkWidth = incoming ? 0.0f : (read ? 17.0f : 11.0f);
+    CGFloat width = CGCeil(textSize.width) + checkWidth + (incoming ? 2.0f : 5.0f);
+    CGFloat height = 16.0f;
+
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(width, height), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, UIColorRGBA(0xffffff, 0.9f).CGColor);
+    [UIColorRGB(0x5f5f5f) set];
+    [timeText drawAtPoint:CGPointMake(0.0f, 1.0f) withFont:font];
+    CGContextRestoreGState(context);
+
+    if (!incoming)
+    {
+        CGFloat checkRight = width - 1.0f;
+        CGFloat checkY = 8.0f;
+        CGContextSaveGState(context);
+        CGContextSetStrokeColorWithColor(context, UIColorRGB(0x666666).CGColor);
+        CGContextSetLineWidth(context, 1.5f);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetLineJoin(context, kCGLineJoinRound);
+        CGFloat firstOffset = read ? -3.0f : 0.0f;
+        CGContextMoveToPoint(context, checkRight - 8.0f + firstOffset, checkY);
+        CGContextAddLineToPoint(context, checkRight - 5.0f + firstOffset, checkY + 2.5f);
+        CGContextAddLineToPoint(context, checkRight + firstOffset, checkY - 3.5f);
+        CGContextStrokePath(context);
+        if (read)
+        {
+            CGContextMoveToPoint(context, checkRight - 5.0f, checkY);
+            CGContextAddLineToPoint(context, checkRight - 2.0f, checkY + 2.5f);
+            CGContextAddLineToPoint(context, checkRight + 3.0f, checkY - 3.5f);
+            CGContextStrokePath(context);
+        }
+        CGContextRestoreGState(context);
+    }
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
++ (UIImage *)brandedIOS6FlatDeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read
+{
+    return TGBrandedIOS6FlatDeliveryTagImage(timeText, incoming, read);
+}
+
++ (CGFloat)brandedIOS6DeliveryTagBottomInset
+{
+    return 17.0f;
+}
+
++ (CGRect)brandedIOS6DeliveryTagFrameForMessageFrame:(CGRect)messageFrame tagSize:(CGSize)tagSize incoming:(bool)incoming
+{
+    CGFloat x = 0.0f;
+    if (incoming)
+        x = CGRectGetMaxX(messageFrame) + 4.0f;
+    else
+        x = CGRectGetMaxX(messageFrame) - tagSize.width - 6.0f;
+    CGFloat anchorY = CGRectGetMaxY(messageFrame) - [self brandedIOS6DeliveryTagBottomInset];
+    CGFloat y = TGScreenPixelFloor(anchorY - tagSize.height / 2.0f);
+    return CGRectMake(x, y, tagSize.width, tagSize.height);
+}
+
 + (UIImage *)chatBubbleFull:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing
 {
     if (TGClassicIOS6StyleEnabled())
@@ -1007,7 +1247,9 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
         if (classicImage != nil)
         {
             UIImage *adaptedImage = classicImage;
-            if ([TGPresentation classicIOS6UsesPaletteAdaptedAssets])
+            if ([TGPresentation brandedIOS6Style] && outgoing)
+                adaptedImage = TGBrandedIOS6OutgoingBubbleImage(classicImage);
+            else if ([TGPresentation classicIOS6UsesPaletteAdaptedAssets])
                 adaptedImage = [TGPresentation classicIOS6ThemedImage:classicImage tintColor:color alpha:0.85f];
             return [adaptedImage stretchableImageWithLeftCapWidth:outgoing ? 18 : 25 topCapHeight:15];
         }

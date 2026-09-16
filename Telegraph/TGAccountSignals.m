@@ -101,7 +101,7 @@
     return [[[TGDatabaseInstance() cachedPeerSettings:peerId] take:1] mapToSignal:^SSignal *(TGCachedPeerSettings *settings) {
         if (settings == nil || settings.reportSpamState == TGCachedPeerReportSpamUnknown || settings.reportSpamState == TGCachedPeerReportSpamShow) {
             if (TGPeerIdIsSecretChat(peerId)) {
-                return [[TGDatabaseInstance() modify:^id{
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
                     int32_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:peerId];
                     TGCachedPeerReportSpamState reportSpamState = TGCachedPeerReportSpamShow;
@@ -127,7 +127,7 @@
                 TLRPCmessages_getPeerSettings$messages_getPeerSettings *getPeerSettings = [[TLRPCmessages_getPeerSettings$messages_getPeerSettings alloc] init];
                 getPeerSettings.peer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
                 return [[[TGTelegramNetworking instance] requestSignal:getPeerSettings] mapToSignal:^SSignal *(TLPeerSettings *result) {
-                    return [[TGDatabaseInstance() modify:^id{
+                    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                         [TGDatabaseInstance() updateCachedPeerSettings:peerId block:^TGCachedPeerSettings *(TGCachedPeerSettings *settings) {
                             TGCachedPeerReportSpamState reportSpamState = result.flags & (1 << 0) ? TGCachedPeerReportSpamShow : TGCachedPeerReportSpamDismissed;
                             if (settings == nil) {
@@ -197,7 +197,7 @@
     updateProfile.flags = (1 << 2);
     updateProfile.about = about;
     return [[[TGTelegramNetworking instance] requestSignal:updateProfile] mapToSignal:^SSignal *(__unused id result) {
-        return [[TGDatabaseInstance() modify:^id{
+        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             [TGDatabaseInstance() updateCachedUserData:TGTelegraphInstance.clientUserId block:^TGCachedUserData *(TGCachedUserData *data) {
                 if (data == nil) {
                     return [[TGCachedUserData alloc] initWithAbout:about groupsInCommonCount:0 groupsInCommon:nil supportsCalls:false callsPrivate:false];
@@ -242,7 +242,7 @@
     registerDevice.flags = 0;
     registerDevice.token_type = voip ? 9 : 1;
     registerDevice.token = deviceToken;
-#if defined(DEBUG) || defined(TWELVIUM_APNS_SANDBOX)
+#if defined(DEBUG) || defined(ONEGRAMIUM_APNS_SANDBOX)
     registerDevice.app_sandbox = true;
 #else
     registerDevice.app_sandbox = false;
@@ -299,7 +299,7 @@
 }
 
 + (SSignal *)currentContactsJoinedNotificationSettings {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSString *key = @"contactsJoinedNotifications";
         NSData *data = [TGDatabaseInstance() customProperty:key];
         int32_t value = 1;
@@ -312,7 +312,7 @@
 }
 
 + (SSignal *)updateContactsJoinedNotificationSettings:(bool)enabled {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSString *key = @"contactsJoinedNotifications";
         int32_t value = enabled ? 1 : 0;
         [TGDatabaseInstance() setCustomProperty:key value:[NSData dataWithBytes:&value length:4]];

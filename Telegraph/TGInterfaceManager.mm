@@ -18,6 +18,7 @@
 #import "TGPrivateModernConversationCompanion.h"
 #import "TGSecretModernConversationCompanion.h"
 #import "TGChannelConversationCompanion.h"
+#import "TGChannelGroupInfoController.h"
 
 #import "TGTelegraphUserInfoController.h"
 #import "TGSecretChatUserInfoController.h"
@@ -35,6 +36,7 @@
 #import "TGHashtagOverviewController.h"
 
 #import "TGCustomAlertView.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGMenuSheetController.h"
 
 #import "TGCallSession.h"
 #import "TGCallController.h"
@@ -939,6 +941,23 @@ static NSString *TGIOS6ForumTopicString(id topic, NSString *key)
     return [value isKindOfClass:[NSString class]] ? value : @"";
 }
 
+static int32_t TGIOS6ForumTopicIdForMessage(TGMessage *message)
+{
+    if (message == nil)
+        return 0;
+
+    id topicProperty = message.contentProperties[@"ios6ForumTopicId"];
+    int32_t topicId = 0;
+    if ([topicProperty isKindOfClass:[TGMessageForumTopicContentProperty class]])
+        topicId = ((TGMessageForumTopicContentProperty *)topicProperty).topicId;
+    else if ([topicProperty respondsToSelector:@selector(intValue)])
+        topicId = [topicProperty intValue];
+
+    if (topicId == 0)
+        topicId = 1;
+    return topicId;
+}
+
 static UIColor *TGIOS6ForumTopicColor(int32_t rgb)
 {
     if (rgb == 0)
@@ -1401,9 +1420,10 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     return result;
 }
 
-@interface TGIOS6ForumTopicsController : TGViewController <UITableViewDelegate, UITableViewDataSource>
+@interface TGIOS6ForumTopicsController : TGViewController <UITableViewDelegate, UITableViewDataSource, ASWatcher>
 {
     TGConversation *_conversation;
+    ASHandle *_actionHandle;
     UITableView *_tableView;
     NSArray *_topics;
     UILabel *_placeholderLabel;
@@ -1417,6 +1437,7 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     TGIOS6ForumTopicsControllerReference *_ios4LifetimeReference;
     int _ios4TopicsRequestGeneration;
     int _ios4IconRequestGeneration;
+    bool _liveTopicsRefreshScheduled;
 }
 - (instancetype)initWithConversation:(TGConversation *)conversation;
 - (instancetype)initWithConversation:(TGConversation *)conversation pendingActions:(NSDictionary *)pendingActions;
@@ -1436,6 +1457,7 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     if (self != nil)
     {
         _conversation = conversation;
+        _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
         _pendingActions = [pendingActions copy];
         _topics = @[];
         _iconDocumentsById = [[NSMutableDictionary alloc] init];
@@ -1458,8 +1480,15 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     return self;
 }
 
+- (ASHandle *)actionHandle
+{
+    return _actionHandle;
+}
+
 - (void)dealloc
 {
+    [_actionHandle reset];
+    [ActionStageInstance() removeWatcher:self];
     @synchronized (_ios4LifetimeReference)
     {
         _ios4LifetimeReference.value = nil;
@@ -1473,6 +1502,7 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
 
 - (void)viewWillDisappear:(BOOL)animated
 {
+    [ActionStageInstance() removeWatcher:self];
     if (iosMajorVersion() <= 4 && self.navigationController != nil && ![self.navigationController.viewControllers containsObject:self])
     {
         @synchronized (_ios4LifetimeReference)
@@ -1520,6 +1550,21 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
 {
     [super viewWillAppear:animated];
 
+    NSString *messagesPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/messages", _conversation.conversationId];
+    NSString *importantMessagesPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/importantMessages", _conversation.conversationId];
+    NSString *unimportantMessagesPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/unimportantMessages", _conversation.conversationId];
+    NSString *editedPath = [NSString stringWithFormat:@"/messagesEditedInConversation/(%lld)", _conversation.conversationId];
+    NSString *deletedPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/messagesDeleted", _conversation.conversationId];
+    [ActionStageInstance() dispatchOnStageQueue:^
+    {
+        [ActionStageInstance() removeWatcher:self];
+        [ActionStageInstance() watchForPath:messagesPath watcher:self];
+        [ActionStageInstance() watchForPath:importantMessagesPath watcher:self];
+        [ActionStageInstance() watchForPath:unimportantMessagesPath watcher:self];
+        [ActionStageInstance() watchForPath:editedPath watcher:self];
+        [ActionStageInstance() watchForPath:deletedPath watcher:self];
+    }];
+
     [self _loadTopics];
 }
 
@@ -1561,6 +1606,163 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     _placeholderLabel.textColor = pallete.secondaryTextColor;
 
     [_tableView reloadData];
+}
+
+- (void)_scheduleLiveTopicsRefresh
+{
+    if (_liveTopicsRefreshScheduled)
+        return;
+
+    _liveTopicsRefreshScheduled = true;
+    TGIOS6ForumTopicsControllerReference *reference = _ios4LifetimeReference;
+    TGDispatchAfter(0.35, dispatch_get_main_queue(), ^
+    {
+        TGIOS6ForumTopicsController *strongSelf = TGIOS6ResolveForumTopicsController(reference);
+        if (strongSelf == nil)
+            return;
+        strongSelf->_liveTopicsRefreshScheduled = false;
+        if (strongSelf.view.window != nil)
+            [strongSelf _loadTopics];
+    });
+}
+
+- (void)_applyLiveTopicMessages:(NSArray *)messages
+{
+    if (![messages isKindOfClass:[NSArray class]] || messages.count == 0)
+        return;
+
+    NSMutableIndexSet *updatedRows = [[NSMutableIndexSet alloc] init];
+    bool needsServerRefresh = false;
+
+    for (id object in messages)
+    {
+        if (![object isKindOfClass:[TGMessage class]])
+            continue;
+
+        TGMessage *message = (TGMessage *)object;
+        if (message.cid != 0 && message.cid != _conversation.conversationId)
+            continue;
+
+        int32_t topicId = TGIOS6ForumTopicIdForMessage(message);
+        NSUInteger topicIndex = NSNotFound;
+        for (NSUInteger i = 0; i < _topics.count; i++)
+        {
+            if (TGIOS6ForumTopicInt(_topics[i], @"topicId") == topicId)
+            {
+                topicIndex = i;
+                break;
+            }
+        }
+
+        if (topicIndex == NSNotFound)
+        {
+            needsServerRefresh = true;
+            continue;
+        }
+
+        id topic = _topics[topicIndex];
+        int32_t currentTopMessageId = TGIOS6ForumTopicInt(topic, @"topMessage");
+        TGMessage *currentTopMessage = [_topMessagesById objectForKey:@(currentTopMessageId)];
+        if (currentTopMessage != nil && message.mid < currentTopMessageId && message.date <= currentTopMessage.date)
+            continue;
+
+        [_topMessagesById setObject:message forKey:@(message.mid)];
+        @try
+        {
+            [topic setValue:@(message.mid) forKey:@"topMessage"];
+            if (!message.outgoing && message.mid > currentTopMessageId && message.mid > TGIOS6ForumTopicInt(topic, @"readInboxMaxId"))
+                [topic setValue:@(TGIOS6ForumTopicInt(topic, @"unreadCount") + 1) forKey:@"unreadCount"];
+        }
+        @catch (__unused NSException *exception)
+        {
+        }
+        [updatedRows addIndex:topicIndex];
+        needsServerRefresh = true;
+    }
+
+    if (updatedRows.count != 0)
+    {
+        NSMutableArray *indexPaths = [[NSMutableArray alloc] init];
+        [updatedRows enumerateIndexesUsingBlock:^(NSUInteger idx, __unused BOOL *stop)
+        {
+            if (idx < _topics.count)
+                [indexPaths addObject:[NSIndexPath indexPathForRow:(NSInteger)idx inSection:0]];
+        }];
+        if (indexPaths.count != 0)
+            [_tableView reloadRowsAtIndexPaths:indexPaths withRowAnimation:UITableViewRowAnimationNone];
+    }
+
+    if (needsServerRefresh)
+        [self _scheduleLiveTopicsRefresh];
+}
+
+- (void)actionStageResourceDispatched:(NSString *)path resource:(id)resource arguments:(id)__unused arguments
+{
+    NSString *messagesPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/messages", _conversation.conversationId];
+    NSString *importantMessagesPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/importantMessages", _conversation.conversationId];
+    NSString *unimportantMessagesPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/unimportantMessages", _conversation.conversationId];
+    NSString *editedPath = [NSString stringWithFormat:@"/messagesEditedInConversation/(%lld)", _conversation.conversationId];
+    NSString *deletedPath = [NSString stringWithFormat:@"/tg/conversation/(%lld)/messagesDeleted", _conversation.conversationId];
+
+    if ([path isEqualToString:messagesPath] || [path isEqualToString:editedPath])
+    {
+        id value = resource;
+        if ([resource isKindOfClass:[SGraphObjectNode class]])
+            value = ((SGraphObjectNode *)resource).object;
+        NSArray *messages = [value isKindOfClass:[NSArray class]] ? value : @[];
+        TGDispatchOnMainThread(^
+        {
+            [self _applyLiveTopicMessages:messages];
+        });
+    }
+    else if ([path isEqualToString:importantMessagesPath] || [path isEqualToString:unimportantMessagesPath])
+    {
+        NSDictionary *value = [resource isKindOfClass:[NSDictionary class]] ? resource : nil;
+        NSMutableArray *messages = [[NSMutableArray alloc] init];
+        NSArray *added = [value[@"added"] isKindOfClass:[NSArray class]] ? value[@"added"] : @[];
+        [messages addObjectsFromArray:added];
+
+        id updated = value[@"updated"];
+        if ([updated isKindOfClass:[NSDictionary class]])
+        {
+            for (id object in [(NSDictionary *)updated allValues])
+            {
+                if ([object isKindOfClass:[TGMessage class]])
+                    [messages addObject:object];
+                else if ([object isKindOfClass:[NSArray class]])
+                {
+                    for (id nestedObject in (NSArray *)object)
+                    {
+                        if ([nestedObject isKindOfClass:[TGMessage class]])
+                            [messages addObject:nestedObject];
+                    }
+                }
+            }
+        }
+        else if ([updated isKindOfClass:[NSArray class]])
+        {
+            for (id object in (NSArray *)updated)
+            {
+                if ([object isKindOfClass:[TGMessage class]])
+                    [messages addObject:object];
+            }
+        }
+
+        bool hasRemoved = [value[@"removed"] isKindOfClass:[NSArray class]] && [(NSArray *)value[@"removed"] count] != 0;
+        TGDispatchOnMainThread(^
+        {
+            [self _applyLiveTopicMessages:messages];
+            if (hasRemoved)
+                [self _scheduleLiveTopicsRefresh];
+        });
+    }
+    else if ([path isEqualToString:deletedPath])
+    {
+        TGDispatchOnMainThread(^
+        {
+            [self _scheduleLiveTopicsRefresh];
+        });
+    }
 }
 
 - (void)_loadTopics
@@ -3017,6 +3219,47 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                 [strongSelf dismissMusicPlayer];
         };
     }
+}
+
+- (bool)isConversationVisible:(int64_t)conversationId
+{
+    NSArray *viewControllers = TGAppDelegateInstance.rootController.viewControllers;
+
+    if (TGAppDelegateInstance.rootController.isSplitView)
+    {
+        for (UIViewController *viewController in viewControllers)
+        {
+            if (![viewController isKindOfClass:[TGModernConversationController class]])
+                continue;
+
+            id companion = ((TGModernConversationController *)viewController).companion;
+            if (![companion isKindOfClass:[TGGenericModernConversationCompanion class]])
+                continue;
+
+            TGGenericModernConversationCompanion *genericCompanion = companion;
+            if (([genericCompanion isKindOfClass:[TGFeedConversationCompanion class]] && TGPeerIdIsChannel(conversationId)) || genericCompanion.conversationId == conversationId)
+                return true;
+        }
+
+        return false;
+    }
+
+    UIViewController *topController = viewControllers.lastObject;
+    if ([topController isKindOfClass:[TGMenuSheetController class]] && viewControllers.count > 2)
+        topController = viewControllers[viewControllers.count - 2];
+
+    if (![topController isKindOfClass:[TGModernConversationController class]])
+        return false;
+
+    id companion = ((TGModernConversationController *)topController).companion;
+    if (![companion isKindOfClass:[TGGenericModernConversationCompanion class]])
+        return false;
+
+    TGGenericModernConversationCompanion *genericCompanion = companion;
+    if ([genericCompanion isKindOfClass:[TGFeedConversationCompanion class]] && TGPeerIdIsChannel(conversationId))
+        return true;
+
+    return genericCompanion.conversationId == conversationId;
 }
 
 - (void)displayBannerIfNeeded:(TGMessage *)message conversationId:(int64_t)conversationId

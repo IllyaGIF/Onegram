@@ -164,7 +164,7 @@ static void *kPlayerLayerReadyToDisplayContext = (void *) 4;
 	{
 		//KAObjectLog(@"%@ status: %i", player == self.videoPlayer ? @"videoPlayer" : @"audioPlayer", player.status);
 
-		NSLog(@"status: %i", player.status);
+		NSLog(@"status: %ld", (long)player.status);
 		if(context == kPlayerItemContext && player.currentItem == nil && _nextItem)
 			return;
 

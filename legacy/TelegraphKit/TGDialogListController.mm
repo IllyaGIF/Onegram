@@ -1,4 +1,7 @@
 #import "TGDialogListController.h"
+#import "TGCommon.h"
+#import "../../OnegramRuntime/OGRuntime.h"
+#include <inttypes.h>
 
 #import "../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -91,6 +94,7 @@
 #import "TGLocalizationSelectionController.h"
 
 #import "../../submodules/LegacyComponents/LegacyComponents/TGTooltipView.h"
+#import "../../submodules/LegacyComponents/LegacyComponents/TGDateUtils.h"
 
 #import "TGProxySetupController.h"
 #import "../../submodules/MtProtoKit/MTProtoKit/MTProtoKit.h"
@@ -114,6 +118,144 @@
 #import "../TL/TLRPCmessages_getPeerDialogs.h"
 #import "../TL/TLmessages_PeerDialogs.h"
 #import "../../Telegraph/TGTelegraphDialogListCompanion.h"
+
+
+static CGFloat TGDialogListSearchBarHeight(void)
+{
+    return [TGPresentation brandedIOS6Style] ? 40.0f : [TGSearchBar searchBarBaseHeight];
+}
+
+static dispatch_queue_t TGDialogListRenderPreheatQueue(void)
+{
+    return OGRuntimeQueueForPriority(OGRuntimePriorityUtility);
+}
+
+static bool TGDialogListSingleCoreDevice(void)
+{
+    static bool singleCore = false;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        singleCore = cpuCoreCount() <= 1;
+    });
+    return singleCore;
+}
+
+static NSString *TGDialogListBrandedStatusText(TGConversation *conversation)
+{
+    if (![TGPresentation brandedIOS6Style] || conversation == nil)
+        return nil;
+    if (conversation.conversationId == TGTelegraphInstance.clientUserId)
+        return nil;
+    if (conversation.isChannel || TGPeerIdIsChannel(conversation.conversationId))
+        return TGLocalized(conversation.isChannelGroup ? @"Group.Status" : @"Channel.Status");
+    if (TGPeerIdIsGroup(conversation.conversationId))
+        return TGLocalized(@"Group.Status");
+    if (conversation.conversationId <= 0)
+        return nil;
+
+    NSDictionary *dialogListData = conversation.dialogListData;
+    NSNumber *onlineValue = dialogListData[@"presenceOnline"];
+    NSNumber *lastSeenValue = dialogListData[@"presenceLastSeen"];
+    if ([dialogListData[@"isBot"] boolValue])
+        return TGLocalized(@"Bot.GenericBotStatus");
+    if (onlineValue != nil && lastSeenValue != nil)
+    {
+        if ([onlineValue boolValue])
+            return TGLocalized(@"Presence.online");
+        int lastSeen = [lastSeenValue intValue];
+        if (lastSeen == -1)
+            return TGLocalized(@"LastSeen.ALongTimeAgo");
+        if (lastSeen != 0)
+            return [TGDateUtils stringForRelativeLastSeen:lastSeen];
+        return nil;
+    }
+
+    TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)conversation.conversationId];
+    if (user == nil)
+        return nil;
+    if (user.isBot)
+        return TGLocalized(@"Bot.GenericBotStatus");
+    if (user.presence.online)
+        return TGLocalized(@"Presence.online");
+    if (user.presence.lastSeen == -1)
+        return TGLocalized(@"LastSeen.ALongTimeAgo");
+    if (user.presence.lastSeen != 0)
+        return [TGDateUtils stringForRelativeLastSeen:user.presence.lastSeen];
+    return nil;
+}
+
+static UIImage *TGDialogListCreateBrandedFolderButtonImage(bool highlighted)
+{
+    CGSize size = CGSizeMake(29.0f, 27.0f);
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect rect = CGRectInset(CGRectMake(0.0f, 0.0f, size.width, size.height), 0.5f, 0.5f);
+    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:13.0f];
+
+    CGContextSaveGState(context);
+    [path addClip];
+
+    CGFloat top = highlighted ? 0.60f : 0.68f;
+    CGFloat middle = highlighted ? 0.53f : 0.62f;
+    CGFloat bottom = highlighted ? 0.48f : 0.57f;
+    CGFloat components[] = {
+        top, top, top, 1.0f,
+        middle, middle, middle, 1.0f,
+        bottom, bottom, bottom, 1.0f
+    };
+    CGFloat locations[] = {0.0f, 0.52f, 1.0f};
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 3);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, rect.origin.y), CGPointMake(0.0f, CGRectGetMaxY(rect)), 0);
+    CGGradientRelease(gradient);
+
+    CGFloat glossComponents[] = {
+        1.0f, 1.0f, 1.0f, highlighted ? 0.15f : 0.28f,
+        1.0f, 1.0f, 1.0f, 0.02f
+    };
+    CGFloat glossLocations[] = {0.0f, 1.0f};
+    CGGradientRef glossGradient = CGGradientCreateWithColorComponents(colorSpace, glossComponents, glossLocations, 2);
+    CGContextDrawLinearGradient(context, glossGradient, CGPointMake(0.0f, 1.0f), CGPointMake(0.0f, 13.0f), 0);
+    CGGradientRelease(glossGradient);
+    CGColorSpaceRelease(colorSpace);
+    CGContextRestoreGState(context);
+
+    CGContextSetStrokeColorWithColor(context, UIColorRGB(highlighted ? 0x5a5a5a : 0x666666).CGColor);
+    CGContextSetLineWidth(context, 1.0f);
+    [path stroke];
+
+    UIBezierPath *innerPath = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(rect, 1.0f, 1.0f) cornerRadius:12.0f];
+    CGContextSetStrokeColorWithColor(context, UIColorRGBA(0xffffff, highlighted ? 0.12f : 0.22f).CGColor);
+    CGContextSetLineWidth(context, 0.5f);
+    [innerPath stroke];
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [image stretchableImageWithLeftCapWidth:14 topCapHeight:13];
+}
+
+static UIImage *TGDialogListBrandedFolderButtonImage(bool highlighted)
+{
+    if (highlighted)
+    {
+        static UIImage *image = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^
+        {
+            image = TGDialogListCreateBrandedFolderButtonImage(true);
+        });
+        return image;
+    }
+
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        image = TGDialogListCreateBrandedFolderButtonImage(false);
+    });
+    return image;
+}
 
 @interface TGTelegraphDialogListCompanion (TGIOS6FoldersInternal)
 - (void)initializeDialogListData:(TGConversation *)conversation customUser:(TGUser *)customUser selfUser:(TGUser *)selfUser;
@@ -260,14 +402,28 @@ extern "C" void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^comple
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
+static bool TGDialogListClassicIOS6DarkStyle(TGPresentation *presentation)
+{
+    return [TGPresentation classicIOS6Style] && presentation.pallete.isDark;
+}
+
 static UIColor *TGDialogListNavigationTitleColor(TGPresentation *presentation)
 {
-    return presentation.pallete.navigationTitleColor;
+    return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationTitleColor;
 }
 
 static UIColor *TGDialogListNavigationSubtitleColor(TGPresentation *presentation)
 {
-    return presentation.pallete.navigationSubtitleColor;
+    if (![TGPresentation classicIOS6Style])
+        return presentation.pallete.navigationSubtitleColor;
+    return presentation.pallete.isDark ? presentation.pallete.navigationSubtitleColor : UIColorRGB(0xdbe6ee);
+}
+
+static UIColor *TGDialogListNavigationShadowColor(TGPresentation *presentation, CGFloat alpha)
+{
+    if (![TGPresentation classicIOS6Style])
+        return [UIColor clearColor];
+    return TGDialogListClassicIOS6DarkStyle(presentation) ? UIColorRGBA(0x000000, alpha) : UIColorRGBA(0x1f3446, alpha);
 }
 #import "TGPreviewPresentationHelper.h"
 
@@ -444,11 +600,16 @@ static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
     SMetaDisposable *_ios6FolderPeerHydrationDisposable;
     NSMutableArray *_ios6FolderPeerHydrationQueue;
     bool _ios6FolderPeerHydrationActive;
+    bool _ios6FolderPeerHydrationReconcileScheduled;
     int _ios6FolderPeerHydrationLoaded;
     int _ios6FolderPeerHydrationFailed;
+    NSUInteger _ios6FolderPeerHydrationBatchSize;
+    NSMutableDictionary *_ios6FolderPeerHydrationRetryCounts;
     NSTimeInterval _ios6DialogFiltersLastRefreshTime;
     int _ios6DialogFiltersAuthorizationRetryCount;
     bool _ios6DialogFiltersAuthorizationRetryScheduled;
+    int _ios6DialogFiltersNetworkRetryCount;
+    bool _ios6DialogFiltersNetworkRetryScheduled;
     UIScrollView *_ios6FolderTabsScrollView;
     UIView *_ios6FolderTabsView;
     UIView *_ios6FolderTabsSeparatorView;
@@ -480,6 +641,11 @@ static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
     bool _ios6FolderTabsUpdatePending;
     NSTimeInterval _lastOwnEmojiStatusRefreshTime;
     bool _ownEmojiStatusRefreshInFlight;
+    bool _dialogListFastScrolling;
+    bool _dialogListVisibleRefreshPending;
+    NSMutableArray *_dialogListDeferredMutations;
+    NSMutableSet *_dialogListPrefetchedAvatarKeys;
+    NSMutableSet *_dialogListPreheatedRenderKeys;
 }
 
 @property (nonatomic, strong) TGSearchBar *searchBar;
@@ -521,6 +687,9 @@ static UIImage *TGIOS6CenteredScaledBarIcon(UIImage *image, CGFloat scale)
 @property (nonatomic, copy) void (^toggleReadConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleArchiveConversation)(int64_t, bool);
 
+- (void)ios6SynchronizeDialogStateForce:(bool)force;
+- (void)ios6ScheduleFolderPeerHydrationReconciliation;
+- (void)ios6AuthorizationReady:(NSNotification *)notification;
 - (bool)ios6NewChatListGesturesEnabled;
 - (void)ios6UpdateNewChatListGesturesState;
 - (void)ios6NewChatListGesturesChanged:(NSNotification *)notification;
@@ -585,6 +754,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         _ios6DialogFiltersDisposable = [[SMetaDisposable alloc] init];
         _ios6FolderPeerHydrationDisposable = [[SMetaDisposable alloc] init];
         _ios6FolderPeerHydrationQueue = [[NSMutableArray alloc] init];
+        _ios6FolderPeerHydrationRetryCounts = [[NSMutableDictionary alloc] init];
         
         _reusableSectionHeaders = [[NSArray alloc] initWithObjects:[[NSMutableArray alloc] init], [[NSMutableArray alloc] init], nil];
         
@@ -597,6 +767,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6ArchivePeerIdsUpdated:) name:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6ClearChatCacheRequested:) name:@"TGIOS6ClearChatListCacheRequested" object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6DialogFiltersUpdated:) name:@"TGIOS6DialogFiltersUpdated" object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6AuthorizationReady:) name:TGAuthorizationReadyNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6NewChatListGesturesChanged:) name:TGIOS6NewChatListGesturesChangedNotification object:nil];
         
         _doNotHideSearchAutomatically = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad;
@@ -818,10 +989,16 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)dealloc
 {
+    if (_dialogListFastScrolling)
+    {
+        _dialogListFastScrolling = false;
+        OGRuntimeEndInteraction();
+    }
     [_ios6LifetimeReference invalidate];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6ClearChatListCacheRequested" object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6DialogFiltersUpdated" object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGAuthorizationReadyNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:TGIOS6NewChatListGesturesChangedNotification object:nil];
     [_ios6DialogFiltersDisposable dispose];
     [_ios6FolderPeerHydrationDisposable dispose];
@@ -922,7 +1099,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         _titleStatusLabel.clipsToBounds = false;
         _titleStatusLabel.backgroundColor = [UIColor clearColor];
         _titleStatusLabel.textColor = TGDialogListNavigationTitleColor(_presentation);
-        _titleStatusLabel.shadowColor = [UIColor clearColor];
+        _titleStatusLabel.shadowColor = TGDialogListNavigationShadowColor(_presentation, 0.9f);
         _titleStatusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
         _titleStatusLabel.font = TGBoldSystemFontOfSize(16.0f);
         [_titleContainer addSubview:_titleStatusLabel];
@@ -931,6 +1108,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         _titleStatusSubtitleLabel.clipsToBounds = false;
         _titleStatusSubtitleLabel.backgroundColor = [UIColor clearColor];
         _titleStatusSubtitleLabel.textColor = TGDialogListNavigationSubtitleColor(_presentation);
+        _titleStatusSubtitleLabel.shadowColor = TGDialogListNavigationShadowColor(_presentation, 0.72f);
+        _titleStatusSubtitleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
         _titleStatusSubtitleLabel.font = TGSystemFontOfSize(12.0f);
         _titleStatusSubtitleLabel.hidden = true;
         [_titleContainer addSubview:_titleStatusSubtitleLabel];
@@ -1108,6 +1287,11 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (NSArray *)controllerRightBarButtonItems
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        UIBarButtonItem *item = [[UIBarButtonItem alloc] initWithTitle:(_editingMode ? @"Done" : @"Edit") style:(_editingMode ? UIBarButtonItemStyleDone : UIBarButtonItemStyleBordered) target:self action:(_editingMode ? @selector(doneButtonPressed) : @selector(editButtonPressed))];
+        return @[ item ];
+    }
     if (_editingMode)
         return nil;
     
@@ -1301,7 +1485,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     
     if (!_dialogListCompanion.feedChannels)
     {
-        _searchBar = [[TGSearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, [TGSearchBar searchBarBaseHeight]) style:TGSearchBarStyleLightPlain];
+        _searchBar = [[TGSearchBar alloc] initWithFrame:CGRectMake(0, 0, self.view.frame.size.width, TGDialogListSearchBarHeight()) style:TGSearchBarStyleLightPlain];
         _searchBar.pallete = self.presentation.searchBarPallete;
         _searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         _searchBar.safeAreaInset = [self controllerSafeAreaInset];
@@ -1321,7 +1505,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     
-    if (iosMajorVersion() >= 7) {
+    if (iosMajorVersion() >= 7 && !TGDialogListClassicIOS6DarkStyle(_presentation)) {
         _tableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
         _tableView.separatorColor = _presentation.pallete.separatorColor;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
@@ -1357,7 +1541,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
     _ios6FolderTabsView = [[UIView alloc] initWithFrame:CGRectZero];
     _ios6FolderTabsView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    _ios6FolderTabsView.backgroundColor = [TGPresentation classicIOS6Style] ? UIColorRGB(0xf7f7f7) : self.presentation.pallete.backgroundColor;
+    _ios6FolderTabsView.backgroundColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0xf7f7f7) : ([TGPresentation classicIOS6Style] ? (TGDialogListClassicIOS6DarkStyle(self.presentation) ? self.presentation.pallete.backgroundColor : UIColorRGB(0xf7f7f7)) : self.presentation.pallete.backgroundColor);
     _ios6FolderTabsView.hidden = false;
     _ios6FolderTabsScrollView = [[UIScrollView alloc] initWithFrame:CGRectZero];
     _ios6FolderTabsScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -1368,13 +1552,13 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     [_ios6FolderTabsView addSubview:_ios6FolderTabsScrollView];
 
     _ios6FolderTabsSeparatorView = [[UIView alloc] initWithFrame:CGRectZero];
-    _ios6FolderTabsSeparatorView.backgroundColor = [TGPresentation classicIOS6Style] ? UIColorRGB(0xc8c8c8) : self.presentation.pallete.separatorColor;
+    _ios6FolderTabsSeparatorView.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor clearColor] : ([TGPresentation classicIOS6Style] ? (TGDialogListClassicIOS6DarkStyle(self.presentation) ? self.presentation.pallete.barSeparatorColor : UIColorRGB(0xc8c8c8)) : self.presentation.pallete.separatorColor);
     [_ios6FolderTabsView addSubview:_ios6FolderTabsSeparatorView];
 
     _ios6FolderEmptyLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _ios6FolderEmptyLabel.backgroundColor = [UIColor clearColor];
     _ios6FolderEmptyLabel.textAlignment = NSTextAlignmentCenter;
-    _ios6FolderEmptyLabel.textColor = [TGPresentation classicIOS6Style] ? UIColorRGB(0x8e8e93) : self.presentation.pallete.secondaryTextColor;
+    _ios6FolderEmptyLabel.textColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0x7a7a7a) : ([TGPresentation classicIOS6Style] ? (TGDialogListClassicIOS6DarkStyle(self.presentation) ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x8e8e93)) : self.presentation.pallete.secondaryTextColor);
     _ios6FolderEmptyLabel.font = TGSystemFontOfSize(15.0f);
     _ios6FolderEmptyLabel.text = @"Нет чатов";
     _ios6FolderEmptyLabel.hidden = true;
@@ -1430,7 +1614,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 {
     if (!_doNotHideSearchAutomatically)
     {
-        _tableView.contentOffset = CGPointMake(0.0f, -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top);
+        _tableView.contentOffset = CGPointMake(0.0f, -_tableView.contentInset.top + TGDialogListSearchBarHeight() + self.explicitTableInset.top);
         _ios6SearchPullArmed = false;
     }
 }
@@ -1502,8 +1686,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     [super viewWillAppear:animated];
     [self refreshOwnEmojiStatusIfNeeded];
     [self updateTitleEmojiStatus];
-    [self ios6ReloadDialogFilters:false];
-    [self ios6RefreshAllDialogItems:false];
+    [self ios6SynchronizeDialogStateForce:false];
     
     [self updateProxyButton];
     
@@ -1662,6 +1845,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)viewWillDisappear:(BOOL)animated
 {
+    if (_dialogListFastScrolling)
+        [self dialogListSetFastScrolling:false];
     if (iosMajorVersion() >= 7)
         [_searchMixin resignResponderIfAny];
     
@@ -1781,8 +1966,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)willEnterForeground:(NSNotification *)__unused notification
 {
-    [self ios6ReloadDialogFilters:true];
-    [self ios6RefreshAllDialogItems:true];
+    [self ios6SynchronizeDialogStateForce:true];
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
         if ([cell isKindOfClass:[TGDialogListCell class]])
@@ -1906,6 +2090,14 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)dialogListFullyReloaded:(NSArray *)items
 {
+    if (TGDialogListSingleCoreDevice() && _dialogListFastScrolling)
+    {
+        if (_dialogListDeferredMutations == nil)
+            _dialogListDeferredMutations = [[NSMutableArray alloc] init];
+        [_dialogListDeferredMutations addObject:@{ @"type": @"full", @"items": items == nil ? @[] : [items copy] }];
+        return;
+    }
+
     [self ios6ReloadArchivePeerIds];
     
     if (_listModel.count == 0)
@@ -1925,11 +2117,21 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     [_listModel removeAllObjects];
     [_listModel addObjectsFromArray:items];
     [self ios6ApplyArchivePeerIdsToListModel];
+    [self ios6ScheduleFolderPeerHydrationReconciliation];
     if (_ios6ArchiveExpanded && [self ios6ArchivedConversationCount] == 0)
         _ios6ArchiveExpanded = false;
     [self ios6LogArchiveDiagnostics:@"reload"];
     
     [self reloadData:_reloadWithAnimations];
+    TGDialogListControllerReference *renderReference = _ios6LifetimeReference;
+    TGDispatchAfter(0.01, dispatch_get_main_queue(), ^
+    {
+        [renderReference withValue:^(void *value)
+        {
+            TGDialogListController *controller = (__bridge TGDialogListController *)value;
+            [controller dialogListPrimeVisibleRenderCache];
+        }];
+    });
     [self updateBarButtonItemsAnimated:false];
     _reloadWithAnimations = false;
     
@@ -2032,6 +2234,14 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 }
 
 - (void)updateConversations:(NSDictionary *)dict {
+    if (TGDialogListSingleCoreDevice() && _dialogListFastScrolling)
+    {
+        if (_dialogListDeferredMutations == nil)
+            _dialogListDeferredMutations = [[NSMutableArray alloc] init];
+        [_dialogListDeferredMutations addObject:@{ @"type": @"update", @"dict": dict == nil ? @{} : [dict copy] }];
+        return;
+    }
+
     _ios6VisibleListCache = nil;
     _ios6VisibleListCacheFilterId = INT32_MIN;
     NSUInteger archivedCountBefore = [self ios6ArchivedConversationCount];
@@ -2041,6 +2251,24 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         if (conversation != nil) {
             [_listModel replaceObjectAtIndex:i withObject:conversation];
         }
+    }
+    if (_ios6AllDialogItems.count != 0)
+    {
+        NSMutableArray *allDialogItems = [_ios6AllDialogItems mutableCopy];
+        for (NSInteger i = (NSInteger)allDialogItems.count - 1; i >= 0; i--)
+        {
+            id item = allDialogItems[(NSUInteger)i];
+            if (![item isKindOfClass:[TGConversation class]])
+                continue;
+            TGConversation *conversation = dict[@(((TGConversation *)item).conversationId)];
+            if (conversation == nil)
+                continue;
+            if (conversation.isDeleted || conversation.isDeactivated || conversation.leftChat || conversation.kickedFromChat)
+                [allDialogItems removeObjectAtIndex:(NSUInteger)i];
+            else
+                [allDialogItems replaceObjectAtIndex:(NSUInteger)i withObject:conversation];
+        }
+        _ios6AllDialogItems = allDialogItems;
     }
     [self ios6ApplyArchivePeerIdsToListModel];
     NSUInteger archivedCountAfter = [self ios6ArchivedConversationCount];
@@ -2056,28 +2284,63 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         return;
     }
     
-    for (TGDialogListCell *cell in _tableView.visibleCells) {
-        if ([cell isKindOfClass:[TGDialogListCell class]]) {
-            id<TGDialogListItem> conversation = dict[@(cell.conversationId)];
-            if ([conversation isKindOfClass:[TGConversation class]]) {
-                [self prepareCell:cell forConversation:(TGConversation *)conversation animated:true isSearch:false];
-            } else if ([conversation isKindOfClass:[TGFeed class]]) {
-                [self prepareCell:cell forFeed:(TGFeed *)conversation animated:true];
+    if (_ios6SelectedDialogFilterId != 0)
+    {
+        _ios6VisibleListCache = nil;
+        _ios6VisibleListCacheFilterId = INT32_MIN;
+        [self reloadData:false];
+        [self ios6UpdateFolderTabs];
+    }
+    else
+    {
+        for (TGDialogListCell *cell in _tableView.visibleCells) {
+            if ([cell isKindOfClass:[TGDialogListCell class]]) {
+                id<TGDialogListItem> conversation = dict[@(cell.conversationId)];
+                if ([conversation isKindOfClass:[TGConversation class]]) {
+                    [self prepareCell:cell forConversation:(TGConversation *)conversation animated:true isSearch:false];
+                } else if ([conversation isKindOfClass:[TGFeed class]]) {
+                    [self prepareCell:cell forFeed:(TGFeed *)conversation animated:true];
+                }
             }
         }
+        [self ios6UpdateFolderTabs];
     }
     
+    [self ios6ScheduleFolderPeerHydrationReconciliation];
     _visibleConversationsPipe.sink(@true);
 }
 
-- (void)dialogListItemsChanged:(NSArray *)insertedIndices insertedItems:(NSArray *)__unused insertedItems updatedIndices:(NSArray *)updatedIndices updatedItems:(NSArray *)updatedItems removedIndices:(NSArray *)removedIndices
+- (void)dialogListItemsChanged:(NSArray *)insertedIndices insertedItems:(NSArray *)insertedItems updatedIndices:(NSArray *)updatedIndices updatedItems:(NSArray *)updatedItems removedIndices:(NSArray *)removedIndices
 {
+    if (TGDialogListSingleCoreDevice() && _dialogListFastScrolling)
+    {
+        if (_dialogListDeferredMutations == nil)
+            _dialogListDeferredMutations = [[NSMutableArray alloc] init];
+        [_dialogListDeferredMutations addObject:@{
+            @"type": @"change",
+            @"insertedIndices": insertedIndices == nil ? @[] : [insertedIndices copy],
+            @"insertedItems": insertedItems == nil ? @[] : [insertedItems copy],
+            @"updatedIndices": updatedIndices == nil ? @[] : [updatedIndices copy],
+            @"updatedItems": updatedItems == nil ? @[] : [updatedItems copy],
+            @"removedIndices": removedIndices == nil ? @[] : [removedIndices copy]
+        }];
+        return;
+    }
+
     NSArray *previousVisibleItems = [[self ios6VisibleListModel] copy];
     int countBefore = (int)_listModel.count;
+    NSMutableSet *removedPeerIds = [[NSMutableSet alloc] init];
 
     for (NSNumber *nRemovedIndex in removedIndices)
     {
-        [_listModel removeObjectAtIndex:[nRemovedIndex intValue]];
+        NSInteger removedIndex = [nRemovedIndex integerValue];
+        if (removedIndex >= 0 && removedIndex < (NSInteger)_listModel.count)
+        {
+            id item = _listModel[(NSUInteger)removedIndex];
+            if ([item isKindOfClass:[TGConversation class]])
+                [removedPeerIds addObject:@(((TGConversation *)item).conversationId)];
+            [_listModel removeObjectAtIndex:(NSUInteger)removedIndex];
+        }
     }
 
     int index = -1;
@@ -2085,6 +2348,51 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     {
         index++;
         [_listModel replaceObjectAtIndex:[nUpdatedIndex intValue] withObject:[updatedItems objectAtIndex:index]];
+    }
+
+    if (_ios6AllDialogItems.count != 0 && (removedPeerIds.count != 0 || updatedItems.count != 0 || insertedItems.count != 0))
+    {
+        NSMutableArray *allDialogItems = [_ios6AllDialogItems mutableCopy];
+        for (NSInteger i = (NSInteger)allDialogItems.count - 1; i >= 0; i--)
+        {
+            id item = allDialogItems[(NSUInteger)i];
+            if (![item isKindOfClass:[TGConversation class]])
+                continue;
+            NSNumber *peerId = @(((TGConversation *)item).conversationId);
+            if ([removedPeerIds containsObject:peerId])
+            {
+                [allDialogItems removeObjectAtIndex:(NSUInteger)i];
+                continue;
+            }
+            for (TGConversation *updatedConversation in updatedItems)
+            {
+                if ([updatedConversation isKindOfClass:[TGConversation class]] && updatedConversation.conversationId == [peerId longLongValue])
+                {
+                    if (updatedConversation.isDeleted || updatedConversation.isDeactivated || updatedConversation.leftChat || updatedConversation.kickedFromChat)
+                        [allDialogItems removeObjectAtIndex:(NSUInteger)i];
+                    else
+                        [allDialogItems replaceObjectAtIndex:(NSUInteger)i withObject:updatedConversation];
+                    break;
+                }
+            }
+        }
+        for (TGConversation *insertedConversation in insertedItems)
+        {
+            if (![insertedConversation isKindOfClass:[TGConversation class]] || insertedConversation.isDeleted || insertedConversation.isDeactivated || insertedConversation.leftChat || insertedConversation.kickedFromChat)
+                continue;
+            bool found = false;
+            for (TGConversation *item in allDialogItems)
+            {
+                if ([item isKindOfClass:[TGConversation class]] && item.conversationId == insertedConversation.conversationId)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                [allDialogItems addObject:insertedConversation];
+        }
+        _ios6AllDialogItems = allDialogItems;
     }
 
     _ios6VisibleListCache = nil;
@@ -2121,31 +2429,38 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
     if (stableVisibleOrder)
     {
-        NSMutableDictionary *itemsByPeerId = [[NSMutableDictionary alloc] initWithCapacity:currentVisibleItems.count];
-        for (id item in currentVisibleItems)
+        if (TGDialogListSingleCoreDevice() && _dialogListFastScrolling)
         {
-            int64_t peerId = 0;
-            if ([item isKindOfClass:[TGConversation class]])
-                peerId = ((TGConversation *)item).conversationId;
-            else if ([item isKindOfClass:[TGFeed class]])
-                peerId = ((TGFeed *)item).conversationId;
-            if (peerId != 0)
-                itemsByPeerId[@(peerId)] = item;
+            _dialogListVisibleRefreshPending = true;
         }
-
-        for (TGDialogListCell *cell in _tableView.visibleCells)
+        else
         {
-            if (![cell isKindOfClass:[TGDialogListCell class]])
-                continue;
+            NSMutableDictionary *itemsByPeerId = [[NSMutableDictionary alloc] initWithCapacity:currentVisibleItems.count];
+            for (id item in currentVisibleItems)
+            {
+                int64_t peerId = 0;
+                if ([item isKindOfClass:[TGConversation class]])
+                    peerId = ((TGConversation *)item).conversationId;
+                else if ([item isKindOfClass:[TGFeed class]])
+                    peerId = ((TGFeed *)item).conversationId;
+                if (peerId != 0)
+                    itemsByPeerId[@(peerId)] = item;
+            }
 
-            id item = itemsByPeerId[@(cell.conversationId)];
-            if ([item isKindOfClass:[TGConversation class]])
-                [self prepareCell:cell forConversation:(TGConversation *)item animated:true isSearch:false];
-            else if ([item isKindOfClass:[TGFeed class]])
-                [self prepareCell:cell forFeed:(TGFeed *)item animated:true];
+            for (TGDialogListCell *cell in _tableView.visibleCells)
+            {
+                if (![cell isKindOfClass:[TGDialogListCell class]])
+                    continue;
+
+                id item = itemsByPeerId[@(cell.conversationId)];
+                if ([item isKindOfClass:[TGConversation class]])
+                    [self prepareCell:cell forConversation:(TGConversation *)item animated:true isSearch:false];
+                else if ([item isKindOfClass:[TGFeed class]])
+                    [self prepareCell:cell forFeed:(TGFeed *)item animated:true];
+            }
+
+            [self updateIsLastCell];
         }
-
-        [self updateIsLastCell];
         [self ios6UpdateFolderTabs];
     }
     else
@@ -2154,6 +2469,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         [self ios6UpdateFolderTabs];
     }
 
+    [self ios6ScheduleFolderPeerHydrationReconciliation];
     _visibleConversationsPipe.sink(@true);
 
     if ((countBefore == 0) != (_listModel.count == 0))
@@ -2174,7 +2490,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         TGConversation *topConversation = visibleItems[0];
         topIsPinned = topConversation.pinnedToTop || topConversation.isAd || (_dialogListCompanion.forwardMode && topConversation.conversationId == TGTelegraphInstance.clientUserId);
     }
-    UIColor *backgroundColor = topIsPinned ? _presentation.pallete.barBackgroundColor : _presentation.pallete.backgroundColor;
+    UIColor *backgroundColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0xf7f7f7) : (topIsPinned ? _presentation.pallete.barBackgroundColor : _presentation.pallete.backgroundColor);
     if (!TGObjectCompare(_searchBar.backgroundColor, backgroundColor)) {
         _searchBar.backgroundColor = backgroundColor;
         _searchTopBackgroundView.backgroundColor = backgroundColor;
@@ -2832,11 +3148,16 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     _ios6FolderSwipeTabsView.userInteractionEnabled = false;
     [self.view addSubview:_ios6FolderSwipeTabsView];
 
-    bool classicStyle = [TGPresentation classicIOS6Style];
-    _ios6FolderSwipeIndicatorView = [[UIView alloc] initWithFrame:sourceIndicatorFrame];
-    _ios6FolderSwipeIndicatorView.backgroundColor = classicStyle ? UIColorRGB(0x2b78c5) : self.presentation.pallete.accentColor;
-    _ios6FolderSwipeIndicatorView.userInteractionEnabled = false;
-    [_ios6FolderSwipeTabsView addSubview:_ios6FolderSwipeIndicatorView];
+    if (![TGPresentation brandedIOS6Style])
+    {
+        bool classicStyle = [TGPresentation classicIOS6Style];
+        _ios6FolderSwipeIndicatorView = [[UIView alloc] initWithFrame:sourceIndicatorFrame];
+        _ios6FolderSwipeIndicatorView.backgroundColor = classicStyle ? UIColorRGB(0x2b78c5) : self.presentation.pallete.accentColor;
+        _ios6FolderSwipeIndicatorView.userInteractionEnabled = false;
+        [_ios6FolderSwipeTabsView addSubview:_ios6FolderSwipeIndicatorView];
+    }
+    else
+        _ios6FolderSwipeIndicatorView = nil;
 
     _ios6FolderSwipeActive = true;
     _tableView.scrollEnabled = false;
@@ -3212,7 +3533,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 {
     if (![self ios6FoldersAllowed] || _isDisplayingSearch || _ios6ArchiveExpanded || _ios6DialogFilters.count <= 1)
         return 0.0f;
-    return 38.0f;
+    return [TGPresentation brandedIOS6Style] ? 36.0f : 38.0f;
 }
 
 - (int64_t)ios6PeerIdForInputPeer:(id)peer
@@ -3433,6 +3754,31 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     return result;
 }
 
+- (void)ios6ScheduleFolderPeerHydrationReconciliation
+{
+    if (_ios6FolderPeerHydrationReconcileScheduled || _ios6DialogFilters.count == 0 || ![self ios6FoldersAllowed])
+        return;
+    if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
+        return;
+
+    _ios6FolderPeerHydrationReconcileScheduled = true;
+    TGDialogListControllerReference *reference = _ios6LifetimeReference;
+    TGDispatchAfter(0.35, dispatch_get_main_queue(), ^
+    {
+        [reference withValue:^(void *value)
+        {
+            TGDialogListController *controller = (__bridge TGDialogListController *)value;
+            controller->_ios6FolderPeerHydrationReconcileScheduled = false;
+            if (controller->_dialogListFastScrolling)
+            {
+                [controller ios6ScheduleFolderPeerHydrationReconciliation];
+                return;
+            }
+            [controller ios6HydrateExplicitFolderPeers];
+        }];
+    });
+}
+
 - (void)ios6ContinueFolderPeerHydration
 {
     if (!_ios6FolderPeerHydrationActive)
@@ -3453,7 +3799,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         return;
     }
 
-    NSUInteger batchCount = MIN((NSUInteger)20, _ios6FolderPeerHydrationQueue.count);
+    NSUInteger batchLimit = MAX((NSUInteger)1, _ios6FolderPeerHydrationBatchSize);
+    NSUInteger batchCount = MIN(batchLimit, _ios6FolderPeerHydrationQueue.count);
     NSArray *batch = [_ios6FolderPeerHydrationQueue subarrayWithRange:NSMakeRange(0, batchCount)];
     [_ios6FolderPeerHydrationQueue removeObjectsInRange:NSMakeRange(0, batchCount)];
 
@@ -3479,10 +3826,34 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         [reference withValue:^(void *value)
         {
             TGDialogListController *controller = (__bridge TGDialogListController *)value;
-            controller->_ios6FolderPeerHydrationFailed += (int)batch.count;
             NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+            NSTimeInterval retryDelay = 0.15;
+            if (batch.count > 1)
+            {
+                controller->_ios6FolderPeerHydrationBatchSize = MAX((NSUInteger)1, batch.count / 2);
+                for (NSInteger i = (NSInteger)batch.count - 1; i >= 0; i--)
+                    [controller->_ios6FolderPeerHydrationQueue insertObject:batch[(NSUInteger)i] atIndex:0];
+            }
+            else if (batch.count == 1)
+            {
+                TLInputPeer *inputPeer = batch[0];
+                int64_t peerId = [controller ios6PeerIdForInputPeer:inputPeer];
+                NSNumber *peerKey = @(peerId);
+                int retryCount = [controller->_ios6FolderPeerHydrationRetryCounts[peerKey] intValue] + 1;
+                controller->_ios6FolderPeerHydrationRetryCounts[peerKey] = @(retryCount);
+                bool transient = [errorType hasPrefix:@"FLOOD_WAIT_"] || [errorType hasPrefix:@"INTERNAL"] || [errorType hasPrefix:@"TIMEOUT"] || [errorType hasPrefix:@"NETWORK"];
+                if (transient && retryCount < 3)
+                {
+                    [controller->_ios6FolderPeerHydrationQueue addObject:inputPeer];
+                    retryDelay = [errorType hasPrefix:@"FLOOD_WAIT_"] ? 2.0 : 0.75;
+                }
+                else
+                {
+                    controller->_ios6FolderPeerHydrationFailed++;
+                }
+            }
             NSLog(@"FOLDERS hydrate error batch=%d type=%@", (int)batch.count, errorType);
-            TGDispatchAfter(0.05, dispatch_get_main_queue(), ^
+            TGDispatchAfter(retryDelay, dispatch_get_main_queue(), ^
             {
                 [reference withValue:^(void *delayedValue)
                 {
@@ -3497,6 +3868,16 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         {
             TGDialogListController *controller = (__bridge TGDialogListController *)value;
             controller->_ios6FolderPeerHydrationLoaded += (int)batch.count;
+            NSUInteger maximumBatchSize = 20;
+            switch (devicePerformanceClass())
+            {
+                case TGPerformanceClassConstrained: maximumBatchSize = 6; break;
+                case TGPerformanceClassBalanced: maximumBatchSize = 10; break;
+                case TGPerformanceClassFast: maximumBatchSize = 16; break;
+                case TGPerformanceClassHigh: maximumBatchSize = 24; break;
+            }
+            if (controller->_ios6FolderPeerHydrationBatchSize < maximumBatchSize)
+                controller->_ios6FolderPeerHydrationBatchSize = MIN(maximumBatchSize, controller->_ios6FolderPeerHydrationBatchSize + 2);
             TGDispatchAfter(0.12, dispatch_get_main_queue(), ^
             {
                 [reference withValue:^(void *delayedValue)
@@ -3511,17 +3892,31 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)ios6HydrateExplicitFolderPeers
 {
-    if (_ios6FolderPeerHydrationActive || _ios6DialogFilters.count <= 1)
+    if (_ios6FolderPeerHydrationActive)
         return;
 
+    NSArray *sourceItems = [self ios6FolderSourceItems];
     NSMutableSet *availablePeerIds = [[NSMutableSet alloc] init];
-    for (id item in [self ios6FolderSourceItems])
+    NSMutableDictionary *missingPeersById = [[NSMutableDictionary alloc] init];
+    for (id item in sourceItems)
     {
-        if ([item isKindOfClass:[TGConversation class]])
-            [availablePeerIds addObject:@(((TGConversation *)item).conversationId)];
+        if (![item isKindOfClass:[TGConversation class]])
+            continue;
+        TGConversation *conversation = (TGConversation *)item;
+        NSNumber *peerKey = @(conversation.conversationId);
+        [availablePeerIds addObject:peerKey];
+        NSString *displayTitle = conversation.dialogListData[@"title"];
+        bool incomplete = conversation.dialogListData.count == 0 || displayTitle.length == 0;
+        if (TGPeerIdIsChannel(conversation.conversationId) && conversation.accessHash == 0)
+            incomplete = true;
+        if (incomplete)
+        {
+            TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:conversation.conversationId accessHash:conversation.accessHash];
+            if (inputPeer != nil && ![inputPeer isKindOfClass:[TLInputPeer$inputPeerEmpty class]])
+                missingPeersById[peerKey] = inputPeer;
+        }
     }
 
-    NSMutableDictionary *missingPeersById = [[NSMutableDictionary alloc] init];
     for (NSDictionary *filter in _ios6DialogFilters)
     {
         NSDictionary *inputPeers = filter[@"inputPeers"];
@@ -3529,18 +3924,24 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
             continue;
         [inputPeers enumerateKeysAndObjectsUsingBlock:^(NSNumber *peerId, TLInputPeer *inputPeer, __unused BOOL *stop)
         {
-            if (![availablePeerIds containsObject:peerId] && inputPeer != nil)
+            if (![availablePeerIds containsObject:peerId] && inputPeer != nil && ![inputPeer isKindOfClass:[TLInputPeer$inputPeerEmpty class]])
                 missingPeersById[peerId] = inputPeer;
         }];
     }
 
     if (missingPeersById.count == 0)
-    {
         return;
-    }
 
     [_ios6FolderPeerHydrationQueue removeAllObjects];
     [_ios6FolderPeerHydrationQueue addObjectsFromArray:missingPeersById.allValues];
+    [_ios6FolderPeerHydrationRetryCounts removeAllObjects];
+    switch (devicePerformanceClass())
+    {
+        case TGPerformanceClassConstrained: _ios6FolderPeerHydrationBatchSize = 6; break;
+        case TGPerformanceClassBalanced: _ios6FolderPeerHydrationBatchSize = 10; break;
+        case TGPerformanceClassFast: _ios6FolderPeerHydrationBatchSize = 16; break;
+        case TGPerformanceClassHigh: _ios6FolderPeerHydrationBatchSize = 24; break;
+    }
     _ios6FolderPeerHydrationLoaded = 0;
     _ios6FolderPeerHydrationFailed = 0;
     _ios6FolderPeerHydrationActive = true;
@@ -3709,6 +4110,38 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     return [self ios6UnreadCountForDialogFilter:filter sourceItems:[self ios6FolderSourceItems]];
 }
 
+- (void)ios6SynchronizeDialogStateForce:(bool)force
+{
+    if (![self ios6FoldersAllowed] || TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
+        return;
+
+    if (force)
+    {
+        _ios6DialogFiltersLastRefreshTime = 0.0;
+        _ios6AllDialogItemsLastRefreshTime = 0.0;
+    }
+
+    [self ios6ReloadDialogFilters:force];
+    [self ios6RefreshAllDialogItems:force];
+    [self ios6HydrateExplicitFolderPeers];
+    if ([_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
+        [(TGTelegraphDialogListCompanion *)_dialogListCompanion ios6PreloadAllDialogsForFolders];
+}
+
+- (void)ios6SynchronizeDialogState
+{
+    [self ios6SynchronizeDialogStateForce:false];
+}
+
+- (void)ios6AuthorizationReady:(NSNotification *)__unused notification
+{
+    _ios6DialogFiltersAuthorizationRetryCount = 0;
+    _ios6DialogFiltersAuthorizationRetryScheduled = false;
+    _ios6DialogFiltersNetworkRetryCount = 0;
+    _ios6DialogFiltersNetworkRetryScheduled = false;
+    [self ios6SynchronizeDialogStateForce:true];
+}
+
 - (void)ios6ReloadDialogFilters:(bool)force
 {
     if (![self ios6FoldersAllowed])
@@ -3774,10 +4207,16 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
             [[NSUserDefaults standardUserDefaults] setInteger:0 forKey:@"TGIOS6SelectedDialogFilterId"];
         }
 
+        strongSelf->_ios6DialogFiltersNetworkRetryCount = 0;
+        strongSelf->_ios6DialogFiltersNetworkRetryScheduled = false;
         NSLog(@"FOLDERS result count=%d selected=%d", (int)strongSelf->_ios6DialogFilters.count, strongSelf->_ios6SelectedDialogFilterId);
         [strongSelf ios6UpdateFolderTabs];
-            [strongSelf ios6LayoutFolderTabs];
-            [strongSelf reloadData:false];
+        [strongSelf ios6LayoutFolderTabs];
+        [strongSelf reloadData:false];
+        [strongSelf ios6RefreshAllDialogItems:true];
+        [strongSelf ios6HydrateExplicitFolderPeers];
+        if ([strongSelf->_dialogListCompanion isKindOfClass:[TGTelegraphDialogListCompanion class]])
+            [(TGTelegraphDialogListCompanion *)strongSelf->_dialogListCompanion ios6PreloadAllDialogsForFolders];
         }];
     } error:^(id error)
     {
@@ -3785,7 +4224,25 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         {
             TGDialogListController *controller = (__bridge TGDialogListController *)value;
             NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+            controller->_ios6DialogFiltersLastRefreshTime = 0.0;
             NSLog(@"FOLDERS error type=%@", errorType);
+            if (!controller->_ios6DialogFiltersNetworkRetryScheduled && TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated)
+            {
+                controller->_ios6DialogFiltersNetworkRetryScheduled = true;
+                int retryCount = MIN(controller->_ios6DialogFiltersNetworkRetryCount, 5);
+                controller->_ios6DialogFiltersNetworkRetryCount++;
+                NSTimeInterval delay = MIN(8.0, 0.5 * (1 << retryCount));
+                TGDialogListControllerReference *retryReference = controller->_ios6LifetimeReference;
+                TGDispatchAfter(delay, dispatch_get_main_queue(), ^
+                {
+                    [retryReference withValue:^(void *retryValue)
+                    {
+                        TGDialogListController *retryController = (__bridge TGDialogListController *)retryValue;
+                        retryController->_ios6DialogFiltersNetworkRetryScheduled = false;
+                        [retryController ios6ReloadDialogFilters:true];
+                    }];
+                });
+            }
         }];
     } completed:nil]];
 }
@@ -3813,20 +4270,27 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     }
     _ios6FolderTabsUpdatePending = false;
 
+    bool brandedStyle = [TGPresentation brandedIOS6Style];
     bool classicStyle = [TGPresentation classicIOS6Style];
-    _ios6FolderTabsView.backgroundColor = classicStyle ? UIColorRGB(0xf7f7f7) : self.presentation.pallete.backgroundColor;
+    bool classicDarkStyle = TGDialogListClassicIOS6DarkStyle(self.presentation);
+    _ios6FolderTabsView.backgroundColor = brandedStyle ? UIColorRGB(0xf7f7f7) : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.backgroundColor : UIColorRGB(0xf7f7f7)) : self.presentation.pallete.backgroundColor);
     _ios6FolderTabsScrollView.backgroundColor = [UIColor clearColor];
-    _ios6FolderTabsSeparatorView.backgroundColor = classicStyle ? UIColorRGB(0xc8c8c8) : self.presentation.pallete.separatorColor;
-    _ios6FolderEmptyLabel.textColor = classicStyle ? UIColorRGB(0x8e8e93) : self.presentation.pallete.secondaryTextColor;
+    _ios6FolderTabsSeparatorView.backgroundColor = brandedStyle ? UIColorRGB(0x9d9d9d) : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.barSeparatorColor : UIColorRGB(0xc8c8c8)) : self.presentation.pallete.separatorColor);
+    _ios6FolderEmptyLabel.textColor = brandedStyle ? UIColorRGB(0x7a7a7a) : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x8e8e93)) : self.presentation.pallete.secondaryTextColor);
 
-    NSArray *folderSourceItems = [self ios6FolderSourceItems];
-    NSMutableArray *unreadCounts = [[NSMutableArray alloc] initWithCapacity:_ios6DialogFilters.count];
-    NSMutableString *stateKey = [[NSMutableString alloc] initWithFormat:@"%d|%d|%.0f", classicStyle ? 1 : 0, _ios6SelectedDialogFilterId, self.view.bounds.size.width];
+    NSArray *folderSourceItems = brandedStyle ? nil : [self ios6FolderSourceItems];
+    NSMutableArray *unreadCounts = brandedStyle ? nil : [[NSMutableArray alloc] initWithCapacity:_ios6DialogFilters.count];
+    NSMutableString *stateKey = [[NSMutableString alloc] initWithFormat:@"%d|%d|%d|%d|%.0f", brandedStyle ? 1 : 0, classicStyle ? 1 : 0, classicDarkStyle ? 1 : 0, _ios6SelectedDialogFilterId, self.view.bounds.size.width];
     for (NSDictionary *filter in _ios6DialogFilters)
     {
-        int unread = [self ios6UnreadCountForDialogFilter:filter sourceItems:folderSourceItems];
-        [unreadCounts addObject:@(unread)];
-        [stateKey appendFormat:@"|%d:%d:%@", [filter[@"id"] intValue], unread, filter[@"title"]];
+        if (brandedStyle)
+            [stateKey appendFormat:@"|%d:%@", [filter[@"id"] intValue], filter[@"title"]];
+        else
+        {
+            int unread = [self ios6UnreadCountForDialogFilter:filter sourceItems:folderSourceItems];
+            [unreadCounts addObject:@(unread)];
+            [stateKey appendFormat:@"|%d:%d:%@", [filter[@"id"] intValue], unread, filter[@"title"]];
+        }
     }
 
     if ([_ios6FolderTabsStateKey isEqualToString:stateKey])
@@ -3839,60 +4303,93 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     for (UIView *view in [_ios6FolderTabsScrollView.subviews copy])
         [view removeFromSuperview];
 
-    CGFloat x = 8.0f;
     UIFont *font = TGBoldSystemFontOfSize(13.0f);
+    CGFloat brandedInset = 13.0f;
+    CGFloat brandedSpacing = 18.0f;
+    if (brandedStyle && _ios6DialogFilters.count > 1)
+    {
+        CGFloat totalWidth = 0.0f;
+        for (NSDictionary *filter in _ios6DialogFilters)
+        {
+            CGSize titleSize = [filter[@"title"] sizeWithFont:font];
+            totalWidth += MAX(48.0f, ceil(titleSize.width) + 24.0f);
+        }
+        CGFloat availableSpacing = self.view.bounds.size.width - brandedInset * 2.0f - totalWidth;
+        if (availableSpacing >= 0.0f)
+            brandedSpacing = availableSpacing / (_ios6DialogFilters.count - 1);
+    }
+    CGFloat x = brandedStyle ? brandedInset : 8.0f;
     NSInteger index = 0;
     UIButton *selectedButton = nil;
     for (NSDictionary *filter in _ios6DialogFilters)
     {
         NSString *title = filter[@"title"];
-        int unread = [unreadCounts[index] intValue];
+        int unread = brandedStyle ? 0 : [unreadCounts[index] intValue];
         NSString *badgeText = unread > 999 ? @"999+" : (unread > 0 ? [NSString stringWithFormat:@"%d", unread] : nil);
         CGSize titleSize = [title sizeWithFont:font];
-        CGFloat badgeWidth = badgeText.length == 0 ? 0.0f : MAX(18.0f, [badgeText sizeWithFont:TGBoldSystemFontOfSize(11.0f)].width + 10.0f);
-        CGFloat width = MAX(64.0f, titleSize.width + 24.0f + (badgeWidth > 0.0f ? badgeWidth + 5.0f : 0.0f));
+        CGFloat badgeWidth = brandedStyle || badgeText.length == 0 ? 0.0f : MAX(18.0f, [badgeText sizeWithFont:TGBoldSystemFontOfSize(11.0f)].width + 10.0f);
+        CGFloat width = brandedStyle ? MAX(48.0f, ceil(titleSize.width) + 24.0f) : MAX(64.0f, titleSize.width + 24.0f + (badgeWidth > 0.0f ? badgeWidth + 5.0f : 0.0f));
 
         UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
         button.tag = 6100 + index;
-        button.frame = CGRectMake(x, 0.0f, width, 37.0f);
+        button.frame = brandedStyle ? CGRectMake(x, 3.0f, width, 27.0f) : CGRectMake(x, 0.0f, width, 37.0f);
         button.titleLabel.font = font;
         [button setTitle:title forState:UIControlStateNormal];
         bool selected = [filter[@"id"] intValue] == _ios6SelectedDialogFilterId;
-        UIColor *accent = classicStyle ? UIColorRGB(0x2b78c5) : self.presentation.pallete.accentColor;
-        UIColor *normalTitleColor = classicStyle ? UIColorRGB(0x555d66) : self.presentation.pallete.textColor;
-        [button setTitleColor:selected ? accent : normalTitleColor forState:UIControlStateNormal];
-        [button setTitleColor:[accent colorWithAlphaComponent:0.55f] forState:UIControlStateHighlighted];
-        if (badgeWidth > 0.0f)
+        if (brandedStyle)
         {
-            button.contentEdgeInsets = UIEdgeInsetsMake(0.0f, 0.0f, 0.0f, badgeWidth + 5.0f);
-            UILabel *badge = [[UILabel alloc] initWithFrame:CGRectMake(width - badgeWidth - 8.0f, 9.0f, badgeWidth, 18.0f)];
-            badge.backgroundColor = selected ? accent : (classicStyle ? UIColorRGB(0xa7afb7) : self.presentation.pallete.secondaryTextColor);
-            badge.textColor = selected && !classicStyle ? self.presentation.pallete.accentContrastColor : [UIColor whiteColor];
-            badge.textAlignment = NSTextAlignmentCenter;
-            badge.font = TGBoldSystemFontOfSize(11.0f);
-            badge.text = badgeText;
-            badge.layer.cornerRadius = 9.0f;
-            badge.clipsToBounds = true;
-            badge.userInteractionEnabled = false;
-            [button addSubview:badge];
+            [button setBackgroundImage:TGDialogListBrandedFolderButtonImage(false) forState:UIControlStateNormal];
+            [button setBackgroundImage:TGDialogListBrandedFolderButtonImage(true) forState:UIControlStateHighlighted];
+            [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [button setTitleColor:UIColorRGB(0xf4f4f4) forState:UIControlStateHighlighted];
+            [button setTitleShadowColor:UIColorRGBA(0x4d4d4d, 0.85f) forState:UIControlStateNormal];
+            [button setTitleShadowColor:UIColorRGBA(0x3a3a3a, 0.9f) forState:UIControlStateHighlighted];
+            button.titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+            button.contentEdgeInsets = UIEdgeInsetsMake(0.0f, 12.0f, 1.0f, 12.0f);
+        }
+        else
+        {
+            UIColor *accent = classicStyle ? UIColorRGB(0x2b78c5) : self.presentation.pallete.accentColor;
+            UIColor *normalTitleColor = classicStyle ? (classicDarkStyle ? self.presentation.pallete.secondaryTextColor : UIColorRGB(0x555d66)) : self.presentation.pallete.textColor;
+            [button setTitleColor:selected ? accent : normalTitleColor forState:UIControlStateNormal];
+            [button setTitleColor:[accent colorWithAlphaComponent:0.55f] forState:UIControlStateHighlighted];
+            if (badgeWidth > 0.0f)
+            {
+                button.contentEdgeInsets = UIEdgeInsetsMake(0.0f, 0.0f, 0.0f, badgeWidth + 5.0f);
+                UILabel *badge = [[UILabel alloc] initWithFrame:CGRectMake(width - badgeWidth - 8.0f, 9.0f, badgeWidth, 18.0f)];
+                badge.backgroundColor = selected ? accent : (classicStyle ? (classicDarkStyle ? self.presentation.pallete.dialogBadgeMutedColor : UIColorRGB(0xa7afb7)) : self.presentation.pallete.secondaryTextColor);
+                badge.textColor = selected && !classicStyle ? self.presentation.pallete.accentContrastColor : [UIColor whiteColor];
+                badge.textAlignment = NSTextAlignmentCenter;
+                badge.font = TGBoldSystemFontOfSize(11.0f);
+                badge.text = badgeText;
+                badge.layer.cornerRadius = 9.0f;
+                badge.clipsToBounds = true;
+                badge.userInteractionEnabled = false;
+                [button addSubview:badge];
+            }
+            if (selected)
+            {
+                UIView *indicator = [[UIView alloc] initWithFrame:CGRectMake(5.0f, 34.0f, width - 10.0f, 3.0f)];
+                indicator.tag = 6199;
+                indicator.backgroundColor = accent;
+                indicator.userInteractionEnabled = false;
+                [button addSubview:indicator];
+            }
         }
         if (selected)
-        {
-            UIView *indicator = [[UIView alloc] initWithFrame:CGRectMake(5.0f, 34.0f, width - 10.0f, 3.0f)];
-            indicator.tag = 6199;
-            indicator.backgroundColor = accent;
-            indicator.userInteractionEnabled = false;
-            [button addSubview:indicator];
             selectedButton = button;
-        }
         [button addTarget:self action:@selector(ios6FolderTabPressed:) forControlEvents:UIControlEventTouchUpInside];
         [_ios6FolderTabsScrollView addSubview:button];
-        x += width + 2.0f;
+        x += width;
+        if (index + 1 < (NSInteger)_ios6DialogFilters.count)
+            x += brandedStyle ? brandedSpacing : 2.0f;
         index++;
     }
-    _ios6FolderTabsScrollView.contentSize = CGSizeMake(MAX(self.view.bounds.size.width, x + 6.0f), 37.0f);
+    CGFloat contentHeight = brandedStyle ? 35.0f : 37.0f;
+    CGFloat trailingInset = brandedStyle ? 13.0f : 6.0f;
+    _ios6FolderTabsScrollView.contentSize = CGSizeMake(MAX(self.view.bounds.size.width, x + trailingInset), contentHeight);
     if (selectedButton != nil && [self ios6FolderTabsHeight] > 0.0f)
-        [_ios6FolderTabsScrollView scrollRectToVisible:CGRectInset(selectedButton.frame, -16.0f, 0.0f) animated:false];
+        [_ios6FolderTabsScrollView scrollRectToVisible:CGRectInset(selectedButton.frame, brandedStyle ? -13.0f : -16.0f, 0.0f) animated:false];
     [self ios6UpdateFolderEmptyLabel];
 }
 
@@ -4060,13 +4557,13 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     if (tableView == _tableView)
     {
         if (indexPath.section == 0)
-            return 45.0f;
+            return [TGPresentation brandedIOS6Style] ? 49.0f : 45.0f;
         
         id item = [self ios6DialogListItemAtIndexPath:indexPath];
         if ([self ios6IsArchiveHeaderItem:item])
             return 54.0f;
         if (item != nil)
-            return 76;
+            return [TGPresentation brandedIOS6Style] ? 65.0f : 76.0f;
         
         return 0;
     }
@@ -4090,6 +4587,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
 - (void)prepareCell:(TGDialogListCell *)cell forFeed:(TGFeed *)feed animated:(bool)animated
 {
+    cell.preparedPreview = nil;
     if (cell.reuseTag != (intptr_t)feed || cell.unreadCount != feed.unreadCount || (feed.serviceUnreadCount != -1 && cell.unreadCount != feed.serviceUnreadCount))
     {
         cell.conversationId = feed.conversationId;
@@ -4123,11 +4621,17 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     bool shouldBeVerified = [currentDialogListData[@"isVerified"] boolValue];
     int currentIsSavedMessages = [currentDialogListData[@"isSavedMessages"] intValue];
     bool shouldBePremium = [currentDialogListData[@"isPremium"] boolValue] && !currentIsSavedMessages;
+    NSString *statusText = TGDialogListBrandedStatusText(conversation);
+    bool statusChanged = cell.statusText != statusText && ![cell.statusText isEqualToString:statusText];
+    NSDictionary *preparedPreview = currentDialogListData[@"preparedPreview"];
+    bool previewChanged = cell.preparedPreview != preparedPreview && ![cell.preparedPreview isEqual:preparedPreview];
 
-    if (cell.reuseTag != (intptr_t)conversation || cell.conversationId != conversation.conversationId || cell.unreadCount != conversation.unreadCount || cell.serviceUnreadCount != conversation.serviceUnreadCount || cell.unreadMentionCount != conversation.unreadMentionCount || cell.isAd != conversation.isAd || cell.isVerified != shouldBeVerified || cell.isPremium != shouldBePremium)
+    if (cell.reuseTag != (intptr_t)conversation || cell.conversationId != conversation.conversationId || cell.unreadCount != conversation.unreadCount || cell.serviceUnreadCount != conversation.serviceUnreadCount || cell.unreadMentionCount != conversation.unreadMentionCount || cell.isAd != conversation.isAd || cell.isVerified != shouldBeVerified || cell.isPremium != shouldBePremium || statusChanged || previewChanged)
     {
         cell.reuseTag = (intptr_t)conversation;
         cell.conversationId = conversation.conversationId;
+        cell.statusText = statusText;
+        cell.preparedPreview = preparedPreview;
     
         cell.date = conversation.unpinnedDate;
         cell.pinnedToTop = conversation.pinnedToTop && !_dialogListCompanion.feedChannels;
@@ -4773,6 +5277,278 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     return nil;
 }
 
+- (void)dialogListApplyDeferredMutations
+{
+    if (_dialogListDeferredMutations.count == 0)
+        return;
+
+    NSArray *mutations = [_dialogListDeferredMutations copy];
+    [_dialogListDeferredMutations removeAllObjects];
+
+    NSUInteger startIndex = 0;
+    for (NSUInteger i = 0; i < mutations.count; i++)
+    {
+        if ([mutations[i][@"type"] isEqualToString:@"full"])
+            startIndex = i;
+    }
+
+    for (NSUInteger i = startIndex; i < mutations.count; i++)
+    {
+        NSDictionary *mutation = mutations[i];
+        NSString *type = mutation[@"type"];
+        if ([type isEqualToString:@"full"])
+        {
+            [self dialogListFullyReloaded:mutation[@"items"]];
+        }
+        else if ([type isEqualToString:@"update"])
+        {
+            [self updateConversations:mutation[@"dict"]];
+        }
+        else if ([type isEqualToString:@"change"])
+        {
+            [self dialogListItemsChanged:mutation[@"insertedIndices"] insertedItems:mutation[@"insertedItems"] updatedIndices:mutation[@"updatedIndices"] updatedItems:mutation[@"updatedItems"] removedIndices:mutation[@"removedIndices"]];
+        }
+    }
+}
+
+- (void)dialogListRefreshVisibleCells
+{
+    NSArray *currentVisibleItems = [self ios6VisibleListModel];
+    NSMutableDictionary *itemsByPeerId = [[NSMutableDictionary alloc] initWithCapacity:currentVisibleItems.count];
+    for (id item in currentVisibleItems)
+    {
+        int64_t peerId = 0;
+        if ([item isKindOfClass:[TGConversation class]])
+            peerId = ((TGConversation *)item).conversationId;
+        else if ([item isKindOfClass:[TGFeed class]])
+            peerId = ((TGFeed *)item).conversationId;
+        if (peerId != 0)
+            itemsByPeerId[@(peerId)] = item;
+    }
+
+    for (TGDialogListCell *cell in _tableView.visibleCells)
+    {
+        if (![cell isKindOfClass:[TGDialogListCell class]])
+            continue;
+
+        id item = itemsByPeerId[@(cell.conversationId)];
+        if ([item isKindOfClass:[TGConversation class]])
+            [self prepareCell:cell forConversation:(TGConversation *)item animated:false isSearch:false];
+        else if ([item isKindOfClass:[TGFeed class]])
+            [self prepareCell:cell forFeed:(TGFeed *)item animated:false];
+    }
+    [self updateIsLastCell];
+    [self updateSearchBarBackground];
+}
+
+- (void)dialogListSetFastScrolling:(bool)fastScrolling
+{
+    if (_dialogListFastScrolling == fastScrolling)
+        return;
+
+    _dialogListFastScrolling = fastScrolling;
+    if (fastScrolling)
+        OGRuntimeBeginInteraction();
+    else
+        OGRuntimeEndInteraction();
+    for (UITableViewCell *cell in _tableView.visibleCells)
+    {
+        if ([cell isKindOfClass:[TGDialogListCell class]])
+            [(TGDialogListCell *)cell setFastScrolling:fastScrolling];
+    }
+
+    if (!fastScrolling)
+    {
+        [self dialogListApplyDeferredMutations];
+        if (_dialogListVisibleRefreshPending)
+        {
+            _dialogListVisibleRefreshPending = false;
+            [self dialogListRefreshVisibleCells];
+        }
+    }
+}
+
+- (bool)dialogListIsFastScrolling
+{
+    return _dialogListFastScrolling;
+}
+
+- (void)dialogListPrefetchAvatarUrl:(NSString *)url filter:(NSString *)filter
+{
+    if (url.length == 0 || filter.length == 0)
+        return;
+
+    if (_dialogListPrefetchedAvatarKeys == nil)
+        _dialogListPrefetchedAvatarKeys = [[NSMutableSet alloc] init];
+    if (_dialogListPrefetchedAvatarKeys.count > 192)
+        [_dialogListPrefetchedAvatarKeys removeAllObjects];
+
+    NSString *key = [NSString stringWithFormat:@"%@|%@", filter, url];
+    if ([_dialogListPrefetchedAvatarKeys containsObject:key])
+        return;
+
+    [_dialogListPrefetchedAvatarKeys addObject:key];
+
+    NSString *trimmedUrl = url;
+    NSArray *components = [trimmedUrl componentsSeparatedByString:@"_"];
+    if (components.count >= 5)
+        trimmedUrl = [NSString stringWithFormat:@"%@_%@_%@_%@", components[0], components[1], components[2], components[3]];
+
+    NSString *filteredUrl = [NSString stringWithFormat:@"{filter:%@}%@", filter, trimmedUrl];
+    TGCache *cache = [TGRemoteImageView sharedCache];
+    if ([cache cachedImage:filteredUrl availability:TGCacheMemory] != nil)
+        return;
+
+    dispatch_async(TGDialogListRenderPreheatQueue(), ^
+    {
+        @autoreleasepool
+        {
+            UIImage *filteredImage = [cache cachedImage:filteredUrl availability:TGCacheDisk];
+            if (filteredImage != nil)
+            {
+                [cache cacheImage:filteredImage withData:nil url:filteredUrl availability:TGCacheMemory];
+                return;
+            }
+
+            UIImage *sourceImage = [cache cachedImage:trimmedUrl availability:TGCacheDisk];
+            if (sourceImage == nil)
+                return;
+
+            TGImageProcessor processor = [TGRemoteImageView imageProcessorForName:filter];
+            UIImage *processedImage = processor != nil ? processor(sourceImage) : sourceImage;
+            if (processedImage != nil)
+                [cache cacheImage:processedImage withData:nil url:filteredUrl availability:TGCacheMemory];
+        }
+    });
+}
+
+- (void)dialogListPreheatConversation:(TGConversation *)conversation width:(CGFloat)width
+{
+    if (conversation == nil || width <= 0.0f)
+        return;
+
+    if (_dialogListPreheatedRenderKeys == nil)
+        _dialogListPreheatedRenderKeys = [[NSMutableSet alloc] init];
+    if (_dialogListPreheatedRenderKeys.count > 512)
+        [_dialogListPreheatedRenderKeys removeAllObjects];
+
+    NSDictionary *dialogListData = conversation.dialogListData;
+    int isSavedMessages = [dialogListData[@"isSavedMessages"] intValue];
+    NSString *titleText = isSavedMessages ? TGLocalized(@"DialogList.SavedMessages") : dialogListData[@"title"];
+    NSDictionary *preparedPreview = dialogListData[@"preparedPreview"];
+    NSString *messageText = preparedPreview != nil ? preparedPreview[@"text"] : conversation.text;
+    NSString *authorName = dialogListData[@"authorName"];
+    if ([authorName isEqualToString:authorNameYou])
+        authorName = TGLocalized(@"DialogList.You");
+    if ([preparedPreview[@"hideAuthor"] boolValue])
+        authorName = nil;
+    NSString *statusText = TGDialogListBrandedStatusText(conversation);
+    NSInteger widthKey = (NSInteger)lrint(width * [UIScreen mainScreen].scale);
+    NSString *key = [NSString stringWithFormat:@"%lld:%d:%d:%d:%d:%d:%ld:%ld:%lu:%lu:%lu:%lu", conversation.conversationId, conversation.messageDate, conversation.unreadCount, conversation.serviceUnreadCount, conversation.unreadMentionCount, conversation.unreadMark ? 1 : 0, (long)[TGPresentation interfaceStyle], (long)widthKey, (unsigned long)titleText.hash, (unsigned long)messageText.hash, (unsigned long)authorName.hash, (unsigned long)statusText.hash];
+    if ([_dialogListPreheatedRenderKeys containsObject:key])
+        return;
+    [_dialogListPreheatedRenderKeys addObject:key];
+    TGPresentation *presentation = _presentation;
+    bool unread = conversation.unread;
+    if (TGPeerIdIsChannel(conversation.conversationId))
+    {
+        int32_t mid = TGConversationSortKeyMid(conversation.variantSortKey);
+        unread = mid >= TGMessageLocalMidBaseline || mid > conversation.maxOutgoingReadMessageId;
+        if (!conversation.isChannelGroup && conversation.outgoing && conversation.deliveryState == TGMessageDeliveryStateDelivered)
+            unread = false;
+    }
+    else if ([dialogListData[@"isBot"] boolValue])
+    {
+        unread = false;
+    }
+    int unreadCount = conversation.unreadCount;
+    int serviceUnreadCount = conversation.serviceUnreadCount;
+    if ([_dialogListCompanion isConversationOpened:conversation.conversationId])
+    {
+        unreadCount = 0;
+        serviceUnreadCount = 0;
+    }
+    TGDatabaseMessageDraft *draft = dialogListData[@"draft"];
+    if (draft != nil && ![draft isEmpty] && unreadCount + serviceUnreadCount == 0)
+    {
+        messageText = draft.text;
+        authorName = TGLocalized(@"DialogList.Draft");
+    }
+    bool unreadMark = conversation.unreadMark;
+    int unreadMentionCount = conversation.unreadMentionCount;
+    bool pinned = conversation.pinnedToTop && !_dialogListCompanion.feedChannels;
+    bool muted = [dialogListData[@"mute"] boolValue];
+    bool verified = [dialogListData[@"isVerified"] boolValue];
+    bool premium = [dialogListData[@"isPremium"] boolValue] && !isSavedMessages;
+    TGMessageDeliveryState deliveryState = conversation.deliveryError ? TGMessageDeliveryStateFailed : conversation.deliveryState;
+
+    dispatch_async(TGDialogListRenderPreheatQueue(), ^
+    {
+        [TGDialogListCell prewarmTitleText:titleText messageText:messageText authorName:authorName statusText:statusText width:width presentation:presentation unread:unread unreadCount:unreadCount serviceUnreadCount:serviceUnreadCount unreadMark:unreadMark unreadMentionCount:unreadMentionCount pinned:pinned muted:muted verified:verified premium:premium deliveryState:deliveryState];
+    });
+}
+
+- (void)dialogListPrefetchAroundIndexPath:(NSIndexPath *)indexPath
+{
+    if (_dialogListFastScrolling || indexPath == nil || indexPath.section == 0)
+        return;
+
+    CGFloat avatarSize = [TGPresentation brandedIOS6Style] ? 50.0f : ([TGPresentation classicIOS6Style] ? 52.0f : 62.0f);
+    NSString *filter = [TGPresentation classicIOS6Style] ? [NSString stringWithFormat:@"scale:%dx%d", (int)avatarSize, (int)avatarSize] : [NSString stringWithFormat:@"circle:%dx%d", (int)avatarSize, (int)avatarSize];
+    NSInteger count = (NSInteger)[self ios6VisibleListModel].count;
+    NSInteger backCount = 6;
+    NSInteger forwardCount = 32;
+    switch (devicePerformanceClass())
+    {
+        case TGPerformanceClassConstrained: backCount = 3; forwardCount = 16; break;
+        case TGPerformanceClassBalanced: backCount = 4; forwardCount = 24; break;
+        case TGPerformanceClassFast: backCount = 6; forwardCount = 32; break;
+        case TGPerformanceClassHigh: backCount = 8; forwardCount = 48; break;
+    }
+    NSInteger start = MAX(0, indexPath.row - backCount);
+    NSInteger end = MIN(count - 1, indexPath.row + forwardCount);
+    if (end < start)
+        return;
+
+    for (NSInteger row = start; row <= end; row++)
+    {
+        id item = [self ios6DialogListItemAtIndexPath:[NSIndexPath indexPathForRow:row inSection:indexPath.section]];
+        if ([item isKindOfClass:[TGConversation class]])
+        {
+            TGConversation *conversation = (TGConversation *)item;
+            NSString *url = conversation.dialogListData[@"avatarUrl"];
+            [self dialogListPrefetchAvatarUrl:url filter:filter];
+            [self dialogListPreheatConversation:conversation width:_tableView.bounds.size.width];
+        }
+        else if ([item isKindOfClass:[TGFeed class]])
+        {
+            NSInteger limit = MIN((NSInteger)((TGFeed *)item).chatPhotosSmall.count, 4);
+            for (NSInteger i = 0; i < limit; i++)
+                [self dialogListPrefetchAvatarUrl:((TGFeed *)item).chatPhotosSmall[i] filter:@"circle:29x29"];
+        }
+    }
+}
+
+
+- (void)dialogListPrimeVisibleRenderCache
+{
+    if (_tableView == nil || [self ios6VisibleListModel].count == 0)
+        return;
+
+    NSArray *visibleIndexPaths = [_tableView indexPathsForVisibleRows];
+    if (visibleIndexPaths.count == 0)
+    {
+        [self dialogListPrefetchAroundIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
+        return;
+    }
+
+    NSIndexPath *first = [visibleIndexPaths objectAtIndex:0];
+    NSIndexPath *last = visibleIndexPaths.lastObject;
+    [self dialogListPrefetchAroundIndexPath:first];
+    if (![last isEqual:first])
+        [self dialogListPrefetchAroundIndexPath:last];
+}
+
 #pragma mark -
 
 - (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath
@@ -4790,6 +5566,8 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         if ([cell isKindOfClass:[TGDialogListCell class]])
         {
             TGDialogListCell *dialogCell = (TGDialogListCell *)cell;
+            [dialogCell setFastScrolling:_dialogListFastScrolling];
+            [self dialogListPrefetchAroundIndexPath:indexPath];
             
             if (dialogCell.conversationId == _scheduledHighlightAnimationConversationId)
             {
@@ -5166,7 +5944,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 
     if ((scrollView.isDragging || scrollView.isTracking) && !_ios6SearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil)
     {
-        CGFloat hiddenOffset = -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top;
+        CGFloat hiddenOffset = -_tableView.contentInset.top + TGDialogListSearchBarHeight() + self.explicitTableInset.top;
         if (scrollView.contentOffset.y < hiddenOffset)
             scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, hiddenOffset);
     }
@@ -5178,27 +5956,41 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView
 {
     if (scrollView == _tableView)
+    {
         _scrollingToConversationId = 0;
+        [self dialogListSetFastScrolling:false];
+    }
 }
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
-    if (scrollView == _tableView && !decelerate && _ios6FolderTabsUpdatePending)
-        [self ios6UpdateFolderTabs];
+    if (scrollView == _tableView && !decelerate)
+    {
+        [self dialogListSetFastScrolling:false];
+        [self dialogListPrimeVisibleRenderCache];
+        if (_ios6FolderTabsUpdatePending)
+            [self ios6UpdateFolderTabs];
+    }
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
 {
-    if (scrollView == _tableView && _ios6FolderTabsUpdatePending)
-        [self ios6UpdateFolderTabs];
+    if (scrollView == _tableView)
+    {
+        [self dialogListSetFastScrolling:false];
+        [self dialogListPrimeVisibleRenderCache];
+        if (_ios6FolderTabsUpdatePending)
+            [self ios6UpdateFolderTabs];
+    }
 }
 
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView
 {
     if (scrollView == _tableView)
     {
+        [self dialogListSetFastScrolling:true];
         _draggingStartOffset = scrollView.contentOffset.y;
-        CGFloat hiddenOffset = -_tableView.contentInset.top + [TGSearchBar searchBarBaseHeight] + self.explicitTableInset.top;
+        CGFloat hiddenOffset = -_tableView.contentInset.top + TGDialogListSearchBarHeight() + self.explicitTableInset.top;
         _ios6SearchPullArmed = _searchBar != nil && scrollView.contentOffset.y <= hiddenOffset + 1.0f;
     }
     
@@ -5213,7 +6005,7 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
         if (targetContentOffset != NULL)
         {
             CGFloat shownOffset = -_tableView.contentInset.top + self.explicitTableInset.top;
-            CGFloat searchHeight = [TGSearchBar searchBarBaseHeight];
+            CGFloat searchHeight = TGDialogListSearchBarHeight();
             CGFloat hiddenOffset = shownOffset + searchHeight;
 
             if (!_ios6SearchPullArmed && !_searchMixin.isActive && !_doNotHideSearchAutomatically && _searchBar != nil && targetContentOffset->y < hiddenOffset)
@@ -6619,14 +7411,19 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     [_searchBar setPallete:presentation.searchBarPallete];
     
     _titleLockIconView.presentation = self.presentation;
+    bool classicIOS6Style = [TGPresentation classicIOS6Style];
+    UIColor *classicTitleShadowColor = TGDialogListNavigationShadowColor(_presentation, 0.9f);
+    UIColor *classicSubtitleShadowColor = TGDialogListNavigationShadowColor(_presentation, 0.72f);
     _titleLabel.textColor = TGDialogListNavigationTitleColor(self.presentation);
-    _titleLabel.shadowColor = [UIColor clearColor];
+    _titleLabel.shadowColor = classicTitleShadowColor;
     _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     _titleStatusLabel.textColor = TGDialogListNavigationTitleColor(_presentation);
-    _titleStatusLabel.shadowColor = [UIColor clearColor];
+    _titleStatusLabel.shadowColor = classicTitleShadowColor;
     _titleStatusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     _titleStatusSubtitleLabel.textColor = TGDialogListNavigationSubtitleColor(_presentation);
-    _titleStatusIndicator.color = _presentation.pallete.navigationSpinnerColor;
+    _titleStatusSubtitleLabel.shadowColor = classicSubtitleShadowColor;
+    _titleStatusSubtitleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+    _titleStatusIndicator.color = classicIOS6Style ? [UIColor whiteColor] : _presentation.pallete.navigationSpinnerColor;
     
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
@@ -6645,7 +7442,15 @@ NSString *authorNameYou = @"  __TGLocalized__YOU";
     }
     
     if (iosMajorVersion() >= 7)
-        _tableView.separatorColor = _presentation.pallete.separatorColor;
+    {
+        if (TGDialogListClassicIOS6DarkStyle(_presentation))
+            _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
+        else
+        {
+            _tableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
+            _tableView.separatorColor = _presentation.pallete.separatorColor;
+        }
+    }
     
     _primaryTitlePanel.presentation = self.presentation;
 

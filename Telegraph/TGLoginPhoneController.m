@@ -240,6 +240,7 @@
     
     [self updateCountry];
     
+#if !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
     if (_presetPhoneNumber.length == 0 || _presetPhoneCountry.length == 0)
     {
         if (iosMajorVersion() >= 7)
@@ -263,12 +264,14 @@
             }
         }
     }
+#endif
     
     [self _applyPresetNumber];
 }
 
 - (void)keyValueStoreChanged:(NSNotification *)__unused notification
 {
+#if !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
     if (iosMajorVersion() >= 7)// && !_editedText)
     {
         NSUbiquitousKeyValueStore *store = [NSUbiquitousKeyValueStore defaultStore];
@@ -295,6 +298,7 @@
             }
         }
     }
+#endif
 }
 
 - (void)performClose

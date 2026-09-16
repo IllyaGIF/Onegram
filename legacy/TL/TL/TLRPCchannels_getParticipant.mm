@@ -2,9 +2,10 @@
 
 #import "../NSInputStream+TL.h"
 #import "../NSOutputStream+TL.h"
+#import "../TLMetaClassStore.h"
 
 #import "TLInputChannel.h"
-#import "TLInputUser.h"
+#import "TLInputPeer.h"
 #import "TLchannels_ChannelParticipant.h"
 
 @implementation TLRPCchannels_getParticipant
@@ -17,7 +18,7 @@
 
 - (int)impliedResponseSignature
 {
-    return (int)0xd0d9b163;
+    return (int)0xdfb80317;
 }
 
 - (int)layerVersion
@@ -56,19 +57,19 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x546dd7a6;
+    return (int32_t)0xa0ab6cc6;
 }
 
 - (int32_t)TLconstructorName
 {
-    return (int32_t)0x57bff8bc;
+    return -1;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCchannels_getParticipant$channels_getParticipant *object = [[TLRPCchannels_getParticipant$channels_getParticipant alloc] init];
     object.channel = metaObject->getObject((int32_t)0xe11f3d41);
-    object.user_id = metaObject->getObject((int32_t)0xafdf4073);
+    object.participant = metaObject->getObject((int32_t)0x837816d4);
     return object;
 }
 
@@ -83,9 +84,15 @@
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
-        value.nativeObject = self.user_id;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
+        value.nativeObject = self.participant;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x837816d4, value));
     }
+}
+
+- (void)TLserialize:(NSOutputStream *)os
+{
+    TLMetaClassStore::serializeObject(os, self.channel, true);
+    TLMetaClassStore::serializeObject(os, self.participant, true);
 }
 
 

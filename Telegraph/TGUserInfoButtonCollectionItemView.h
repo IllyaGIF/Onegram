@@ -14,5 +14,6 @@
 
 - (void)setTitle:(NSString *)title;
 - (void)setTitleColor:(UIColor *)titleColor;
+- (void)setIconName:(NSString *)iconName;
 
 @end

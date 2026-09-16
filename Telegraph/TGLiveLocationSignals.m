@@ -34,7 +34,7 @@
 
 + (SSignal *)updateLiveLocationWithPeerId:(int64_t)peerId messageId:(int32_t)messageId stop:(bool)stop coordinate:(CLLocationCoordinate2D)coordinate
 {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
         return [TGTelegraphInstance createInputPeerForConversation:conversation.conversationId accessHash:conversation.accessHash];
     }] mapToSignal:^SSignal *(TLInputPeer *inputPeer) {
@@ -76,7 +76,7 @@
 
 + (SSignal *)recentLocationsForPeerId:(int64_t)peerId limit:(int32_t)limit
 {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
         NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6InvalidPeer")];
         if (invalidPeerMarker.length != 0 && conversation.isChannel) {

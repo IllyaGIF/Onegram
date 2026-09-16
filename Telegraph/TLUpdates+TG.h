@@ -18,5 +18,6 @@
 @interface TLUpdate (TG)
 
 - (bool)hasPts;
+- (bool)hasChannelPts;
 
 @end

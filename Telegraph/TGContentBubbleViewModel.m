@@ -11,6 +11,7 @@
 #import "TGTextMessageBackgroundViewModel.h"
 #import "TGModernFlatteningViewModel.h"
 #import "TGModernDateViewModel.h"
+#import "TGModernLabelViewModel.h"
 #import "TGModernClockProgressViewModel.h"
 #import "TGModernTextViewModel.h"
 
@@ -48,6 +49,26 @@
 #import "TGPresentationAssets.h"
 
 bool debugShowMessageIds = false;
+
+static void TGBrandedIOS6UpdateDeliveryPlate(TGModernImageViewModel *model, NSString *timeText, bool incomingAppearance, int deliveryState, bool read)
+{
+    if (model == nil)
+        return;
+
+    bool hidden = !incomingAppearance && deliveryState != TGMessageDeliveryStateDelivered;
+    model.hidden = hidden;
+    if (hidden)
+        return;
+
+    UIImage *image = [TGPresentationAssets brandedIOS6DeliveryTagImage:timeText incoming:incomingAppearance read:read];
+    model.image = image;
+    CGRect frame = model.frame;
+    frame.size = image.size;
+    model.frame = frame;
+    UIImageView *view = (UIImageView *)[model boundView];
+    if (view != nil)
+        view.image = image;
+}
 
 static NSString *TGIOS6ReactionSummaryFromMessage(TGMessage *message)
 {
@@ -418,7 +439,19 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         }
         
         _dateModel = [[TGModernDateViewModel alloc] initWithText:dateText textColor:_incomingAppearance ? context.presentation.pallete.chatIncomingDateColor : context.presentation.pallete.chatOutgoingDateColor daytimeVariant:daytimeVariant];
-        [_contentModel addSubmodel:_dateModel];
+        bool brandedIOS6ExternalDate = false;
+        if (brandedIOS6ExternalDate)
+        {
+            _dateModel.hidden = true;
+            _deliveryPlateModel = [[TGModernImageViewModel alloc] initWithImage:[TGPresentationAssets brandedIOS6DeliveryTagImage:dateText incoming:_incomingAppearance read:_read]];
+            _deliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
+            [_deliveryPlateModel sizeToFit];
+            [self addSubmodel:_deliveryPlateModel];
+        }
+        else
+        {
+            [_contentModel addSubmodel:_dateModel];
+        }
 
         if (_reactionSummary.length != 0)
             [self _ios6RebuildReactionButtons:nil];
@@ -441,7 +474,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         
         if (!_incoming && !(_incomingAppearance && _context.isSavedMessages))
         {            
-            if (!_inhibitChecks)
+            if (!_inhibitChecks && _deliveryPlateModel == nil)
             {
                 UIImage *deliveredIcon = _context.presentation.images.chatDeliveredIcon;
                 UIImage *readIcon = _context.presentation.images.chatReadIcon;
@@ -468,23 +501,30 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             }
             else if (_deliveryState == TGMessageDeliveryStateDelivered && !_inhibitChecks)
             {
-                if (!_incomingAppearance) {
-                    [_contentModel addSubmodel:_checkFirstModel];
-                }
-                _checkFirstEmbeddedInContent = true;
-                
-                if (_read)
+                if (!_incomingAppearance)
                 {
-                    if (!_incomingAppearance) {
-                        [_contentModel addSubmodel:_checkSecondModel];
+                    if (_deliveryPlateModel != nil)
+                        [self addSubmodel:_checkFirstModel];
+                    else
+                        [_contentModel addSubmodel:_checkFirstModel];
+                }
+                _checkFirstEmbeddedInContent = _deliveryPlateModel == nil;
+                
+                if (_read || ([TGPresentation brandedIOS6Style] && _context.isSavedMessages))
+                {
+                    if (!_incomingAppearance)
+                    {
+                        if (_deliveryPlateModel != nil)
+                            [self addSubmodel:_checkSecondModel];
+                        else
+                            [_contentModel addSubmodel:_checkSecondModel];
                     }
-                    _checkSecondEmbeddedInContent = true;
+                    _checkSecondEmbeddedInContent = _deliveryPlateModel == nil;
                 }
                 else
                 {
-                    if (!_incomingAppearance) {
+                    if (!_incomingAppearance)
                         [self addSubmodel:_checkSecondModel];
-                    }
                     _checkSecondModel.alpha = 0.0f;
                 }
             }
@@ -888,6 +928,12 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     _read = ![_context isMessageUnread:_message];
     
     if (_read != previousRead) {
+        if (_deliveryPlateModel != nil)
+        {
+            int daytimeVariant = 0;
+            NSString *dateText = [TGDateUtils stringForShortTime:(int)_message.date daytimeVariant:&daytimeVariant];
+            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
+        }
         if (_read) {
             _checkSecondModel.alpha = 1.0f;
             
@@ -918,7 +964,10 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         int daytimeVariant = 0;
         NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
         if (!debugShowMessageIds)
+        {
             [_dateModel setText:dateText daytimeVariant:daytimeVariant];
+            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
+        }
 
         if (_reactionSummary.length == 0)
         {
@@ -1050,6 +1099,13 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         
         bool previousRead = _read;
         _read = !messageUnread;
+
+        if (_deliveryPlateModel != nil)
+        {
+            int daytimeVariant = 0;
+            NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
+            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
+        }
         
         if (_date != (int32_t)message.date && !debugShowMessageIds)
         {
@@ -1058,6 +1114,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             int daytimeVariant = 0;
             NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
             [_dateModel setText:dateText daytimeVariant:daytimeVariant];
+            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
         }
         
         if (_deliveryState == TGMessageDeliveryStateDelivered)
@@ -1358,7 +1415,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
                 }
             }
             
-            if (_read && !_checkSecondEmbeddedInContent)
+            if ((_read || ([TGPresentation brandedIOS6Style] && _context.isSavedMessages)) && !_checkSecondEmbeddedInContent)
             {
                 if ([self.submodels containsObject:_checkSecondModel])
                 {
@@ -1583,7 +1640,10 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         bottomSpacing = layoutConstants->bottomPostInset;
     }
     
-    CGSize contentContainerSize = CGSizeMake(MIN(420.0f, containerSize.width - 80.0f - (_hasAvatar ? 38.0f : 0.0f)), containerSize.height);
+    CGFloat contentHorizontalInset = [TGPresentation brandedIOS6Style] && [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone ? 52.0f : 80.0f;
+    CGSize contentContainerSize = CGSizeMake(MIN(420.0f, containerSize.width - contentHorizontalInset - (_hasAvatar ? 38.0f : 0.0f)), containerSize.height);
+    if (_deliveryPlateModel != nil && !_deliveryPlateModel.hidden)
+        contentContainerSize.width = MAX(80.0f, contentContainerSize.width - _deliveryPlateModel.image.size.width - 5.0f);
     if (_actionButtonModel != nil && !_actionButtonModel.hidden) {
         contentContainerSize.width -= 20.0f;
     }
@@ -1602,7 +1662,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     }
     
     CGFloat infoWidth = 0.0f;
-    if (!_incoming) {
+    if (!_incoming && _deliveryPlateModel == nil) {
         if (_messageViews == nil) {
             infoWidth += 20.0f;
         } else {
@@ -1612,7 +1672,8 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             }
         }
     }
-    infoWidth += _dateModel.frame.size.width + 10.0f;
+    if (_deliveryPlateModel == nil)
+        infoWidth += _dateModel.frame.size.width + 10.0f;
     if (_editedLabelModel != nil) {
         infoWidth += _editedLabelModel.frame.size.width + 4.0f;
     }
@@ -1878,7 +1939,11 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     
     [self layoutContentForHeaderHeight:headerSize.height containerSize:_contentModel.frame.size];
     
-    _dateModel.frame = CGRectMake(_contentModel.frame.size.width - (_incomingAppearance ? (10.0f + TGScreenPixel) : 28.0f) - _dateModel.frame.size.width, _contentModel.frame.size.height - 18.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f), _dateModel.frame.size.width, _dateModel.frame.size.height);
+    CGFloat dateRightInset = _incomingAppearance ? (10.0f + TGScreenPixel) : 28.0f;
+    CGFloat dateX = _contentModel.frame.size.width - dateRightInset - _dateModel.frame.size.width;
+    if ([TGPresentation brandedIOS6Style] && _incomingAppearance)
+        dateX = 1.0f;
+    _dateModel.frame = CGRectMake(dateX, _contentModel.frame.size.height - 18.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f), _dateModel.frame.size.width, _dateModel.frame.size.height);
 
     if (_ios6ReactionButtonModels.count != 0)
     {
@@ -1936,11 +2001,19 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     }
     
     CGPoint stateOffset = _contentModel.frame.origin;
-    if (_checkFirstModel != nil)
-        _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 24, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 14 + TGScreenPixel, 12, 11);
-    
-    if (_checkSecondModel != nil)
-        _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 20, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 14 + TGScreenPixel, 12, 11);
+    if (_deliveryPlateModel != nil)
+    {
+        CGSize deliveryPlateSize = _deliveryPlateModel.image.size;
+        _deliveryPlateModel.frame = [TGPresentationAssets brandedIOS6DeliveryTagFrameForMessageFrame:backgroundFrame tagSize:deliveryPlateSize incoming:_incomingAppearance];
+    }
+    else
+    {
+        if (_checkFirstModel != nil)
+            _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 24, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 14 + TGScreenPixel, 12, 11);
+        
+        if (_checkSecondModel != nil)
+            _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 20, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 14 + TGScreenPixel, 12, 11);
+    }
     
     if (_unsentButtonModel != nil)
     {

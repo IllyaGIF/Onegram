@@ -39,7 +39,9 @@
     
     TGDisclosureActionCollectionItem *_autoNightItem;
     TGSwitchCollectionItem *_newGesturesItem;
-    TGSwitchCollectionItem *_classicIOS6StyleItem;
+    TGCheckCollectionItem *_interfaceModernItem;
+    TGCheckCollectionItem *_interfaceClassicItem;
+    TGCheckCollectionItem *_interfaceFeklaItem;
     TGCheckCollectionItem *_emojiStockItem;
     TGCheckCollectionItem *_emojiNewItem;
     TGCheckCollectionItem *_emojiCombinedItem;
@@ -125,13 +127,13 @@
         _newGesturesItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.NewGestures") isOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"TGIOS6NewChatListGestures"]];
         _newGesturesItem.interfaceHandle = _actionHandle;
 
-        _classicIOS6StyleItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ClassicIOS6Style") isOn:[TGPresentation classicIOS6Style]];
-        _classicIOS6StyleItem.interfaceHandle = _actionHandle;
         TGCollectionMenuSection *interfaceStyleSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyle")],
          _newGesturesItem,
-         _classicIOS6StyleItem
+         _interfaceModernItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleModern") action:@selector(interfaceModernPressed)],
+         _interfaceClassicItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleClassic") action:@selector(interfaceClassicPressed)],
+         _interfaceFeklaItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleFekla") action:@selector(interfaceFeklaPressed)]
         ]];
         [self.menuSections addSection:interfaceStyleSection];
         
@@ -155,6 +157,7 @@
         [self.menuSections addSection:themeSection];
 
         [self updateSelection];
+        [self updateInterfaceStyleSelection];
         [self updateEmojiSelection];
         
         [ActionStageInstance() watchForPaths:@[@"/tg/assets/currentWallpaperInfo"] watcher:self];
@@ -394,13 +397,41 @@
         [[NSUserDefaults standardUserDefaults] synchronize];
         [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6NewChatListGesturesChanged" object:nil];
     }
-    else if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _classicIOS6StyleItem)
-    {
-        [TGPresentation setClassicIOS6Style:_classicIOS6StyleItem.isOn];
-        [_previewItem refreshMetrics];
-        [self.collectionView reloadData];
-        [self setNeedsStatusBarAppearanceUpdate];
-    }
+}
+
+- (void)setInterfaceStyle:(TGInterfaceStyle)style
+{
+    if ([TGPresentation interfaceStyle] == style)
+        return;
+
+    [TGPresentation setInterfaceStyle:style];
+    [self updateInterfaceStyleSelection];
+    [_previewItem refreshMetrics];
+    [self.collectionView reloadData];
+    [self setNeedsStatusBarAppearanceUpdate];
+}
+
+- (void)interfaceModernPressed
+{
+    [self setInterfaceStyle:TGInterfaceStyleModern];
+}
+
+- (void)interfaceClassicPressed
+{
+    [self setInterfaceStyle:TGInterfaceStyleClassic];
+}
+
+- (void)interfaceFeklaPressed
+{
+    [self setInterfaceStyle:TGInterfaceStyleFekla];
+}
+
+- (void)updateInterfaceStyleSelection
+{
+    TGInterfaceStyle style = [TGPresentation interfaceStyle];
+    _interfaceModernItem.isChecked = style == TGInterfaceStyleModern;
+    _interfaceClassicItem.isChecked = style == TGInterfaceStyleClassic;
+    _interfaceFeklaItem.isChecked = style == TGInterfaceStyleFekla;
 }
 
 - (void)updateSelection

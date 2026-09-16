@@ -1,4 +1,5 @@
 #import "TGApplyUpdatesActor.h"
+#include <inttypes.h>
 #import "IOS6NotificationProbe.h"
 #import "IOS6FeatureProbe.h"
 
@@ -156,25 +157,6 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     return [NSString stringWithFormat:@"%lu new messages", (unsigned long)count];
 }
 
-static bool TGIOS6ShouldRequestStateUpdateNow()
-{
-    if ([[UIDevice currentDevice].systemVersion intValue] > 6 ||
-        [UIApplication sharedApplication].applicationState == UIApplicationStateActive)
-    {
-        return true;
-    }
-
-    static NSTimeInterval lastBackgroundStateUpdate = 0.0;
-    NSTimeInterval now = CFAbsoluteTimeGetCurrent();
-    @synchronized([TGApplyUpdatesActor class])
-    {
-        if (lastBackgroundStateUpdate != 0.0 && now - lastBackgroundStateUpdate < 60.0)
-            return false;
-        lastBackgroundStateUpdate = now;
-    }
-    return true;
-}
-
 @interface TGApplyUpdatesActor ()
 
 @property (nonatomic, strong) NSMutableArray *updateList;
@@ -325,7 +307,6 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
 + (void)presentLocalNotificationsForMessageDescriptions:(NSArray *)messageDescriptions
 {
     if (!TGIOS6BackgroundNotificationsEnabled() ||
-        [[UIDevice currentDevice].systemVersion intValue] > 10 ||
         [UIApplication sharedApplication].applicationState == UIApplicationStateActive ||
         messageDescriptions.count == 0)
     {
@@ -354,7 +335,7 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
                 continue;
 
             TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDescription];
-            if (message.mid == 0 || message.cid == 0 || message.outgoing) {
+            if (message.mid == 0 || message.cid == 0 || message.outgoing || message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId) {
                 IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=invalid peer=%lld mid=%d outgoing=%d", message.cid, message.mid, message.outgoing ? 1 : 0);
                 continue;
             }
@@ -416,7 +397,7 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
     else if ([self.path isEqualToString:@"/tg/service/tryupdates/(withQts)"])
         messagesQueue = true;
     else if ([self.path isEqualToString:@"/tg/service/tryupdates/(withDate)"])
-        messagesQueue = false;
+        messagesQueue = true;
     else
         NSAssert(false, ([NSString stringWithFormat:@"Invalid actor path %@", self.path]));
     
@@ -437,33 +418,7 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
     else if ([self.path isEqualToString:@"/tg/service/tryupdates/(withQts)"])
         [self checkQtsUpdates];
     else
-    {
-        NSArray *sortedDateUpdates = [_updateList sortedArrayUsingComparator:^NSComparisonResult(TGUpdatesWithDate *updates1, TGUpdatesWithDate *updates2)
-        {
-            return updates1.date < updates2.date ? NSOrderedAscending : NSOrderedDescending;
-        }];
-        NSMutableArray *users = [[NSMutableArray alloc] init];
-        NSMutableArray *chats = [[NSMutableArray alloc] init];
-        NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
-        
-        for (TGUpdatesWithDate *updates in sortedDateUpdates)
-        {
-            for (id update in updates.updates)
-            {
-                [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:updates.date]];
-            }
-            [users addObjectsFromArray:updates.users];
-            [chats addObjectsFromArray:updates.chats];
-        }
-        if (wrappedUpdates.count != 0)
-        {
-            [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:0 completion:^(bool)
-            {
-            }];
-        }
-        
-        [self completeAction];
-    }
+        [self checkDateUpdates];
 }
 
 - (void)completeAction
@@ -492,6 +447,63 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
     }
 }
 
+- (void)checkDateUpdates
+{
+    if (_waitingForApplyUpdates)
+        return;
+
+    if (_updateList.count == 0)
+    {
+        [self completeAction];
+        return;
+    }
+
+    NSArray *pendingDateUpdates = [_updateList copy];
+    [_updateList removeAllObjects];
+
+    NSArray *sortedDateUpdates = [pendingDateUpdates sortedArrayUsingComparator:^NSComparisonResult(TGUpdatesWithDate *updates1, TGUpdatesWithDate *updates2)
+    {
+        if (updates1.date == updates2.date)
+            return NSOrderedSame;
+        return updates1.date < updates2.date ? NSOrderedAscending : NSOrderedDescending;
+    }];
+
+    NSMutableArray *users = [[NSMutableArray alloc] init];
+    NSMutableArray *chats = [[NSMutableArray alloc] init];
+    NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
+
+    for (TGUpdatesWithDate *updates in sortedDateUpdates)
+    {
+        for (id update in updates.updates)
+            [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:updates.date]];
+        if (updates.users != nil)
+            [users addObjectsFromArray:updates.users];
+        if (updates.chats != nil)
+            [chats addObjectsFromArray:updates.chats];
+    }
+
+    int32_t finalDate = ((TGUpdatesWithDate *)sortedDateUpdates.lastObject).date;
+    TGDatabaseState databaseState = [[TGDatabase instance] databaseState];
+    if (wrappedUpdates.count == 0 && finalDate <= databaseState.date)
+    {
+        [self checkDateUpdates];
+        return;
+    }
+
+    [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:finalDate completion:^(bool success)
+    {
+        if (success)
+        {
+            [self checkDateUpdates];
+        }
+        else
+        {
+            [TGTelegraphInstance stateUpdateRequired];
+            [self completeAction];
+        }
+    }];
+}
+
 - (void)watcherJoined:(ASHandle *)watcherHandle options:(NSDictionary *)options waitingInActorQueue:(bool)waitingInActorQueue
 {
     [self dumpUpdates:[options objectForKey:@"updates"]];
@@ -516,33 +528,9 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
         if (!waitingInActorQueue && !_waitingForApplyUpdates)
             [self checkQtsUpdates];
     }
-    else
+    else if (!waitingInActorQueue && !_waitingForApplyUpdates)
     {
-        [_updateList removeAllObjects];
-        
-        NSArray *sortedDateUpdates = [_updateList sortedArrayUsingComparator:^NSComparisonResult(TGUpdatesWithDate *updates1, TGUpdatesWithDate *updates2)
-        {
-            return updates1.date < updates2.date ? NSOrderedAscending : NSOrderedDescending;
-        }];
-        NSMutableArray *users = [[NSMutableArray alloc] init];
-        NSMutableArray *chats = [[NSMutableArray alloc] init];
-        NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
-        
-        for (TGUpdatesWithDate *updates in sortedDateUpdates)
-        {
-            for (id update in updates.updates)
-            {
-                [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:updates.date]];
-            }
-            [users addObjectsFromArray:updates.users];
-            [chats addObjectsFromArray:updates.chats];
-        }
-        if (wrappedUpdates.count != 0)
-        {
-            [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:((TGWrappedUpdate *)wrappedUpdates.lastObject).date completion:^(bool)
-            {
-            }];
-        }
+        [self checkDateUpdates];
     }
     
     [super watcherJoined:watcherHandle options:options waitingInActorQueue:waitingInActorQueue];
@@ -559,12 +547,11 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
 
 - (void)startTimeoutTimer
 {
-    _overallTimeout += [_timeoutTimer remainingTime];
-    
-    [self cancelTimeoutTimer];
+    if (_timeoutTimer != nil)
+        return;
     
     __weak TGApplyUpdatesActor *weakSelf = self;
-    NSTimeInterval timeout = MAX(0.0, MIN(2.0, 5.0 - _overallTimeout));
+    NSTimeInterval timeout = 0.5;
     _timeoutTimer = [[TGTimer alloc] initWithTimeout:timeout repeat:false completion:^
     {
         __strong TGApplyUpdatesActor *strongSelf = weakSelf;
@@ -592,131 +579,113 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
 {
     if (_updateList.count == 0)
     {
+        [self cancelTimeoutTimer];
         [self completeAction];
+        return;
     }
-    else
+
+    NSMutableArray *ptsUpdates = [[NSMutableArray alloc] init];
+    for (TGUpdatesWithPts *updates in _updateList)
+        [ptsUpdates addObjectsFromArray:updates.updates];
+
+    [ptsUpdates sortUsingComparator:^NSComparisonResult(id<TGSyntheticUpdateWithPts> update1, id<TGSyntheticUpdateWithPts> update2)
     {
-        NSMutableArray *ptsUpdates = [[NSMutableArray alloc] init];
-        for (TGUpdatesWithPts *update in _updateList)
+        if ([update1 pts] == [update2 pts])
         {
-            [ptsUpdates addObjectsFromArray:update.updates];
+            if ([update1 pts_count] == [update2 pts_count])
+                return NSOrderedSame;
+            return [update1 pts_count] > [update2 pts_count] ? NSOrderedAscending : NSOrderedDescending;
         }
-        
-        [ptsUpdates sortUsingComparator:^NSComparisonResult(id<TGSyntheticUpdateWithPts> update1, id<TGSyntheticUpdateWithPts> update2)
+        return [update1 pts] < [update2 pts] ? NSOrderedAscending : NSOrderedDescending;
+    }];
+
+    int32_t currentPts = [[TGDatabase instance] databaseState].pts;
+    NSMutableArray *inOrderUpdates = [[NSMutableArray alloc] init];
+    NSMutableArray *expiredUpdates = [[NSMutableArray alloc] init];
+
+    for (id<TGSyntheticUpdateWithPts> update in ptsUpdates)
+    {
+        int32_t nextPts = currentPts + [update pts_count];
+        if (nextPts == [update pts])
         {
-            if ([update1 pts] == [update2 pts])
-                return [update1 pts_count] > [update2 pts_count] ? NSOrderedAscending : NSOrderedDescending;
-            return [update1 pts] < [update2 pts] ? NSOrderedAscending : NSOrderedDescending;
-        }];
-        
-        int32_t databasePts = [[TGDatabase instance] databaseState].pts;
-        int32_t currentPts = databasePts;
-        
-        NSMutableArray *inOrderUpdates = [[NSMutableArray alloc] init];
-        NSMutableArray *expiredUpdates = [[NSMutableArray alloc] init];
-        
-        for (id<TGSyntheticUpdateWithPts> update in ptsUpdates)
-        {
-            if ([update pts] <= databasePts)
-                [expiredUpdates addObject:update];
-            else
-            {
-                if (currentPts + [update pts_count] == [update pts])
-                {
-                    [inOrderUpdates addObject:update];
-                    
-                    currentPts = [update pts];
-                }
-                else
-                {
-                    TGLog(@"***** Missing updates: %d + %d != %d", (int)currentPts, (int)[update pts_count], (int)[update pts]);
-                    [self startTimeoutTimer];
-                    break;
-                }
-            }
+            [inOrderUpdates addObject:update];
+            currentPts = [update pts];
         }
-        
-        if (expiredUpdates.count != 0)
+        else if (nextPts > [update pts])
         {
-            NSMutableArray *affectedGroups = [[NSMutableArray alloc] init];
-            
-            for (TGUpdatesWithPts *updates in _updateList)
-            {
-                for (id update in expiredUpdates)
-                {
-                    if ([updates.updates containsObject:update])
-                    {
-                        if (![affectedGroups containsObject:updates])
-                            [affectedGroups addObject:updates];
-                    }
-                }
-            }
-            
-            for (TGUpdatesWithPts *updates in affectedGroups)
-            {
-                NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
-                for (id update in expiredUpdates)
-                {
-                    [filteredUpdates removeObject:update];
-                }
-                
-                if (filteredUpdates.count == 0)
-                    [_updateList removeObject:updates];
-            }
-        }
-        
-        if (inOrderUpdates.count != 0)
-        {
-            NSMutableArray *affectedGroups = [[NSMutableArray alloc] init];
-            
-            for (TGUpdatesWithPts *updates in _updateList)
-            {
-                for (id update in inOrderUpdates)
-                {
-                    if ([updates.updates containsObject:update])
-                    {
-                        if (![affectedGroups containsObject:updates])
-                            [affectedGroups addObject:updates];
-                    }
-                }
-            }
-            
-            NSMutableArray *users = [[NSMutableArray alloc] init];
-            NSMutableArray *chats = [[NSMutableArray alloc] init];
-            for (TGUpdatesWithPts *updates in affectedGroups)
-            {
-                [users addObjectsFromArray:updates.users];
-                [chats addObjectsFromArray:updates.chats];
-                
-                NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
-                for (id update in inOrderUpdates)
-                {
-                    [filteredUpdates removeObject:update];
-                }
-                
-                if (filteredUpdates.count == 0)
-                    [_updateList removeObject:updates];
-            }
-            
-            NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
-            for (id update in inOrderUpdates)
-            {
-                [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:0]];
-            }
-            
-            [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:0 completion:^(bool success)
-            {
-                if (!success)
-                    [self _failPts];
-                else
-                    [self checkPtsUpdates];
-            }];
+            [expiredUpdates addObject:update];
         }
         else
         {
-            if (_updateList.count == 0)
-                [self completeAction];
+            TGLog(@"***** Missing updates: %d + %d != %d", (int)currentPts, (int)[update pts_count], (int)[update pts]);
+            [self startTimeoutTimer];
+            break;
         }
+    }
+
+    if (expiredUpdates.count != 0)
+    {
+        NSArray *groups = [_updateList copy];
+        for (TGUpdatesWithPts *updates in groups)
+        {
+            NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
+            [filteredUpdates removeObjectsInArray:expiredUpdates];
+            if (filteredUpdates.count != updates.updates.count)
+            {
+                NSUInteger index = [_updateList indexOfObjectIdenticalTo:updates];
+                if (index != NSNotFound)
+                {
+                    if (filteredUpdates.count == 0)
+                        [_updateList removeObjectAtIndex:index];
+                    else
+                        _updateList[index] = [[TGUpdatesWithPts alloc] initWithUpdates:filteredUpdates users:updates.users chats:updates.chats];
+                }
+            }
+        }
+    }
+
+    if (inOrderUpdates.count != 0)
+    {
+        NSMutableArray *users = [[NSMutableArray alloc] init];
+        NSMutableArray *chats = [[NSMutableArray alloc] init];
+        NSArray *groups = [_updateList copy];
+        for (TGUpdatesWithPts *updates in groups)
+        {
+            NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
+            [filteredUpdates removeObjectsInArray:inOrderUpdates];
+            if (filteredUpdates.count != updates.updates.count)
+            {
+                if (updates.users != nil)
+                    [users addObjectsFromArray:updates.users];
+                if (updates.chats != nil)
+                    [chats addObjectsFromArray:updates.chats];
+                NSUInteger index = [_updateList indexOfObjectIdenticalTo:updates];
+                if (index != NSNotFound)
+                {
+                    if (filteredUpdates.count == 0)
+                        [_updateList removeObjectAtIndex:index];
+                    else
+                        _updateList[index] = [[TGUpdatesWithPts alloc] initWithUpdates:filteredUpdates users:updates.users chats:updates.chats];
+                }
+            }
+        }
+
+        NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
+        for (id update in inOrderUpdates)
+            [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:0]];
+
+        [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:0 completion:^(bool success)
+        {
+            if (!success)
+                [self _failPts];
+            else
+                [self checkPtsUpdates];
+        }];
+    }
+    else if (_updateList.count == 0)
+    {
+        [self cancelTimeoutTimer];
+        [self completeAction];
     }
 }
 
@@ -724,129 +693,109 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
 {
     if (_updateList.count == 0)
     {
+        [self cancelTimeoutTimer];
         [self completeAction];
+        return;
     }
-    else
+
+    NSMutableArray *qtsUpdates = [[NSMutableArray alloc] init];
+    for (TGUpdatesWithQts *updates in _updateList)
+        [qtsUpdates addObjectsFromArray:updates.updates];
+
+    [qtsUpdates sortUsingComparator:^NSComparisonResult(id<TGSyntheticUpdateWithQts> update1, id<TGSyntheticUpdateWithQts> update2)
     {
-        NSMutableArray *qtsUpdates = [[NSMutableArray alloc] init];
-        for (TGUpdatesWithQts *update in _updateList)
+        if ([update1 qts] == [update2 qts])
+            return NSOrderedSame;
+        return [update1 qts] < [update2 qts] ? NSOrderedAscending : NSOrderedDescending;
+    }];
+
+    int32_t currentQts = [[TGDatabase instance] databaseState].qts;
+    NSMutableArray *inOrderUpdates = [[NSMutableArray alloc] init];
+    NSMutableArray *expiredUpdates = [[NSMutableArray alloc] init];
+
+    for (id<TGSyntheticUpdateWithQts> update in qtsUpdates)
+    {
+        int32_t nextQts = currentQts + 1;
+        if (nextQts == [update qts])
         {
-            [qtsUpdates addObjectsFromArray:update.updates];
+            [inOrderUpdates addObject:update];
+            currentQts = [update qts];
         }
-        
-        [qtsUpdates sortUsingComparator:^NSComparisonResult(id<TGSyntheticUpdateWithQts> update1, id<TGSyntheticUpdateWithQts> update2)
+        else if (nextQts > [update qts])
         {
-            return [update1 qts] < [update2 qts] ? NSOrderedAscending : NSOrderedDescending;
-        }];
-        
-        int32_t databaseQts = [[TGDatabase instance] databaseState].qts;
-        int32_t currentQts = databaseQts;
-        
-        NSMutableArray *inOrderUpdates = [[NSMutableArray alloc] init];
-        NSMutableArray *expiredUpdates = [[NSMutableArray alloc] init];
-        
-        for (id<TGSyntheticUpdateWithQts> update in qtsUpdates)
-        {
-            if ([update qts] <= databaseQts)
-                [expiredUpdates addObject:update];
-            else
-            {
-                if (currentQts + 1 == [update qts])
-                {
-                    [inOrderUpdates addObject:update];
-                    
-                    currentQts = [update qts];
-                }
-                else
-                {
-                    TGLog(@"***** Missing updates: qts %d + 1 != %d", (int)currentQts, (int)[update qts]);
-                    [self startTimeoutTimer];
-                    break;
-                }
-            }
-        }
-        
-        if (expiredUpdates.count != 0)
-        {
-            NSMutableArray *affectedGroups = [[NSMutableArray alloc] init];
-            
-            for (TGUpdatesWithQts *updates in _updateList)
-            {
-                for (id update in expiredUpdates)
-                {
-                    if ([updates.updates containsObject:update])
-                    {
-                        if (![affectedGroups containsObject:updates])
-                            [affectedGroups addObject:updates];
-                    }
-                }
-            }
-            
-            for (TGUpdatesWithQts *updates in affectedGroups)
-            {
-                NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
-                for (id update in expiredUpdates)
-                {
-                    [filteredUpdates removeObject:update];
-                }
-                
-                if (filteredUpdates.count == 0)
-                    [_updateList removeObject:updates];
-            }
-        }
-        
-        if (inOrderUpdates.count != 0)
-        {
-            NSMutableArray *affectedGroups = [[NSMutableArray alloc] init];
-            
-            for (TGUpdatesWithQts *updates in _updateList)
-            {
-                for (id update in inOrderUpdates)
-                {
-                    if ([updates.updates containsObject:update])
-                    {
-                        if (![affectedGroups containsObject:updates])
-                            [affectedGroups addObject:updates];
-                    }
-                }
-            }
-            
-            NSMutableArray *users = [[NSMutableArray alloc] init];
-            NSMutableArray *chats = [[NSMutableArray alloc] init];
-            for (TGUpdatesWithQts *updates in affectedGroups)
-            {
-                [users addObjectsFromArray:updates.users];
-                [chats addObjectsFromArray:updates.chats];
-                
-                NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
-                for (id update in inOrderUpdates)
-                {
-                    [filteredUpdates removeObject:update];
-                }
-                
-                if (filteredUpdates.count == 0)
-                    [_updateList removeObject:updates];
-            }
-            
-            NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
-            for (id update in inOrderUpdates)
-            {
-                [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:0]];
-            }
-            
-            [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:0 completion:^(bool success)
-            {
-                if (!success)
-                    [self _failQts];
-                else
-                    [self checkQtsUpdates];
-            }];
+            [expiredUpdates addObject:update];
         }
         else
         {
-            if (_updateList.count == 0)
-                [self completeAction];
+            TGLog(@"***** Missing updates: qts %d + 1 != %d", (int)currentQts, (int)[update qts]);
+            [self startTimeoutTimer];
+            break;
         }
+    }
+
+    if (expiredUpdates.count != 0)
+    {
+        NSArray *groups = [_updateList copy];
+        for (TGUpdatesWithQts *updates in groups)
+        {
+            NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
+            [filteredUpdates removeObjectsInArray:expiredUpdates];
+            if (filteredUpdates.count != updates.updates.count)
+            {
+                NSUInteger index = [_updateList indexOfObjectIdenticalTo:updates];
+                if (index != NSNotFound)
+                {
+                    if (filteredUpdates.count == 0)
+                        [_updateList removeObjectAtIndex:index];
+                    else
+                        _updateList[index] = [[TGUpdatesWithQts alloc] initWithUpdates:filteredUpdates users:updates.users chats:updates.chats];
+                }
+            }
+        }
+    }
+
+    if (inOrderUpdates.count != 0)
+    {
+        NSMutableArray *users = [[NSMutableArray alloc] init];
+        NSMutableArray *chats = [[NSMutableArray alloc] init];
+        NSArray *groups = [_updateList copy];
+        for (TGUpdatesWithQts *updates in groups)
+        {
+            NSMutableArray *filteredUpdates = [[NSMutableArray alloc] initWithArray:updates.updates];
+            [filteredUpdates removeObjectsInArray:inOrderUpdates];
+            if (filteredUpdates.count != updates.updates.count)
+            {
+                if (updates.users != nil)
+                    [users addObjectsFromArray:updates.users];
+                if (updates.chats != nil)
+                    [chats addObjectsFromArray:updates.chats];
+                NSUInteger index = [_updateList indexOfObjectIdenticalTo:updates];
+                if (index != NSNotFound)
+                {
+                    if (filteredUpdates.count == 0)
+                        [_updateList removeObjectAtIndex:index];
+                    else
+                        _updateList[index] = [[TGUpdatesWithQts alloc] initWithUpdates:filteredUpdates users:updates.users chats:updates.chats];
+                }
+            }
+        }
+
+        NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
+        for (id update in inOrderUpdates)
+            [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:0]];
+
+        [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:0 optionalFinalDate:0 completion:^(bool success)
+        {
+            if (!success)
+                [self _failQts];
+            else
+                [self checkQtsUpdates];
+        }];
+    }
+    else if (_updateList.count == 0)
+    {
+        [self cancelTimeoutTimer];
+        [self completeAction];
     }
 }
 
@@ -854,62 +803,78 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
 {
     if (_updateList.count == 0)
     {
+        [self cancelTimeoutTimer];
         [self completeAction];
+        return;
     }
-    else
+
+    NSArray *seqUpdates = [_updateList sortedArrayUsingComparator:^NSComparisonResult(TGUpdatesWithSeq *updates1, TGUpdatesWithSeq *updates2)
     {
-        NSArray *seqUpdates = [_updateList sortedArrayUsingComparator:^NSComparisonResult(TGUpdatesWithSeq *updates1, TGUpdatesWithSeq *updates2)
+        if (updates1.seqStart == updates2.seqStart)
         {
+            if (updates1.seqEnd == updates2.seqEnd)
+                return NSOrderedSame;
             return updates1.seqEnd < updates2.seqEnd ? NSOrderedAscending : NSOrderedDescending;
-        }];
-        
-        int32_t currentSeq = [[TGDatabase instance] databaseState].seq;
-        
-        NSMutableArray *inOrderUpdates = [[NSMutableArray alloc] init];
-        for (TGUpdatesWithSeq *updates in seqUpdates)
-        {
-            if (updates.seqStart == currentSeq + 1)
-            {
-                [inOrderUpdates addObject:updates];
-                currentSeq = updates.seqEnd;
-            }
-            else
-            {
-                TGLog(@"***** Missing updates: seq %d", (int)currentSeq + 1);
-                [self startTimeoutTimer];
-            }
         }
-        
-        if (inOrderUpdates.count != 0)
+        return updates1.seqStart < updates2.seqStart ? NSOrderedAscending : NSOrderedDescending;
+    }];
+
+    int32_t currentSeq = [[TGDatabase instance] databaseState].seq;
+    NSMutableArray *inOrderUpdates = [[NSMutableArray alloc] init];
+    NSMutableArray *expiredUpdates = [[NSMutableArray alloc] init];
+
+    for (TGUpdatesWithSeq *updates in seqUpdates)
+    {
+        if (updates.seqStart <= currentSeq)
         {
-            NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
-            NSMutableArray *users = [[NSMutableArray alloc] init];
-            NSMutableArray *chats = [[NSMutableArray alloc] init];
-            
-            for (TGUpdatesWithSeq *updates in inOrderUpdates)
-            {
-                for (id update in updates.updates)
-                {
-                    [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:updates.date]];
-                }
+            [expiredUpdates addObject:updates];
+        }
+        else if (updates.seqStart == currentSeq + 1)
+        {
+            [inOrderUpdates addObject:updates];
+            currentSeq = updates.seqEnd;
+        }
+        else
+        {
+            TGLog(@"***** Missing updates: seq %d", (int)currentSeq + 1);
+            [self startTimeoutTimer];
+            break;
+        }
+    }
+
+    if (expiredUpdates.count != 0)
+        [_updateList removeObjectsInArray:expiredUpdates];
+
+    if (inOrderUpdates.count != 0)
+    {
+        NSMutableArray *wrappedUpdates = [[NSMutableArray alloc] init];
+        NSMutableArray *users = [[NSMutableArray alloc] init];
+        NSMutableArray *chats = [[NSMutableArray alloc] init];
+
+        for (TGUpdatesWithSeq *updates in inOrderUpdates)
+        {
+            for (id update in updates.updates)
+                [wrappedUpdates addObject:[[TGWrappedUpdate alloc] initWithUpdate:update date:updates.date]];
+            if (updates.users != nil)
                 [users addObjectsFromArray:updates.users];
+            if (updates.chats != nil)
                 [chats addObjectsFromArray:updates.chats];
-                
-                [_updateList removeObject:updates];
-            }
-            
-            [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:((TGUpdatesWithSeq *)inOrderUpdates.lastObject).seqEnd optionalFinalDate:((TGWrappedUpdate *)wrappedUpdates.lastObject).date completion:^(bool success)
-            {
-                if (!success)
-                    [self _failSeq];
-                else
-                    [self checkSeqUpdates];
-            }];
+            [_updateList removeObject:updates];
         }
-        else if (_updateList.count == 0)
+
+        TGUpdatesWithSeq *finalUpdates = (TGUpdatesWithSeq *)inOrderUpdates.lastObject;
+        [self _tryApplyingUpdates:wrappedUpdates users:users chats:chats optionalFinalSeq:finalUpdates.seqEnd optionalFinalDate:finalUpdates.date completion:^(bool success)
         {
-            [self completeAction];
-        }
+            if (!success)
+                [self _failSeq];
+            else
+                [self checkSeqUpdates];
+        }];
+    }
+    else if (_updateList.count == 0)
+    {
+        [self cancelTimeoutTimer];
+        [self completeAction];
     }
 }
 
@@ -919,8 +884,7 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
     
     [self cancelTimeoutTimer];
     
-    if (TGIOS6ShouldRequestStateUpdateNow())
-        [TGTelegraphInstance stateUpdateRequired];
+    [TGTelegraphInstance stateUpdateRequired];
     
     [self completeAction];
 }
@@ -931,8 +895,7 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
     
     [self cancelTimeoutTimer];
     
-    if (TGIOS6ShouldRequestStateUpdateNow())
-        [TGTelegraphInstance stateUpdateRequired];
+    [TGTelegraphInstance stateUpdateRequired];
     
     [self completeAction];
 }
@@ -943,8 +906,7 @@ static bool TGIOS6ShouldRequestStateUpdateNow()
     
     [self cancelTimeoutTimer];
     
-    if (TGIOS6ShouldRequestStateUpdateNow())
-        [TGTelegraphInstance stateUpdateRequired];
+    [TGTelegraphInstance stateUpdateRequired];
     
     [self completeAction];
 }
@@ -1727,6 +1689,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         
                         bool messageIsChannel = TGPeerIdIsChannel(message.cid);
 
+                        if (message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId)
+                            continue;
+
                         if (message.containsMention)
                         {
                             if ([TGDatabaseInstance() isPeerMuted:message.fromUid]) {
@@ -1789,6 +1754,38 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=notification_peer_muted peer=%lld title=%@ mid=%d", notificationPeerId, chatName ?: @"", message.mid);
                             continue;
                         }
+
+                        NSString *authorName = user.displayName;
+                        if (authorName.length == 0 && message.fromUid != 0)
+                        {
+                            if (TGPeerIdIsUser(message.fromUid))
+                            {
+                                TGUser *authorUser = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+                                if (user == nil)
+                                    user = authorUser;
+                                authorName = authorUser.displayName;
+                            }
+                            else if (TGPeerIdIsGroup(message.fromUid) || TGPeerIdIsChannel(message.fromUid))
+                            {
+                                TGConversation *authorConversation = [TGDatabaseInstance() loadConversationWithIdCached:message.fromUid];
+                                if (authorConversation == nil)
+                                    authorConversation = [TGDatabaseInstance() loadConversationWithId:message.fromUid];
+                                authorName = authorConversation.chatTitle;
+                            }
+                        }
+                        if (authorName.length == 0 && messageIsChannel && message.fromUid == message.cid)
+                            authorName = chatName;
+                        if (authorName.length == 0 && message.cid > 0)
+                        {
+                            TGUser *peerUser = [TGDatabaseInstance() loadUser:(int32_t)message.cid];
+                            if (user == nil)
+                                user = peerUser;
+                            authorName = peerUser.displayName;
+                        }
+                        if (authorName.length == 0)
+                            authorName = chatName;
+                        if (authorName.length == 0)
+                            continue;
                         
                         NSNumber *soundIdVal = nil;
                         int soundId = 1;
@@ -1816,14 +1813,14 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 {
                                     case TGMessageActionChatEditTitle:
                                     {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_TITLE_EDITED"), user.displayName, [((TGActionMediaAttachment *)attachment).actionData objectForKey:@"title"]];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_TITLE_EDITED"), authorName, [((TGActionMediaAttachment *)attachment).actionData objectForKey:@"title"]];
                                         attachmentFound = true;
                                         
                                         break;
                                     }
                                     case TGMessageActionChatEditPhoto:
                                     {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_PHOTO_EDITED"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_PHOTO_EDITED"), authorName, chatName];
                                         attachmentFound = true;
                                         
                                         break;
@@ -1842,7 +1839,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                             }
                                             
                                             if (subjectUsers.count == 1 && authorUser.uid == ((TGUser *)subjectUsers[0]).uid) {
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorUser.displayName, chatName];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
                                             } else {
                                                 NSMutableString *subjectNames = [[NSMutableString alloc] init];
                                                 for (TGUser *subjectUser in subjectUsers) {
@@ -1851,7 +1848,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                                     }
                                                     [subjectNames appendString:subjectUser.displayName];
                                                 }
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorUser.displayName, chatName, subjectNames];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorName, chatName, subjectNames];
                                             }
                                             attachmentFound = true;
                                         } else {
@@ -1861,11 +1858,11 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                                 TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
                                                 
                                                 if (subjectUser.uid == user.uid)
-                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), user.displayName, chatName];
+                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
                                                 else if (subjectUser.uid == TGTelegraphInstance.clientUserId)
-                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), user.displayName, chatName];
+                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), authorName, chatName];
                                                 else
-                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), user.displayName, chatName, subjectUser.displayName];
+                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorName, chatName, subjectUser.displayName];
                                                 attachmentFound = true;
                                             }
                                         }
@@ -1880,11 +1877,11 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                             TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
                                             
                                             if (subjectUser.uid == user.uid)
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_LEFT"), user.displayName, chatName];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_LEFT"), authorName, chatName];
                                             else if (subjectUser.uid == TGTelegraphInstance.clientUserId)
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_YOU"), user.displayName, chatName];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_YOU"), authorName, chatName];
                                             else
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_MEMBER"), user.displayName, chatName, subjectUser.displayName];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_MEMBER"), authorName, chatName, subjectUser.displayName];
                                             attachmentFound = true;
                                         }
                                         
@@ -1892,7 +1889,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                     }
                                     case TGMessageActionCreateChat:
                                     {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), authorName, chatName];
                                         attachmentFound = true;
                                         
                                         break;
@@ -1914,7 +1911,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                     case TGMessageActionJoinedByLink:
                                     {
                                         NSString *formatString = [actionAttachment.actionData[@"joinedByRequest"] boolValue] ? TGLocalized(@"Notification.JoinedChat") : TGLocalized(@"Notification.JoinedGroupByLink");
-                                        text = [[NSString alloc] initWithFormat:formatString, user.displayName];
+                                        text = [[NSString alloc] initWithFormat:formatString, authorName];
                                         attachmentFound = true;
                                         
                                         break;
@@ -1964,7 +1961,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                         
                                         NSMutableString *formatString = [[NSMutableString alloc] initWithString:baseString];
                                         
-                                        NSString *authorName = user.displayFirstName;
+                                        NSString *scoreAuthorName = user.displayFirstName;
+                                        if (scoreAuthorName.length == 0)
+                                            scoreAuthorName = authorName;
                                         
                                         for (int i = 0; i < 3; i++) {
                                             NSRange nameRange = [formatString rangeOfString:@"{name}"];
@@ -1999,7 +1998,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                             }
                                             
                                             if (nameRange.location != NSNotFound) {
-                                                [formatString replaceCharactersInRange:nameRange withString:authorName];
+                                                [formatString replaceCharactersInRange:nameRange withString:scoreAuthorName];
                                             }
                                             
                                             if (scoreRange.location != NSNotFound) {
@@ -2020,7 +2019,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                     {
                                         TGCallDiscardReason reason = (TGCallDiscardReason)[actionAttachment.actionData[@"reason"] intValue];
                                         if (reason == TGCallDiscardReasonMissed) {
-                                            text = [NSString stringWithFormat:TGLocalized(@"PHONE_CALL_MISSED"), user.displayName];
+                                            text = [NSString stringWithFormat:TGLocalized(@"PHONE_CALL_MISSED"), authorName];
                                             phoneCall = true;
                                         }
                                         else {
@@ -2032,7 +2031,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                     }
                                     case TGMessageActionEncryptedChatMessageScreenshot:
                                     {
-                                        text = [NSString stringWithFormat:TGLocalized(@"MESSAGE_SCREENSHOT"), user.displayName];
+                                        text = [NSString stringWithFormat:TGLocalized(@"MESSAGE_SCREENSHOT"), authorName];
                                         attachmentFound = true;
                                         
                                         break;
@@ -2045,20 +2044,20 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             {
                                 if (((globalMessagePreviewText && TGPeerIdIsUser(message.cid)) || (globalGroupPreviewText && !TGPeerIdIsUser(message.cid))) && ((TGImageMediaAttachment *)attachment).caption.length != 0) {
                                     if (message.cid > 0) {
-                                        text = [[NSString alloc] initWithFormat:@"%@: 🖼 %@", user.displayName, ((TGImageMediaAttachment *)attachment).caption];
+                                        text = [[NSString alloc] initWithFormat:@"%@: 🖼 %@", authorName, ((TGImageMediaAttachment *)attachment).caption];
                                     } else {
-                                        text = [[NSString alloc] initWithFormat:@"%@@%@: 🖼 %@", user.displayName, chatName, ((TGImageMediaAttachment *)attachment).caption];
+                                        text = [[NSString alloc] initWithFormat:@"%@@%@: 🖼 %@", authorName, chatName, ((TGImageMediaAttachment *)attachment).caption];
                                     }
                                 } else {
                                     if (message.cid > 0) {
                                         if (message.messageLifetime > 0 && message.messageLifetime <= 60) {
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO_SECRET"), user.displayName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO_SECRET"), authorName];
                                         } else {
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO"), user.displayName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO"), authorName];
                                         }
                                     }
                                     else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_PHOTO"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_PHOTO"), authorName, chatName];
                                 }
                                 
                                 attachmentFound = true;
@@ -2071,26 +2070,26 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 
                                 if (((globalMessagePreviewText && TGPeerIdIsUser(message.cid)) || (globalGroupPreviewText && !TGPeerIdIsUser(message.cid))) && ((TGVideoMediaAttachment *)attachment).caption.length != 0) {
                                     if (message.cid > 0) {
-                                        text = [[NSString alloc] initWithFormat:@"%@: 📹 %@", user.displayName, ((TGVideoMediaAttachment *)attachment).caption];
+                                        text = [[NSString alloc] initWithFormat:@"%@: 📹 %@", authorName, ((TGVideoMediaAttachment *)attachment).caption];
                                     } else {
-                                        text = [[NSString alloc] initWithFormat:@"%@@%@: 📹 %@", user.displayName, chatName, ((TGVideoMediaAttachment *)attachment).caption];
+                                        text = [[NSString alloc] initWithFormat:@"%@@%@: 📹 %@", authorName, chatName, ((TGVideoMediaAttachment *)attachment).caption];
                                     }
                                 } else {
                                     if (isRoundMessage) {
                                         if (message.cid > 0)
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_ROUND"), user.displayName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_ROUND"), authorName];
                                         else
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_ROUND"), user.displayName, chatName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_ROUND"), authorName, chatName];
                                     }
                                     else {
                                         if (message.cid > 0)
                                             if (message.messageLifetime > 0 && message.messageLifetime <= 60) {
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO_SECRET"), user.displayName];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO_SECRET"), authorName];
                                             } else {
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO"), user.displayName];
+                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO"), authorName];
                                             }
                                         else
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_VIDEO"), user.displayName, chatName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_VIDEO"), authorName, chatName];
                                     }
                                 }
                                 
@@ -2104,16 +2103,16 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 if (attachment.period > 0)
                                 {
                                     if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEOLIVE"), user.displayName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEOLIVE"), authorName];
                                     else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEOLIVE"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEOLIVE"), authorName, chatName];
                                 }
                                 else
                                 {
                                     if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEO"), user.displayName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEO"), authorName];
                                     else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEO"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEO"), authorName, chatName];
                                 }
                                 
                                 attachmentFound = true;
@@ -2123,9 +2122,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             else if (attachment.type == TGContactMediaAttachmentType)
                             {
                                 if (message.cid > 0)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_CONTACT"), user.displayName];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_CONTACT"), authorName];
                                 else
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_CONTACT"), user.displayName, chatName];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_CONTACT"), authorName, chatName];
                                 
                                 attachmentFound = true;
                                 
@@ -2164,36 +2163,36 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 if (isSticker)
                                 {
                                     if (message.cid > 0) {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_STICKER"), user.displayName, stickerRepresentation];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_STICKER"), authorName, stickerRepresentation];
                                     } else {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_STICKER"), user.displayName, chatName, stickerRepresentation];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_STICKER"), authorName, chatName, stickerRepresentation];
                                     }
                                 }
                                 else if (isAnimated) {
                                     if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GIF"), user.displayName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GIF"), authorName];
                                     else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GIF"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GIF"), authorName, chatName];
                                 }
                                 else if (isVoice) {
                                     if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), user.displayName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), authorName];
                                     else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), user.displayName, chatName];
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), authorName, chatName];
                                 }
                                 else
                                 {
                                     if (globalMessagePreviewText && ((TGDocumentMediaAttachment *)attachment).caption.length != 0) {
                                         if (message.cid > 0) {
-                                            text = [[NSString alloc] initWithFormat:@"%@: 📎 %@", user.displayName, ((TGDocumentMediaAttachment *)attachment).caption];
+                                            text = [[NSString alloc] initWithFormat:@"%@: 📎 %@", authorName, ((TGDocumentMediaAttachment *)attachment).caption];
                                         } else {
-                                            text = [[NSString alloc] initWithFormat:@"%@@%@: 📎 %@", user.displayName, chatName, ((TGDocumentMediaAttachment *)attachment).caption];
+                                            text = [[NSString alloc] initWithFormat:@"%@@%@: 📎 %@", authorName, chatName, ((TGDocumentMediaAttachment *)attachment).caption];
                                         }
                                     } else {
                                         if (message.cid > 0)
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_DOC"), user.displayName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_DOC"), authorName];
                                         else
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_DOC"), user.displayName, chatName];
+                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_DOC"), authorName, chatName];
                                     }
                                 }
                                 
@@ -2204,9 +2203,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             else if (attachment.type == TGAudioMediaAttachmentType)
                             {
                                 if (message.cid > 0)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), user.displayName];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), authorName];
                                 else
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), user.displayName, chatName];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), authorName, chatName];
                                 
                                 attachmentFound = true;
                                 
@@ -2216,9 +2215,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 NSString *gameTitle = ((TGGameMediaAttachment *)attachment).title;
                                 
                                 if (message.cid > 0) {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GAME"), user.displayName, gameTitle];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GAME"), authorName, gameTitle];
                                 } else {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GAME"), user.displayName, chatName, gameTitle];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GAME"), authorName, chatName, gameTitle];
                                 }
                                 
                                 attachmentFound = true;
@@ -2230,9 +2229,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 NSString *priceString = [[TGCurrencyFormatter shared] formatAmount:invoice.totalAmount currency:invoice.currency];
                                 
                                 if (message.cid > 0) {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_INVOICE"), user.displayName, priceString];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_INVOICE"), authorName, priceString];
                                 } else {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_INVOICE"), user.displayName, chatName, priceString];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_INVOICE"), authorName, chatName, priceString];
                                 }
                                 
                                 attachmentFound = true;
@@ -2259,11 +2258,11 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         {
                             if (message.cid > 0)
                             {
-                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_FWDS"), user.displayName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_FWDS"), authorName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
                             }
                             else
                             {
-                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_FWDS"), user.displayName, chatName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_FWDS"), authorName, chatName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
                             }
                         }
                         else
@@ -2272,8 +2271,8 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             {
                                 if (globalGroupPreviewText && !attachmentFound)
                                 {
-                                    if (user.displayName.length != 0)
-                                        text = [[NSString alloc] initWithFormat:@"%@@%@: %@", user.displayName, chatName, message.text];
+                                    if (authorName.length != 0)
+                                        text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
                                     else
                                         text = [[NSString alloc] initWithFormat:@"%@: %@", chatName, message.text];
                                 }
@@ -2289,16 +2288,16 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             else if (message.cid > 0)
                             {
                                 if (globalMessagePreviewText && !attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:@"%@: %@", user.displayName, message.text];
+                                    text = [[NSString alloc] initWithFormat:@"%@: %@", authorName, message.text];
                                 else if (!attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_NOTEXT"), user.displayName];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_NOTEXT"), authorName];
                             }
                             else
                             {
                                 if (globalGroupPreviewText && !attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:@"%@@%@: %@", user.displayName, chatName, message.text];
+                                    text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
                                 else if (!attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_NOTEXT"), user.displayName, chatName];
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_NOTEXT"), authorName, chatName];
                             }
                         }
                         
@@ -2314,7 +2313,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
 
                         NSString *notificationTitle = chatName;
                         if (notificationTitle.length == 0)
-                            notificationTitle = user.displayName;
+                            notificationTitle = authorName;
                         SEL setAlertTitleSelector = NSSelectorFromString(@"setAlertTitle:");
                         if (notificationTitle.length != 0 && [localNotification respondsToSelector:setAlertTitleSelector])
                             [localNotification setValue:notificationTitle forKey:@"alertTitle"];

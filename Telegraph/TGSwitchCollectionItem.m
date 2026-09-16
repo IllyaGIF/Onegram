@@ -11,6 +11,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/ASHandle.h"
 
 #import "TGSwitchCollectionItemView.h"
+#import "TGPresentation.h"
 
 @interface TGSwitchCollectionItem () <TGSwitchCollectionItemViewDelegate>
 {
@@ -48,7 +49,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, 44);
+    return CGSizeMake(containerSize.width, _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 35.0f : 44.0f);
 }
 
 - (void)bindView:(TGCollectionItemView *)view
@@ -60,6 +61,7 @@
     [((TGSwitchCollectionItemView *)view) setIsOn:_isOn animated:false];
     [((TGSwitchCollectionItemView *)view) setIsEnabled:_isEnabled];
     [((TGSwitchCollectionItemView *)view) setIsLocked:_isLocked];
+    [((TGSwitchCollectionItemView *)view) setIconName:_iconName brandedUserInfoStyle:_brandedUserInfoStyle];
     ((TGSwitchCollectionItemView *)view).delegate = self;
 }
 
@@ -137,6 +139,19 @@
             _toggled(isOn, self);
         [_interfaceHandle requestAction:@"switchItemChanged" options:@{@"item": self, @"value": @(_isOn)}];
     }
+}
+
+
+- (void)setIconName:(NSString *)iconName
+{
+    _iconName = iconName;
+    [(TGSwitchCollectionItemView *)self.boundView setIconName:_iconName brandedUserInfoStyle:_brandedUserInfoStyle];
+}
+
+- (void)setBrandedUserInfoStyle:(bool)brandedUserInfoStyle
+{
+    _brandedUserInfoStyle = brandedUserInfoStyle;
+    [(TGSwitchCollectionItemView *)self.boundView setIconName:_iconName brandedUserInfoStyle:_brandedUserInfoStyle];
 }
 
 @end

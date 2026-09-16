@@ -565,7 +565,7 @@ static OSStatus TGOpusRecordingCallback(void *inRefCon, AudioUnitRenderActionFla
 {
     @autoreleasepool
     {
-        if (globalRecorderContext.globalAudioRecorderId != (int)inRefCon)
+        if (globalRecorderContext.globalAudioRecorderId != (intptr_t)inRefCon)
             return noErr;
         
         AudioBuffer buffer;
@@ -603,7 +603,7 @@ static OSStatus TGOpusRecordingCallback(void *inRefCon, AudioUnitRenderActionFla
 
 static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRenderActionFlags *ioActionFlags, __unused const AudioTimeStamp *inTimeStamp, __unused UInt32 inBusNumber, __unused UInt32 inNumberFrames, AudioBufferList *ioData)
 {
-    if (globalRecorderContext.globalAudioRecorderId != (int)inRefCon)
+    if (globalRecorderContext.globalAudioRecorderId != (intptr_t)inRefCon)
         return noErr;
     
     for (int i = 0; i < (int)ioData->mNumberBuffers; i++)

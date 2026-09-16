@@ -1,4 +1,6 @@
 #import "TGDatabase.h"
+#import "TGCommon.h"
+#import "../../OnegramRuntime/OGRuntime.h"
 
 #import "../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -546,7 +548,6 @@ static TGFutureAction *futureActionDeserializer(int type)
 @interface TGDatabase ()
 {
     ATQueue *_fileDeletionQueue;
-    ATQueue *_backgroundFileIndexingQueue;
     
     TG_SYNCHRONIZED_DEFINE(_userByUid);
     TG_SYNCHRONIZED_DEFINE(_contactsByPhoneId);
@@ -571,6 +572,9 @@ static TGFutureAction *futureActionDeserializer(int type)
     TG_SYNCHRONIZED_DEFINE(_encryptedConversationAccessHash);
     TG_SYNCHRONIZED_DEFINE(_messageLifetimeByPeerId);
     TG_SYNCHRONIZED_DEFINE(_cachedConversations);
+    TG_SYNCHRONIZED_DEFINE(_customPropertiesCacheLock);
+    TG_SYNCHRONIZED_DEFINE(_peerMessageDraftsLock);
+    TG_SYNCHRONIZED_DEFINE(_unreadPeerMentionsLock);
     TG_SYNCHRONIZED_DEFINE(_conversationInputStates);
     TG_SYNCHRONIZED_DEFINE(_instantPageStates);
     TG_SYNCHRONIZED_DEFINE(_unpinnedGroupStickerPacks);
@@ -644,9 +648,12 @@ static TGFutureAction *futureActionDeserializer(int type)
     
     SPipe *_customPropertiesPipe;
     NSMutableDictionary *_customPropertiesCache;
+    bool _customPropertiesCacheLoaded;
     
     NSMutableDictionary *_cachedChannelDataPipes;
     NSMutableDictionary *_userChannelDataVariables;
+    NSCache *_channelCachedDataMemoryCache;
+    NSCache *_userCachedDataMemoryCache;
     NSMutableDictionary *_cachedPeerSettingsVariables;
     SVariable *_cachedRecentPeerCategoriesVariable;
     TGRemoteRecentPeerCategories *_cachedRecentPeerCategories;
@@ -941,50 +948,57 @@ TGDatabase *TGDatabaseInstance()
 #endif
             block();
 #ifdef DEBUG_DATABASE_INVOKATIONS
-            CFAbsoluteTime executionTime = (CFAbsoluteTimeGetCurrent() - startTime);
-            if (executionTime > 1.0)
-                TGLog(@"***** DB Dispatch from %s:%d took %f s", file, line, executionTime);
+            CFAbsoluteTime executionTime = CFAbsoluteTimeGetCurrent() - startTime;
+            if (executionTime >= 0.05)
+                TGLog(@"DBPERF inline file=%s line=%d exec=%.1fms", file, line, executionTime * 1000.0);
 #endif
         }
     }
+    else if (synchronous)
+    {
+#ifdef DEBUG_DATABASE_INVOKATIONS
+        bool callerIsMainThread = [NSThread isMainThread];
+        CFAbsoluteTime submittedTime = CFAbsoluteTimeGetCurrent();
+        __block CFAbsoluteTime executionTime = 0.0;
+#endif
+        dispatch_sync([self databaseQueue], ^
+        {
+            @autoreleasepool
+            {
+#ifdef DEBUG_DATABASE_INVOKATIONS
+                CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+#endif
+                block();
+#ifdef DEBUG_DATABASE_INVOKATIONS
+                executionTime = CFAbsoluteTimeGetCurrent() - startTime;
+#endif
+            }
+        });
+#ifdef DEBUG_DATABASE_INVOKATIONS
+        CFAbsoluteTime totalTime = CFAbsoluteTimeGetCurrent() - submittedTime;
+        CFAbsoluteTime waitTime = MAX(0.0, totalTime - executionTime);
+        CFAbsoluteTime threshold = callerIsMainThread ? 0.008 : 0.05;
+        if (totalTime >= threshold || executionTime >= 0.05)
+            TGLog(@"DBPERF sync file=%s line=%d main=%d wait=%.1fms exec=%.1fms total=%.1fms", file, line, callerIsMainThread ? 1 : 0, waitTime * 1000.0, executionTime * 1000.0, totalTime * 1000.0);
+#endif
+    }
     else
     {
-        if (synchronous)
+        dispatch_async([self databaseQueue], ^
         {
-            dispatch_sync([self databaseQueue], ^
+            @autoreleasepool
             {
-                @autoreleasepool
-                {
 #ifdef DEBUG_DATABASE_INVOKATIONS
-                    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+                CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
 #endif
-                    block();
+                block();
 #ifdef DEBUG_DATABASE_INVOKATIONS
-                    CFAbsoluteTime executionTime = (CFAbsoluteTimeGetCurrent() - startTime);
-                    if (executionTime > 1.0)
-                        TGLog(@"***** DB Dispatch from %s:%d took %f s", file, line, executionTime);
+                CFAbsoluteTime executionTime = CFAbsoluteTimeGetCurrent() - startTime;
+                if (executionTime >= 0.05)
+                    TGLog(@"DBPERF async file=%s line=%d exec=%.1fms", file, line, executionTime * 1000.0);
 #endif
-                }
-            });
-        }
-        else
-        {
-            dispatch_async([self databaseQueue], ^
-            {
-                @autoreleasepool
-                {
-#ifdef DEBUG_DATABASE_INVOKATIONS
-                    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
-#endif
-                    block();
-#ifdef DEBUG_DATABASE_INVOKATIONS
-                    CFAbsoluteTime executionTime = (CFAbsoluteTimeGetCurrent() - startTime);
-                    if (executionTime > 1.0)
-                        TGLog(@"***** DB Dispatch from %s:%d took %f s", file, line, executionTime);
-#endif
-                }
-            });
-        }
+            }
+        });
     }
 }
 
@@ -1384,7 +1398,6 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         TGLog(@"static const int32 resend_seq_in_hash = %d;", @"resend_seq_in".hash);*/
         
         _fileDeletionQueue = [[ATQueue alloc] init];
-        _backgroundFileIndexingQueue = [[ATQueue alloc] init];
         
         TG_SYNCHRONIZED_INIT(_userByUid);
         TG_SYNCHRONIZED_INIT(_contactsByPhoneId);
@@ -1409,6 +1422,9 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         TG_SYNCHRONIZED_INIT(_encryptedConversationAccessHash);
         TG_SYNCHRONIZED_INIT(_messageLifetimeByPeerId);
         TG_SYNCHRONIZED_INIT(_cachedConversations);
+        TG_SYNCHRONIZED_INIT(_customPropertiesCacheLock);
+        TG_SYNCHRONIZED_INIT(_peerMessageDraftsLock);
+        TG_SYNCHRONIZED_INIT(_unreadPeerMentionsLock);
         TG_SYNCHRONIZED_INIT(_conversationInputStates);
         TG_SYNCHRONIZED_INIT(_instantPageStates);
         TG_SYNCHRONIZED_INIT(_unpinnedGroupStickerPacks);
@@ -1433,6 +1449,7 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         
         _customPropertiesPipe = [[SPipe alloc] init];
         _customPropertiesCache = [[NSMutableDictionary alloc] init];
+        _customPropertiesCacheLoaded = false;
         
         NSString *baseDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.db", (databaseName == nil ? @"tgdata" : databaseName)]];
         NSString *baseIndexDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_index.db", (databaseName == nil ? @"tgdata" : databaseName)]];
@@ -1557,6 +1574,26 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         _existingChannelPipes = [[NSMutableDictionary alloc] init];
         _cachedChannelDataPipes = [[NSMutableDictionary alloc] init];
         _userChannelDataVariables = [[NSMutableDictionary alloc] init];
+        NSUInteger cachedConversationLimit = 256;
+        switch (devicePerformanceClass())
+        {
+            case TGPerformanceClassConstrained:
+                cachedConversationLimit = 128;
+                break;
+            case TGPerformanceClassBalanced:
+                cachedConversationLimit = 256;
+                break;
+            case TGPerformanceClassFast:
+                cachedConversationLimit = 768;
+                break;
+            case TGPerformanceClassHigh:
+                cachedConversationLimit = 1536;
+                break;
+        }
+        _channelCachedDataMemoryCache = [[NSCache alloc] init];
+        _channelCachedDataMemoryCache.countLimit = cachedConversationLimit;
+        _userCachedDataMemoryCache = [[NSCache alloc] init];
+        _userCachedDataMemoryCache.countLimit = cachedConversationLimit * 2;
         _cachedPeerSettingsVariables = [[NSMutableDictionary alloc] init];
         _channelPtsPipes = [[NSMutableDictionary alloc] init];
         _queuedDeleteChannelMessages = [[SPipe alloc] init];
@@ -1574,13 +1611,17 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         _channelShouldNotifyMembersVariables = [[NSMutableDictionary alloc] init];
         
         _invalidatedPeerReadStatesPipe = [[SPipe alloc] init];
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
         _peerMessageDrafts = [[NSMutableDictionary alloc] init];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
         _pinnedConversationDates = nil;
         _synchronizePeerMessageDraftsPeerIds = [[SPipe alloc] init];
         _shouldSynchronizePinnedConversations = [[SPipe alloc] init];
         _shouldSynchronizeFeededChannels = [[SPipe alloc] init];
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         _cachedUnreadPeerMentionStates = [[NSMutableDictionary alloc] init];
         _cachedUnreadPeerMentionMessageIdsStates = [[NSMutableDictionary alloc] init];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         _automaticallyReadPeerIds = [[NSMutableDictionary alloc] init];
         
         _unpinnedLiveLocationsPipe = [[SPipe alloc] init];
@@ -1788,6 +1829,18 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
     }
     
     [_database executeUpdate:[NSString stringWithFormat:@"CREATE TABLE IF NOT EXISTS %@ (key INTEGER PRIMARY KEY, value BLOB)", _serviceTableName]];
+    FMResultSet *servicePropertiesResult = [_database executeQuery:[NSString stringWithFormat:@"SELECT key, value FROM %@", _serviceTableName]];
+    TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+    [_customPropertiesCache removeAllObjects];
+    while ([servicePropertiesResult next])
+    {
+        NSNumber *propertyKey = @([servicePropertiesResult intForColumnIndex:0]);
+        NSData *propertyValue = [servicePropertiesResult dataForColumnIndex:1];
+        if (propertyValue != nil)
+            _customPropertiesCache[propertyKey] = propertyValue;
+    }
+    _customPropertiesCacheLoaded = true;
+    TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
     
     [_database executeUpdate:[NSString stringWithFormat:@"CREATE TABLE IF NOT EXISTS %@ (uid INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, local_first_name TEXT, local_last_name TEXT, phone_number TEXT, access_hash INTEGER, sex INTEGER, photo_small TEXT, photo_medium TEXT, photo_big TEXT, last_seen INTEGER, username STRING, data BLOB)", _usersTableName]];
     
@@ -2801,6 +2854,20 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
 {
     [self dispatchOnDatabaseThread:^
     {
+        TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+        [_customPropertiesCache removeAllObjects];
+        _customPropertiesCacheLoaded = false;
+        TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
+        [_channelCachedDataMemoryCache removeAllObjects];
+        [_userCachedDataMemoryCache removeAllObjects];
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
+        [_peerMessageDrafts removeAllObjects];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+        [_cachedUnreadPeerMentionStates removeAllObjects];
+        [_cachedUnreadPeerMentionMessageIdsStates removeAllObjects];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+
         if (fullDrop)
         {
             [[NSFileManager defaultManager] removeItemAtPath:self.databasePath error:nil];
@@ -3007,6 +3074,8 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         [_existingChannelPipes removeAllObjects];
         [_cachedChannelDataPipes removeAllObjects];
         [_userChannelDataVariables removeAllObjects];
+        [_channelCachedDataMemoryCache removeAllObjects];
+        [_userCachedDataMemoryCache removeAllObjects];
         [_cachedPeerSettingsVariables removeAllObjects];
         _cachedRecentPeerCategoriesVariable = nil;
         _cachedRecentPeerCategories = nil;
@@ -3029,14 +3098,22 @@ static void cleanupMessage(TGDatabase *database, int mid, NSArray *attachments, 
         TG_SYNCHRONIZED_END(_channelShouldNotifyMembersVariables)
         
         _invalidatedPeerReadStatesPipe = [[SPipe alloc] init];
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
         _peerMessageDrafts = [[NSMutableDictionary alloc] init];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
         _pinnedConversationDates = nil;
         _synchronizePeerMessageDraftsPeerIds = [[SPipe alloc] init];
         _shouldSynchronizePinnedConversations = [[SPipe alloc] init];
         _shouldSynchronizeFeededChannels = [[SPipe alloc] init];
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         _cachedUnreadPeerMentionStates = [[NSMutableDictionary alloc] init];
         _cachedUnreadPeerMentionMessageIdsStates = [[NSMutableDictionary alloc] init];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         _automaticallyReadPeerIds = [[NSMutableDictionary alloc] init];
+        TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+        [_customPropertiesCache removeAllObjects];
+        _customPropertiesCacheLoaded = false;
+        TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
         
         [_syncRemoteContactUidsTimer invalidate];
         _syncRemoteContactUidsTimer = nil;
@@ -4029,6 +4106,14 @@ static inline TGConversation *loadConversationFromDatabase(FMResultSet *result)
 - (TGConversation *)loadConversationWithId:(int64_t)conversationId
 {
     __block TGConversation *conversation = nil;
+
+    TG_SYNCHRONIZED_BEGIN(_cachedConversations);
+    auto cachedIt = _cachedConversations.find(conversationId);
+    if (cachedIt != _cachedConversations.end())
+        conversation = cachedIt->second;
+    TG_SYNCHRONIZED_END(_cachedConversations);
+    if (conversation != nil)
+        return conversation;
     
     [self dispatchOnDatabaseThread:^
     {
@@ -5593,7 +5678,7 @@ static NSMutableDictionary *transliterationPartsCache()
             currentState.qts = qts;
         
         [self setPts:currentState.pts date:currentState.date seq:currentState.seq qts:currentState.qts unreadCount:currentState.unreadCount];
-    } synchronous:false];
+    } synchronous:true];
 }
 
 - (void)setPts:(int)_ptsValue date:(int)_dateValue seq:(int)_seqValue qts:(int)_qtsValue unreadCount:(int)_unreadCountValue
@@ -5935,17 +6020,23 @@ static NSMutableDictionary *transliterationPartsCache()
 
 - (void)setCustomProperty:(NSString *)key value:(NSData *)value
 {
+    NSNumber *cacheKey = @(murMurHash32(key));
+    TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+    if (value == nil)
+        [_customPropertiesCache removeObjectForKey:cacheKey];
+    else
+        _customPropertiesCache[cacheKey] = value;
+    TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
+
     [self dispatchOnDatabaseThread:^
     {
         NSDictionary *update = nil;
         if (value == nil) {
             update = @{@"key":key};
-            _customPropertiesCache[key] = [NSNull null];
-            [_database executeUpdate:[[NSString alloc] initWithFormat:@"DELETE FROM %@ WHERE key=?", _serviceTableName], [[NSNumber alloc] initWithInt:murMurHash32(key)]];
+            [_database executeUpdate:[[NSString alloc] initWithFormat:@"DELETE FROM %@ WHERE key=?", _serviceTableName], cacheKey];
         } else {
             update = @{@"key":key, @"value":value};
-            _customPropertiesCache[key] = value;
-            [_database executeUpdate:[[NSString alloc] initWithFormat:@"INSERT OR REPLACE INTO %@ (key, value) VALUES (?, ?)", _serviceTableName], [[NSNumber alloc] initWithInt:murMurHash32(key)], value];
+            [_database executeUpdate:[[NSString alloc] initWithFormat:@"INSERT OR REPLACE INTO %@ (key, value) VALUES (?, ?)", _serviceTableName], cacheKey, value];
         }
         _customPropertiesPipe.sink(update);
     } synchronous:false];
@@ -5953,21 +6044,43 @@ static NSMutableDictionary *transliterationPartsCache()
 
 - (void)customProperty:(NSString *)key completion:(void (^)(NSData *value))completion
 {
+    NSNumber *cacheKey = @(murMurHash32(key));
+    __block NSData *cachedValue = nil;
+    __block bool cacheLoaded = false;
+    TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+    cachedValue = _customPropertiesCache[cacheKey];
+    cacheLoaded = _customPropertiesCacheLoaded;
+    TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
+    if (cachedValue != nil || cacheLoaded)
+    {
+        if (completion)
+            completion(cachedValue);
+        return;
+    }
+
     [self dispatchOnDatabaseThread:^
     {
-        id cachedValue = _customPropertiesCache[key];
-        if (cachedValue != nil)
+        __block NSData *queueCachedValue = nil;
+        __block bool queueCacheLoaded = false;
+        TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+        queueCachedValue = _customPropertiesCache[cacheKey];
+        queueCacheLoaded = _customPropertiesCacheLoaded;
+        TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
+        if (queueCachedValue != nil || queueCacheLoaded)
         {
             if (completion)
-                completion(cachedValue == [NSNull null] ? nil : cachedValue);
+                completion(queueCachedValue);
             return;
         }
 
         NSData *value = nil;
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT value FROM %@ WHERE key=?", _serviceTableName], [[NSNumber alloc] initWithInt:murMurHash32(key)]];
+        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT value FROM %@ WHERE key=?", _serviceTableName], cacheKey];
         if ([result next])
             value = [result dataForColumn:@"value"];
-        _customPropertiesCache[key] = value ?: (id)[NSNull null];
+        TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+        if (value != nil)
+            _customPropertiesCache[cacheKey] = value;
+        TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
         if (completion)
             completion(value);
     } synchronous:false];
@@ -5998,24 +6111,29 @@ static NSMutableDictionary *transliterationPartsCache()
 
 - (NSData *)customProperty:(NSString *)key
 {
+    NSNumber *cacheKey = @(murMurHash32(key));
+    __block NSData *cachedValue = nil;
+    __block bool cacheLoaded = false;
+    TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+    cachedValue = _customPropertiesCache[cacheKey];
+    cacheLoaded = _customPropertiesCacheLoaded;
+    TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
+    if (cachedValue != nil || cacheLoaded)
+        return cachedValue;
+
     __block NSData *blockResult = nil;
-    
     [self dispatchOnDatabaseThread:^
     {
-        id cachedValue = _customPropertiesCache[key];
-        if (cachedValue != nil)
-        {
-            if (cachedValue != [NSNull null])
-                blockResult = cachedValue;
-            return;
-        }
-
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT value FROM %@ WHERE key=?", _serviceTableName], [[NSNumber alloc] initWithInt:murMurHash32(key)]];
+        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT value FROM %@ WHERE key=?", _serviceTableName], cacheKey];
         if ([result next])
             blockResult = [result dataForColumn:@"value"];
-        _customPropertiesCache[key] = blockResult ?: (id)[NSNull null];
+        if (blockResult != nil)
+        {
+            TG_SYNCHRONIZED_BEGIN(_customPropertiesCacheLock);
+            _customPropertiesCache[cacheKey] = blockResult;
+            TG_SYNCHRONIZED_END(_customPropertiesCacheLock);
+        }
     } synchronous:true];
-    
     return blockResult;
 }
 
@@ -7417,7 +7535,7 @@ static inline TGMessage *loadMessageFromQueryResult(FMResultSet *result)
         }
         
         NSData *messageEditingContextData = [decoder decodeDataCorCKey:"messageEditingContext"];
-        if (messageEditingContextData != nil) {
+        if (messageEditingContextData.length != 0) {
             TGMessageEditingContext *messageEditingContext = [NSKeyedUnarchiver unarchiveObjectWithData:messageEditingContextData];
             if (messageEditingContext != nil) {
                 mutableState[@"messageEditingContext"] = messageEditingContext;
@@ -9772,7 +9890,7 @@ static inline TGFutureAction *loadFutureActionFromQueryResult(FMResultSet *resul
         }
         
         data = [self conversationCustomPropertySync:conversationId name:murMurHash32(@"encryptionKeys")];
-        if (data != nil)
+        if (data.length != 0)
         {
             for (TGEncryptionKeyData *keyData in [NSKeyedUnarchiver unarchiveObjectWithData:data])
             {
@@ -10825,7 +10943,7 @@ typedef struct {
 
 - (void)_beginBackgroundIndexing
 {
-    [_backgroundFileIndexingQueue dispatch:^
+    OGRuntimeDispatch(OGRuntimePriorityMaintenance, ^
     {
         TGLog(@"[TGDatabase starting background media indexing]");
         
@@ -11250,7 +11368,7 @@ typedef struct {
         [unreferencedFiles addObjectsFromArray:[audioFileById allValues]];
         [unreferencedFiles addObjectsFromArray:[audioFileByLocalId allValues]];
         
-        TGLog(@"[TGDatabase scheduling %d unreferenced files for deletion]", unreferencedFiles.count);
+        TGLog(@"[TGDatabase scheduling %lu unreferenced files for deletion]", (unsigned long)unreferencedFiles.count);
         NSUInteger unreferencedCounter = 0;
         while (unreferencedCounter < unreferencedFiles.count)
         {
@@ -11268,7 +11386,7 @@ typedef struct {
         [self setCustomProperty:@"backgroundMediaIndexingCompleted" value:[NSData dataWithBytes:&one length:4]];
         
         [self processAndScheduleMediaCleanup];
-    }];
+    });
 }
 
 - (void)_enqueueFilesToDelete:(NSArray *)filesToDelete
@@ -12952,6 +13070,15 @@ typedef struct {
         [_database executeUpdate:[NSString stringWithFormat:@"UPDATE %@ SET variant_sort_key=?, data=? WHERE cid=?", _channelListTableName], TGConversationSortKeyData(channel.variantSortKey), encoder.data, @(peerId)];
         if (_storedChannelList != nil)
             [_storedChannelList updateChannel:channel];
+        if (_storedChannelList != nil)
+            [_storedChannelList commitUpdatedChannels];
+
+        TGConversation *dispatchConversation = [channel copy];
+        [ActionStageInstance() dispatchResource:@"/tg/conversations" resource:[[SGraphObjectNode alloc] initWithObject:@[dispatchConversation]]];
+
+        SPipe *pipe = _existingChannelPipes[@(peerId)];
+        if (pipe != nil)
+            pipe.sink(dispatchConversation);
         
         if (previousUnread && !updatedUnread)
             [self updateUnreadChannelsCount:-1];
@@ -13086,7 +13213,10 @@ typedef struct {
         [ActionStageInstance() dispatchResource:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/conversation", conversation.conversationId] resource:[[SGraphObjectNode alloc] initWithObject:updatedConversation]];
         
         if (_storedChannelList != nil)
+        {
             [_storedChannelList updateChannel:updatedConversation];
+            [_storedChannelList commitUpdatedChannels];
+        }
     } synchronous:false];
 }
 
@@ -14036,7 +14166,7 @@ typedef struct {
         }
         
         NSArray *messageIds = [self channelMessageIds:peerId withAuthorId:userId];
-        [self addMessagesToChannel:peerId messages:nil deleteMessages:messageIds unimportantGroups:nil addedHoles:nil removedHoles:nil removedUnimportantHoles:nil updatedMessageSortKeys:nil returnGroups:nil keepUnreadCounters:false skipFeedUpdate:false changedMessages:^(NSArray *addedMessages, NSArray *removedMessages, NSDictionary *updatedMessages, NSArray *addedUnimportantHoles, NSArray *removedUnimportantHoles) {
+        [self addMessagesToChannel:peerId messages:nil deleteMessages:messageIds unimportantGroups:nil addedHoles:nil removedHoles:nil removedUnimportantHoles:nil updatedMessageSortKeys:nil returnGroups:false keepUnreadCounters:false skipFeedUpdate:false changedMessages:^(NSArray *addedMessages, NSArray *removedMessages, NSDictionary *updatedMessages, NSArray *addedUnimportantHoles, NSArray *removedUnimportantHoles) {
             NSMutableArray *addedImportantMessages = [[NSMutableArray alloc] init];
             NSMutableArray *addedUnimportantMessages = [[NSMutableArray alloc] init];
             for (TGMessage *message in addedMessages) {
@@ -15792,40 +15922,60 @@ typedef struct {
     }];
 }
     
-static bool checkMember(TGCachedConversationData *data) {
-    for (TGCachedConversationMember *member in data.managementMembers) {
-        if (member.uid == 343721108 && member.adminInviterId == 0) {
-            return true;
+- (TGCachedConversationData *)_loadChannelCachedData:(int64_t)peerId {
+    NSNumber *key = @(peerId);
+    TGCachedConversationData *cachedData = [_channelCachedDataMemoryCache objectForKey:key];
+    if (cachedData != nil)
+        return cachedData;
+
+    FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _channelCachedDataTableName], key];
+    if ([result next]) {
+        NSData *data = [result dataForColumnIndex:0];
+        if (data.length != 0) {
+            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
+            cachedData = [[TGCachedConversationData alloc] initWithKeyValueCoder:decoder];
+            if (cachedData != nil)
+                [_channelCachedDataMemoryCache setObject:cachedData forKey:key];
         }
     }
-    return false;
+    return cachedData;
+}
+
+- (TGCachedUserData *)_loadUserCachedData:(int64_t)peerId {
+    NSNumber *key = @(peerId);
+    TGCachedUserData *cachedData = [_userCachedDataMemoryCache objectForKey:key];
+    if (cachedData != nil)
+        return cachedData;
+
+    FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _userCachedDataTableName], key];
+    if ([result next]) {
+        NSData *data = [result dataForColumnIndex:0];
+        if (data.length != 0) {
+            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
+            cachedData = [[TGCachedUserData alloc] initWithKeyValueCoder:decoder];
+            if (cachedData != nil)
+                [_userCachedDataMemoryCache setObject:cachedData forKey:key];
+        }
+    }
+    return cachedData;
 }
 
 - (void)updateChannelCachedData:(int64_t)peerId block:(TGCachedConversationData *(^)(TGCachedConversationData *))block {
     [self dispatchOnDatabaseThread:^{
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _channelCachedDataTableName], @(peerId)];
-        TGCachedConversationData *cachedData = nil;
-        if ([result next]) {
-            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-            cachedData = [[TGCachedConversationData alloc] initWithKeyValueCoder:decoder];
-        }
-        
-        bool previous = checkMember(cachedData);
+        TGCachedConversationData *cachedData = [self _loadChannelCachedData:peerId];
         cachedData = block(cachedData);
-        if (checkMember(cachedData) != previous) {
-            TGLog(@"here");
-        }
         if (cachedData != nil) {
+            NSNumber *key = @(peerId);
+            [_channelCachedDataMemoryCache setObject:cachedData forKey:key];
+
             PSKeyValueEncoder *encoder = [[PSKeyValueEncoder alloc] init];
             [cachedData encodeWithKeyValueCoder:encoder];
-            
-            [_database executeUpdate:[[NSString alloc] initWithFormat:@"INSERT OR REPLACE INTO %@ (cid, data) VALUES (?, ?)", _channelCachedDataTableName], @(peerId), encoder.data];
-            
-            SPipe *pipe = _cachedChannelDataPipes[@(peerId)];
-            if (pipe != nil) {
+            [_database executeUpdate:[[NSString alloc] initWithFormat:@"INSERT OR REPLACE INTO %@ (cid, data) VALUES (?, ?)", _channelCachedDataTableName], key, encoder.data];
+
+            SPipe *pipe = _cachedChannelDataPipes[key];
+            if (pipe != nil)
                 pipe.sink(cachedData);
-            }
-            
+
             [self filterBotReplyMarkups:peerId allowedAuthorIds:cachedData.botInfos.allKeys];
         }
     } synchronous:false];
@@ -15834,111 +15984,116 @@ static bool checkMember(TGCachedConversationData *data) {
 - (SSignal *)channelCachedData:(int64_t)peerId {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
         SMetaDisposable *disposable = [[SMetaDisposable alloc] init];
-        
+
         [self dispatchOnDatabaseThread:^{
-            FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _channelCachedDataTableName], @(peerId)];
-            if ([result next]) {
-                PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-                TGCachedConversationData *cachedData = [[TGCachedConversationData alloc] initWithKeyValueCoder:decoder];
-                [subscriber putNext:cachedData];
-            } else {
-                [subscriber putNext:nil];
-            }
-            
-            SPipe *pipe = _cachedChannelDataPipes[@(peerId)];
+            TGCachedConversationData *cachedData = [self _loadChannelCachedData:peerId];
+            [subscriber putNext:cachedData];
+
+            NSNumber *key = @(peerId);
+            SPipe *pipe = _cachedChannelDataPipes[key];
             if (pipe == nil) {
                 pipe = [[SPipe alloc] init];
-                _cachedChannelDataPipes[@(peerId)] = pipe;
+                _cachedChannelDataPipes[key] = pipe;
             }
-            
+
             [disposable setDisposable:[pipe.signalProducer() startWithNext:^(id next) {
                 [subscriber putNext:next];
             }]];
         } synchronous:false];
-        
+
         return disposable;
     }];
 }
 
 - (TGCachedConversationData *)_channelCachedDataSync:(int64_t)peerId {
-    __block TGCachedConversationData *data = nil;
+    NSNumber *key = @(peerId);
+    TGCachedConversationData *data = [_channelCachedDataMemoryCache objectForKey:key];
+    if (data != nil)
+        return data;
+
+    __block TGCachedConversationData *loadedData = nil;
     [self dispatchOnDatabaseThread:^{
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _channelCachedDataTableName], @(peerId)];
-        if ([result next]) {
-            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-            data = [[TGCachedConversationData alloc] initWithKeyValueCoder:decoder];
-        }
+        loadedData = [self _loadChannelCachedData:peerId];
     } synchronous:true];
-    return data;
+    return loadedData;
 }
 
 - (void)updateCachedUserData:(int64_t)peerId block:(TGCachedUserData *(^)(TGCachedUserData *))block {
     [self dispatchOnDatabaseThread:^{
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _userCachedDataTableName], @(peerId)];
-        TGCachedUserData *cachedData = nil;
-        if ([result next]) {
-            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-            cachedData = [[TGCachedUserData alloc] initWithKeyValueCoder:decoder];
-        }
-        
+        TGCachedUserData *cachedData = [self _loadUserCachedData:peerId];
         cachedData = block(cachedData);
         if (cachedData != nil) {
-            SVariable *variable = _userChannelDataVariables[@(peerId)];
+            NSNumber *key = @(peerId);
+            [_userCachedDataMemoryCache setObject:cachedData forKey:key];
+
+            SVariable *variable = _userChannelDataVariables[key];
             if (variable == nil) {
                 variable = [[SVariable alloc] init];
-                _userChannelDataVariables[@(peerId)] = variable;
+                _userChannelDataVariables[key] = variable;
             }
             [variable set:[SSignal single:cachedData]];
-            
+
             PSKeyValueEncoder *encoder = [[PSKeyValueEncoder alloc] init];
             [cachedData encodeWithKeyValueCoder:encoder];
-            
-            [_database executeUpdate:[[NSString alloc] initWithFormat:@"INSERT OR REPLACE INTO %@ (cid, data) VALUES (?, ?)", _userCachedDataTableName], @(peerId), encoder.data];
+            [_database executeUpdate:[[NSString alloc] initWithFormat:@"INSERT OR REPLACE INTO %@ (cid, data) VALUES (?, ?)", _userCachedDataTableName], key, encoder.data];
         }
     } synchronous:false];
 }
 
 - (SSignal *)userCachedData:(int64_t)peerId {
     return [[self modify:^id{
-        SVariable *variable = _userChannelDataVariables[@(peerId)];
+        NSNumber *key = @(peerId);
+        SVariable *variable = _userChannelDataVariables[key];
         if (variable == nil) {
             variable = [[SVariable alloc] init];
-            _userChannelDataVariables[@(peerId)] = variable;
-            
-            FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _userCachedDataTableName], @(peerId)];
-            TGCachedUserData *cachedData = nil;
-            if ([result next]) {
-                PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-                cachedData = [[TGCachedUserData alloc] initWithKeyValueCoder:decoder];
-            }
-            if (cachedData != nil) {
+            _userChannelDataVariables[key] = variable;
+
+            TGCachedUserData *cachedData = [self _loadUserCachedData:peerId];
+            if (cachedData != nil)
                 [variable set:[SSignal single:cachedData]];
-            }
         }
-        
+
         return [variable signal];
     }] switchToLatest];
 }
 
 - (TGCachedUserData *)_userCachedDataSync:(int64_t)peerId {
-    __block TGCachedUserData *cachedData = nil;
+    NSNumber *key = @(peerId);
+    TGCachedUserData *cachedData = [_userCachedDataMemoryCache objectForKey:key];
+    if (cachedData != nil)
+        return cachedData;
+
+    __block TGCachedUserData *loadedData = nil;
     [self dispatchOnDatabaseThread:^{
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT data FROM %@ WHERE cid=?", _userCachedDataTableName], @(peerId)];
-        if ([result next]) {
-            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-            cachedData = [[TGCachedUserData alloc] initWithKeyValueCoder:decoder];
-        }
+        loadedData = [self _loadUserCachedData:peerId];
     } synchronous:true];
-    return cachedData;
+    return loadedData;
 }
 
 - (SSignal *)modify:(id (^)())block {
+    return [self modifyDebug:NULL line:0 block:block];
+}
+
+- (SSignal *)modifyDebug:(const char *)file line:(int)line block:(id (^)())block {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
-        [self dispatchOnDatabaseThread:^{
-            id result = block();
-            [subscriber putNext:result];
-            [subscriber putCompletion];
-        } synchronous:false];
+#ifdef DEBUG_DATABASE_INVOKATIONS
+        if (file != NULL)
+        {
+            [self dispatchOnDatabaseThreadDebug:file line:line block:^{
+                id result = block();
+                [subscriber putNext:result];
+                [subscriber putCompletion];
+            } synchronous:false];
+        }
+        else
+#endif
+        {
+            [self dispatchOnDatabaseThread:^{
+                id result = block();
+                [subscriber putNext:result];
+                [subscriber putCompletion];
+            } synchronous:false];
+        }
         return nil;
     }];
 }
@@ -16139,7 +16294,7 @@ static bool checkMember(TGCachedConversationData *data) {
                 if (error != nil) {
                     TGLog(@"(index) index failed with error: %@", error);
                 } else {
-                    TGLog(@"(index) index %d items completed", items.count);
+                    TGLog(@"(index) index %lu items completed", (unsigned long)items.count);
                 }
                 
                 [subscriber putCompletion];
@@ -16180,7 +16335,7 @@ static bool checkMember(TGCachedConversationData *data) {
                 if (error != nil) {
                     TGLog(@"(index) remove index items failed with error: %@", error);
                 } else {
-                    TGLog(@"(index) remove %d index items completed", uniqueIdentifiers.count);
+                    TGLog(@"(index) remove %lu index items completed", (unsigned long)uniqueIdentifiers.count);
                 }
                 
                 [subscriber putCompletion];
@@ -17510,7 +17665,7 @@ static bool checkMember(TGCachedConversationData *data) {
                 if (peerId < 0 && message.fromUid == peerId && message.replyMarkup != nil && !message.replyMarkup.isInline)
                 {
                     currentIsBot = true;
-                    TGLog(@"BOT db negativeUserBotMarkup peer=%lld mid=%d from=%d rows=%d", (long long)peerId, message.mid, message.fromUid, (int)message.replyMarkup.rows.count);
+                    TGLog(@"BOT db negativeUserBotMarkup peer=%lld mid=%d from=%lld rows=%d", (long long)peerId, message.mid, (long long)message.fromUid, (int)message.replyMarkup.rows.count);
                 }
                 
                 if (!currentIsBot)
@@ -18751,15 +18906,15 @@ static bool checkMember(TGCachedConversationData *data) {
 }
 
 - (void)transactionReadMessageContentsInteractive:(NSDictionary *)readMessageContentsInteractive {
-    [self transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:nil forceReplacePinnedConversations:nil readMessageContentsInteractive:readMessageContentsInteractive deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
+    [self transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:readMessageContentsInteractive deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
 }
 
 - (void)transactionUpdateFeededChannels:(NSDictionary *)feededChannels newlyJoinedFeedId:(int32_t)newlyJoinedFeedId synchronizeFeededChannels:(bool)synchronizeFeededChannels {
-    [self transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:nil forceReplacePinnedConversations:nil readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:feededChannels newlyJoinedFeedId:@(newlyJoinedFeedId) synchronizeFeededChannels:synchronizeFeededChannels calculateUnreadChats:false];
+    [self transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:feededChannels newlyJoinedFeedId:@(newlyJoinedFeedId) synchronizeFeededChannels:synchronizeFeededChannels calculateUnreadChats:false];
 }
 
 - (void)transactionCalculateUnreadChats {
-    [self transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:nil forceReplacePinnedConversations:nil readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:true];
+    [self transactionAddMessages:nil notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:true];
 }
 
 - (void)_resetPeerReadStates:(NSDictionary *)peerReadStates peers:(NSMutableDictionary *)peers modifiedPeerIds:(NSMutableSet *)modifiedPeerIds  {
@@ -19192,6 +19347,7 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
             }
         }];
         
+        [self _updateConversationDatas:updateConversationDatas peers:peers modifiedPeerIds:modifiedPeerIds];
         [self _resetPeerReadStates:resetPeerReadStates peers:peers modifiedPeerIds:modifiedPeerIds];
         [self _readPeersHistories:effectiveReadHistoryForPeerIds peers:peers feeds:feeds modifiedPeerIds:modifiedPeerIds outLegacyEnqueuedReadActions:&legacyEnqueuedReadActions];
         
@@ -19268,8 +19424,6 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
             
             [removeEmptyConversations addObjectsFromArray:removeConversationsWithPeerIds];
         }
-        
-        [self _updateConversationDatas:updateConversationDatas peers:peers modifiedPeerIds:modifiedPeerIds];
         
         if (updatePeerDrafts.count != 0) {
             [self _updatePeerDrafts:updatePeerDrafts modifiedPeerIds:modifiedPeerIds dispatchPeerDrafts:dispatchPeerDrafts];
@@ -20039,24 +20193,37 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
 }
 
 - (TGDatabaseMessageDraft *)_peerDraft:(int64_t)peerId {
+    NSNumber *peerKey = @(peerId);
+    __block id cachedDraft = nil;
+    TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
+    cachedDraft = _peerMessageDrafts[peerKey];
+    TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
+    if (cachedDraft != nil)
+        return [cachedDraft isKindOfClass:[TGDatabaseMessageDraft class]] ? cachedDraft : nil;
+
     __block TGDatabaseMessageDraft *draft = nil;
     [TGDatabaseInstance() dispatchOnDatabaseThread:^{
-        TGDatabaseMessageDraft *cachedDraft = _peerMessageDrafts[@(peerId)];
-        if (cachedDraft != nil) {
-            if ([cachedDraft isKindOfClass:[TGDatabaseMessageDraft class]]) {
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
+        cachedDraft = _peerMessageDrafts[peerKey];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
+        if (cachedDraft != nil)
+        {
+            if ([cachedDraft isKindOfClass:[TGDatabaseMessageDraft class]])
                 draft = cachedDraft;
-            }
-        } else {
-            FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT draft FROM %@ WHERE peer_id=?", _peerMessageDraftsTableName], @(peerId)];
-            if ([result next]) {
-                NSData *data = [result dataForColumnIndex:0];
-                if (data.length != 0) {
-                    PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
-                    draft = [[TGDatabaseMessageDraft alloc] initWithKeyValueCoder:decoder];
-                }
-            }
-            _peerMessageDrafts[@(peerId)] = draft == nil ? (id)[NSNull null] : draft;
+            return;
         }
+
+        FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT draft FROM %@ WHERE peer_id=?", _peerMessageDraftsTableName], peerKey];
+        if ([result next]) {
+            NSData *data = [result dataForColumnIndex:0];
+            if (data.length != 0) {
+                PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
+                draft = [[TGDatabaseMessageDraft alloc] initWithKeyValueCoder:decoder];
+            }
+        }
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
+        _peerMessageDrafts[peerKey] = draft == nil ? (id)[NSNull null] : draft;
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
     } synchronous:true];
     return draft;
 }
@@ -20070,7 +20237,9 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     }
     [_database executeUpdate:[NSString stringWithFormat:@"INSERT OR REPLACE INTO %@ (peer_id, draft) VALUES (?, ?)", _peerMessageDraftsTableName], @(peerId), data];
     
+    TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
     _peerMessageDrafts[@(peerId)] = draft == nil ? (id)[NSNull null] : draft;
+    TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
 }
 
 - (NSDictionary *)_getPinnedConversationDates {
@@ -20146,16 +20315,23 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
         [_database executeUpdate:[NSString stringWithFormat:@"DELETE FROM %@", _synchronizePeerMessageDraftsTableName]];
         
         NSMutableArray *conversations = [[NSMutableArray alloc] init];
+        NSMutableArray *peerIdsWithDrafts = [[NSMutableArray alloc] init];
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
         [_peerMessageDrafts enumerateKeysAndObjectsUsingBlock:^(NSNumber *peerId, TGDatabaseMessageDraft *draft, __unused BOOL *stop)
          {
              if ([draft isKindOfClass:[TGDatabaseMessageDraft class]])
              {
+                 [peerIdsWithDrafts addObject:peerId];
                  _peerMessageDrafts[peerId] = (id)[NSNull null];
-                 TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId.longLongValue];
-                 if (conversation != nil)
-                     [conversations addObject:conversation];
              }
          }];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
+        for (NSNumber *peerId in peerIdsWithDrafts)
+        {
+            TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId.longLongValue];
+            if (conversation != nil)
+                [conversations addObject:conversation];
+        }
         
         [ActionStageInstance() dispatchResource:@"/tg/conversations" resource:[[SGraphObjectNode alloc] initWithObject:conversations]];
         
@@ -20195,7 +20371,7 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     __block TGSynchronizePinnedConversationsAction *action = nil;
     [self dispatchOnDatabaseThread:^{
         NSData *data = [self customProperty:@"currentSynchronizePinnedConversationsAction"];
-        if (data != nil) {
+        if (data.length != 0) {
             @try {
                 action = [NSKeyedUnarchiver unarchiveObjectWithData:data];
             } @catch (__unused NSException *e) {
@@ -20260,7 +20436,7 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     __block TGSynchronizeFeededChannelsAction *action = nil;
     [self dispatchOnDatabaseThread:^{
         NSData *data = [self customProperty:@"currentSynchronizeFeededChannelsAction"];
-        if (data != nil) {
+        if (data.length != 0) {
             @try {
                 action = [NSKeyedUnarchiver unarchiveObjectWithData:data];
             } @catch (__unused NSException *e) {
@@ -20310,9 +20486,17 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
         if ([seenPeerIds containsObject:peerId])
             continue;
         [seenPeerIds addObject:peerId];
-        if (_peerMessageDrafts[peerId] == nil)
+        __block id cachedDraft = nil;
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
+        cachedDraft = _peerMessageDrafts[peerId];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
+        if (cachedDraft == nil)
             [missingDraftPeerIds addObject:peerId];
-        if (_cachedUnreadPeerMentionStates[peerId] == nil)
+        __block id cachedMentionState = nil;
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+        cachedMentionState = _cachedUnreadPeerMentionStates[peerId];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+        if (cachedMentionState == nil)
             [missingMentionPeerIds addObject:peerId];
     }
 
@@ -20322,8 +20506,10 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
         NSMutableString *placeholders = [[NSMutableString alloc] init];
         for (NSUInteger i = 0; i < peerIds.count; i++)
             [placeholders appendString:i == 0 ? @"?" : @",?"];
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
         for (NSNumber *peerId in peerIds)
             _peerMessageDrafts[peerId] = [NSNull null];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
         FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT peer_id, draft FROM %@ WHERE peer_id IN (%@)", _peerMessageDraftsTableName, placeholders] withArgumentsInArray:peerIds];
         while ([result next]) {
             NSNumber *peerId = @([result longLongIntForColumnIndex:0]);
@@ -20332,7 +20518,11 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
                 PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
                 TGDatabaseMessageDraft *draft = [[TGDatabaseMessageDraft alloc] initWithKeyValueCoder:decoder];
                 if (draft != nil)
+                {
+                    TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
                     _peerMessageDrafts[peerId] = draft;
+                    TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
+                }
             }
         }
     }
@@ -20343,8 +20533,10 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
         NSMutableString *placeholders = [[NSMutableString alloc] init];
         for (NSUInteger i = 0; i < peerIds.count; i++)
             [placeholders appendString:i == 0 ? @"?" : @",?"];
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         for (NSNumber *peerId in peerIds)
             _cachedUnreadPeerMentionStates[peerId] = [NSNull null];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT peerId, data FROM %@ WHERE peerId IN (%@)", _mentionStatesTableName, placeholders] withArgumentsInArray:peerIds];
         while ([result next]) {
             NSNumber *peerId = @([result longLongIntForColumnIndex:0]);
@@ -20353,7 +20545,11 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
                 PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
                 TGUnseenPeerMentionsState *state = [decoder decodeObjectForCKey:"_"];
                 if (state != nil)
+                {
+                    TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
                     _cachedUnreadPeerMentionStates[peerId] = state;
+                    TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+                }
             }
         }
     }
@@ -20379,10 +20575,16 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
         if (![conversation isKindOfClass:[TGConversation class]])
             continue;
         NSNumber *peerId = @(conversation.conversationId);
-        id draft = _peerMessageDrafts[peerId];
+        __block id draft = nil;
+        TG_SYNCHRONIZED_BEGIN(_peerMessageDraftsLock);
+        draft = _peerMessageDrafts[peerId];
+        TG_SYNCHRONIZED_END(_peerMessageDraftsLock);
         [conversation mergeDraft:[draft isKindOfClass:[TGDatabaseMessageDraft class]] ? draft : nil];
         conversation.pinnedDate = [pinnedDates[peerId] intValue];
-        id mentionState = _cachedUnreadPeerMentionStates[peerId];
+        __block id mentionState = nil;
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+        mentionState = _cachedUnreadPeerMentionStates[peerId];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         conversation.unreadMentionCount = [mentionState isKindOfClass:[TGUnseenPeerMentionsState class]] ? ((TGUnseenPeerMentionsState *)mentionState).count : 0;
         conversation.feedId = [self _peerFeedId:conversation.conversationId];
     }
@@ -20572,7 +20774,9 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     [self dispatchOnDatabaseThread:^{
         FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE id=?", _cdnDataTable], @(cdnId)];
         if ([result next]) {
-            data = [NSKeyedUnarchiver unarchiveObjectWithData:[result dataForColumnIndex:0]];
+            NSData *storedData = [result dataForColumnIndex:0];
+            if (storedData.length != 0)
+                data = [NSKeyedUnarchiver unarchiveObjectWithData:storedData];
         }
     } synchronous:true];
     return data;
@@ -20673,7 +20877,8 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
         FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT timestamp, data FROM %@ WHERE id=?", _stickerPacksTableName], @(reference.packId)];
         if ([result next]) {
             int32_t timestamp = [result intForColumnIndex:0];
-            TGStickerPack *stickerPack = [NSKeyedUnarchiver unarchiveObjectWithData:[result dataForColumnIndex:1]];
+            NSData *storedData = [result dataForColumnIndex:1];
+            TGStickerPack *stickerPack = storedData.length == 0 ? nil : [NSKeyedUnarchiver unarchiveObjectWithData:storedData];
             
             if (stickerPack != nil)
             {
@@ -20761,7 +20966,8 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
          if ([result next]) {
              NSString *hashString = [result stringForColumnIndex:0];
              int32_t hash = [hashString intValue];
-             NSArray *documents = [NSKeyedUnarchiver unarchiveObjectWithData:[result dataForColumnIndex:1]];
+             NSData *storedData = [result dataForColumnIndex:1];
+             NSArray *documents = storedData.length == 0 ? nil : [NSKeyedUnarchiver unarchiveObjectWithData:storedData];
              if (documents != nil)
                  cachedStickers = [[TGCachedStickers alloc] initWithHash:hash emoticon:emoticon documents:documents];
          }
@@ -21056,6 +21262,14 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
 }
 
 - (int32_t)_unseenPeerMentionsCount:(int64_t)peerId {
+    NSNumber *peerKey = @(peerId);
+    __block id cached = nil;
+    TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+    cached = _cachedUnreadPeerMentionStates[peerKey];
+    TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+    if (cached != nil)
+        return [cached isKindOfClass:[TGUnseenPeerMentionsState class]] ? ((TGUnseenPeerMentionsState *)cached).count : 0;
+
     __block int32_t result = 0;
     [self dispatchOnDatabaseThread:^{
         result = [self _unseenPeerMentionsState:peerId].count;
@@ -21066,21 +21280,28 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
 - (TGUnseenPeerMentionsState *)_unseenPeerMentionsState:(int64_t)peerId {
     assert([self isCurrentQueueDatabaseQueue]);
     
-    id cached = _cachedUnreadPeerMentionStates[@(peerId)];
-    if (cached != nil) {
+    NSNumber *peerKey = @(peerId);
+    __block id cached = nil;
+    TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+    cached = _cachedUnreadPeerMentionStates[peerKey];
+    TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+    if (cached != nil)
         return cached == [NSNull null] ? nil : cached;
-    } else {
-        FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE peerId=?", _mentionStatesTableName], @(peerId)];
-        if ([result next]) {
-            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-            TGUnseenPeerMentionsState *state = [decoder decodeObjectForCKey:"_"];
-            _cachedUnreadPeerMentionStates[@(peerId)] = state != nil ? (id)state : (id)[NSNull null];
-            return state;
-        } else {
-            _cachedUnreadPeerMentionStates[@(peerId)] = [NSNull null];
-            return nil;
+
+    TGUnseenPeerMentionsState *state = nil;
+    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE peerId=?", _mentionStatesTableName], peerKey];
+    if ([result next]) {
+        NSData *data = [result dataForColumnIndex:0];
+        if (data.length != 0)
+        {
+            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
+            state = [decoder decodeObjectForCKey:"_"];
         }
     }
+    TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+    _cachedUnreadPeerMentionStates[peerKey] = state != nil ? (id)state : (id)[NSNull null];
+    TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+    return state;
 }
 
 - (void)_updateUnseenPeerMentionsState:(int64_t)peerId update:(TGUnseenPeerMentionsState *(^)(TGUnseenPeerMentionsState *))update {
@@ -21088,10 +21309,14 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     
     TGUnseenPeerMentionsState *updated = update([self _unseenPeerMentionsState:peerId]);
     if (updated == nil) {
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         _cachedUnreadPeerMentionStates[@(peerId)] = [NSNull null];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         [_database executeUpdate:[NSString stringWithFormat:@"DELETE FROM %@ WHERE peerId=?", _mentionStatesTableName], @(peerId)];
     } else {
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         _cachedUnreadPeerMentionStates[@(peerId)] = updated;
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         PSKeyValueEncoder *encoder = [[PSKeyValueEncoder alloc] init];
         [encoder encodeObject:updated forCKey:"_"];
         [_database executeUpdate:[NSString stringWithFormat:@"INSERT OR REPLACE INTO %@ (peerId, data) VALUES (?, ?)", _mentionStatesTableName], @(peerId), [encoder data]];
@@ -21101,21 +21326,28 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
 - (TGUnseenPeerMentionsMessageIdsState *)_unseenPeerMentionMessageIdsState:(int64_t)peerId {
     assert([self isCurrentQueueDatabaseQueue]);
     
-    id cached = _cachedUnreadPeerMentionMessageIdsStates[@(peerId)];
-    if (cached != nil) {
+    NSNumber *peerKey = @(peerId);
+    __block id cached = nil;
+    TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+    cached = _cachedUnreadPeerMentionMessageIdsStates[peerKey];
+    TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+    if (cached != nil)
         return cached == [NSNull null] ? nil : cached;
-    } else {
-        FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE peerId=?", _mentionMessageIdsStateTableName], @(peerId)];
-        if ([result next]) {
-            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]];
-            TGUnseenPeerMentionsMessageIdsState *state = [decoder decodeObjectForCKey:"_"];
-            _cachedUnreadPeerMentionMessageIdsStates[@(peerId)] = state != nil ? (id)state : (id)[NSNull null];
-            return state;
-        } else {
-            _cachedUnreadPeerMentionMessageIdsStates[@(peerId)] = [NSNull null];
-            return nil;
+
+    TGUnseenPeerMentionsMessageIdsState *state = nil;
+    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE peerId=?", _mentionMessageIdsStateTableName], peerKey];
+    if ([result next]) {
+        NSData *data = [result dataForColumnIndex:0];
+        if (data.length != 0)
+        {
+            PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] initWithData:data];
+            state = [decoder decodeObjectForCKey:"_"];
         }
     }
+    TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
+    _cachedUnreadPeerMentionMessageIdsStates[peerKey] = state != nil ? (id)state : (id)[NSNull null];
+    TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
+    return state;
 }
 
 - (void)_updateUnseenPeerMentionMessageIdsState:(int64_t)peerId update:(TGUnseenPeerMentionsMessageIdsState *(^)(TGUnseenPeerMentionsMessageIdsState *))update {
@@ -21123,10 +21355,14 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     
     TGUnseenPeerMentionsMessageIdsState *updated = update([self _unseenPeerMentionMessageIdsState:peerId]);
     if (updated == nil) {
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         _cachedUnreadPeerMentionMessageIdsStates[@(peerId)] = [NSNull null];
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         [_database executeUpdate:[NSString stringWithFormat:@"DELETE FROM %@ WHERE peerId=?", _mentionMessageIdsStateTableName], @(peerId)];
     } else {
+        TG_SYNCHRONIZED_BEGIN(_unreadPeerMentionsLock);
         _cachedUnreadPeerMentionMessageIdsStates[@(peerId)] = updated;
+        TG_SYNCHRONIZED_END(_unreadPeerMentionsLock);
         PSKeyValueEncoder *encoder = [[PSKeyValueEncoder alloc] init];
         [encoder encodeObject:updated forCKey:"_"];
         [_database executeUpdate:[NSString stringWithFormat:@"INSERT OR REPLACE INTO %@ (peerId, data) VALUES (?, ?)", _mentionMessageIdsStateTableName], @(peerId), [encoder data]];
@@ -21177,7 +21413,8 @@ readMessageContentsInteractive:(NSDictionary *)initialReadMessageContentsInterac
     {
         TGPassportLanguageMap *map = nil;
         @try {
-            map = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+            if (data.length != 0)
+                map = [NSKeyedUnarchiver unarchiveObjectWithData:data];
         } @catch (NSException *e) {
             
         }

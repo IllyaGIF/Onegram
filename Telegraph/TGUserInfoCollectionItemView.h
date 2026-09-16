@@ -42,6 +42,8 @@
 
 - (void)setPhoneNumber:(NSString *)phoneNumber;
 - (void)setUsername:(NSString *)username;
+- (void)setAbout:(NSString *)about;
+- (void)setBrandedDetailsTextScale:(CGFloat)scale;
 
 - (void)setAvatarHidden:(bool)hidden animated:(bool)animated;
 - (id)avatarView;

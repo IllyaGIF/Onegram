@@ -962,7 +962,8 @@ typedef enum {
     [ActionStageInstance() watchForPaths:@[
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/typing", _conversationId],
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/conversation", _conversationId],
-        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2]
+        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2],
+        [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]
     ] watcher:self];
     
     [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _conversationId] watcher:self];
@@ -1078,6 +1079,13 @@ typedef enum {
 
 - (void)actionStageResourceDispatched:(NSString *)path resource:(id)resource arguments:(id)arguments
 {
+    if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]])
+    {
+        TGDispatchOnMainThread(^{
+            [self _refreshPinnedMessages];
+        });
+    }
+
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/messages", _conversationId]])
     {
         NSArray *messages = ((SGraphObjectNode *)resource).object;
@@ -1279,7 +1287,7 @@ typedef enum {
     }
     
     return [[canBeContextBot ? [TGRecentContextBotsSignal recentBots] : [SSignal single:@[]] mapToSignal:^SSignal *(NSArray *userIds) {
-        return [TGDatabaseInstance() modify:^id{
+        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             NSMutableArray *users = [[NSMutableArray alloc] init];
             for (TGUser *user in [userDict allValues]) {
                 if (user.uid != TGTelegraphInstance.clientUserId || includeSelf) {

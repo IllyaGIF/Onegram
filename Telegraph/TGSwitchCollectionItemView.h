@@ -27,6 +27,7 @@
 - (void)setIsOn:(bool)isOn animated:(bool)animated;
 - (void)setIsEnabled:(bool)isEnabled;
 - (void)setIsLocked:(bool)isLocked;
+- (void)setIconName:(NSString *)iconName brandedUserInfoStyle:(bool)brandedUserInfoStyle;
 
 @end
 

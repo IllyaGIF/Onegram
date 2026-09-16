@@ -57,7 +57,7 @@
 
 + (SSignal *)reportSpam:(int64_t)peerId accessHash:(int64_t)accessHash {
     if (TGPeerIdIsSecretChat(peerId)) {
-        return [[TGDatabaseInstance() modify:^id{
+        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             TLRPCmessages_reportEncryptedSpam$messages_reportEncryptedSpam *reportEncryptedSpam = [[TLRPCmessages_reportEncryptedSpam$messages_reportEncryptedSpam alloc] init];
             TLInputEncryptedChat$inputEncryptedChat *inputChat = [[TLInputEncryptedChat$inputEncryptedChat alloc] init];
             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];

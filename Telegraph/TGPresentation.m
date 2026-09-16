@@ -1,4 +1,6 @@
 #import "TGPresentation.h"
+#include <stdlib.h>
+#include <stdint.h>
 #import "TGDefaultPresentationPallete.h"
 #import "TGDayPresentationPallete.h"
 #import "TGNightPresentationPallete.h"
@@ -108,6 +110,7 @@ static TGPresentationAutoNightPreferences *autoNightPreferences;
 static SPipe *autoNightPreferencesPipe;
 static id<SDisposable> autoNightDisposable;
 static NSString *const TGClassicIOS6StyleDefaultsKey = @"TGClassicIOS6Style";
+static NSString *const TGInterfaceStyleDefaultsKey = @"TGInterfaceStyle";
 
 static UIImage *TGClassicIOS6RecoloredImage(UIImage *image, UIColor *tintColor, CGFloat intensity)
 {
@@ -138,41 +141,281 @@ static UIImage *TGClassicIOS6RecoloredImage(UIImage *image, UIColor *tintColor, 
     return result == nil ? image : result;
 }
 
-static UIImage *TGClassicIOS6NavigationResourceImage(NSString *name)
++ (UIImage *)classicIOS6ResourceImage:(NSString *)name
 {
     CGFloat scale = [UIScreen mainScreen].scale;
-    NSString *resourceName = scale > 1.5f ? [name stringByAppendingString:@"@2x"] : name;
+    bool retinaResource = scale > 1.5f;
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSMutableDictionary alloc] init];
+    });
+    NSString *cacheKey = [NSString stringWithFormat:@"%@:%d", name, retinaResource ? 2 : 1];
+    UIImage *cachedImage = nil;
+    @synchronized(cache)
+    {
+        cachedImage = cache[cacheKey];
+    }
+    if (cachedImage != nil)
+        return cachedImage;
+
+    NSString *resourceName = retinaResource ? [name stringByAppendingString:@"@2x"] : name;
     NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
+    if (path.length == 0)
+    {
+        retinaResource = !retinaResource;
+        resourceName = retinaResource ? [name stringByAppendingString:@"@2x"] : name;
+        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
+    }
+
     UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
-    if (image != nil && scale > 1.5f && image.CGImage != NULL)
+    if (image != nil && retinaResource && image.CGImage != NULL)
         image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
+    if (image != nil)
+    {
+        @synchronized(cache)
+        {
+            if (cache.count >= 160)
+                [cache removeAllObjects];
+            cache[cacheKey] = image;
+        }
+    }
     return image;
 }
 
-static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlighted, UIColor *tintColor)
++ (UIImage *)brandedIOS6ResourceImage:(NSString *)name
 {
-    if (backButton)
+    CGFloat scale = [UIScreen mainScreen].scale;
+    bool retinaResource = scale > 1.5f;
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
     {
-        UIImage *image = TGClassicIOS6NavigationResourceImage(highlighted ? @"BackButton_Pressed" : @"BackButton");
-        image = [TGPresentation classicIOS6ThemedImage:image tintColor:tintColor alpha:0.8f];
-        return image == nil ? nil : [image stretchableImageWithLeftCapWidth:20 topCapHeight:14];
+        cache = [[NSMutableDictionary alloc] init];
+    });
+    NSString *cacheKey = [NSString stringWithFormat:@"%@:%d", name, retinaResource ? 2 : 1];
+    UIImage *cachedImage = nil;
+    @synchronized(cache)
+    {
+        cachedImage = cache[cacheKey];
     }
+    if (cachedImage != nil)
+        return cachedImage;
 
-    NSString *suffix = highlighted ? @"_Highlighted" : @"";
-    UIImage *left = [TGPresentation classicIOS6ThemedImage:TGClassicIOS6NavigationResourceImage([@"MenuButtonLeft" stringByAppendingString:suffix]) tintColor:tintColor alpha:0.8f];
-    UIImage *center = [TGPresentation classicIOS6ThemedImage:TGClassicIOS6NavigationResourceImage([@"MenuButtonCenter" stringByAppendingString:suffix]) tintColor:tintColor alpha:0.8f];
-    UIImage *right = [TGPresentation classicIOS6ThemedImage:TGClassicIOS6NavigationResourceImage([@"MenuButtonRight" stringByAppendingString:suffix]) tintColor:tintColor alpha:0.8f];
-    if (left == nil || center == nil || right == nil)
-        return nil;
+    NSString *resourceName = retinaResource ? [name stringByAppendingString:@"@2x"] : name;
+    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ios6style"];
+    if (path.length == 0)
+        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
+    if (path.length == 0)
+    {
+        retinaResource = false;
+        resourceName = name;
+        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ios6style"];
+        if (path.length == 0)
+            path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
+    }
+    if (path.length == 0)
+        path = [[NSBundle mainBundle] pathForResource:name ofType:@"jpg" inDirectory:@"ios6style"];
+    if (path.length == 0)
+        path = [[NSBundle mainBundle] pathForResource:name ofType:@"jpg"];
 
-    CGSize size = CGSizeMake(32.0f, left.size.height);
-    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-    [left drawAtPoint:CGPointZero];
-    [center drawInRect:CGRectMake(left.size.width, 0.0f, size.width - left.size.width - right.size.width, size.height)];
-    [right drawAtPoint:CGPointMake(size.width - right.size.width, 0.0f)];
+    UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
+    if (image != nil && retinaResource && image.CGImage != NULL)
+        image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
+    if (image != nil)
+    {
+        @synchronized(cache)
+        {
+            if (cache.count >= 96)
+                [cache removeAllObjects];
+            cache[cacheKey] = image;
+        }
+    }
+    return image;
+}
+
++ (UIImage *)brandedIOS6BadgeImage
+{
+    return [self brandedIOS6BadgeImageForWidth:18.0f height:18.0f];
+}
+
++ (UIImage *)brandedIOS6BadgeImageForWidth:(CGFloat)width
+{
+    return [self brandedIOS6BadgeImageForWidth:width height:18.0f];
+}
+
++ (UIImage *)brandedIOS6BadgeImageForWidth:(CGFloat)width height:(CGFloat)height
+{
+    height = MAX(1.0f, height);
+    width = MAX(height, width);
+    CGFloat scale = height / 18.0f;
+
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSMutableDictionary alloc] init];
+    });
+
+    NSString *key = [NSString stringWithFormat:@"%.3f:%.3f", width, height];
+    UIImage *cachedImage = nil;
+    @synchronized(cache)
+    {
+        cachedImage = [cache objectForKey:key];
+    }
+    if (cachedImage != nil)
+        return cachedImage;
+
+    CGSize imageSize = CGSizeMake(width, height);
+    UIGraphicsBeginImageContextWithOptions(imageSize, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect bounds = CGRectMake(0.0f, 0.0f, imageSize.width, imageSize.height);
+    UIBezierPath *outerPath = [UIBezierPath bezierPathWithRoundedRect:bounds cornerRadius:9.0f * scale];
+
+    CGContextSaveGState(context);
+    CGContextAddPath(context, outerPath.CGPath);
+    CGContextClip(context);
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat baseComponents[] = {
+        198.0f / 255.0f, 1.0f / 255.0f, 1.0f / 255.0f, 1.0f,
+        103.0f / 255.0f, 9.0f / 255.0f, 9.0f / 255.0f, 1.0f
+    };
+    CGFloat baseLocations[] = {0.0f, 1.0f};
+    CGGradientRef baseGradient = CGGradientCreateWithColorComponents(colorSpace, baseComponents, baseLocations, 2);
+    CGContextDrawLinearGradient(context, baseGradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, height), 0);
+    CGGradientRelease(baseGradient);
+    CGContextRestoreGState(context);
+
+    CGContextSaveGState(context);
+    CGContextAddPath(context, outerPath.CGPath);
+    CGContextClip(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 0.5f * scale), 1.0f * scale, UIColorRGBA(0x000000, 0.30f).CGColor);
+    CGMutablePathRef shadowPath = CGPathCreateMutable();
+    CGPathAddRect(shadowPath, NULL, CGRectInset(bounds, -10.0f * scale, -10.0f * scale));
+    CGPathAddPath(shadowPath, NULL, outerPath.CGPath);
+    CGContextAddPath(context, shadowPath);
+    CGContextSetFillColorWithColor(context, [UIColor blackColor].CGColor);
+    CGContextEOFillPath(context);
+    CGPathRelease(shadowPath);
+    CGContextRestoreGState(context);
+
+    CGContextSaveGState(context);
+    CGContextAddPath(context, outerPath.CGPath);
+    CGContextClip(context);
+    CGRect glossRect = CGRectMake((width - 31.0f * scale) / 2.0f - 0.5f * scale, -2.0f * scale, 31.0f * scale, 12.0f * scale);
+    CGContextClipToRect(context, glossRect);
+    CGFloat glossComponents[] = {
+        1.0f, 1.0f, 1.0f, 0.80f,
+        1.0f, 1.0f, 1.0f, 0.20f
+    };
+    CGFloat glossLocations[] = {0.0f, 1.0f};
+    CGGradientRef glossGradient = CGGradientCreateWithColorComponents(colorSpace, glossComponents, glossLocations, 2);
+    CGContextDrawLinearGradient(context, glossGradient, CGPointMake(0.0f, -2.0f * scale), CGPointMake(0.0f, 10.0f * scale), 0);
+    CGGradientRelease(glossGradient);
+    CGContextRestoreGState(context);
+
+    CGColorSpaceRelease(colorSpace);
+
+    CGRect borderRect = CGRectInset(bounds, 1.0f * scale, 1.0f * scale);
+    UIBezierPath *borderPath = [UIBezierPath bezierPathWithRoundedRect:borderRect cornerRadius:8.0f * scale];
+    [[UIColor whiteColor] setStroke];
+    borderPath.lineWidth = 2.0f * scale;
+    [borderPath stroke];
+
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    return [image stretchableImageWithLeftCapWidth:(int)left.size.width topCapHeight:20];
+
+    if (image != nil)
+    {
+        @synchronized(cache)
+        {
+            [cache setObject:image forKey:key];
+        }
+    }
+
+    return image;
+}
+
++ (NSString *)brandedIOS6BadgeTextForCount:(NSInteger)count
+{
+    if (count <= 0)
+        return @"";
+    if (count > 99)
+        return @"99+";
+    return [NSString stringWithFormat:@"%ld", (long)count];
+}
+
++ (UIImage *)brandedIOS6GrayIconImage:(NSString *)name
+{
+    if (name.length == 0)
+        return nil;
+
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSMutableDictionary alloc] init];
+    });
+
+    UIImage *cachedImage = cache[name];
+    if (cachedImage != nil)
+        return cachedImage;
+
+    UIImage *source = [self brandedIOS6ResourceImage:name];
+    if (source == nil)
+        return nil;
+
+    UIGraphicsBeginImageContextWithOptions(source.size, false, source.scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = {
+        0.86f, 0.86f, 0.86f, 1.0f,
+        0.48f, 0.48f, 0.48f, 1.0f
+    };
+    CGFloat locations[] = {0.0f, 1.0f};
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, source.size.height), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(colorSpace);
+    [source drawInRect:CGRectMake(0.0f, 0.0f, source.size.width, source.size.height) blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    if (image != nil)
+        cache[name] = image;
+    return image;
+}
+
+static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlighted, bool landscape)
+{
+    NSString *name = nil;
+    if (backButton)
+    {
+        if (landscape)
+            name = highlighted ? @"BackButton_Landscape_Pressed" : @"BackButton_Landscape";
+        else
+            name = highlighted ? @"BackButton_Pressed" : @"BackButton";
+    }
+    else
+    {
+        if (landscape)
+            name = highlighted ? @"HeaderButton_Landscape_Pressed" : @"HeaderButton_Landscape";
+        else
+            name = highlighted ? @"HeaderButton_Pressed" : @"HeaderButton";
+    }
+
+    UIImage *image = [TGPresentation classicIOS6ResourceImage:name];
+    if (image == nil)
+        return nil;
+
+    TGPresentationPallete *pallete = currentPresentation != nil ? currentPresentation.pallete : [TGPresentation currentSavedPallete];
+    if (pallete.isDark)
+        image = [TGPresentation classicIOS6ThemedImage:image tintColor:pallete.barBackgroundColor alpha:0.85f];
+
+    CGFloat leftCap = backButton ? MIN(15.0f, image.size.width - 1.0f) : floor(image.size.width / 2.0f);
+    return [image stretchableImageWithLeftCapWidth:(int)leftCap topCapHeight:0];
 }
 
 - (instancetype)initWithPallete:(TGPresentationPallete *)pallete
@@ -564,28 +807,54 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
         UIColor *navigationButtonColor = TGPresentation.current.pallete.navigationButtonColor;
         UIColor *navigationTitleColor = TGPresentation.current.pallete.navigationTitleColor;
         UIBarButtonItem *item = [UIBarButtonItem appearanceWhenContainedIn:[TGNavigationBar class], nil];
+        bool classicIOS6Style = [TGPresentation classicIOS6Style];
+        bool classicDarkIOS6Style = classicIOS6Style && TGPresentation.current.pallete.isDark;
 
-        [item setBackgroundImage:transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [item setBackgroundImage:transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
+        if (classicIOS6Style)
+        {
+            UIImage *buttonImage = TGClassicIOS6NavigationButtonImage(false, false, false);
+            UIImage *buttonHighlightedImage = TGClassicIOS6NavigationButtonImage(false, true, false);
+            UIImage *buttonLandscapeImage = TGClassicIOS6NavigationButtonImage(false, false, true);
+            UIImage *buttonLandscapeHighlightedImage = TGClassicIOS6NavigationButtonImage(false, true, true);
+            [item setBackgroundImage:buttonImage ?: transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+            [item setBackgroundImage:buttonHighlightedImage ?: buttonImage ?: transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
+            [item setBackgroundImage:buttonLandscapeImage ?: buttonImage ?: transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsLandscapePhone];
+            [item setBackgroundImage:buttonLandscapeHighlightedImage ?: buttonLandscapeImage ?: buttonHighlightedImage ?: buttonImage ?: transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsLandscapePhone];
+        }
+        else
+        {
+            [item setBackgroundImage:transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+            [item setBackgroundImage:transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
+            [item setBackgroundImage:transparentImage forState:UIControlStateNormal barMetrics:UIBarMetricsLandscapePhone];
+            [item setBackgroundImage:transparentImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsLandscapePhone];
+        }
 
-        UIImage *backImage = TGTintedImage([UIImage imageNamed:@"NavigationBackButton.png"], navigationButtonColor);
-        UIImage *backHighlightedImage = TGTintedImage([UIImage imageNamed:@"NavigationBackButton_Highlighted.png"], navigationButtonColor);
-        UIImage *backLandscapeImage = TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape.png"], navigationButtonColor);
-        UIImage *backLandscapeHighlightedImage = TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape_Highlighted.png"], navigationButtonColor);
+        UIImage *backImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, false, false) : TGTintedImage([UIImage imageNamed:@"NavigationBackButton.png"], navigationButtonColor);
+        UIImage *backHighlightedImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, true, false) : TGTintedImage([UIImage imageNamed:@"NavigationBackButton_Highlighted.png"], navigationButtonColor);
+        UIImage *backLandscapeImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, false, true) : TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape.png"], navigationButtonColor);
+        UIImage *backLandscapeHighlightedImage = classicIOS6Style ? TGClassicIOS6NavigationButtonImage(true, true, true) : TGTintedImage([UIImage imageNamed:@"NavigationBackButtonLandscape_Highlighted.png"], navigationButtonColor);
 
-        [item setBackButtonBackgroundImage:[backImage stretchableImageWithLeftCapWidth:(int)backImage.size.width topCapHeight:0] forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [item setBackButtonBackgroundImage:[backHighlightedImage stretchableImageWithLeftCapWidth:(int)backHighlightedImage.size.width topCapHeight:0] forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [item setBackButtonBackgroundImage:[backLandscapeImage stretchableImageWithLeftCapWidth:(int)backLandscapeImage.size.width topCapHeight:0] forState:UIControlStateNormal barMetrics:UIBarMetricsLandscapePhone];
-        [item setBackButtonBackgroundImage:[backLandscapeHighlightedImage stretchableImageWithLeftCapWidth:(int)backLandscapeHighlightedImage.size.width topCapHeight:0] forState:UIControlStateHighlighted barMetrics:UIBarMetricsLandscapePhone];
-        [item setBackButtonTitlePositionAdjustment:UIOffsetMake(5, -1) forBarMetrics:UIBarMetricsDefault];
-        [item setBackButtonTitlePositionAdjustment:UIOffsetMake(5, -3) forBarMetrics:UIBarMetricsLandscapePhone];
-        [item setTitlePositionAdjustment:UIOffsetMake(0, 1) forBarMetrics:UIBarMetricsDefault];
+        UIImage *backButtonImage = classicIOS6Style ? backImage : [backImage stretchableImageWithLeftCapWidth:(int)backImage.size.width topCapHeight:0];
+        UIImage *backButtonHighlightedImage = classicIOS6Style ? backHighlightedImage : [backHighlightedImage stretchableImageWithLeftCapWidth:(int)backHighlightedImage.size.width topCapHeight:0];
+        UIImage *backButtonLandscapeImage = classicIOS6Style ? backLandscapeImage : [backLandscapeImage stretchableImageWithLeftCapWidth:(int)backLandscapeImage.size.width topCapHeight:0];
+        UIImage *backButtonLandscapeHighlightedImage = classicIOS6Style ? backLandscapeHighlightedImage : [backLandscapeHighlightedImage stretchableImageWithLeftCapWidth:(int)backLandscapeHighlightedImage.size.width topCapHeight:0];
+        [item setBackButtonBackgroundImage:backButtonImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+        [item setBackButtonBackgroundImage:backButtonHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
+        [item setBackButtonBackgroundImage:backButtonLandscapeImage forState:UIControlStateNormal barMetrics:UIBarMetricsLandscapePhone];
+        [item setBackButtonBackgroundImage:backButtonLandscapeHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsLandscapePhone];
+        [item setBackButtonTitlePositionAdjustment:UIOffsetMake(classicIOS6Style ? 1.0f : 5.0f, classicIOS6Style ? 0.0f : -1.0f) forBarMetrics:UIBarMetricsDefault];
+        [item setBackButtonTitlePositionAdjustment:UIOffsetMake(classicIOS6Style ? 1.0f : 5.0f, classicIOS6Style ? -1.0f : -3.0f) forBarMetrics:UIBarMetricsLandscapePhone];
+        [item setTitlePositionAdjustment:UIOffsetMake(0, classicIOS6Style ? 0.0f : 1.0f) forBarMetrics:UIBarMetricsDefault];
 
-        UIColor *buttonTitleColor = TGPresentation.current.pallete.accentColor;
-        [item setTitleTextAttributes:@{UITextAttributeTextColor:buttonTitleColor, UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0.0f, 0.0f)], UITextAttributeFont:TGSystemFontOfSize(16.0f)} forState:UIControlStateNormal];
-        [item setTitleTextAttributes:@{UITextAttributeTextColor:[buttonTitleColor colorWithAlphaComponent:0.55f], UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0.0f, 0.0f)], UITextAttributeFont:TGSystemFontOfSize(16.0f)} forState:UIControlStateHighlighted];
+        UIColor *buttonTitleColor = classicIOS6Style ? [UIColor whiteColor] : TGPresentation.current.pallete.accentColor;
+        UIColor *buttonShadowColor = classicIOS6Style ? (classicDarkIOS6Style ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f)) : [UIColor clearColor];
+        UIFont *buttonFont = classicIOS6Style ? TGBoldSystemFontOfSize(12.0f) : TGSystemFontOfSize(16.0f);
+        [item setTitleTextAttributes:@{UITextAttributeTextColor:buttonTitleColor, UITextAttributeTextShadowColor:buttonShadowColor, UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0.0f, classicIOS6Style ? -1.0f : 0.0f)], UITextAttributeFont:buttonFont} forState:UIControlStateNormal];
+        [item setTitleTextAttributes:@{UITextAttributeTextColor:[buttonTitleColor colorWithAlphaComponent:0.75f], UITextAttributeTextShadowColor:buttonShadowColor, UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0.0f, classicIOS6Style ? -1.0f : 0.0f)], UITextAttributeFont:buttonFont} forState:UIControlStateHighlighted];
 
-        [[TGNavigationBar appearance] setTitleTextAttributes:@{UITextAttributeTextColor:navigationTitleColor, UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0.0f, 0.0f)], UITextAttributeFont:TGBoldSystemFontOfSize(17.0f)}];
+        UIColor *effectiveNavigationTitleColor = classicIOS6Style ? [UIColor whiteColor] : navigationTitleColor;
+        UIColor *navigationTitleShadowColor = classicIOS6Style ? (classicDarkIOS6Style ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f)) : [UIColor clearColor];
+        [[TGNavigationBar appearance] setTitleTextAttributes:@{UITextAttributeTextColor:effectiveNavigationTitleColor, UITextAttributeTextShadowColor:navigationTitleShadowColor, UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0.0f, classicIOS6Style ? -1.0f : 0.0f)], UITextAttributeFont:TGBoldSystemFontOfSize([TGPresentation brandedIOS6Style] ? 20.0f : 17.0f)}];
         [[TGNavigationBar appearance] setTitleVerticalPositionAdjustment:(TGIsRetina() ? 0.5f : 0.0f) forBarMetrics:UIBarMetricsDefault];
         [[TGNavigationBar appearance] setTitleVerticalPositionAdjustment:-1.0f forBarMetrics:UIBarMetricsLandscapePhone];
     }
@@ -602,12 +871,46 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
     return currentPresentation;
 }
 
-+ (bool)classicIOS6Style
++ (TGInterfaceStyle)interfaceStyle
 {
     if (![self classicIOS6StyleAvailable])
-        return false;
+        return TGInterfaceStyleModern;
 
-    return [[NSUserDefaults standardUserDefaults] boolForKey:TGClassicIOS6StyleDefaultsKey];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:TGInterfaceStyleDefaultsKey] == nil)
+        return [defaults boolForKey:TGClassicIOS6StyleDefaultsKey] ? TGInterfaceStyleClassic : TGInterfaceStyleModern;
+
+    NSInteger value = [defaults integerForKey:TGInterfaceStyleDefaultsKey];
+    if (value < TGInterfaceStyleModern || value > TGInterfaceStyleFekla)
+        return TGInterfaceStyleModern;
+    return (TGInterfaceStyle)value;
+}
+
++ (void)setInterfaceStyle:(TGInterfaceStyle)style
+{
+    if (style < TGInterfaceStyleModern || style > TGInterfaceStyleFekla)
+        style = TGInterfaceStyleModern;
+
+    if ([self interfaceStyle] == style)
+        return;
+
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:style forKey:TGInterfaceStyleDefaultsKey];
+    [defaults setBool:style != TGInterfaceStyleModern forKey:TGClassicIOS6StyleDefaultsKey];
+    [defaults synchronize];
+
+    if (currentPresentation != nil)
+        [self switchToPallete:currentPresentation.pallete temporary:true];
+}
+
++ (bool)classicIOS6Style
+{
+    return [self interfaceStyle] != TGInterfaceStyleModern;
+}
+
++ (bool)brandedIOS6Style
+{
+    return [self interfaceStyle] == TGInterfaceStyleFekla;
 }
 
 + (bool)classicIOS6StyleAvailable
@@ -617,25 +920,13 @@ static UIImage *TGClassicIOS6NavigationButtonImage(bool backButton, bool highlig
 
 + (void)setClassicIOS6Style:(bool)enabled
 {
-    if (enabled && ![self classicIOS6StyleAvailable])
-        return;
-
-    if ([self classicIOS6Style] == enabled)
-        return;
-
-    [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:TGClassicIOS6StyleDefaultsKey];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-
-    // Recreate the presentation so every screen receives fresh generated
-    // images while preserving the user's current day/night palette.
-    if (currentPresentation != nil)
-        [self switchToPallete:currentPresentation.pallete temporary:true];
+    [self setInterfaceStyle:enabled ? TGInterfaceStyleClassic : TGInterfaceStyleModern];
 }
 
 
 + (bool)classicIOS6UsesPaletteAdaptedAssets
 {
-    if (![self classicIOS6Style])
+    if (![self classicIOS6Style] || [self brandedIOS6Style])
         return false;
 
     TGPresentationPallete *pallete = currentPresentation != nil ? currentPresentation.pallete : [self currentSavedPallete];

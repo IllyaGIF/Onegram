@@ -135,7 +135,6 @@ static UIImage *arrowImage(UIColor *color) {
             UIGraphicsBeginImageContextWithOptions(CGSizeMake(diameter, diameter), false, 0.0f);
             CGContextRef context = UIGraphicsGetCurrentContext();
             
-            //!placeholder
             CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
             CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, diameter, diameter));
             CGContextSetStrokeColorWithColor(context, UIColorRGB(0xd9d9d9).CGColor);

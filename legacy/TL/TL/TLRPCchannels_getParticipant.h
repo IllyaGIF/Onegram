@@ -7,13 +7,13 @@
 #import "TLMetaRpc.h"
 
 @class TLInputChannel;
-@class TLInputUser;
+@class TLInputPeer;
 @class TLchannels_ChannelParticipant;
 
 @interface TLRPCchannels_getParticipant : TLMetaRpc
 
 @property (nonatomic, retain) TLInputChannel *channel;
-@property (nonatomic, retain) TLInputUser *user_id;
+@property (nonatomic, retain) TLInputPeer *participant;
 
 - (Class)responseClass;
 

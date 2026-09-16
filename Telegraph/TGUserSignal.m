@@ -460,7 +460,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 }
 
 + (SSignal *)profileSavedMusicWithUserId:(int32_t)userId {
-    return [[TGDatabaseInstance() modify:^id {
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
         TGUser *user = [TGDatabaseInstance() loadUser:userId];
         if (user == nil)
             return [SSignal single:@[]];
@@ -469,16 +469,26 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 }
 
 + (SSignal *)updatedUserCachedDataWithUserId:(int32_t)userId {
-    return [[TGDatabaseInstance() modify:^id {
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
         TGUser *user = [TGDatabaseInstance() loadUser:userId];
         if (user != nil) {
             TLRPCusers_getFullUser$users_getFullUser *getFullUser = [[TLRPCusers_getFullUser$users_getFullUser alloc] init];
-            TLInputUser$inputUser *inputUser = [[TLInputUser$inputUser alloc] init];
-            inputUser.user_id = user.uid;
-            inputUser.access_hash = user.phoneNumberHash;
-            getFullUser.n_id = inputUser;
+            if (userId == TGTelegraphInstance.clientUserId)
+            {
+                getFullUser.n_id = [[TLInputUser$inputUserSelf alloc] init];
+            }
+            else
+            {
+                int64_t resolvedUserId = 0;
+                int64_t resolvedAccessHash = 0;
+                TGIOS6ProfileMusicResolveForeignUser(user, &resolvedUserId, &resolvedAccessHash);
+                TLInputUser$inputUser *inputUser = [[TLInputUser$inputUser alloc] init];
+                inputUser.user_id = resolvedUserId;
+                inputUser.access_hash = resolvedAccessHash;
+                getFullUser.n_id = inputUser;
+            }
             return [[[TGTelegramNetworking instance] requestSignal:getFullUser] mapToSignal:^SSignal *(TLUserFull$userFull *result) {
-                return [[TGDatabaseInstance() modify:^id{
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() updateCachedUserData:user.uid block:^TGCachedUserData *(TGCachedUserData *data) {
                         if (data == nil) {
                             return [[TGCachedUserData alloc] initWithAbout:result.about groupsInCommonCount:result.common_chats_count groupsInCommon:nil supportsCalls:result.flags & (1 << 4) callsPrivate:result.flags & (1 << 5)];
@@ -511,7 +521,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 }
 
 + (SSignal *)groupsInCommon:(int32_t)userId {
-    return [[TGDatabaseInstance() modify:^id {
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
         TGUser *user = [TGDatabaseInstance() loadUser:userId];
         if (user != nil) {
             TLRPCmessages_getCommonChats$messages_getCommonChats *getCommonChats = [[TLRPCmessages_getCommonChats$messages_getCommonChats alloc] init];
@@ -528,7 +538,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
                         [conversations addObject:conversation];
                     }
                 }
-                return [[TGDatabaseInstance() modify:^id{
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() updateCachedUserData:user.uid block:^TGCachedUserData *(TGCachedUserData *data) {
                         if (data == nil) {
                             return [[TGCachedUserData alloc] initWithAbout:nil groupsInCommonCount:(int32_t)conversations.count groupsInCommon:[[TGCachedUserGroupsInCommon alloc] initWithGroups:conversations] supportsCalls:false callsPrivate:false];

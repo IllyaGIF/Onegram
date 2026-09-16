@@ -164,7 +164,6 @@
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(110, 110), false, 0.0f);
         CGContextRef context = UIGraphicsGetCurrentContext();
         
-        //!placeholder
         CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
         CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, 110.0f, 110.0f));
         CGContextSetStrokeColorWithColor(context, UIColorRGB(0xd9d9d9).CGColor);

@@ -6,6 +6,7 @@
 #import <CoreText/CoreText.h>
 #import <map>
 #import <vector>
+#import <string>
 
 UIFont *TGSystemFontOfSize(CGFloat size)
 {
@@ -89,21 +90,10 @@ UIFont *TGEmojiFontOfSize(CGFloat size)
     return font;
 }
 
-struct TGEmojiTrieNode
-{
-    std::map<uint32_t, TGEmojiTrieNode *> children;
-    bool terminal;
-
-    TGEmojiTrieNode() : terminal(false)
-    {
-    }
-};
-
 static NSDictionary *TGEmojiPackIndex = nil;
 static NSFileHandle *TGEmojiPackHandle = nil;
 static NSCache *TGEmojiImageCache = nil;
 static NSObject *TGEmojiFileLock = nil;
-static TGEmojiTrieNode *TGEmojiTrieRoot = NULL;
 static NSMutableDictionary *TGEmojiSupportCache = nil;
 static NSString *const TGEmojiRenderModeDefaultsKey = @"TGEmojiRenderMode";
 
@@ -146,39 +136,6 @@ static void TGEmojiLoadPack(void)
         TGEmojiImageCache.countLimit = 256;
         TGEmojiFileLock = [[NSObject alloc] init];
         TGEmojiSupportCache = [[NSMutableDictionary alloc] init];
-        TGEmojiTrieRoot = new TGEmojiTrieNode();
-
-        for (NSString *key in TGEmojiPackIndex)
-        {
-            TGEmojiTrieNode *node = TGEmojiTrieRoot;
-            NSArray *parts = [key componentsSeparatedByString:@"-"];
-            for (NSString *part in parts)
-            {
-                unsigned int value = 0;
-                NSScanner *scanner = [NSScanner scannerWithString:part];
-                if (![scanner scanHexInt:&value])
-                {
-                    node = NULL;
-                    break;
-                }
-
-                TGEmojiTrieNode *next = NULL;
-                std::map<uint32_t, TGEmojiTrieNode *>::iterator it = node->children.find(value);
-                if (it == node->children.end())
-                {
-                    next = new TGEmojiTrieNode();
-                    node->children[value] = next;
-                }
-                else
-                {
-                    next = it->second;
-                }
-                node = next;
-            }
-
-            if (node != NULL)
-                node->terminal = true;
-        }
 
         NSLog(@"EMOJI pack loaded=%d entries=%d", TGEmojiPackHandle != nil ? 1 : 0, (int)TGEmojiPackIndex.count);
     });
@@ -253,10 +210,10 @@ bool TGEmojiPackMatchAtIndex(NSString *text, NSUInteger index, NSRange *range)
         return false;
 
     TGEmojiLoadPack();
-    if (TGEmojiTrieRoot == NULL || TGEmojiPackIndex.count == 0)
+    if (TGEmojiPackIndex.count == 0)
         return false;
 
-    TGEmojiTrieNode *node = TGEmojiTrieRoot;
+    NSMutableString *key = [[NSMutableString alloc] initWithCapacity:48];
     NSUInteger cursor = index;
     NSUInteger lastEnd = NSNotFound;
     bool textPresentation = false;
@@ -286,14 +243,13 @@ bool TGEmojiPackMatchAtIndex(NSString *text, NSUInteger index, NSRange *range)
             continue;
         }
 
-        std::map<uint32_t, TGEmojiTrieNode *>::iterator it = node->children.find(codepoint);
-        if (it == node->children.end())
-            break;
+        if (key.length != 0)
+            [key appendString:@"-"];
+        [key appendFormat:@"%x", (unsigned int)codepoint];
 
-        node = it->second;
         cursor += codepointLength;
         steps++;
-        if (node->terminal)
+        if ([TGEmojiPackIndex objectForKey:key] != nil)
             lastEnd = cursor;
     }
 
@@ -771,6 +727,9 @@ static CTFontRef TGCreateCoreTextFont(UIFont *font)
     if (font == nil)
         return NULL;
 
+    if (iosMajorVersion() < 6)
+        return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
+
     CTFontRef result = NULL;
     CTFontDescriptorRef baseDescriptor = CTFontDescriptorCreateWithNameAndSize((__bridge CFStringRef)font.fontName, font.pointSize);
     UIFont *appleEmojiFont = [UIFont fontWithName:@"AppleColorEmoji" size:font.pointSize];
@@ -841,9 +800,52 @@ static CTFontRef TGCreateCoreTextFont(UIFont *font)
     return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
 }
 
+static std::map<std::string, CTFontRef> genericFontCache;
+static pthread_mutex_t genericFontCacheMutex = PTHREAD_MUTEX_INITIALIZER;
+
 CTFontRef TGCoreTextFontForUIFont(UIFont *font)
 {
-    return TGCreateCoreTextFont(font);
+    if (font == nil)
+        return NULL;
+
+    const char *fontName = [font.fontName UTF8String];
+    if (fontName == NULL)
+        return TGCreateCoreTextFont(font);
+
+    char keyBuffer[256];
+    snprintf(keyBuffer, sizeof(keyBuffer), "%s/%d", fontName, (int)lrint(font.pointSize * 64.0f));
+    std::string key(keyBuffer);
+
+    pthread_mutex_lock(&genericFontCacheMutex);
+    std::map<std::string, CTFontRef>::iterator it = genericFontCache.find(key);
+    if (it != genericFontCache.end())
+    {
+        CTFontRef result = it->second;
+        CFRetain(result);
+        pthread_mutex_unlock(&genericFontCacheMutex);
+        return result;
+    }
+    pthread_mutex_unlock(&genericFontCacheMutex);
+
+    CTFontRef created = TGCreateCoreTextFont(font);
+    if (created == NULL)
+        return NULL;
+
+    pthread_mutex_lock(&genericFontCacheMutex);
+    it = genericFontCache.find(key);
+    if (it == genericFontCache.end())
+    {
+        genericFontCache[key] = created;
+        CFRetain(created);
+    }
+    else
+    {
+        CFRelease(created);
+        created = it->second;
+        CFRetain(created);
+    }
+    pthread_mutex_unlock(&genericFontCacheMutex);
+    return created;
 }
 
 static std::map<int, CTFontRef> systemFontCache;

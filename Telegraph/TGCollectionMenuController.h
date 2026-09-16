@@ -19,6 +19,8 @@
 
 @property (nonatomic, strong) TGPresentation *presentation;
 
+- (UIColor *)collectionMenuBackgroundColor;
+
 - (void)_resetCollectionView;
 - (void)_ensureBinding;
 - (NSIndexPath *)indexPathForItem:(TGCollectionItem *)item;

@@ -17,7 +17,7 @@ typedef void(^STPAPIPostResponseBlock)(id<STPAPIResponseDecodable> object, NSHTT
 + (void)startWithAPIClient:(STPAPIClient *)apiClient
                   endpoint:(NSString *)endpoint
                   postData:(NSData *)postData
-                serializer:(id<STPAPIResponseDecodable>)serializer
+                serializer:(Class<STPAPIResponseDecodable>)serializer
                 completion:(STPAPIPostResponseBlock)completion;
 
 @end

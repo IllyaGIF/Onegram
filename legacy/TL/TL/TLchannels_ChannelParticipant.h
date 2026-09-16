@@ -11,6 +11,7 @@
 @interface TLchannels_ChannelParticipant : NSObject <TLObject>
 
 @property (nonatomic, retain) TLChannelParticipant *participant;
+@property (nonatomic, retain) NSArray *chats;
 @property (nonatomic, retain) NSArray *users;
 
 @end

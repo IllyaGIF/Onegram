@@ -34,6 +34,7 @@
 #import "TGMessageReplyButtonsModel.h"
 
 #import "TGPresentation.h"
+#import "TGPresentationAssets.h"
 
 @interface TGContactMessageViewModel () <UIGestureRecognizerDelegate, TGDoubleTapGestureRecognizerDelegate>
 {
@@ -52,6 +53,7 @@
     TGModernButtonViewModel *_actionButtonModel;
     
     TGModernDateViewModel *_dateModel;
+    TGModernImageViewModel *_brandedDeliveryPlateModel;
     TGModernClockProgressViewModel *_progressModel;
     TGModernImageViewModel *_checkFirstModel;
     TGModernImageViewModel *_checkSecondModel;
@@ -207,7 +209,7 @@
         _contactAvatarModel.viewUserInteractionDisabled = true;
         [self addSubmodel:_contactAvatarModel];
         
-        _contactNameModel = [[TGModernLabelViewModel alloc] initWithText:contact.displayName textColor:_incomingAppearance ? context.presentation.pallete.chatIncomingAccentColor : context.presentation.pallete.chatOutgoingAccentColor font:[assetsSource messageForwardPhoneNameFont] maxWidth:155.0f];
+        _contactNameModel = [[TGModernLabelViewModel alloc] initWithText:contact.displayName textColor:(!_incomingAppearance && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : (_incomingAppearance ? context.presentation.pallete.chatIncomingAccentColor : context.presentation.pallete.chatOutgoingAccentColor) font:[assetsSource messageForwardPhoneNameFont] maxWidth:155.0f];
         [_contentModel addSubmodel:_contactNameModel];
         
         const NSUInteger limit = 5;
@@ -254,7 +256,7 @@
         _contactTextModel.layoutFlags = TGReusableLabelLayoutMultiline;
         [_contentModel addSubmodel:_contactTextModel];
         
-        UIImage *icon = _incomingAppearance ? TGTintedImage(TGImageNamed(@"ModernMessageContactAdd_Incoming.png"), context.presentation.pallete.chatIncomingAccentColor) : TGTintedImage(TGImageNamed(@"ModernMessageContactAdd_Incoming.png"), context.presentation.pallete.chatOutgoingAccentColor);
+        UIImage *icon = _incomingAppearance ? TGTintedImage(TGImageNamed(@"ModernMessageContactAdd_Incoming.png"), context.presentation.pallete.chatIncomingAccentColor) : TGTintedImage(TGImageNamed(@"ModernMessageContactAdd_Incoming.png"), [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : context.presentation.pallete.chatOutgoingAccentColor);
         
         _contactButtonModel = [[TGModernButtonViewModel alloc] init];
         _contactButtonModel.image = icon;
@@ -264,7 +266,19 @@
         int daytimeVariant = 0;
         NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
         _dateModel = [[TGModernDateViewModel alloc] initWithText:dateText textColor:_incomingAppearance ? _context.presentation.pallete.chatIncomingDateColor : _context.presentation.pallete.chatOutgoingDateColor daytimeVariant:daytimeVariant];
-        [_contentModel addSubmodel:_dateModel];
+        if ([TGPresentation brandedIOS6Style])
+        {
+            _dateModel.hidden = true;
+            UIImage *deliveryImage = [TGPresentationAssets brandedIOS6DeliveryTagImage:dateText incoming:_incomingAppearance read:_read];
+            _brandedDeliveryPlateModel = [[TGModernImageViewModel alloc] initWithImage:deliveryImage];
+            _brandedDeliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
+            [_brandedDeliveryPlateModel sizeToFit];
+            [self addSubmodel:_brandedDeliveryPlateModel];
+        }
+        else
+        {
+            [_contentModel addSubmodel:_dateModel];
+        }
         
         if (_messageViews != nil) {
             _messageViewsModel = [[TGMessageViewsViewModel alloc] init];
@@ -275,7 +289,7 @@
             _messageViewsModel.hidden = _deliveryState != TGMessageDeliveryStateDelivered;
         }
         
-        if (!_incoming)
+        if (!_incoming && ![TGPresentation brandedIOS6Style])
         {
             _checkFirstModel = [[TGModernImageViewModel alloc] initWithImage:_context.presentation.images.chatDeliveredIcon];
             _checkSecondModel = [[TGModernImageViewModel alloc] initWithImage:_context.presentation.images.chatReadIcon];
@@ -320,13 +334,38 @@
                 }
             }
         }
+        else if (!_incoming)
+        {
+            if (_deliveryState == TGMessageDeliveryStatePending)
+            {
+                _progressModel = [[TGModernClockProgressViewModel alloc] initWithType:_incomingAppearance ? TGModernClockProgressTypeIncomingClock : TGModernClockProgressTypeOutgoingClock];
+                _progressModel.presentation = context.presentation;
+                [self addSubmodel:_progressModel];
+            }
+            else if (_deliveryState == TGMessageDeliveryStateFailed)
+            {
+                [self addSubmodel:[self unsentButtonModel]];
+            }
+        }
         
         NSDictionary *button = [TGArticleWebpageFooterModel buttonForType:@"viewContactDetails" context:context];
         _actionButtonModel = [[TGModernButtonViewModel alloc] init];
-        _actionButtonModel.image = _incomingAppearance ? button[@"incoming"] : button[@"outgoing"];
-        _actionButtonModel.highlightedImage = _incomingAppearance ? button[@"incomingHighlighted"] : button[@"outgoingHighlighted"];
-        _actionButtonModel.backgroundImage = _incomingAppearance ? button[@"incomingBg"] : button[@"outgoingBg"];
-        _actionButtonModel.highlightedBackgroundImage = _incomingAppearance ? button[@"incomingSolidBg"] : button[@"outgoingSolidBg"];
+        if (!_incomingAppearance && [TGPresentation brandedIOS6Style])
+        {
+            _actionButtonModel.image = TGTintedImage(button[@"outgoing"], [UIColor whiteColor]);
+            _actionButtonModel.highlightedImage = TGTintedImage(button[@"outgoingHighlighted"], [UIColor whiteColor]);
+            UIImage *backgroundImage = TGTintedImage(button[@"outgoingBg"], [UIColor whiteColor]);
+            UIImage *highlightedBackgroundImage = TGTintedImage(button[@"outgoingSolidBg"], [UIColor whiteColor]);
+            _actionButtonModel.backgroundImage = [backgroundImage stretchableImageWithLeftCapWidth:7 topCapHeight:7];
+            _actionButtonModel.highlightedBackgroundImage = [highlightedBackgroundImage stretchableImageWithLeftCapWidth:7 topCapHeight:7];
+        }
+        else
+        {
+            _actionButtonModel.image = _incomingAppearance ? button[@"incoming"] : button[@"outgoing"];
+            _actionButtonModel.highlightedImage = _incomingAppearance ? button[@"incomingHighlighted"] : button[@"outgoingHighlighted"];
+            _actionButtonModel.backgroundImage = _incomingAppearance ? button[@"incomingBg"] : button[@"outgoingBg"];
+            _actionButtonModel.highlightedBackgroundImage = _incomingAppearance ? button[@"incomingSolidBg"] : button[@"outgoingSolidBg"];
+        }
         _actionButtonModel.skipDrawInContext = true;
 
         TGMessageViewModelReference *messageLifetimeReference1 = [self lifetimeReference];
@@ -463,6 +502,12 @@
     _read = ![_context isMessageUnread:_message];
     
     if (_read != previousRead) {
+        if (_brandedDeliveryPlateModel != nil)
+        {
+            UIImage *deliveryImage = [TGPresentationAssets brandedIOS6DeliveryTagImage:[TGDateUtils stringForShortTime:(int)_date] incoming:_incomingAppearance read:_read];
+            _brandedDeliveryPlateModel.image = deliveryImage;
+            _brandedDeliveryPlateModel.frame = (CGRect){_brandedDeliveryPlateModel.frame.origin, deliveryImage.size};
+        }
         if (_read) {
             _checkSecondModel.alpha = 1.0f;
             
@@ -502,6 +547,14 @@
         
         bool previousRead = _read;
         _read = !messageUnread;
+        if (_brandedDeliveryPlateModel != nil)
+        {
+            NSString *deliveryTime = [TGDateUtils stringForShortTime:(int)message.date];
+            UIImage *deliveryImage = [TGPresentationAssets brandedIOS6DeliveryTagImage:deliveryTime incoming:_incomingAppearance read:_read];
+            _brandedDeliveryPlateModel.image = deliveryImage;
+            _brandedDeliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
+            _brandedDeliveryPlateModel.frame = (CGRect){_brandedDeliveryPlateModel.frame.origin, deliveryImage.size};
+        }
         
         if (_date != (int32_t)message.date)
         {
@@ -1189,6 +1242,18 @@
     }
     
     _dateModel.frame = CGRectMake(_contentModel.frame.size.width - (_incomingAppearance ? (3 + TGRetinaPixel) : 20.0f) - _dateModel.frame.size.width, _contentModel.frame.size.height - 18.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f), _dateModel.frame.size.width, _dateModel.frame.size.height);
+
+    if (_brandedDeliveryPlateModel != nil)
+    {
+        _brandedDeliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
+        if (!_brandedDeliveryPlateModel.hidden)
+        {
+            UIImage *deliveryImage = [TGPresentationAssets brandedIOS6DeliveryTagImage:[TGDateUtils stringForShortTime:(int)_date] incoming:_incomingAppearance read:_read];
+            _brandedDeliveryPlateModel.image = deliveryImage;
+            CGSize deliverySize = deliveryImage.size;
+            _brandedDeliveryPlateModel.frame = [TGPresentationAssets brandedIOS6DeliveryTagFrameForMessageFrame:backgroundFrame tagSize:deliverySize incoming:_incomingAppearance];
+        }
+    }
     
     CGFloat signatureSize = (hasSignature ? (_authorSignatureModel.frame.size.width + 8.0f) : 0.0f);
     

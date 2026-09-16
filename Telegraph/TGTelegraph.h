@@ -113,6 +113,7 @@
 @class TGTelegraph;
 extern TGTelegraph *TGTelegraphInstance;
 extern NSString *const TGLoginTokenUpdatedNotification;
+extern NSString *const TGAuthorizationReadyNotification;
 
 @interface TGTelegraph : AFHTTPClient <ASWatcher>
 

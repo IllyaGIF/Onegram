@@ -33,6 +33,7 @@
 @property (nonatomic, strong) NSArray *messageAttachments;
 @property (nonatomic, strong) NSString *caption;
 @property (nonatomic, strong) NSDictionary *users;
+@property (nonatomic, strong) NSDictionary *preparedPreview;
 
 @property (nonatomic, strong) NSArray *titleLetters;
 @property (nonatomic, strong) UIColor *titleColor;
@@ -53,6 +54,7 @@
 @property (nonatomic, strong) NSString *avatarUrl;
 @property (nonatomic, strong) NSData *avatarFileReference;
 @property (nonatomic) bool isOnline;
+@property (nonatomic, strong) NSString *statusText;
 
 @property (nonatomic) bool isMuted;
 
@@ -97,6 +99,9 @@
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier assetsSource:(id<TGDialogListCellAssetsSource>)assetsSource;
 
++ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium deliveryState:(TGMessageDeliveryState)deliveryState;
++ (NSDictionary *)preparedPreviewForConversationId:(int64_t)conversationId messageText:(NSString *)messageText attachments:(NSArray *)attachments isSavedMessages:(int)isSavedMessages isGroupChat:(bool)isGroupChat isChannel:(bool)isChannel isChannelGroup:(bool)isChannelGroup isEncrypted:(bool)isEncrypted encryptionStatus:(int)encryptionStatus encryptionOutgoing:(bool)encryptionOutgoing encryptionFirstName:(NSString *)encryptionFirstName;
+
 - (void)collectCachedPhotos:(NSMutableDictionary *)dict;
 
 - (void)setTypingString:(NSString *)typingString animated:(bool)animated;
@@ -113,6 +118,7 @@
 - (bool)isEditingControlsExpanded;
 - (void)setEditingConrolsExpanded:(bool)expanded animated:(bool)animated;
 - (void)setSwipeActionsEnabled:(bool)enabled;
+- (void)setFastScrolling:(bool)fastScrolling;
 
 - (void)animateHighlight;
 

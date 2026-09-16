@@ -79,6 +79,8 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
     int _collapseFlags;
     int _positionFlags;
     TGMessageGroupedLayout *_groupedLayout;
+    CGFloat _groupedMediaOffsetX;
+    CGFloat _groupedMediaOffsetY;
     bool _editing;
     
     bool _needsEditingCheckButton;
@@ -95,6 +97,10 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
 @property (nonatomic) int collapseFlags;
 @property (nonatomic) int positionFlags;
 @property (nonatomic) TGMessageGroupedLayout *groupedLayout;
+
+- (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y;
+- (CGFloat)groupedMediaOffsetX;
+- (CGFloat)groupedMediaOffsetY;
 
 @property (nonatomic, readonly) CGRect editingCheckButtonFrame;
 @property (nonatomic, readonly) CGRect editingCheckAreaFrame;

@@ -12,6 +12,7 @@
 
 @property (nonatomic, strong) UIColor *titleColor;
 @property (nonatomic, strong) NSString *title;
+@property (nonatomic, strong) NSString *iconName;
 @property (nonatomic) bool editing;
 
 - (instancetype)initWithTitle:(NSString *)title action:(SEL)action;

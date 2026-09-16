@@ -373,7 +373,7 @@
         _globalTimeDifference = globalTimeDifference;
         
         if (MTLogEnabled()) {
-            MTLog(@"[MTContext#%x: global time difference changed: %.1fs]", (int)self, globalTimeDifference);
+            MTLog(@"[MTContext#%p: global time difference changed: %.1fs]", (__bridge void *)self, globalTimeDifference);
         }
         
         [_keychain setObject:@(_globalTimeDifference) forKey:@"globalTimeDifference" group:@"temp"];
@@ -395,7 +395,7 @@
         if (addressSet != nil && datacenterId != 0)
         {
             if (MTLogEnabled()) {
-                MTLog(@"[MTContext#%x: address set updated for %d]", (int)self, datacenterId);
+                MTLog(@"[MTContext#%p: address set updated for %d]", (__bridge void *)self, datacenterId);
             }
             
             bool updateSchemes = forceUpdateSchemes;
@@ -437,7 +437,7 @@
                         }
                         if (!matches) {
                             if (MTLogEnabled()) {
-                                MTLog(@"[MTContext#%x: updated address set for %d doesn't contain current %@, updating]", (int)self, datacenterId, address);
+                                MTLog(@"[MTContext#%p: updated address set for %d doesn't contain current %@, updating]", (__bridge void *)self, datacenterId, address);
                             }
                             
                             [self updateTransportSchemeForDatacenterWithId:datacenterId transportScheme:[self defaultTransportSchemeForDatacenterWithId:datacenterId media:[nMedia boolValue] isProxy:[nIsProxy boolValue]] media:[nMedia boolValue] isProxy:[nIsProxy boolValue]];
@@ -487,7 +487,7 @@
         if (updated)
         {
             if (MTLogEnabled()) {
-                MTLog(@"[MTContext#%x: added address %@ for datacenter %d]", (int)self, address, datacenterId);
+                MTLog(@"[MTContext#%p: added address %@ for datacenter %d]", (__bridge void *)self, address, datacenterId);
             }
             
             _datacenterAddressSetById[@(datacenterId)] = addressSet;
@@ -511,7 +511,7 @@
         if (authInfo != nil && datacenterId != 0)
         {
             if (MTLogEnabled()) {
-                MTLog(@"[MTContext#%x: auth info updated for %d]", (int)self, datacenterId);
+                MTLog(@"[MTContext#%p: auth info updated for %d]", (__bridge void *)self, datacenterId);
             }
             
             _datacenterAuthInfoById[@(datacenterId)] = authInfo;
@@ -603,7 +603,7 @@
             if (currentScheme != nil && (previousScheme == nil || ![previousScheme isEqualToScheme:currentScheme]))
             {
                 if (MTLogEnabled()) {
-                    MTLog(@"[MTContext#%x: %@ transport scheme updated for %d: %@]", (int)self, media ? @"media" : @"generic", datacenterId, transportScheme);
+                    MTLog(@"[MTContext#%p: %@ transport scheme updated for %d: %@]", (__bridge void *)self, media ? @"media" : @"generic", datacenterId, transportScheme);
                 }
                 
                 for (id<MTContextChangeListener> listener in currentListeners)

@@ -82,6 +82,117 @@
 
 @end
 
+static bool TGNavigationControllerClassicIOS6Style(void)
+{
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
+}
+
+static bool TGNavigationControllerClassicDarkPalette(TGNavigationBarPallete *pallete)
+{
+    if (pallete == nil || pallete.backgroundColor == nil)
+        return false;
+
+    CGColorRef color = pallete.backgroundColor.CGColor;
+    size_t count = CGColorGetNumberOfComponents(color);
+    const CGFloat *components = CGColorGetComponents(color);
+    if (components == NULL || count == 0)
+        return false;
+
+    CGFloat luminance = 1.0f;
+    if (count == 2)
+        luminance = components[0];
+    else if (count >= 3)
+        luminance = components[0] * 0.299f + components[1] * 0.587f + components[2] * 0.114f;
+
+    return luminance < 0.5f;
+}
+
+static UIColor *TGNavigationControllerColorWithBrightnessMultiplier(UIColor *color, CGFloat multiplier)
+{
+    if (color == nil)
+        return nil;
+
+    CGColorRef cgColor = color.CGColor;
+    size_t count = CGColorGetNumberOfComponents(cgColor);
+    const CGFloat *components = CGColorGetComponents(cgColor);
+    if (components == NULL)
+        return color;
+
+    if (count == 2)
+    {
+        CGFloat value = MIN(1.0f, MAX(0.0f, components[0] * multiplier));
+        return [UIColor colorWithWhite:value alpha:components[1]];
+    }
+
+    if (count >= 3)
+    {
+        CGFloat red = MIN(1.0f, MAX(0.0f, components[0] * multiplier));
+        CGFloat green = MIN(1.0f, MAX(0.0f, components[1] * multiplier));
+        CGFloat blue = MIN(1.0f, MAX(0.0f, components[2] * multiplier));
+        CGFloat alpha = count >= 4 ? components[3] : 1.0f;
+        return [UIColor colorWithRed:red green:green blue:blue alpha:alpha];
+    }
+
+    return color;
+}
+
+static UIImage *TGNavigationControllerClassicIOS6ResourceImage(NSString *name)
+{
+    CGFloat scale = [UIScreen mainScreen].scale;
+    bool retinaResource = scale > 1.5f;
+    NSString *resourceName = retinaResource ? [name stringByAppendingString:@"@2x"] : name;
+    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
+    if (path.length == 0)
+    {
+        retinaResource = !retinaResource;
+        resourceName = retinaResource ? [name stringByAppendingString:@"@2x"] : name;
+        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
+    }
+
+    UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
+    if (image != nil && retinaResource && image.CGImage != NULL)
+        image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
+    return image;
+}
+
+static UIImage *TGNavigationControllerRecoloredImage(UIImage *image, UIColor *tintColor, CGFloat intensity)
+{
+    if (image == nil || tintColor == nil)
+        return image;
+
+    CGFloat scale = image.scale > FLT_EPSILON ? image.scale : 0.0f;
+    CGRect rect = CGRectMake(0.0f, 0.0f, image.size.width, image.size.height);
+    UIGraphicsBeginImageContextWithOptions(image.size, false, scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    [image drawInRect:rect];
+    CGContextSetBlendMode(context, kCGBlendModeColor);
+    CGContextSetFillColorWithColor(context, tintColor.CGColor);
+    CGContextFillRect(context, rect);
+    if (intensity > FLT_EPSILON)
+    {
+        CGContextSetBlendMode(context, kCGBlendModeMultiply);
+        CGContextSetFillColorWithColor(context, [tintColor colorWithAlphaComponent:MIN(1.0f, MAX(0.0f, intensity))].CGColor);
+        CGContextFillRect(context, rect);
+    }
+    [image drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result == nil ? image : result;
+}
+
+static UIImage *TGNavigationControllerClassicIOS6BackImage(bool highlighted, TGNavigationBarPallete *pallete)
+{
+    UIImage *image = TGNavigationControllerClassicIOS6ResourceImage(highlighted ? @"BackButton_Pressed" : @"BackButton");
+    if (image == nil)
+        return nil;
+
+    if (TGNavigationControllerClassicDarkPalette(pallete))
+        image = TGNavigationControllerRecoloredImage(image, pallete.backgroundColor, 0.85f);
+
+    CGFloat leftCap = MIN(15.0f, image.size.width - 1.0f);
+    return [image stretchableImageWithLeftCapWidth:(NSInteger)leftCap topCapHeight:0];
+}
+
 static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigationBar, Class navigationBarClass, TGNavigationBarPallete *pallete)
 {
     if ([navigationBar isKindOfClass:[TGNavigationBar class]])
@@ -158,10 +269,35 @@ static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigation
         }
         else
         {
+            bool classicIOS6Style = TGNavigationControllerClassicIOS6Style() && navigationBarClass != [TGWhiteNavigationBar class];
+            bool classicDarkStyle = classicIOS6Style && TGNavigationControllerClassicDarkPalette(pallete);
             backgroundView.hidden = false;
-            backgroundView.backgroundColor = navigationBarClass == [TGWhiteNavigationBar class] ? [UIColor whiteColor] : (pallete != nil ? pallete.backgroundColor : [UIColor whiteColor]);
-            gradientView.hidden = true;
-            separatorView.backgroundColor = pallete != nil ? pallete.separatorColor : UIColorRGB(0xb2b2b2);
+            if (classicIOS6Style)
+            {
+                backgroundView.backgroundColor = [UIColor clearColor];
+                gradientView.hidden = false;
+                CAGradientLayer *gradientLayer = (CAGradientLayer *)gradientView.layer;
+                gradientLayer.locations = @[@0.0f, @0.52f, @1.0f];
+                if (classicDarkStyle)
+                {
+                    UIColor *topColor = TGNavigationControllerColorWithBrightnessMultiplier(pallete.backgroundColor, 1.30f);
+                    UIColor *middleColor = TGNavigationControllerColorWithBrightnessMultiplier(pallete.backgroundColor, 1.00f);
+                    UIColor *bottomColor = TGNavigationControllerColorWithBrightnessMultiplier(pallete.backgroundColor, 0.68f);
+                    gradientLayer.colors = @[(id)topColor.CGColor, (id)middleColor.CGColor, (id)bottomColor.CGColor];
+                }
+                else
+                {
+                    gradientLayer.colors = @[(id)UIColorRGB(0x91b7d5).CGColor, (id)UIColorRGB(0x6f99bc).CGColor, (id)UIColorRGB(0x4d7293).CGColor];
+                }
+                separatorView.backgroundColor = classicDarkStyle && pallete != nil ? pallete.separatorColor : UIColorRGB(0x36546d);
+                navigationBar.tintColor = classicDarkStyle && pallete != nil ? pallete.backgroundColor : UIColorRGB(0x5f89ad);
+            }
+            else
+            {
+                backgroundView.backgroundColor = navigationBarClass == [TGWhiteNavigationBar class] ? [UIColor whiteColor] : (pallete != nil ? pallete.backgroundColor : [UIColor whiteColor]);
+                gradientView.hidden = true;
+                separatorView.backgroundColor = pallete != nil ? pallete.separatorColor : UIColorRGB(0xb2b2b2);
+            }
         }
 
         [navigationBar sendSubviewToBack:backgroundView];
@@ -175,6 +311,10 @@ static void TGNavigationControllerApplyLegacyTextStyle(UINavigationBar *navigati
     if (pallete == nil)
         return;
 
+    UIView *titleView = navigationBar.topItem.titleView;
+    if (titleView != nil && (view == titleView || [view isDescendantOfView:titleView]))
+        return;
+
     if ([view isKindOfClass:[UILabel class]])
     {
         UILabel *label = (UILabel *)view;
@@ -182,10 +322,20 @@ static void TGNavigationControllerApplyLegacyTextStyle(UINavigationBar *navigati
         CGFloat centerX = CGRectGetMidX(frame);
         CGFloat width = navigationBar.bounds.size.width;
         bool centered = centerX > width * 0.30f && centerX < width * 0.70f;
-        label.textColor = centered ? pallete.titleColor : pallete.tintColor;
-        label.shadowColor = [UIColor clearColor];
-        label.shadowOffset = CGSizeZero;
-        label.font = centered ? [UIFont boldSystemFontOfSize:17.0f] : [UIFont systemFontOfSize:16.0f];
+        if (TGNavigationControllerClassicIOS6Style())
+        {
+            label.textColor = [UIColor whiteColor];
+            label.shadowColor = TGNavigationControllerClassicDarkPalette(pallete) ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f);
+            label.shadowOffset = CGSizeMake(0.0f, -1.0f);
+            label.font = centered ? [UIFont boldSystemFontOfSize:17.0f] : [UIFont boldSystemFontOfSize:12.0f];
+        }
+        else
+        {
+            label.textColor = centered ? pallete.titleColor : pallete.tintColor;
+            label.shadowColor = [UIColor clearColor];
+            label.shadowOffset = CGSizeZero;
+            label.font = centered ? [UIFont boldSystemFontOfSize:17.0f] : [UIFont systemFontOfSize:16.0f];
+        }
     }
 
     for (UIView *subview in view.subviews)
@@ -217,24 +367,38 @@ static UIBarButtonItem *TGNavigationControllerLegacyBackItem(TGNavigationControl
         return nil;
 
     UIColor *tintColor = pallete != nil ? pallete.tintColor : TGAccentColor();
-    UIImage *normalImage = TGTintedImage(TGImageNamed(@"NavigationBackButton.png"), tintColor);
-    UIImage *highlightedImage = TGTintedImage(TGImageNamed(@"NavigationBackButton_Highlighted.png"), [tintColor colorWithAlphaComponent:0.55f]);
-    UIFont *font = [UIFont systemFontOfSize:16.0f];
+    bool classicIOS6Style = TGNavigationControllerClassicIOS6Style();
+    UIImage *normalImage = classicIOS6Style ? TGNavigationControllerClassicIOS6BackImage(false, pallete) : TGTintedImage(TGImageNamed(@"NavigationBackButton.png"), tintColor);
+    UIImage *highlightedImage = classicIOS6Style ? TGNavigationControllerClassicIOS6BackImage(true, pallete) : TGTintedImage(TGImageNamed(@"NavigationBackButton_Highlighted.png"), [tintColor colorWithAlphaComponent:0.55f]);
+    UIFont *font = classicIOS6Style ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont systemFontOfSize:16.0f];
     CGSize titleSize = [title sizeWithFont:font];
-    CGFloat width = MIN(150.0f, MAX(32.0f, normalImage.size.width + 5.0f + titleSize.width));
+    CGFloat width = classicIOS6Style ? MIN(150.0f, MAX(44.0f, titleSize.width + 25.0f)) : MIN(150.0f, MAX(32.0f, normalImage.size.width + 5.0f + titleSize.width));
 
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
     button.tag = TGNavigationControllerLegacyBackButtonTag;
-    button.frame = CGRectMake(0.0f, 0.0f, width, 44.0f);
+    button.frame = CGRectMake(0.0f, 0.0f, width, classicIOS6Style ? 30.0f : 44.0f);
     button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
     button.titleLabel.font = font;
     button.titleLabel.lineBreakMode = UILineBreakModeTailTruncation;
-    [button setImage:normalImage forState:UIControlStateNormal];
-    [button setImage:highlightedImage ?: normalImage forState:UIControlStateHighlighted];
+    if (classicIOS6Style)
+    {
+        [button setBackgroundImage:normalImage forState:UIControlStateNormal];
+        [button setBackgroundImage:highlightedImage ?: normalImage forState:UIControlStateHighlighted];
+        [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [button setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
+        button.titleLabel.shadowColor = TGNavigationControllerClassicDarkPalette(pallete) ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f);
+        button.titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+        button.contentEdgeInsets = UIEdgeInsetsMake(0.0f, 14.0f, 0.0f, 8.0f);
+    }
+    else
+    {
+        [button setImage:normalImage forState:UIControlStateNormal];
+        [button setImage:highlightedImage ?: normalImage forState:UIControlStateHighlighted];
+        [button setTitleColor:tintColor forState:UIControlStateNormal];
+        [button setTitleColor:[tintColor colorWithAlphaComponent:0.55f] forState:UIControlStateHighlighted];
+        button.titleEdgeInsets = UIEdgeInsetsMake(0.0f, 4.0f, 0.0f, 0.0f);
+    }
     [button setTitle:title forState:UIControlStateNormal];
-    [button setTitleColor:tintColor forState:UIControlStateNormal];
-    [button setTitleColor:[tintColor colorWithAlphaComponent:0.55f] forState:UIControlStateHighlighted];
-    button.titleEdgeInsets = UIEdgeInsetsMake(0.0f, 4.0f, 0.0f, 0.0f);
     [button addTarget:navigationController action:@selector(tgLegacyBackButtonPressed) forControlEvents:UIControlEventTouchUpInside];
 
     return [[UIBarButtonItem alloc] initWithCustomView:button];
@@ -851,6 +1015,9 @@ static UIView *findDimmingView(UIView *view)
         if ([appearance respondsToSelector:@selector(statusBarShouldBeHidden)])
             statusBarShouldBeHidden = [appearance statusBarShouldBeHidden];
     }
+
+    if (iosMajorVersion() < 5 && TGNavigationControllerClassicIOS6Style() && !statusBarShouldBeHidden)
+        statusBarStyle = UIStatusBarStyleBlackOpaque;
     
     if (navigationBarShouldBeHidden != self.navigationBarHidden)
     {
@@ -1136,7 +1303,7 @@ static UIView *findDimmingView(UIView *view)
     return [super popToRootViewControllerAnimated:animated];
 }
 
-- (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)())completion
+- (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion
 {
     if (iosMajorVersion() >= 5)
         [super presentViewController:viewControllerToPresent animated:flag completion:completion];
@@ -1144,7 +1311,7 @@ static UIView *findDimmingView(UIView *view)
         TGPresentViewController(self, viewControllerToPresent, flag, completion);
 }
 
-- (void)dismissViewControllerAnimated:(BOOL)flag completion:(void (^)())completion
+- (void)dismissViewControllerAnimated:(BOOL)flag completion:(void (^)(void))completion
 {
     if (iosMajorVersion() >= 5)
         [super dismissViewControllerAnimated:flag completion:completion];

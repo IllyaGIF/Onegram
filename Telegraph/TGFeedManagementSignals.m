@@ -437,7 +437,7 @@
     if (feedId == 0)
         return [SSignal never];
     
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSDictionary *feededChannels = @{@(feedId): peerIds};
         [TGDatabaseInstance() transactionUpdateFeededChannels:feededChannels newlyJoinedFeedId:alsoNewlyJoined ? feedId : 0 synchronizeFeededChannels:true];
         
@@ -446,7 +446,7 @@
 }
 
 + (SSignal *)groupChannelWithPeerId:(int64_t)peerId feedId:(int32_t)feedId {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
         if (conversation.feedId.intValue == feedId)
             return [SSignal complete];
@@ -486,7 +486,7 @@
 }
 
 + (SSignal *)synchronizeFeededChannelsOnce {
-    return [[[TGDatabaseInstance() modify:^id{
+    return [[[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         SSignal *signal = [SSignal complete];
         TGSynchronizeFeededChannelsAction *action = [TGDatabaseInstance() currentSynchronizeFeededChannelsAction];
         if (action.type == TGSynchronizeFeededChannelsActionSync)
@@ -501,7 +501,7 @@
 }
 
 + (SSignal *)tryCompletingWithAction:(TGSynchronizeFeededChannelsAction *)action {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         if ([[TGDatabaseInstance() currentSynchronizeFeededChannelsAction] isEqual:action]) {
             [TGDatabaseInstance() _setCurrentSynchronizeFeededChannelsAction:[[TGSynchronizeFeededChannelsAction alloc] initWithType:TGSynchronizeFeededChannelsActionNone feedId:action.feedId peerIds:action.peerIds alsoNewlyJoined:action.alsoNewlyJoined version:action.version]];
             return [SSignal complete];
@@ -512,7 +512,7 @@
 }
 
 + (SSignal *)pushFeededChannelsWithAction:(TGSynchronizeFeededChannelsAction *)action {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TLRPCchannels_setFeedBroadcasts *setFeedBroadcasts = [[TLRPCchannels_setFeedBroadcasts alloc] init];
         
         NSMutableArray *channels = [[NSMutableArray alloc] init];

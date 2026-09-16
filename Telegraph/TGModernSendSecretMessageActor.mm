@@ -1,4 +1,5 @@
 #import "TGModernSendSecretMessageActor.h"
+#include <inttypes.h>
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 

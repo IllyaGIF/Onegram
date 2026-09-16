@@ -115,7 +115,7 @@ const CGPoint TGPhotoEditorEdgeScrollTriggerOffset = { 100, 150 };
     }
 }
 
-- (void)selectItemAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated scrollPosition:(UICollectionViewScrollPosition)scrollPosition
+- (void)selectItemAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated scrollPosition:(PSTCollectionViewScrollPosition)scrollPosition
 {
     _selectedItemIndexPath = indexPath;
     [super selectItemAtIndexPath:indexPath animated:animated scrollPosition:scrollPosition];
@@ -128,7 +128,7 @@ const CGPoint TGPhotoEditorEdgeScrollTriggerOffset = { 100, 150 };
     [super reloadData];
     
     if (_selectedItemIndexPath != nil)
-        [self selectItemAtIndexPath:_selectedItemIndexPath animated:false scrollPosition:UICollectionViewScrollPositionNone];
+        [self selectItemAtIndexPath:_selectedItemIndexPath animated:false scrollPosition:PSTCollectionViewScrollPositionNone];
 }
 
 #pragma mark - Collection View Data Source & Delegate

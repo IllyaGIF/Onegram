@@ -12,6 +12,8 @@
     UISwitch *_switchView;
     bool _isEnabled;
     bool _isLocked;
+    UIImageView *_iconView;
+    bool _brandedUserInfoStyle;
 }
 
 @end
@@ -46,6 +48,21 @@
     [super setPresentation:presentation];
     
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
+    if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
+    {
+        _titleLabel.font = TGBoldSystemFontOfSize(18.0f);
+        _titleLabel.textColor = UIColorRGB(0x000000);
+        _titleLabel.shadowColor = UIColorRGBA(0x000000, 0.2f);
+        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        self.classicIOS6HorizontalInset = 9.0f;
+    }
+    else
+    {
+        _titleLabel.font = TGSystemFontOfSize(17.0f);
+        _titleLabel.shadowColor = nil;
+        _titleLabel.shadowOffset = CGSizeZero;
+        self.classicIOS6HorizontalInset = 9.0f;
+    }
     if ([_switchView isKindOfClass:[UISwitch class]] && [_switchView respondsToSelector:@selector(setOnTintColor:)])
     {
         _switchView.onTintColor = presentation.pallete.collectionMenuSwitchColor;
@@ -87,6 +104,30 @@
     _switchView.alpha = _isEnabled && !_isLocked ? 1.0f : 0.5f;
 }
 
+
+- (void)setIconName:(NSString *)iconName brandedUserInfoStyle:(bool)brandedUserInfoStyle
+{
+    _brandedUserInfoStyle = brandedUserInfoStyle;
+    UIImage *image = iconName.length == 0 ? nil : ([TGPresentation brandedIOS6Style] && brandedUserInfoStyle ? [TGPresentation brandedIOS6ResourceImage:iconName] : nil);
+    if (_iconView == nil && image != nil)
+    {
+        _iconView = [[UIImageView alloc] init];
+        _iconView.contentMode = UIViewContentModeScaleAspectFit;
+        [self addSubview:_iconView];
+    }
+    _iconView.image = image;
+    _iconView.hidden = image == nil;
+    if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
+    {
+        _titleLabel.font = TGBoldSystemFontOfSize(18.0f);
+        _titleLabel.textColor = UIColorRGB(0x000000);
+        _titleLabel.shadowColor = UIColorRGBA(0x000000, 0.2f);
+        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        self.classicIOS6HorizontalInset = 9.0f;
+    }
+    [self setNeedsLayout];
+}
+
 - (void)switchValueChanged
 {
     id<TGSwitchCollectionItemViewDelegate> delegate = _delegate;
@@ -101,9 +142,25 @@
     CGRect bounds = self.bounds;
     
     CGSize switchSize = _switchView.bounds.size;
-    _switchView.frame = CGRectMake(bounds.size.width - switchSize.width - 15.0f - self.safeAreaInset.right, 6.0f, switchSize.width, switchSize.height);
-    
-    _titleLabel.frame = CGRectMake(15.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 26.0f) / 2.0f), bounds.size.width - 15.0f - 4.0f - switchSize.width - 6.0f, 26.0f);
+    CGFloat switchY = CGFloor((bounds.size.height - switchSize.height) / 2.0f);
+    CGFloat switchRightInset = _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 14.0f : 20.0f;
+    _switchView.frame = CGRectMake(bounds.size.width - switchSize.width - switchRightInset - self.safeAreaInset.right, switchY, switchSize.width, switchSize.height);
+    CGFloat titleX = 15.0f + self.safeAreaInset.left;
+    if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
+    {
+        if (_iconView.image != nil)
+        {
+            _iconView.frame = CGRectMake(17.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 16.0f) / 2.0f) + 1.0f, 16.0f, 16.0f);
+            _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
+            _iconView.layer.shadowOpacity = 0.1f;
+            _iconView.layer.shadowRadius = 0.5f;
+            _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        }
+        titleX = 43.0f + self.safeAreaInset.left;
+    }
+    CGFloat titleHeight = _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 22.0f : MAX(24.0f, ceilf(_titleLabel.font.lineHeight));
+    CGFloat titleY = _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 7.0f : CGFloor((bounds.size.height - titleHeight) / 2.0f);
+    _titleLabel.frame = CGRectMake(titleX, titleY, MAX(0.0f, CGRectGetMinX(_switchView.frame) - titleX - 8.0f), titleHeight);
 }
 
 @end

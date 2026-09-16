@@ -1,4 +1,6 @@
 #import "TGModernConversationController.h"
+#import "../OnegramRuntime/OGRuntime.h"
+#include <inttypes.h>
 #import "../submodules/LegacyComponents/LegacyComponents/TGLocationSignals.h"
 
 #ifndef IOS6_NOOP_LOG
@@ -646,6 +648,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     UIView *_snapshotImageView;
     
     UIImageView *_backgroundView;
+    UIImageView *_backgroundTransitionView;
     
     TGModernConversationInputTextPanel *_inputTextPanel;
     TGModernConversationInputPanel *_currentInputPanel;
@@ -781,6 +784,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     __weak TGVideoMessageCaptureController *_videoMessageCaptureController;
     
     bool _fastScrolling;
+    bool _ogRuntimeInteractionActive;
     
     bool _doNotIgnoreKeyboardChangeDuringAppearance;
     TGPickerSheet *_pickerSheet;
@@ -926,6 +930,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)dealloc
 {
+    if (_ogRuntimeInteractionActive)
+    {
+        _ogRuntimeInteractionActive = false;
+        OGRuntimeEndInteraction();
+    }
     [_ios6ReactionMenuDisposable dispose];
     [_actionHandle reset];
     [_companion unbindController];
@@ -1252,6 +1261,50 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
 }
 
+- (void)_updateConversationBackgroundAnimated:(bool)animated
+{
+    if (_view == nil || _backgroundView == nil)
+        return;
+
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    UIImage *image = brandedIOS6Style ? nil : [[TGWallpaperManager instance] currentWallpaperImage];
+    UIColor *viewColor = brandedIOS6Style ? UIColorRGB(0xdbe2ed) : [UIColor whiteColor];
+    UIColor *imageViewColor = brandedIOS6Style ? UIColorRGB(0xdbe2ed) : [UIColor clearColor];
+
+    [_backgroundTransitionView.layer removeAllAnimations];
+    [_backgroundTransitionView removeFromSuperview];
+    _backgroundTransitionView = nil;
+
+    UIImage *previousImage = _backgroundView.image;
+    if (animated && !brandedIOS6Style && previousImage != nil && previousImage != image)
+    {
+        _backgroundTransitionView = [[UIImageView alloc] initWithImage:previousImage];
+        _backgroundTransitionView.contentMode = _backgroundView.contentMode;
+        _backgroundTransitionView.frame = _backgroundView.frame;
+        _backgroundTransitionView.autoresizingMask = _backgroundView.autoresizingMask;
+        _backgroundTransitionView.clipsToBounds = true;
+        [_backgroundView.superview insertSubview:_backgroundTransitionView aboveSubview:_backgroundView];
+    }
+
+    _view.backgroundColor = viewColor;
+    _backgroundView.image = image;
+    _backgroundView.backgroundColor = imageViewColor;
+
+    UIImageView *transitionView = _backgroundTransitionView;
+    if (transitionView != nil)
+    {
+        [UIView animateWithDuration:0.3 animations:^
+        {
+            transitionView.alpha = 0.0f;
+        } completion:^(__unused BOOL finished)
+        {
+            [transitionView removeFromSuperview];
+            if (_backgroundTransitionView == transitionView)
+                _backgroundTransitionView = nil;
+        }];
+    }
+}
+
 - (void)setPresentation:(TGPresentation *)presentation
 {
     _presentation = presentation;
@@ -1266,6 +1319,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     _scrollButtons.presentation = presentation;
     
     [_collectionView updatePresentation];
+    [self _updateConversationBackgroundAnimated:false];
     
     if (self.companion.viewContext.presentation != nil)
     {
@@ -1333,11 +1387,12 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     };
     
     _view.clipsToBounds = true;
-    _view.backgroundColor = [UIColor whiteColor];
+    _view.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : [UIColor whiteColor];
     
     _backgroundView = [[UIImageView alloc] initWithFrame:_view.bounds];
-    UIImage *wallpaperImage = [[TGWallpaperManager instance] currentWallpaperImage];
+    UIImage *wallpaperImage = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ResourceImage:@"list"] : [[TGWallpaperManager instance] currentWallpaperImage];
     _backgroundView.image = wallpaperImage;
+    _backgroundView.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : [UIColor clearColor];
     _backgroundView.clipsToBounds = true;
     _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _backgroundView.contentMode = UIViewContentModeScaleAspectFill;
@@ -1937,6 +1992,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)viewWillDisappear:(BOOL)animated
 {
+    if (_ogRuntimeInteractionActive)
+    {
+        _ogRuntimeInteractionActive = false;
+        OGRuntimeEndInteraction();
+    }
     if (iosMajorVersion() >= 7)
     {
         if (TGTransitionCoordinatorIsInteractive(self.transitionCoordinator))
@@ -2702,6 +2762,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 {
     if (scrollView == _collectionView)
     {
+        if (!_ogRuntimeInteractionActive)
+        {
+            _ogRuntimeInteractionActive = true;
+            OGRuntimeBeginInteraction();
+        }
         if (_scrollToMid != nil)
         {
             _scrollToMid = nil;
@@ -2790,14 +2855,24 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
 }
 
-- (void)scrollViewDidEndDragging:(UIScrollView *)__unused scrollView willDecelerate:(BOOL)decelerate
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
+    if (scrollView == _collectionView && !decelerate && _ogRuntimeInteractionActive)
+    {
+        _ogRuntimeInteractionActive = false;
+        OGRuntimeEndInteraction();
+    }
     if (!decelerate)
         [self updateLastScrollTime];
 }
 
-- (void)scrollViewDidEndDecelerating:(UIScrollView *)__unused scrollView
+- (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
 {
+    if (scrollView == _collectionView && _ogRuntimeInteractionActive)
+    {
+        _ogRuntimeInteractionActive = false;
+        OGRuntimeEndInteraction();
+    }
     [self updateLastScrollTime];
 }
 
@@ -5841,6 +5916,74 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
 }
 
+- (TGMenuSheetController *)_presentMessageMenuActions:(NSArray *)menuActions userInfo:(NSDictionary *)userInfo sourceRect:(CGRect)sourceRect requiresDimView:(bool)requiresDimView
+{
+    if (menuActions.count == 0)
+        return nil;
+
+    TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
+    _contextMenuController = controller;
+    controller.requiuresDimView = requiresDimView;
+    controller.dismissesByOutsideTap = requiresDimView;
+    controller.inhibitPopoverPresentation = true;
+    controller.requiresShadow = true;
+    controller.stickWithSpecifiedParentController = TGIsPad();
+
+    TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
+    controller.didDismiss = ^(bool manual)
+    {
+        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+        if (strongSelf == nil)
+            return;
+
+        strongSelf->_contextMenuController = nil;
+        if (strongSelf->_menuContainerView.isShowingMenu)
+        {
+            if (manual)
+                [strongSelf->_menuContainerView hideMenu];
+        }
+        else if (requiresDimView)
+        {
+            [strongSelf unfocusMessagesAnimated:true];
+        }
+    };
+
+    NSMutableArray *itemViews = [[NSMutableArray alloc] init];
+    for (NSDictionary *action in menuActions)
+    {
+        TGMenuSheetButtonItemView *item = [[TGMenuSheetButtonItemView alloc] initWithTitle:action[@"title"] type:[action[@"destructive"] boolValue] ? TGMenuSheetButtonTypeDestructive : TGMenuSheetButtonTypeDefault action:^
+        {
+            TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+            if (strongSelf == nil)
+                return;
+
+            NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
+            options[@"action"] = action[@"action"];
+            if (userInfo != nil)
+                options[@"userInfo"] = userInfo;
+            [strongSelf->_actionHandle requestAction:@"menuAction" options:options];
+
+            if ([action[@"keepDim"] boolValue])
+                strongSelf->_keepDim = true;
+
+            [strongSelf->_menuContainerView hideMenu];
+        }];
+        [itemViews addObject:item];
+    }
+
+    [controller setItemViews:itemViews animated:false];
+    CGRect contextSourceRect = sourceRect;
+    if (TGIsPad() && !CGRectIsNull(contextSourceRect) && !CGRectIsEmpty(contextSourceRect))
+        contextSourceRect = CGRectMake(CGRectGetMidX(contextSourceRect), CGRectGetMidY(contextSourceRect), 1.0f, 1.0f);
+    controller.sourceRect = ^CGRect
+    {
+        return contextSourceRect;
+    };
+    [controller presentInViewController:self sourceView:self.view animated:true];
+
+    return controller;
+}
+
 - (void)highlightAndShowActionsMenuForMessage:(int32_t)messageId peerId:(int64_t)peerId groupedId:(int64_t)groupedId
 {
     if (_isRecording)
@@ -6200,6 +6343,31 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 [menuActions addObject:banAction];
             }
 
+            id<LegacyComponentsGlobalsProvider> globalsProvider = [LegacyComponentsGlobals provider];
+            bool deferMenuActions = moreAction != nil && actions.count != 0 && menuActions.count != 0 && [globalsProvider respondsToSelector:@selector(useNativeActionSheets)] && [globalsProvider useNativeActionSheets];
+            if (deferMenuActions)
+            {
+                NSUInteger moreIndex = [actions indexOfObjectIdenticalTo:moreAction];
+                if (moreIndex == NSNotFound)
+                {
+                    deferMenuActions = false;
+                }
+                else
+                {
+                    NSMutableDictionary *updatedMoreAction = [[NSMutableDictionary alloc] initWithDictionary:moreAction];
+                    updatedMoreAction[@"action"] = @"showMoreActions";
+                    moreAction = updatedMoreAction;
+                    [actions replaceObjectAtIndex:moreIndex withObject:moreAction];
+
+                    NSDictionary *selectAction = @{ @"title": TGLocalized(@"Common.Select"), @"action": @"select" };
+                    NSUInteger deleteIndex = deleteAction == nil ? NSNotFound : [menuActions indexOfObjectIdenticalTo:deleteAction];
+                    if (deleteIndex == NSNotFound)
+                        [menuActions addObject:selectAction];
+                    else
+                        [menuActions insertObject:selectAction atIndex:deleteIndex];
+                }
+            }
+
             if (TGIsArabic())
             {
                 NSMutableArray *reversedActions = [[NSMutableArray alloc] init];
@@ -6237,63 +6405,18 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                     cellFrame = [[cell contentViewForBinding] convertRect:[messageItem fullContentFrame] toView:self.view];
                 CGRect contentFrame = CGRectIntersection(cellFrame, CGRectMake(0, 0, _view.frame.size.width, _currentInputPanel == nil ? _view.frame.size.height : _currentInputPanel.frame.origin.y));
                 
-                NSDictionary *userInfo = groupedId != 0 ? @{@"mid": @(messageId), @"peerId": @(peerId), @"groupedId": @(groupedId)} : @{@"mid": @(messageId), @"peerId": @(peerId)};
+                NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] initWithDictionary:groupedId != 0 ? @{@"mid": @(messageId), @"peerId": @(peerId), @"groupedId": @(groupedId)} : @{@"mid": @(messageId), @"peerId": @(peerId)}];
+                if (deferMenuActions)
+                {
+                    userInfo[@"secondaryActions"] = menuActions;
+                    userInfo[@"secondarySourceRect"] = [NSValue valueWithCGRect:contentFrame];
+                }
                 
                 CGFloat offset = 0.0f;
                 CGFloat height = 0.0f;
-                if (menuActions.count != 0)
+                if (menuActions.count != 0 && !deferMenuActions)
                 {
-                    TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-                    _contextMenuController = controller;
-                    controller.requiuresDimView = actions.count == 0;
-                    controller.dismissesByOutsideTap = actions.count == 0;
-                    controller.inhibitPopoverPresentation = true;
-                    controller.requiresShadow = true;
-                    controller.stickWithSpecifiedParentController = TGIsPad();
-
-                    TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
-                    controller.didDismiss = ^(bool manual)
-                    {
-                        if (!manual)
-                            return;
-
-                        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-                        if (strongSelf != nil)
-                            [strongSelf->_menuContainerView hideMenu];
-                    };
-                    NSMutableArray *itemViews = [[NSMutableArray alloc] init];
-                    for (NSDictionary *action in menuActions)
-                    {
-                        TGMenuSheetButtonItemView *item = [[TGMenuSheetButtonItemView alloc] initWithTitle:action[@"title"] type:[action[@"destructive"] boolValue] ? TGMenuSheetButtonTypeDestructive : TGMenuSheetButtonTypeDefault action:^
-                        {
-                            TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-                            if (strongSelf == nil)
-                                return;
-
-                            NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
-                            options[@"action"] = action[@"action"];
-                            if (userInfo != nil)
-                                options[@"userInfo"] = userInfo;
-                            [strongSelf->_actionHandle requestAction:@"menuAction" options:options];
-
-                            if ([action[@"keepDim"] boolValue])
-                                strongSelf->_keepDim = true;
-
-                            [strongSelf->_menuContainerView hideMenu];
-                        }];
-                        [itemViews addObject:item];
-                    }
-
-                    [controller setItemViews:itemViews animated:false];
-                    CGRect contextSourceRect = contentFrame;
-                    if (TGIsPad() && !CGRectIsNull(contextSourceRect) && !CGRectIsEmpty(contextSourceRect))
-                        contextSourceRect = CGRectMake(CGRectGetMidX(contextSourceRect), CGRectGetMidY(contextSourceRect), 1.0f, 1.0f);
-                    controller.sourceRect = ^CGRect
-                    {
-                        return contextSourceRect;
-                    };
-                    [controller presentInViewController:self sourceView:self.view animated:true];
-
+                    TGMenuSheetController *controller = [self _presentMessageMenuActions:menuActions userInfo:userInfo sourceRect:contentFrame requiresDimView:actions.count == 0];
                     height = controller.menuHeight + controller.safeAreaInset.bottom;
                     CGFloat bottomEdge = MIN(CGRectGetMinY(_currentInputPanel.frame) - 6.0f, self.view.frame.size.height - height);
                     if (CGRectGetMaxY(cellFrame) > bottomEdge)
@@ -6942,7 +7065,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     tempImageView.contentMode = _backgroundView.contentMode;
     tempImageView.frame = _backgroundView.frame;
     [_backgroundView.superview insertSubview:tempImageView aboveSubview:_backgroundView];
-    _backgroundView.image = [[TGWallpaperManager instance] currentWallpaperImage];
+    _backgroundView.image = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ResourceImage:@"list"] : [[TGWallpaperManager instance] currentWallpaperImage];
+    _backgroundView.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : [UIColor clearColor];
     
     [UIView animateWithDuration:0.3 animations:^
     {
@@ -12525,7 +12649,16 @@ static UIView *_findBackArrow(UIView *view)
             }
             
             NSString *menuAction = options[@"action"];
-            if ([menuAction isEqualToString:@"reaction"])
+            if ([menuAction isEqualToString:@"showMoreActions"])
+            {
+                NSArray *secondaryActions = options[@"userInfo"][@"secondaryActions"];
+                NSValue *sourceRectValue = options[@"userInfo"][@"secondarySourceRect"];
+                CGRect sourceRect = sourceRectValue == nil ? CGRectZero : [sourceRectValue CGRectValue];
+                TGMenuSheetController *controller = [self _presentMessageMenuActions:secondaryActions userInfo:options[@"userInfo"] sourceRect:sourceRect requiresDimView:true];
+                if (controller != nil && _menuContainerView.isShowingMenu)
+                    controller.ignoreNextDismissal = true;
+            }
+            else if ([menuAction isEqualToString:@"reaction"])
             {
                 if (reactionMessageItem != nil)
                 {

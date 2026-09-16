@@ -13,6 +13,7 @@
     NSMutableDictionary *_channelStateDisposables;
     
     NSMutableSet *_uncommitedPeerIds;
+    NSMutableDictionary *_removedChannels;
 }
 
 @end
@@ -24,8 +25,13 @@
     if (self != nil) {
         _channelStateDisposables = [[NSMutableDictionary alloc] init];
         _uncommitedPeerIds = [[NSMutableSet alloc] init];
-        
-        _channels = [[NSMutableArray alloc] initWithArray:channels];
+        _removedChannels = [[NSMutableDictionary alloc] init];
+
+        _channels = [[NSMutableArray alloc] init];
+        for (TGConversation *conversation in channels) {
+            if (!conversation.leftChat && !conversation.kickedFromChat && conversation.kind == TGConversationKindPersistentChannel)
+                [_channels addObject:conversation];
+        }
         [_channels sortUsingComparator:^NSComparisonResult(TGConversation *lhs, TGConversation *rhs) {
             int result = TGConversationSortKeyCompare(lhs.variantSortKey, rhs.variantSortKey);
             if (result > 0) {
@@ -51,6 +57,8 @@
 }
 
 - (bool)updateChannel:(TGConversation *)conversation {
+    NSNumber *peerId = @(conversation.conversationId);
+
     for (NSUInteger i = 0; i < _channels.count; i++) {
         TGConversation *currentChannel = _channels[i];
         if (currentChannel.conversationId == conversation.conversationId) {
@@ -58,7 +66,17 @@
             break;
         }
     }
-    
+
+    if (conversation.leftChat || conversation.kickedFromChat || conversation.kind != TGConversationKindPersistentChannel) {
+        TGConversation *deletedConversation = [conversation copy];
+        deletedConversation.isDeleted = true;
+        _removedChannels[peerId] = deletedConversation;
+        [_uncommitedPeerIds addObject:peerId];
+        return true;
+    }
+
+    [_removedChannels removeObjectForKey:peerId];
+
     bool inserted = false;
     for (NSUInteger i = 0; i < _channels.count; i++) {
         TGConversation *currentChannel = _channels[i];
@@ -68,13 +86,12 @@
             break;
         }
     }
-    
-    if (!inserted) {
+
+    if (!inserted)
         [_channels addObject:conversation];
-    }
-    
-    [_uncommitedPeerIds addObject:@(conversation.conversationId)];
-    
+
+    [_uncommitedPeerIds addObject:peerId];
+
     return true;
 }
 
@@ -91,9 +108,16 @@
             [channels addObject:conversation];
     }
 
-    if (channels.count != 0) {
-        [ActionStageInstance() dispatchResource:@"/tg/conversations" resource:[[SGraphObjectNode alloc] initWithObject:channels]];
+    for (NSNumber *peerId in peerIds) {
+        TGConversation *removedConversation = _removedChannels[peerId];
+        if (removedConversation != nil) {
+            [channels addObject:removedConversation];
+            [_removedChannels removeObjectForKey:peerId];
+        }
     }
+
+    if (channels.count != 0)
+        [ActionStageInstance() dispatchResource:@"/tg/conversations" resource:[[SGraphObjectNode alloc] initWithObject:channels]];
 }
 
 @end

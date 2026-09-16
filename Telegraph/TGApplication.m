@@ -107,6 +107,7 @@ static Class TGIOS6RuntimeSystemClass(NSString *name, Class compatibilityClass)
     return nil; \
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation NSURLSessionConfiguration
 TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionConfiguration")
 + (instancetype)defaultSessionConfiguration
@@ -122,7 +123,9 @@ TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionConfiguration")
     return [[self alloc] init];
 }
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation NSURLSession
 TGIOS6_RUNTIME_PROXY_METHODS("NSURLSession")
 + (instancetype)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration
@@ -159,17 +162,23 @@ TGIOS6_RUNTIME_PROXY_METHODS("NSURLSession")
 }
 - (void)invalidateAndCancel {}
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation NSURLSessionTask
 TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionTask")
 - (void)resume {}
 - (void)cancel {}
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation NSURLSessionDataTask
 TGIOS6_RUNTIME_PROXY_METHODS("NSURLSessionDataTask")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 100000
 @implementation UIImpactFeedbackGenerator
 TGIOS6_RUNTIME_PROXY_METHODS("UIImpactFeedbackGenerator")
 - (instancetype)initWithStyle:(NSInteger)style
@@ -179,7 +188,9 @@ TGIOS6_RUNTIME_PROXY_METHODS("UIImpactFeedbackGenerator")
 - (void)prepare {}
 - (void)impactOccurred {}
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation UIKeyCommand
 TGIOS6_RUNTIME_PROXY_METHODS("UIKeyCommand")
 + (instancetype)keyCommandWithInput:(NSString *)input modifierFlags:(NSUInteger)modifierFlags action:(SEL)action
@@ -200,90 +211,133 @@ TGIOS6_RUNTIME_PROXY_METHODS("UIKeyCommand")
     return [[self alloc] init];
 }
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation UIAlertController
 TGIOS6_RUNTIME_PROXY_METHODS("UIAlertController")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation UIDocumentPickerViewController
 TGIOS6_RUNTIME_PROXY_METHODS("UIDocumentPickerViewController")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHObject
 TGIOS6_RUNTIME_PROXY_METHODS("PHObject")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHAsset
 TGIOS6_RUNTIME_PROXY_METHODS("PHAsset")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHAssetChangeRequest
 TGIOS6_RUNTIME_PROXY_METHODS("PHAssetChangeRequest")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHAssetCollection
 TGIOS6_RUNTIME_PROXY_METHODS("PHAssetCollection")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation PHAssetResource
 TGIOS6_RUNTIME_PROXY_METHODS("PHAssetResource")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation PHAssetResourceManager
 TGIOS6_RUNTIME_PROXY_METHODS("PHAssetResourceManager")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHCachingImageManager
 TGIOS6_RUNTIME_PROXY_METHODS("PHCachingImageManager")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHFetchOptions
 TGIOS6_RUNTIME_PROXY_METHODS("PHFetchOptions")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHImageManager
 TGIOS6_RUNTIME_PROXY_METHODS("PHImageManager")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHImageRequestOptions
 TGIOS6_RUNTIME_PROXY_METHODS("PHImageRequestOptions")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation PHLivePhotoRequestOptions
 TGIOS6_RUNTIME_PROXY_METHODS("PHLivePhotoRequestOptions")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHPhotoLibrary
 TGIOS6_RUNTIME_PROXY_METHODS("PHPhotoLibrary")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 @implementation PHVideoRequestOptions
 TGIOS6_RUNTIME_PROXY_METHODS("PHVideoRequestOptions")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation CNContactFormatter
 TGIOS6_RUNTIME_PROXY_METHODS("CNContactFormatter")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation CNContactVCardSerialization
 TGIOS6_RUNTIME_PROXY_METHODS("CNContactVCardSerialization")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation CNLabeledValue
 TGIOS6_RUNTIME_PROXY_METHODS("CNLabeledValue")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation CNMutableContact
 TGIOS6_RUNTIME_PROXY_METHODS("CNMutableContact")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation CNPhoneNumber
 TGIOS6_RUNTIME_PROXY_METHODS("CNPhoneNumber")
 @end
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 90000
 @implementation WCSession
 TGIOS6_RUNTIME_PROXY_METHODS("WCSession")
 @end
+#endif
 
 static NSString *TGIos6YouTubeDecodedString(NSString *string)
 {

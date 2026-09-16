@@ -73,6 +73,10 @@
 + (UIImage *)chatPlaceholderEncryptedIcon;
 
 + (UIImage *)chatBubbleImage:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail;
++ (UIImage *)brandedIOS6DeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read;
++ (UIImage *)brandedIOS6FlatDeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read;
++ (CGFloat)brandedIOS6DeliveryTagBottomInset;
++ (CGRect)brandedIOS6DeliveryTagFrameForMessageFrame:(CGRect)messageFrame tagSize:(CGSize)tagSize incoming:(bool)incoming;
 + (UIImage *)chatRoundMessageBackgroundImage:(UIColor *)color borderColor:(UIColor *)borderColor;
 
 + (UIImage *)chatPlaceholderBackgroundImage:(UIColor *)color;

@@ -650,7 +650,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
     }] mapToSignal:^SSignal *(NSArray *peers) {
         if (ratedPeers) {
             return [[TGRecentPeersSignals recentPeers] mapToSignal:^id(TGRemoteRecentPeerCategories *categories) {
-                return [TGDatabaseInstance() modify:^id{
+                return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     NSMutableDictionary *parsedCategories = [[NSMutableDictionary alloc] init];
                     
                     [categories.categories enumerateKeysAndObjectsUsingBlock:^(NSNumber *category, TGRemoteRecentPeerSet *peers, __unused BOOL *stop) {

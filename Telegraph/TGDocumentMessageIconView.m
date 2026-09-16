@@ -15,6 +15,7 @@
     
     TGModernButton *_buttonView;
     TGMessageImageViewOverlayView *_overlayView;
+    UIImageView *_brandedMediaButtonView;
     
     CGFloat _progress;
 }
@@ -25,6 +26,103 @@
 @end
 
 @implementation TGDocumentMessageIconView
+
+static UIImage *TGBrandedMediaButtonImage(CGFloat diameter, bool paused)
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(diameter, diameter), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect bounds = CGRectMake(0.5f, 0.5f, diameter - 1.0f, diameter - 1.0f);
+    CGContextSaveGState(context);
+    CGContextAddEllipseInRect(context, bounds);
+    CGContextClip(context);
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = {
+        0.67f, 0.86f, 1.0f, 1.0f,
+        0.19f, 0.69f, 0.96f, 1.0f,
+        0.03f, 0.58f, 0.89f, 1.0f
+    };
+    CGFloat locations[] = {0.0f, 0.48f, 1.0f};
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 3);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, diameter), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(colorSpace);
+    CGContextRestoreGState(context);
+
+    CGContextSaveGState(context);
+    CGContextAddEllipseInRect(context, CGRectMake(2.0f, 1.5f, diameter - 4.0f, diameter * 0.53f));
+    CGContextClip(context);
+    CGColorSpaceRef glossColorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat glossComponents[] = {
+        1.0f, 1.0f, 1.0f, 0.72f,
+        1.0f, 1.0f, 1.0f, 0.10f
+    };
+    CGFloat glossLocations[] = {0.0f, 1.0f};
+    CGGradientRef glossGradient = CGGradientCreateWithColorComponents(glossColorSpace, glossComponents, glossLocations, 2);
+    CGContextDrawLinearGradient(context, glossGradient, CGPointMake(0.0f, 1.0f), CGPointMake(0.0f, diameter * 0.53f), 0);
+    CGGradientRelease(glossGradient);
+    CGColorSpaceRelease(glossColorSpace);
+    CGContextRestoreGState(context);
+
+    CGContextSetStrokeColorWithColor(context, UIColorRGBA(0x4d8db8, 0.70f).CGColor);
+    CGContextSetLineWidth(context, 1.0f);
+    CGContextStrokeEllipseInRect(context, bounds);
+
+    CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.5f, UIColorRGBA(0x000000, 0.25f).CGColor);
+    CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
+    if (!paused)
+    {
+        CGFloat glyphWidth = CGFloor(diameter * 0.30f);
+        CGFloat glyphHeight = CGFloor(diameter * 0.40f);
+        CGFloat x = CGFloor((diameter - glyphWidth) / 2.0f) + 1.0f;
+        CGFloat y = CGFloor((diameter - glyphHeight) / 2.0f);
+        CGContextBeginPath(context);
+        CGContextMoveToPoint(context, x, y);
+        CGContextAddLineToPoint(context, x + glyphWidth, y + glyphHeight / 2.0f);
+        CGContextAddLineToPoint(context, x, y + glyphHeight);
+        CGContextClosePath(context);
+        CGContextFillPath(context);
+    }
+    else
+    {
+        CGFloat barWidth = MAX(3.0f, CGFloor(diameter * 0.11f));
+        CGFloat barHeight = CGFloor(diameter * 0.38f);
+        CGFloat gap = MAX(3.0f, CGFloor(diameter * 0.10f));
+        CGFloat totalWidth = barWidth * 2.0f + gap;
+        CGFloat x = CGFloor((diameter - totalWidth) / 2.0f);
+        CGFloat y = CGFloor((diameter - barHeight) / 2.0f);
+        CGContextFillRect(context, CGRectMake(x, y, barWidth, barHeight));
+        CGContextFillRect(context, CGRectMake(x + barWidth + gap, y, barWidth, barHeight));
+    }
+    CGContextRestoreGState(context);
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+- (void)updateBrandedMediaButton
+{
+    if (![TGPresentation brandedIOS6Style])
+        return;
+
+    if (_brandedMediaButtonView == nil)
+    {
+        _brandedMediaButtonView = [[UIImageView alloc] initWithFrame:_buttonView.frame];
+        _brandedMediaButtonView.userInteractionEnabled = false;
+        [self addSubview:_brandedMediaButtonView];
+    }
+
+    bool brandedMedia = _overlayType == TGMessageImageViewOverlayPlayMedia || _overlayType == TGMessageImageViewOverlayPauseMedia;
+    _brandedMediaButtonView.hidden = !brandedMedia;
+    _overlayView.hidden = brandedMedia;
+    if (!brandedMedia)
+        return;
+
+    _brandedMediaButtonView.frame = _buttonView.frame;
+    _brandedMediaButtonView.image = TGBrandedMediaButtonImage(MIN(_buttonView.bounds.size.width, _buttonView.bounds.size.height), _overlayType == TGMessageImageViewOverlayPauseMedia);
+    [self bringSubviewToFront:_brandedMediaButtonView];
+}
 
 static UIImage *highlightImageForDiameter(CGFloat diameter) {
     static NSMutableDictionary *dict = nil;
@@ -82,9 +180,11 @@ static UIImage *highlightImageForDiameter(CGFloat diameter) {
 {
     _presentation = presentation;
     _overlayView.incomingColor = presentation.pallete.chatIncomingButtonColor;
-    _overlayView.outgoingColor = presentation.pallete.chatOutgoingButtonColor;
+    _overlayView.outgoingColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : presentation.pallete.chatOutgoingButtonColor;
     _overlayView.incomingIconColor = presentation.pallete.chatIncomingButtonIconColor;
-    _overlayView.outgoingIconColor = presentation.pallete.chatOutgoingButtonIconColor;
+    _overlayView.outgoingIconColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0x609bd5) : presentation.pallete.chatOutgoingButtonIconColor;
+    _extensionLabel.textColor = (!_incoming && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : TGAccentColor();
+    [self updateBrandedMediaButton];
 }
 
 - (void)willBecomeRecycled
@@ -107,6 +207,7 @@ static UIImage *highlightImageForDiameter(CGFloat diameter) {
         {
             _buttonView.frame = buttonFrame;
         }
+        [self updateBrandedMediaButton];
     }
 }
 
@@ -122,11 +223,13 @@ static UIImage *highlightImageForDiameter(CGFloat diameter) {
     {
         _buttonView.frame = buttonFrame;
     }
+    [self updateBrandedMediaButton];
 }
 
 - (void)setIncoming:(bool)incoming
 {
     _incoming = incoming;
+    _extensionLabel.textColor = (!incoming && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : TGAccentColor();
     
     [_overlayView setOverlayStyle:incoming ? TGMessageImageViewOverlayStyleIncoming : TGMessageImageViewOverlayStyleOutgoing];
 }
@@ -260,6 +363,7 @@ static UIImage *highlightImageForDiameter(CGFloat diameter) {
     {
         [_overlayView setProgress:_progress animated:false];
     }
+    [self updateBrandedMediaButton];
 }
 
 - (void)setProgress:(CGFloat)progress

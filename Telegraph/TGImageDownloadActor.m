@@ -19,6 +19,7 @@
 #import "TGDownloadManager.h"
 
 #import "TGDatabase.h"
+#import "TGCommon.h"
 
 #import "TGInterfaceAssets.h"
 
@@ -258,7 +259,7 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
     dispatch_once(&onceToken, ^
     {
         queue = [[NSOperationQueue alloc] init];
-        [queue setMaxConcurrentOperationCount:(cpuCoreCount() > 1 ? 3 : 1)];
+        [queue setMaxConcurrentOperationCount:performanceBackgroundWorkerCount()];
     });
     return queue;
 }

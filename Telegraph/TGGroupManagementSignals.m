@@ -1,4 +1,5 @@
 #import "TGGroupManagementSignals.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -40,6 +41,49 @@
 #import "TGDialogListRequestBuilder.h"
 
 #import "TLPeerNotifySettings$peerNotifySettings.h"
+
+static SQueue *OGPeerDialogsPreparationQueue(void)
+{
+    static SQueue *queue = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = [SQueue wrapConcurrentNativeQueue:OGRuntimeQueueForPriority(OGRuntimePriorityUtility)];
+    });
+    return queue;
+}
+
+static SQueue *OGPeerDialogsStorageQueue(void)
+{
+    static SQueue *queue = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = [SQueue wrapConcurrentNativeQueue:OGRuntimeQueueForPriority(OGRuntimePriorityStorage)];
+    });
+    return queue;
+}
+
+static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^block)(void))
+{
+    return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        __block id result = nil;
+#ifdef DEBUG_DATABASE_INVOKATIONS
+        [TGDatabaseInstance() dispatchOnDatabaseThreadDebug:file line:line block:^
+#else
+        (void)file;
+        (void)line;
+        [TGDatabaseInstance() dispatchOnDatabaseThread:^
+#endif
+        {
+            result = block();
+        } synchronous:true];
+        [subscriber putNext:result];
+        [subscriber putCompletion];
+        return nil;
+    }] startOn:OGPeerDialogsStorageQueue()];
+}
 
 static inline bool TGIOS6GroupPeerIdLooksLikeModernRawChannel(int64_t peerId)
 {
@@ -210,7 +254,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
             }
             
             if (TGPeerIdIsChannel(peerId)) {
-                return [[TGDatabaseInstance() modify:^id{
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
                     if (conversation == nil) {
                         conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chat];
@@ -392,7 +436,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         
         if (conversation != nil)
         {
-            return [[TGDatabaseInstance() modify:^id{
+            return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                 [TGDatabaseInstance() transactionAddMessages:nil updateConversationDatas:@{@(conversation.conversationId): conversation} notifyAdded:true];
                 
                 return [SSignal complete];
@@ -413,7 +457,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
     editChatAdmin.is_admin = isAdmin;
     
     return [[[TGTelegramNetworking instance] requestSignal:editChatAdmin] mapToSignal:^SSignal *(__unused id result) {
-        return [[TGDatabaseInstance() modify:^id {
+        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
             TGConversation *currentConversation = [TGDatabaseInstance() loadConversationWithId:peerId];
             if (currentConversation != nil) {
                 TGConversationParticipantsData *updatedData = [currentConversation.chatParticipants copy];
@@ -426,7 +470,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 
                 currentConversation.chatParticipants = updatedData;
                 [ActionStageInstance() dispatchResource:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/conversation", peerId] resource:[[SGraphObjectNode alloc] initWithObject:currentConversation]];
-                return [[TGDatabaseInstance() modify:^id{
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() transactionAddMessages:nil updateConversationDatas:@{@(currentConversation.conversationId): currentConversation} notifyAdded:true];
                     
                     return [SSignal complete];
@@ -530,7 +574,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         return [SSignal complete];
     }
     
-    SSignal *initialPts = [TGDatabaseInstance() modify:^id{
+    SSignal *initialPts = [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         return @([TGDatabaseInstance() databaseState].pts);
     }];
     
@@ -619,7 +663,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 }
 
 + (SSignal *)_synchronizeDraft:(int64_t)peerId {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         if (TGPeerIdIsSecretChat(peerId)) {
             return [SSignal complete];
         }
@@ -722,9 +766,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 }
 
 + (SSignal *)processedDialogs:(TLmessages_PeerDialogs *)result peerId:(int64_t)peerId {
-    return [[TGDatabaseInstance() modify:^id{
-        [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
-        
+    return [[SSignal defer:^SSignal *{
         NSMutableDictionary *chatItems = [[NSMutableDictionary alloc] init];
         NSMutableDictionary *channelItems = [[NSMutableDictionary alloc] init];
         
@@ -753,7 +795,8 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         return [[[TGDialogListRequestBuilder signalForCompleteMessages:parsedMessages channels:channelItems] catch:^SSignal *(__unused id error) {
             return [SSignal single:parsedMessages];
         }] mapToSignal:^SSignal *(NSArray *completeMessages) {
-            return [TGDatabaseInstance() modify:^id {
+            return OGPeerDialogsDatabaseSignal(__FILE__, __LINE__, ^id {
+                [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
                 NSMutableDictionary *multipleMessagesByConversation = [[NSMutableDictionary alloc] init];
                 NSMutableDictionary *updatePeerDrafts = [[NSMutableDictionary alloc] init];
                 
@@ -1064,13 +1107,13 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 }
                 
                 return nil;
-            }];
+            });
         }];
-    }] switchToLatest];
+    }] startOn:OGPeerDialogsPreparationQueue()];
 }
 
 + (SSignal *)preloadedPeer:(int64_t)peerId accessHash:(int64_t)accessHash {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[SSignal defer:^SSignal *{
         TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
         if (inputPeer != nil) {
             TLRPCmessages_getPeerDialogs$messages_getPeerDialogs *getPeerDialogs = [[TLRPCmessages_getPeerDialogs$messages_getPeerDialogs alloc] init];
@@ -1081,7 +1124,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         } else {
             return [SSignal single:nil];
         }
-    }] switchToLatest];
+    }] startOn:OGPeerDialogsPreparationQueue()];
 }
 
 + (TLInputPeer *)inputPeerWithPeerId:(int64_t)peerId {
@@ -1112,7 +1155,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 }
 
 + (SSignal *)updatePinnedState:(int64_t)peerId pinned:(bool)pinned {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSMutableArray *peerIds = [[NSMutableArray alloc] init];
         for (TGConversation *conversation in [TGDatabaseInstance() _getPinnedConversations]) {
             if (conversation.conversationId != peerId) {
@@ -1135,7 +1178,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 }
 
 + (SSignal *)synchronizePinnedConversationsOnce {
-    return [[[TGDatabaseInstance() modify:^id{
+    return [[[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         SSignal *pushAction = [SSignal complete];
         SSignal *pullAction = [SSignal complete];
         
@@ -1156,7 +1199,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 }
 
 + (SSignal *)tryCompletingWithAction:(TGSynchronizePinnedConversationsAction *)action {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         if ([[TGDatabaseInstance() currentSynchronizePinnedConversationsAction] isEqual:action]) {
             [TGDatabaseInstance() _setCurrentSynchronizePinnedConversationsAction:[[TGSynchronizePinnedConversationsAction alloc] initWithType:0 version:action.version]];
             return [SSignal complete];
@@ -1167,7 +1210,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 }
 
 + (SSignal *)pushPinnedConversations {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSMutableArray *inputPeers = [[NSMutableArray alloc] init];
         
         for (TGConversation *conversation in [TGDatabaseInstance() _getPinnedConversations]) {
@@ -1210,7 +1253,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
     TLRPCmessages_getPinnedDialogs$messages_getPinnedDialogs *getPinnedDialogs = [[TLRPCmessages_getPinnedDialogs$messages_getPinnedDialogs alloc] init];
     return [[[TGTelegramNetworking instance] requestSignal:getPinnedDialogs] mapToSignal:^SSignal *(TLmessages_PeerDialogs *result) {
         return [[self processedDialogs:result peerId:0] mapToSignal:^SSignal *(__unused id result1) {
-            return [[TGDatabaseInstance() modify:^id{
+            return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                 NSMutableArray *peerIds = [[NSMutableArray alloc] init];
                 for (TLDialog *dialog in result.dialogs) {
                     int64_t peerId = 0;

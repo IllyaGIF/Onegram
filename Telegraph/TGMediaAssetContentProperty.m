@@ -41,7 +41,9 @@
     NSString *assetPath = [coder decodeStringForCKey:"assetURL"];
     NSURL *assetURL = (assetPath != nil) ? [NSURL fileURLWithPath:assetPath] : nil;
     
-    return [self initWithAssetIdentifier:[coder decodeStringForCKey:"assetIdentifier"] assetURL:assetURL isVideo:[coder decodeInt32ForCKey:"isVideo"] editAdjustments:[NSKeyedUnarchiver unarchiveObjectWithData:[coder decodeDataCorCKey:"editAdjustments"]] isCloud:[coder decodeInt32ForCKey:"isCloud"] useMediaCache:[coder decodeInt32ForCKey:"useMediaCache"] liveUpload:[coder decodeInt32ForCKey:"liveUpload"] passthrough:[coder decodeInt32ForCKey:"passthough"] roundMessage:[coder decodeInt32ForCKey:"roundMessage"]];
+    NSData *editAdjustmentsData = [coder decodeDataCorCKey:"editAdjustments"];
+    id editAdjustments = editAdjustmentsData.length == 0 ? nil : [NSKeyedUnarchiver unarchiveObjectWithData:editAdjustmentsData];
+    return [self initWithAssetIdentifier:[coder decodeStringForCKey:"assetIdentifier"] assetURL:assetURL isVideo:[coder decodeInt32ForCKey:"isVideo"] editAdjustments:editAdjustments isCloud:[coder decodeInt32ForCKey:"isCloud"] useMediaCache:[coder decodeInt32ForCKey:"useMediaCache"] liveUpload:[coder decodeInt32ForCKey:"liveUpload"] passthrough:[coder decodeInt32ForCKey:"passthough"] roundMessage:[coder decodeInt32ForCKey:"roundMessage"]];
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder

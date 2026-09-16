@@ -176,7 +176,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
         
         _titleText = TGIOS6DisplayFileNameForDocument(document);
         
-        _documentNameModel = [[TGModernLabelViewModel alloc] initWithText:@"" textColor:_incomingAppearance ? _context.presentation.pallete.chatIncomingAccentColor : _context.presentation.pallete.chatOutgoingAccentColor font:TGCoreTextSystemFontOfSize(16.0f) maxWidth:145.0f truncateInTheMiddle:true];
+        _documentNameModel = [[TGModernLabelViewModel alloc] initWithText:@"" textColor:(!_incomingAppearance && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : (_incomingAppearance ? _context.presentation.pallete.chatIncomingAccentColor : _context.presentation.pallete.chatOutgoingAccentColor) font:TGCoreTextSystemFontOfSize(16.0f) maxWidth:145.0f truncateInTheMiddle:true];
         [_contentModel addSubmodel:_documentNameModel];
         
         NSString *sizeString = @"";
@@ -208,7 +208,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
             _textModel.additionalTrailingWidth += 10.0f;
         [_contentModel addSubmodel:_textModel];
         
-        _documentSizeModel = [[TGModernLabelViewModel alloc] initWithText:@"" textColor:_incomingAppearance ? _context.presentation.pallete.chatIncomingSubtextColor : _context.presentation.pallete.chatOutgoingSubtextColor font:TGCoreTextSystemFontOfSize(13.0f) maxWidth:145.0f];
+        _documentSizeModel = [[TGModernLabelViewModel alloc] initWithText:@"" textColor:(!_incomingAppearance && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : (_incomingAppearance ? _context.presentation.pallete.chatIncomingSubtextColor : _context.presentation.pallete.chatOutgoingSubtextColor) font:TGCoreTextSystemFontOfSize(13.0f) maxWidth:145.0f];
         [_contentModel addSubmodel:_documentSizeModel];
         
         [self updateIconWithUri:filePreviewUri];
@@ -586,7 +586,8 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
         previewSize.height += 14.0f;
     }
     
-    return CGSizeMake(MAX(textSize.width, MAX(nameWidth, sizeWidth) + previewSize.width + 14.0f), previewSize.height + 10.0f + textSize.height);
+    CGFloat brandedBottomInset = [TGPresentation brandedIOS6Style] ? 4.0f : 0.0f;
+    return CGSizeMake(MAX(textSize.width, MAX(nameWidth, sizeWidth) + previewSize.width + 14.0f), previewSize.height + 10.0f + textSize.height + brandedBottomInset);
 }
 
 - (void)messageImageViewActionButtonPressed:(TGMessageImageView *)messageImageView withAction:(TGMessageImageViewActionType)action

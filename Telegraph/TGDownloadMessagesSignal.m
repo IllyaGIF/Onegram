@@ -229,7 +229,7 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
     getUnreadMentions.min_id = maxId - 1;
     
     return [[[TGTelegramNetworking instance] requestSignal:getUnreadMentions] mapToSignal:^SSignal *(TLmessages_Messages *result) {
-        return [TGDatabaseInstance() modify:^id{
+        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             NSMutableArray *messageIds = [[NSMutableArray alloc] init];
             NSMutableArray *messageUpdates = [[NSMutableArray alloc] init];
             for (TLMessage *message in result.messages) {
@@ -245,7 +245,7 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
 }
 
 + (SSignal *)earliestUnseenMentionMessageId:(int64_t)peerId accessHash:(int64_t)accessHash {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         int32_t loadRequiredAfterMessageId = 0;
         int32_t localId = [TGDatabaseInstance() _nextUnreadMentionMessageId:peerId loadRequiredAfterMessageId:&loadRequiredAfterMessageId];
         
@@ -304,7 +304,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         }];
     }];
     
-    return [clear then:[[TGDatabaseInstance() modify:^id{
+    return [clear then:[[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSMutableDictionary *resetPeerUnseenMentionsStates = [[NSMutableDictionary alloc] init];
         resetPeerUnseenMentionsStates[@(peerId)] = [[TGUnseenPeerMentionsState alloc] initWithVersion:0 count:0 maxIdWithPrecalculatedCount:0];
         [TGDatabaseInstance() transactionResetPeerUnseenMentionsStates:resetPeerUnseenMentionsStates];

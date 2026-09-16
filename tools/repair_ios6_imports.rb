@@ -6,7 +6,7 @@ require 'pathname'
 
 root = Pathname.new(File.expand_path(ARGV[0] || Dir.pwd))
 unless (root / 'Telegraph.xcodeproj').directory?
-  abort "Run from the Twelvium_Public 2 directory."
+  abort "Run from the Onegramium_Public 2 directory."
 end
 
 roots = {

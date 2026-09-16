@@ -70,6 +70,8 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     TGUser *_syntheticAuthor;
     
     TGMessageGroupedLayout *_groupedLayout;
+    CGFloat _groupedMediaOffsetX;
+    CGFloat _groupedMediaOffsetY;
     
     bool _isExpiredLiveLocation;
 }
@@ -105,6 +107,8 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     copyItem->_collapseFlags = _collapseFlags;
     copyItem->_cachedMessageType = _cachedMessageType;
     copyItem->_mediaAvailabilityStatus = _mediaAvailabilityStatus;
+    copyItem->_groupedMediaOffsetX = _groupedMediaOffsetX;
+    copyItem->_groupedMediaOffsetY = _groupedMediaOffsetY;
     
     [copyItem _updateLiveLocationExpiration];
     
@@ -122,6 +126,8 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     copyItem->_collapseFlags = _collapseFlags;
     copyItem->_cachedMessageType = _cachedMessageType;
     copyItem->_mediaAvailabilityStatus = _mediaAvailabilityStatus;
+    copyItem->_groupedMediaOffsetX = _groupedMediaOffsetX;
+    copyItem->_groupedMediaOffsetY = _groupedMediaOffsetY;
     
     [copyItem _updateLiveLocationExpiration];
     
@@ -910,6 +916,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                         model.collapseFlags = _collapseFlags;
                         model.groupedLayout = _groupedLayout;
                         model.positionFlags = _positionFlags;
+                        [model setGroupedMediaOffsetX:_groupedMediaOffsetX y:_groupedMediaOffsetY];
                         [model layoutForContainerSize:containerSize];
                         return model;
                     }
@@ -940,6 +947,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                             model.collapseFlags = _collapseFlags;
                             model.groupedLayout = _groupedLayout;
                             model.positionFlags = _positionFlags;
+                            [model setGroupedMediaOffsetX:_groupedMediaOffsetX y:_groupedMediaOffsetY];
                             [model layoutForContainerSize:containerSize];
                             return model;
                         }
@@ -1439,16 +1447,39 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
     return _isExpiredLiveLocation;
 }
 
+- (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y
+{
+    _groupedMediaOffsetX = x;
+    _groupedMediaOffsetY = y;
+    [_viewModel setGroupedMediaOffsetX:x y:y];
+    _layoutIsInvalid = true;
+}
+
+- (CGFloat)groupedMediaOffsetX
+{
+    return _viewModel != nil ? [_viewModel groupedMediaOffsetX] : _groupedMediaOffsetX;
+}
+
+- (CGFloat)groupedMediaOffsetY
+{
+    return _viewModel != nil ? [_viewModel groupedMediaOffsetY] : _groupedMediaOffsetY;
+}
+
 - (void)updateGroupedLayout:(TGMessageGroupedLayout *)groupedLayout
 {
     _groupedLayout = groupedLayout;
     if (groupedLayout != nil)
         _positionFlags = [groupedLayout positionForMessageId:_message.mid];
     else
+    {
         _positionFlags = TGMessageGroupPositionNone;
+        _groupedMediaOffsetX = 0.0f;
+        _groupedMediaOffsetY = 0.0f;
+    }
 
     _viewModel.positionFlags = _positionFlags;
     _viewModel.groupedLayout = groupedLayout;
+    [_viewModel setGroupedMediaOffsetX:_groupedMediaOffsetX y:_groupedMediaOffsetY];
     
     _layoutIsInvalid = true;
 }

@@ -89,7 +89,7 @@
 }
 
 + (SSignal *)recentBots {
-    return [TGDatabaseInstance() modify:^id{
+    return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSMutableArray *userIds = [[NSMutableArray alloc] init];
         NSInteger count = 0;
         for (TGUser *user in [TGDatabaseInstance() _syncCachedRecentInlineBots:0.0f]) {

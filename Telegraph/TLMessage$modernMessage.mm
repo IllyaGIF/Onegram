@@ -279,7 +279,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
 
     int32_t signature = [is readInt32];
     
-    if (signature == (int32_t)0xafbc09db || signature == (int32_t)0x1b97dd66)
+    if (signature == (int32_t)0xafbc09db || signature == (int32_t)0x1b97dd66 || signature == (int32_t)0x6917560b)
     {
         int32_t flags = [is readInt32];
         if (forumTopic != NULL)
@@ -305,7 +305,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
             TGModernReadObjectVector(is, environment, error);
         if (flags & (1 << 10))
             [is readInt32];
-        if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 11)))
+        if ((signature == (int32_t)0x1b97dd66 || signature == (int32_t)0x6917560b) && (flags & (1 << 11)))
             [is readInt32];
         if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 12)))
             [is readBytes];
@@ -340,7 +340,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     
     int32_t flags = [is readInt32];
     int32_t flags2 = 0;
-    bool hasModernFlags2 = signature == (int32_t)0x94345242 || signature == (int32_t)0x96fdbbe9 || signature == (int32_t)0x7600b9d3 || signature == (int32_t)0x95ef6f2b || signature == (int32_t)0x6a26cb37 || signature == (int32_t)0xd0bbd081 || signature == (int32_t)0x003e38e7 || signature == (int32_t)0xd9a7d88a || signature == (int32_t)0xd18fd1bb || signature == (int32_t)0xff86154d || signature == (int32_t)0xbb294f27 || signature == (int32_t)0x65fdf943 || signature == (int32_t)0x6a4ced37 || signature == (int32_t)0x6236ae4a || signature == (int32_t)0xd8a8d820;
+    bool hasModernFlags2 = signature == (int32_t)0x94345242 || signature == (int32_t)0x96fdbbe9 || signature == (int32_t)0x7600b9d3 || signature == (int32_t)0x95ef6f2b || signature == (int32_t)0x6a26cb37 || signature == (int32_t)0xd0bbd081 || signature == (int32_t)0x003e38e7 || signature == (int32_t)0xd9a7d88a || signature == (int32_t)0xd18fd1bb || signature == (int32_t)0xff86154d || signature == (int32_t)0xbb294f27 || signature == (int32_t)0x65fdf943 || signature == (int32_t)0x6a4ced37 || signature == (int32_t)0x6236ae4a || signature == (int32_t)0xd8a8d820 || signature == (int32_t)0x9815cec8;
     bool isLayer181Message = signature == (int32_t)0x94345242;
     bool usesModernPeerObjects = hasModernFlags2;
     bool isLatestLongPeerMessage = signature == (int32_t)0x7600b9d3;

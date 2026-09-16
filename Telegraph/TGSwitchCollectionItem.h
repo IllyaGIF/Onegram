@@ -22,6 +22,8 @@
 @property (nonatomic) bool isLocked;
 @property (nonatomic) bool isPermission;
 @property (nonatomic) bool fullSeparator;
+@property (nonatomic, strong) NSString *iconName;
+@property (nonatomic) bool brandedUserInfoStyle;
 
 - (instancetype)initWithTitle:(NSString *)title isOn:(bool)isOn;
 

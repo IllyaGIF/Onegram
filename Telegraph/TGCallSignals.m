@@ -105,7 +105,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
 {
     TGLog(@"CALL signal.requestedOutgoing peer=%lld", peerId);
     
-    return [[TGDatabaseInstance() modify:^id
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id
              {
                  return [TGTelegraphInstance createInputUserForUid:(int32_t)peerId];
              }] mapToSignal:^SSignal *(TLInputUser *inputUser)

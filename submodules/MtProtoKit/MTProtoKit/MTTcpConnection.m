@@ -329,6 +329,7 @@ struct ctr_state {
 - (NSString *)onegramWebSocketTargetForAttempt:(NSInteger)attempt;
 - (void)onegramPrepareSocket;
 - (void)onegramWebSocketAttemptsExhausted;
+- (void)onegramStartDirectFallback;
 - (void)onegramStartWebSocketAttempt;
 - (void)onegramWebSocketAttemptFailed;
 - (void)onegramWebSocketOpened;
@@ -536,7 +537,39 @@ struct ctr_state {
     if (_closed)
         return;
 
-    [self closeAndNotify];
+    [self onegramStartDirectFallback];
+}
+
+- (void)onegramStartDirectFallback
+{
+    if (_closed)
+        return;
+
+    _onegramWebSocket = false;
+    _onegramWebSocketReady = false;
+    _onegramWebSocketDomain = nil;
+    _onegramWebSocketPath = nil;
+    _onegramWebSocketKey = nil;
+    _onegramWebSocketFragment = nil;
+    _onegramWebSocketTransportBuffer = nil;
+    _addedControlHeader = false;
+    _outgoingAesCtr = nil;
+    _incomingAesCtr = nil;
+    _useIntermediateFormat = [MTSocksProxySettings secretSupportsExtendedPadding:_address.secret];
+
+    [self onegramPrepareSocket];
+
+    NSError *error = nil;
+    if (![_socket connectToHost:_address.ip onPort:_address.port viaInterface:_interface withTimeout:12 error:&error] || error != nil)
+    {
+        [self closeAndNotify];
+        return;
+    }
+
+    if (_useIntermediateFormat)
+        [_socket readDataToLength:4 withTimeout:-1 tag:MTTcpReadTagPacketFullLength];
+    else
+        [_socket readDataToLength:1 withTimeout:-1 tag:MTTcpReadTagPacketShortLength];
 }
 
 - (void)onegramStartWebSocketAttempt
@@ -909,16 +942,16 @@ struct ctr_state {
                     if (MTLogEnabled()) {
                         if (strongSelf->_socksIp != nil) {
                             if (strongSelf->_socksUsername.length == 0) {
-                                MTLog(@"[MTTcpConnection#%x connecting to %@:%d via %@:%d]", (int)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_socksIp, (int)strongSelf->_socksPort);
+                                MTLog(@"[MTTcpConnection#%p connecting to %@:%d via %@:%d]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_socksIp, (int)strongSelf->_socksPort);
                             } else {
-                                MTLog(@"[MTTcpConnection#%x connecting to %@:%d via %@:%d using %@:%@]", (int)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_socksIp, (int)_socksPort, strongSelf->_socksUsername, strongSelf->_socksPassword);
+                                MTLog(@"[MTTcpConnection#%p connecting to %@:%d via %@:%d using %@:%@]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_socksIp, (int)_socksPort, strongSelf->_socksUsername, strongSelf->_socksPassword);
                             }
                         } else if (strongSelf->_mtpIp != nil) {
-                            MTLog(@"[MTTcpConnection#%x connecting to %@:%d via mtp://%@:%d:%@]", (int)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_mtpIp, (int)strongSelf->_mtpPort, strongSelf->_mtpSecret);
+                            MTLog(@"[MTTcpConnection#%p connecting to %@:%d via mtp://%@:%d:%@]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_mtpIp, (int)strongSelf->_mtpPort, strongSelf->_mtpSecret);
                         } else if (strongSelf->_address.secret != nil) {
-                            MTLog(@"[MTTcpConnection#%x connecting to %@:%d with secret %@]", (int)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_address.secret);
+                            MTLog(@"[MTTcpConnection#%p connecting to %@:%d with secret %@]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_address.secret);
                         } else {
-                            MTLog(@"[MTTcpConnection#%x connecting to %@:%d]", (int)self, strongSelf->_address.ip, (int)strongSelf->_address.port);
+                            MTLog(@"[MTTcpConnection#%p connecting to %@:%d]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port);
                         }
                     }
                     
@@ -1190,7 +1223,7 @@ struct ctr_state {
     _responseTimeoutTimer = nil;
     
     if (MTLogEnabled()) {
-        MTLog(@"[MTTcpConnection#%x response timeout]", (int)self);
+        MTLog(@"[MTTcpConnection#%p response timeout]", (__bridge void *)self);
     }
     [self stop];
 }
@@ -1268,11 +1301,7 @@ struct ctr_state {
         return;
 
 #if TARGET_OS_IPHONE
-    BOOL isPrimaryDataConnection = _usageCalculationInfo != nil &&
-        [_usageCalculationInfo incomingWWANKey] == 0 &&
-        [_usageCalculationInfo outgoingWWANKey] == 1 &&
-        [_usageCalculationInfo incomingOtherKey] == 2 &&
-        [_usageCalculationInfo outgoingOtherKey] == 3;
+    BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
     if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && isPrimaryDataConnection)
     {
         static CFAbsoluteTime lastPrimaryActivitySignalTime = 0.0;
@@ -1471,7 +1500,7 @@ struct ctr_state {
         
         if (resp.Reply != 0x00) {
             if (MTLogEnabled()) {
-                MTLog(@"***** %x %s: socks5 connect failed, error 0x%02x", (int)self, __PRETTY_FUNCTION__, resp.Reply);
+                MTLog(@"***** %p %s: socks5 connect failed, error 0x%02x", (__bridge void *)self, __PRETTY_FUNCTION__, resp.Reply);
             }
             [self closeAndNotify];
             return;
@@ -1649,7 +1678,7 @@ struct ctr_state {
         } else {
             if (length > 16 * 1024 * 1024) {
                 if (MTLogEnabled()) {
-                    MTLog(@"[MTTcpConnection#%x received invalid length %d]", (int)self, length);
+                    MTLog(@"[MTTcpConnection#%p received invalid length %d]", (__bridge void *)self, length);
                 }
                 [self closeAndNotify];
             } else {
@@ -1731,7 +1760,7 @@ struct ctr_state {
                 }
             } else if (header == 0 && packetData.length < 16) {
                 if (MTLogEnabled()) {
-                    MTLog(@"[MTTcpConnection#%x received nop packet]", (int)self);
+                    MTLog(@"[MTTcpConnection#%p received nop packet]", (__bridge void *)self);
                 }
                 ignorePacket = true;
             }
@@ -1778,11 +1807,7 @@ struct ctr_state {
 - (void)socket:(GCDAsyncSocket *)__unused socket didConnectToHost:(NSString *)__unused host port:(uint16_t)__unused port
 {
 #if TARGET_OS_IPHONE
-    BOOL isPrimaryDataConnection = _usageCalculationInfo != nil &&
-        [_usageCalculationInfo incomingWWANKey] == 0 &&
-        [_usageCalculationInfo outgoingWWANKey] == 1 &&
-        [_usageCalculationInfo incomingOtherKey] == 2 &&
-        [_usageCalculationInfo outgoingOtherKey] == 3;
+    BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
     if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && isPrimaryDataConnection) {
         __block BOOL backgroundingEnabled = NO;
         __block int socketFd = -1;
@@ -1790,11 +1815,15 @@ struct ctr_state {
         __block int keepAliveError = 0;
         __block int keepAliveIdleResult = -2;
         __block int keepAliveIdleError = 0;
+        BOOL shouldEnableBackgrounding = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
         [_socket performBlock:^{
-            if ([[UIDevice currentDevice].systemVersion intValue] <= 4)
-                backgroundingEnabled = [_socket enableBackgroundingOnSocketWithCaveat];
-            else
-                backgroundingEnabled = [_socket enableBackgroundingOnSocket];
+            if (shouldEnableBackgrounding)
+            {
+                if ([[UIDevice currentDevice].systemVersion intValue] <= 4)
+                    backgroundingEnabled = [_socket enableBackgroundingOnSocketWithCaveat];
+                else
+                    backgroundingEnabled = [_socket enableBackgroundingOnSocket];
+            }
 
             socketFd = [_socket socketFD];
             if (socketFd >= 0) {
@@ -1810,10 +1839,9 @@ struct ctr_state {
 #endif
             }
         }];
-        IOS6NotificationProbe(@"SOCKET", @"primary_connected host=%@ port=%d background=%d fd=%d soKeepAlive=%d/%d tcpKeepAlive=%d/%d",
-                              host ?: @"none", (int)port, backgroundingEnabled ? 1 : 0, socketFd,
+        IOS6NotificationProbe(@"SOCKET", @"primary_connected host=%@ port=%d backgroundRequested=%d background=%d fd=%d soKeepAlive=%d/%d tcpKeepAlive=%d/%d",
+                              host ?: @"none", (int)port, shouldEnableBackgrounding ? 1 : 0, backgroundingEnabled ? 1 : 0, socketFd,
                               keepAliveResult, keepAliveError, keepAliveIdleResult, keepAliveIdleError);
-        NSLog(@"PUSH voipSocket enabled=%d host=%@ port=%d", backgroundingEnabled ? 1 : 0, host, (int)port);
     }
 #endif
     
@@ -1862,11 +1890,7 @@ struct ctr_state {
 - (void)socketDidDisconnect:(GCDAsyncSocket *)__unused socket withError:(NSError *)error
 {
 #if TARGET_OS_IPHONE
-    BOOL isPrimaryDataConnection = _usageCalculationInfo != nil &&
-        [_usageCalculationInfo incomingWWANKey] == 0 &&
-        [_usageCalculationInfo outgoingWWANKey] == 1 &&
-        [_usageCalculationInfo incomingOtherKey] == 2 &&
-        [_usageCalculationInfo outgoingOtherKey] == 3;
+    BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
     if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && isPrimaryDataConnection)
     {
         IOS6NotificationProbe(@"SOCKET", @"primary_disconnected domain=%@ code=%ld description=%@",
@@ -1882,12 +1906,12 @@ struct ctr_state {
 
     if (error != nil) {
         if (MTLogEnabled()) {
-            MTLog(@"[MTTcpConnection#%x disconnected from %@ (%@)]", (int)self, _address.ip, error);
+            MTLog(@"[MTTcpConnection#%p disconnected from %@ (%@)]", (__bridge void *)self, _address.ip, error);
         }
     }
     else {
         if (MTLogEnabled()) {
-            MTLog(@"[MTTcpConnection#%x disconnected from %@]", (int)self, _address.ip);
+            MTLog(@"[MTTcpConnection#%p disconnected from %@]", (__bridge void *)self, _address.ip);
         }
     }
     

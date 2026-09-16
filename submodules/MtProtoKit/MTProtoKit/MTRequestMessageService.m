@@ -158,7 +158,7 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                 
                 if (request.requestContext.messageId != 0) {
                     if (MTLogEnabled()) {
-                        MTLog(@"[MTRequestMessageService#%x drop %" PRId64 "]", (int)self, request.requestContext.messageId);
+                        MTLog(@"[MTRequestMessageService#%p drop %" PRId64 "]", (__bridge void *)self, request.requestContext.messageId);
                     }
                 }
                 
@@ -897,8 +897,8 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                 request.requestContext.responseMessageId = responseMessageId;
                 return true;
             } else {
-                MTLog(@"[MTRequestMessageService#%x will not request message %" PRId64 " (transaction was not completed)]", (int)self, messageId);
-                MTLog(@"[MTRequestMessageService#%x but today it will]", (int)self);
+                MTLog(@"[MTRequestMessageService#%p will not request message %" PRId64 " (transaction was not completed)]", (__bridge void *)self, messageId);
+                MTLog(@"[MTRequestMessageService#%p but today it will]", (__bridge void *)self);
                 return true;
             }
         }

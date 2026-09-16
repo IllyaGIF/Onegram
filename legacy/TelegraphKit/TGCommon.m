@@ -34,8 +34,9 @@ int cpuCoreCount()
         unsigned int ncpu;
         
         len = sizeof(ncpu);
-        sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0);
-        count = ncpu;
+        if (sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0) != 0 || ncpu == 0)
+            ncpu = 1;
+        count = (int)ncpu;
     }
     
     return count;
@@ -59,10 +60,47 @@ int deviceMemorySize()
         __int64_t nmem;
         
         len = sizeof(nmem);
-        sysctlbyname("hw.memsize", &nmem, &len, NULL, 0);
+        if (sysctlbyname("hw.memsize", &nmem, &len, NULL, 0) != 0 || nmem <= 0)
+            nmem = 512LL * 1024LL * 1024LL;
         memorySize = (int)(nmem / (1024 * 1024));
     }
     return memorySize;
+}
+
+TGPerformanceClass devicePerformanceClass()
+{
+    static TGPerformanceClass performanceClass = (TGPerformanceClass)-1;
+    if ((int)performanceClass < 0)
+    {
+        int cores = cpuCoreCount();
+        int memorySize = deviceMemorySize();
+        if (cores <= 1 || memorySize <= 512)
+            performanceClass = TGPerformanceClassConstrained;
+        else if (memorySize <= 1024)
+            performanceClass = TGPerformanceClassBalanced;
+        else if (memorySize <= 2048 || cores <= 2)
+            performanceClass = TGPerformanceClassFast;
+        else
+            performanceClass = TGPerformanceClassHigh;
+    }
+    return performanceClass;
+}
+
+int performanceBackgroundWorkerCount()
+{
+    int cores = MAX(cpuCoreCount(), 1);
+    switch (devicePerformanceClass())
+    {
+        case TGPerformanceClassConstrained:
+            return 1;
+        case TGPerformanceClassBalanced:
+            return MIN(2, cores);
+        case TGPerformanceClassFast:
+            return MIN(3, cores);
+        case TGPerformanceClassHigh:
+        default:
+            return MIN(4, MAX(cores - 1, 1));
+    }
 }
 
 bool TGObjectCompare(id obj1, id obj2)
@@ -291,7 +329,7 @@ TGLocalization *currentNativeLocalization() {
     pthread_mutex_unlock(&_currentLocalizationMutex);
     if (value == nil) {
         NSData *data = [NSData dataWithContentsOfFile:currentNativeLocalizationPath()];
-        if (data != nil) {
+        if (data.length != 0) {
             value = [NSKeyedUnarchiver unarchiveObjectWithData:data];
         }
         if (value == nil) {
@@ -324,7 +362,7 @@ TGLocalization *currentCustomLocalization() {
     pthread_mutex_unlock(&_currentLocalizationMutex);
     if (!initialized) {
         NSData *data = [NSData dataWithContentsOfFile:currentCustomLocalizationPath()];
-        if (data != nil) {
+        if (data.length != 0) {
             value = [NSKeyedUnarchiver unarchiveObjectWithData:data];
         } else {
             NSBundle *bundle = [NSBundle bundleWithPath:legacyCustomLocalizationBundlePath()];
@@ -361,11 +399,15 @@ void setCurrentNativeLocalization(TGLocalization *localization, bool switchIfCus
     _safeCurrentNativeLocalization = localization;
     pthread_mutex_unlock(&_currentLocalizationMutex);
     
-    [[NSFileManager defaultManager] removeItemAtPath:currentNativeLocalizationPath() error:nil];
-    [[NSFileManager defaultManager] removeItemAtPath:currentNativeExtensionLocalizationPath() error:nil];
-    [NSKeyedArchiver archiveRootObject:localization toFile:currentNativeLocalizationPath()];
+    NSString *nativePath = currentNativeLocalizationPath();
+    NSString *extensionPath = currentNativeExtensionLocalizationPath();
+    [[NSFileManager defaultManager] removeItemAtPath:nativePath error:nil];
+    if (![extensionPath isEqualToString:nativePath])
+        [[NSFileManager defaultManager] removeItemAtPath:extensionPath error:nil];
+    [NSKeyedArchiver archiveRootObject:localization toFile:nativePath];
     
-    [[NSFileManager defaultManager] copyItemAtPath:currentNativeLocalizationPath() toPath:currentNativeExtensionLocalizationPath() error:nil];
+    if (![extensionPath isEqualToString:nativePath])
+        [[NSFileManager defaultManager] copyItemAtPath:nativePath toPath:extensionPath error:nil];
     TGLocalizedStaticVersion++;
     
     if (switchIfCustom) {
@@ -672,11 +714,8 @@ void TGLogv(NSString *format, va_list args)
     if (!logEnabled && !diagnosticBreadcrumb)
         return;
 
-    // TGLog stays visible in /var/log/syslog as before.
     NSLog(@"%@", message);
 
-    // Diagnostic lines are persisted synchronously and mirrored to a tiny
-    // native breadcrumb file. Ordinary debug MTProto traffic stays async.
     if (diagnosticBreadcrumb)
     {
         void (^writeBlock)(void) = ^
@@ -716,6 +755,149 @@ NSArray *TGGetLogFilePaths(int count)
     }
     
     return filePaths;
+}
+
+static NSString *TGArchivedLogsDirectoryPath()
+{
+    NSString *path = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"OnegramLogs"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:true attributes:nil error:nil];
+    return path;
+}
+
+static NSString *TGArchivedLogPath(NSString *prefix, NSDate *date)
+{
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.dateFormat = @"yyyy-MM-dd_HH-mm-ss";
+    NSString *timestamp = [formatter stringFromDate:date ?: [NSDate date]];
+    NSString *directory = TGArchivedLogsDirectoryPath();
+    NSString *path = [directory stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@.log", prefix, timestamp]];
+    int suffix = 1;
+    while ([[NSFileManager defaultManager] fileExistsAtPath:path])
+    {
+        path = [directory stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@-%d.log", prefix, timestamp, suffix]];
+        suffix++;
+    }
+    return path;
+}
+
+NSArray *TGGetArchivedLogFilePaths()
+{
+    NSString *directory = TGArchivedLogsDirectoryPath();
+    NSArray *entries = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:nil];
+    NSMutableArray *paths = [[NSMutableArray alloc] init];
+    for (NSString *entry in entries)
+    {
+        if (![[[entry pathExtension] lowercaseString] isEqualToString:@"log"])
+            continue;
+        NSString *path = [directory stringByAppendingPathComponent:entry];
+        BOOL isDirectory = false;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDirectory] && !isDirectory)
+            [paths addObject:path];
+    }
+    [paths sortUsingComparator:^NSComparisonResult(NSString *path1, NSString *path2)
+    {
+        NSDate *date1 = [[[NSFileManager defaultManager] attributesOfItemAtPath:path1 error:nil] objectForKey:NSFileModificationDate];
+        NSDate *date2 = [[[NSFileManager defaultManager] attributesOfItemAtPath:path2 error:nil] objectForKey:NSFileModificationDate];
+        if (date1 == nil && date2 == nil)
+            return [path2 compare:path1];
+        if (date1 == nil)
+            return NSOrderedDescending;
+        if (date2 == nil)
+            return NSOrderedAscending;
+        return [date2 compare:date1];
+    }];
+    return paths;
+}
+
+NSString *TGArchiveCrashLogText(NSString *text, NSDate *date)
+{
+    if (text.length == 0)
+        return nil;
+    NSString *path = TGArchivedLogPath(@"Crash", date ?: [NSDate date]);
+    if (![text writeToFile:path atomically:true encoding:NSUTF8StringEncoding error:nil])
+        return nil;
+    return path;
+}
+
+NSString *TGSaveCurrentLogLines(int lineCount)
+{
+    if (lineCount <= 0)
+        return nil;
+
+    __block NSString *resultText = nil;
+    void (^readBlock)(void) = ^
+    {
+        [TGLogFileHandle() synchronizeFile];
+        NSMutableArray *lines = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)lineCount];
+        NSArray *paths = TGGetLogFilePaths(60);
+        for (NSString *path in paths)
+        {
+            if ((int)lines.count >= lineCount)
+                break;
+
+            NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+            unsigned long long fileSize = [[attributes objectForKey:NSFileSize] unsignedLongLongValue];
+            if (fileSize == 0)
+                continue;
+
+            const unsigned long long maximumReadSize = 1024 * 1024;
+            unsigned long long readSize = MIN(fileSize, maximumReadSize);
+            unsigned long long startOffset = fileSize - readSize;
+            NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
+            if (handle == nil)
+                continue;
+
+            [handle seekToFileOffset:startOffset];
+            NSData *data = [handle readDataToEndOfFile];
+            [handle closeFile];
+
+            if (startOffset != 0 && data.length != 0)
+            {
+                const uint8_t *bytes = data.bytes;
+                NSUInteger skip = 0;
+                while (skip < data.length && bytes[skip] != '\n')
+                    skip++;
+                if (skip < data.length)
+                    skip++;
+                if (skip >= data.length)
+                    continue;
+                if (skip != 0)
+                    data = [data subdataWithRange:NSMakeRange(skip, data.length - skip)];
+            }
+
+            NSString *contents = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            if (contents == nil)
+                contents = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+            if (contents.length == 0)
+                continue;
+
+            NSArray *fileLines = [contents componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+            for (NSInteger index = (NSInteger)fileLines.count - 1; index >= 0 && (int)lines.count < lineCount; index--)
+            {
+                NSString *line = fileLines[(NSUInteger)index];
+                if (line.length == 0)
+                    continue;
+                [lines insertObject:line atIndex:0];
+            }
+        }
+
+        if (lines.count != 0)
+            resultText = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+    };
+
+    if (dispatch_get_specific(TGLogQueueSpecificKey) != NULL)
+        readBlock();
+    else
+        dispatch_sync(TGLogQueue(), readBlock);
+
+    if (resultText.length == 0)
+        return nil;
+
+    NSString *path = TGArchivedLogPath(@"Live", [NSDate date]);
+    if (![resultText writeToFile:path atomically:true encoding:NSUTF8StringEncoding error:nil])
+        return nil;
+    return path;
 }
 
 NSArray *TGGetPackedLogs()

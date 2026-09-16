@@ -13,5 +13,6 @@
 - (void)setTitle:(NSString *)title;
 - (void)setVariant:(NSString *)variant;
 - (void)setVariantImage:(UIImage *)variantImage;
+- (void)setIconName:(NSString *)iconName;
 
 @end

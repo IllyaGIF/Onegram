@@ -25,13 +25,109 @@
 #import "TGSelectContactController.h"
 
 #import "TGPresentation.h"
+#import <QuartzCore/QuartzCore.h>
+
+static UIImage *TGRecentCallsBrandedSegmentImage(bool selected)
+{
+    static UIImage *normalImage = nil;
+    static UIImage *selectedImage = nil;
+    UIImage *cachedImage = selected ? selectedImage : normalImage;
+    if (cachedImage != nil)
+        return cachedImage;
+
+    CGSize size = CGSizeMake(10.0f, 29.0f);
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[8];
+    if (selected)
+    {
+        components[0] = 0x6c / 255.0f;
+        components[1] = 0x85 / 255.0f;
+        components[2] = 0x9f / 255.0f;
+        components[3] = 1.0f;
+        components[4] = 0x21 / 255.0f;
+        components[5] = 0x4a / 255.0f;
+        components[6] = 0x78 / 255.0f;
+        components[7] = 1.0f;
+    }
+    else
+    {
+        components[0] = 0x7a / 255.0f;
+        components[1] = 0x99 / 255.0f;
+        components[2] = 0xb7 / 255.0f;
+        components[3] = 1.0f;
+        components[4] = 0x26 / 255.0f;
+        components[5] = 0x57 / 255.0f;
+        components[6] = 0x8e / 255.0f;
+        components[7] = 1.0f;
+    }
+    CGFloat locations[] = {0.0f, 1.0f};
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, size.height), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(colorSpace);
+
+    CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.20f).CGColor);
+    CGContextFillRect(context, CGRectMake(0.0f, 0.0f, size.width, TGScreenPixel));
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    image = [image stretchableImageWithLeftCapWidth:4 topCapHeight:14];
+    if (selected)
+        selectedImage = image;
+    else
+        normalImage = image;
+    return image;
+}
+
+static UIImage *TGRecentCallsBrandedSegmentDividerImage(void)
+{
+    static UIImage *image = nil;
+    if (image != nil)
+        return image;
+
+    CGSize size = CGSizeMake(2.0f, 29.0f);
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(context, UIColorRGBA(0x244f6d, 0.85f).CGColor);
+    CGContextFillRect(context, CGRectMake(0.0f, 0.0f, 1.0f, size.height));
+    CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.15f).CGColor);
+    CGContextFillRect(context, CGRectMake(1.0f, 0.0f, 1.0f, size.height));
+    image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
 
 static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmentedControl, TGPresentation *presentation)
 {
     if (segmentedControl == nil || presentation == nil)
         return;
 
-    if (iosMajorVersion() >= 5)
+    bool brandedStyle = [TGPresentation brandedIOS6Style];
+    segmentedControl.layer.cornerRadius = brandedStyle ? 6.0f : 0.0f;
+    segmentedControl.layer.borderWidth = brandedStyle ? 1.0f : 0.0f;
+    segmentedControl.layer.borderColor = brandedStyle ? UIColorRGB(0x244f6d).CGColor : [UIColor clearColor].CGColor;
+    segmentedControl.layer.masksToBounds = brandedStyle;
+
+    if (brandedStyle && iosMajorVersion() >= 5)
+    {
+        UIImage *normalImage = TGRecentCallsBrandedSegmentImage(false);
+        UIImage *selectedImage = TGRecentCallsBrandedSegmentImage(true);
+        UIImage *dividerImage = TGRecentCallsBrandedSegmentDividerImage();
+        [segmentedControl setBackgroundImage:normalImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+        [segmentedControl setBackgroundImage:selectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
+        [segmentedControl setBackgroundImage:selectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
+        [segmentedControl setBackgroundImage:selectedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
+        [segmentedControl setDividerImage:dividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+        [segmentedControl setDividerImage:dividerImage forLeftSegmentState:UIControlStateSelected rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+        [segmentedControl setDividerImage:dividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
+        NSDictionary *attributes = @{UITextAttributeTextColor:[UIColor whiteColor], UITextAttributeTextShadowColor:UIColorRGBA(0x000000, 0.55f), UITextAttributeFont:TGBoldSystemFontOfSize(13.0f)};
+        [segmentedControl setTitleTextAttributes:attributes forState:UIControlStateNormal];
+        [segmentedControl setTitleTextAttributes:attributes forState:UIControlStateSelected];
+        [segmentedControl setTitleTextAttributes:attributes forState:UIControlStateHighlighted];
+    }
+    else if (iosMajorVersion() >= 5)
     {
         [segmentedControl setBackgroundImage:presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
         [segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
@@ -172,13 +268,14 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
     TGConfigureRecentCallsSegmentedControl(_segmentedControl, _presentation);
     
     CGFloat width = 0.0f;
+    UIFont *segmentedFont = [TGPresentation brandedIOS6Style] ? TGBoldSystemFontOfSize(13.0f) : TGSystemFontOfSize(13.0f);
     for (NSString *itemName in items)
     {
-        CGSize size = [itemName sizeWithFont:TGSystemFontOfSize(13.0f)];
+        CGSize size = [itemName sizeWithFont:segmentedFont];
         if (size.width > width)
             width = size.width;
     }
-    width = (width + 34.0f) * 2.0f;
+    width = [TGPresentation brandedIOS6Style] ? 141.0f : (width + 34.0f) * 2.0f;
     
     _segmentedControl.frame = CGRectMake((self.view.frame.size.width - width) / 2.0f, 8.0f, width, 29.0f);
     _segmentedControl.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin;
@@ -215,7 +312,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
 
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     
-    if (iosMajorVersion() >= 7) {
+    if (iosMajorVersion() >= 7 && ![TGPresentation brandedIOS6Style]) {
         _tableView.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
         _tableView.separatorColor = _presentation.pallete.separatorColor;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
@@ -424,11 +521,15 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
 
 - (UIBarButtonItem *)controllerLeftBarButtonItem
 {
+    if ([TGPresentation brandedIOS6Style] && !_inSettings)
+        return nil;
     return _inSettings ? [self actionBarButtonItem] : [self editBarButtonItem];
 }
 
 - (UIBarButtonItem *)controllerRightBarButtonItem
 {
+    if ([TGPresentation brandedIOS6Style] && !_inSettings)
+        return [self editBarButtonItem];
     if (_inSettings)
         return [self editBarButtonItem];
     else if (_editingMode)
@@ -572,7 +673,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
 
 - (CGFloat)tableView:(UITableView *)__unused tableView heightForRowAtIndexPath:(NSIndexPath *)__unused indexPath
 {
-    return 56.0f;
+    return [TGPresentation brandedIOS6Style] ? 60.0f : 56.0f;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
@@ -1112,7 +1213,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
     __weak TGRecentCallsController *weakSelf = self;
     __block bool gotItems = false;
     
-    SSignal *signal = [[TGDatabaseInstance() modify:^id{ return nil; }] mapToSignal:^SSignal *(__unused id value) {
+    SSignal *signal = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{ return nil; }] mapToSignal:^SSignal *(__unused id value) {
         if (TGTelegraphInstance.clientUserId != 0) {
             [TGTelegramNetworking instance];
         }

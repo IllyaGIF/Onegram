@@ -19,5 +19,6 @@
 - (void)setHideArrow:(bool)hideArrow;
 - (void)setMinLeftPadding:(CGFloat)minLeftPadding;
 - (void)setFlexibleLayout:(bool)flexibleLayout;
+- (void)setBrandedSettingsStyle:(bool)brandedSettingsStyle iconName:(NSString *)iconName;
 
 @end

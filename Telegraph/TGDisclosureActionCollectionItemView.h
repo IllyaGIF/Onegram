@@ -14,5 +14,7 @@
 - (void)setIcon:(UIImage *)icon;
 - (void)setBadge:(NSString *)badge;
 - (void)setHideArrow:(bool)hideArrow;
+- (void)setBrandedProfileMusic:(bool)brandedProfileMusic;
+- (void)setBrandedSettingsStyle:(bool)brandedSettingsStyle iconName:(NSString *)iconName;
 
 @end

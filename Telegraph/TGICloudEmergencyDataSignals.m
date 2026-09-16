@@ -1,6 +1,6 @@
 #import "TGICloudEmergencyDataSignals.h"
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 && !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
 #import <CloudKit/CloudKit.h>
 #import "../submodules/MtProtoKit/MTProtoKit/MTProtoKit.h"
 
@@ -237,7 +237,7 @@
         return [SSignal complete];
     }
     
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSString *propertyKey = @"cloudkit-datacenter-subscription-v1";
         
         TGCloudKitDatacenterSubscription *currentSubscription = nil;

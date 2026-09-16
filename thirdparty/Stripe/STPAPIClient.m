@@ -131,7 +131,7 @@ static NSString *const stripeAPIVersion = @"2015-10-12";
     [STPAPIPostRequest startWithAPIClient:self
                                              endpoint:tokenEndpoint
                                              postData:data
-                                           serializer:[STPToken new]
+                                           serializer:[STPToken class]
                                            completion:^(STPToken *object, NSHTTPURLResponse *response, NSError *error) {
                                                NSDate *end = [NSDate date];
                                                [[STPAnalyticsClient sharedClient] logRUMWithToken:object configuration:self.configuration response:response start:start end:end];

@@ -238,6 +238,26 @@
 
 @end
 
+@interface TLUpdate$updatePinnedMessagesCodex : TLUpdate
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) TLPeer *peer;
+@property (nonatomic, retain) NSArray *messages;
+@property (nonatomic) int32_t pts;
+@property (nonatomic) int32_t pts_count;
+
+@end
+
+@interface TLUpdate$updatePinnedChannelMessagesCodex : TLUpdate
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int64_t channel_id;
+@property (nonatomic, retain) NSArray *messages;
+@property (nonatomic) int32_t pts;
+@property (nonatomic) int32_t pts_count;
+
+@end
+
 @interface TLUpdate$updateContactLink : TLUpdate
 
 @property (nonatomic) int32_t user_id;

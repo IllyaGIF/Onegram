@@ -1,5 +1,19 @@
 #import <UIKit/UIKit.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import <WebKit/WKWebView.h>
+#import <WebKit/WKWebViewConfiguration.h>
+#import <WebKit/WKNavigation.h>
+#import <WebKit/WKNavigationAction.h>
+#import <WebKit/WKNavigationDelegate.h>
+#import <WebKit/WKScriptMessage.h>
+#import <WebKit/WKScriptMessageHandler.h>
+#import <WebKit/WKFrameInfo.h>
+#import <WebKit/WKPreferences.h>
+#import <WebKit/WKUserScript.h>
+#import <WebKit/WKUserContentController.h>
+#else
+
 typedef NSInteger WKUserScriptInjectionTime;
 #define WKUserScriptInjectionTimeAtDocumentStart 0
 #define WKUserScriptInjectionTimeAtDocumentEnd 1
@@ -63,5 +77,8 @@ typedef NSInteger WKNavigationActionPolicy;
 @property (nonatomic, readonly) double estimatedProgress;
 @property (nonatomic, assign) id<WKNavigationDelegate> navigationDelegate;
 - (WKNavigation *)loadRequest:(NSURLRequest *)request;
+- (WKNavigation *)loadHTMLString:(NSString *)string baseURL:(NSURL *)baseURL;
 - (void)evaluateJavaScript:(NSString *)javaScriptString completionHandler:(void (^)(id result, NSError *error))completionHandler;
 @end
+
+#endif

@@ -600,8 +600,8 @@
     bool hasPostcode = _postcodeItem.username.length > 0 && _postcodeItem.username.length <= 12;
     bool hasAddress = (hasStreet && hasCity && hasCountry && hasStateIfNeeded && hasPostcode) || _documentOnly;
     
-    bool hasFiles = _fileSections[@(TGPassportDocumentFileTypeGeneric)] == nil || [[self.files objectForKey:@(TGPassportDocumentFileTypeGeneric)] count] > 0 || _editing;
-    bool hasTranslation = _fileSections[@(TGPassportDocumentFileTypeTranslation)] == nil || [[self.files objectForKey:@(TGPassportDocumentFileTypeTranslation)] count] > 0 || _editing;
+    bool hasFiles = _fileSections[@(TGPassportDocumentFileTypeGeneric)] == nil || [(NSArray *)[self.files objectForKey:@(TGPassportDocumentFileTypeGeneric)] count] > 0 || _editing;
+    bool hasTranslation = _fileSections[@(TGPassportDocumentFileTypeTranslation)] == nil || [(NSArray *)[self.files objectForKey:@(TGPassportDocumentFileTypeTranslation)] count] > 0 || _editing;
     bool hasNoUploads = ![self hasActiveUploads];
     bool hasNoErrors = ([self.errors errorsForType:TGPassportTypeAddress].count + [self.errors errorsForType:_type].count) == 0;
     

@@ -142,7 +142,6 @@
         inputLocation.volume_id = imageFileReference.volumeId;
         inputLocation.local_id = imageFileReference.localId;
         inputLocation.secret = imageFileReference.secret;
-        //TODO!!!
         
         return [[TGRemoteFileSignal dataForLocation:inputLocation datacenterId:imageFileReference.datacenterId originInfo:nil identifier:0 size:0 reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] map:^id(NSData *data)
         {

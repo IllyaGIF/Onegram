@@ -39,7 +39,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xd0d9b163;
+    return (int32_t)0xdfb80317;
 }
 
 - (int32_t)TLconstructorName
@@ -51,6 +51,7 @@
 {
     TLchannels_ChannelParticipant$channels_channelParticipant *object = [[TLchannels_ChannelParticipant$channels_channelParticipant alloc] init];
     object.participant = metaObject->getObject((int32_t)0x837816d4);
+    object.chats = metaObject->getArray((int32_t)0x4240ad02);
     object.users = metaObject->getArray((int32_t)0x933e5ff3);
     return object;
 }
@@ -62,6 +63,12 @@
         value.type = TLConstructedValueTypeObject;
         value.nativeObject = self.participant;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x837816d4, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeVector;
+        value.nativeObject = self.chats;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x4240ad02, value));
     }
     {
         TLConstructedValue value;

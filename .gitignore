@@ -1,4 +1,4 @@
-config.h
+/config.h
 .DS_Store
 
 build/
@@ -18,3 +18,13 @@ xcuserdata/
 *.orig
 *.rej
 *~
+
+/theos/.theos/
+/theos/generated/
+/theos/ccache-bin/
+
+*.bak
+*.backup
+*.tmp
+*.swp
+*.swo

@@ -43,6 +43,9 @@
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
 + (SSignal *)recognizeBarcodeInImage:(UIImage *)image
 {
+    if (NSClassFromString(@"VNDetectBarcodesRequest") == Nil || NSClassFromString(@"VNImageRequestHandler") == Nil)
+        return [SSignal single:nil];
+
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
         VNDetectBarcodesRequest *barcodeRequest = [[VNDetectBarcodesRequest alloc] initWithCompletionHandler:^(VNRequest *  request, NSError *  error)
         {

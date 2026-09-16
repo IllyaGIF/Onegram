@@ -358,15 +358,19 @@
     
     if (playNotification && !TGAppDelegateInstance.deviceProximityState)
     {
-        if (needsSound)
+        bool shouldPlaySound = needsSound;
+        TGMessage *notificationMessage = messageForNotification;
+        TGDispatchOnMainThread(^
         {
-            [TGAppDelegateInstance playSound:TGAppDelegateInstance.soundEnabled ? (playChatSound ? @"notification.caf" : @"notification.caf") : nil vibrate:true];
-        }
-        
-        if (messageForNotification != nil)
-        {
-            [[TGInterfaceManager instance] displayBannerIfNeeded:messageForNotification conversationId:messageForNotification.cid];
-        }
+            if (notificationMessage != nil && [[TGInterfaceManager instance] isConversationVisible:notificationMessage.cid])
+                return;
+
+            if (shouldPlaySound)
+                [TGAppDelegateInstance playSound:TGAppDelegateInstance.soundEnabled ? (playChatSound ? @"notification.caf" : @"notification.caf") : nil vibrate:true];
+
+            if (notificationMessage != nil)
+                [[TGInterfaceManager instance] displayBannerIfNeeded:notificationMessage conversationId:notificationMessage.cid];
+        });
     }
     
     dispatch_async([ActionStageInstance() globalStageDispatchQueue], ^

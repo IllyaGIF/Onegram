@@ -24,10 +24,12 @@
 
 #import "TLDcOption$modernDcOption.h"
 
+static const NSTimeInterval TGDatacenterWatchdogFailoverTimeout = 30.0;
+
 @interface TGDatacenterWatchdogActor ()
 {
     MTTimer *_startupTimer;
-    MTTimer *_addOneMoreDatacenterTimer;
+    MTTimer *_datacenterFailoverTimer;
     
     NSMutableSet *_processedDatacenters;
     
@@ -36,6 +38,8 @@
     MTProto *_currentMtProto;
     MTRequestMessageService *_currentRequestService;
 }
+
+- (void)armDatacenterFailoverTimer;
 
 @end
 
@@ -68,8 +72,8 @@
     [_startupTimer invalidate];
     _startupTimer = nil;
     
-    [_addOneMoreDatacenterTimer invalidate];
-    _addOneMoreDatacenterTimer = nil;
+    [_datacenterFailoverTimer invalidate];
+    _datacenterFailoverTimer = nil;
     
     [_currentMtProto removeMessageService:_currentRequestService];
     [_currentMtProto stop];
@@ -116,19 +120,30 @@
         }];
     }];
     
-    _addOneMoreDatacenterTimer = [[MTTimer alloc] initWithTimeout:10.0 repeat:true completion:^
+    _mainMtProtoRequestId = request.internalId;
+    [[TGTelegramNetworking instance] addRequest:request];
+    [self armDatacenterFailoverTimer];
+}
+
+- (void)armDatacenterFailoverTimer
+{
+    [_datacenterFailoverTimer invalidate];
+    _datacenterFailoverTimer = nil;
+
+    __weak TGDatacenterWatchdogActor *weakSelf = self;
+    _datacenterFailoverTimer = [[MTTimer alloc] initWithTimeout:TGDatacenterWatchdogFailoverTimeout repeat:false completion:^
     {
         __strong TGDatacenterWatchdogActor *strongSelf = weakSelf;
         [strongSelf switchToNextDatacenter];
     } queue:[ActionStageInstance() globalStageDispatchQueue]];
-    [_addOneMoreDatacenterTimer start];
-    
-    _mainMtProtoRequestId = request.internalId;
-    [[TGTelegramNetworking instance] addRequest:request];
+    [_datacenterFailoverTimer start];
 }
 
 - (void)switchToNextDatacenter
 {
+    [_datacenterFailoverTimer invalidate];
+    _datacenterFailoverTimer = nil;
+
     MTContext *context = [[TGTelegramNetworking instance] context];
     
     [_currentMtProto removeMessageService:_currentRequestService];
@@ -207,6 +222,7 @@
     }];
     
     [requestService addRequest:request];
+    [self armDatacenterFailoverTimer];
 }
 
 - (void)processConfig:(TLConfig *)config fromDatacenterId:(NSInteger)__unused datacenterId
@@ -260,8 +276,8 @@
     
     NSTimeInterval nextCheckDelay = 60.0 * 60.0;
     
-    [_addOneMoreDatacenterTimer invalidate];
-    _addOneMoreDatacenterTimer = nil;
+    [_datacenterFailoverTimer invalidate];
+    _datacenterFailoverTimer = nil;
     
     [_processedDatacenters removeAllObjects];
     

@@ -1236,6 +1236,7 @@ CGFloat TGAnimationSpeedFactor()
 
 @end
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation UICollectionViewTransitionLayout
 
 @synthesize currentLayout = _currentLayout;
@@ -1256,6 +1257,7 @@ CGFloat TGAnimationSpeedFactor()
 }
 
 @end
+#endif
 
 @implementation PSUICollectionView (LegacyComponentsTransitionCompatibility)
 
@@ -1630,6 +1632,7 @@ CGFloat TGAnimationSpeedFactor()
 
 #endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 80000
 static Class TGIOS6WebKitRuntimeClass(NSString *name, Class compatibilityClass)
 {
     Class systemClass = NSClassFromString(name);
@@ -1743,3 +1746,5 @@ TGIOS6_WEBKIT_RUNTIME_PROXY_METHODS("WKWebView")
 }
 
 @end
+
+#endif

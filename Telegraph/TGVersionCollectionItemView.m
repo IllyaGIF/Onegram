@@ -2,6 +2,7 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "TGAppDelegate.h"
+#import "TGPresentation.h"
 
 @interface TGVersionCollectionItemView ()
 {
@@ -49,6 +50,24 @@
 {
     [super layoutSubviews];
     
+    if ([TGPresentation brandedIOS6Style])
+    {
+        _titleLabel.font = TGBoldSystemFontOfSize(11.0f);
+        _titleLabel.textColor = UIColorRGB(0x717171);
+        _titleLabel.shadowColor = UIColorRGBA(0xffffff, 0.8f);
+        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        [_titleLabel sizeToFit];
+        _versionLabel.font = TGSystemFontOfSize(11.0f);
+        _versionLabel.textColor = UIColorRGB(0x717171);
+        _versionLabel.shadowColor = UIColorRGBA(0xffffff, 0.8f);
+        _versionLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        [_versionLabel sizeToFit];
+        CGFloat startingY = 14.0f;
+        _titleLabel.frame = CGRectMake(ceil((self.frame.size.width - _titleLabel.frame.size.width) / 2.0f), startingY, _titleLabel.frame.size.width, _titleLabel.frame.size.height);
+        _versionLabel.frame = CGRectMake(ceil((self.frame.size.width - _versionLabel.frame.size.width) / 2.0f), CGRectGetMaxY(_titleLabel.frame) + 2.0f, _versionLabel.frame.size.width, _versionLabel.frame.size.height);
+        return;
+    }
+
     CGFloat startingY = CGCeil((self.frame.size.height + 35.0f - _titleLabel.frame.size.height - _versionLabel.frame.size.height - 2.0f) / 2.0f);
     _titleLabel.frame = CGRectMake(ceil((self.frame.size.width - _titleLabel.frame.size.width) / 2.0f), startingY, _titleLabel.frame.size.width, _titleLabel.frame.size.height);
     _versionLabel.frame = CGRectMake(ceil((self.frame.size.width - _versionLabel.frame.size.width) / 2.0f), CGRectGetMaxY(_titleLabel.frame) + 2.0f, _versionLabel.frame.size.width, _versionLabel.frame.size.height);

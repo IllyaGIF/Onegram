@@ -149,7 +149,7 @@
     }] ignoreRepeated];
     
     return [signal mapToSignal:^SSignal *(NSNumber *nPeerId) {
-        return [TGDatabaseInstance() modify:^id{
+        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             NSData *data = [TGDatabaseInstance() customProperty:@"ad-item-id"];
             int64_t peerId = 0;
             if (data != nil && data.length == 8) {

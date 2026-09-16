@@ -3,6 +3,9 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import <Lottie.h>
+#import <QuartzCore/QuartzCore.h>
+
+#import "TGPresentation.h"
 
 @interface TGDialogListCellEditingButton () {
     UILabel *_labelView;
@@ -212,10 +215,23 @@
     CGRect bounds = self.bounds;
     CGFloat buttonWidth = self.buttonWidth;
     
-    CGSize labelSize = _labelView.bounds.size;
     CGSize iconSize = _iconView.image.size;
     
-    CGFloat labelY = _labelOnly ? 17.0f : 49.0f;
+    if ([TGPresentation brandedIOS6Style] && !_labelOnly)
+    {
+        _labelView.font = TGBoldSystemFontOfSize(8.0f);
+        [_labelView sizeToFit];
+        _labelView.textColor = [UIColor whiteColor];
+        _labelView.shadowColor = UIColorRGBA(0x000000, 0.40f);
+        _labelView.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
+        _iconView.layer.shadowOpacity = 0.30f;
+        _iconView.layer.shadowRadius = 1.0f;
+        _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+    }
+
+    CGSize labelSize = _labelView.bounds.size;
+    CGFloat labelY = [TGPresentation brandedIOS6Style] && !_labelOnly ? 39.0f : (_labelOnly ? 17.0f : 49.0f);
     if (_smallLabel) {
         labelY = 15.0f;
     } else if (_offsetLabel) {
@@ -224,7 +240,9 @@
     
     CGFloat offset = _triggered ? bounds.size.width - buttonWidth : 0.0f;
     _labelView.center = CGPointMake(offset + buttonWidth / 2.0f, labelY + labelSize.height / 2.0f);
-    _iconView.frame = CGRectMake(offset + CGFloor((buttonWidth - iconSize.width) / 2.0f), 14.0f, iconSize.width, iconSize.height);
+    if ([TGPresentation brandedIOS6Style] && !_labelOnly)
+        iconSize = CGSizeMake(18.0f, 18.0f);
+    _iconView.frame = CGRectMake(offset + CGFloor((buttonWidth - iconSize.width) / 2.0f), [TGPresentation brandedIOS6Style] && !_labelOnly ? 17.0f : 14.0f, iconSize.width, iconSize.height);
     _animationView.center = CGPointMake(offset + buttonWidth / 2.0f, bounds.size.height / 2.0f - 2.0f);
 }
 

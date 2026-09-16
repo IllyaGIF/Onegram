@@ -169,7 +169,7 @@ static BOOL gPlaybackIsInterrupted = NO;
 //		[self startPlayingIfPossible];
 //	}
     if(self.state == CBCoubPlayerStatePaused){
-		self.state = STKAudioPlayerStatePlaying;
+		self.state = CBCoubPlayerStatePlaying;
 
 		[_videoPlayer play];
 

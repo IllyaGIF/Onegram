@@ -561,6 +561,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (TGCachedUserData *)_userCachedDataSync:(int64_t)peerId;
 
 - (SSignal *)modify:(id (^)())block;
+- (SSignal *)modifyDebug:(const char *)file line:(int)line block:(id (^)())block;
 - (SSignal *)modifyChannel:(int64_t)peerId block:(id (^)(int32_t pts))block;
 
 - (void)_dropChannels;

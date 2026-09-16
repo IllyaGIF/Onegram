@@ -54,7 +54,7 @@ static const CGFloat TGStickersTopMargin = 140.0f;
         }
         
         if (iosMajorVersion() >= 10)
-            _feedbackGenerator = [[NSClassFromString(@"UIImpactFeedbackGenerator") alloc] initWithStyle:0];
+            _feedbackGenerator = [(UIImpactFeedbackGenerator *)[NSClassFromString(@"UIImpactFeedbackGenerator") alloc] initWithStyle:UIImpactFeedbackStyleLight];
     }
     return self;
 }

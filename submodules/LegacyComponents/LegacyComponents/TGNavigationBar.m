@@ -57,19 +57,100 @@ static bool TGNavigationBarClassicIOS6Style(void)
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
 }
 
-static void TGNavigationBarApplyClassicFontToLabels(UIView *view)
+static bool TGNavigationBarBrandedIOS6Style(void)
+{
+    return [[NSUserDefaults standardUserDefaults] integerForKey:@"TGInterfaceStyle"] == 2;
+}
+
+static UIImage *TGNavigationBarBrandedIOS6Image(NSString *name)
+{
+    CGFloat scale = [UIScreen mainScreen].scale;
+    bool retinaResource = scale > 1.5f;
+    NSString *resourceName = retinaResource ? [name stringByAppendingString:@"@2x"] : name;
+    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ios6style"];
+    if (path.length == 0)
+        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
+    if (path.length == 0)
+    {
+        retinaResource = false;
+        resourceName = name;
+        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ios6style"];
+        if (path.length == 0)
+            path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
+    }
+
+    UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
+    if (image != nil && retinaResource && image.CGImage != NULL)
+        image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
+
+    return image;
+}
+
+static bool TGNavigationBarClassicDarkPalette(TGNavigationBarPallete *pallete)
+{
+    if (pallete == nil || pallete.backgroundColor == nil)
+        return false;
+
+    CGColorRef color = pallete.backgroundColor.CGColor;
+    size_t count = CGColorGetNumberOfComponents(color);
+    const CGFloat *components = CGColorGetComponents(color);
+    if (components == NULL || count == 0)
+        return false;
+
+    CGFloat luminance = 1.0f;
+    if (count == 2)
+        luminance = components[0];
+    else if (count >= 3)
+        luminance = components[0] * 0.299f + components[1] * 0.587f + components[2] * 0.114f;
+
+    return luminance < 0.5f;
+}
+
+static UIColor *TGNavigationBarColorWithBrightnessMultiplier(UIColor *color, CGFloat multiplier)
+{
+    if (color == nil)
+        return nil;
+
+    CGColorRef cgColor = color.CGColor;
+    size_t count = CGColorGetNumberOfComponents(cgColor);
+    const CGFloat *components = CGColorGetComponents(cgColor);
+    if (components == NULL)
+        return color;
+
+    if (count == 2)
+    {
+        CGFloat value = MIN(1.0f, MAX(0.0f, components[0] * multiplier));
+        return [UIColor colorWithWhite:value alpha:components[1]];
+    }
+
+    if (count >= 3)
+    {
+        CGFloat red = MIN(1.0f, MAX(0.0f, components[0] * multiplier));
+        CGFloat green = MIN(1.0f, MAX(0.0f, components[1] * multiplier));
+        CGFloat blue = MIN(1.0f, MAX(0.0f, components[2] * multiplier));
+        CGFloat alpha = count >= 4 ? components[3] : 1.0f;
+        return [UIColor colorWithRed:red green:green blue:blue alpha:alpha];
+    }
+
+    return color;
+}
+
+static void TGNavigationBarApplyClassicFontToLabels(UIView *view, bool darkStyle)
 {
     if ([view isKindOfClass:[UILabel class]])
     {
         UILabel *label = (UILabel *)view;
         label.font = [UIFont boldSystemFontOfSize:12.0f];
+        label.textColor = [UIColor whiteColor];
+        label.shadowColor = darkStyle ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f);
+        label.shadowOffset = CGSizeMake(0.0f, -1.0f);
     }
 
     for (UIView *subview in view.subviews)
-        TGNavigationBarApplyClassicFontToLabels(subview);
+        TGNavigationBarApplyClassicFontToLabels(subview, darkStyle);
 }
 
-static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigationBar, UIView *view)
+static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigationBar, UIView *view, bool darkStyle)
 {
     for (UIView *subview in view.subviews)
     {
@@ -79,10 +160,10 @@ static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigati
             CGFloat centerX = CGRectGetMidX(frame);
             CGFloat width = navigationBar.bounds.size.width;
             if (frame.size.width < width * 0.48f && (centerX < width * 0.36f || centerX > width * 0.64f))
-                TGNavigationBarApplyClassicFontToLabels(subview);
+                TGNavigationBarApplyClassicFontToLabels(subview, darkStyle);
         }
 
-        TGNavigationBarApplyClassicEdgeButtonFonts(navigationBar, subview);
+        TGNavigationBarApplyClassicEdgeButtonFonts(navigationBar, subview, darkStyle);
     }
 }
 
@@ -93,6 +174,8 @@ static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigati
     
     UIView *_musicPlayerContainer;
     CAGradientLayer *_classicIOS6GradientLayer;
+    UIImageView *_classicIOS6BackgroundImageView;
+    TGNavigationBarPallete *_pallete;
     
     bool _showMusicPlayerView;
     
@@ -163,21 +246,84 @@ static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigati
 
 - (void)setPallete:(TGNavigationBarPallete *)pallete
 {
-    if (_classicIOS6GradientLayer != nil)
-        _classicIOS6GradientLayer.hidden = true;
+    _pallete = pallete;
+    bool classicIOS6Style = TGNavigationBarClassicIOS6Style();
+    bool classicDarkStyle = classicIOS6Style && TGNavigationBarClassicDarkPalette(pallete);
 
-    _barBackgroundView.backgroundColor = pallete.backgroundColor;
-    _stripeView.backgroundColor = pallete.separatorColor;
-    self.tintColor = pallete.tintColor;
+    if (classicIOS6Style)
+    {
+        bool brandedIOS6Style = TGNavigationBarBrandedIOS6Style();
+        if (brandedIOS6Style)
+        {
+            if (_classicIOS6BackgroundImageView == nil && _backgroundContainerView != nil)
+            {
+                _classicIOS6BackgroundImageView = [[UIImageView alloc] initWithFrame:_backgroundContainerView.bounds];
+                _classicIOS6BackgroundImageView.userInteractionEnabled = false;
+                _classicIOS6BackgroundImageView.contentMode = UIViewContentModeScaleAspectFill;
+                _classicIOS6BackgroundImageView.clipsToBounds = true;
+                [_backgroundContainerView insertSubview:_classicIOS6BackgroundImageView atIndex:0];
+            }
+            _classicIOS6BackgroundImageView.hidden = false;
+            _classicIOS6BackgroundImageView.image = TGNavigationBarBrandedIOS6Image(@"navigation_top_bg");
+            if (_classicIOS6GradientLayer != nil)
+                _classicIOS6GradientLayer.hidden = true;
+        }
+        else
+        {
+            if (_classicIOS6GradientLayer == nil && _backgroundContainerView != nil)
+            {
+                _classicIOS6GradientLayer = [CAGradientLayer layer];
+                _classicIOS6GradientLayer.locations = @[@0.0f, @0.52f, @1.0f];
+                [_backgroundContainerView.layer insertSublayer:_classicIOS6GradientLayer atIndex:0];
+            }
+            if (_classicIOS6BackgroundImageView != nil)
+                _classicIOS6BackgroundImageView.hidden = true;
 
-    NSMutableDictionary *attributes = [[NSMutableDictionary alloc] init];
-    attributes[UITextAttributeTextColor] = pallete.titleColor;
-    attributes[UITextAttributeTextShadowColor] = [UIColor clearColor];
-    attributes[UITextAttributeTextShadowOffset] = [NSValue valueWithUIOffset:UIOffsetMake(0.0f, 0.0f)];
-    if (iosMajorVersion() < 7)
+            _classicIOS6GradientLayer.hidden = false;
+            if (classicDarkStyle)
+            {
+                UIColor *topColor = TGNavigationBarColorWithBrightnessMultiplier(pallete.backgroundColor, 1.30f);
+                UIColor *middleColor = TGNavigationBarColorWithBrightnessMultiplier(pallete.backgroundColor, 1.00f);
+                UIColor *bottomColor = TGNavigationBarColorWithBrightnessMultiplier(pallete.backgroundColor, 0.68f);
+                _classicIOS6GradientLayer.colors = @[(id)topColor.CGColor, (id)middleColor.CGColor, (id)bottomColor.CGColor];
+            }
+            else
+                _classicIOS6GradientLayer.colors = @[(id)UIColorRGB(0x91b7d5).CGColor, (id)UIColorRGB(0x6f99bc).CGColor, (id)UIColorRGB(0x4d7293).CGColor];
+        }
+        _barBackgroundView.hidden = true;
+        _stripeView.hidden = brandedIOS6Style;
+        _stripeView.backgroundColor = classicDarkStyle ? pallete.separatorColor : UIColorRGB(0x36546d);
+        self.tintColor = [UIColor whiteColor];
+
+        NSMutableDictionary *attributes = [[NSMutableDictionary alloc] init];
+        attributes[UITextAttributeTextColor] = [UIColor whiteColor];
+        attributes[UITextAttributeTextShadowColor] = classicDarkStyle ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f);
+        attributes[UITextAttributeTextShadowOffset] = [NSValue valueWithUIOffset:UIOffsetMake(0.0f, -1.0f)];
         attributes[UITextAttributeFont] = TGBoldSystemFontOfSize(17.0f);
+        [self setTitleTextAttributes:attributes];
+    }
+    else
+    {
+        if (_classicIOS6GradientLayer != nil)
+            _classicIOS6GradientLayer.hidden = true;
+        if (_classicIOS6BackgroundImageView != nil)
+            _classicIOS6BackgroundImageView.hidden = true;
 
-    [self setTitleTextAttributes:attributes];
+        _barBackgroundView.hidden = false;
+        _barBackgroundView.backgroundColor = pallete.backgroundColor;
+        _stripeView.hidden = false;
+        _stripeView.backgroundColor = pallete.separatorColor;
+        self.tintColor = pallete.tintColor;
+
+        NSMutableDictionary *attributes = [[NSMutableDictionary alloc] init];
+        attributes[UITextAttributeTextColor] = pallete.titleColor;
+        attributes[UITextAttributeTextShadowColor] = [UIColor clearColor];
+        attributes[UITextAttributeTextShadowOffset] = [NSValue valueWithUIOffset:UIOffsetMake(0.0f, 0.0f)];
+        if (iosMajorVersion() < 7)
+            attributes[UITextAttributeFont] = TGBoldSystemFontOfSize(17.0f);
+
+        [self setTitleTextAttributes:attributes];
+    }
 }
 
 - (void)commonInit:(UIBarStyle)barStyle
@@ -250,6 +396,8 @@ static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigati
     
     [super layoutSubviews];
 
+    if (TGNavigationBarClassicIOS6Style())
+        TGNavigationBarApplyClassicEdgeButtonFonts(self, self, TGNavigationBarClassicDarkPalette(_pallete));
 }
 
 - (void)updateLayout
@@ -269,6 +417,8 @@ static void TGNavigationBarApplyClassicEdgeButtonFonts(UINavigationBar *navigati
         
         if (_barBackgroundView != nil)
             _barBackgroundView.frame = _backgroundContainerView.bounds;
+        if (_classicIOS6BackgroundImageView != nil)
+            _classicIOS6BackgroundImageView.frame = _backgroundContainerView.bounds;
 
         if (_classicIOS6GradientLayer != nil)
             _classicIOS6GradientLayer.frame = _backgroundContainerView.bounds;

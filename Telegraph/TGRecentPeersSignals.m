@@ -121,7 +121,7 @@
 }
 
 + (SSignal *)genericCategoryForPeerId:(int64_t)peerId {
-    return [TGDatabaseInstance() modify:^id{
+    return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         if (TGPeerIdIsChannel(peerId) || TGPeerIdIsGroup(peerId)) {
             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
             if (conversation != nil) {

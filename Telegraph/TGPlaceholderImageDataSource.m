@@ -27,20 +27,49 @@ static bool TGClassicIOS6StyleEnabled(void)
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
 }
 
-static UIImage *TGClassicIOS6AvatarPlaceholder(NSString *type, CGSize size)
+static UIImage *TGClassicIOS6AvatarResource(NSString *name)
+{
+    CGFloat scale = [UIScreen mainScreen].scale;
+    NSString *resourceName = scale > 1.5f ? [name stringByAppendingFormat:@"%c2x", 64] : name;
+    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
+    if (path.length == 0 && scale > 1.5f)
+        path = [[NSBundle mainBundle] pathForResource:name ofType:@"png" inDirectory:@"ClassicIOS6"];
+    UIImage *image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
+    if (image != nil && scale > 1.5f && [resourceName hasSuffix:@"@2x"] && image.CGImage != NULL)
+        image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
+    return image;
+}
+
+static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
 {
     if (!TGClassicIOS6StyleEnabled())
         return nil;
 
-    bool group = [type isEqualToString:@"group-avatar"];
-    NSString *name = group ? (size.width <= 40.0f ? @"DialogListGroupAvatarPlaceholderSmall" : @"DialogListGroupAvatarPlaceholder") : (size.width <= 40.0f ? @"DialogListAvatarPlaceholderSmall" : @"DialogListAvatarPlaceholder");
-    NSString *resourceName = [UIScreen mainScreen].scale > 1.5f ? [name stringByAppendingFormat:@"%c2x", 64] : name;
-    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ClassicIOS6"];
-    UIImage *source = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
+    NSString *type = args[@"type"];
+    NSString *name = nil;
+
+    if ([type isEqualToString:@"saved-messages"])
+    {
+        name = @"OnegramiumSavedMessagesAvatar";
+    }
+    else if ([type isEqualToString:@"user-avatar"])
+    {
+        int32_t uid = [args[@"uid"] intValue];
+        if (uid == 0)
+            name = @"DialogListAvatarSystem";
+        else
+            name = [NSString stringWithFormat:@"%@%d", size.width <= 40.0f ? @"SmallAvatar" : @"DialogListAvatar", [[TGInterfaceAssets instance] userColorIndex:uid] + 1];
+    }
+    else if ([type isEqualToString:@"group-avatar"])
+    {
+        int64_t gid = [args[@"cid"] longLongValue];
+        int index = [[TGInterfaceAssets instance] groupColorIndex:gid] % 4 + 1;
+        name = [NSString stringWithFormat:@"%@%d", size.width <= 40.0f ? @"DialogListGroupAvatarSmall" : @"DialogListGroupAvatar", index];
+    }
+
+    UIImage *source = name.length == 0 ? nil : TGClassicIOS6AvatarResource(name);
     if (source == nil)
         return nil;
-    if ([UIScreen mainScreen].scale > 1.5f && source.CGImage != NULL)
-        source = [UIImage imageWithCGImage:source.CGImage scale:2.0f orientation:UIImageOrientationUp];
 
     UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
     [source drawInRect:CGRectMake(0.0f, 0.0f, size.width, size.height)];
@@ -160,7 +189,7 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSString *type, CGSize size)
         return nil;
     
     NSString *type = args[@"type"];
-    UIImage *classicPlaceholder = TGClassicIOS6AvatarPlaceholder(type, size);
+    UIImage *classicPlaceholder = TGClassicIOS6AvatarPlaceholder(args, size);
     if (classicPlaceholder != nil)
     {
         TG_SYNCHRONIZED_BEGIN(imageCache);
