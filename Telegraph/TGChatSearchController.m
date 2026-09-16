@@ -384,9 +384,9 @@ extern NSString *authorNameYou;
 
 - (void)prepareCell:(TGDialogListCell *)cell forConversation:(TGConversation *)conversation animated:(bool)animated
 {
-    if (cell.reuseTag != (int)conversation || cell.conversationId != conversation.conversationId)
+    if (cell.reuseTag != (intptr_t)conversation || cell.conversationId != conversation.conversationId)
     {
-        cell.reuseTag = (int)conversation;
+        cell.reuseTag = (intptr_t)conversation;
         cell.conversationId = conversation.conversationId;
         cell.isSavedMessages = conversation.conversationId == TGTelegraphInstance.clientUserId;
         

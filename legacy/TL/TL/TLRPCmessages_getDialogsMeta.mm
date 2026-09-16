@@ -42,7 +42,7 @@
     object.offset_id = metaObject->getInt32((int32_t)0x1120a8cd);
     object.offset_peer = metaObject->getObject((int32_t)0xfcfce48f);
     object.limit = metaObject->getInt32((int32_t)0xb8433fca);
-    object.hash = metaObject->getInt64((int32_t)0xec5a7d63);
+    object.n_hash = metaObject->getInt64((int32_t)0xec5a7d63);
     return object;
 }
 
@@ -87,7 +87,7 @@
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypePrimitiveInt64;
-        value.primitive.int64Value = self.hash;
+        value.primitive.int64Value = self.n_hash;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xec5a7d63, value));
     }
 }

@@ -18,7 +18,7 @@
 @property (nonatomic) int32_t offset_id;
 @property (nonatomic, retain) TLInputPeer *offset_peer;
 @property (nonatomic) int32_t limit;
-@property (nonatomic) int64_t hash;
+@property (nonatomic) int64_t n_hash;
 
 - (Class)responseClass;
 

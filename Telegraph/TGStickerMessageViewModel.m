@@ -32,8 +32,29 @@
 #import "TGModernTextViewModel.h"
 
 #import "TGPresentation.h"
+#import "TGPresentationAssets.h"
 
 #import "TGAppDelegate.h"
+
+static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *model, NSString *timeText, bool incomingAppearance, TGMessageDeliveryState deliveryState, bool read)
+{
+    if (model == nil)
+        return;
+
+    bool hidden = !incomingAppearance && deliveryState != TGMessageDeliveryStateDelivered;
+    model.hidden = hidden;
+    if (hidden)
+        return;
+
+    UIImage *image = [TGPresentationAssets brandedIOS6FlatDeliveryTagImage:timeText incoming:incomingAppearance read:read];
+    model.image = image;
+    CGRect frame = model.frame;
+    frame.size = image.size;
+    model.frame = frame;
+    UIImageView *view = (UIImageView *)[model boundView];
+    if (view != nil)
+        view.image = image;
+}
 
 static NSString *TGIOS6StickerReactionSummary(TGMessage *message)
 {
@@ -164,6 +185,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
     TGDoubleTapGestureRecognizer *_boundDoubleTapRecognizer;
     UITapGestureRecognizer *_replyTapRecognizer;
     
+    TGModernImageViewModel *_brandedDeliveryPlateModel;
     TGModernImageViewModel *_unsentButtonModel;
     UITapGestureRecognizer *_unsentButtonTapRecognizer;
     
@@ -455,6 +477,15 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         _imageModel.frame = CGRectMake(0.0f, 0.0f, displaySize.width, displaySize.height);
         _imageModel.skipDrawInContext = true;
         [self addSubmodel:_imageModel];
+
+        if ([TGPresentation brandedIOS6Style])
+        {
+            UIImage *deliveryPlateImage = [TGPresentationAssets brandedIOS6FlatDeliveryTagImage:[TGDateUtils stringForShortTime:(int)message.date] incoming:_incomingAppearance read:(_read || _context.isSavedMessages)];
+            _brandedDeliveryPlateModel = [[TGModernImageViewModel alloc] initWithImage:deliveryPlateImage];
+            _brandedDeliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
+            [_brandedDeliveryPlateModel sizeToFit];
+            [self addSubmodel:_brandedDeliveryPlateModel];
+        }
         
         NSString *alt = [self stickerAltText:_document];
         if (alt.length != 0)
@@ -469,8 +500,9 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         }
         
         _imageModel.flexibleTimestamp = true;
-        [_imageModel setTimestampString:[TGDateUtils stringForShortTime:(int)message.date] signatureString:nil displayCheckmarks:!_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:_messageViews != nil viewsValue:_messageViews.viewCount animated:false];
-        [_imageModel setDisplayTimestampProgress:_deliveryState == TGMessageDeliveryStatePending];
+        _imageModel.timestampHidden = [TGPresentation brandedIOS6Style];
+        [_imageModel setTimestampString:([TGPresentation brandedIOS6Style] ? nil : [TGDateUtils stringForShortTime:(int)message.date]) signatureString:nil displayCheckmarks:![TGPresentation brandedIOS6Style] && !_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:![TGPresentation brandedIOS6Style] && _messageViews != nil viewsValue:_messageViews.viewCount animated:false];
+        [_imageModel setDisplayTimestampProgress:![TGPresentation brandedIOS6Style] && _deliveryState == TGMessageDeliveryStatePending];
         [_imageModel setIsBroadcast:message.isBroadcast];
         
         TGMessageViewModelReference *messageLifetimeReference2 = [self lifetimeReference];
@@ -606,7 +638,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
 
 - (void)setAuthorSignature:(NSString *)authorSignature {
     _authorSignature = authorSignature;
-    [_imageModel setTimestampString:[TGDateUtils stringForShortTime:(int)_message.date] signatureString:authorSignature displayCheckmarks:!_incoming && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:_messageViews != nil viewsValue:_messageViews.viewCount animated:false];
+    [_imageModel setTimestampString:([TGPresentation brandedIOS6Style] ? nil : [TGDateUtils stringForShortTime:(int)_message.date]) signatureString:([TGPresentation brandedIOS6Style] ? nil : authorSignature) displayCheckmarks:![TGPresentation brandedIOS6Style] && !_incoming && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:![TGPresentation brandedIOS6Style] && _messageViews != nil viewsValue:_messageViews.viewCount animated:false];
 }
 
 - (void)updateAssets
@@ -660,8 +692,9 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
     bool previousRead = _read;
     _read = ![_context isMessageUnread:_message];
     if (previousRead != _read) {
-        [_imageModel setTimestampString:[TGDateUtils stringForShortTime:(int)_message.date] signatureString:_authorSignature displayCheckmarks:!_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:_messageViews != nil viewsValue:_messageViews.viewCount animated:true];
-        [_imageModel setDisplayTimestampProgress:_deliveryState == TGMessageDeliveryStatePending];
+        TGBrandedIOS6UpdateStickerDeliveryPlate(_brandedDeliveryPlateModel, [TGDateUtils stringForShortTime:(int)_message.date], _incomingAppearance, _deliveryState, _read || _context.isSavedMessages);
+        [_imageModel setTimestampString:([TGPresentation brandedIOS6Style] ? nil : [TGDateUtils stringForShortTime:(int)_message.date]) signatureString:([TGPresentation brandedIOS6Style] ? nil : _authorSignature) displayCheckmarks:![TGPresentation brandedIOS6Style] && !_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:![TGPresentation brandedIOS6Style] && _messageViews != nil viewsValue:_messageViews.viewCount animated:true];
+        [_imageModel setDisplayTimestampProgress:![TGPresentation brandedIOS6Style] && _deliveryState == TGMessageDeliveryStatePending];
     }
 }
 
@@ -688,9 +721,10 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         _messageViews = message.viewCount;
         _deliveryState = message.deliveryState;
         _read = !messageUnread;
+        TGBrandedIOS6UpdateStickerDeliveryPlate(_brandedDeliveryPlateModel, [TGDateUtils stringForShortTime:(int)message.date], _incomingAppearance, _deliveryState, _read || _context.isSavedMessages);
         
-        [_imageModel setTimestampString:[TGDateUtils stringForShortTime:(int)message.date] signatureString:_authorSignature displayCheckmarks:!_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:_messageViews != nil viewsValue:_messageViews.viewCount animated:true];
-        [_imageModel setDisplayTimestampProgress:_deliveryState == TGMessageDeliveryStatePending];
+        [_imageModel setTimestampString:([TGPresentation brandedIOS6Style] ? nil : [TGDateUtils stringForShortTime:(int)message.date]) signatureString:([TGPresentation brandedIOS6Style] ? nil : _authorSignature) displayCheckmarks:![TGPresentation brandedIOS6Style] && !_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:![TGPresentation brandedIOS6Style] && _messageViews != nil viewsValue:_messageViews.viewCount animated:true];
+        [_imageModel setDisplayTimestampProgress:![TGPresentation brandedIOS6Style] && _deliveryState == TGMessageDeliveryStatePending];
         
         if (_deliveryState == TGMessageDeliveryStateDelivered)
         {
@@ -1146,6 +1180,18 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         imageFrame.origin.x += _replyPanOffset;
     
     _imageModel.frame = imageFrame;
+
+    if (_brandedDeliveryPlateModel != nil)
+    {
+        _brandedDeliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
+        if (!_brandedDeliveryPlateModel.hidden)
+        {
+            UIImage *deliveryImage = [TGPresentationAssets brandedIOS6FlatDeliveryTagImage:[TGDateUtils stringForShortTime:(int)_message.date] incoming:_incomingAppearance read:(_read || _context.isSavedMessages)];
+            _brandedDeliveryPlateModel.image = deliveryImage;
+            CGSize deliverySize = deliveryImage.size;
+            _brandedDeliveryPlateModel.frame = [TGPresentationAssets brandedIOS6DeliveryTagFrameForMessageFrame:imageFrame tagSize:deliverySize incoming:_incomingAppearance];
+        }
+    }
 
     if (_ios6ReactionButtonModels.count != 0)
     {

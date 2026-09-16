@@ -430,7 +430,7 @@ static CTFontRef textFontForSize(CGFloat size)
     //width = a * exp(b * MIN(maxVoiceLength, (CGFloat)_duration));
     
     width = minVoiceWidth + (maxVoiceWidth - minVoiceWidth) * (calcDuration - minVoiceLength) / (maxVoiceLength - minVoiceLength);
-    width = CGFloor(width);
+    width = [TGPresentation brandedIOS6Style] ? 172.0f : CGFloor(width);
     
     CGFloat height = 50.0f;
     
@@ -454,11 +454,49 @@ static CTFontRef textFontForSize(CGFloat size)
 {
     [super layoutForContainerSize:containerSize];
     
-    _iconModel.frame = CGRectMake(_backgroundModel.frame.origin.x + (_incomingAppearance ? 14.0f : 9.0f), _headerHeight + _backgroundModel.frame.origin.y + 12.0f, 37.0f, 37.0f);
-    
-    CGFloat trackOriginX = CGRectGetMaxX(_iconModel.frame) + 5.0f;
-    CGRect sliderFrame = CGRectMake(trackOriginX, _iconModel.frame.origin.y - 3.0f, CGRectGetMaxX(_backgroundModel.frame) - trackOriginX - 13.0f + (_incomingAppearance ? 5.0f : 0.0f), 14.0f);
-    _sliderModel.frame = sliderFrame;
+    if ([TGPresentation brandedIOS6Style])
+    {
+        _iconModel.frame = CGRectMake(_backgroundModel.frame.origin.x + (_incomingAppearance ? 12.0f : 9.0f), _headerHeight + _backgroundModel.frame.origin.y + 6.0f, 37.0f, 37.0f);
+        CGFloat trackOriginX = CGRectGetMaxX(_iconModel.frame) + 8.0f;
+        CGRect sliderFrame = CGRectMake(trackOriginX, _iconModel.frame.origin.y + 3.0f, CGRectGetMaxX(_backgroundModel.frame) - trackOriginX - 10.0f, 24.0f);
+        _sliderModel.frame = sliderFrame;
+        if (_textModel.frame.size.height < FLT_EPSILON)
+        {
+            CGFloat dateY = _contentModel.frame.size.height - _dateModel.frame.size.height - 3.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f);
+            if (_incomingAppearance)
+            {
+                _dateModel.frame = CGRectMake(18.0f, dateY, _dateModel.frame.size.width, _dateModel.frame.size.height);
+            }
+            else
+            {
+                CGFloat rightX = _contentModel.frame.size.width - 9.0f;
+                if (_checkSecondModel != nil)
+                {
+                    CGRect secondFrame = _checkSecondModel.frame;
+                    secondFrame.origin.x = rightX - secondFrame.size.width;
+                    secondFrame.origin.y = _contentModel.frame.size.height - 15.0f + TGScreenPixel;
+                    _checkSecondModel.frame = secondFrame;
+                    rightX = secondFrame.origin.x - 1.0f;
+                }
+                if (_checkFirstModel != nil)
+                {
+                    CGRect firstFrame = _checkFirstModel.frame;
+                    firstFrame.origin.x = rightX - firstFrame.size.width;
+                    firstFrame.origin.y = _contentModel.frame.size.height - 15.0f + TGScreenPixel;
+                    _checkFirstModel.frame = firstFrame;
+                    rightX = firstFrame.origin.x - 4.0f;
+                }
+                _dateModel.frame = CGRectMake(rightX - _dateModel.frame.size.width, dateY, _dateModel.frame.size.width, _dateModel.frame.size.height);
+            }
+        }
+    }
+    else
+    {
+        _iconModel.frame = CGRectMake(_backgroundModel.frame.origin.x + (_incomingAppearance ? 14.0f : 9.0f), _headerHeight + _backgroundModel.frame.origin.y + 12.0f, 37.0f, 37.0f);
+        CGFloat trackOriginX = CGRectGetMaxX(_iconModel.frame) + 5.0f;
+        CGRect sliderFrame = CGRectMake(trackOriginX, _iconModel.frame.origin.y - 3.0f, CGRectGetMaxX(_backgroundModel.frame) - trackOriginX - 13.0f + (_incomingAppearance ? 5.0f : 0.0f), 14.0f);
+        _sliderModel.frame = sliderFrame;
+    }
 }
 
 - (void)audioSliderViewDidBeginPositionAdjustment:(TGAudioSliderView *)__unused audioSliderView

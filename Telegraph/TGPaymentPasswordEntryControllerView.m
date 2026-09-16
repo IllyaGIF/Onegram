@@ -111,7 +111,7 @@
         _textField.font = TGSystemFontOfSize(12.0f);
         _textField.typingAttributes = @{NSFontAttributeName: TGSystemFontOfSize(12.0f)};
         _textField.secureTextEntry = true;
-        _textField.keyboardAppearance = presentation.pallete.isDark ? UIKeyboardAppearanceAlert : UIReturnKeyDefault;
+        _textField.keyboardAppearance = presentation.pallete.isDark ? UIKeyboardAppearanceAlert : UIKeyboardAppearanceDefault;
         [_textField addTarget:self action:@selector(textFieldTextChanged:) forControlEvents:UIControlEventEditingChanged];
         _textField.delegate = self;
         [_backgroundView addSubview:_textField];

@@ -34,6 +34,7 @@ typedef enum {
 @property (nonatomic) UIEdgeInsets safeAreaInset;
 @property (nonatomic) CGFloat separatorInset;
 @property (nonatomic) UIEdgeInsets selectionInsets;
+@property (nonatomic) CGFloat classicIOS6HorizontalInset;
 
 @property (nonatomic, strong) TGCollectionItem *boundItem;
 @property (nonatomic, strong) TGPresentation *presentation;

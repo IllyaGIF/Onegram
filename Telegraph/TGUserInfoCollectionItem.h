@@ -30,6 +30,10 @@
 @property (nonatomic, strong) NSString *customStatus;
 @property (nonatomic) bool multilineName;
 @property (nonatomic, strong) TGDocumentMediaAttachment *profileMusicDocument;
+@property (nonatomic, strong) NSString *phoneNumber;
+@property (nonatomic, strong) NSString *username;
+@property (nonatomic, strong) NSString *about;
+@property (nonatomic) CGFloat brandedDetailsTextScale;
 
 - (void)setUser:(TGUser *)user animated:(bool)animated;
 - (void)setEditing:(bool)editing animated:(bool)animated;

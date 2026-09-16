@@ -47,7 +47,7 @@
     [os writeInt32:self.limit];
     
     // Modern Telegram layers require hash:long after limit. Zero disables cached diff mode.
-    [os writeInt64:self.hash];
+    [os writeInt64:self.n_hash];
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error

@@ -13,6 +13,7 @@
 @property (nonatomic, strong) NSString *title;
 @property (nonatomic, strong) NSString *variant;
 @property (nonatomic, strong) UIImage *variantImage;
+@property (nonatomic, strong) NSString *iconName;
 
 - (instancetype)initWithTitle:(NSString *)title variant:(NSString *)variant action:(SEL)action;
 

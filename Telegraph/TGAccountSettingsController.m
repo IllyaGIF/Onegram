@@ -87,30 +87,13 @@
 #import "TGLegacyComponentsContext.h"
 #import <QuartzCore/QuartzCore.h>
 
-@interface TGIOS6LogsController : TGViewController
+@interface TGIOS6LogsController : TGViewController <UITableViewDelegate, UITableViewDataSource>
 {
-    UIView *_filterContainer;
-    TGModernButton *_filterButton;
-    UILabel *_filterTitleLabel;
-    UILabel *_filterValueLabel;
-    UILabel *_filterArrowLabel;
-    UIScrollView *_filterMenu;
-    NSMutableArray *_filterMenuButtons;
-    NSString *_selectedFilter;
-    bool _filterMenuVisible;
-    UITextView *_textView;
+    UITableView *_tableView;
     UIView *_bottomBar;
     UIView *_bottomSeparator;
-    UIView *_buttonSeparator1;
-    UIView *_buttonSeparator2;
-    TGModernButton *_clearButton;
-    TGModernButton *_copyButton;
-    TGModernButton *_shareButton;
-    NSTimer *_refreshTimer;
-    NSString *_rawText;
-    unsigned long long _lastCurrentSize;
-    bool _readInProgress;
-    bool _didInitialScroll;
+    TGModernButton *_saveButton;
+    NSArray *_logFiles;
 }
 @end
 
@@ -122,7 +105,6 @@
     if (self != nil)
     {
         self.title = @"Логи";
-        _lastCurrentSize = (unsigned long long)-1;
         TGLogSetEnabled(true);
     }
     return self;
@@ -138,7 +120,7 @@
     return true;
 }
 
-- (NSUInteger)supportedInterfaceOrientations
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations
 {
     return UIInterfaceOrientationMaskAllButUpsideDown;
 }
@@ -150,83 +132,13 @@
     TGPresentationPallete *pallete = TGPresentation.current.pallete;
     self.view.backgroundColor = pallete.backgroundColor;
 
-    _filterContainer = [[UIView alloc] initWithFrame:CGRectZero];
-    _filterContainer.backgroundColor = pallete.collectionMenuBackgroundColor;
-    [self.view addSubview:_filterContainer];
-
-    _selectedFilter = @"Основное";
-    _filterMenuVisible = false;
-
-    _filterButton = [[TGModernButton alloc] initWithFrame:CGRectZero];
-    _filterButton.modernHighlight = true;
-    [_filterButton addTarget:self action:@selector(filterButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [_filterContainer addSubview:_filterButton];
-
-    _filterTitleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _filterTitleLabel.backgroundColor = [UIColor clearColor];
-    _filterTitleLabel.text = @"Фильтр";
-    _filterTitleLabel.font = TGSystemFontOfSize(15.0f);
-    _filterTitleLabel.textColor = pallete.textColor;
-    [_filterContainer addSubview:_filterTitleLabel];
-
-    _filterValueLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _filterValueLabel.backgroundColor = [UIColor clearColor];
-    _filterValueLabel.text = _selectedFilter;
-    _filterValueLabel.font = TGSystemFontOfSize(15.0f);
-    _filterValueLabel.textColor = pallete.accentColor;
-    _filterValueLabel.textAlignment = NSTextAlignmentRight;
-    [_filterContainer addSubview:_filterValueLabel];
-
-    _filterArrowLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _filterArrowLabel.backgroundColor = [UIColor clearColor];
-    _filterArrowLabel.text = @"▾";
-    _filterArrowLabel.font = TGSystemFontOfSize(15.0f);
-    _filterArrowLabel.textColor = pallete.accentColor;
-    _filterArrowLabel.textAlignment = NSTextAlignmentCenter;
-    [_filterContainer addSubview:_filterArrowLabel];
-
-    _filterMenu = [[UIScrollView alloc] initWithFrame:CGRectZero];
-    _filterMenu.backgroundColor = pallete.collectionMenuBackgroundColor;
-    _filterMenu.clipsToBounds = true;
-    _filterMenu.hidden = true;
-    _filterMenu.alwaysBounceVertical = true;
-    _filterMenu.showsVerticalScrollIndicator = true;
-    _filterMenu.bounces = true;
-    [self.view addSubview:_filterMenu];
-
-    NSArray *filterNames = @[@"Основное", @"Ошибки", @"CRASH", @"AUTH", @"QR", @"CALL", @"WEBRTC", @"FOLDERS", @"FORUM", @"AUTHPERF", @"Сеть", @"Сырой лог"];
-    _filterMenuButtons = [[NSMutableArray alloc] initWithCapacity:filterNames.count];
-    for (NSUInteger index = 0; index < filterNames.count; index++)
-    {
-        NSString *name = filterNames[index];
-        TGModernButton *button = [[TGModernButton alloc] initWithFrame:CGRectZero];
-        button.modernHighlight = true;
-        button.tag = (NSInteger)index;
-        button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-        button.titleLabel.font = TGSystemFontOfSize(15.0f);
-        [button setTitle:name forState:UIControlStateNormal];
-        [button setTitleColor:(index == 0 ? pallete.accentColor : pallete.textColor) forState:UIControlStateNormal];
-        [button addTarget:self action:@selector(filterOptionPressed:) forControlEvents:UIControlEventTouchUpInside];
-        [_filterMenu addSubview:button];
-        [_filterMenuButtons addObject:button];
-
-        if (index != filterNames.count - 1)
-        {
-            UIView *separator = [[UIView alloc] initWithFrame:CGRectZero];
-            separator.tag = 1000 + (NSInteger)index;
-            separator.backgroundColor = pallete.barSeparatorColor;
-            [_filterMenu addSubview:separator];
-        }
-    }
-
-    _textView = [[UITextView alloc] initWithFrame:CGRectZero];
-    _textView.backgroundColor = pallete.backgroundColor;
-    _textView.textColor = pallete.textColor;
-    _textView.editable = false;
-    _textView.alwaysBounceVertical = true;
-    UIFont *font = [UIFont fontWithName:@"Courier" size:11.0f];
-    _textView.font = font != nil ? font : [UIFont systemFontOfSize:11.0f];
-    [self.view addSubview:_textView];
+    _tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain];
+    _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _tableView.backgroundColor = pallete.backgroundColor;
+    _tableView.delegate = self;
+    _tableView.dataSource = self;
+    _tableView.rowHeight = 58.0f;
+    [self.view addSubview:_tableView];
 
     _bottomBar = [[UIView alloc] initWithFrame:CGRectZero];
     _bottomBar.backgroundColor = pallete.barBackgroundColor;
@@ -236,40 +148,22 @@
     _bottomSeparator.backgroundColor = pallete.barSeparatorColor;
     [_bottomBar addSubview:_bottomSeparator];
 
-    _buttonSeparator1 = [[UIView alloc] initWithFrame:CGRectZero];
-    _buttonSeparator1.backgroundColor = pallete.barSeparatorColor;
-    [_bottomBar addSubview:_buttonSeparator1];
-
-    _buttonSeparator2 = [[UIView alloc] initWithFrame:CGRectZero];
-    _buttonSeparator2.backgroundColor = pallete.barSeparatorColor;
-    [_bottomBar addSubview:_buttonSeparator2];
-
-    _clearButton = [[TGModernButton alloc] initWithFrame:CGRectZero];
-    _clearButton.modernHighlight = true;
-    _clearButton.titleLabel.font = TGSystemFontOfSize(15.0f);
-    [_clearButton setTitle:@"Очистить" forState:UIControlStateNormal];
-    [_clearButton setTitleColor:pallete.destructiveColor forState:UIControlStateNormal];
-    [_clearButton addTarget:self action:@selector(clearPressed) forControlEvents:UIControlEventTouchUpInside];
-    [_bottomBar addSubview:_clearButton];
-
-    _copyButton = [[TGModernButton alloc] initWithFrame:CGRectZero];
-    _copyButton.modernHighlight = true;
-    _copyButton.titleLabel.font = TGSystemFontOfSize(15.0f);
-    [_copyButton setTitle:@"Копировать" forState:UIControlStateNormal];
-    [_copyButton setTitleColor:pallete.accentColor forState:UIControlStateNormal];
-    [_copyButton addTarget:self action:@selector(copyPressed) forControlEvents:UIControlEventTouchUpInside];
-    [_bottomBar addSubview:_copyButton];
-
-    _shareButton = [[TGModernButton alloc] initWithFrame:CGRectZero];
-    _shareButton.modernHighlight = true;
-    _shareButton.titleLabel.font = TGSystemFontOfSize(15.0f);
-    [_shareButton setTitle:@"Поделиться" forState:UIControlStateNormal];
-    [_shareButton setTitleColor:pallete.accentColor forState:UIControlStateNormal];
-    [_shareButton addTarget:self action:@selector(sharePressed) forControlEvents:UIControlEventTouchUpInside];
-    [_bottomBar addSubview:_shareButton];
+    _saveButton = [[TGModernButton alloc] initWithFrame:CGRectZero];
+    _saveButton.modernHighlight = true;
+    _saveButton.titleLabel.font = TGSystemFontOfSize(15.0f);
+    [_saveButton setTitle:@"Сохранить последние 500 строк" forState:UIControlStateNormal];
+    [_saveButton setTitleColor:pallete.accentColor forState:UIControlStateNormal];
+    [_saveButton addTarget:self action:@selector(saveLiveLogPressed) forControlEvents:UIControlEventTouchUpInside];
+    [_bottomBar addSubview:_saveButton];
 
     if (![self _updateControllerInset:false])
         [self controllerInsetUpdated:UIEdgeInsetsZero];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self reloadLogFiles];
 }
 
 - (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
@@ -283,509 +177,124 @@
     CGFloat width = self.view.bounds.size.width;
     CGFloat height = self.view.bounds.size.height;
     UIEdgeInsets inset = self.controllerInset;
-    CGFloat filterHeight = 44.0f;
-    CGFloat bottomBarHeight = 46.0f;
-    CGFloat top = inset.top;
-    CGFloat bottom = inset.bottom;
+    CGFloat bottomBarHeight = 48.0f;
+    CGFloat bottomY = MAX(inset.top, height - inset.bottom - bottomBarHeight);
 
-    _filterContainer.frame = CGRectMake(0.0f, top, width, filterHeight);
-    _filterButton.frame = _filterContainer.bounds;
-    _filterTitleLabel.frame = CGRectMake(15.0f, 0.0f, 90.0f, filterHeight);
-    _filterArrowLabel.frame = CGRectMake(MAX(0.0f, width - 31.0f), 0.0f, 16.0f, filterHeight);
-    _filterValueLabel.frame = CGRectMake(105.0f, 0.0f, MAX(0.0f, width - 136.0f), filterHeight);
-
-    CGFloat bottomY = MAX(top + filterHeight, height - bottom - bottomBarHeight);
-    _bottomBar.frame = CGRectMake(0.0f, bottomY, width, bottomBarHeight + bottom);
+    _tableView.frame = CGRectMake(0.0f, inset.top, width, MAX(0.0f, bottomY - inset.top));
+    _bottomBar.frame = CGRectMake(0.0f, bottomY, width, bottomBarHeight + inset.bottom);
     _bottomSeparator.frame = CGRectMake(0.0f, 0.0f, width, 1.0f);
-
-    CGFloat buttonWidth = width / 3.0f;
-    _clearButton.frame = CGRectMake(0.0f, 1.0f, buttonWidth, bottomBarHeight - 1.0f);
-    _copyButton.frame = CGRectMake(buttonWidth, 1.0f, buttonWidth, bottomBarHeight - 1.0f);
-    _shareButton.frame = CGRectMake(buttonWidth * 2.0f, 1.0f, width - buttonWidth * 2.0f, bottomBarHeight - 1.0f);
-    _buttonSeparator1.frame = CGRectMake(buttonWidth, 9.0f, 1.0f, bottomBarHeight - 18.0f);
-    _buttonSeparator2.frame = CGRectMake(buttonWidth * 2.0f, 9.0f, 1.0f, bottomBarHeight - 18.0f);
-
-    CGFloat textTop = CGRectGetMaxY(_filterContainer.frame);
-    _textView.frame = CGRectMake(0.0f, textTop, width, MAX(0.0f, bottomY - textTop));
-
-    CGFloat menuRowHeight = 36.0f;
-    CGFloat menuHeight = menuRowHeight * _filterMenuButtons.count;
-    CGFloat maximumMenuHeight = MAX(0.0f, bottomY - textTop);
-    menuHeight = MIN(menuHeight, maximumMenuHeight);
-    _filterMenu.frame = CGRectMake(0.0f, textTop, width, _filterMenuVisible ? menuHeight : 0.0f);
-    _filterMenu.contentSize = CGSizeMake(width, menuRowHeight * _filterMenuButtons.count);
-
-    for (NSUInteger index = 0; index < _filterMenuButtons.count; index++)
-    {
-        TGModernButton *button = _filterMenuButtons[index];
-        button.frame = CGRectMake(15.0f, menuRowHeight * index, MAX(0.0f, width - 30.0f), menuRowHeight);
-        UIView *separator = [_filterMenu viewWithTag:1000 + (NSInteger)index];
-        if (separator != nil)
-            separator.frame = CGRectMake(15.0f, menuRowHeight * (index + 1) - 1.0f, MAX(0.0f, width - 15.0f), 1.0f);
-    }
-    [self.view bringSubviewToFront:_filterMenu];
-    [self.view bringSubviewToFront:_filterContainer];
-    [self.view bringSubviewToFront:_bottomBar];
+    _saveButton.frame = CGRectMake(0.0f, 1.0f, width, bottomBarHeight - 1.0f);
 }
 
-- (void)viewWillAppear:(BOOL)animated
+- (void)reloadLogFiles
 {
-    [super viewWillAppear:animated];
-    [self refreshLogsForce:true];
-    [_refreshTimer invalidate];
-    _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:0.8 target:self selector:@selector(refreshTimerTick) userInfo:nil repeats:true];
+    _logFiles = TGGetArchivedLogFilePaths();
+    [_tableView reloadData];
 }
 
-- (void)viewWillDisappear:(BOOL)animated
+- (NSString *)displaySizeForPath:(NSString *)path
 {
-    [super viewWillDisappear:animated];
-    [self setFilterMenuVisible:false animated:false];
-    [_refreshTimer invalidate];
-    _refreshTimer = nil;
-}
-
-- (void)dealloc
-{
-    [_refreshTimer invalidate];
-}
-
-- (unsigned long long)currentLogSize
-{
-    NSString *documentsPath = [TGAppDelegate documentsPath];
-    NSString *path = [documentsPath stringByAppendingPathComponent:@"application-0.log"];
     NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
     unsigned long long size = [attributes[NSFileSize] unsignedLongLongValue];
-
-    NSString *crashPath = [documentsPath stringByAppendingPathComponent:@"ios6_last_crash.txt"];
-    NSDictionary *crashAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:crashPath error:nil];
-    size ^= ([crashAttributes[NSFileSize] unsignedLongLongValue] << 1);
-    return size;
+    if (size >= 1024 * 1024)
+        return [NSString stringWithFormat:@"%.1f MB", (double)size / (1024.0 * 1024.0)];
+    if (size >= 1024)
+        return [NSString stringWithFormat:@"%.1f KB", (double)size / 1024.0];
+    return [NSString stringWithFormat:@"%llu B", size];
 }
 
-- (NSString *)readLogTail
+- (NSString *)displayDateForPath:(NSString *)path
 {
-    const NSUInteger maximumBytes = 768 * 1024;
-    NSUInteger remaining = maximumBytes;
-    NSArray *paths = TGGetLogFilePaths(8);
-    NSMutableArray *chunks = [[NSMutableArray alloc] init];
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    NSDate *date = attributes[NSFileModificationDate];
+    if (date == nil)
+        return @"";
 
-    for (NSString *path in paths)
-    {
-        if (remaining == 0)
-            break;
-
-        NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
-        unsigned long long fileSize = [attributes[NSFileSize] unsignedLongLongValue];
-        if (fileSize == 0)
-            continue;
-
-        NSUInteger readLength = (NSUInteger)MIN((unsigned long long)remaining, fileSize);
-        unsigned long long startOffset = fileSize - readLength;
-
-        NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
-        if (handle == nil)
-            continue;
-
-        [handle seekToFileOffset:startOffset];
-        NSData *data = [handle readDataToEndOfFile];
-        [handle closeFile];
-
-        if (startOffset != 0 && data.length != 0)
-        {
-            const uint8_t *bytes = data.bytes;
-            NSUInteger skip = 0;
-            while (skip < data.length && bytes[skip] != '\n')
-                skip++;
-            if (skip < data.length)
-                skip++;
-            if (skip != 0 && skip < data.length)
-                data = [data subdataWithRange:NSMakeRange(skip, data.length - skip)];
-        }
-
-        NSString *chunk = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        if (chunk == nil)
-            chunk = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
-        if (chunk.length != 0)
-        {
-            if (![chunk hasSuffix:@"\n"])
-                chunk = [chunk stringByAppendingString:@"\n"];
-            [chunks insertObject:chunk atIndex:0];
-        }
-
-        remaining -= MIN(remaining, readLength);
-    }
-
-    NSString *crashPath = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"ios6_last_crash.txt"];
-    NSString *crash = [NSString stringWithContentsOfFile:crashPath encoding:NSUTF8StringEncoding error:nil];
-    if (crash.length != 0)
-    {
-        if (![crash hasSuffix:@"\n"])
-            crash = [crash stringByAppendingString:@"\n"];
-        [chunks insertObject:crash atIndex:0];
-    }
-
-    return [chunks componentsJoinedByString:@""];
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateFormat = @"dd.MM.yyyy HH:mm:ss";
+    return [formatter stringFromDate:date] ?: @"";
 }
 
-- (bool)lineLooksLikeError:(NSString *)line
+- (NSInteger)tableView:(UITableView *)__unused tableView numberOfRowsInSection:(NSInteger)__unused section
 {
-    if (line.length == 0)
-        return false;
-
-    NSString *lowerLine = [line lowercaseString];
-    NSArray *errorTokens = @[
-        @"error", @"exception", @"terminating", @"unrecognized selector",
-        @"fatal", @"crash", @"assert", @"sigabrt", @"sigsegv", @"sigbus",
-        @"sigill", @"sigfpe", @"failed", @"failure", @"timeout", @"timed out",
-        @"_invalid", @"_not_active", @"unauthorized", @"forbidden", @"denied"
-    ];
-    for (NSString *token in errorTokens)
-    {
-        if ([lowerLine rangeOfString:token].location != NSNotFound)
-            return true;
-    }
-    return false;
+    return _logFiles.count == 0 ? 1 : (NSInteger)_logFiles.count;
 }
 
-- (bool)lineIsImportant:(NSString *)line
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    if (line.length == 0)
-        return false;
+    static NSString *identifier = @"TGIOS6LogFileCell";
+    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    if (cell == nil)
+        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
 
-    if ([line hasPrefix:@"IOS6"] || [line rangeOfString:@" IOS6" options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return true;
-    if ([line rangeOfString:@"AUTHPERF" options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return true;
-    if ([line rangeOfString:@"Starting with user id" options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return true;
+    TGPresentationPallete *pallete = TGPresentation.current.pallete;
+    cell.backgroundColor = pallete.collectionMenuBackgroundColor;
+    cell.textLabel.textColor = pallete.textColor;
+    cell.detailTextLabel.textColor = pallete.secondaryTextColor;
 
-    if ([self lineLooksLikeError:line])
-        return true;
-
-    NSArray *importantRpcNames = @[
-        @"phone_requestCall", @"phone_acceptCall", @"phone_confirmCall",
-        @"phone_discardCall", @"phone_receivedCall"
-    ];
-    for (NSString *rpcName in importantRpcNames)
+    if (_logFiles.count == 0)
     {
-        if ([line rangeOfString:rpcName options:NSCaseInsensitiveSearch].location != NSNotFound)
-            return true;
-    }
-
-    return false;
-}
-
-- (bool)lineIsNetworkDiagnostic:(NSString *)line
-{
-    if (line.length == 0)
-        return false;
-
-    NSArray *tokens = @[
-        @"Connection time:", @"network state:", @"connection state:",
-        @"connecting to ", @"disconnected from ", @"rpcError", @"timeout",
-        @"timed out", @"network unavailable", @"interface:"
-    ];
-    for (NSString *token in tokens)
-    {
-        if ([line rangeOfString:token options:NSCaseInsensitiveSearch].location != NSNotFound)
-            return true;
-    }
-    return false;
-}
-
-- (bool)lineIsCrashContext:(NSString *)line
-{
-    if (line.length == 0)
-        return false;
-
-    if ([line rangeOfString:@"CALL" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [line rangeOfString:@"WEBRTC" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [line rangeOfString:@"AUTH" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-        [line rangeOfString:@"CRASH" options:NSCaseInsensitiveSearch].location != NSNotFound)
-        return true;
-
-    if ([self lineLooksLikeError:line])
-        return true;
-
-    NSArray *tokens = @[
-        @"phone_requestCall", @"phone_acceptCall", @"phone_confirmCall",
-        @"phone_discardCall", @"phone_receivedCall", @"phone_sendSignalingData"
-    ];
-    for (NSString *token in tokens)
-    {
-        if ([line rangeOfString:token options:NSCaseInsensitiveSearch].location != NSNotFound)
-            return true;
-    }
-
-    return false;
-}
-
-- (NSString *)crashDiagnosticText:(NSString *)text
-{
-    NSString *documentsPath = [TGAppDelegate documentsPath];
-    NSString *previousPath = [documentsPath stringByAppendingPathComponent:@"application-1.log"];
-    NSString *source = nil;
-
-    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:previousPath error:nil];
-    unsigned long long fileSize = [attributes[NSFileSize] unsignedLongLongValue];
-    if (fileSize != 0)
-    {
-        const NSUInteger maximumBytes = 512 * 1024;
-        NSUInteger readLength = (NSUInteger)MIN((unsigned long long)maximumBytes, fileSize);
-        unsigned long long startOffset = fileSize - readLength;
-        NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:previousPath];
-        if (handle != nil)
-        {
-            [handle seekToFileOffset:startOffset];
-            NSData *data = [handle readDataToEndOfFile];
-            [handle closeFile];
-
-            if (startOffset != 0 && data.length != 0)
-            {
-                const uint8_t *bytes = data.bytes;
-                NSUInteger skip = 0;
-                while (skip < data.length && bytes[skip] != '\n')
-                    skip++;
-                if (skip < data.length)
-                    skip++;
-                if (skip != 0 && skip < data.length)
-                    data = [data subdataWithRange:NSMakeRange(skip, data.length - skip)];
-            }
-
-            source = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            if (source == nil)
-                source = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
-        }
-    }
-    if (source.length == 0)
-        source = text ?: @"";
-
-    NSArray *lines = [source componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-    NSMutableArray *contextLines = [[NSMutableArray alloc] init];
-
-    const NSUInteger maximumContextLines = 160;
-    for (NSString *line in lines)
-    {
-        if (line.length == 0)
-            continue;
-        if ([self lineIsCrashContext:line])
-        {
-            [contextLines addObject:line];
-            if (contextLines.count > maximumContextLines)
-                [contextLines removeObjectAtIndex:0];
-        }
-    }
-
-    NSMutableString *result = [[NSMutableString alloc] init];
-    for (NSString *line in contextLines)
-        [result appendFormat:@"%@\n", line];
-
-    NSString *crashPath = [documentsPath stringByAppendingPathComponent:@"ios6_last_crash.txt"];
-    NSString *crash = [NSString stringWithContentsOfFile:crashPath encoding:NSUTF8StringEncoding error:nil];
-    if (crash.length != 0 && [crash rangeOfString:@"CRASH context-begin"].location != NSNotFound)
-    {
-        return crash;
-    }
-    if (crash.length != 0)
-    {
-        NSArray *crashLines = [crash componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-        for (NSString *line in crashLines)
-        {
-            if (line.length == 0)
-                continue;
-            if ([line hasPrefix:@"CRASH"])
-                [result appendFormat:@"%@\n", line];
-            else
-                [result appendFormat:@"CRASH %@\n", line];
-        }
-    }
-
-    return result;
-}
-
-- (NSString *)filteredText:(NSString *)text query:(NSString *)query
-{
-    NSString *filter = query.length != 0 ? query : @"Основное";
-    if ([filter isEqualToString:@"Сырой лог"])
-        return text ?: @"";
-    if ([filter isEqualToString:@"CRASH"])
-        return [self crashDiagnosticText:text];
-
-    NSMutableString *result = [[NSMutableString alloc] init];
-    NSArray *lines = [(text ?: @"") componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-    for (NSString *line in lines)
-    {
-        bool matches = false;
-        if ([filter isEqualToString:@"Основное"])
-        {
-            matches = [self lineIsImportant:line];
-        }
-        else if ([filter isEqualToString:@"Ошибки"])
-        {
-            matches = [self lineLooksLikeError:line];
-        }
-        else if ([filter isEqualToString:@"Сеть"])
-        {
-            matches = [self lineIsNetworkDiagnostic:line];
-        }
-        else
-        {
-            matches = [line rangeOfString:filter options:NSCaseInsensitiveSearch].location != NSNotFound;
-        }
-
-        if (matches)
-            [result appendFormat:@"%@\n", line];
-    }
-    return result;
-}
-
-- (void)applyDisplayedText:(NSString *)text
-{
-    bool nearBottom = !_didInitialScroll || (_textView.contentOffset.y + _textView.bounds.size.height >= _textView.contentSize.height - 50.0f);
-    _textView.text = text ?: @"";
-
-    if (nearBottom && _textView.text.length != 0)
-    {
-        [_textView scrollRangeToVisible:NSMakeRange(_textView.text.length - 1, 1)];
-        _didInitialScroll = true;
-    }
-}
-
-- (void)refreshTimerTick
-{
-    [self refreshLogsForce:false];
-}
-
-- (void)refreshLogsForce:(bool)force
-{
-    unsigned long long currentSize = [self currentLogSize];
-    if (!force && currentSize == _lastCurrentSize)
-        return;
-    if (_readInProgress)
-        return;
-
-    _lastCurrentSize = currentSize;
-    _readInProgress = true;
-    NSString *query = [_selectedFilter copy] ?: @"Основное";
-
-    __weak TGIOS6LogsController *weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
-    {
-        __strong TGIOS6LogsController *strongSelf = weakSelf;
-        if (strongSelf == nil)
-            return;
-
-        NSString *raw = [strongSelf readLogTail];
-        NSString *filtered = [strongSelf filteredText:raw query:query];
-
-        dispatch_async(dispatch_get_main_queue(), ^
-        {
-            __strong TGIOS6LogsController *innerSelf = weakSelf;
-            if (innerSelf == nil)
-                return;
-            innerSelf->_readInProgress = false;
-            innerSelf->_rawText = raw ?: @"";
-            [innerSelf applyDisplayedText:filtered];
-        });
-    });
-}
-
-- (void)setFilterMenuVisible:(bool)visible animated:(bool)animated
-{
-    _filterMenuVisible = visible;
-    _filterMenu.hidden = false;
-    _filterArrowLabel.text = visible ? @"▴" : @"▾";
-
-    void (^changes)(void) = ^
-    {
-        [self viewWillLayoutSubviews];
-        _filterMenu.alpha = visible ? 1.0f : 0.0f;
-        if (visible)
-        {
-            for (TGModernButton *button in _filterMenuButtons)
-            {
-                if ([[button titleForState:UIControlStateNormal] isEqualToString:_selectedFilter])
-                {
-                    [_filterMenu scrollRectToVisible:CGRectInset(button.frame, 0.0f, -4.0f) animated:false];
-                    break;
-                }
-            }
-        }
-    };
-
-    if (animated)
-    {
-        if (visible)
-            _filterMenu.alpha = 0.0f;
-        [UIView animateWithDuration:0.2 animations:changes completion:^(BOOL finished)
-        {
-            if (!_filterMenuVisible)
-                _filterMenu.hidden = true;
-        }];
+        cell.textLabel.text = @"Логов пока нет";
+        cell.detailTextLabel.text = @"Crash-логи появятся здесь автоматически";
+        cell.accessoryType = UITableViewCellAccessoryNone;
+        cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
     else
     {
-        changes();
-        _filterMenu.hidden = !visible;
+        NSString *path = _logFiles[(NSUInteger)indexPath.row];
+        cell.textLabel.text = [path lastPathComponent];
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@", [self displayDateForPath:path], [self displaySizeForPath:path]];
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleBlue;
     }
+
+    return cell;
 }
 
-- (void)filterButtonPressed
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    [self setFilterMenuVisible:!_filterMenuVisible animated:true];
+    [tableView deselectRowAtIndexPath:indexPath animated:true];
+    if (_logFiles.count == 0 || (NSUInteger)indexPath.row >= _logFiles.count)
+        return;
+
+    [self shareFileAtPath:_logFiles[(NSUInteger)indexPath.row]];
 }
 
-- (void)filterOptionPressed:(TGModernButton *)button
+- (BOOL)tableView:(UITableView *)__unused tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    NSString *filter = [button titleForState:UIControlStateNormal];
-    if (filter.length == 0)
-        filter = @"Основное";
-
-    _selectedFilter = filter;
-    _filterValueLabel.text = filter;
-    TGPresentationPallete *pallete = TGPresentation.current.pallete;
-    for (TGModernButton *menuButton in _filterMenuButtons)
-        [menuButton setTitleColor:(menuButton == button ? pallete.accentColor : pallete.textColor) forState:UIControlStateNormal];
-    [self setFilterMenuVisible:false animated:true];
-    [self applyDisplayedText:[self filteredText:_rawText query:_selectedFilter]];
+    return _logFiles.count != 0 && (NSUInteger)indexPath.row < _logFiles.count;
 }
 
-- (void)clearPressed
+- (void)tableView:(UITableView *)__unused tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    TGLogClear();
-    _lastCurrentSize = (unsigned long long)-1;
-    _rawText = @"";
-    [self applyDisplayedText:@""];
-    [self refreshLogsForce:true];
+    if (editingStyle != UITableViewCellEditingStyleDelete || _logFiles.count == 0 || (NSUInteger)indexPath.row >= _logFiles.count)
+        return;
+
+    NSString *path = _logFiles[(NSUInteger)indexPath.row];
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    [self reloadLogFiles];
 }
 
-- (void)copyPressed
+- (void)saveLiveLogPressed
 {
-    [UIPasteboard generalPasteboard].string = _textView.text ?: @"";
-    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Логи" message:@"Скопировано" delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
-    [alert show];
-}
-
-- (void)sharePressed
-{
-    NSString *text = _textView.text ?: @"";
-    if (text.length == 0)
+    NSString *path = TGSaveCurrentLogLines(500);
+    if (path.length == 0)
     {
-        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Логи" message:@"Лог пуст" delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Логи" message:@"Live-лог пуст" delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
         [alert show];
         return;
     }
 
-    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"Onegram-logs.txt"];
-    NSError *error = nil;
-    if (![text writeToFile:path atomically:true encoding:NSUTF8StringEncoding error:&error])
-    {
-        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Логи" message:@"Не удалось подготовить файл" delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
-        [alert show];
-        return;
-    }
+    [self reloadLogFiles];
+    [self shareFileAtPath:path];
+}
 
-    NSArray *files = @[@{ @"url": [NSURL fileURLWithPath:path] }];
+- (void)shareFileAtPath:(NSString *)path
+{
+    if (path.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:path])
+        return;
+
+    NSArray *files = @[@{@"url": [NSURL fileURLWithPath:path]}];
     TGForwardTargetController *forwardController = [[TGForwardTargetController alloc] initWithDocumentFiles:files];
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[forwardController]];
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
@@ -888,6 +397,8 @@
     TGDocumentMediaAttachment *_profileMusicDocument;
     NSArray *_profileMusicDocuments;
     id<SDisposable> _profileMusicDisposable;
+    id<SDisposable> _profileAboutDisposable;
+    id<SDisposable> _profileAboutUpdateDisposable;
     TGDisclosureActionCollectionItem *_wallpapersItem;
     TGVariantCollectionItem *_languageItem;
     
@@ -917,6 +428,15 @@
 
 @implementation TGAccountSettingsController
 
+static const CGFloat TGAccountSettingsBrandedDetailsTextScale = 1.2f;
+
+- (UIColor *)collectionMenuBackgroundColor
+{
+    if ([TGPresentation brandedIOS6Style])
+        return UIColorRGB(0xdbe2ed);
+    return [super collectionMenuBackgroundColor];
+}
+
 static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 {
     int32_t userId = TGTelegraphInstance.clientUserId;
@@ -939,7 +459,8 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _uid = uid;
         
         _profileDataItem = [[TGAccountInfoCollectionItem alloc] init];
-        _profileDataItem.hasDisclosureIndicator = true;
+        _profileDataItem.brandedDetailsTextScale = TGAccountSettingsBrandedDetailsTextScale;
+        _profileDataItem.hasDisclosureIndicator = ![TGPresentation brandedIOS6Style];
         _profileDataItem.selectable = true;
         _profileDataItem.highlightable = true;
         _profileDataItem.action = @selector(editButtonPressed);
@@ -952,20 +473,31 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 
         _profileMusicItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"" action:@selector(profileMusicPressed)];
         _profileMusicItem.hideArrow = true;
+        _profileMusicItem.brandedProfileMusic = true;
         _profileMusicItem.deselectAutomatically = true;
         
         _logsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Логи" action:@selector(logsPressed)];
         _logsItem.deselectAutomatically = true;
-        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem]];
-        [self.menuSections addSection:_logsSection];
 
         _onegramProxyItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Title") action:@selector(onegramProxyPressed)];
         _onegramProxyItem.deselectAutomatically = true;
-        _onegramProxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_onegramProxyItem]];
-        [self.menuSections addSection:_onegramProxySection];
         
         _proxyItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Proxy") action:@selector(proxyPressed)];
         _proxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_proxyItem]];
+
+        if ([TGPresentation brandedIOS6Style])
+        {
+            _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem, _proxyItem, _onegramProxyItem]];
+            _logsSection.insets = UIEdgeInsetsMake(0.0f, 4.0f, 15.0f, 5.0f);
+            [self.menuSections addSection:_logsSection];
+        }
+        else
+        {
+            _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem]];
+            [self.menuSections addSection:_logsSection];
+            _onegramProxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_onegramProxyItem]];
+            [self.menuSections addSection:_onegramProxySection];
+        }
         
         _wallpapersItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Appearance") action:@selector(wallpapersPressed)];
         _languageItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.AppLanguage") variant:TGLocalized(@"Localization.LanguageName") action:@selector(languagePressed)];
@@ -983,9 +515,13 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         [shortcutItems addObject:(_clearChatListCacheItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Clear Chat Cache" action:@selector(clearChatListCachePressed)])];
         
         _shortcutSection = [[TGCollectionMenuSection alloc] initWithItems:shortcutItems];
+        if ([TGPresentation brandedIOS6Style])
+            _shortcutSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 15.0f, 6.0f);
         [self.menuSections addSection:_shortcutSection];
         
         _settingsSection = [[TGCollectionMenuSection alloc] initWithItems:settingsItems];
+        if ([TGPresentation brandedIOS6Style])
+            _settingsSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 16.0f, 6.0f);
         [self.menuSections addSection:_settingsSection];
         
         [TGDatabaseInstance() customProperty:@"phoneCallsEnabled" completion:^(NSData *value)
@@ -1004,6 +540,9 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _otherSection =  [[TGCollectionMenuSection alloc] initWithItems:@[]];
         _otherSection.insets = UIEdgeInsetsZero;
         [self.menuSections addSection:_otherSection];
+
+        if ([TGPresentation brandedIOS6Style])
+            _headerSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 15.0f, 0.0f);
         
         SSignal *blockedModeSignal = [[TGDatabaseInstance() customPropertySignal:@"blockedMode"] map:^NSNumber *(NSData *data)
         {
@@ -1024,6 +563,12 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
             
             NSArray *list = next.firstObject;
             bool alwaysShowProxy = [next.lastObject boolValue];
+
+            if ([TGPresentation brandedIOS6Style])
+            {
+                [strongSelf setupProxyStatus];
+                return;
+            }
             
             [strongSelf.menuSections beginRecordingChanges];
             if (list.count == 0 && !alwaysShowProxy)
@@ -1053,12 +598,15 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         NSDictionary *bundleInfo = [[NSBundle mainBundle] infoDictionary];
         NSString *version = [bundleInfo objectForKey:@"CFBundleShortVersionString"];
         NSString *build = [bundleInfo objectForKey:@"CFBundleVersion"];
-        _versionItem = [[TGVersionCollectionItem alloc] initWithVersion:[NSString stringWithFormat:@"Onegram %@v build %@", version ?: @"", build ?: @""]];
+        NSString *versionText = [TGPresentation brandedIOS6Style] ? [NSString stringWithFormat:@"Onegram %@v concept by FEKLA DAVICHI", version ?: @""] : [NSString stringWithFormat:@"Onegram %@v build %@", version ?: @"", build ?: @""];
+        _versionItem = [[TGVersionCollectionItem alloc] initWithVersion:versionText];
         
         TGCollectionMenuSection *infoSection = [[TGCollectionMenuSection alloc] initWithItems:@[
             _developerChannelItem,
             _versionItem
         ]];
+        if ([TGPresentation brandedIOS6Style])
+            infoSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 165.0f, 6.0f);
         [self.menuSections addSection:infoSection];
    
 #ifdef INTERNAL_RELEASE
@@ -1081,6 +629,8 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     [_proxyListDisposable dispose];
     [_proxyStatusDisposable dispose];
     [_profileMusicDisposable dispose];
+    [_profileAboutDisposable dispose];
+    [_profileAboutUpdateDisposable dispose];
     [_passportStatusDisposable dispose];
     [_stickerPacksDisposable dispose];
     [_updatedFeaturedStickerPacksDisposable dispose];
@@ -1091,6 +641,9 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 - (void)loadView
 {
     [super loadView];
+
+    if ([TGPresentation brandedIOS6Style])
+        self.collectionView.showsVerticalScrollIndicator = false;
    
     _logsItem.icon = TGImageNamed(@"SettingsDataIcon.png");
     _proxyItem.icon = TGImageNamed(@"SettingsProxyIcon.png");
@@ -1106,6 +659,34 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     _developerChannelItem.icon = TGImageNamed(@"SettingsSupportIcon.png");
     if (_callSettingsItem != nil)
         _callSettingsItem.icon = TGImageNamed(@"SettingsCallsIcon.png");
+
+    if ([TGPresentation brandedIOS6Style])
+    {
+        _logsItem.brandedSettingsStyle = true;
+        _logsItem.brandedSettingsIconName = @"SettingsFeklaLogs";
+        _proxyItem.brandedSettingsStyle = true;
+        _proxyItem.brandedSettingsIconName = @"SettingsFeklaProxy";
+        _onegramProxyItem.brandedSettingsStyle = true;
+        _onegramProxyItem.brandedSettingsIconName = @"SettingsFeklaOnegramProxy";
+        _savedMessagesItem.brandedSettingsStyle = true;
+        _savedMessagesItem.brandedSettingsIconName = @"SettingsFeklaFavourites";
+        _stickerSettingsItem.brandedSettingsStyle = true;
+        _stickerSettingsItem.brandedSettingsIconName = @"SettingsFeklaStickers";
+        _clearChatListCacheItem.brandedSettingsStyle = true;
+        _clearChatListCacheItem.brandedSettingsIconName = @"SettingsFeklaCache";
+        _notificationsItem.brandedSettingsStyle = true;
+        _notificationsItem.brandedSettingsIconName = @"SettingsFeklaNotifications";
+        _privacySettingsItem.brandedSettingsStyle = true;
+        _privacySettingsItem.brandedSettingsIconName = @"SettingsFeklaPrivacy";
+        _chatSettingsItem.brandedSettingsStyle = true;
+        _chatSettingsItem.brandedSettingsIconName = @"SettingsFeklaDataMemory";
+        _wallpapersItem.brandedSettingsStyle = true;
+        _wallpapersItem.brandedSettingsIconName = @"SettingsFeklaDecoration";
+        _languageItem.brandedSettingsStyle = true;
+        _languageItem.brandedSettingsIconName = @"SettingsFeklaLanguage";
+        _developerChannelItem.brandedSettingsStyle = true;
+        _developerChannelItem.brandedSettingsIconName = @"SettingsFeklaDeveloper";
+    }
     
     _editing = false;
     
@@ -1114,6 +695,18 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     [_profileDataItem setUser:user animated:false];
     [self updateSubtitleWithPhoneNumber:user.phoneNumber username:user.userName];
     [self updateSuggestedSetProfilePhoto:user.photoUrlSmall.length == 0 setUsername:user.userName.length == 0];
+
+    TGCachedUserData *cachedUserData = [TGDatabaseInstance() _userCachedDataSync:_uid];
+    _profileDataItem.about = cachedUserData.about;
+
+    ASHandle *profileHandle = _actionHandle;
+    _profileAboutDisposable = [[[TGDatabaseInstance() userCachedData:_uid] deliverOn:[SQueue mainQueue]] startWithNext:^(TGCachedUserData *data)
+    {
+        TGAccountSettingsController *strongSelf = (TGAccountSettingsController *)profileHandle.delegate;
+        if (strongSelf != nil)
+            strongSelf->_profileDataItem.about = data.about;
+    }];
+    _profileAboutUpdateDisposable = [[TGUserSignal updatedUserCachedDataWithUserId:_uid] startWithNext:nil];
     
     [self setTitleText:TGLocalized(@"Settings.Title")];
     
@@ -1621,14 +1214,34 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     bool changed = _profileMusicDocument.documentId != document.documentId;
     _profileMusicDocument = document;
 
-    if (hasMusic)
-        _profileMusicItem.title = TGIOS6SettingsProfileMusicTitle(document);
-
     NSUInteger sectionIndex = [self.menuSections.sections indexOfObject:_headerSection];
     if (sectionIndex == NSNotFound)
         return;
 
     NSUInteger itemIndex = [_headerSection.items indexOfObject:_profileMusicItem];
+
+    if ([TGPresentation brandedIOS6Style])
+    {
+        _profileDataItem.profileMusicDocument = document;
+        if (itemIndex != NSNotFound)
+        {
+            [self.menuSections beginRecordingChanges];
+            [self.menuSections deleteItemFromSection:sectionIndex atIndex:itemIndex];
+            [self.menuSections commitRecordedChanges:self.collectionView];
+        }
+        if (hadMusic != hasMusic || changed)
+        {
+            [self.collectionLayout invalidateLayout];
+            [self.collectionView layoutSubviews];
+        }
+        return;
+    }
+
+    _profileDataItem.profileMusicDocument = nil;
+
+    if (hasMusic)
+        _profileMusicItem.title = TGIOS6SettingsProfileMusicTitle(document);
+
     if (!hadMusic && hasMusic && itemIndex == NSNotFound)
     {
         [self.menuSections beginRecordingChanges];
@@ -1643,7 +1256,6 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     }
     else if (hasMusic && changed)
     {
-        // setTitle: updates the bound row in-place, no full settings reload.
         _profileMusicItem.title = TGIOS6SettingsProfileMusicTitle(document);
     }
 }
@@ -1666,9 +1278,8 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     }];
 }
 
-- (void)profileMusicPressed
+- (void)_playProfileMusicDocument:(TGDocumentMediaAttachment *)document
 {
-    TGDocumentMediaAttachment *document = _profileMusicDocument;
     if (document == nil)
         return;
 
@@ -1708,6 +1319,11 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     }];
 }
 
+- (void)profileMusicPressed
+{
+    [self _playProfileMusicDocument:_profileMusicDocument];
+}
+
 - (void)logsPressed
 {
     TGIOS6LogsController *controller = [[TGIOS6LogsController alloc] init];
@@ -1722,7 +1338,7 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
 
 - (void)developerChannelPressed
 {
-    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://t.me/herefansios"]];
+    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:@"https://t.me/Onegramdev"]];
 }
 
 #pragma mark -
@@ -1820,9 +1436,14 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     }
 }
 
-- (void)actionStageActionRequested:(NSString *)action options:(id)__unused options
+- (void)actionStageActionRequested:(NSString *)action options:(id)options
 {
-    if ([action isEqualToString:@"avatarTapped"])
+    if ([action isEqualToString:@"profileMusicTapped"])
+    {
+        TGDocumentMediaAttachment *document = [options isKindOfClass:[TGDocumentMediaAttachment class]] ? options : _profileMusicDocument;
+        [self _playProfileMusicDocument:document];
+    }
+    else if ([action isEqualToString:@"avatarTapped"])
     {
         TGUser *user = [TGDatabaseInstance() loadUser:_uid];
         

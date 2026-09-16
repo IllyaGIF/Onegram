@@ -1,4 +1,5 @@
 #import "TGShareSheetView.h"
+#import "TGCommon.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 

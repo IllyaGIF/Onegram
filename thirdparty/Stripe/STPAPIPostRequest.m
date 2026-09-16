@@ -17,7 +17,7 @@
 + (void)startWithAPIClient:(STPAPIClient *)apiClient
                   endpoint:(NSString *)endpoint
                   postData:(NSData *)postData
-                serializer:(id<STPAPIResponseDecodable>)serializer
+                serializer:(Class<STPAPIResponseDecodable>)serializer
                 completion:(STPAPIPostResponseBlock)completion {
 
     NSURL *url = [apiClient.apiURL URLByAppendingPathComponent:endpoint];
@@ -27,7 +27,7 @@
     
     [[apiClient.urlSession dataTaskWithRequest:request completionHandler:^(NSData * body, NSURLResponse * response, NSError * error) {
         NSDictionary *jsonDictionary = body ? [NSJSONSerialization JSONObjectWithData:body options:0 error:NULL] : nil;
-        id<STPAPIResponseDecodable> responseObject = [[serializer class] decodedObjectFromAPIResponse:jsonDictionary];
+        id<STPAPIResponseDecodable> responseObject = [serializer decodedObjectFromAPIResponse:jsonDictionary];
         NSError *returnedError = [NSError stp_errorFromStripeResponse:jsonDictionary] ?: error;
         if ((!responseObject || ![response isKindOfClass:[NSHTTPURLResponse class]]) && !returnedError) {
             returnedError = [NSError stp_genericFailedToParseResponseError];

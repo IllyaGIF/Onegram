@@ -123,7 +123,7 @@
         } else {
             TGWebPageMediaAttachment *updatedWebPage = [[TGWebPageMediaAttachment alloc] initWithTelegraphWebPageDesc:desc];
             if (updatedWebPage != nil) {
-                return [TGDatabaseInstance() modify:^id{
+                return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() updateWebpages:@[updatedWebPage]];
                     [ActionStageInstance() dispatchResource:@"/webpages" resource:@[updatedWebPage]];
                     return updatedWebPage;
@@ -136,7 +136,7 @@
 }
 
 + (SSignal *)cachedOrRemoteWebpage:(int64_t)webPageId url:(NSString *)url {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGWebPageMediaAttachment *webPage = [TGDatabaseInstance() _webpageWithId:webPageId];
         if (webPage != nil && webPage.url.length != 0) {
             return [SSignal single:webPage];
@@ -150,7 +150,7 @@
                 } else {
                     TGWebPageMediaAttachment *updatedWebPage = [[TGWebPageMediaAttachment alloc] initWithTelegraphWebPageDesc:desc];
                     if (updatedWebPage != nil) {
-                        return [TGDatabaseInstance() modify:^id{
+                        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                             [TGDatabaseInstance() updateWebpages:@[updatedWebPage]];
                             [ActionStageInstance() dispatchResource:@"/webpages" resource:@[updatedWebPage]];
                             return updatedWebPage;

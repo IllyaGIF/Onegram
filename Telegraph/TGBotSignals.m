@@ -391,7 +391,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
 }
 
 + (SSignal *)botContextResultForUserId:(int32_t)userId peerId:(int64_t)peerId accessHash:(int64_t)accessHash query:(NSString *)query geoPoint:(SSignal *)__unused geoPoint offset:(NSString *)offset forceAllowLocation:(bool)forceAllowLocation {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         return [TGDatabaseInstance() loadUser:userId];
     }] mapToSignal:^SSignal *(TGUser *user) {
         if (user != nil) {
@@ -420,7 +420,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                     getContextBotResults.geo_point = geoPoint;
                 }
                 
-                return [[TGDatabaseInstance() modify:^id {
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
                     NSMutableData *request = [[NSMutableData alloc] init];
                     int32_t magic = 0x751236f4;
                     [request appendBytes:&magic length:4];
@@ -599,7 +599,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
 }
 
 + (SSignal *)botCallback:(int64_t)conversationId accessHash:(int64_t)accessHash messageId:(int32_t)messageId data:(NSData *)data isGame:(bool)isGame {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         NSMutableData *request = [[NSMutableData alloc] init];
         int64_t peerId = conversationId;
         int64_t localAccessHash = accessHash;
@@ -676,7 +676,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
 }
 
 + (SSignal *)shareBotGame:(int64_t)fromPeerId messageId:(int32_t)messageId toPeerId:(int64_t)peerId withScore:(bool)withScore {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TLInputPeer *fromPeer = [self inputPeerWithPeerId:fromPeerId];
         TLInputPeer *toPeer = [self inputPeerWithPeerId:peerId];
         
@@ -714,7 +714,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
 }
 
 + (SSignal *)sendBotGame:(NSString *)shortName toPeerId:(int64_t)peerId botId:(int32_t)botId {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TLInputPeer *toPeer = [self inputPeerWithPeerId:peerId];
         TLInputUser *botUser = [TGTelegraphInstance createInputUserForUid:botId];
         if (toPeer == nil || botUser == nil) {

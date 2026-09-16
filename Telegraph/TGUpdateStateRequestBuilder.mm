@@ -96,18 +96,10 @@ static TLupdates_State *TGIOS6ValidDifferenceState(id state, NSString *source)
     if ([state isKindOfClass:[TLupdates_State class]])
         return (TLupdates_State *)state;
 
-    TGDatabaseState databaseState = [TGDatabaseInstance() databaseState];
-    TLupdates_State$updates_state *fallbackState = [[TLupdates_State$updates_state alloc] init];
-    fallbackState.pts = MAX(databaseState.pts, 1);
-    fallbackState.date = databaseState.date;
-    fallbackState.seq = databaseState.seq;
-    fallbackState.qts = databaseState.qts;
-    fallbackState.unread_count = databaseState.unreadCount;
-
     NSString *stateClass = state == nil ? @"nil" : NSStringFromClass([state class]);
-    TGLog(@"AUTH invalid difference state source=%@ class=%@ fallback pts=%d date=%d seq=%d qts=%d", source, stateClass, fallbackState.pts, fallbackState.date, fallbackState.seq, fallbackState.qts);
-    IOS6Trace(@"FULL difference.invalidState source=%@ class=%@ fallbackPts=%d seq=%d", source, stateClass, fallbackState.pts, fallbackState.seq);
-    return fallbackState;
+    TGLog(@"AUTH invalid difference state source=%@ class=%@", source, stateClass);
+    IOS6Trace(@"FULL difference.invalidState source=%@ class=%@", source, stateClass);
+    return nil;
 }
 #import "TGCallSession.h"
 #import "TGCallSignals.h"
@@ -210,6 +202,114 @@ static void notifyAwaitingWebPageListeners(TGWebPageMediaAttachment *webPage)
     {
         completion(webPage);
     }
+}
+
+static NSMutableSet *TGIOS6ChannelMetadataRefreshPeers()
+{
+    static NSMutableSet *set = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        set = [[NSMutableSet alloc] init];
+    });
+    return set;
+}
+
+static void TGIOS6RequestDialogReconciliation()
+{
+    [ActionStageInstance() requestActor:@"/tg/dialoglist/(realtimeSync)" options:@{@"inline": @true, @"limit": @100} watcher:TGTelegraphInstance];
+}
+
+static void TGIOS6RefreshChannelMetadata(int64_t peerId)
+{
+    NSNumber *key = @(peerId);
+    @synchronized(TGIOS6ChannelMetadataRefreshPeers())
+    {
+        if ([TGIOS6ChannelMetadataRefreshPeers() containsObject:key])
+            return;
+        [TGIOS6ChannelMetadataRefreshPeers() addObject:key];
+    }
+
+    TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
+    if (conversation == nil || conversation.accessHash == 0)
+    {
+        @synchronized(TGIOS6ChannelMetadataRefreshPeers())
+        {
+            [TGIOS6ChannelMetadataRefreshPeers() removeObject:key];
+        }
+        TGIOS6RequestDialogReconciliation();
+        return;
+    }
+
+    TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:conversation.accessHash];
+    if (inputPeer == nil)
+    {
+        @synchronized(TGIOS6ChannelMetadataRefreshPeers())
+        {
+            [TGIOS6ChannelMetadataRefreshPeers() removeObject:key];
+        }
+        TGIOS6RequestDialogReconciliation();
+        return;
+    }
+
+    TLRPCchannels_getChannels$channels_getChannels *request = [[TLRPCchannels_getChannels$channels_getChannels alloc] init];
+    request.n_id = @[inputPeer];
+
+    SDisposableSet *disposableSet = [[SDisposableSet alloc] init];
+    [TGTelegraphInstance.disposeOnLogout add:disposableSet];
+    id<SDisposable> disposable = [[[TGTelegramNetworking instance] requestSignal:request] startWithNext:^(id result)
+    {
+        NSMutableArray *channels = [[NSMutableArray alloc] init];
+        for (TLChat *chatDesc in [result valueForKey:@"chats"])
+        {
+            TGConversation *updatedConversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
+            if (updatedConversation == nil || updatedConversation.conversationId == 0)
+                continue;
+
+            int64_t apiChannelId = TGIOS6ApiChannelIdForConversation(updatedConversation);
+            if (apiChannelId > 0)
+                [TGDatabaseInstance() setConversationCustomProperty:updatedConversation.conversationId name:murMurHash32(@"ios6ApiChannelId") value:[NSData dataWithBytes:&apiChannelId length:sizeof(apiChannelId)]];
+
+            [channels addObject:updatedConversation];
+        }
+
+        if (channels.count != 0)
+            [TGDatabaseInstance() updateChannels:channels updateFeeds:true];
+        else
+            TGIOS6RequestDialogReconciliation();
+    } error:^(id error)
+    {
+        NSString *description = [[error description] uppercaseString];
+        if ([description rangeOfString:@"CHANNEL_PRIVATE"].location != NSNotFound ||
+            [description rangeOfString:@"CHANNEL_INVALID"].location != NSNotFound ||
+            [description rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound)
+        {
+            TGConversation *removedConversation = [conversation copy];
+            removedConversation.leftChat = true;
+            removedConversation.kind = TGConversationKindTemporaryChannel;
+            [TGDatabaseInstance() updateChannels:@[removedConversation] updateFeeds:true];
+        }
+        else
+        {
+            TGIOS6RequestDialogReconciliation();
+        }
+
+        @synchronized(TGIOS6ChannelMetadataRefreshPeers())
+        {
+            [TGIOS6ChannelMetadataRefreshPeers() removeObject:key];
+        }
+        [TGTelegraphInstance.disposeOnLogout remove:disposableSet];
+        [disposableSet dispose];
+    } completed:^
+    {
+        @synchronized(TGIOS6ChannelMetadataRefreshPeers())
+        {
+            [TGIOS6ChannelMetadataRefreshPeers() removeObject:key];
+        }
+        [TGTelegraphInstance.disposeOnLogout remove:disposableSet];
+        [disposableSet dispose];
+    }];
+    [disposableSet add:disposable];
 }
 
 static bool _initialUpdatesScheduled = false;
@@ -724,12 +824,15 @@ static bool _initialUpdatesScheduled = false;
     [TGUserDataRequestBuilder executeUserDataUpdate:usersDesc];
 
     NSMutableDictionary *chatItems = [[NSMutableDictionary alloc] init];
+    NSMutableSet *removedBasicGroupPeerIds = [[NSMutableSet alloc] init];
     for (TLChat *chatDesc in chatsDesc)
     {
         TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
         if (conversation.conversationId != 0)
         {
             [chatItems setObject:conversation forKey:[NSNumber numberWithLongLong:conversation.conversationId]];
+            if (!conversation.isChannel && (conversation.leftChat || conversation.kickedFromChat))
+                [removedBasicGroupPeerIds addObject:@(conversation.conversationId)];
         }
     }
 
@@ -779,6 +882,7 @@ static bool _initialUpdatesScheduled = false;
     NSMutableSet *peerIdsForUpdateChannels = [[NSMutableSet alloc] init];
 
     NSMutableArray *updatedWebpages = [[NSMutableArray alloc] init];
+    NSMutableSet *pinnedMessagesChangedPeerIds = [[NSMutableSet alloc] init];
 
     __block bool requestPinnedDialogs = false;
     NSMutableDictionary *updatedPinnedDialogs = [[NSMutableDictionary alloc] init];
@@ -826,6 +930,19 @@ static bool _initialUpdatesScheduled = false;
                 maxOutboxReadMessageIdByPeerId[peerId] = concreteUpdate.max_id;
             else
                 maxOutboxReadMessageIdByPeerId[peerId] = MAX(it->second, concreteUpdate.max_id);
+        }
+        else if ([update isKindOfClass:[TLUpdate$updatePinnedMessagesCodex class]])
+        {
+            TLUpdate$updatePinnedMessagesCodex *concreteUpdate = (TLUpdate$updatePinnedMessagesCodex *)update;
+            int64_t peerId = 0;
+            if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerUser class]])
+                peerId = ((TLPeer$peerUser *)concreteUpdate.peer).user_id;
+            else if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerChat class]])
+                peerId = TGPeerIdFromGroupId(((TLPeer$peerChat *)concreteUpdate.peer).chat_id);
+            else if ([concreteUpdate.peer isKindOfClass:[TLPeer$peerChannel class]])
+                peerId = TGPeerIdFromChannelId(((TLPeer$peerChannel *)concreteUpdate.peer).channel_id);
+            if (peerId != 0)
+                [pinnedMessagesChangedPeerIds addObject:@(peerId)];
         }
         else if ([update isKindOfClass:updateEncryptedMessagesReadClass])
         {
@@ -982,6 +1099,16 @@ static bool _initialUpdatesScheduled = false;
 
             [updatedWebpages addObject:webPage];
         }
+        else if ([update isKindOfClass:[TLUpdate$updatePinnedChannelMessagesCodex class]]) {
+            TLUpdate$updatePinnedChannelMessagesCodex *pinnedMessages = (TLUpdate$updatePinnedChannelMessagesCodex *)update;
+            int64_t peerId = TGPeerIdFromChannelId((int32_t)pinnedMessages.channel_id);
+            NSMutableArray *channelUpdates = channelUpdatesByPeerId[@(peerId)];
+            if (channelUpdates == nil) {
+                channelUpdates = [[NSMutableArray alloc] init];
+                channelUpdatesByPeerId[@(peerId)] = channelUpdates;
+            }
+            [channelUpdates addObject:update];
+        }
         else if ([update isKindOfClass:[TLUpdate$updateChannelPinnedMessage class]]) {
             TLUpdate$updateChannelPinnedMessage *pinnedMessage = (TLUpdate$updateChannelPinnedMessage *)update;
             int64_t peerId = TGPeerIdFromChannelId(pinnedMessage.channel_id);
@@ -1014,6 +1141,8 @@ static bool _initialUpdatesScheduled = false;
             [channelUpdates addObject:update];
 
             [peerIdsForUpdateChannels addObject:@(peerId)];
+            if (chatItems[@(peerId)] == nil)
+                TGIOS6RefreshChannelMetadata(peerId);
         }
         else if ([update isKindOfClass:[TLUpdate$updateChannelMessageViews class]]) {
             TLUpdate$updateChannelMessageViews *updateViews = (TLUpdate$updateChannelMessageViews *)update;
@@ -1042,6 +1171,8 @@ static bool _initialUpdatesScheduled = false;
         {
             TLUpdate$updateChatParticipantDelete *updateChatParticipantDelete = (TLUpdate$updateChatParticipantDelete *)update;
             chatParticipantUpdateArrays[updateChatParticipantDelete.chat_id].push_back(update);
+            if (updateChatParticipantDelete.user_id == TGTelegraphInstance.clientUserId)
+                [removedBasicGroupPeerIds addObject:@(TGPeerIdFromGroupId(updateChatParticipantDelete.chat_id))];
         }
         else if ([update isKindOfClass:[TLUpdate$updateChatParticipantAdmin class]]) {
             TLUpdate$updateChatParticipantAdmin *concreteUpdate = (TLUpdate$updateChatParticipantAdmin *)update;
@@ -1274,11 +1405,11 @@ static bool _initialUpdatesScheduled = false;
                         conversation.encryptedData.handshakeState = 3;
                     }
                     else
-                        TGLog(@"***** ignoring discarded encryption in chat %lld", updateEncryption.chat.n_id);
+                        TGLog(@"***** ignoring discarded encryption in chat %d", updateEncryption.chat.n_id);
                 }
                 else if ([updateEncryption.chat isKindOfClass:[TLEncryptedChat$encryptedChatEmpty class]])
                 {
-                    TGLog(@"***** empty chat %lld in updateEncryption", updateEncryption.chat.n_id);
+                    TGLog(@"***** empty chat %d in updateEncryption", updateEncryption.chat.n_id);
                 }
             }
         }
@@ -2165,7 +2296,10 @@ static bool _initialUpdatesScheduled = false;
             [TGDatabaseInstance() updateWebpages:updatedWebpages];
             [ActionStageInstance() dispatchResource:@"/webpages" resource:updatedWebpages];
         }
-        [TGDatabaseInstance() transactionAddMessages:addedMessages notifyAddedMessages:true removeMessages:removeMessageIdsByPeerId updateMessages:messageUpdates updatePeerDrafts:updatePeerDrafts removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:chatItems applyMaxIncomingReadIds:maxIncomingReadIds applyMaxOutgoingReadIds:maxOutgoingReadIds applyMaxOutgoingReadDates:maxOutgoingReadDates applyUnreadMarks:updatePeerReadMarks readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
+        [TGDatabaseInstance() transactionAddMessages:addedMessages notifyAddedMessages:true removeMessages:removeMessageIdsByPeerId updateMessages:messageUpdates updatePeerDrafts:updatePeerDrafts removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:chatItems applyMaxIncomingReadIds:maxIncomingReadIds applyMaxOutgoingReadIds:maxOutgoingReadIds applyMaxOutgoingReadDates:maxOutgoingReadDates applyUnreadMarks:updatePeerReadMarks readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:nil clearConversationsInteractive:false removeConversationsWithPeerIds:removedBasicGroupPeerIds.count == 0 ? nil : removedBasicGroupPeerIds.allObjects updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:nil updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
+
+        for (NSNumber *nPeerId in pinnedMessagesChangedPeerIds)
+            [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", [nPeerId longLongValue]] resource:@true];
 
         NSMutableArray *chatParticipantsArray = [[NSMutableArray alloc] init];
 
@@ -2557,6 +2691,11 @@ static bool _initialUpdatesScheduled = false;
         {
             TLupdates_Difference$updates_differenceSlice *concreteDifference = (TLupdates_Difference$updates_differenceSlice *)difference;
             TLupdates_State *safeState = TGIOS6ValidDifferenceState(concreteDifference.intermediate_state, @"slice");
+            if (safeState == nil)
+            {
+                self.cancelToken = [TGTelegraphInstance doRequestState:self];
+                return;
+            }
             TGDatabaseState localState = [[TGDatabase instance] databaseState];
             bool stateAdvanced = safeState.pts > localState.pts || safeState.date > localState.date || safeState.qts > localState.qts || safeState.seq > localState.seq;
 
@@ -2585,7 +2724,14 @@ static bool _initialUpdatesScheduled = false;
         {
             TLupdates_State *safeState = nil;
             if ([difference isKindOfClass:[TLupdates_Difference$updates_difference class]])
+            {
                 safeState = TGIOS6ValidDifferenceState(((TLupdates_Difference$updates_difference *)difference).state, @"final");
+                if (safeState == nil)
+                {
+                    self.cancelToken = [TGTelegraphInstance doRequestState:self];
+                    return;
+                }
+            }
 
             int differencePts = 0;
             if ([difference isKindOfClass:[TLupdates_Difference$updates_difference class]])
@@ -2790,10 +2936,8 @@ static bool _initialUpdatesScheduled = false;
          });
          #endif*/
 
-        [TGUpdateStateRequestBuilder applyUpdates:newMessages otherUpdates:otherUpdates usersDesc:usersDesc chatsDesc:chatsDesc chatParticipantsDesc:nil updatesWithDates:nil addedEncryptedActionsByPeerId:encryptedActionsByPeerId addedEncryptedUnparsedActionsByPeerId:encryptedUnparsedActionsByPeerId completion:^(bool success)
+        [TGUpdateStateRequestBuilder applyUpdates:newMessages otherUpdates:otherUpdates usersDesc:usersDesc chatsDesc:chatsDesc chatParticipantsDesc:nil updatesWithDates:nil addedEncryptedActionsByPeerId:encryptedActionsByPeerId addedEncryptedUnparsedActionsByPeerId:encryptedUnparsedActionsByPeerId completion:^(__unused bool success)
          {
-             if (success)
-                 [TGApplyUpdatesActor presentLocalNotificationsForMessageDescriptions:newMessages];
              continueBlock();
          }];
     }
@@ -2872,7 +3016,7 @@ static bool _initialUpdatesScheduled = false;
 
     if (encryptedMessage.bytes.length < 8 + 16 + 16)
     {
-        TGLog(@"***** Ignoring message from conversation %lld (too short)", encryptedMessage.chat_id);
+        TGLog(@"***** Ignoring message from conversation %d (too short)", encryptedMessage.chat_id);
     }
     else if (conversationId != 0)
     {
@@ -2958,12 +3102,12 @@ static bool _initialUpdatesScheduled = false;
                         {
                             if ((seqIn & 1) == 0)
                             {
-                                TGLog(@"***** Ignoring message from conversation %lld with seq_in %d", encryptedMessage.chat_id, seqIn);
+                                TGLog(@"***** Ignoring message from conversation %d with seq_in %d", encryptedMessage.chat_id, seqIn);
                                 return nil;
                             }
                             if (seqOut & 1)
                             {
-                                TGLog(@"***** Ignoring message from conversation %lld with seq_out %d", encryptedMessage.chat_id, seqOut);
+                                TGLog(@"***** Ignoring message from conversation %d with seq_out %d", encryptedMessage.chat_id, seqOut);
                                 return nil;
                             }
                         }
@@ -2971,12 +3115,12 @@ static bool _initialUpdatesScheduled = false;
                         {
                             if (seqIn & 1)
                             {
-                                TGLog(@"***** Ignoring message from conversation %lld with seq_in %d", encryptedMessage.chat_id, seqIn);
+                                TGLog(@"***** Ignoring message from conversation %d with seq_in %d", encryptedMessage.chat_id, seqIn);
                                 return nil;
                             }
                             if ((seqOut & 1) == 0)
                             {
-                                TGLog(@"***** Ignoring message from conversation %lld with seq_out %d", encryptedMessage.chat_id, seqOut);
+                                TGLog(@"***** Ignoring message from conversation %d with seq_out %d", encryptedMessage.chat_id, seqOut);
                                 return nil;
                             }
                         }
@@ -3015,19 +3159,19 @@ static bool _initialUpdatesScheduled = false;
                     return messageContentData;
                 }
                 else
-                    TGLog(@"***** Couldn't find participant uid for conversation %lld", encryptedMessage.chat_id);
+                    TGLog(@"***** Couldn't find participant uid for conversation %d", encryptedMessage.chat_id);
             } else {
                 TGLog(@"***** Couldn't decrypt message from conversation %" PRId64 "", keyId);
             }
         }
         else if (key != nil && keyId != localKeyId)
-            TGLog(@"***** Ignoring message from conversation with key fingerprint mismatch %lld", encryptedMessage.chat_id);
+            TGLog(@"***** Ignoring message from conversation with key fingerprint mismatch %d", encryptedMessage.chat_id);
         else
             TGLog(@"***** Not decrypting message from conversation with missing key %" PRId64 "", keyId);
     }
     else
     {
-        TGLog(@"***** Ignoring message from unknown encrypted conversation %lld", encryptedMessage.chat_id);
+        TGLog(@"***** Ignoring message from unknown encrypted conversation %d", encryptedMessage.chat_id);
 
         [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/encrypted/discardEncryptedChat/(%lld)", (int64_t)encryptedMessage.chat_id] options:@{@"encryptedConversationId": @((int64_t)encryptedMessage.chat_id)} flags:0 watcher:TGTelegraphInstance];
     }
@@ -3068,7 +3212,7 @@ static bool _initialUpdatesScheduled = false;
             }
         }
     } else if ((v2 && paddingLength < 12) || paddingLength > 1024) {
-        TGLog(@"***** Ignoring message from conversation %lld with invalid message padding %d", encryptedMessage.chat_id, paddingLength);
+        TGLog(@"***** Ignoring message from conversation %d with invalid message padding %d", encryptedMessage.chat_id, paddingLength);
 
         if (v2) {
             int xValue = currentClientIsCreator ? 8 : 0;
@@ -3100,7 +3244,7 @@ static bool _initialUpdatesScheduled = false;
             NSData *localMessageKey = [msgKeyLarge subdataWithRange:NSMakeRange(8, 16)];
 
             if (![localMessageKey isEqualToData:messageKey]) {
-                TGLog(@"***** Ignoring message from conversation with message key mismatch %lld", encryptedMessage.chat_id);
+                TGLog(@"***** Ignoring message from conversation with message key mismatch %d", encryptedMessage.chat_id);
             } else {
                 return messageData;
             }
@@ -3108,7 +3252,7 @@ static bool _initialUpdatesScheduled = false;
             NSData *localMessageKeyFull = MTSubdataSha1(messageData, 0, messageLength + 4);
             NSData *localMessageKey = [[NSData alloc] initWithBytes:(((int8_t *)localMessageKeyFull.bytes) + localMessageKeyFull.length - 16) length:16];
             if (![localMessageKey isEqualToData:messageKey]) {
-                TGLog(@"***** Ignoring message from conversation with message key mismatch %lld", encryptedMessage.chat_id);
+                TGLog(@"***** Ignoring message from conversation with message key mismatch %d", encryptedMessage.chat_id);
             } else {
                 return messageData;
             }

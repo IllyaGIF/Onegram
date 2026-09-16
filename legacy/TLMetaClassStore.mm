@@ -1265,23 +1265,35 @@ static void CodexSkipBytesVector(NSInputStream *is)
             int32_t flags = [is readInt32];
             if (flags & (1 << 0))
                 [is readInt32];
-            CodexReadObject(is, environment, error);
+            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
             if (flags & (1 << 1))
                 [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadHistoryInbox flags=0x%08x", flags);
-            break;
+            int32_t maxId = [is readInt32];
+            int32_t stillUnreadCount = [is readInt32];
+            int32_t pts = [is readInt32];
+            int32_t ptsCount = [is readInt32];
+            TLUpdate$updateReadHistoryInbox *result = [[TLUpdate$updateReadHistoryInbox alloc] init];
+            result.peer = peer;
+            result.max_id = maxId;
+            result.pts = pts;
+            result.pts_count = ptsCount;
+            IOS6_NOOP_LOG(@"MODERN updateReadHistoryInbox flags=0x%08x maxId=%d stillUnread=%d pts=%d ptsCount=%d", flags, maxId, stillUnreadCount, pts, ptsCount);
+            return result;
         }
         case (int32_t)0x2f2f21bf:
-            CodexReadObject(is, environment, error);
-            [is readInt32];
-            [is readInt32];
-            [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadHistoryOutbox");
-            break;
+        {
+            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
+            int32_t maxId = [is readInt32];
+            int32_t pts = [is readInt32];
+            int32_t ptsCount = [is readInt32];
+            TLUpdate$updateReadHistoryOutbox *result = [[TLUpdate$updateReadHistoryOutbox alloc] init];
+            result.peer = peer;
+            result.max_id = maxId;
+            result.pts = pts;
+            result.pts_count = ptsCount;
+            IOS6_NOOP_LOG(@"MODERN updateReadHistoryOutbox maxId=%d pts=%d ptsCount=%d", maxId, pts, ptsCount);
+            return result;
+        }
         case (int32_t)0x0bb2d201:
             [is readInt32];
             CodexReadInt64Vector(is);
@@ -1292,10 +1304,15 @@ static void CodexSkipBytesVector(NSInputStream *is)
             IOS6_NOOP_LOG(@"SKIP updateStickerSets");
             break;
         case (int32_t)0xb23fc698:
-            [is readInt64];
-            [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateChannelAvailableMessages");
-            break;
+        {
+            int64_t channelId = [is readInt64];
+            int32_t availableMinId = [is readInt32];
+            TLUpdate$updateChannelAvailableMessages *result = [[TLUpdate$updateChannelAvailableMessages alloc] init];
+            result.channel_id = (int32_t)channelId;
+            result.available_min_id = availableMinId;
+            IOS6_NOOP_LOG(@"MODERN updateChannelAvailableMessages channelId=%lld availableMinId=%d", channelId, availableMinId);
+            return result;
+        }
         case (int32_t)0x9d2216e0:
         {
             int32_t flags = [is readInt32];
@@ -3748,22 +3765,29 @@ static void CodexSkipBytesVector(NSInputStream *is)
         {
             int32_t flags = [is readInt32];
             int64_t channelId = [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP updateChannelReadMessagesContents flags=0x%08x channelId=%lld", flags, channelId);
             if (flags & (1 << 0))
                 [is readInt32];
-            CodexReadInt32Vector(is);
-            break;
+            NSArray *messages = CodexReadInt32Vector(is);
+            TLUpdate$updateChannelReadMessagesContents *result = [[TLUpdate$updateChannelReadMessagesContents alloc] init];
+            result.channel_id = (int32_t)channelId;
+            result.messages = messages;
+            IOS6_NOOP_LOG(@"MODERN updateChannelReadMessagesContents flags=0x%08x channelId=%lld messages=%d", flags, channelId, (int)messages.count);
+            return result;
         }
         case (int32_t)0xf8227181:
         {
             int32_t flags = [is readInt32];
-            CodexReadInt32Vector(is);
+            NSArray *messages = CodexReadInt32Vector(is);
             int32_t pts = [is readInt32];
             int32_t ptsCount = [is readInt32];
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadMessagesContents flags=0x%08x pts=%d ptsCount=%d", flags, pts, ptsCount);
-            break;
+            TLUpdate$updateReadMessagesContents *result = [[TLUpdate$updateReadMessagesContents alloc] init];
+            result.messages = messages;
+            result.pts = pts;
+            result.pts_count = ptsCount;
+            IOS6_NOOP_LOG(@"MODERN updateReadMessagesContents flags=0x%08x messages=%d pts=%d ptsCount=%d", flags, (int)messages.count, pts, ptsCount);
+            return result;
         }
         case (int32_t)0xebe07752:
         {
@@ -3794,8 +3818,10 @@ static void CodexSkipBytesVector(NSInputStream *is)
         case (int32_t)0x635b4c09:
         {
             int64_t channelId = [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP updateChannel channelId=%lld", channelId);
-            break;
+            TLUpdate$updateChannel *result = [[TLUpdate$updateChannel alloc] init];
+            result.channel_id = (int32_t)channelId;
+            IOS6_NOOP_LOG(@"MODERN updateChannel channelId=%lld", channelId);
+            return result;
         }
         case (int32_t)0x922e6e10:
         {
@@ -3806,8 +3832,11 @@ static void CodexSkipBytesVector(NSInputStream *is)
             int32_t maxId = [is readInt32];
             int32_t stillUnreadCount = [is readInt32];
             int32_t pts = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadChannelInbox flags=0x%08x channelId=%lld maxId=%d stillUnread=%d pts=%d", flags, channelId, maxId, stillUnreadCount, pts);
-            break;
+            TLUpdate$updateReadChannelInbox *result = [[TLUpdate$updateReadChannelInbox alloc] init];
+            result.channel_id = (int32_t)channelId;
+            result.max_id = maxId;
+            IOS6_NOOP_LOG(@"MODERN updateReadChannelInbox flags=0x%08x channelId=%lld maxId=%d stillUnread=%d pts=%d", flags, channelId, maxId, stillUnreadCount, pts);
+            return result;
         }
         case (int32_t)0xf74e932b:
         {
@@ -3821,28 +3850,40 @@ static void CodexSkipBytesVector(NSInputStream *is)
             int32_t flags = [is readInt32];
             if (flags & (1 << 0))
                 [is readInt32];
-            CodexReadObject(is, environment, error);
+            TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
             int32_t maxId = [is readInt32];
             int32_t stillUnreadCount = [is readInt32];
             int32_t pts = [is readInt32];
             int32_t ptsCount = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadHistoryInbox flags=0x%08x maxId=%d stillUnread=%d pts=%d ptsCount=%d", flags, maxId, stillUnreadCount, pts, ptsCount);
-            break;
+            TLUpdate$updateReadHistoryInbox *result = [[TLUpdate$updateReadHistoryInbox alloc] init];
+            result.peer = peer;
+            result.max_id = maxId;
+            result.pts = pts;
+            result.pts_count = ptsCount;
+            IOS6_NOOP_LOG(@"MODERN updateReadHistoryInbox flags=0x%08x maxId=%d stillUnread=%d pts=%d ptsCount=%d", flags, maxId, stillUnreadCount, pts, ptsCount);
+            return result;
         }
         case (int32_t)0xb75f99a9:
         {
             int64_t channelId = [is readInt64];
             int32_t maxId = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadChannelOutbox channelId=%lld maxId=%d", channelId, maxId);
-            break;
+            TLUpdate$updateReadChannelOutbox *result = [[TLUpdate$updateReadChannelOutbox alloc] init];
+            result.channel_id = (int32_t)channelId;
+            result.max_id = maxId;
+            IOS6_NOOP_LOG(@"MODERN updateReadChannelOutbox channelId=%lld maxId=%d", channelId, maxId);
+            return result;
         }
         case (int32_t)0xf226ac08:
         {
             int64_t channelId = [is readInt64];
             int32_t messageId = [is readInt32];
             int32_t views = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateChannelMessageViews channelId=%lld id=%d views=%d", channelId, messageId, views);
-            break;
+            TLUpdate$updateChannelMessageViews *result = [[TLUpdate$updateChannelMessageViews alloc] init];
+            result.channel_id = (int32_t)channelId;
+            result.n_id = messageId;
+            result.views = views;
+            IOS6_NOOP_LOG(@"MODERN updateChannelMessageViews channelId=%lld id=%d views=%d", channelId, messageId, views);
+            return result;
         }
         case (int32_t)0x6f7863f4:
             IOS6_NOOP_LOG(@"SKIP updateRecentReactions");
@@ -7427,7 +7468,7 @@ static void CodexSkipNotificationSound(NSInputStream *is)
     if (result.flags & (1 << 11))
         result.via_bot_id = TGModernLegacyIdForModernId([is readInt64]);
     if (result.flags & (1 << 3))
-        CodexReadReplyHeaderCompat(is, environment, error);
+        result.reply_to_msg_id = CodexReadReplyHeaderCompat(is, environment, error);
     if (result.flags & (1 << 7))
         result.entities = CodexReadObjectVector(is, environment, error);
     if (result.flags & (1 << 25))

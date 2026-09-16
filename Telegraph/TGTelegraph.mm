@@ -370,7 +370,7 @@ static void TGIOS6StoreArchivePeerIds(TLmessages_Dialogs *dialogs, NSString *rea
     [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:peerIds]];
     uint8_t complete = 1;
     [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:[NSData dataWithBytes:&complete length:1]];
-    TGLog(@"ARCHIVE peerIds.saved reason=%@ count=%d ids=%@", reason ?: @"archive", (int)peerIds.count, peerIds);
+    TGLog(@"ARCHIVE peerIds.saved reason=%@ count=%d", reason ?: @"archive", (int)peerIds.count);
     [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
 }
 
@@ -428,6 +428,7 @@ extern "C" NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageId
 }
 
 NSString *const TGLoginTokenUpdatedNotification = @"TGLoginTokenUpdatedNotification";
+NSString *const TGAuthorizationReadyNotification = @"TGAuthorizationReadyNotification";
 
 @interface TGIOS6AuthLoginToken : NSObject <TLObject>
 @property (nonatomic) int32_t expires;
@@ -1609,6 +1610,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     [ActionStageInstance() dispatchOnStageQueue:^
     {
         [self updateUserTypingStatuses];
+        [self stateUpdateRequired];
+        [TGChannelStateSignals resumeChannelStates];
         
         [TGApplyUpdatesActor clearDelayedNotifications];
         
@@ -2329,7 +2332,13 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             
             __unused id disposable2 = [TGICloudEmergencyDataSignals updateSubscription];
 
-
+            if (_clientIsActivated)
+            {
+                TGDispatchOnMainThread(^
+                {
+                    [[NSNotificationCenter defaultCenter] postNotificationName:TGAuthorizationReadyNotification object:nil];
+                });
+            }
         }
     }];
 }
@@ -3153,7 +3162,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         registerDevice.flags = 0;
         registerDevice.token_type = 1;
         registerDevice.token = deviceToken;
-#if defined(DEBUG) || defined(TWELVIUM_APNS_SANDBOX)
+#if defined(DEBUG) || defined(ONEGRAMIUM_APNS_SANDBOX)
         registerDevice.app_sandbox = true;
 #else
         registerDevice.app_sandbox = false;
@@ -3402,8 +3411,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     getDialogs.offset_id = offset.messageId;
     getDialogs.offset_peer = offset.peerId == 0 ? [[TLInputPeer$inputPeerEmpty alloc] init] : [self createInputPeerForConversation:offset.peerId accessHash:offset.accessHash];
     getDialogs.limit = limit;
-    getDialogs.hash = 0;
-    IOS6Trace(@"FULL RPC dialogs.hash folder=%d hash=%lld", folderId, getDialogs.hash);
+    getDialogs.n_hash = 0;
+    IOS6Trace(@"FULL RPC dialogs.hash folder=%d hash=%lld", folderId, getDialogs.n_hash);
     if (folderId != 0)
         TGLog(@"ARCHIVE request archiveRpc=1 flags=0x%08x folder_id=%d limit=%d offsetDate=%d offsetPeer=%lld offsetMid=%d", getDialogs.flags, getDialogs.folder_id, getDialogs.limit, getDialogs.offset_date, offset.peerId, getDialogs.offset_id);
     
@@ -3411,7 +3420,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     {
         if (error == nil)
         {
-            if (getDialogs.hash != 0 && dialogs.dialogs.count == 0 && dialogs.messages.count == 0 && dialogs.chats.count == 0 && dialogs.users.count == 0 && requestBuilder != nil)
+            if (getDialogs.n_hash != 0 && dialogs.dialogs.count == 0 && dialogs.messages.count == 0 && dialogs.chats.count == 0 && dialogs.users.count == 0 && requestBuilder != nil)
             {
                 [requestBuilder dialogListRequestNotModified:((TLmessages_Dialogs$messages_dialogsSlice *)dialogs).count];
                 return;
@@ -3490,7 +3499,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     getDialogs.offset_id = offset.messageId;
     getDialogs.offset_peer = offset.peerId == 0 ? [[TLInputPeer$inputPeerEmpty alloc] init] : [self createInputPeerForConversation:offset.peerId accessHash:offset.accessHash];
     getDialogs.limit = limit;
-    getDialogs.hash = 0;
+    getDialogs.n_hash = 0;
     if (folderId != 0)
         TGLog(@"ARCHIVE request archiveRpc=1 flags=0x%08x folder_id=%d limit=%d offsetDate=%d offsetPeer=%lld offsetMid=%d", getDialogs.flags, getDialogs.folder_id, getDialogs.limit, getDialogs.offset_date, offset.peerId, getDialogs.offset_id);
 
@@ -3549,8 +3558,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doExportContacts:(NSArray *)contacts requestBuilder:(TGSynchronizeContactsActor *)requestActor
 {
-    NSMutableString *debugContactsString = [[NSMutableString alloc] init];
-    
     NSMutableArray *contactsArray = [[NSMutableArray alloc] initWithCapacity:contacts.count];
     
     int index = -1;
@@ -3564,10 +3571,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         inputContact.first_name = binding.firstName;
         inputContact.last_name = binding.lastName;
         [contactsArray addObject:inputContact];
-        
-        [debugContactsString appendFormat:@"%@\t%@\t%@\n", binding.phoneNumber, binding.firstName, binding.lastName];
     }
-    TGLog(@"Exporting %d contacts: %@", contacts.count, debugContactsString);
+    TGLog(@"Exporting %lu contacts", (unsigned long)contacts.count);
     
     TLRPCcontacts_importContacts$contacts_importContacts *importContacts = [[TLRPCcontacts_importContacts$contacts_importContacts alloc] init];
     
@@ -3577,8 +3582,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     {
         if (error == nil)
         {
-            NSMutableString *debugImportedString = [[NSMutableString alloc] init];
-            
             NSMutableArray *importedArray = [[NSMutableArray alloc] initWithCapacity:importedContacts.imported.count];
             for (TLImportedContact *importedContact in importedContacts.imported)
             {
@@ -3590,13 +3593,11 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
                     importedPhone.phone = clientPhone;
                     importedPhone.user_id = importedContact.user_id;
                     
-                    [debugImportedString appendFormat:@"%@ -> %d\n", clientPhone, importedContact.user_id];
-                    
                     [importedArray addObject:importedPhone];
                 }
             }
             
-            TGLog(@"Server imported: %@", debugImportedString);
+            TGLog(@"Server imported %lu contacts", (unsigned long)importedArray.count);
             
             NSMutableArray *popularArray = [[NSMutableArray alloc] initWithCapacity:importedContacts.popular_invites.count];
             for (TLPopularContact *popularContact in importedContacts.popular_invites)
@@ -3826,22 +3827,24 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     }
     else
     {
-        if (accessHash != 0) {
+        TGUser *user = [TGDatabaseInstance() loadUser:(int)conversationId];
+        int64_t userId = TGModernUserIdForLegacyId((int32_t)conversationId);
+        int64_t userAccessHash = accessHash;
+
+        if (user != nil)
+        {
+            userId = TGIOS6ModernUserIdFromStoredUser(user, (int32_t)conversationId);
+            if (user.phoneNumberHash != 0)
+                userAccessHash = user.phoneNumberHash;
+        }
+
+        if (userAccessHash != 0)
+        {
             TLInputPeer$inputPeerUser *foreignPeer = [[TLInputPeer$inputPeerUser alloc] init];
-            foreignPeer.user_id = TGModernUserIdForLegacyId((int32_t)conversationId);
-            foreignPeer.access_hash = accessHash;
-            IOS6Trace(@"TRACE inputPeer peer=%lld type=user modern=%lld hash=%lld source=argument", conversationId, foreignPeer.user_id, accessHash);
+            foreignPeer.user_id = userId;
+            foreignPeer.access_hash = userAccessHash;
+            IOS6Trace(@"TRACE inputPeer peer=%lld type=user modern=%lld hash=%lld", conversationId, foreignPeer.user_id, userAccessHash);
             return foreignPeer;
-        } else {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int)conversationId];
-            if (user != nil)
-            {
-                TLInputPeer$inputPeerUser *foreignPeer = [[TLInputPeer$inputPeerUser alloc] init];
-                foreignPeer.user_id = TGIOS6ModernUserIdFromStoredUser(user, (int32_t)conversationId);
-                foreignPeer.access_hash = user.phoneNumberHash;
-                IOS6Trace(@"TRACE inputPeer peer=%lld type=user modern=%lld hash=%lld source=database", conversationId, foreignPeer.user_id, user.phoneNumberHash);
-                return foreignPeer;
-            }
         }
 
         IOS6Trace(@"TRACE inputPeer peer=%lld type=user result=empty missingAccessHash=1", conversationId);

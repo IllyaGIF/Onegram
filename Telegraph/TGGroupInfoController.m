@@ -25,6 +25,7 @@
 #import "TGVariantCollectionItem.h"
 #import "TGButtonCollectionItem.h"
 #import "TGCommentCollectionItem.h"
+#import "TGCollectionStaticMultilineTextItem.h"
 #import "TGGroupInfoCollectionItem.h"
 #import "TGGroupInfoUserCollectionItem.h"
 
@@ -74,6 +75,8 @@
     
     TGGroupInfoCollectionItem *_groupInfoItem;
     TGButtonCollectionItem *_setGroupPhotoItem;
+    TGCollectionMenuSection *_descriptionSection;
+    TGCollectionStaticMultilineTextItem *_descriptionItem;
     
     TGCollectionMenuSection *_notificationsAndMediaSection;
     TGSwitchCollectionItem *_notificationsItem;
@@ -149,6 +152,11 @@
         ]];
         
         [self.menuSections addSection:_groupInfoSection];
+
+        TGHeaderCollectionItem *descriptionHeaderItem = [[TGHeaderCollectionItem alloc] initWithTitle:[TGLocalized(@"Channel.Info.Description") uppercaseString]];
+        _descriptionItem = [[TGCollectionStaticMultilineTextItem alloc] init];
+        _descriptionItem.deselectAutomatically = true;
+        _descriptionSection = [[TGCollectionMenuSection alloc] initWithItems:@[descriptionHeaderItem, _descriptionItem]];
         
         _notificationsItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.Notifications") isOn:false];
         __weak TGGroupInfoController *weakSelf = self;
@@ -333,6 +341,20 @@
 
 - (void)resetSections {
     bool reload = false;
+
+    NSUInteger descriptionSectionIndex = [self indexForSection:_descriptionSection];
+    if (_descriptionItem.text.length != 0) {
+        if (descriptionSectionIndex == NSNotFound) {
+            NSUInteger groupInfoSectionIndex = [self indexForSection:_groupInfoSection];
+            if (groupInfoSectionIndex != NSNotFound) {
+                [self.menuSections insertSection:_descriptionSection atIndex:groupInfoSectionIndex + 1];
+                reload = true;
+            }
+        }
+    } else if (descriptionSectionIndex != NSNotFound) {
+        [self.menuSections deleteSection:descriptionSectionIndex];
+        reload = true;
+    }
     
     if (_editing) {
         if (_conversation.isCreator) {
@@ -1081,6 +1103,7 @@
         }
         
         _conversation = conversation;
+        _descriptionItem.text = _conversation.about;
         [_groupInfoItem setConversation:_conversation];
         
         [self _updateLeftState];

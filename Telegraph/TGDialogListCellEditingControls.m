@@ -10,6 +10,25 @@ static UIFont *buttonFont;
 static CGFloat leftButtonWidth;
 static CGFloat rightButtonWidth;
 
+static CGFloat TGDialogListEditingLeftButtonWidth(void)
+{
+    return [TGPresentation brandedIOS6Style] ? 65.0f : leftButtonWidth;
+}
+
+static CGFloat TGDialogListEditingRightButtonWidth(void)
+{
+    return [TGPresentation brandedIOS6Style] ? 65.0f : rightButtonWidth;
+}
+
+
+static CGFloat TGDialogListEditingRightRevealWidth(NSUInteger count, CGFloat boundsWidth)
+{
+    CGFloat contentWidth = count * TGDialogListEditingRightButtonWidth();
+    if (![TGPresentation brandedIOS6Style])
+        return contentWidth;
+    return MIN(contentWidth, MAX(0.0f, boundsWidth - 74.0f));
+}
+
 static UIPanGestureRecognizer *TGDialogListScrollViewPanGestureRecognizer(UIScrollView *scrollView)
 {
     for (UIGestureRecognizer *gestureRecognizer in scrollView.gestureRecognizers)
@@ -21,6 +40,32 @@ static UIPanGestureRecognizer *TGDialogListScrollViewPanGestureRecognizer(UIScro
 }
 
 static NSString *buttonTitleForType(TGDialogListCellEditingControlButton button) {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        switch (button)
+        {
+            case TGDialogListCellEditingControlsDelete:
+                return @"Delete";
+            case TGDialogListCellEditingControlsPin:
+                return @"Pin";
+            case TGDialogListCellEditingControlsUnpin:
+                return @"Unpin";
+            case TGDialogListCellEditingControlsMute:
+                return @"Mute";
+            case TGDialogListCellEditingControlsUnmute:
+                return @"Unmute";
+            case TGDialogListCellEditingControlsRead:
+                return @"Read";
+            case TGDialogListCellEditingControlsUnread:
+                return @"Unread";
+            case TGDialogListCellEditingControlsArchive:
+                return @"Archive";
+            case TGDialogListCellEditingControlsUnarchive:
+                return @"Chats";
+            default:
+                break;
+        }
+    }
     switch (button) {
         case TGDialogListCellEditingControlsDelete:
             return TGLocalized(@"Common.Delete");
@@ -86,6 +131,11 @@ static NSString *animationForType(TGDialogListCellEditingControlButton button) {
 }
 
 static UIColor *buttonColorForType(TGDialogListCellEditingControlButton button, TGPresentation *presentation) {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        UIImage *clothImage = [TGPresentation brandedIOS6ResourceImage:@"cloth"];
+        return clothImage == nil ? UIColorRGB(0x303137) : [UIColor colorWithPatternImage:clothImage];
+    }
     switch (button) {
         case TGDialogListCellEditingControlsDelete:
             return presentation.pallete.dialogEditDeleteColor;
@@ -114,7 +164,55 @@ static UIColor *buttonColorForType(TGDialogListCellEditingControlButton button, 
     }
 }
 
+
+static UIImage *TGDialogListEditingBrandedIcon(NSString *name)
+{
+    UIImage *source = [TGPresentation brandedIOS6ResourceImage:name];
+    if (source == nil)
+        return nil;
+
+    CGSize size = source.size;
+    UIGraphicsBeginImageContextWithOptions(size, false, source.scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect rect = CGRectMake(0.0f, 0.0f, size.width, size.height);
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGFloat components[] = {
+        1.0f, 1.0f, 1.0f, 1.0f,
+        0.639f, 0.639f, 0.639f, 1.0f
+    };
+    CGFloat locations[] = {0.0f, 1.0f};
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, size.height), 0);
+    CGGradientRelease(gradient);
+    CGColorSpaceRelease(colorSpace);
+    [source drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result;
+}
+
 static UIImage *buttonImageForType(TGDialogListCellEditingControlButton button, TGPresentation *presentation) {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        switch (button)
+        {
+            case TGDialogListCellEditingControlsDelete:
+                return TGDialogListEditingBrandedIcon(@"trash-fill");
+            case TGDialogListCellEditingControlsPin:
+            case TGDialogListCellEditingControlsUnpin:
+                return TGDialogListEditingBrandedIcon(@"pin-angle-fill-18");
+            case TGDialogListCellEditingControlsMute:
+            case TGDialogListCellEditingControlsUnmute:
+                return TGDialogListEditingBrandedIcon(@"volume-up-fill");
+            case TGDialogListCellEditingControlsArchive:
+            case TGDialogListCellEditingControlsUnarchive:
+                return TGDialogListEditingBrandedIcon(@"inboxes-fill");
+            default:
+                return nil;
+        }
+    }
     switch (button) {
         case TGDialogListCellEditingControlsDelete:
             return presentation.images.dialogEditDeleteIcon;
@@ -313,7 +411,7 @@ static CGRect validatedRect(CGRect value) {
 - (void)setExpanded:(bool)expanded animated:(bool)animated {
     CGPoint offset = CGPointZero;
     if (expanded) {
-        offset = CGPointMake(rightButtonWidth * _rightButtonTypes.count, 0.0f);
+        offset = CGPointMake(TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, self.bounds.size.width), 0.0f);
     }
     if (animated) {
         if ([_scroller isDragging]) {
@@ -325,7 +423,9 @@ static CGRect validatedRect(CGRect value) {
         
         [UIView animateWithDuration:0.3 animations:^{
             [_scroller setContentOffset:offset animated:false];
+            [self updateButtonFrames];
         } completion:^(__unused BOOL finished) {
+            [self updateButtonFrames:true];
             if (!expanded) {
                 for (TGDialogListCellEditingButton *button in _leftButtons) {
                     if (button.hidden)
@@ -366,6 +466,7 @@ static CGRect validatedRect(CGRect value) {
             [self insertSubview:_scroller atIndex:0];
         }
         [_scroller setContentOffset:offset animated:false];
+        [self updateButtonFrames:true];
         if (!expanded) {
             for (TGDialogListCellEditingButton *button in _leftButtons) {
                 if (button.hidden)
@@ -428,6 +529,8 @@ static CGRect validatedRect(CGRect value) {
 }
 
 - (void)resetButtons {
+    self.backgroundColor = [UIColor clearColor];
+
     void(^processButtons)(NSArray *, NSMutableArray *, SEL) = ^(NSArray *buttonTypes, NSMutableArray *buttons, SEL action)
     {
         NSUInteger index = 0;
@@ -446,7 +549,9 @@ static CGRect validatedRect(CGRect value) {
             button.labelOnly = _labelOnly;
             button.smallLabel = _smallLabels;
             button.offsetLabel = _offsetLabels;
-            NSString *animationName = animationForType(buttonType);
+            NSString *animationName = [TGPresentation brandedIOS6Style] ? nil : animationForType(buttonType);
+            if (animationName.length > 0 && [[NSBundle mainBundle] pathForResource:animationName ofType:@"json"] == nil)
+                animationName = nil;
             if (animationName.length > 0)
                 [button setTitle:buttonTitleForType(buttonType) animationName:animationName];
             else
@@ -477,19 +582,22 @@ static CGRect validatedRect(CGRect value) {
 }
 
 - (void)updateFrames {
-    CGFloat leftContentWidth = _leftButtonTypes.count * rightButtonWidth;
-    CGFloat rightContentWidth = _rightButtonTypes.count * rightButtonWidth;
+    bool expanded = [self isExpanded];
+    CGFloat leftContentWidth = _leftButtonTypes.count * TGDialogListEditingLeftButtonWidth();
+    CGFloat rightContentWidth = TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, self.bounds.size.width);
     _scroller.frame = CGRectMake(0.0f, 0.0f, rightContentWidth, 1.0f);
     _scroller.contentSize = CGSizeMake(rightContentWidth * 2.0f, 1.0f);
     _scroller.contentInset = UIEdgeInsetsMake(0.0f, leftContentWidth, 0.0f, 0.0f);
-    [self updateButtonFrames];
+    if (!expanded)
+        [_scroller setContentOffset:CGPointZero animated:false];
+    [self updateButtonFrames:true];
 }
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)__unused scrollView willDecelerate:(BOOL)__unused decelerate {
     if (_leftButtonTypes.count > 0) {
         CGFloat offset = _scroller.bounds.origin.x;
         
-        CGFloat leftContentWidth = _leftButtonTypes.count * rightButtonWidth;
+        CGFloat leftContentWidth = _leftButtonTypes.count * TGDialogListEditingLeftButtonWidth();
         CGFloat unconstrainedLeftOffsetFactor = MAX(0.0f, -offset / leftContentWidth);
         
         if (unconstrainedLeftOffsetFactor > 2.0f)
@@ -509,7 +617,8 @@ static CGRect validatedRect(CGRect value) {
                     [UIView animateWithDuration:0.2 delay:0.0 options:7 << 16 animations:^{
                         _scroller.contentOffset = CGPointZero;
                         self.bounds = CGRectMake(_scroller.bounds.origin.x, 0.0f, self.bounds.size.width, self.bounds.size.height);
-                        button.frame = CGRectMake(-rightButtonWidth, 0.0f, rightButtonWidth, self.bounds.size.height);
+                        CGFloat buttonWidth = TGDialogListEditingLeftButtonWidth();
+                        button.frame = CGRectMake(-buttonWidth, 0.0f, buttonWidth, self.bounds.size.height);
                     } completion:^(__unused BOOL finished)
                     {
                         _ignoringScroll = false;
@@ -580,7 +689,7 @@ static CGRect validatedRect(CGRect value) {
     CGFloat offset = _scroller.bounds.origin.x;
     CGRect bounds = self.bounds;
     
-    bool expanded = offset > FLT_EPSILON;
+    bool expanded = ABS(offset) > FLT_EPSILON;
     if (expanded != _isExpanded) {
         _isExpanded = expanded;
         if (_expandedUpdated) {
@@ -591,7 +700,7 @@ static CGRect validatedRect(CGRect value) {
     self.bounds = CGRectMake(offset, 0.0f, bounds.size.width, bounds.size.height);
     
     if (_leftButtonTypes.count > 0) {
-        CGFloat leftContentWidth = _leftButtonTypes.count * rightButtonWidth;
+        CGFloat leftContentWidth = _leftButtonTypes.count * TGDialogListEditingLeftButtonWidth();
         CGFloat leftOffsetFactor = MIN(1.0f, MAX(0.0f, -offset / leftContentWidth));
         CGFloat unconstrainedLeftOffsetFactor = MAX(0.0f, -offset / leftContentWidth);
         CGFloat nextButtonEndOffset = 0.0f;
@@ -604,9 +713,10 @@ static CGRect validatedRect(CGRect value) {
             if (button.hidden) {
                 continue;
             }
-            button.buttonWidth = rightButtonWidth;
-            button.frame = CGRectMake(-rightButtonWidth * (1.0f - leftOffsetFactor) + nextButtonEndOffset * leftOffsetFactor + offset, 0.0f, rightButtonWidth + MAX(-offset - leftContentWidth, 0.0f), bounds.size.height);
-            nextButtonEndOffset += rightButtonWidth;
+            CGFloat buttonWidth = TGDialogListEditingLeftButtonWidth();
+            button.buttonWidth = buttonWidth;
+            button.frame = CGRectMake(-buttonWidth * (1.0f - leftOffsetFactor) + nextButtonEndOffset * leftOffsetFactor + offset, 0.0f, buttonWidth + MAX(-offset - leftContentWidth, 0.0f), bounds.size.height);
+            nextButtonEndOffset += buttonWidth;
             
             if (leftOffsetFactor >= 0.4f && _leftReadyToPlay)
                 [button playAnimation];
@@ -649,16 +759,19 @@ static CGRect validatedRect(CGRect value) {
     }
     
     if (_rightButtonTypes.count > 0) {
-        CGFloat rightContentWidth = _rightButtonTypes.count * rightButtonWidth;
+        CGFloat buttonWidth = TGDialogListEditingRightButtonWidth();
+        CGFloat rightButtonsWidth = _rightButtonTypes.count * buttonWidth;
+        CGFloat rightContentWidth = TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, bounds.size.width);
         CGFloat rightOffsetFactor = MIN(1.0f, MAX(0.0f, offset / rightContentWidth));
-        CGFloat nextButtonEndOffset = bounds.size.width - rightButtonWidth;
+        CGFloat hiddenOverflow = MAX(0.0f, rightButtonsWidth - rightContentWidth);
+        CGFloat nextButtonEndOffset = bounds.size.width - buttonWidth + hiddenOverflow;
         for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
             if (button.hidden) {
                 continue;
             }
-            button.buttonWidth = rightButtonWidth;
-            button.frame = CGRectMake(bounds.size.width * (1.0f - rightOffsetFactor) + nextButtonEndOffset * rightOffsetFactor + offset, 0.0f, rightButtonWidth, bounds.size.height);
-            nextButtonEndOffset -= rightButtonWidth;
+            button.buttonWidth = buttonWidth;
+            button.frame = CGRectMake(bounds.size.width * (1.0f - rightOffsetFactor) + nextButtonEndOffset * rightOffsetFactor + offset, 0.0f, buttonWidth, bounds.size.height);
+            nextButtonEndOffset -= buttonWidth;
             
             if (rightOffsetFactor >= 0.4f && _rightReadyToPlay)
                 [button playAnimation];
@@ -804,8 +917,8 @@ static CGRect validatedRect(CGRect value) {
     if (!_manualScrollerPan)
         return;
 
-    CGFloat leftContentWidth = _leftButtonTypes.count * rightButtonWidth;
-    CGFloat rightContentWidth = _rightButtonTypes.count * rightButtonWidth;
+    CGFloat leftContentWidth = _leftButtonTypes.count * TGDialogListEditingLeftButtonWidth();
+    CGFloat rightContentWidth = TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, self.bounds.size.width);
 
     if (recognizer.state == UIGestureRecognizerStateBegan)
     {

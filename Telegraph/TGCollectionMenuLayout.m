@@ -110,7 +110,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
 }
 
 - (void)tearDownCollectionView {
-    // Tear down long press gesture
     if (_longPressGestureRecognizer) {
         UIView *view = _longPressGestureRecognizer.view;
         if (view) {
@@ -120,7 +119,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
         _longPressGestureRecognizer = nil;
     }
     
-    // Tear down pan gesture
     if (_panGestureRecognizer) {
         UIView *view = _panGestureRecognizer.view;
         if (view) {
@@ -297,7 +295,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
             translation = CGPointMake(distance, 0.0f);
         } break;
         default: {
-            // Do nothing...
         } break;
     }
     
@@ -467,7 +464,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
             [self invalidatesScrollTimer];
         } break;
         default: {
-            // Do nothing...
         } break;
     }
 }
@@ -483,7 +479,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
                 [self applyLayoutAttributes:layoutAttributes];
             } break;
             default: {
-                // Do nothing...
             } break;
         }
     }
@@ -499,7 +494,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
             [self applyLayoutAttributes:layoutAttributes];
         } break;
         default: {
-            // Do nothing...
         } break;
     }
     
@@ -562,7 +556,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
 
 #pragma mark Starting from 0.1.0
 - (void)setUpGestureRecognizersOnCollectionView {
-    // Do nothing...
 }
 
 - (void)prepareForCollectionViewUpdates:(NSArray *)updateItems

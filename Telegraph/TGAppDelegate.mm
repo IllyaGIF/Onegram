@@ -12,6 +12,7 @@
 #include <sys/ucontext.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#include <dlfcn.h>
 #include <stdint.h>
 #include <sys/xattr.h>
 
@@ -362,16 +363,16 @@ static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
         dispatch_once(&onceToken, ^
         {
             Method original = class_getClassMethod(self, @selector(imageNamed:));
-            Method replacement = class_getClassMethod(self, @selector(twelvium_classicIOS6ImageNamed:));
+            Method replacement = class_getClassMethod(self, @selector(onegramium_classicIOS6ImageNamed:));
             method_exchangeImplementations(original, replacement);
         });
     }
 }
 
-+ (UIImage *)twelvium_classicIOS6ImageNamed:(NSString *)name
++ (UIImage *)onegramium_classicIOS6ImageNamed:(NSString *)name
 {
     UIImage *classicImage = TGClassicIOS6OriginalImageNamed(name);
-    return classicImage != nil ? classicImage : [self twelvium_classicIOS6ImageNamed:name];
+    return classicImage != nil ? classicImage : [self onegramium_classicIOS6ImageNamed:name];
 }
 
 @end
@@ -465,7 +466,7 @@ static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
 #import "TGPresentation.h"
 #import "TGPassportSignals.h"
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 && !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
 #import <CloudKit/CloudKit.h>
 #endif
 #import "TGICloudEmergencyDataSignals.h"
@@ -680,6 +681,20 @@ static intptr_t TGIOS6ExecutableImageSlide = 0;
 static volatile sig_atomic_t TGIOS6HandlingFatalSignal = 0;
 static volatile sig_atomic_t TGIOS6ExceptionRecordedThisRun = 0;
 
+#define TGIOS6_CRASH_IMAGE_MAX 256
+#define TGIOS6_CRASH_IMAGE_NAME_MAX 96
+
+typedef struct
+{
+    uintptr_t start;
+    uintptr_t end;
+    char name[TGIOS6_CRASH_IMAGE_NAME_MAX];
+    size_t nameLength;
+} TGIOS6CrashImageRange;
+
+static TGIOS6CrashImageRange TGIOS6CrashImageRanges[TGIOS6_CRASH_IMAGE_MAX];
+static size_t TGIOS6CrashImageRangeCount = 0;
+
 static void TGIOS6WriteHexPointer(int fd, const void *pointer);
 
 static void TGIOS6PrepareExecutableImageRange()
@@ -691,11 +706,14 @@ static void TGIOS6PrepareExecutableImageRange()
     if (header == NULL)
         return;
 
-    const uint8_t *cursor = (const uint8_t *)(header + 1);
+    const uint8_t *cursor = (const uint8_t *)header + (header->magic == MH_MAGIC_64 ? sizeof(struct mach_header_64) : sizeof(struct mach_header));
+    const uint8_t *commandsEnd = cursor + header->sizeofcmds;
     for (uint32_t i = 0; i < header->ncmds; i++)
     {
+        if ((size_t)(commandsEnd - cursor) < sizeof(struct load_command))
+            break;
         const struct load_command *command = (const struct load_command *)cursor;
-        if (command->cmdsize < sizeof(struct load_command))
+        if (command->cmdsize < sizeof(struct load_command) || command->cmdsize > (size_t)(commandsEnd - cursor))
             break;
         if (command->cmd == LC_SEGMENT && command->cmdsize >= sizeof(struct segment_command))
         {
@@ -704,8 +722,99 @@ static void TGIOS6PrepareExecutableImageRange()
             if (segmentEnd > TGIOS6ExecutableImageEnd)
                 TGIOS6ExecutableImageEnd = segmentEnd;
         }
+        else if (command->cmd == LC_SEGMENT_64 && command->cmdsize >= sizeof(struct segment_command_64))
+        {
+            const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
+            uintptr_t segmentEnd = (uintptr_t)segment->vmaddr + (uintptr_t)segment->vmsize + TGIOS6ExecutableImageSlide;
+            if (segmentEnd > TGIOS6ExecutableImageEnd)
+                TGIOS6ExecutableImageEnd = segmentEnd;
+        }
         cursor += command->cmdsize;
     }
+}
+
+static void TGIOS6PrepareLoadedImageRanges()
+{
+    TGIOS6CrashImageRangeCount = 0;
+    uint32_t imageCount = _dyld_image_count();
+    for (uint32_t imageIndex = 0; imageIndex < imageCount && TGIOS6CrashImageRangeCount < TGIOS6_CRASH_IMAGE_MAX; imageIndex++)
+    {
+        const struct mach_header *header = _dyld_get_image_header(imageIndex);
+        if (header == NULL)
+            continue;
+
+        intptr_t slide = _dyld_get_image_vmaddr_slide(imageIndex);
+        uintptr_t textStart = 0;
+        uintptr_t textEnd = 0;
+        const uint8_t *cursor = (const uint8_t *)header + (header->magic == MH_MAGIC_64 ? sizeof(struct mach_header_64) : sizeof(struct mach_header));
+        const uint8_t *commandsEnd = cursor + header->sizeofcmds;
+        for (uint32_t commandIndex = 0; commandIndex < header->ncmds; commandIndex++)
+        {
+            if ((size_t)(commandsEnd - cursor) < sizeof(struct load_command))
+                break;
+            const struct load_command *command = (const struct load_command *)cursor;
+            if (command->cmdsize < sizeof(struct load_command) || command->cmdsize > (size_t)(commandsEnd - cursor))
+                break;
+
+            if (command->cmd == LC_SEGMENT && command->cmdsize >= sizeof(struct segment_command))
+            {
+                const struct segment_command *segment = (const struct segment_command *)command;
+                if (strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)) == 0)
+                {
+                    textStart = (uintptr_t)((intptr_t)segment->vmaddr + slide);
+                    textEnd = textStart + (uintptr_t)segment->vmsize;
+                    break;
+                }
+            }
+            else if (command->cmd == LC_SEGMENT_64 && command->cmdsize >= sizeof(struct segment_command_64))
+            {
+                const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
+                if (strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)) == 0)
+                {
+                    textStart = (uintptr_t)((intptr_t)segment->vmaddr + slide);
+                    textEnd = textStart + (uintptr_t)segment->vmsize;
+                    break;
+                }
+            }
+            cursor += command->cmdsize;
+        }
+
+        if (textStart == 0 || textEnd <= textStart)
+            continue;
+
+        const char *path = _dyld_get_image_name(imageIndex);
+        const char *name = path;
+        if (path != NULL)
+        {
+            const char *slash = strrchr(path, '/');
+            if (slash != NULL && slash[1] != 0)
+                name = slash + 1;
+        }
+        if (name == NULL || name[0] == 0)
+            name = "?";
+
+        TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[TGIOS6CrashImageRangeCount++];
+        range->start = textStart;
+        range->end = textEnd;
+        size_t nameLength = strlen(name);
+        if (nameLength >= TGIOS6_CRASH_IMAGE_NAME_MAX)
+            nameLength = TGIOS6_CRASH_IMAGE_NAME_MAX - 1;
+        memcpy(range->name, name, nameLength);
+        range->name[nameLength] = 0;
+        range->nameLength = nameLength;
+    }
+}
+
+static const TGIOS6CrashImageRange *TGIOS6CrashImageRangeForAddress(uintptr_t address)
+{
+    uintptr_t normalizedAddress = address & ~(uintptr_t)1;
+    for (size_t i = 0; i < TGIOS6CrashImageRangeCount; i++)
+    {
+        const TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[i];
+        if (normalizedAddress >= range->start && normalizedAddress < range->end)
+            return range;
+    }
+    return NULL;
 }
 
 static void TGIOS6PrepareCrashEnvironment()
@@ -722,6 +831,7 @@ static void TGIOS6PrepareCrashEnvironment()
     uname(&systemInfo);
 
     TGIOS6PrepareExecutableImageRange();
+    TGIOS6PrepareLoadedImageRanges();
 
 #if defined(__arm__)
     const char *architecture = "armv7";
@@ -771,6 +881,22 @@ static void TGIOS6WriteRegisterLine(int fd, const char *name, uintptr_t value)
     write(fd, name, strlen(name));
     write(fd, "=", 1);
     TGIOS6WriteHexPointer(fd, (const void *)value);
+    write(fd, "\n", 1);
+}
+
+static void TGIOS6WriteImageAddressLine(int fd, const char *name, uintptr_t address)
+{
+    const TGIOS6CrashImageRange *range = TGIOS6CrashImageRangeForAddress(address);
+    if (range == NULL)
+        return;
+
+    uintptr_t normalizedAddress = address & ~(uintptr_t)1;
+    write(fd, "CRASH ", 6);
+    write(fd, name, strlen(name));
+    write(fd, "=", 1);
+    write(fd, range->name, range->nameLength);
+    write(fd, "+", 1);
+    TGIOS6WriteHexPointer(fd, (const void *)(normalizedAddress - range->start));
     write(fd, "\n", 1);
 }
 
@@ -902,6 +1028,8 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 TGIOS6WriteRegisterLine(fd, "r10", (uintptr_t)ucontext->uc_mcontext->__ss.__r[10]);
                 TGIOS6WriteRegisterLine(fd, "r11", (uintptr_t)ucontext->uc_mcontext->__ss.__r[11]);
                 TGIOS6WriteRegisterLine(fd, "r12", (uintptr_t)ucontext->uc_mcontext->__ss.__r[12]);
+                TGIOS6WriteImageAddressLine(fd, "pc_image", pc);
+                TGIOS6WriteImageAddressLine(fd, "lr_image", lr);
 #else
                 uintptr_t pc = (uintptr_t)ucontext->uc_mcontext->ss.pc;
                 uintptr_t lr = (uintptr_t)ucontext->uc_mcontext->ss.lr;
@@ -922,6 +1050,8 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 TGIOS6WriteRegisterLine(fd, "r10", (uintptr_t)ucontext->uc_mcontext->ss.r[10]);
                 TGIOS6WriteRegisterLine(fd, "r11", (uintptr_t)ucontext->uc_mcontext->ss.r[11]);
                 TGIOS6WriteRegisterLine(fd, "r12", (uintptr_t)ucontext->uc_mcontext->ss.r[12]);
+                TGIOS6WriteImageAddressLine(fd, "pc_image", pc);
+                TGIOS6WriteImageAddressLine(fd, "lr_image", lr);
 #endif
                 if (TGIOS6ExecutableImageBase != 0 && pc >= TGIOS6ExecutableImageBase && pc < TGIOS6ExecutableImageEnd)
                 {
@@ -931,17 +1061,27 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 {
                     TGIOS6WriteRegisterLine(fd, "lr_app_offset", lr - TGIOS6ExecutableImageBase);
                 }
-                if (TGIOS6ExecutableImageBase != 0 && sp != 0)
+                if (sp != 0)
                 {
                     const uintptr_t *stackWords = (const uintptr_t *)sp;
                     int stackAppCount = 0;
-                    for (int i = 0; i < 64 && stackAppCount < 20; i++)
+                    int stackImageCount = 0;
+                    uintptr_t previousImageCandidate = 0;
+                    for (int i = 0; i < 64; i++)
                     {
                         uintptr_t candidate = stackWords[i];
-                        if (candidate >= TGIOS6ExecutableImageBase && candidate < TGIOS6ExecutableImageEnd)
+                        uintptr_t normalizedCandidate = candidate & ~(uintptr_t)1;
+                        TGIOS6WriteRegisterLine(fd, "stack_raw", candidate);
+                        if (TGIOS6ExecutableImageBase != 0 && normalizedCandidate >= TGIOS6ExecutableImageBase && normalizedCandidate < TGIOS6ExecutableImageEnd && stackAppCount < 20)
                         {
-                            TGIOS6WriteRegisterLine(fd, "stack_app", (uintptr_t)((intptr_t)candidate - TGIOS6ExecutableImageSlide));
+                            TGIOS6WriteRegisterLine(fd, "stack_app", (uintptr_t)((intptr_t)normalizedCandidate - TGIOS6ExecutableImageSlide));
                             stackAppCount++;
+                        }
+                        if (stackImageCount < 32 && normalizedCandidate != previousImageCandidate && TGIOS6CrashImageRangeForAddress(normalizedCandidate) != NULL)
+                        {
+                            TGIOS6WriteImageAddressLine(fd, "stack_image", normalizedCandidate);
+                            previousImageCandidate = normalizedCandidate;
+                            stackImageCount++;
                         }
                     }
                 }
@@ -1102,6 +1242,34 @@ static NSString *TGIOS6CrashSelectorName(uintptr_t selectorAddress)
     return result;
 }
 
+static NSString *TGIOS6CrashResolvedSystemAddress(NSString *label, uintptr_t address, uintptr_t previousImageBase, uintptr_t previousImageEnd)
+{
+    uintptr_t normalizedAddress = address & ~(uintptr_t)1;
+    if (normalizedAddress == 0 || (previousImageBase != 0 && normalizedAddress >= previousImageBase && normalizedAddress < previousImageEnd))
+        return nil;
+
+    Dl_info info;
+    memset(&info, 0, sizeof(info));
+    if (dladdr((const void *)normalizedAddress, &info) == 0 || info.dli_fname == NULL || info.dli_fbase == NULL)
+        return nil;
+
+    NSString *path = [NSString stringWithUTF8String:info.dli_fname];
+    if (![path hasPrefix:@"/System/"] && ![path hasPrefix:@"/usr/lib/"])
+        return nil;
+
+    NSString *image = [path lastPathComponent];
+    uintptr_t imageBase = (uintptr_t)info.dli_fbase;
+    uintptr_t imageOffset = normalizedAddress >= imageBase ? normalizedAddress - imageBase : 0;
+    if (info.dli_sname != NULL && info.dli_saddr != NULL)
+    {
+        NSString *symbol = [NSString stringWithUTF8String:info.dli_sname];
+        uintptr_t symbolAddress = (uintptr_t)info.dli_saddr;
+        uintptr_t symbolOffset = normalizedAddress >= symbolAddress ? normalizedAddress - symbolAddress : 0;
+        return [NSString stringWithFormat:@"CRASH %@_resolved=%@+0x%lx %@+0x%lx\n", label, image ?: @"?", (unsigned long)imageOffset, symbol ?: @"?", (unsigned long)symbolOffset];
+    }
+    return [NSString stringWithFormat:@"CRASH %@_resolved=%@+0x%lx\n", label, image ?: @"?", (unsigned long)imageOffset];
+}
+
 static void TGIOS6SendPendingCrashReport()
 {
     NSString *localPath = TGIOS6CrashReportPath();
@@ -1112,6 +1280,20 @@ static void TGIOS6SendPendingCrashReport()
         NSString *selectorName = TGIOS6CrashSelectorName(selectorAddress);
         if (selectorName.length != 0)
             localMessage = [localMessage stringByAppendingFormat:@"CRASH selector=%@\n", selectorName];
+
+        uintptr_t previousImageBase = TGIOS6CrashRegisterValue(localMessage, @"image_base");
+        uintptr_t previousImageEnd = TGIOS6CrashRegisterValue(localMessage, @"image_end");
+        uintptr_t pc = TGIOS6CrashRegisterValue(localMessage, @"pc");
+        uintptr_t lr = TGIOS6CrashRegisterValue(localMessage, @"lr");
+        NSString *pcResolved = TGIOS6CrashResolvedSystemAddress(@"pc", pc, previousImageBase, previousImageEnd);
+        NSString *lrResolved = TGIOS6CrashResolvedSystemAddress(@"lr", lr, previousImageBase, previousImageEnd);
+        if (pcResolved.length != 0)
+            localMessage = [localMessage stringByAppendingString:pcResolved];
+        if (lrResolved.length != 0)
+            localMessage = [localMessage stringByAppendingString:lrResolved];
+
+        NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:localPath error:nil];
+        TGArchiveCrashLogText(localMessage, [attributes objectForKey:NSFileModificationDate]);
         TGLog(@"CRASH previous-begin\n%@CRASH previous-end", localMessage);
         [[NSFileManager defaultManager] removeItemAtPath:localPath error:nil];
     }
@@ -1243,6 +1425,7 @@ static void TGIOS6SendLatestSystemCrashReport()
 @interface TGAppDelegate () <AVAudioPlayerDelegate, PKPushRegistryDelegate>
 {
     bool _inBackground;
+    bool _ios6BackgroundLifecycleEntered;
     bool _enteringForeground;
     
     NSTimer *_foregroundResumeTimer;
@@ -1272,6 +1455,7 @@ static void TGIOS6SendLatestSystemCrashReport()
     bool _ios6VoipHealthCheckPending;
     CFAbsoluteTime _ios6VoipLastTransportResetTime;
     CFAbsoluteTime _ios6VoipLastProactiveTransportRefreshTime;
+    CFAbsoluteTime _ios6VoipLastScheduledHealthCheckTime;
     int32_t _ios6VoipLastPrimaryReceiveUptime;
     UIBackgroundTaskIdentifier _ios6VoipHealthCheckTaskIdentifier;
     bool _ios6VoipHealthCheckTaskActive;
@@ -1314,6 +1498,7 @@ static void TGIOS6SendLatestSystemCrashReport()
 - (void)onBecomeActive;
 - (bool)willBeLocked;
 - (NSTimeInterval)ios6VoipHealthCheckInterval;
+- (void)ios6PerformScheduledVoipHealthCheck;
 - (void)ios6PrimaryTransportReceivedData:(NSNotification *)notification;
 - (bool)ios6NotificationTransportAllowedWithSystemTypes:(UIRemoteNotificationType *)systemTypes privateEnabled:(bool *)privateEnabled groupEnabled:(bool *)groupEnabled;
 - (BOOL)ios6InstallVoipKeepAliveForApplication:(UIApplication *)application source:(NSString *)source;
@@ -1362,6 +1547,7 @@ static NSUserDefaults *TGAppDelegateUserDefaultsCompat()
         _finishedLaunching = [[SVariable alloc] init];
         _isActive = [[SVariable alloc] init];
         [_isActive set:[SSignal single:@true]];
+        _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
         _ios6VoipHealthCheckTaskIdentifier = UIBackgroundTaskInvalid;
         _ios6ColdLaunchTaskIdentifier = UIBackgroundTaskInvalid;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6PrimaryTransportReceivedData:) name:@"TGIOS6PrimaryTransportReceivedData" object:nil];
@@ -2472,6 +2658,17 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     _ios6VoipLastPrimaryReceiveUptime = (int32_t)[[NSProcessInfo processInfo] systemUptime];
 }
 
+- (void)ios6PerformScheduledVoipHealthCheck
+{
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    NSTimeInterval healthCheckInterval = [self ios6VoipHealthCheckInterval];
+    if (_ios6VoipLastScheduledHealthCheckTime > 0.0 && now - _ios6VoipLastScheduledHealthCheckTime + 1.0 < healthCheckInterval)
+        return;
+
+    _ios6VoipLastScheduledHealthCheckTime = now;
+    [self ios6PerformVoipHealthCheck];
+}
+
 - (BOOL)ios6InstallVoipKeepAliveForApplication:(UIApplication *)application source:(NSString *)source
 {
     if ([[UIDevice currentDevice].systemVersion intValue] > 6 ||
@@ -2497,17 +2694,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         return false;
     }
 
-    __block CFAbsoluteTime lastScheduledHealthCheckTime = CFAbsoluteTimeGetCurrent();
-    void (^performScheduledHealthCheck)(void) = ^
-    {
-        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-        NSTimeInterval healthCheckInterval = [self ios6VoipHealthCheckInterval];
-        if (now - lastScheduledHealthCheckTime + 1.0 < healthCheckInterval)
-            return;
-
-        lastScheduledHealthCheckTime = now;
-        [self ios6PerformVoipHealthCheck];
-    };
+    _ios6VoipLastScheduledHealthCheckTime = CFAbsoluteTimeGetCurrent();
 
     BOOL keepAliveInstalled = [application setKeepAliveTimeout:600.0 handler:^
     {
@@ -2516,9 +2703,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                               [UIApplication sharedApplication].backgroundTimeRemaining,
                               [NSThread isMainThread] ? @"main" : @"worker");
         if ([NSThread isMainThread])
-            performScheduledHealthCheck();
+            [self ios6PerformScheduledVoipHealthCheck];
         else
-            dispatch_async(dispatch_get_main_queue(), performScheduledHealthCheck);
+            dispatch_async(dispatch_get_main_queue(), ^
+            {
+                [self ios6PerformScheduledVoipHealthCheck];
+            });
     }];
     IOS6NotificationProbe(@"LIFECYCLE", @"keepalive_registered result=%d scheduler=600 healthInterval=%d source=%@",
                           keepAliveInstalled ? 1 : 0, (int)[self ios6VoipHealthCheckInterval], source ?: @"unknown");
@@ -2900,11 +3090,17 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGLogSynchronize();
 #endif
     
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    bool isIos6 = [[UIDevice currentDevice].systemVersion intValue] <= 6;
+    if (isIos6 && _ios6BackgroundLifecycleEntered)
+        return;
+
+    if (isIos6)
+    {
+        _ios6BackgroundLifecycleEntered = true;
         IOS6NotificationProbe(@"LIFECYCLE", @"background_enter state=%d remaining=%.1f", (int)application.applicationState, application.backgroundTimeRemaining);
+    }
 
     _inBackground = true;
-
 
     _ios6NotificationTransportAllowedForBackgroundSession = TGIOS6BackgroundNotificationsEnabled() || TGTelegraphInstance.callManager.hasActiveCall;
 
@@ -2913,6 +3109,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         [application beginReceivingRemoteControlEvents];
         [self becomeFirstResponder];
         [self ios6InstallVoipKeepAliveForApplication:application source:@"background_enter"];
+        if (_ios6NotificationTransportAllowedForBackgroundSession)
+            [[TGTelegramNetworking instance] resume];
     }
     
     [_isActive set:[SSignal single:@false]];
@@ -2926,6 +3124,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         _backgroundTaskExpirationTimer = nil;
     }
     
+    if (_backgroundTaskIdentifier != UIBackgroundTaskInvalid)
+    {
+        UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+        _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
+        [application endBackgroundTask:identifier];
+    }
+
     _backgroundTaskIdentifier = [application beginBackgroundTaskWithExpirationHandler:^
     {
         if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
@@ -2939,7 +3144,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         
         UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
         _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-        [application endBackgroundTask:identifier];
+        if (identifier != UIBackgroundTaskInvalid)
+            [application endBackgroundTask:identifier];
     }];
     if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
         IOS6NotificationProbe(@"LEASE", @"initial_task_begin id=%d remaining=%.1f", (int)_backgroundTaskIdentifier, application.backgroundTimeRemaining);
@@ -3010,16 +3216,19 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
     
-    TGLog(@"Background: task %d end imminent", identifier);
+    TGLog(@"Background: task %lu end imminent", (unsigned long)identifier);
     _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
     if (identifier == UIBackgroundTaskInvalid)
         TGLog(@"***** Strange. *****");
     
-    TGDispatchAfter(3.0, dispatch_get_main_queue(), ^
+    if (identifier != UIBackgroundTaskInvalid)
     {
-        TGLog(@"Background: ended task it %d", identifier);
-        [[UIApplication sharedApplication] endBackgroundTask:identifier];
-    });
+        TGDispatchAfter(3.0, dispatch_get_main_queue(), ^
+        {
+            TGLog(@"Background: ended task it %lu", (unsigned long)identifier);
+            [[UIApplication sharedApplication] endBackgroundTask:identifier];
+        });
+    }
 }
 
 - (bool)backgroundTaskOngoing
@@ -3039,11 +3248,15 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
     {
+        _ios6BackgroundLifecycleEntered = false;
         [application clearKeepAliveTimeout];
         [self ios6CancelVoipHealthCheck];
         [self ios6EndColdLaunchTask];
         _ios6VoipLastProactiveTransportRefreshTime = 0.0;
+        _ios6VoipLastScheduledHealthCheckTime = 0.0;
         _ios6NotificationTransportAllowedForBackgroundSession = false;
+        [[TGTelegramNetworking instance] resume];
+        [[[TGTelegramNetworking instance] mtProto] requestSecureTransportReset];
     }
     dispatch_async(dispatch_get_main_queue(), ^
     {
@@ -4608,7 +4821,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 }
 
 - (void)processPossibleCloudKitNotification:(NSDictionary *)userInfo {
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000 && !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
     if (iosMajorVersion() >= 10) {
         CKNotification *notification = [CKNotification notificationFromRemoteNotificationDictionary:userInfo];
         if (notification != nil) {
@@ -5639,8 +5852,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             {
                 TGDispatchOnMainThread(^
                 {
-                    [self applicationDidEnterBackground:[UIApplication sharedApplication]];
-                    
+                    if (_inBackground && !TGTelegraphInstance.callManager.hasActiveCall)
+                        [[TGTelegramNetworking instance] pause];
                     if (completion)
                         completion();
                 });
@@ -5702,8 +5915,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         {
             TGDispatchOnMainThread(^
             {
-                [self applicationDidEnterBackground:[UIApplication sharedApplication]];
-                
+                if (_inBackground && !TGTelegraphInstance.callManager.hasActiveCall)
+                    [[TGTelegramNetworking instance] pause];
                 if (completion)
                     completion();
             });
@@ -5863,11 +6076,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }
     
     return false;
-}
-
-- (bool)isDisplayingPasscodeWindow
-{
-    return _passcodeWindow != nil && !_passcodeWindow.hidden;
 }
 
 - (void)onBecomeInactive

@@ -120,12 +120,13 @@ int deviceMemorySize()
     static int memorySize = 0;
     if (memorySize == 0)
     {
-        size_t len;
-        __int64_t nmem;
-        
-        len = sizeof(nmem);
-        sysctlbyname("hw.memsize", &nmem, &len, NULL, 0);
-        memorySize = (int)(nmem / (1024 * 1024));
+        size_t len = sizeof(uint64_t);
+        uint64_t nmem = 0;
+        if (sysctlbyname("hw.memsize", &nmem, &len, NULL, 0) != 0 || nmem == 0)
+            nmem = 512ULL * 1024ULL * 1024ULL;
+        memorySize = (int)(nmem / (1024ULL * 1024ULL));
+        if (memorySize <= 0)
+            memorySize = 512;
     }
     return memorySize;
 }
@@ -135,12 +136,11 @@ int cpuCoreCount()
     static int count = 0;
     if (count == 0)
     {
-        size_t len;
-        unsigned int ncpu;
-        
-        len = sizeof(ncpu);
-        sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0);
-        count = ncpu;
+        size_t len = sizeof(uint32_t);
+        uint32_t ncpu = 0;
+        if (sysctlbyname("hw.ncpu", &ncpu, &len, NULL, 0) != 0 || ncpu == 0)
+            ncpu = 1;
+        count = (int)ncpu;
     }
     
     return count;

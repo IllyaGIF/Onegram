@@ -64,7 +64,7 @@ static NSData *TGProxySecretData(NSString *secret)
 
 + (SSignal *)currentSignal
 {
-    SSignal *initialSignal = [[TGDatabaseInstance() modify:^id{ return nil; }] mapToSignal:^SSignal *(__unused id value)
+    SSignal *initialSignal = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{ return nil; }] mapToSignal:^SSignal *(__unused id value)
     {
         bool inactive = false;
         TGProxyItem *current = [self currentProxy:&inactive];
@@ -75,7 +75,7 @@ static NSData *TGProxySecretData(NSString *secret)
    
 + (SSignal *)listSignal
 {
-    SSignal *initialSignal = [[TGDatabaseInstance() modify:^id{ return nil; }] mapToSignal:^SSignal *(__unused id value)
+    SSignal *initialSignal = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{ return nil; }] mapToSignal:^SSignal *(__unused id value)
     {
         return [SSignal single:[self loadStoredProxies]];
     }];

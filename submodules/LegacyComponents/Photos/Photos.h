@@ -3,6 +3,19 @@
 #import <CoreLocation/CoreLocation.h>
 #import <AVFoundation/AVFoundation.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import <Photos/PHPhotoLibrary.h>
+#import <Photos/PHAsset.h>
+#import <Photos/PHCollection.h>
+#import <Photos/PHFetchOptions.h>
+#import <Photos/PHFetchResult.h>
+#import <Photos/PHChange.h>
+#import <Photos/PHAssetChangeRequest.h>
+#import <Photos/PHImageManager.h>
+#import <Photos/PHAssetResource.h>
+#import <Photos/PHAssetResourceManager.h>
+#else
+
 typedef NSInteger PHAssetMediaType;
 typedef NSUInteger PHAssetMediaSubtype;
 typedef NSUInteger PHAssetMediaSubtypes;
@@ -211,3 +224,5 @@ typedef NSInteger PHAssetResourceType;
 + (PHAssetResourceManager *)defaultManager;
 - (void)writeDataForAssetResource:(PHAssetResource *)resource toFile:(NSURL *)fileURL options:(id)options completionHandler:(void (^)(NSError *error))completionHandler;
 @end
+
+#endif

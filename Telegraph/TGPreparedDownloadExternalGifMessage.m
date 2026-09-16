@@ -112,7 +112,8 @@
 }
 
 - (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder {
-    return [self initWithSearchResult:[NSKeyedUnarchiver unarchiveObjectWithData:[coder decodeDataCorCKey:"searchResult"]]];
+    NSData *searchResultData = [coder decodeDataCorCKey:"searchResult"];
+    return [self initWithSearchResult:searchResultData.length == 0 ? nil : [NSKeyedUnarchiver unarchiveObjectWithData:searchResultData]];
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder {

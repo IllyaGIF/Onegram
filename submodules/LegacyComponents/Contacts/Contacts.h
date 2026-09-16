@@ -1,5 +1,19 @@
 #import <Foundation/Foundation.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
+#import <Contacts/CNContact.h>
+#import <Contacts/CNContactFormatter.h>
+#import <Contacts/CNContactVCardSerialization.h>
+#import <Contacts/CNLabeledValue.h>
+#import <Contacts/CNMutableContact.h>
+#import <Contacts/CNPhoneNumber.h>
+#import <Contacts/CNMutablePostalAddress.h>
+#import <Contacts/CNContactProperty.h>
+#import <Contacts/CNContactStore.h>
+#import <Contacts/CNGroup.h>
+#import <Contacts/CNContainer.h>
+#else
+
 typedef NSInteger CNContactFormatterStyle;
 #define CNContactFormatterStyleFullName 0
 
@@ -38,3 +52,5 @@ typedef NSInteger CNContactFormatterStyle;
 @interface CNContactFormatter : NSObject
 + (NSString *)stringFromContact:(CNMutableContact *)contact style:(CNContactFormatterStyle)style;
 @end
+
+#endif

@@ -17,17 +17,26 @@ const NSTimeInterval typingIntervalSecond = 0.14;
 
 static UIColor *TGClassicAwareNavigationTitleColor(TGPresentation *presentation)
 {
-    return presentation.pallete.navigationTitleColor;
+    return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationTitleColor;
 }
 
 static UIColor *TGClassicAwareNavigationSubtitleColor(TGPresentation *presentation)
 {
-    return presentation.pallete.navigationSubtitleColor;
+    if (![TGPresentation classicIOS6Style])
+        return presentation.pallete.navigationSubtitleColor;
+    return presentation.pallete.isDark ? presentation.pallete.navigationSubtitleColor : UIColorRGB(0xdbe6ee);
 }
 
 static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *presentation)
 {
-    return presentation.pallete.navigationActiveSubtitleColor;
+    return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationActiveSubtitleColor;
+}
+
+static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation, CGFloat alpha)
+{
+    if (![TGPresentation classicIOS6Style])
+        return [UIColor clearColor];
+    return presentation.pallete.isDark ? UIColorRGBA(0x000000, alpha) : UIColorRGBA(0x1f3446, alpha);
 }
 
 @interface TGModernConversationTitleView ()
@@ -91,8 +100,10 @@ static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *pres
     _presentation = presentation;
     
     _titleLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
-    _titleLabel.shadowColor = [UIColor clearColor];
+    _titleLabel.shadowColor = TGClassicAwareNavigationShadowColor(presentation, 0.9f);
     _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+    _statusLabel.shadowColor = TGClassicAwareNavigationShadowColor(presentation, 0.72f);
+    _statusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     _activityIndicator.color = TGClassicAwareNavigationActiveSubtitleColor(presentation);
     _titleModalProgressIndicator.color = presentation.pallete.navigationSpinnerColor;
     _titleModalProgressLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
@@ -104,8 +115,36 @@ static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *pres
     
     _toggleLabel.textColor = TGClassicAwareNavigationSubtitleColor(presentation);
     
-    _unreadBackground.image = presentation.images.chatNavBadgeImage;
-    _unreadLabel.textColor = presentation.pallete.navigationBadgeTextColor;
+    if (_unreadBackground != nil)
+    {
+        if ([TGPresentation brandedIOS6Style])
+        {
+            CGFloat badgeWidth = MAX(18.0f, _unreadBackground.frame.size.width);
+            _unreadBackground.image = [TGPresentation brandedIOS6BadgeImageForWidth:badgeWidth];
+            _unreadBackground.layer.shadowColor = [UIColor blackColor].CGColor;
+            _unreadBackground.layer.shadowOpacity = 0.80f;
+            _unreadBackground.layer.shadowRadius = 1.5f;
+            _unreadBackground.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
+            _unreadBackground.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadBackground.bounds cornerRadius:9.0f].CGPath;
+            UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:11.0f];
+            _unreadLabel.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(11.0f);
+            _unreadLabel.textColor = [UIColor whiteColor];
+            _unreadLabel.textAlignment = NSTextAlignmentCenter;
+            _unreadLabel.shadowColor = [UIColor clearColor];
+            _unreadLabel.shadowOffset = CGSizeZero;
+        }
+        else
+        {
+            _unreadBackground.image = presentation.images.chatNavBadgeImage;
+            _unreadBackground.layer.shadowOpacity = 0.0f;
+            _unreadBackground.layer.shadowPath = NULL;
+            _unreadLabel.font = TGSystemFontOfSize(12.0f);
+            _unreadLabel.textColor = presentation.pallete.navigationBadgeTextColor;
+            _unreadLabel.textAlignment = NSTextAlignmentLeft;
+            _unreadLabel.shadowColor = [UIColor clearColor];
+            _unreadLabel.shadowOffset = CGSizeZero;
+        }
+    }
     
     if (_arrowView != nil)
         _arrowView.image = TGTintedImage(TGImageNamed(@"TooltipArrow.png"), TGClassicAwareNavigationTitleColor(self.presentation));
@@ -135,9 +174,9 @@ static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *pres
         _titleLabel = [[TGReusableLabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = TGClassicAwareNavigationTitleColor(_presentation);
-        _titleLabel.shadowColor = [UIColor clearColor];
+        _titleLabel.shadowColor = TGClassicAwareNavigationShadowColor(_presentation, 0.9f);
         _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
-        _titleLabel.font = TGBoldSystemFontOfSize(17.0f);
+        _titleLabel.font = TGBoldSystemFontOfSize([TGPresentation brandedIOS6Style] ? 20.0f : 17.0f);
         _titleLabel.numberOfLines = 1;
         [self addSubview:_titleLabel];
     }
@@ -149,12 +188,14 @@ static UIColor *TGClassicAwareNavigationActiveSubtitleColor(TGPresentation *pres
 {
     if (_statusLabel == nil)
     {
-        _titleLabel.font = TGMediumSystemFontOfSize(17.0f);
+        _titleLabel.font = [TGPresentation brandedIOS6Style] ? TGBoldSystemFontOfSize(20.0f) : TGMediumSystemFontOfSize(17.0f);
         
         _statusLabel = [[UILabel alloc] init];
         _statusLabel.backgroundColor = [UIColor clearColor];
         _statusLabel.textColor = TGClassicAwareNavigationSubtitleColor(_presentation);
-        _statusLabel.font = TGSystemFontOfSize(13.0f);
+        _statusLabel.shadowColor = TGClassicAwareNavigationShadowColor(_presentation, 0.72f);
+        _statusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+        _statusLabel.font = TGSystemFontOfSize([TGPresentation brandedIOS6Style] ? 10.0f : ([TGPresentation classicIOS6Style] ? 12.0f : 13.0f));
         [self addSubview:_statusLabel];
     }
     
@@ -530,13 +571,28 @@ static UIView *findNavigationBar(UIView *view)
                 if (self.superview != nil)
                     [findNavigationBar(self.superview) addSubview:_unreadContainer];
                 
-                _unreadBackground = [[UIImageView alloc] initWithImage:_presentation.images.chatNavBadgeImage];
+                UIImage *badgeImage = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6BadgeImage] : _presentation.images.chatNavBadgeImage;
+                _unreadBackground = [[UIImageView alloc] initWithImage:badgeImage];
                 [_unreadContainer addSubview:_unreadBackground];
                 
                 _unreadLabel = [[UILabel alloc] init];
                 _unreadLabel.backgroundColor = [UIColor clearColor];
-                _unreadLabel.textColor = _presentation.pallete.navigationBadgeTextColor;
-                _unreadLabel.font = TGSystemFontOfSize(12.0f);
+                if ([TGPresentation brandedIOS6Style])
+                {
+                    _unreadBackground.layer.shadowColor = [UIColor blackColor].CGColor;
+                    _unreadBackground.layer.shadowOpacity = 0.80f;
+                    _unreadBackground.layer.shadowRadius = 1.5f;
+                    _unreadBackground.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
+                    UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:11.0f];
+                    _unreadLabel.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(11.0f);
+                    _unreadLabel.textColor = [UIColor whiteColor];
+                    _unreadLabel.textAlignment = NSTextAlignmentCenter;
+                }
+                else
+                {
+                    _unreadLabel.textColor = _presentation.pallete.navigationBadgeTextColor;
+                    _unreadLabel.font = TGSystemFontOfSize(12.0f);
+                }
                 [_unreadContainer addSubview:_unreadLabel];
                 
                 _unreadBackground.alpha = _editingMode ? 0.0f : 1.0f;
@@ -545,20 +601,34 @@ static UIView *findNavigationBar(UIView *view)
             
             _unreadContainer.hidden = false;
             
-            _unreadLabel.text = TGIsLocaleArabic() ? [TGStringUtils stringWithLocalizedNumberCharacters:[[NSString alloc] initWithFormat:@"%d", unreadCount]] : [[NSString alloc] initWithFormat:@"%d", unreadCount];
+            _unreadLabel.text = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6BadgeTextForCount:unreadCount] : (TGIsLocaleArabic() ? [TGStringUtils stringWithLocalizedNumberCharacters:[[NSString alloc] initWithFormat:@"%d", unreadCount]] : [[NSString alloc] initWithFormat:@"%d", unreadCount]);
             [_unreadLabel sizeToFit];
             
             CGPoint offset = CGPointMake(14.0f, UIInterfaceOrientationIsPortrait(_orientation) ? 2.0f : 0.0f);
             offset.x += [TGViewController safeAreaInsetForOrientation:_orientation].left - 1.0f;
             offset.y -= 1.0f;
             
-            _unreadBackground.frame = CGRectMake(offset.x, offset.y, MAX(_unreadLabel.frame.size.width + 10.0f, 19.0f), 19.0f);
+            bool brandedBadge = [TGPresentation brandedIOS6Style];
+            CGFloat badgeWidth = MAX(_unreadLabel.frame.size.width + 10.0f, brandedBadge ? 18.0f : 19.0f);
+            CGFloat badgeHeight = brandedBadge ? 18.0f : 19.0f;
+            _unreadBackground.frame = CGRectMake(offset.x, offset.y, badgeWidth, badgeHeight);
             if (TGAppDelegateInstance.rootController.isRTL) {
                 CGRect frame = _unreadBackground.frame;
                 frame.origin.x = 10.0f - _unreadBackground.frame.size.width - [TGViewController safeAreaInsetForOrientation:_orientation].right;
                 _unreadBackground.frame = frame;
             }
-            _unreadLabel.frame = CGRectMake(_unreadBackground.frame.origin.x + TGScreenPixelFloor((_unreadBackground.frame.size.width - _unreadLabel.frame.size.width) / 2.0f), offset.y + 1.0f + (TGIsLocaleArabic() ? 1.0f : 0.0f) + 1.0f, _unreadLabel.frame.size.width, _unreadLabel.frame.size.height);
+            if (brandedBadge)
+            {
+                _unreadBackground.image = [TGPresentation brandedIOS6BadgeImageForWidth:badgeWidth];
+                _unreadBackground.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadBackground.bounds cornerRadius:9.0f].CGPath;
+                _unreadLabel.textAlignment = NSTextAlignmentCenter;
+                _unreadLabel.frame = CGRectMake(_unreadBackground.frame.origin.x, _unreadBackground.frame.origin.y, _unreadBackground.frame.size.width, _unreadBackground.frame.size.height);
+            }
+            else
+            {
+                _unreadLabel.textAlignment = NSTextAlignmentLeft;
+                _unreadLabel.frame = CGRectMake(_unreadBackground.frame.origin.x + TGScreenPixelFloor((_unreadBackground.frame.size.width - _unreadLabel.frame.size.width) / 2.0f), offset.y + 1.0f + (TGIsLocaleArabic() ? 1.0f : 0.0f) + 1.0f, _unreadLabel.frame.size.width, _unreadLabel.frame.size.height);
+            }
         }
         else if (_unreadContainer != nil)
         {
@@ -678,7 +748,17 @@ static UIView *findNavigationBar(UIView *view)
             }
             _unreadBackground.frame = unreadBackgroundFrame;
             
-            _unreadLabel.frame = CGRectMake(_unreadBackground.frame.origin.x + TGRetinaFloor((_unreadBackground.frame.size.width - _unreadLabel.frame.size.width) / 2.0f), offset.y + 1.0f + (TGIsLocaleArabic() ? 1.0f : 0.0f) + 1.0f, _unreadLabel.frame.size.width, _unreadLabel.frame.size.height);
+            if ([TGPresentation brandedIOS6Style])
+            {
+                _unreadBackground.image = [TGPresentation brandedIOS6BadgeImageForWidth:_unreadBackground.frame.size.width];
+                _unreadBackground.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadBackground.bounds cornerRadius:9.0f].CGPath;
+                _unreadLabel.textAlignment = NSTextAlignmentCenter;
+                _unreadLabel.frame = _unreadBackground.frame;
+            }
+            else
+            {
+                _unreadLabel.frame = CGRectMake(_unreadBackground.frame.origin.x + TGRetinaFloor((_unreadBackground.frame.size.width - _unreadLabel.frame.size.width) / 2.0f), offset.y + 1.0f + (TGIsLocaleArabic() ? 1.0f : 0.0f) + 1.0f, _unreadLabel.frame.size.width, _unreadLabel.frame.size.height);
+            }
         }
     }
 }
@@ -838,7 +918,7 @@ static UIView *findNavigationBar(UIView *view)
             
             CGPoint titleOrigin = CGPointMake(titleHorizontalAdjustment + CGFloor((bounds.size.width - titleTotalWidth) / 2.0f), -17.0f + titlePortraitOffset);
             if (!_showStatus) {
-                titleOrigin.y += 8.0f;
+                titleOrigin.y += [TGPresentation brandedIOS6Style] ? 6.0f : 8.0f;
             }
             
             for (TGModernConversationTitleIcon *icon in _icons)

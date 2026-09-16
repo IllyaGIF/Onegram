@@ -48,7 +48,7 @@
             [self addSubview:webView];
             
             if (html.length != 0) {
-                [(id)webView loadHTMLString:html baseURL:nil];
+                [webView loadHTMLString:html baseURL:nil];
             } else {
                 NSURL *parsedUrl = [NSURL URLWithString:url];
                 NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:parsedUrl];
@@ -123,7 +123,7 @@
                 [self addSubview:webView];
                 
                 if (html.length != 0) {
-                    [(id)webView loadHTMLString:html baseURL:nil];
+                    [webView loadHTMLString:html baseURL:nil];
                 } else {
                     NSURL *parsedUrl = [NSURL URLWithString:url];
                     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:parsedUrl];

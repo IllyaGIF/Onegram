@@ -1390,7 +1390,7 @@ static unsigned char strToChar (char a, char b)
         buf[1] = [hex characterAtIndex:i+1];
         char *b2 = NULL;
         *bp++ = strtol(buf, &b2, 16);
-        NSAssert(b2 == buf + 2, @"String should be all hex digits: %@ (bad digit around %d)", hex, i);
+        NSAssert(b2 == buf + 2, @"String should be all hex digits: %@ (bad digit around %ld)", hex, (long)i);
     }
     
     return [NSData dataWithBytesNoCopy:bytes length:[hex length]/2 freeWhenDone:YES];

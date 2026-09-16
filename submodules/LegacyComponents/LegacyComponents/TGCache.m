@@ -117,24 +117,56 @@ static NSFileManager *cacheFileManager = nil;
     {
         TG_SYNCHRONIZED_INIT(_dataMemoryCache);
         
-        _imageMemoryLimit = deviceMemorySize() > 300 ? (int)(15 * 1024 * 1024) : (int)(11 * 1024 * 1024);
-        _imageMemoryEvictionInterval = deviceMemorySize() > 300 ? 1024 * 1024 : 812 * 1024;
-        
-        //_imageMemoryLimit = 10;
-        //_imageMemoryEvictionInterval = 10;
-        
-        _thumbnailMemoryLimit = deviceMemorySize() > 300 ? (int)(1.6 * 1024 * 1024) : (int)(1.1 * 1024 * 1024);
-        _thumbnailEvictionInterval = cpuCoreCount() > 1 ? (int)(0.4 * 1024 * 1024) : (int)(0.25 * 1024 * 1024);
-        
-        _dataMemoryLimit = deviceMemorySize() > 300 ? (int)(1 * 1024 * 1024) : (int)(0.6 * 1024 * 1024);
-        _dataMemoryEvictionInterval = cpuCoreCount() > 1 ? (int)(0.4 * 1024 * 1024) : (int)(0.25 * 1024 * 1024);
-        
-        _diskLimit = 32 * 1024 * 1024;
-        _diskEvictionInterval = 6 * 1024 * 1024;
-        
-        _memoryWarningBaseline = deviceMemorySize() > 300 ? (int)(1.5 * 1024 * 1024) : (int)(1.1 * 1024 * 1024);
-        
-        _backgroundBaseline = deviceMemorySize() > 300 ? (int)(5.8 * 1024 * 1024) : (int)(2.8 * 1024 * 1024);
+        int memorySize = deviceMemorySize();
+        if (memorySize <= 512)
+        {
+            _imageMemoryLimit = 12 * 1024 * 1024;
+            _thumbnailMemoryLimit = 1536 * 1024;
+            _dataMemoryLimit = 1024 * 1024;
+            _diskLimit = 64 * 1024 * 1024;
+            _memoryWarningBaseline = 1536 * 1024;
+            _backgroundBaseline = 4 * 1024 * 1024;
+        }
+        else if (memorySize <= 1024)
+        {
+            _imageMemoryLimit = 20 * 1024 * 1024;
+            _thumbnailMemoryLimit = 3 * 1024 * 1024;
+            _dataMemoryLimit = 2 * 1024 * 1024;
+            _diskLimit = 96 * 1024 * 1024;
+            _memoryWarningBaseline = 2 * 1024 * 1024;
+            _backgroundBaseline = 8 * 1024 * 1024;
+        }
+        else if (memorySize <= 2048)
+        {
+            _imageMemoryLimit = 32 * 1024 * 1024;
+            _thumbnailMemoryLimit = 5 * 1024 * 1024;
+            _dataMemoryLimit = 3 * 1024 * 1024;
+            _diskLimit = 128 * 1024 * 1024;
+            _memoryWarningBaseline = 3 * 1024 * 1024;
+            _backgroundBaseline = 12 * 1024 * 1024;
+        }
+        else if (memorySize <= 4096)
+        {
+            _imageMemoryLimit = 64 * 1024 * 1024;
+            _thumbnailMemoryLimit = 8 * 1024 * 1024;
+            _dataMemoryLimit = 6 * 1024 * 1024;
+            _diskLimit = 192 * 1024 * 1024;
+            _memoryWarningBaseline = 4 * 1024 * 1024;
+            _backgroundBaseline = 20 * 1024 * 1024;
+        }
+        else
+        {
+            _imageMemoryLimit = 96 * 1024 * 1024;
+            _thumbnailMemoryLimit = 12 * 1024 * 1024;
+            _dataMemoryLimit = 8 * 1024 * 1024;
+            _diskLimit = 256 * 1024 * 1024;
+            _memoryWarningBaseline = 6 * 1024 * 1024;
+            _backgroundBaseline = 32 * 1024 * 1024;
+        }
+        _imageMemoryEvictionInterval = MAX(512 * 1024, _imageMemoryLimit / 8);
+        _thumbnailEvictionInterval = MAX(256 * 1024, _thumbnailMemoryLimit / 8);
+        _dataMemoryEvictionInterval = MAX(256 * 1024, _dataMemoryLimit / 8);
+        _diskEvictionInterval = MAX(8 * 1024 * 1024, _diskLimit / 8);
         
         _temporaryCachedImagesSources = [[NSMutableArray alloc] init];
         
@@ -348,7 +380,17 @@ static NSFileManager *cacheFileManager = nil;
 {
     if (image != nil && (availability & TGCacheMemory))
     {
-        int size = (int)(image.size.width * image.size.height * 4 * image.scale);
+        CGImageRef cgImage = image.CGImage;
+        uint64_t byteSize = 0;
+        if (cgImage != NULL)
+            byteSize = (uint64_t)CGImageGetBytesPerRow(cgImage) * (uint64_t)CGImageGetHeight(cgImage);
+        if (byteSize == 0)
+        {
+            CGFloat pixelWidth = image.size.width * image.scale;
+            CGFloat pixelHeight = image.size.height * image.scale;
+            byteSize = (uint64_t)ceil(pixelWidth) * (uint64_t)ceil(pixelHeight) * 4ULL;
+        }
+        int size = byteSize > 0x7fffffffULL ? 0x7fffffff : (int)byteSize;
         dispatch_block_t block = ^
         {
             TGCacheRecord *cacheRecord = [_memoryCache objectForKey:url];

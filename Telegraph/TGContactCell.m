@@ -79,8 +79,8 @@
         
         _contactContentsView = [[TGContactCellContents alloc] initWithFrame:self.contentView.bounds];
         _contactContentsView.userInteractionEnabled = false;
-        _contactContentsView.titleFont = TGSystemFontOfSize(17);
-        _contactContentsView.titleBoldFont = TGMediumSystemFontOfSize(17.0f);
+        _contactContentsView.titleFont = TGSystemFontOfSize(16.0f);
+        _contactContentsView.titleBoldFont = TGMediumSystemFontOfSize(16.0f);
         _contactContentsView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self.contentView addSubview:_contactContentsView];
 
@@ -91,7 +91,7 @@
         
         _boldMode = 2;
         
-        CGFloat subtitleFontSize = TGIsPad() ? 14.0f : 13.0f;
+        CGFloat subtitleFontSize = [TGPresentation brandedIOS6Style] ? 11.0f : (TGIsPad() ? 14.0f : 13.0f);
         CGFloat amWidth = TGIsPad() ? 23.0f : 22.0f;
         
         _subtitleLabel = [[TGDateLabel alloc] initWithFrame:CGRectZero];
@@ -126,7 +126,7 @@
     _contactContentsView.presentation = presentation;
     _subtitleLabel.textColor = _subtitleActive ? _presentation.pallete.accentColor : _presentation.pallete.secondaryTextColor;
     
-    _separatorLayer.backgroundColor = presentation.pallete.separatorColor.CGColor;
+    _separatorLayer.backgroundColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0xd7d7d7).CGColor : presentation.pallete.separatorColor.CGColor;
     self.selectedBackgroundView.backgroundColor = presentation.pallete.selectionColor;
 }
 
@@ -209,6 +209,11 @@
         _subtitleLabel.attributedText = _subtitleAttributedText;
         [_subtitleLabel measureTextSize];
         
+        if ([TGPresentation brandedIOS6Style])
+        {
+            _subtitleLabel.dateText = nil;
+        }
+        
         _subtitleLabel.hidden = _subtitleAttributedText.length == 0;
     }
     else
@@ -216,13 +221,20 @@
         _subtitleLabel.dateText = _subtitleText;
         [_subtitleLabel measureTextSize];
         
+        if ([TGPresentation brandedIOS6Style])
+        {
+            _subtitleLabel.dateText = nil;
+        }
+        
         _subtitleLabel.hidden = _subtitleText == nil || _subtitleText.length == 0;
     }
     
-    _avatarView.hidden = false;
-    
-    CGFloat diameter = TGIsPad() ? 45.0f : 40.0f;
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    _avatarView.hidden = _hideAvatar;
+
+    CGFloat diameter = brandedIOS6Style ? 34.0f : (TGIsPad() ? 45.0f : 40.0f);
     UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:diameter];
+    NSString *filter = brandedIOS6Style ? @"scale:34x34" : (TGIsPad() ? @"circle:45x45" : @"circle:40x40");
     if (_avatarUrl.length != 0)
     {
         _avatarView.fadeTransitionDuration = animateState ? 0.14 : 0.3;
@@ -231,15 +243,25 @@
             if (animateState)
             {
                 UIImage *currentImage = [_avatarView currentImage];
-                [_avatarView loadImage:_avatarUrl filter:TGIsPad() ? @"circle:45x45" : @"circle:40x40" placeholder:(currentImage != nil ? currentImage : placeholder) forceFade:true];
+                [_avatarView loadImage:_avatarUrl filter:filter placeholder:(currentImage != nil ? currentImage : placeholder) forceFade:true];
             }
             else
-                [_avatarView loadImage:_avatarUrl filter:TGIsPad() ? @"circle:45x45" : @"circle:40x40" placeholder:placeholder];
+                [_avatarView loadImage:_avatarUrl filter:filter placeholder:placeholder];
         }
     }
     else
     {
         [_avatarView loadUserPlaceholderWithSize:CGSizeMake(diameter, diameter) uid:_hideAvatar ? 0 : (int32_t)_itemId firstName:_user.firstName lastName:_user.lastName placeholder:placeholder];
+    }
+
+    if (brandedIOS6Style)
+    {
+        _avatarView.clipsToBounds = false;
+        _avatarView.layer.cornerRadius = 8.0f;
+        _avatarView.layer.shadowColor = [UIColor blackColor].CGColor;
+        _avatarView.layer.shadowOpacity = 0.18f;
+        _avatarView.layer.shadowRadius = 2.0f;
+        _avatarView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
     }
     
     if (_checkButton != nil)
@@ -334,6 +356,48 @@
 - (void)layoutSubviews
 {
     [super layoutSubviews];
+
+    if ([TGPresentation brandedIOS6Style])
+    {
+        CGFloat separatorHeight = TGScreenPixel;
+        CGFloat avatarLeft = _selectionEnabled ? 44.0f : 8.0f;
+        CGFloat avatarSize = 34.0f;
+        bool compactListStyle = _hideAvatar && _subtitleLabel.hidden;
+        _separatorLayer.frame = CGRectMake(0.0f, self.frame.size.height - separatorHeight, self.frame.size.width, separatorHeight);
+        _contactContentsView.titleFont = TGSystemFontOfSize(compactListStyle ? 20.0f : 16.0f);
+        _contactContentsView.titleBoldFont = TGBoldSystemFontOfSize(compactListStyle ? 20.0f : 16.0f);
+        _subtitleLabel.dateFont = TGSystemFontOfSize(11.0f);
+        _subtitleLabel.dateTextFont = _subtitleLabel.dateFont;
+        _subtitleLabel.dateLabelFont = _subtitleLabel.dateFont;
+        _avatarView.hidden = _hideAvatar;
+        _avatarView.frame = CGRectMake(avatarLeft, 5.0f, avatarSize, avatarSize);
+        _avatarView.clipsToBounds = false;
+        _avatarView.layer.cornerRadius = 8.0f;
+        CGSize viewSize = self.contentView.frame.size;
+        CGFloat textLeft = _hideAvatar ? (_selectionEnabled ? 42.0f : (compactListStyle ? 10.0f : 16.0f)) : (CGRectGetMaxX(_avatarView.frame) + 10.0f);
+        CGFloat titleY = _subtitleLabel.hidden ? 10.0f : 5.0f;
+        _contactContentsView.titleOffset = CGPointMake(textLeft, titleY);
+        if (!_subtitleLabel.hidden)
+        {
+            [_subtitleLabel measureTextSize];
+            _subtitleLabel.frame = CGRectMake(textLeft, 23.0f, MAX(0.0f, viewSize.width - textLeft - 8.0f), 13.0f);
+        }
+        if (_checkButton != nil)
+            _checkButton.frame = CGRectMake(_selectionEnabled ? 6.0f : (-12.0f - _checkButton.frame.size.width), CGFloor((self.frame.size.height - 32.0f) / 2.0f), 32.0f, 32.0f);
+        if (!_markedUserBadgeView.hidden)
+        {
+            UIFont *firstFont = (_contactContentsView.titleBoldMode & 1) ? _contactContentsView.titleBoldFont : _contactContentsView.titleFont;
+            UIFont *secondFont = (_contactContentsView.titleBoldMode & 2) ? _contactContentsView.titleBoldFont : _contactContentsView.titleFont;
+            CGFloat titleWidth = [_contactContentsView.titleFirst sizeWithFont:firstFont].width;
+            if (_contactContentsView.titleSecond.length != 0)
+                titleWidth += 4.0f + [_contactContentsView.titleSecond sizeWithFont:secondFont].width;
+            static const CGFloat badgeWidth = 38.0f;
+            static const CGFloat badgeHeight = 16.0f;
+            CGFloat badgeX = MIN(_contactContentsView.titleOffset.x + titleWidth + 5.0f, viewSize.width - badgeWidth - 8.0f);
+            _markedUserBadgeView.frame = CGRectMake(CGFloor(badgeX), CGFloor(titleY + 1.0f), badgeWidth, badgeHeight);
+        }
+        return;
+    }
     
     CGFloat separatorHeight = TGScreenPixel;
     CGFloat separatorInset = _selectionEnabled ? 98 : (TGIsPad() ? 74.0f : 65.0f);
@@ -391,6 +455,11 @@
             titleLabelsY += 1;
         
         [_subtitleLabel measureTextSize];
+        
+        if ([TGPresentation brandedIOS6Style])
+        {
+            _subtitleLabel.dateText = nil;
+        }
         _subtitleLabel.frame = CGRectMake(avatarWidth + 21 + leftPadding, titleLabelsY + titleSizeGeneric.height + 1.0f + (TGIsPad() ? 1.0f : TGRetinaPixel), subtitleSize.width, subtitleSize.height);
     }
     

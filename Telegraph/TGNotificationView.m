@@ -82,7 +82,7 @@ const CGFloat TGNotificationBottomHitTestInset = 20.0f;
         
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
         if (iosMajorVersion() >= 8)
-            [_backgroundView.vibrantEffectView.contentView addSubview:_handleView];
+            [_backgroundView.vibrantEffectView addSubview:_handleView];
         else
 #endif
             [_backgroundView addSubview:_handleView];

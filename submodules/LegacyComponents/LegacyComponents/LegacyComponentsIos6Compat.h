@@ -323,6 +323,15 @@ UIColor *TGSeparatorColor();
 #endif
 #endif
 
+#ifndef TG_LEGACY_CTFONT_FROM_UIFONT
+#define TG_LEGACY_CTFONT_FROM_UIFONT
+static inline CTFontRef TGIos6CreateCTFontFromUIFont(UIFont *font)
+{
+    return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
+}
+#endif
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 #ifndef TG_LEGACY_UIIMPACT_FEEDBACK_DECLS
 #define TG_LEGACY_UIIMPACT_FEEDBACK_DECLS
 typedef NSInteger UIImpactFeedbackStyle;
@@ -668,13 +677,7 @@ typedef void (^NSURLSessionDataTaskCompletionHandler)(NSData *data, NSURLRespons
 @end
 #endif
 
-#ifndef TG_LEGACY_CTFONT_FROM_UIFONT
-#define TG_LEGACY_CTFONT_FROM_UIFONT
-static inline CTFontRef TGIos6CreateCTFontFromUIFont(UIFont *font)
-{
-    return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
-}
-#endif
+
 
 #ifndef NS_ASSUME_NONNULL_BEGIN
 #define NS_ASSUME_NONNULL_BEGIN
@@ -1104,13 +1107,8 @@ typedef NSInteger UIScrollViewContentInsetAdjustmentBehavior;
 @property (nonatomic) CGFloat transitionProgress;
 - (instancetype)initWithCurrentLayout:(PSUICollectionViewLayout *)currentLayout nextLayout:(PSUICollectionViewLayout *)newLayout;
 @end
-@interface PSUICollectionViewLayoutAttributes (LegacyComponentsBoundsDeclarations)
-@property (nonatomic) CGRect bounds;
-@end
-@interface PSUICollectionView (LegacyComponentsTransitionDeclarations)
-- (UICollectionViewTransitionLayout *)startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
-- (void)finishInteractiveTransition;
-@end
+
+
 @interface UIScrollView (LegacyComponentsContentInsetAdjustmentDeclarations)
 @property (nonatomic) UIScrollViewContentInsetAdjustmentBehavior contentInsetAdjustmentBehavior;
 @end
@@ -1265,6 +1263,16 @@ typedef NSInteger AVCaptureSessionInterruptionReason;
 #define AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableWithMultipleForegroundApps 1
 #define AVCaptureSessionInterruptionReasonKey @"AVCaptureSessionInterruptionReasonKey"
 #endif
+
+#endif
+
+@interface PSUICollectionViewLayoutAttributes (LegacyComponentsBoundsDeclarations)
+@property (nonatomic) CGRect bounds;
+@end
+@interface PSUICollectionView (LegacyComponentsTransitionDeclarations)
+- (UICollectionViewTransitionLayout *)startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
+- (void)finishInteractiveTransition;
+@end
 
 #endif
 #endif

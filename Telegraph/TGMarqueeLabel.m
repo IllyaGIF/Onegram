@@ -83,8 +83,12 @@ CGPoint MLOffsetCGPoint(CGPoint point, CGFloat offset);
 {
     self.clipsToBounds = true;
     self.numberOfLines = 1;
+    self.backgroundColor = [UIColor clearColor];
+    self.opaque = false;
     
     self.internalLabel = [[UILabel alloc] initWithFrame:self.bounds];
+    self.internalLabel.backgroundColor = [UIColor clearColor];
+    self.internalLabel.opaque = false;
     self.internalLabel.tag = 700;
     self.internalLabel.layer.anchorPoint = CGPointMake(0.0f, 0.0f);
     [self addSubview:self.internalLabel];

@@ -17,6 +17,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
 static bool sTGIOS6QRLoginFlowActive = false;
+static const NSInteger TGOnegramTransportCacheVersion = 1;
 
 void TGIOS6SetQRLoginFlowActive(bool active)
 {
@@ -328,11 +329,11 @@ static NSString *TGIOS6DescribeInputPeer(TLInputPeer *peer)
     else if ([peer isKindOfClass:[TLInputPeer$inputPeerUser class]])
     {
         TLInputPeer$inputPeerUser *inputPeer = (TLInputPeer$inputPeerUser *)peer;
-        return [[NSString alloc] initWithFormat:@"inputPeerUser id=%d accessHash=%lld", inputPeer.user_id, inputPeer.access_hash];
+        return [[NSString alloc] initWithFormat:@"inputPeerUser id=%lld accessHash=%lld", inputPeer.user_id, inputPeer.access_hash];
     }
     else if ([peer isKindOfClass:[TLInputPeer$inputPeerChat class]])
     {
-        return [[NSString alloc] initWithFormat:@"inputPeerChat id=%d", ((TLInputPeer$inputPeerChat *)peer).chat_id];
+        return [[NSString alloc] initWithFormat:@"inputPeerChat id=%lld", ((TLInputPeer$inputPeerChat *)peer).chat_id];
     }
     
     return [[NSString alloc] initWithFormat:@"%@", peer];
@@ -345,15 +346,7 @@ static NSString *TGIOS6DescribeRpcForError(TLMetaRpc *rpc)
     else if ([rpc isKindOfClass:[TLRPCchannels_getParticipant class]])
     {
         TLRPCchannels_getParticipant *getParticipant = (TLRPCchannels_getParticipant *)rpc;
-        NSString *userDesc = @"nil";
-        if ([getParticipant.user_id isKindOfClass:[TLInputUser$inputUser class]])
-        {
-            TLInputUser$inputUser *inputUser = (TLInputUser$inputUser *)getParticipant.user_id;
-            userDesc = [[NSString alloc] initWithFormat:@"inputUser id=%d accessHash=%lld", inputUser.user_id, inputUser.access_hash];
-        }
-        else
-            userDesc = [[NSString alloc] initWithFormat:@"%@", getParticipant.user_id];
-        return [[NSString alloc] initWithFormat:@"channels.getParticipant %@ %@", TGIOS6DescribeInputChannel(getParticipant.channel), userDesc];
+        return [[NSString alloc] initWithFormat:@"channels.getParticipant %@ %@", TGIOS6DescribeInputChannel(getParticipant.channel), TGIOS6DescribeInputPeer(getParticipant.participant)];
     }
     else if ([rpc isKindOfClass:[TLRPCchannels_getMessages class]])
     {
@@ -368,7 +361,7 @@ static NSString *TGIOS6DescribeRpcForError(TLMetaRpc *rpc)
     else if ([rpc isKindOfClass:[TLRPCmessages_getHistory class]])
     {
         TLRPCmessages_getHistory *getHistory = (TLRPCmessages_getHistory *)rpc;
-        return [[NSString alloc] initWithFormat:@"messages.getHistory %@ offset=%d add=%d limit=%d max=%d min=%d hash=%lld", TGIOS6DescribeInputPeer(getHistory.peer), getHistory.offset_id, getHistory.add_offset, getHistory.limit, getHistory.max_id, getHistory.min_id, getHistory.hash];
+        return [[NSString alloc] initWithFormat:@"messages.getHistory %@ offset=%d add=%d limit=%d max=%d min=%d hash=%lld", TGIOS6DescribeInputPeer(getHistory.peer), getHistory.offset_id, getHistory.add_offset, getHistory.limit, getHistory.max_id, getHistory.min_id, getHistory.n_hash];
     }
     
     return [[NSString alloc] initWithFormat:@"%@", [rpc class]];
@@ -645,6 +638,17 @@ static TGTelegramNetworking *singleton = nil;
             }];
         }
         
+        NSNumber *transportCacheVersion = [_keychain objectForKey:@"onegramTransportCacheVersion" group:@"meta"];
+        if ([transportCacheVersion integerValue] < TGOnegramTransportCacheVersion)
+        {
+            [_keychain removeObjectForKey:@"datacenterAddressSetById" group:@"persistent"];
+            [_keychain removeObjectForKey:@"datacenterGenericTransportSchemeById" group:@"persistent"];
+            [_keychain removeObjectForKey:@"datacenterMediaTransportSchemeById" group:@"persistent"];
+            [_keychain removeObjectForKey:@"datacenterProxyGenericTransportSchemeById" group:@"persistent"];
+            [_keychain removeObjectForKey:@"datacenterProxyMediaTransportSchemeById" group:@"persistent"];
+            [_keychain setObject:@(TGOnegramTransportCacheVersion) forKey:@"onegramTransportCacheVersion" group:@"meta"];
+        }
+
         _context.keychain = _keychain;
 
         if (_isTestingEnvironment)
@@ -965,7 +969,9 @@ static TGTelegramNetworking *singleton = nil;
         MTDatacenterAuthInfo *existingAuthInfo = [_context authInfoForDatacenterWithId:datacenterId];
         bool forceLegacyApiInitialization = TGTelegraphInstance.clientUserId != 0 && existingAuthInfo != nil && existingAuthInfo.authKeyAttributes[@"apiInitializationHash"] == nil;
         
-        _mtProto = [[MTProto alloc] initWithContext:_context datacenterId:datacenterId usageCalculationInfo:[self dataUsageInfo]];
+        MTNetworkUsageCalculationInfo *dataUsageInfo = [self dataUsageInfo];
+        dataUsageInfo.primaryConnection = true;
+        _mtProto = [[MTProto alloc] initWithContext:_context datacenterId:datacenterId usageCalculationInfo:dataUsageInfo];
         _mtProto.delegate = self;
         if (forceLegacyApiInitialization)
         {
@@ -1808,7 +1814,7 @@ static TGTelegramNetworking *singleton = nil;
         {
             _completeWakeUpToken++;
             
-            TGLog(@"[TGTelegramNetworking completed wake up: %@ (%d)]", reason, _currentWakeUpCompletions.count);
+            TGLog(@"[TGTelegramNetworking completed wake up: %@ (%lu)]", reason, (unsigned long)_currentWakeUpCompletions.count);
             
             for (dispatch_block_t block in _currentWakeUpCompletions)
             {

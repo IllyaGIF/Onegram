@@ -465,7 +465,7 @@
         if (useURL)
             [_wkWebView loadRequest:request];
         else
-            [(id)_wkWebView loadHTMLString:embedHTML baseURL:[self _baseURL]];
+            [_wkWebView loadHTMLString:embedHTML baseURL:[self _baseURL]];
     }];
 }
 

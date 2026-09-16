@@ -1,4 +1,5 @@
 #import "TGExtendedChatDataRequestActor.h"
+#import <objc/runtime.h>
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 #import "../submodules/LegacyComponents/LegacyComponents/SGraphObjectNode.h"
@@ -162,6 +163,9 @@ static NSMutableDictionary *extendedChatDataDictionary()
     if (chatFull.chats.count != 0)
     {
         TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:[chatFull.chats lastObject]];
+        NSString *about = objc_getAssociatedObject(chatFull.full_chat, NSSelectorFromString(@"tg_ios6_chatAbout"));
+        if (about != nil)
+            conversation.about = about;
         
         [TGDatabaseInstance() transactionAddMessages:nil updateConversationDatas:@{@(conversation.conversationId): conversation} notifyAdded:true];
     }

@@ -51,6 +51,8 @@ extern NSString *authorNameYou;
 - (void)maybeDismissSearchResults;
 
 - (void)titleStateUpdated:(NSString *)text state:(TGDialogListState)state;
+- (void)ios6SynchronizeDialogState;
+- (bool)dialogListIsFastScrolling;
 
 - (void)userTypingInConversationUpdated:(int64_t)conversationId typingString:(NSString *)typingString;
 

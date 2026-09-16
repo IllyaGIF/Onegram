@@ -84,7 +84,7 @@
         
         __weak TGGenericPeerPlaylistHelper *weakSelf = self;
         
-        SSignal *initialSignal = [[TGDatabaseInstance() modify:^id{
+        SSignal *initialSignal = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:atMessageId peerId:peerId];
             if (message != nil) {
                 return [SSignal single:@[message]];

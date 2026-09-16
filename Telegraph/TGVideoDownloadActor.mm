@@ -554,7 +554,7 @@ public:
 {
     for (std::map<int, TGVideoPartData>::iterator it = _downloadingParts.begin(); it != _downloadingParts.end(); it++)
     {
-        TGLog(@"part %d — %d (%f — %f) data %d // %d", it->first, it->first + it->second.partLength, ((float)it->first) / ((float)_videoFileLength), ((float)(it->first + it->second.partLength)) / ((float)_videoFileLength), it->second.downloadedData.length, _videoFileLength);
+        TGLog(@"part %d — %d (%f — %f) data %lu // %d", it->first, it->first + it->second.partLength, ((float)it->first) / ((float)_videoFileLength), ((float)(it->first + it->second.partLength)) / ((float)_videoFileLength), (unsigned long)it->second.downloadedData.length, _videoFileLength);
     }
 }
 

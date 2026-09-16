@@ -100,7 +100,7 @@ public:
 		setValue(value);
 	}
 
-	template <class T>
+	template <class T, typename std::enable_if<!std::is_same<typename std::decay<T>::type, variant>::value, int>::type = 0>
 	variant(T &&value) : _active(-1) {
 		setValue(std::forward<T>(value));
 	}
@@ -122,7 +122,7 @@ public:
 		return *this;
 	}
 
-	template <class T>
+	template <class T, typename std::enable_if<!std::is_same<typename std::decay<T>::type, variant>::value, int>::type = 0>
 	variant &operator=(T &&value) {
 		setValue(std::forward<T>(value));
 		return *this;

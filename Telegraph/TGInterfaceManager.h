@@ -49,6 +49,7 @@
 
 - (void)displayHashtagOverview:(NSString *)hashtag conversationId:(int64_t)conversationId;
 
+- (bool)isConversationVisible:(int64_t)conversationId;
 - (void)displayBannerIfNeeded:(TGMessage *)message conversationId:(int64_t)conversationId;
 - (void)dismissBannerForConversationId:(int64_t)conversationId;
 - (void)dismissAllBanners;

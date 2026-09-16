@@ -9,6 +9,7 @@
 #import "TGUserInfoVariantCollectionItem.h"
 
 #import "TGUserInfoVariantCollectionItemView.h"
+#import "TGPresentation.h"
 
 @interface TGUserInfoVariantCollectionItem ()
 {
@@ -40,7 +41,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, 44.0f);
+    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] ? 35.0f : 44.0f);
 }
 
 - (void)itemSelected:(id)actionTarget
@@ -61,6 +62,7 @@
     [view setTitle:_title];
     [view setVariant:_variant];
     [view setVariantImage:_variantImage];
+    [view setIconName:_iconName];
 }
 
 - (void)setVariant:(NSString *)variant
@@ -73,6 +75,11 @@
     }
 }
 
+- (void)setIconName:(NSString *)iconName
+{
+    _iconName = iconName;
+    [(TGUserInfoVariantCollectionItemView *)[self boundView] setIconName:iconName];
+}
 
 - (void)setVariantImage:(UIImage *)variantImage
 {

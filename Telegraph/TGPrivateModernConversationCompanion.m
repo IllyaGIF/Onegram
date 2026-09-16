@@ -1301,7 +1301,8 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/messageFlagChanges", _conversationId],
         [[NSString alloc] initWithFormat:@"/tg/conversation/messageViewDateChanges"],
         [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 1],
-        @"/tg/blockedUsers"
+        @"/tg/blockedUsers",
+        [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]
     ] watcher:self];
 
     [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", _uid] watcher:self];
@@ -1561,6 +1562,13 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 
 - (void)actionStageResourceDispatched:(NSString *)path resource:(id)resource arguments:(id)arguments
 {
+    if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]])
+    {
+        TGDispatchOnMainThread(^{
+            [self _refreshPinnedMessages];
+        });
+    }
+
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/messages", _conversationId]])
     {
         NSArray *messages = ((SGraphObjectNode *)resource).object;
@@ -1822,7 +1830,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 
 - (SSignal *)userListForMention:(NSString *)mention canBeContextBot:(bool)canBeContextBot includeSelf:(bool)__unused includeSelf {
     return [[canBeContextBot ? [TGRecentContextBotsSignal recentBots] : [SSignal single:@[]] mapToSignal:^SSignal *(NSArray *userIds) {
-        return [TGDatabaseInstance() modify:^id{
+        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             NSString *normalizedMention = [mention lowercaseString];
             NSMutableArray *users = [[NSMutableArray alloc] init];
             for (NSNumber *nUserId in userIds) {

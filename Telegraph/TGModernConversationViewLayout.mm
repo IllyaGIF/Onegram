@@ -50,8 +50,8 @@ static bool TGIOS6ValidConversationIndexPath(NSIndexPath *indexPath)
         _dateOffset = (int)[[TGTelegramNetworking instance] timeOffset];
         
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-        if (iosMajorVersion() >= 7 && cpuCoreCount() > 1)
-            _dynamicAnimator = [[UIDynamicAnimator alloc] initWithCollectionViewLayout:self];
+        if (iosMajorVersion() >= 7 && cpuCoreCount() > 1 && [self isKindOfClass:[UICollectionViewLayout class]])
+            _dynamicAnimator = [[UIDynamicAnimator alloc] initWithCollectionViewLayout:(UICollectionViewLayout *)self];
 #endif
         
         _cachedGroupedLayouts = [[NSMutableDictionary alloc] init];
@@ -379,16 +379,38 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
             
             if (groupedLayout != nil)
             {
-                // The conversation collection is vertically inverted. Album
-                // items therefore cannot use different outer cell heights:
-                // a short secondary cell is aligned with the bottom of the
-                // taller caption-bearing primary cell and its photo appears
-                // over the caption. First calculate the complete group height.
+                TGMessageModernConversationItem *primaryGroupItem = nil;
                 for (TGMessageModernConversationItem *groupItem in groupedMessageItems)
                 {
+                    TGMessageGroupPositionFlags position = [groupedLayout positionForMessageId:groupItem->_message.mid];
+                    if ((position & TGMessageGroupPositionTop) && (position & TGMessageGroupPositionLeft))
+                    {
+                        primaryGroupItem = groupItem;
+                        break;
+                    }
+                }
+
+                CGFloat groupedMediaOffsetX = 0.0f;
+                CGFloat groupedMediaOffsetY = 0.0f;
+                if (primaryGroupItem != nil)
+                {
+                    [primaryGroupItem setGroupedMediaOffsetX:0.0f y:0.0f];
+                    primaryGroupItem.collapseFlags = groupCollapseFlags;
+                    [primaryGroupItem updateGroupedLayout:groupedLayout];
+                    itemSize = [primaryGroupItem sizeForContainerSize:CGSizeMake(containerWidth, 0.0f) viewStorage:viewStorage];
+                    groupHeight = MAX(groupHeight, itemSize.height);
+                    groupedMediaOffsetX = [primaryGroupItem groupedMediaOffsetX];
+                    groupedMediaOffsetY = [primaryGroupItem groupedMediaOffsetY];
+                }
+
+                for (TGMessageModernConversationItem *groupItem in groupedMessageItems)
+                {
+                    if (groupItem == primaryGroupItem)
+                        continue;
+
+                    [groupItem setGroupedMediaOffsetX:groupedMediaOffsetX y:groupedMediaOffsetY];
                     groupItem.collapseFlags = groupCollapseFlags;
                     [groupItem updateGroupedLayout:groupedLayout];
-                    
                     itemSize = [groupItem sizeForContainerSize:CGSizeMake(containerWidth, 0.0f) viewStorage:viewStorage];
                     groupHeight = MAX(groupHeight, itemSize.height);
                 }

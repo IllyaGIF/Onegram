@@ -66,7 +66,7 @@
         _recentBotsDisposable = [[SMetaDisposable alloc] init];
         
         SSignal *recentBots = [[TGRecentContextBotsSignal recentBots] mapToSignal:^SSignal *(NSArray *userIds) {
-            return [TGDatabaseInstance() modify:^id{
+            return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                 NSMutableArray *users = [[NSMutableArray alloc] init];
                 for (NSNumber *nUid in userIds) {
                     TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];

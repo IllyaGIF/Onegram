@@ -74,7 +74,7 @@ const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants()
             minTextFontSize = 12.0f;
             maxTextFontSize = 26.0f;
             
-            defaultTextFontSize = 17.0f;
+            defaultTextFontSize = [TGPresentation brandedIOS6Style] ? 15.0f : 17.0f;
         }
         else
         {
@@ -374,6 +374,22 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 - (void)invalidateLifetimeReference
 {
     [_lifetimeReference invalidate];
+}
+
+- (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y
+{
+    _groupedMediaOffsetX = x;
+    _groupedMediaOffsetY = y;
+}
+
+- (CGFloat)groupedMediaOffsetX
+{
+    return _groupedMediaOffsetX;
+}
+
+- (CGFloat)groupedMediaOffsetY
+{
+    return _groupedMediaOffsetY;
 }
 
 - (TGMessageViewModelReference *)lifetimeReference

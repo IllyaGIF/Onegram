@@ -34,6 +34,7 @@
         _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
         
         _userInfoItem = [[TGUserInfoCollectionItem alloc] init];
+        _userInfoItem.brandedDetailsTextScale = 1.2f;
         _userInfoItem.transparent = true;
         _userInfoItem.interfaceHandle = _actionHandle;
         

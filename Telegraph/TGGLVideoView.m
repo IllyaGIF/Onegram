@@ -724,13 +724,11 @@ static NSMutableDictionary *queueItemsByPath() {
     
     _program = glCreateProgram();
     
-    // Create and compile the vertex shader.
     if (![self _compileShaderWithType:GL_VERTEX_SHADER outShader:&vertShader]) {
         TGLog(@"Failed to compile vertex shader");
         return false;
     }
     
-    // Create and compile fragment shader.
     if (![self _compileShaderWithType:GL_FRAGMENT_SHADER outShader:&fragShader]) {
         TGLog(@"Failed to compile fragment shader");
         return false;

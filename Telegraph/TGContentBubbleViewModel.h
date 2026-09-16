@@ -48,6 +48,7 @@ extern bool debugShowMessageIds;
     TGModernClockProgressViewModel *_progressModel;
     TGModernImageViewModel *_checkFirstModel;
     TGModernImageViewModel *_checkSecondModel;
+    TGModernImageViewModel *_deliveryPlateModel;
     bool _checkFirstEmbeddedInContent;
     bool _checkSecondEmbeddedInContent;
     TGModernImageViewModel *_unsentButtonModel;

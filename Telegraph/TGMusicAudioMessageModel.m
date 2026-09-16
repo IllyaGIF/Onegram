@@ -122,10 +122,10 @@ static CTFontRef textFontForSize(CGFloat size)
             _textModel.additionalTrailingWidth += 10.0f;
         [_contentModel addSubmodel:_textModel];
         
-        _titleModel = [[TGModernLabelViewModel alloc] initWithText:title textColor:_incomingAppearance ? _context.presentation.pallete.chatIncomingAccentColor : _context.presentation.pallete.chatOutgoingAccentColor font:TGCoreTextSystemFontOfSize(16.0f) maxWidth:maxWidth truncateInTheMiddle:false];
+        _titleModel = [[TGModernLabelViewModel alloc] initWithText:title textColor:(!_incomingAppearance && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : (_incomingAppearance ? _context.presentation.pallete.chatIncomingAccentColor : _context.presentation.pallete.chatOutgoingAccentColor) font:TGCoreTextSystemFontOfSize(16.0f) maxWidth:maxWidth truncateInTheMiddle:false];
         [_contentModel addSubmodel:_titleModel];
         
-        _performerModel = [[TGModernLabelViewModel alloc] initWithText:performer textColor:_incomingAppearance ? _context.presentation.pallete.chatIncomingSubtextColor : _context.presentation.pallete.chatOutgoingSubtextColor font:TGCoreTextSystemFontOfSize(13.0f) maxWidth:maxWidth truncateInTheMiddle:false];
+        _performerModel = [[TGModernLabelViewModel alloc] initWithText:performer textColor:(!_incomingAppearance && [TGPresentation brandedIOS6Style]) ? [UIColor whiteColor] : (_incomingAppearance ? _context.presentation.pallete.chatIncomingSubtextColor : _context.presentation.pallete.chatOutgoingSubtextColor) font:TGCoreTextSystemFontOfSize(13.0f) maxWidth:maxWidth truncateInTheMiddle:false];
         [_contentModel addSubmodel:_performerModel];
         _viaUser = viaUser;
     }

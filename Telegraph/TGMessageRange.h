@@ -28,7 +28,7 @@ inline TGMessageRange TGMessageRangeEmpty()
     
 inline bool TGMessageRangeEquals(TGMessageRange range1, TGMessageRange range2)
 {
-    return range1.firstDate == range2.firstDate && range1.lastDate == range2.lastDate && range1.firstMessageId == range2.firstMessageId && range1.firstLocalMessageId == range1.firstLocalMessageId && range1.lastMessageId == range2.lastMessageId && range1.lastLocalMessageId == range2.lastLocalMessageId;
+    return range1.firstDate == range2.firstDate && range1.lastDate == range2.lastDate && range1.firstMessageId == range2.firstMessageId && range1.firstLocalMessageId == range2.firstLocalMessageId && range1.lastMessageId == range2.lastMessageId && range1.lastLocalMessageId == range2.lastLocalMessageId;
 }
 
 #ifndef __cplusplus

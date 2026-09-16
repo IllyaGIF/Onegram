@@ -188,7 +188,7 @@
 }
 
 + (SSignal *)messageIdForPeerId:(int64_t)peerId date:(int32_t)date {
-    return [[TGDatabaseInstance() modify:^id{
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         return [self inputPeerWithPeerId:peerId];
     }] mapToSignal:^SSignal *(TLInputPeer *inputPeer) {
         if (inputPeer == nil) {

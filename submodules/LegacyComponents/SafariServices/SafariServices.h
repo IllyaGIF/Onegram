@@ -1,5 +1,13 @@
 #import <UIKit/UIKit.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+#import <SafariServices/SSReadingList.h>
+#endif
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
+#import <SafariServices/SFSafariViewController.h>
+#else
+
 @class SFSafariViewController;
 
 @protocol SFSafariViewControllerDelegate <NSObject>
@@ -13,3 +21,5 @@
 - (instancetype)initWithURL:(NSURL *)URL entersReaderIfAvailable:(BOOL)entersReaderIfAvailable;
 - (NSArray *)previewActionItems;
 @end
+
+#endif

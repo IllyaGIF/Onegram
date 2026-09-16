@@ -1,4 +1,5 @@
 #import "TGTelegraphDialogListCompanion.h"
+#import "TGCommon.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -7,6 +8,7 @@
 #import "TGGenericModernConversationCompanion.h"
 
 #import "TGDialogListController.h"
+#import "TGDialogListCell.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/SGraphObjectNode.h"
 #import "../submodules/LegacyComponents/LegacyComponents/SGraphListNode.h"
@@ -139,6 +141,9 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
 
     bool _ios6FolderPreloadActive;
     bool _ios6FolderPreloadRequestInFlight;
+    bool _ios6FolderPreloadResumeScheduled;
+    bool _ios6FolderPreloadRetryScheduled;
+    int _ios6FolderPreloadRetryCount;
 }
 
 @property (nonatomic, strong) NSMutableArray *conversationList;
@@ -755,11 +760,43 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
     if (!_canLoadMore)
     {
         _ios6FolderPreloadActive = false;
+        _ios6FolderPreloadResumeScheduled = false;
+        _ios6FolderPreloadRetryScheduled = false;
+        _ios6FolderPreloadRetryCount = 0;
         return;
     }
 
+    TGDialogListController *controller = self.dialogListController;
+    if ([controller dialogListIsFastScrolling])
+    {
+        if (!_ios6FolderPreloadResumeScheduled)
+        {
+            _ios6FolderPreloadResumeScheduled = true;
+            __weak TGTelegraphDialogListCompanion *weakSelf = self;
+            TGDispatchAfter(0.25, dispatch_get_main_queue(), ^
+            {
+                __strong TGTelegraphDialogListCompanion *strongSelf = weakSelf;
+                if (strongSelf != nil)
+                {
+                    strongSelf->_ios6FolderPreloadResumeScheduled = false;
+                    [strongSelf ios6ContinueFolderDialogPreload];
+                }
+            });
+        }
+        return;
+    }
+
+    int limit = 40;
+    switch (devicePerformanceClass())
+    {
+        case TGPerformanceClassConstrained: limit = 12; break;
+        case TGPerformanceClassBalanced: limit = 24; break;
+        case TGPerformanceClassFast: limit = 40; break;
+        case TGPerformanceClassHigh: limit = 60; break;
+    }
+
     _ios6FolderPreloadRequestInFlight = true;
-    [self loadMoreItems:40];
+    [self loadMoreItems:limit];
 }
 
 - (bool)ios6FolderPreloadActive
@@ -779,6 +816,8 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
 
     _ios6FolderPreloadActive = true;
     _ios6FolderPreloadRequestInFlight = false;
+    _ios6FolderPreloadRetryScheduled = false;
+    _ios6FolderPreloadRetryCount = 0;
     [self ios6ContinueFolderDialogPreload];
 }
 
@@ -800,6 +839,9 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
         _loadedAd = false;
         _ios6FolderPreloadActive = false;
         _ios6FolderPreloadRequestInFlight = false;
+        _ios6FolderPreloadResumeScheduled = false;
+        _ios6FolderPreloadRetryScheduled = false;
+        _ios6FolderPreloadRetryCount = 0;
         
         dispatch_async(dispatch_get_main_queue(), ^
         {
@@ -1011,6 +1053,8 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
         if (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot) {
             dict[@"isBot"] = @true;
         }
+        dict[@"presenceOnline"] = @(user.presence.online);
+        dict[@"presenceLastSeen"] = @(user.presence.lastSeen);
         
         if (user.firstName.length != 0 && user.lastName.length != 0)
             titleLetters = [[NSArray alloc] initWithObjects:user.firstName, user.lastName, nil];
@@ -1172,6 +1216,9 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
     [dict setObject:[[NSNumber alloc] initWithBool:[TGDatabaseInstance() isPeerMuted:mutePeerId]] forKey:@"mute"];
     
     [dict setObject:messageUsers forKey:@"users"];
+    NSDictionary *preparedPreview = [TGDialogListCell preparedPreviewForConversationId:conversation.conversationId messageText:conversation.text attachments:conversation.media isSavedMessages:[dict[@"isSavedMessages"] intValue] isGroupChat:[dict[@"isChat"] boolValue] isChannel:conversation.isChannel isChannelGroup:conversation.isChannelGroup isEncrypted:[dict[@"isEncrypted"] boolValue] encryptionStatus:[dict[@"encryptionStatus"] intValue] encryptionOutgoing:[dict[@"encryptionOutgoing"] boolValue] encryptionFirstName:dict[@"encryptionFirstName"]];
+    if (preparedPreview != nil)
+        dict[@"preparedPreview"] = preparedPreview;
     if (ios6Archived)
         dict[@"ios6Archived"] = @true;
     
@@ -1808,14 +1855,24 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
             if (!ios6ArchiveListRequest && _ios6FolderPreloadActive)
             {
                 _ios6FolderPreloadRequestInFlight = false;
+                _ios6FolderPreloadRetryScheduled = false;
+                _ios6FolderPreloadRetryCount = 0;
                 if (!_canLoadMore)
                 {
                     _ios6FolderPreloadActive = false;
                 }
                 else
                 {
+                    NSTimeInterval delay = 0.18;
+                    switch (devicePerformanceClass())
+                    {
+                        case TGPerformanceClassConstrained: delay = 0.65; break;
+                        case TGPerformanceClassBalanced: delay = 0.35; break;
+                        case TGPerformanceClassFast: delay = 0.18; break;
+                        case TGPerformanceClassHigh: delay = 0.10; break;
+                    }
                     __weak TGTelegraphDialogListCompanion *weakSelf = self;
-                    TGDispatchAfter(0.20, dispatch_get_main_queue(), ^
+                    TGDispatchAfter(delay, dispatch_get_main_queue(), ^
                     {
                         __strong TGTelegraphDialogListCompanion *strongSelf = weakSelf;
                         if (strongSelf != nil)
@@ -1842,6 +1899,27 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
                     [self dialogListReady];
                 });
             });
+        }
+        else if (_ios6FolderPreloadActive)
+        {
+            _ios6FolderPreloadRequestInFlight = false;
+            if (!_ios6FolderPreloadRetryScheduled)
+            {
+                _ios6FolderPreloadRetryScheduled = true;
+                _ios6FolderPreloadRetryCount++;
+                int retryCount = _ios6FolderPreloadRetryCount;
+                NSTimeInterval delay = MIN(8.0, 0.5 * (1 << MIN(retryCount - 1, 4)));
+                __weak TGTelegraphDialogListCompanion *weakSelf = self;
+                TGDispatchAfter(delay, dispatch_get_main_queue(), ^
+                {
+                    __strong TGTelegraphDialogListCompanion *strongSelf = weakSelf;
+                    if (strongSelf != nil)
+                    {
+                        strongSelf->_ios6FolderPreloadRetryScheduled = false;
+                        [strongSelf ios6ContinueFolderDialogPreload];
+                    }
+                });
+            }
         }
     }
     else if ([path isEqualToString:@"/tg/service/synchronizationstate"])
@@ -1875,6 +1953,11 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
             if (newState != _state)
             {
                 _state = newState;
+                if (newState == TGDialogListStateNormal)
+                {
+                    [self ios6ContinueFolderDialogPreload];
+                    [self.dialogListController ios6SynchronizeDialogState];
+                }
                 
                 __weak TGTelegraphDialogListCompanion *weakSelf = self;
                 [_stateDisposable setDisposable:[[[[SSignal complete] delay:0.3 onQueue:[SQueue mainQueue]] then:[SSignal single:@(newState)]] startWithNext:^(__unused id next)
@@ -1965,10 +2048,22 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
             [conversations addObjectsFromArray:additional];
         }
         
+        NSMutableDictionary *terminalConversations = [[NSMutableDictionary alloc] init];
         for (NSInteger i = 0; i < (NSInteger)conversations.count; i++) {
             TGConversation *conversation = conversations[i];
             
-            bool isTemporaryChannel = conversation.isChannel && conversation.kind != TGConversationKindPersistentChannel;
+            if ((conversation.leftChat || conversation.kickedFromChat) && !conversation.isDeleted)
+            {
+                TGConversation *removedConversation = [conversation copy];
+                removedConversation.isDeleted = true;
+                conversations[i] = removedConversation;
+                conversation = removedConversation;
+            }
+
+            if (conversation.isDeleted || conversation.isDeactivated || conversation.leftChat || conversation.kickedFromChat)
+                terminalConversations[@(conversation.conversationId)] = conversation;
+
+            bool isTemporaryChannel = conversation.isChannel && conversation.kind != TGConversationKindPersistentChannel && !conversation.isDeleted && !conversation.isDeactivated;
             bool isSavedMessages = conversation.conversationId == selfUser.uid && hideSelf;
             
             bool isAd = TGPeerIdIsAd(conversation.conversationId);
@@ -1980,6 +2075,15 @@ static NSComparisonResult TGIOS6DialogListPinnedDateFirstCompare(id<TGDialogList
         }
         
         TGDialogListController *controller = self.dialogListController;
+        if (terminalConversations.count != 0)
+        {
+            TGDispatchOnMainThread(^
+            {
+                TGDialogListController *strongController = self.dialogListController;
+                if (strongController != nil)
+                    [strongController updateConversations:terminalConversations];
+            });
+        }
         if (controller.isDisplayingSearch)
         {
             NSMutableArray *searchConversations = [[NSMutableArray alloc] init];

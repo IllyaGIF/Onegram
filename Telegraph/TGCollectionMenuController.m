@@ -86,6 +86,11 @@ TGCollectionMenuLayoutDelegateFlowLayout
     return self;
 }
 
+- (UIColor *)collectionMenuBackgroundColor
+{
+    return [TGPresentation classicIOS6Style] && !_presentation.pallete.isDark ? TGCollectionMenuClassicIOS6BackgroundColor() : _presentation.pallete.collectionMenuBackgroundColor;
+}
+
 - (void)dealloc
 {
     _collectionView.delegate = nil;
@@ -204,10 +209,9 @@ TGCollectionMenuLayoutDelegateFlowLayout
     
     if ([self isViewLoaded])
     {
-        self.view.backgroundColor =
-        [TGPresentation classicIOS6Style]
-        ? TGCollectionMenuClassicIOS6BackgroundColor()
-        : _presentation.pallete.collectionMenuBackgroundColor;
+        UIColor *backgroundColor = [self collectionMenuBackgroundColor];
+        self.view.backgroundColor = backgroundColor;
+        _headerBackgroundView.backgroundColor = backgroundColor;
     }
     
     for (TGCollectionMenuSection *section in _menuSections.sections)
@@ -311,10 +315,7 @@ TGCollectionMenuLayoutDelegateFlowLayout
         self.view.frame = self.navigationController.view.bounds;
     }
     
-    self.view.backgroundColor =
-    [TGPresentation classicIOS6Style]
-    ? TGCollectionMenuClassicIOS6BackgroundColor()
-    : _presentation.pallete.collectionMenuBackgroundColor;
+    self.view.backgroundColor = [self collectionMenuBackgroundColor];
     
     _headerBackgroundView =
     [[UIView alloc] initWithFrame:CGRectMake(

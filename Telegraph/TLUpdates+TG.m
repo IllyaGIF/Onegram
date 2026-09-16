@@ -13,7 +13,9 @@
 - (NSArray *)users
 {
     if ([self isKindOfClass:[TLUpdates$updates class]])
-        return ((TLUpdates$updates *)self).users;
+        return ((TLUpdates$updates *)self).users ?: @[];
+    if ([self isKindOfClass:[TLUpdates$updatesCombined class]])
+        return ((TLUpdates$updatesCombined *)self).users ?: @[];
     
     return @[];
 }
@@ -21,7 +23,9 @@
 - (NSArray *)chats
 {
     if ([self isKindOfClass:[TLUpdates$updates class]])
-        return ((TLUpdates$updates *)self).chats;
+        return ((TLUpdates$updates *)self).chats ?: @[];
+    if ([self isKindOfClass:[TLUpdates$updatesCombined class]])
+        return ((TLUpdates$updatesCombined *)self).chats ?: @[];
     
     return @[];
 }
@@ -231,6 +235,24 @@
     } else if ([self isKindOfClass:[TLUpdate$updateWebPage class]]) {
         return true;
     } else if ([self isKindOfClass:[TLUpdate$updateFolderPeers class]]) {
+        return ((TLUpdate$updateFolderPeers *)self).pts_count != 0;
+    } else if ([self isKindOfClass:[TLUpdate$updatePinnedMessagesCodex class]]) {
+        return true;
+    }
+    return false;
+}
+
+- (bool)hasChannelPts
+{
+    if ([self isKindOfClass:[TLUpdate$updateNewChannelMessage class]]) {
+        return true;
+    } else if ([self isKindOfClass:[TLUpdate$updateEditChannelMessage class]]) {
+        return true;
+    } else if ([self isKindOfClass:[TLUpdate$updateDeleteChannelMessages class]]) {
+        return true;
+    } else if ([self isKindOfClass:[TLUpdate$updateChannelWebPage class]]) {
+        return true;
+    } else if ([self isKindOfClass:[TLUpdate$updatePinnedChannelMessagesCodex class]]) {
         return true;
     }
     return false;

@@ -29,17 +29,30 @@
         if ([response isKindOfClass:[Api86_auth_ExportedAuthorization class]])
         {
             Api86_auth_ExportedAuthorization *exportedAuthorization = response;
-            return [[MTExportedAuthorizationData alloc] initWithAuthorizationBytes:exportedAuthorization.bytes authorizationId:[exportedAuthorization.pid intValue]];
+            return [[MTExportedAuthorizationData alloc] initWithAuthorizationBytes:exportedAuthorization.bytes authorizationId:[exportedAuthorization.pid longLongValue]];
         }
         return nil;
     };
 }
 
-- (NSData *)importAuthorization:(int32_t)authId bytes:(NSData *)bytes
+- (NSData *)importAuthorization:(int64_t)authId bytes:(NSData *)bytes
 {
     Api86_FunctionContext *importAuthorization = [Api86 auth_importAuthorizationWithPid:@(authId) bytes:bytes];
     
     return importAuthorization.payload;
+}
+
+- (MTRequestNoopParser)requestNoop:(__autoreleasing NSData **)data
+{
+    Api86_FunctionContext *request = [Api86 help_test];
+
+    if (data)
+        *data = request.payload;
+
+    return ^id(NSData *responseData)
+    {
+        return @(request.responseParser(responseData) != nil);
+    };
 }
 
 - (MTRequestDatacenterAddressListParser)requestDatacenterAddressWithData:(__autoreleasing NSData **)data

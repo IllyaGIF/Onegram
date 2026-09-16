@@ -43,7 +43,7 @@
     
     if (!_hasCustomColor)
     {
-        _titleColor = presentation.pallete.collectionMenuAccentColor;
+        _titleColor = [TGPresentation brandedIOS6Style] ? [UIColor blackColor] : presentation.pallete.collectionMenuAccentColor;
         [(TGUserInfoButtonCollectionItemView *)self.boundView setTitleColor:_titleColor];
     }
 }
@@ -61,7 +61,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, 44.0f);
+    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] ? 35.0f : 44.0f);
 }
 
 - (void)itemSelected:(id)actionTarget
@@ -81,6 +81,7 @@
     
     [view setTitle:_title];
     [view setTitleColor:_titleColor];
+    [view setIconName:_iconName];
     [view setEditing:_editing];
 }
 
@@ -89,6 +90,12 @@
     _title = title;
     
     [((TGUserInfoButtonCollectionItemView *)self.boundView) setTitle:_title];
+}
+
+- (void)setIconName:(NSString *)iconName
+{
+    _iconName = iconName;
+    [(TGUserInfoButtonCollectionItemView *)[self boundView] setIconName:iconName];
 }
 
 - (void)setEditing:(bool)editing

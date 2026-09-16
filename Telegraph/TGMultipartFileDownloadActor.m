@@ -923,7 +923,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                         if (decryptedData.length % 16 == 0)
                             MTAesDecryptInplaceAndModifyIv(decryptedData, _encryptionKey, _runningEncryptionIv);
                         else
-                            TGLog(@"**** Error: encrypted data length % 16 != 0");
+                            TGLog(@"**** Error: encrypted data length %% 16 != 0");
                         dataToWrite = decryptedData;
                         
                         if (_decryptedSize != 0 && _decryptedSize >= _downloadedFileSize && _downloadedFileSize + (int)decryptedData.length > _decryptedSize)

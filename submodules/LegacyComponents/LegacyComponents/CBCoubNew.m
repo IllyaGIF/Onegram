@@ -180,7 +180,7 @@
 	//NSLog(@"localAudioChunkWithIdx = %i", idx);
 
 	NSString *fileNameExtension = @"mp3";
-	NSString *fileName = [[NSString stringWithFormat:@"coub mp3 chunk %i ", idx] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+	NSString *fileName = [[NSString stringWithFormat:@"coub mp3 chunk %ld ", (long)idx] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
 	NSString *localFileName = [[fileName stringByAppendingString:self.permalink] stringByAppendingPathExtension:fileNameExtension];
 
 	return [NSURL fileURLWithPath:[[CBLibrary sharedLibrary].mediaDirectory.path stringByAppendingPathComponent:localFileName] isDirectory:NO];

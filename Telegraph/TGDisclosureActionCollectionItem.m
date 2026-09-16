@@ -1,6 +1,7 @@
 #import "TGDisclosureActionCollectionItem.h"
 
 #import "TGDisclosureActionCollectionItemView.h"
+#import "TGPresentation.h"
 
 @implementation TGDisclosureActionCollectionItem
 
@@ -22,7 +23,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, 44);
+    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] && _brandedSettingsStyle ? 35.0f : ([TGPresentation brandedIOS6Style] && _brandedProfileMusic ? 40.0f : 44.0f));
 }
 
 - (void)itemSelected:(id)actionTarget
@@ -43,10 +44,12 @@
     
     [super bindView:view];
     
+    [view setBrandedProfileMusic:_brandedProfileMusic];
     [view setTitle:_title];
     [view setIcon:_icon];
     [view setBadge:_badge];
     [view setHideArrow:_hideArrow];
+    [view setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
 }
 
 - (void)unbindView {
@@ -74,6 +77,26 @@
     
     if (self.boundView != nil && [self.boundView respondsToSelector:@selector(setBadge:)])
         [(TGDisclosureActionCollectionItemView *)self.view setBadge:badge];
+}
+
+- (void)setBrandedSettingsStyle:(bool)brandedSettingsStyle
+{
+    if (_brandedSettingsStyle == brandedSettingsStyle)
+        return;
+
+    _brandedSettingsStyle = brandedSettingsStyle;
+    if (self.boundView != nil)
+        [(TGDisclosureActionCollectionItemView *)self.boundView setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
+}
+
+- (void)setBrandedSettingsIconName:(NSString *)brandedSettingsIconName
+{
+    if (_brandedSettingsIconName == brandedSettingsIconName || [_brandedSettingsIconName isEqualToString:brandedSettingsIconName])
+        return;
+
+    _brandedSettingsIconName = brandedSettingsIconName;
+    if (self.boundView != nil)
+        [(TGDisclosureActionCollectionItemView *)self.boundView setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
 }
 
 @end

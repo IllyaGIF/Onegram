@@ -97,7 +97,7 @@
     
     [_titleSecond drawInRect:CGRectMake(_titleOffset.x + titleFirstSize.width + 4, _titleOffset.y, titleSecondSize.width, titleFirstSize.height) withFont:titleSecondFont];
     
-    if (_dateLabel != nil)
+    if (_dateLabel != nil && !_dateLabel.hidden && _dateLabel.frame.size.width > FLT_EPSILON && _dateLabel.frame.size.height > FLT_EPSILON)
     {
         CGRect dateFrame = _dateLabel.frame;
         CGContextTranslateCTM(context, dateFrame.origin.x, dateFrame.origin.y);

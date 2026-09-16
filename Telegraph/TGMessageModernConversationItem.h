@@ -59,6 +59,10 @@ extern int32_t TGMessageModernConversationItemLocalUserId;
 
 - (CGRect)effectiveContentFrame;
 - (CGRect)fullContentFrame;
+
+- (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y;
+- (CGFloat)groupedMediaOffsetX;
+- (CGFloat)groupedMediaOffsetY;
 - (UIView *)referenceViewForImageTransition;
 
 - (void)collectBoundModelViewFramesRecursively:(NSMutableDictionary *)dict;

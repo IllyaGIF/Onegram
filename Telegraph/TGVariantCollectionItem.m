@@ -9,6 +9,7 @@
 #import "TGVariantCollectionItem.h"
 
 #import "TGVariantCollectionItemView.h"
+#import "TGPresentation.h"
 
 @interface TGVariantCollectionItem ()
 
@@ -41,7 +42,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, 44);
+    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] && _brandedSettingsStyle ? 35.0f : 44.0f);
 }
 
 - (void)bindView:(TGCollectionItemView *)view
@@ -57,6 +58,7 @@
     [((TGVariantCollectionItemView *)view) setHideArrow:_hideArrow];
     [((TGVariantCollectionItemView *)view) setMinLeftPadding:_minLeftPadding];
     [((TGVariantCollectionItemView *)view) setFlexibleLayout:_flexibleLayout];
+    [((TGVariantCollectionItemView *)view) setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
 }
 
 - (void)itemSelected:(id)actionTarget
@@ -123,6 +125,26 @@
 - (void)setEnabled:(bool)enabled {
     _enabled = enabled;
     [((TGVariantCollectionItemView *)[self boundView]) setEnabled:enabled];
+}
+
+- (void)setBrandedSettingsStyle:(bool)brandedSettingsStyle
+{
+    if (_brandedSettingsStyle == brandedSettingsStyle)
+        return;
+
+    _brandedSettingsStyle = brandedSettingsStyle;
+    if (self.boundView != nil)
+        [(TGVariantCollectionItemView *)self.boundView setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
+}
+
+- (void)setBrandedSettingsIconName:(NSString *)brandedSettingsIconName
+{
+    if (_brandedSettingsIconName == brandedSettingsIconName || [_brandedSettingsIconName isEqualToString:brandedSettingsIconName])
+        return;
+
+    _brandedSettingsIconName = brandedSettingsIconName;
+    if (self.boundView != nil)
+        [(TGVariantCollectionItemView *)self.boundView setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
 }
 
 @end

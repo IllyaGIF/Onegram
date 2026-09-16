@@ -929,7 +929,7 @@
           internalId, context.state.callId, (int)context.state.state, NSStringFromClass([context.context class]), (int)[[context.stateSubscribers copyItems] count]);
     [_callContexts removeObjectForKey:@(internalId)];
     
-    TGLog(@"CallManager: cleanup call context with internalId %ld", internalId);
+    TGLog(@"CallManager: cleanup call context with internalId %d", internalId);
 }
 
 - (SSignal *)callStateWithInternalId:(id)internalId {

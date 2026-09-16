@@ -33,7 +33,11 @@ void syslog(int priority, const char *format, ...)
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/x509v3.h>
-#if defined(SIXTY_FOUR_BIT_LONG) || !defined(THIRTY_TWO_BIT)
+#if defined(__LP64__)
+#if !defined(SIXTY_FOUR_BIT_LONG) || defined(THIRTY_TWO_BIT)
+#error Invalid OpenSSL configuration for iOS
+#endif
+#elif defined(SIXTY_FOUR_BIT_LONG) || !defined(THIRTY_TWO_BIT)
 #error Invalid OpenSSL configuration for iOS
 #endif
 #include <pthread.h>

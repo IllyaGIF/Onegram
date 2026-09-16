@@ -46,6 +46,7 @@
 
 @interface TGDoubleTapGestureRecognizer () {
     CGPoint _touchLocation;
+    __weak id<TGDoubleTapGestureRecognizerDelegate> _safeDelegate;
 }
 
 @property (nonatomic, strong) NSTimer *tapTimer;
@@ -55,6 +56,12 @@
 @end
 
 @implementation TGDoubleTapGestureRecognizer
+
+- (void)setDelegate:(id<UIGestureRecognizerDelegate>)delegate
+{
+    _safeDelegate = (id<TGDoubleTapGestureRecognizerDelegate>)delegate;
+    [super setDelegate:delegate];
+}
 
 - (id)initWithTarget:(id)target action:(SEL)action
 {
@@ -67,6 +74,8 @@
 
 - (void)failGesture
 {
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
+
     if (_tapTimer != nil)
     {
         [_tapTimer invalidate];
@@ -81,8 +90,8 @@
     
     self.state = UIGestureRecognizerStateFailed;
     
-    if ([self.delegate respondsToSelector:@selector(gestureRecognizerDidFail:)])
-        [(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate gestureRecognizerDidFail:self];
+    if ([delegate respondsToSelector:@selector(gestureRecognizerDidFail:)])
+        [delegate gestureRecognizerDidFail:self];
 }
 
 - (void)endGesture
@@ -126,6 +135,8 @@
 
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
 {
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
+
     if (_avoidControls)
     {
         for (UITouch *touch in [touches allObjects])
@@ -165,9 +176,9 @@
     {        
         _currentTapCount++;
         
-        if ([self.delegate respondsToSelector:@selector(gestureRecognizer:didBeginAtPoint:)])
+        if ([delegate respondsToSelector:@selector(gestureRecognizer:didBeginAtPoint:)])
         {
-            [(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate gestureRecognizer:self didBeginAtPoint:[[touches anyObject] locationInView:self.view]];
+            [delegate gestureRecognizer:self didBeginAtPoint:[[touches anyObject] locationInView:self.view]];
         }
         
         _longPressTimer = [TGDoubleTapGestureRecognizerTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(longTapEvent) interval:1.5 repeat:false];
@@ -182,13 +193,14 @@
 
 - (void)touchesMoved:(NSSet *)__unused touches withEvent:(UIEvent *)__unused event
 {
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
     CGPoint location = [(UITouch *)[touches anyObject] locationInView:[self view]];
     CGPoint distance = CGPointMake(location.x - _touchLocation.x, location.y - _touchLocation.y);
     if (distance.x * distance.x + distance.y * distance.y > 4.0 * 4.0) {
     
-        if ([self.delegate respondsToSelector:@selector(gestureRecognizerShouldFailOnMove:)])
+        if ([delegate respondsToSelector:@selector(gestureRecognizerShouldFailOnMove:)])
         {
-            if (![(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate gestureRecognizerShouldFailOnMove:self])
+            if (![delegate gestureRecognizerShouldFailOnMove:self])
                 return;
         }
         
@@ -198,11 +210,13 @@
 
 - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
 {
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
+
     if (_currentTapCount == 1)
     {
         UITouch *touch = [touches anyObject];
         int failTapType = 0;
-        if ([self.delegate conformsToProtocol:@protocol(TGDoubleTapGestureRecognizerDelegate)] && (failTapType = [(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate gestureRecognizer:self shouldFailTap:[touch locationInView:self.view]]))
+        if ([delegate conformsToProtocol:@protocol(TGDoubleTapGestureRecognizerDelegate)] && (failTapType = [delegate gestureRecognizer:self shouldFailTap:[touch locationInView:self.view]]))
         {
             _doubleTapped = false;
             if ((_consumeSingleTap && failTapType != 2) || failTapType == 3)
@@ -224,10 +238,11 @@
     _tapTimer = nil;
     
     _doubleTapped = false;
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
     
-    if ([self.delegate conformsToProtocol:@protocol(TGDoubleTapGestureRecognizerDelegate)] && [self.delegate respondsToSelector:@selector(doubleTapGestureRecognizerSingleTapped:)])
+    if ([delegate conformsToProtocol:@protocol(TGDoubleTapGestureRecognizerDelegate)] && [delegate respondsToSelector:@selector(doubleTapGestureRecognizerSingleTapped:)])
     {
-        [(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate doubleTapGestureRecognizerSingleTapped:self];
+        [delegate doubleTapGestureRecognizerSingleTapped:self];
     }
     
     if (_consumeSingleTap)
@@ -239,10 +254,11 @@
 - (void)longTapEvent
 {
     _longPressTimer = nil;
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
     
-    if ([self.delegate respondsToSelector:@selector(gestureRecognizerShouldHandleLongTap:)])
+    if ([delegate respondsToSelector:@selector(gestureRecognizerShouldHandleLongTap:)])
     {
-        if ([(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate gestureRecognizerShouldHandleLongTap:self])
+        if ([delegate gestureRecognizerShouldHandleLongTap:self])
         {
             _longTapped = true;
             
@@ -253,9 +269,10 @@
 
 - (bool)canScrollViewStealTouches
 {
-    if ([self.delegate respondsToSelector:@selector(gestureRecognizerShouldLetScrollViewStealTouches:)])
+    id<TGDoubleTapGestureRecognizerDelegate> delegate = _safeDelegate;
+    if ([delegate respondsToSelector:@selector(gestureRecognizerShouldLetScrollViewStealTouches:)])
     {
-        if ([(id<TGDoubleTapGestureRecognizerDelegate>)self.delegate gestureRecognizerShouldLetScrollViewStealTouches:self])
+        if ([delegate gestureRecognizerShouldLetScrollViewStealTouches:self])
             return true;
         else
             return false;

@@ -1,4 +1,5 @@
 #import "TGDialogListCell.h"
+#import "TGCommon.h"
 
 #import "../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -22,19 +23,165 @@
 
 #import "TGSimpleImageView.h"
 
+#include <math.h>
+
 static bool TGDialogListClassicIOS6Style(void)
 {
     return [TGPresentation classicIOS6Style];
 }
 
+static bool TGDialogListBrandedIOS6Style(void)
+{
+    return [TGPresentation brandedIOS6Style];
+}
+
+static const CGFloat TGDialogListBrandedIOS6TitleFontSize = 15.6f;
+static const CGFloat TGDialogListBrandedIOS6BodyFontSize = 12.0f;
+// кружочек
+static const CGFloat TGDialogListBrandedIOS6BadgeScale = 0.97f;
+
 static CGFloat TGDialogListAvatarSize(void)
 {
+    if (TGDialogListBrandedIOS6Style())
+        return 50.0f;
     return TGDialogListClassicIOS6Style() ? 52.0f : 62.0f;
 }
 
 static CGFloat TGDialogListContentOffset(void)
 {
+    if (TGDialogListBrandedIOS6Style())
+        return 61.0f;
     return TGDialogListClassicIOS6Style() ? 72.0f : 80.0f;
+}
+
+static UIColor *TGDialogListMessageTextColor(UIColor *defaultColor, bool unread)
+{
+    if (!TGDialogListBrandedIOS6Style())
+        return defaultColor;
+    return unread ? UIColorRGB(0x868282) : [UIColor blackColor];
+}
+
+static CGRect TGDialogListRectAvoidingBadge(CGRect rect, CGRect badgeFrame, CGFloat spacing)
+{
+    if (!CGRectIntersectsRect(rect, badgeFrame))
+        return rect;
+
+    CGFloat newX = CGRectGetMaxX(badgeFrame) + spacing;
+    if (newX <= CGRectGetMinX(rect))
+        return rect;
+
+    CGFloat maxX = CGRectGetMaxX(rect);
+    rect.origin.x = MIN(newX, maxX);
+    rect.size.width = MAX(0.0f, maxX - rect.origin.x);
+    return rect;
+}
+
+static UIImage *TGDialogListBrandedDisclosureImage(bool emphasized)
+{
+    static UIImage *darkImage = nil;
+    static UIImage *lightImage = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        UIImage *image = [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"];
+        darkImage = TGTintedImage(image, UIColorRGB(0x000000));
+        lightImage = TGTintedImage(image, UIColorRGB(0x868282));
+    });
+    return emphasized ? darkImage : lightImage;
+}
+
+static UIImage *TGDialogListBrandedPinImage(void)
+{
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        UIImage *source = [TGPresentation brandedIOS6ResourceImage:@"pin-angle-fill"];
+        if (source == nil)
+            return;
+
+        CGSize size = source.size;
+        UIGraphicsBeginImageContextWithOptions(size, false, source.scale);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGRect rect = CGRectMake(0.0f, 0.0f, size.width, size.height);
+
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGFloat components[] = {
+            0.714f, 0.714f, 0.714f, 1.0f,
+            0.537f, 0.537f, 0.537f, 1.0f
+        };
+        CGFloat locations[] = {0.0f, 1.0f};
+        CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+        CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, size.height), 0);
+        CGGradientRelease(gradient);
+        CGColorSpaceRelease(colorSpace);
+        [source drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
+
+        image = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    });
+    return image;
+}
+
+static NSMutableDictionary *TGDialogListSharedTextLayoutCache(void)
+{
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSMutableDictionary alloc] init];
+    });
+    return cache;
+}
+
+static NSMutableArray *TGDialogListSharedTextLayoutCacheOrder(void)
+{
+    static NSMutableArray *order = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        order = [[NSMutableArray alloc] init];
+    });
+    return order;
+}
+
+static uint32_t TGDialogListColorKey(UIColor *color)
+{
+    if (color == nil)
+        return 0;
+
+    CGColorRef cgColor = color.CGColor;
+    size_t count = CGColorGetNumberOfComponents(cgColor);
+    const CGFloat *components = CGColorGetComponents(cgColor);
+    CGFloat r = 0.0f;
+    CGFloat g = 0.0f;
+    CGFloat b = 0.0f;
+    CGFloat a = 1.0f;
+    if (count == 2)
+    {
+        r = g = b = components[0];
+        a = components[1];
+    }
+    else if (count >= 4)
+    {
+        r = components[0];
+        g = components[1];
+        b = components[2];
+        a = components[3];
+    }
+    uint32_t ri = (uint32_t)MAX(0, MIN(255, (int)lrint(r * 255.0f)));
+    uint32_t gi = (uint32_t)MAX(0, MIN(255, (int)lrint(g * 255.0f)));
+    uint32_t bi = (uint32_t)MAX(0, MIN(255, (int)lrint(b * 255.0f)));
+    uint32_t ai = (uint32_t)MAX(0, MIN(255, (int)lrint(a * 255.0f)));
+    return (ri << 24) | (gi << 16) | (bi << 8) | ai;
+}
+
+static NSString *TGDialogListTextLayoutCacheKey(NSString *text, UIFont *font, UIColor *color, CGFloat width, NSUInteger maxLines, NSTextAlignment alignment)
+{
+    CGFloat scale = [UIScreen mainScreen].scale;
+    NSInteger pixelWidth = (NSInteger)lrint(MAX(0.0f, width) * scale);
+    NSInteger pixelFontSize = (NSInteger)lrint(font.pointSize * scale * 16.0f);
+    return [NSString stringWithFormat:@"%@|%@|%ld|%08x|%ld|%lu|%ld", text, font.fontName, (long)pixelFontSize, TGDialogListColorKey(color), (long)pixelWidth, (unsigned long)maxLines, (long)alignment];
 }
 
 static TGReusableLabelLayoutData *TGDialogListTextLayout(NSString *text, UIFont *font, UIColor *color, CGFloat width, NSUInteger maxLines, NSTextAlignment alignment)
@@ -42,12 +189,50 @@ static TGReusableLabelLayoutData *TGDialogListTextLayout(NSString *text, UIFont 
     if (text.length == 0 || font == nil || width <= 0.0f)
         return nil;
 
+    UIColor *resolvedColor = color == nil ? [UIColor blackColor] : color;
+    NSString *cacheKey = TGDialogListTextLayoutCacheKey(text, font, resolvedColor, width, maxLines, alignment);
+    NSMutableDictionary *cache = TGDialogListSharedTextLayoutCache();
+    TGReusableLabelLayoutData *layout = nil;
+    @synchronized(cache)
+    {
+        layout = cache[cacheKey];
+    }
+    if (layout != nil)
+        return layout;
+
     CTFontRef coreTextFont = TGCoreTextFontForUIFont(font);
     if (coreTextFont == NULL)
         return nil;
 
-    TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:color == nil ? [UIColor blackColor] : color linkColor:nil frame:CGRectZero orMaxWidth:width flags:TGReusableLabelLayoutMultiline textAlignment:alignment outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:maxLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
+    layout = [TGReusableLabel calculateLayout:text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:resolvedColor linkColor:nil frame:CGRectZero orMaxWidth:width flags:TGReusableLabelLayoutMultiline textAlignment:alignment outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:maxLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
     CFRelease(coreTextFont);
+    if (layout != nil)
+    {
+        @synchronized(cache)
+        {
+            NSMutableArray *order = TGDialogListSharedTextLayoutCacheOrder();
+            NSUInteger cacheLimit = 1536;
+            NSUInteger evictionCount = 256;
+            switch (devicePerformanceClass())
+            {
+                case TGPerformanceClassConstrained: cacheLimit = 512; evictionCount = 96; break;
+                case TGPerformanceClassBalanced: cacheLimit = 1024; evictionCount = 160; break;
+                case TGPerformanceClassFast: cacheLimit = 2048; evictionCount = 320; break;
+                case TGPerformanceClassHigh: cacheLimit = 4096; evictionCount = 512; break;
+            }
+            if (cache.count >= cacheLimit && order.count >= evictionCount)
+            {
+                NSArray *expiredKeys = [order subarrayWithRange:NSMakeRange(0, evictionCount)];
+                [cache removeObjectsForKeys:expiredKeys];
+                [order removeObjectsInRange:NSMakeRange(0, evictionCount)];
+            }
+            if (cache[cacheKey] == nil)
+            {
+                cache[cacheKey] = layout;
+                [order addObject:cacheKey];
+            }
+        }
+    }
     return layout;
 }
 
@@ -62,17 +247,18 @@ static CGSize TGDialogListTextSize(NSString *text, UIFont *font, CGFloat width, 
     return size;
 }
 
-static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UIColor *color, NSUInteger maxLines, NSTextAlignment alignment)
+static void TGDialogListDrawLayout(TGReusableLabelLayoutData *layout, CGRect rect)
 {
-    TGReusableLabelLayoutData *layout = TGDialogListTextLayout(text, font, color, rect.size.width, maxLines, alignment);
     if (layout != nil)
-        [TGReusableLabel drawRichTextInRect:rect precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:nil shadowOffset:CGSizeZero];
+        [TGReusableLabel drawRichTextInRect:rect precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:TGDialogListBrandedIOS6Style() ? UIColorRGBA(0x000000, 0.20f) : nil shadowOffset:TGDialogListBrandedIOS6Style() ? CGSizeMake(0.0f, 1.0f) : CGSizeZero];
 }
 
 @interface TGDialogListTextView : UIView
 {
-    NSDictionary *_textAttributes;
-    NSDictionary *_typingAttributes;
+    TGReusableLabelLayoutData *_titleLayout;
+    TGReusableLabelLayoutData *_textLayout;
+    TGReusableLabelLayoutData *_authorNameLayout;
+    TGReusableLabelLayoutData *_typingLayout;
 }
 @property (nonatomic, strong) TGPresentation *presentation;
 @property (nonatomic, strong) NSString *title;
@@ -102,61 +288,164 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
 
 @implementation TGDialogListTextView
 
+- (void)setPresentation:(TGPresentation *)presentation
+{
+    if (_presentation != presentation)
+    {
+        _presentation = presentation;
+        _titleLayout = nil;
+        _textLayout = nil;
+        _authorNameLayout = nil;
+        _typingLayout = nil;
+    }
+}
+
+- (void)setTitle:(NSString *)title
+{
+    if (_title != title && ![_title isEqualToString:title])
+    {
+        _title = title;
+        _titleLayout = nil;
+    }
+}
+
+- (void)setTitleFrame:(CGRect)titleFrame
+{
+    if (!CGRectEqualToRect(_titleFrame, titleFrame))
+    {
+        _titleFrame = titleFrame;
+        _titleLayout = nil;
+    }
+}
+
+- (void)setTitleFont:(UIFont *)titleFont
+{
+    if (_titleFont != titleFont && ![_titleFont isEqual:titleFont])
+    {
+        _titleFont = titleFont;
+        _titleLayout = nil;
+    }
+}
+
+- (void)setMediaIcon:(UIImage *)mediaIcon
+{
+    if (_mediaIcon != mediaIcon)
+    {
+        _mediaIcon = mediaIcon;
+        _textLayout = nil;
+    }
+}
+
+- (void)setText:(NSString *)text
+{
+    if (_text != text && ![_text isEqualToString:text])
+    {
+        _text = text;
+        _textLayout = nil;
+    }
+}
+
 - (void)setTextColor:(UIColor *)textColor
 {
     if (![_textColor isEqual:textColor])
     {
         _textColor = textColor;
-        [self updateAttributes];
+        _textLayout = nil;
     }
 }
 
 - (void)setTextFont:(UIFont *)textFont
 {
-    _textFont = textFont;
-    [self updateAttributes];
+    if (_textFont != textFont && ![_textFont isEqual:textFont])
+    {
+        _textFont = textFont;
+        _textLayout = nil;
+        _typingLayout = nil;
+    }
 }
 
-- (void)updateAttributes
+- (void)setActionTextColor:(UIColor *)actionTextColor
 {
-    if (iosMajorVersion() < 7)
+    if (![_actionTextColor isEqual:actionTextColor])
     {
-        _textAttributes = nil;
-        _typingAttributes = nil;
-        return;
+        _actionTextColor = actionTextColor;
+        _typingLayout = nil;
     }
-    
-    NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
-    style.lineSpacing = 1 + TGScreenPixel;
-    style.lineBreakMode = NSLineBreakByWordWrapping;
-    style.alignment = NSTextAlignmentLeft;
-    
-    NSMutableDictionary *attributes = [[NSMutableDictionary alloc] init];
-    [attributes setObject:style forKey:NSParagraphStyleAttributeName];
-    
-    if (_textFont != nil)
-        [attributes setObject:_textFont forKey:NSFontAttributeName];
-    
-    if (_textColor != nil)
-        [attributes setObject:_textColor forKey:NSForegroundColorAttributeName];
-    
-    _textAttributes = attributes;
-    
-    style = [[NSMutableParagraphStyle alloc] init];
-    style.lineBreakMode = NSLineBreakByClipping;
-    style.alignment = NSTextAlignmentLeft;
-    
-    attributes = [[NSMutableDictionary alloc] init];
-    [attributes setObject:style forKey:NSParagraphStyleAttributeName];
-    
-    if (_textFont != nil)
-        [attributes setObject:_textFont forKey:NSFontAttributeName];
-    
-    if (_textColor != nil)
-        [attributes setObject:_textColor forKey:NSForegroundColorAttributeName];
-    
-    _typingAttributes = attributes;
 }
+
+- (void)setTextFrame:(CGRect)textFrame
+{
+    if (!CGRectEqualToRect(_textFrame, textFrame))
+    {
+        _textFrame = textFrame;
+        _textLayout = nil;
+    }
+}
+
+- (void)setAuthorName:(NSString *)authorName
+{
+    if (_authorName != authorName && ![_authorName isEqualToString:authorName])
+    {
+        _authorName = authorName;
+        _authorNameLayout = nil;
+        _textLayout = nil;
+    }
+}
+
+- (void)setAuthorNameFrame:(CGRect)authorNameFrame
+{
+    if (!CGRectEqualToRect(_authorNameFrame, authorNameFrame))
+    {
+        _authorNameFrame = authorNameFrame;
+        _authorNameLayout = nil;
+    }
+}
+
+- (void)setAuthorNameFont:(UIFont *)authorNameFont
+{
+    if (_authorNameFont != authorNameFont && ![_authorNameFont isEqual:authorNameFont])
+    {
+        _authorNameFont = authorNameFont;
+        _authorNameLayout = nil;
+    }
+}
+
+- (void)setAuthorNameColor:(UIColor *)authorNameColor
+{
+    if (![_authorNameColor isEqual:authorNameColor])
+    {
+        _authorNameColor = authorNameColor;
+        _authorNameLayout = nil;
+    }
+}
+
+- (void)setTypingFrame:(CGRect)typingFrame
+{
+    if (!CGRectEqualToRect(_typingFrame, typingFrame))
+    {
+        _typingFrame = typingFrame;
+        _typingLayout = nil;
+    }
+}
+
+- (void)setTypingText:(NSString *)typingText
+{
+    if (_typingText != typingText && ![_typingText isEqualToString:typingText])
+    {
+        _typingText = typingText;
+        _typingLayout = nil;
+    }
+}
+
+- (void)setIsEncrypted:(bool)isEncrypted
+{
+    if (_isEncrypted != isEncrypted)
+    {
+        _isEncrypted = isEncrypted;
+        _titleLayout = nil;
+    }
+}
+
 - (void)drawRect:(CGRect)rect
 {
     CGContextRef context = UIGraphicsGetCurrentContext();
@@ -177,38 +466,18 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
     CGContextSetFillColorWithColor(context, _isEncrypted ? _presentation.pallete.dialogEncryptedColor.CGColor : _presentation.pallete.dialogTitleColor.CGColor);
     if (CGRectIntersectsRect(rect, titleFrame))
     {
-        if (iosMajorVersion() >= 7 && !useStableTextDrawing && _presentation != nil)
-        {
-            NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
-            style.lineBreakMode = NSLineBreakByTruncatingTail;
-            style.alignment = NSTextAlignmentLeft;
-            
-            NSDictionary *attributes = @{
-                NSParagraphStyleAttributeName: style,
-                NSFontAttributeName: _titleFont,
-                NSForegroundColorAttributeName:_isEncrypted ? _presentation.pallete.dialogEncryptedColor : _presentation.pallete.dialogTitleColor
-            };
-            
-            [_title drawWithRect:titleFrame options:NSStringDrawingUsesLineFragmentOrigin attributes:attributes context:nil];
-        }
-        else
-        {
-            TGDialogListDrawText(_title, titleFrame, _titleFont, _isEncrypted ? _presentation.pallete.dialogEncryptedColor : _presentation.pallete.dialogTitleColor, 1, NSTextAlignmentLeft);
-        }
+        if (_titleLayout == nil)
+            _titleLayout = TGDialogListTextLayout(_title, _titleFont, _isEncrypted ? _presentation.pallete.dialogEncryptedColor : _presentation.pallete.dialogTitleColor, titleFrame.size.width, 1, NSTextAlignmentLeft);
+        TGDialogListDrawLayout(_titleLayout, titleFrame);
     }
     
     if (_showTyping)
     {
         CGContextSetFillColorWithColor(context, _actionTextColor.CGColor);
         
-        if (iosMajorVersion() >= 7 && !useStableTextDrawing)
-        {
-            [_typingText drawWithRect:typingFrame options:NSStringDrawingUsesLineFragmentOrigin attributes:_typingAttributes context:nil];
-        }
-        else
-        {
-            TGDialogListDrawText(_typingText, typingFrame, _textFont, _actionTextColor, 1, NSTextAlignmentLeft);
-        }
+        if (_typingLayout == nil)
+            _typingLayout = TGDialogListTextLayout(_typingText, _textFont, _actionTextColor, typingFrame.size.width, 1, NSTextAlignmentLeft);
+        TGDialogListDrawLayout(_typingLayout, typingFrame);
     }
     else
     {
@@ -222,14 +491,10 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
                 textFrame = CGRectMake(textFrame.origin.x + 19, textFrame.origin.y, textFrame.size.width - 19, textFrame.size.height);
             }
             
-            if (iosMajorVersion() >= 7 && !useStableTextDrawing)
-            {
-                [_text drawWithRect:textFrame options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingTruncatesLastVisibleLine attributes:_textAttributes context:nil];
-            }
-            else
-            {
-                TGDialogListDrawText(_text, textFrame, _textFont, _textColor, textFrame.size.height >= 30.0f ? 2 : 1, NSTextAlignmentLeft);
-            }
+            NSUInteger maxLines = TGDialogListBrandedIOS6Style() ? (_authorName.length == 0 ? 2 : 1) : (textFrame.size.height >= 30.0f ? 2 : 1);
+            if (_textLayout == nil)
+                _textLayout = TGDialogListTextLayout(_text, _textFont, _textColor, textFrame.size.width, maxLines, NSTextAlignmentLeft);
+            TGDialogListDrawLayout(_textLayout, textFrame);
             
             //CGContextFillRect(context, textFrame);
         }
@@ -239,25 +504,10 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
             CGContextSetFillColorWithColor(context, _authorNameColor == nil ? [UIColor blackColor].CGColor : [_authorNameColor CGColor]);
             if (CGRectIntersectsRect(rect, authorNameFrame))
             {
-                if (iosMajorVersion() >= 7 && !useStableTextDrawing)
-                {
-                    NSDictionary *attributes = nil;
-                    NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
-                    style.lineBreakMode = NSLineBreakByTruncatingTail;
-                    style.alignment = NSTextAlignmentLeft;
-                    
-                    attributes = @{
-                        NSParagraphStyleAttributeName: style,
-                        NSFontAttributeName: _authorNameFont,
-                        NSForegroundColorAttributeName: _authorNameColor == nil ? [UIColor blackColor] : _authorNameColor
-                    };
-                    
-                    [_authorName drawWithRect:authorNameFrame options:NSStringDrawingUsesLineFragmentOrigin attributes:attributes context:nil];
-                }
-                else
-                {
-                    TGDialogListDrawText(_authorName, authorNameFrame, _authorNameFont, _authorNameColor == nil ? [UIColor blackColor] : _authorNameColor, 1, useStableTextDrawing ? NSTextAlignmentLeft : NSTextAlignmentRight);
-                }
+                NSTextAlignment alignment = useStableTextDrawing ? NSTextAlignmentLeft : NSTextAlignmentRight;
+                if (_authorNameLayout == nil)
+                    _authorNameLayout = TGDialogListTextLayout(_authorName, _authorNameFont, _authorNameColor == nil ? [UIColor blackColor] : _authorNameColor, authorNameFrame.size.width, 1, alignment);
+                TGDialogListDrawLayout(_authorNameLayout, authorNameFrame);
                 
                 //CGContextFillRect(context, authorNameFrame);
             }
@@ -278,6 +528,9 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
     UIImage *_unseenMentionsImage;
     
     NSMutableArray *_avatarViews;
+    bool _fastScrolling;
+    CGSize _fastLayoutSize;
+    CGFloat _fastLayoutContentOffset;
 }
 
 @property (nonatomic, strong) TGDialogListCellEditingControls *wrapView;
@@ -285,13 +538,16 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
 @property (nonatomic, strong) TGDialogListTextView *textView;
 
 @property (nonatomic, strong) TGLetteredAvatarView *avatarView;
+@property (nonatomic, strong) UIView *brandedAvatarShadowView;
 @property (nonatomic, strong) UIImageView *authorAvatarStrokeView;
 
 @property (nonatomic, strong) TGDateLabel *dateLabel;
+@property (nonatomic, strong) UILabel *brandedStatusLabel;
 
 @property (nonatomic, strong) UIImageView *unreadCountBackgrond;
 @property (nonatomic, strong) UIImageView *unseenMentionsView;
 @property (nonatomic, strong) UIImageView *pinnedBackgrond;
+@property (nonatomic, strong) UIImageView *brandedDisclosureView;
 @property (nonatomic, strong) TGLabel *unreadCountLabel;
 
 @property (nonatomic, strong) UIImageView *deliveryErrorBackgrond;
@@ -325,6 +581,289 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
 @end
 
 @implementation TGDialogListCell
+
++ (NSDictionary *)preparedPreviewForConversationId:(int64_t)conversationId messageText:(NSString *)messageText attachments:(NSArray *)attachments isSavedMessages:(int)isSavedMessages isGroupChat:(bool)isGroupChat isChannel:(bool)isChannel isChannelGroup:(bool)isChannelGroup isEncrypted:(bool)isEncrypted encryptionStatus:(int)encryptionStatus encryptionOutgoing:(bool)encryptionOutgoing encryptionFirstName:(NSString *)encryptionFirstName
+{
+    NSString *preparedText = messageText;
+    int colorRole = 0;
+    bool hideAuthorName = !isGroupChat || (isChannel && !isChannelGroup);
+    bool attachmentFound = false;
+
+    if (isSavedMessages == 2)
+    {
+        preparedText = TGLocalized(@"DialogList.SavedMessagesHelp");
+        colorRole = 1;
+    }
+    else if (attachments.count != 0)
+    {
+        for (TGMediaAttachment *attachment in attachments)
+        {
+            if (attachment.type == TGActionMediaAttachmentType)
+                return nil;
+            else if (attachment.type == TGImageMediaAttachmentType)
+            {
+                TGImageMediaAttachment *imageMediaAttachment = (TGImageMediaAttachment *)attachment;
+                NSString *caption = preparedText.length > 0 ? preparedText : imageMediaAttachment.caption;
+                if (imageMediaAttachment.imageId == 0 && imageMediaAttachment.localImageId == 0)
+                {
+                    preparedText = TGLocalized(@"Message.ImageExpired");
+                    colorRole = 2;
+                }
+                else if (caption.length > 0)
+                {
+                    bool addEmoji = iosMajorVersion() >= 9 && ![caption hasPrefix:@"🖼 "];
+                    preparedText = addEmoji ? [@"🖼 " stringByAppendingString:caption] : caption;
+                    colorRole = 0;
+                }
+                else
+                {
+                    preparedText = TGLocalized(@"Message.Photo");
+                    colorRole = 2;
+                }
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGVideoMediaAttachmentType)
+            {
+                TGVideoMediaAttachment *videoMediaAttachment = (TGVideoMediaAttachment *)attachment;
+                NSString *caption = preparedText.length > 0 ? preparedText : videoMediaAttachment.caption;
+                if (videoMediaAttachment.videoId == 0 && videoMediaAttachment.localVideoId == 0)
+                {
+                    preparedText = TGLocalized(@"Message.VideoExpired");
+                    colorRole = 2;
+                }
+                else if (caption.length > 0)
+                {
+                    bool addEmoji = iosMajorVersion() >= 9 && ![caption hasPrefix:@"📹 "];
+                    preparedText = addEmoji ? [@"📹 " stringByAppendingString:caption] : caption;
+                    colorRole = 0;
+                }
+                else
+                {
+                    preparedText = videoMediaAttachment.roundMessage ? TGLocalized(@"Message.VideoMessage") : TGLocalized(@"Message.Video");
+                    colorRole = 2;
+                }
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGLocationMediaAttachmentType)
+            {
+                preparedText = ((TGLocationMediaAttachment *)attachment).period > 0 ? TGLocalized(@"Message.LiveLocation") : TGLocalized(@"Message.Location");
+                colorRole = 2;
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGContactMediaAttachmentType)
+            {
+                preparedText = TGLocalized(@"Message.Contact");
+                colorRole = 2;
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGDocumentMediaAttachmentType)
+            {
+                TGDocumentMediaAttachment *documentAttachment = (TGDocumentMediaAttachment *)attachment;
+                NSString *caption = preparedText.length > 0 ? preparedText : documentAttachment.caption;
+                bool isAnimated = false;
+                bool isSticker = false;
+                bool isVoice = false;
+                NSString *musicText = nil;
+                NSString *stickerRepresentation = nil;
+                for (id attribute in documentAttachment.attributes)
+                {
+                    if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]])
+                        isAnimated = true;
+                    else if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]])
+                    {
+                        isSticker = true;
+                        stickerRepresentation = ((TGDocumentAttributeSticker *)attribute).alt;
+                    }
+                    else if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]])
+                    {
+                        isVoice = ((TGDocumentAttributeAudio *)attribute).isVoice;
+                        if (!isVoice)
+                        {
+                            NSString *artist = ((TGDocumentAttributeAudio *)attribute).performer;
+                            NSString *title = ((TGDocumentAttributeAudio *)attribute).title;
+                            if (artist.length != 0 && title.length != 0)
+                                musicText = [[artist stringByAppendingString:@" — "] stringByAppendingString:title];
+                            else if (artist.length != 0)
+                                musicText = artist;
+                            else if (title.length != 0)
+                                musicText = title;
+                        }
+                    }
+                }
+
+                if (TGPeerIdIsSecretChat(conversationId) && [documentAttachment.mimeType isEqualToString:@"video/mp4"] && documentAttachment.size < 1024 * 1024)
+                    isAnimated = true;
+
+                if (isSticker)
+                {
+                    preparedText = stickerRepresentation.length == 0 ? TGLocalized(@"Message.Sticker") : [[NSString alloc] initWithFormat:@"%@ %@", stickerRepresentation, TGLocalized(@"Message.Sticker")];
+                    colorRole = 0;
+                }
+                else if (isAnimated)
+                {
+                    preparedText = TGLocalized(@"Message.Animation");
+                    colorRole = 2;
+                }
+                else if (isVoice)
+                {
+                    preparedText = TGLocalized(@"Message.Audio");
+                    colorRole = 2;
+                }
+                else if (musicText != nil)
+                {
+                    preparedText = musicText;
+                    colorRole = 2;
+                }
+                else
+                {
+                    NSString *fileName = documentAttachment.fileName;
+                    if (caption.length > 0)
+                    {
+                        bool addEmoji = ![caption hasPrefix:@"📎 "];
+                        preparedText = addEmoji ? [@"📎 " stringByAppendingString:caption] : caption;
+                    }
+                    else if (fileName.length != 0)
+                        preparedText = fileName;
+                    else
+                        preparedText = TGLocalized(@"Message.File");
+                    colorRole = 2;
+                }
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGAudioMediaAttachmentType)
+            {
+                preparedText = TGLocalized(@"Message.Audio");
+                colorRole = 2;
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGGameAttachmentType)
+            {
+                preparedText = [@"🎮 " stringByAppendingString:((TGGameMediaAttachment *)attachment).title ?: @""];
+                colorRole = 2;
+                attachmentFound = true;
+                break;
+            }
+            else if (attachment.type == TGInvoiceMediaAttachmentType)
+            {
+                preparedText = ((TGInvoiceMediaAttachment *)attachment).title ?: @"";
+                colorRole = 2;
+                attachmentFound = true;
+                break;
+            }
+        }
+    }
+
+    if (!attachmentFound && isSavedMessages != 2)
+        colorRole = 0;
+
+    if (preparedText.length == 0 && isEncrypted)
+    {
+        colorRole = 1;
+        if (encryptionStatus == 1)
+            preparedText = [[NSString alloc] initWithFormat:TGLocalized(@"DialogList.AwaitingEncryption"), encryptionFirstName ?: @""];
+        else if (encryptionStatus == 2)
+            preparedText = TGLocalized(@"DialogList.EncryptionProcessing");
+        else if (encryptionStatus == 3)
+            preparedText = TGLocalized(@"DialogList.EncryptionRejected");
+        else if (encryptionStatus == 4)
+        {
+            if (encryptionOutgoing)
+                preparedText = [[NSString alloc] initWithFormat:TGLocalized(@"DialogList.EncryptedChatStartedOutgoing"), encryptionFirstName ?: @""];
+            else
+                preparedText = [[NSString alloc] initWithFormat:TGLocalized(@"DialogList.EncryptedChatStartedIncoming"), encryptionFirstName ?: @""];
+        }
+    }
+
+    return @{ @"text": preparedText ?: @"", @"colorRole": @(colorRole), @"hideAuthor": @(hideAuthorName) };
+}
+
++ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium deliveryState:(TGMessageDeliveryState)deliveryState
+{
+    if (presentation == nil || width <= 0.0f)
+        return;
+
+    bool branded = [TGPresentation brandedIOS6Style];
+    CGFloat contentX = TGDialogListContentOffset();
+    UIFont *titleFont = branded ? TGBoldSystemFontOfSize(TGDialogListBrandedIOS6TitleFontSize) : TGMediumSystemFontOfSize(16.0f);
+    UIFont *bodyFont = TGSystemFontOfSize(branded ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
+    UIColor *titleColor = presentation.pallete.dialogTitleColor;
+    UIColor *messageColor = TGDialogListMessageTextColor(presentation.pallete.dialogTextColor, unread);
+    UIColor *authorColor = presentation.pallete.dialogNameColor;
+
+    if (titleText.length != 0)
+    {
+        CGFloat titleWidth = CGCeil([titleText sizeWithFont:titleFont].width);
+        titleWidth = MIN(titleWidth, MAX(32.0f, width - contentX - 24.0f));
+        TGDialogListTextLayout(titleText, titleFont, titleColor, titleWidth, 1, NSTextAlignmentLeft);
+    }
+
+    int totalUnreadCount = unreadCount + serviceUnreadCount;
+    CGFloat rightPadding = 0.0f;
+    CGRect badgeFrame = CGRectZero;
+    if (branded)
+    {
+        rightPadding = 22.0f;
+        CGFloat scale = TGDialogListBrandedIOS6BadgeScale;
+        CGFloat badgeHeight = 18.0f * scale;
+        CGFloat badgeFontSize = 11.0f * scale;
+        UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:badgeFontSize];
+        if (badgeFont == nil)
+            badgeFont = TGBoldSystemFontOfSize(badgeFontSize);
+        NSString *badgeText = totalUnreadCount > 0 ? [TGPresentation brandedIOS6BadgeTextForCount:totalUnreadCount] : @"";
+        CGFloat countWidth = badgeText.length == 0 ? 9.0f : [badgeText sizeWithFont:badgeFont].width;
+        CGFloat backgroundWidth = MAX(badgeHeight, countWidth + 10.0f * scale);
+        CGFloat originOffset = (18.0f - badgeHeight) / 2.0f;
+        badgeFrame = CGRectMake(43.0f + originOffset, 42.0f + originOffset, backgroundWidth, badgeHeight);
+    }
+    else
+    {
+        if (totalUnreadCount > 0 || unreadMark || pinned)
+        {
+            UIFont *badgeFont = TGSystemFontOfSize(14.0f);
+            NSString *badgeText = totalUnreadCount > 0 ? (totalUnreadCount < 1000 ? [NSString stringWithFormat:@"%d", totalUnreadCount] : [NSString stringWithFormat:@"%dK", totalUnreadCount / 1000]) : @"";
+            CGFloat countWidth = badgeText.length == 0 ? 9.0f : [badgeText sizeWithFont:badgeFont].width;
+            CGFloat backgroundWidth = MAX(20.0f, countWidth + 11.0f);
+            rightPadding += backgroundWidth + 16.0f;
+        }
+    }
+    if (unreadMentionCount > 0 && (totalUnreadCount > 0 || unreadMark || unread))
+        rightPadding += (!branded && (totalUnreadCount > 0 || unreadMark || pinned)) ? 24.0f : 40.0f;
+    if (deliveryState == TGMessageDeliveryStateFailed)
+        rightPadding += 36.0f;
+
+    CGFloat messageWidth = MAX(1.0f, width - contentX - 7.0f - rightPadding);
+    NSUInteger maxLines = branded ? (authorName.length == 0 ? 2 : 1) : 2;
+    if (branded && !CGRectIsEmpty(badgeFrame) && (totalUnreadCount > 0 || unreadMark))
+    {
+        CGFloat bodyHeight = CGCeil(bodyFont.lineHeight);
+        CGFloat titleHeight = CGCeil(titleFont.lineHeight);
+        CGRect messageFrame = CGRectMake(contentX, 2.0f + titleHeight, messageWidth, MAX(bodyHeight, 62.0f - (2.0f + titleHeight)));
+        if (authorName.length != 0)
+        {
+            messageFrame.origin.y += bodyHeight;
+            messageFrame.size.height -= bodyHeight;
+        }
+        messageFrame = TGDialogListRectAvoidingBadge(messageFrame, badgeFrame, 4.0f);
+        messageWidth = MAX(1.0f, messageFrame.size.width);
+    }
+
+    if (messageText.length != 0)
+        TGDialogListTextLayout(messageText, bodyFont, messageColor, messageWidth, maxLines, NSTextAlignmentLeft);
+    if (authorName.length != 0)
+        TGDialogListTextLayout(authorName, bodyFont, authorColor, MAX(1.0f, width - contentX - 4.0f - rightPadding), 1, NSTextAlignmentLeft);
+    if (branded && statusText.length != 0)
+        TGDialogListTextLayout(statusText, bodyFont, UIColorRGB(0x5a5a5a), MIN(103.2f, MAX(1.0f, width - contentX - 34.0f)), 1, NSTextAlignmentLeft);
+
+    (void)muted;
+    (void)verified;
+    (void)premium;
+}
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier assetsSource:(id<TGDialogListCellAssetsSource>)assetsSource
 {
@@ -401,17 +940,19 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
 
         _textView = [[TGDialogListTextView alloc] initWithFrame:CGRectMake(73, 2, self.frame.size.width - 73, 46)];
         _textView.contentMode = UIViewContentModeLeft;
-        _textView.titleFont = TGMediumSystemFontOfSize(16);
-        _textView.textFont = TGSystemFontOfSize(15);
-        _textView.authorNameFont = TGSystemFontOfSize(15);
+        _textView.titleFont = TGDialogListBrandedIOS6Style() ? TGBoldSystemFontOfSize(TGDialogListBrandedIOS6TitleFontSize) : TGMediumSystemFontOfSize(16.0f);
+        _textView.textFont = TGSystemFontOfSize(TGDialogListBrandedIOS6Style() ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
+        _textView.authorNameFont = TGSystemFontOfSize(TGDialogListBrandedIOS6Style() ? TGDialogListBrandedIOS6BodyFontSize : 15.0f);
         _textView.opaque = false;
         _textView.backgroundColor = nil;//[UIColor whiteColor];
+        _textView.layer.shouldRasterize = true;
+        _textView.layer.rasterizationScale = [UIScreen mainScreen].scale;
         
         [_wrapView addSubview:_textView];
         
         _dateString = [[NSMutableString alloc] initWithCapacity:16];
         
-        CGFloat dateFontSize = 14.0f;
+        CGFloat dateFontSize = TGDialogListBrandedIOS6Style() ? 10.0f : 14.0f;
         CGFloat amWidth = 24.0f;
         if (TGIsPad())
         {
@@ -426,23 +967,44 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
         _dateLabel.dateFont = TGSystemFontOfSize(dateFontSize);
         _dateLabel.dateTextFont = TGSystemFontOfSize(dateFontSize);
         _dateLabel.dateLabelFont = TGSystemFontOfSize(dateFontSize);
-        _dateLabel.textColor = UIColorRGB(0x969699);
+        _dateLabel.textColor = UIColorRGB(0x595959);
         _dateLabel.backgroundColor = [UIColor clearColor];
         _dateLabel.opaque = false;
+        if (TGDialogListBrandedIOS6Style())
+        {
+            _dateLabel.shadowColor = UIColorRGBA(0x000000, 0.30f);
+            _dateLabel.shadowOffset = CGSizeMake(0.0f, 0.5f);
+        }
         [_wrapView addSubview:_dateLabel];
         
         bool fadeTransition = cpuCoreCount() > 1;
         
         CGFloat avatarSize = TGDialogListAvatarSize();
-        _avatarView = [[TGLetteredAvatarView alloc] initWithFrame:CGRectMake(TGDialogListClassicIOS6Style() ? 12.0f : 10.0f, TGDialogListClassicIOS6Style() ? 12.0f : 7.0f, avatarSize, avatarSize)];
-        [_avatarView setSingleFontSize:TGDialogListClassicIOS6Style() ? 24.0f : 28.0f doubleFontSize:TGDialogListClassicIOS6Style() ? 18.0f : 21.0f useBoldFont:false];
+        CGFloat avatarX = TGDialogListBrandedIOS6Style() ? 6.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 10.0f);
+        CGFloat avatarY = TGDialogListBrandedIOS6Style() ? 5.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 7.0f);
+        _avatarView = [[TGLetteredAvatarView alloc] initWithFrame:CGRectMake(avatarX, avatarY, avatarSize, avatarSize)];
+        [_avatarView setSingleFontSize:TGDialogListBrandedIOS6Style() ? 21.0f : (TGDialogListClassicIOS6Style() ? 24.0f : 28.0f) doubleFontSize:TGDialogListBrandedIOS6Style() ? 16.0f : (TGDialogListClassicIOS6Style() ? 18.0f : 21.0f) useBoldFont:false];
         if (TGDialogListClassicIOS6Style())
         {
             _avatarView.clipsToBounds = true;
-            _avatarView.layer.cornerRadius = 7.0f;
+            _avatarView.layer.cornerRadius = TGDialogListBrandedIOS6Style() ? 8.0f : 7.0f;
         }
         _avatarView.fadeTransition = fadeTransition;
         [_wrapView addSubview:_avatarView];
+
+        if (TGDialogListBrandedIOS6Style())
+        {
+            _brandedAvatarShadowView = [[UIView alloc] initWithFrame:_avatarView.frame];
+            _brandedAvatarShadowView.backgroundColor = [UIColor whiteColor];
+            _brandedAvatarShadowView.layer.cornerRadius = 8.0f;
+            _brandedAvatarShadowView.layer.shadowColor = [UIColor blackColor].CGColor;
+            _brandedAvatarShadowView.layer.shadowOpacity = 0.45f;
+            _brandedAvatarShadowView.layer.shadowRadius = 1.0f;
+            _brandedAvatarShadowView.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
+            _brandedAvatarShadowView.layer.shouldRasterize = true;
+            _brandedAvatarShadowView.layer.rasterizationScale = [UIScreen mainScreen].scale;
+            [_wrapView insertSubview:_brandedAvatarShadowView belowSubview:_avatarView];
+        }
         
         _unreadCountLabel = [[TGLabel alloc] initWithFrame:CGRectMake(0, 0, 50, 20)];
         _unreadCountLabel.textColor = [UIColor whiteColor];
@@ -478,29 +1040,47 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
     
     if (TGDialogListClassicIOS6Style())
     {
-        self.backgroundColor = [UIColor whiteColor];
-        self.selectedBackgroundView.backgroundColor = UIColorRGB(0xd8e5f1);
-        _separatorLayer.backgroundColor = UIColorRGB(0xd4d4d4).CGColor;
-        _unreadCountLabel.font = TGBoldSystemFontOfSize(12.0f);
+        bool darkStyle = presentation.pallete.isDark;
+        self.backgroundColor = darkStyle ? presentation.pallete.backgroundColor : [UIColor whiteColor];
+        self.selectedBackgroundView.backgroundColor = darkStyle ? presentation.pallete.selectionColor : UIColorRGB(0xd8e5f1);
+        _separatorLayer.backgroundColor = darkStyle ? [UIColor clearColor].CGColor : UIColorRGB(0xd4d4d4).CGColor;
+        _separatorLayer.hidden = darkStyle;
+        if (TGDialogListBrandedIOS6Style())
+        {
+            CGFloat badgeFontSize = 11.0f * TGDialogListBrandedIOS6BadgeScale;
+            UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:badgeFontSize];
+            _unreadCountLabel.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(badgeFontSize);
+            _unreadCountLabel.shadowColor = [UIColor clearColor];
+            _unreadCountLabel.shadowOffset = CGSizeZero;
+        }
+        else
+        {
+            _unreadCountLabel.font = TGBoldSystemFontOfSize(12.0f);
+            _unreadCountLabel.shadowColor = UIColorRGBA(0x000000, 0.55f);
+            _unreadCountLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+        }
         _unreadCountLabel.textColor = [UIColor whiteColor];
-        _unreadCountLabel.shadowColor = UIColorRGBA(0x000000, 0.55f);
-        _unreadCountLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     }
     else
     {
         self.backgroundColor = presentation.pallete.backgroundColor;
         self.selectedBackgroundView.backgroundColor = presentation.pallete.selectionColor;
         _separatorLayer.backgroundColor = presentation.pallete.barSeparatorColor.CGColor;
+        _separatorLayer.hidden = false;
         _unreadCountLabel.font = TGSystemFontOfSize(14.0f);
         _unreadCountLabel.shadowColor = [UIColor clearColor];
         _unreadCountLabel.shadowOffset = CGSizeZero;
     }
     
     _textView.presentation = presentation;
+    _textView.layer.shouldRasterize = true;
+    _textView.layer.rasterizationScale = [UIScreen mainScreen].scale;
     [_textView setNeedsDisplay];
     
-    _unreadBackgroundImage = presentation.images.dialogBadgeImage;
-    _unreadMutedBackgroundImage = presentation.images.dialogMutedBadgeImage;
+    CGFloat brandedBadgeHeight = 18.0f * TGDialogListBrandedIOS6BadgeScale;
+    UIImage *brandedBadgeImage = [TGPresentation brandedIOS6BadgeImageForWidth:brandedBadgeHeight height:brandedBadgeHeight];
+    _unreadBackgroundImage = TGDialogListBrandedIOS6Style() ? brandedBadgeImage : presentation.images.dialogBadgeImage;
+    _unreadMutedBackgroundImage = TGDialogListBrandedIOS6Style() ? brandedBadgeImage : presentation.images.dialogMutedBadgeImage;
     
     bool resetButtons = _wrapView.presentation != nil && presentation != _wrapView.presentation;
     _wrapView.presentation = presentation;
@@ -513,6 +1093,24 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
         [_wrapView addSubview:_unreadCountBackgrond];
         
         [_unreadCountLabel.superview bringSubviewToFront:_unreadCountLabel];
+    }
+    else
+    {
+        _unreadCountBackgrond.image = _unreadBackgroundImage;
+    }
+    if (TGDialogListBrandedIOS6Style())
+    {
+        _unreadCountBackgrond.layer.shadowColor = [UIColor blackColor].CGColor;
+        _unreadCountBackgrond.layer.shadowOpacity = 0.80f;
+        _unreadCountBackgrond.layer.shadowRadius = 1.5f * TGDialogListBrandedIOS6BadgeScale;
+        _unreadCountBackgrond.layer.shadowOffset = CGSizeMake(0.0f, 2.0f * TGDialogListBrandedIOS6BadgeScale);
+        _unreadCountBackgrond.layer.shouldRasterize = true;
+        _unreadCountBackgrond.layer.rasterizationScale = [UIScreen mainScreen].scale;
+    }
+    else
+    {
+        _unreadCountBackgrond.layer.shadowOpacity = 0.0f;
+        _unreadCountBackgrond.layer.shouldRasterize = false;
     }
     
     if (_unseenMentionsView == nil)
@@ -527,12 +1125,64 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
     
     if (_pinnedBackgrond == nil)
     {
-        _pinnedBackgrond = [[TGSimpleImageView alloc] initWithImage:presentation.images.dialogPinnedIcon];
+        _pinnedBackgrond = [[TGSimpleImageView alloc] initWithImage:TGDialogListBrandedIOS6Style() ? TGDialogListBrandedPinImage() : presentation.images.dialogPinnedIcon];
         [_wrapView addSubview:_pinnedBackgrond];
     }
     else
     {
-        _pinnedBackgrond.image = presentation.images.dialogPinnedIcon;
+        _pinnedBackgrond.image = TGDialogListBrandedIOS6Style() ? TGDialogListBrandedPinImage() : presentation.images.dialogPinnedIcon;
+    }
+
+    if (TGDialogListBrandedIOS6Style())
+    {
+        if (_brandedDisclosureView == nil)
+        {
+            _brandedDisclosureView = [[TGSimpleImageView alloc] initWithImage:TGDialogListBrandedDisclosureImage(false)];
+            [_wrapView addSubview:_brandedDisclosureView];
+        }
+        _brandedDisclosureView.hidden = false;
+    }
+    else
+    {
+        _brandedDisclosureView.hidden = true;
+    }
+
+    if (TGDialogListBrandedIOS6Style())
+    {
+        if (_brandedStatusLabel == nil)
+        {
+            _brandedStatusLabel = [[UILabel alloc] init];
+            _brandedStatusLabel.backgroundColor = [UIColor clearColor];
+            _brandedStatusLabel.font = TGSystemFontOfSize(TGDialogListBrandedIOS6BodyFontSize);
+            _brandedStatusLabel.textColor = UIColorRGB(0x5a5a5a);
+            _brandedStatusLabel.shadowColor = UIColorRGBA(0x000000, 0.20f);
+            _brandedStatusLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+            _brandedStatusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+            _brandedStatusLabel.numberOfLines = 1;
+            [_wrapView addSubview:_brandedStatusLabel];
+        }
+        _brandedStatusLabel.text = _statusText;
+        _brandedStatusLabel.hidden = _statusText.length == 0;
+
+        if (_brandedAvatarShadowView == nil)
+        {
+            _brandedAvatarShadowView = [[UIView alloc] init];
+            _brandedAvatarShadowView.backgroundColor = [UIColor whiteColor];
+            _brandedAvatarShadowView.layer.cornerRadius = 8.0f;
+            _brandedAvatarShadowView.layer.shadowColor = [UIColor blackColor].CGColor;
+            _brandedAvatarShadowView.layer.shadowOpacity = 0.45f;
+            _brandedAvatarShadowView.layer.shadowRadius = 1.0f;
+            _brandedAvatarShadowView.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
+            _brandedAvatarShadowView.layer.shouldRasterize = true;
+            _brandedAvatarShadowView.layer.rasterizationScale = [UIScreen mainScreen].scale;
+            [_wrapView insertSubview:_brandedAvatarShadowView belowSubview:_avatarView];
+        }
+        _brandedAvatarShadowView.hidden = false;
+    }
+    else
+    {
+        _brandedStatusLabel.hidden = true;
+        _brandedAvatarShadowView.hidden = true;
     }
     
     _muteIcon.image = presentation.images.dialogMutedIcon;
@@ -568,6 +1218,8 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
 - (void)prepareForReuse
 {
     [self stopTypingAnimation];
+    _fastScrolling = false;
+    _wrapView.layer.shouldRasterize = false;
     [_wrapView setExpanded:false animated:false];
     
     [super prepareForReuse];
@@ -595,7 +1247,7 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
         
         if (TGIsPad() && _separatorLayer != nil)
         {
-            bool hidden = (self.selected || self.highlighted);
+            bool hidden = (TGDialogListClassicIOS6Style() && _presentation.pallete.isDark) || self.selected || self.highlighted;
             if (_separatorLayer.hidden != hidden)
             {
                 [CATransaction begin];
@@ -629,7 +1281,7 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
         
         if (TGIsPad() && _separatorLayer != nil)
         {
-            bool hidden = (self.selected || self.highlighted);
+            bool hidden = (TGDialogListClassicIOS6Style() && _presentation.pallete.isDark) || self.selected || self.highlighted;
             if (_separatorLayer.hidden != hidden)
             {
                 [CATransaction begin];
@@ -674,6 +1326,17 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
             [self.superview insertSubview:self atIndex:maxCellIndex];
         }
     }
+}
+
+- (void)setFastScrolling:(bool)fastScrolling
+{
+    if (_fastScrolling == fastScrolling)
+        return;
+
+    _fastScrolling = fastScrolling;
+    bool rasterize = _fastScrolling && !_animatingTyping && ![_wrapView isExpanded];
+    _wrapView.layer.shouldRasterize = rasterize;
+    _wrapView.layer.rasterizationScale = [UIScreen mainScreen].scale;
 }
 
 - (void)setTypingString:(NSString *)typingString
@@ -759,6 +1422,7 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
         UIView *typingDotsContainer = [self typingDotsContainer];
         
         _animatingTyping = true;
+        _wrapView.layer.shouldRasterize = false;
         
         if (typingDotsContainer.superview == nil)
         {
@@ -789,6 +1453,11 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
         }
         
         [_typingDotsContainer removeFromSuperview];
+        if (_fastScrolling && ![_wrapView isExpanded])
+        {
+            _wrapView.layer.shouldRasterize = true;
+            _wrapView.layer.rasterizationScale = [UIScreen mainScreen].scale;
+        }
     }
 }
 
@@ -837,6 +1506,20 @@ static void TGDialogListDrawText(NSString *text, CGRect rect, UIFont *font, UICo
 }
 
 static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool mutable, bool groupable, bool grouped, bool archived, bool isAd) {
+    if (TGDialogListBrandedIOS6Style())
+    {
+        NSMutableArray *buttons = [[NSMutableArray alloc] init];
+        if (!isAd)
+            [buttons addObject:archived ? @(TGDialogListCellEditingControlsUnarchive) : @(TGDialogListCellEditingControlsArchive)];
+        if (pinnable && !isAd)
+            [buttons addObject:pinned ? @(TGDialogListCellEditingControlsUnpin) : @(TGDialogListCellEditingControlsPin)];
+        if (mutable && !isAd)
+            [buttons addObject:muted ? @(TGDialogListCellEditingControlsUnmute) : @(TGDialogListCellEditingControlsMute)];
+        if (!isAd)
+            [buttons addObject:@(TGDialogListCellEditingControlsDelete)];
+        return buttons;
+    }
+
     static dispatch_once_t onceToken;
     static NSMutableDictionary *buttonTypes;
     dispatch_once(&onceToken, ^{
@@ -906,12 +1589,28 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     }
     
     _textView.title = _titleText;
+    if (TGDialogListBrandedIOS6Style() && _brandedStatusLabel != nil)
+    {
+        _brandedStatusLabel.text = _statusText;
+        _brandedStatusLabel.hidden = _statusText.length == 0;
+    }
     _textView.isVerified = _isVerified;
     
     UIColor *normalTextColor = _presentation.pallete.dialogTextColor;
     UIColor *actionTextColor = _presentation.pallete.dialogTextColor;
     UIColor *mediaTextColor = _presentation.pallete.dialogTextColor;
     
+    NSDictionary *preparedPreview = _preparedPreview;
+    if (preparedPreview != nil)
+    {
+        _messageText = preparedPreview[@"text"];
+        _hideAuthorName = [preparedPreview[@"hideAuthor"] boolValue];
+        int colorRole = [preparedPreview[@"colorRole"] intValue];
+        _messageTextColor = colorRole == 1 ? actionTextColor : (colorRole == 2 ? mediaTextColor : normalTextColor);
+        _mediaIcon = nil;
+    }
+    else
+    {
     bool attachmentFound = false;
     _hideAuthorName = !_isGroupChat || _rawText || (_isChannel && !_isChannelGroup);
     
@@ -1689,8 +2388,10 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         }
     }
     
+    }
+
     _textView.text = _messageText;
-    _textView.textColor = _messageTextColor;
+    _textView.textColor = TGDialogListMessageTextColor(_messageTextColor, _unread);
     _textView.actionTextColor = actionTextColor;
     _textView.mediaIcon = _mediaIcon;
 
@@ -1702,7 +2403,11 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         {
             _unreadCountLabel.hidden = false;
     
-            if (TGIsLocaleArabic())
+            if (TGDialogListBrandedIOS6Style())
+            {
+                _unreadCountLabel.text = [TGPresentation brandedIOS6BadgeTextForCount:totalUnreadCount];
+            }
+            else if (TGIsLocaleArabic())
             {
                 _unreadCountLabel.text = [TGStringUtils stringWithLocalizedNumberCharacters:[[NSString alloc] initWithFormat:@"%d", totalUnreadCount]];
             }
@@ -1727,7 +2432,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         _pinnedBackgrond.hidden = !_pinnedToTop;
     }
     
-    if (_unreadMentionCount > 0) {
+    if (_unreadMentionCount > 0 && (totalUnreadCount > 0 || _unreadMark || _unread)) {
         _unseenMentionsView.hidden = false;
     } else {
         _unseenMentionsView.hidden = true;
@@ -1758,7 +2463,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     
     if (_draft != nil && ![_draft isEmpty] && totalUnreadCount == 0) {
         _textView.text = _draft.text;
-        _textView.textColor = _messageTextColor;
+        _textView.textColor = TGDialogListBrandedIOS6Style() ? [UIColor blackColor] : _messageTextColor;
         _textView.authorName = TGLocalized(@"DialogList.Draft");
         _hideAuthorName = false;
         _authorName = _textView.authorName;
@@ -1812,11 +2517,11 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             {
                 if (keepState)
                 {
-                    [_avatarView loadImage:_avatarUrl filter:TGDialogListClassicIOS6Style() ? @"scale:52x52" : @"circle:62x62" placeholder:(_avatarView.currentImage != nil ? _avatarView.currentImage : placeholder) forceFade:true];
+                    [_avatarView loadImage:_avatarUrl filter:TGDialogListBrandedIOS6Style() ? @"scale:50x50" : (TGDialogListClassicIOS6Style() ? @"scale:52x52" : @"circle:62x62") placeholder:(_avatarView.currentImage != nil ? _avatarView.currentImage : placeholder) forceFade:true];
                 }
                 else
                 {
-                    [_avatarView loadImage:_avatarUrl filter:TGDialogListClassicIOS6Style() ? @"scale:52x52" : @"circle:62x62" placeholder:placeholder forceFade:false];
+                    [_avatarView loadImage:_avatarUrl filter:TGDialogListBrandedIOS6Style() ? @"scale:50x50" : (TGDialogListClassicIOS6Style() ? @"scale:52x52" : @"circle:62x62") placeholder:placeholder forceFade:false];
                 }
             }
         }
@@ -1860,7 +2565,12 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     }
     
     if (_outgoing && (_draft == nil || [_draft isEmpty] || totalUnreadCount != 0) && !self.isSavedMessages) {
-        if (_deliveryState == TGMessageDeliveryStateDelivered && !_unread)
+        if (TGDialogListBrandedIOS6Style())
+        {
+            _deliveredCheckmark.hidden = true;
+            _readCheckmark.hidden = true;
+        }
+        else if (_deliveryState == TGMessageDeliveryStateDelivered && !_unread)
         {
             _deliveredCheckmark.hidden = true;
             _readCheckmark.hidden = false;
@@ -1918,7 +2628,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         if (_unreadCountBackgrond.image != unreadBackground)
             _unreadCountBackgrond.image = unreadBackground;
         
-        _unreadCountLabel.textColor = _isMuted ? _presentation.pallete.dialogBadgeMutedTextColor : _presentation.pallete.dialogBadgeTextColor;
+        _unreadCountLabel.textColor = TGDialogListBrandedIOS6Style() ? [UIColor whiteColor] : (_isMuted ? _presentation.pallete.dialogBadgeMutedTextColor : _presentation.pallete.dialogBadgeTextColor);
     }
     
     if (_isVerified) {
@@ -1996,6 +2706,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 - (void)setIsLastCell:(bool)isLastCell {
     if (_isLastCell != isLastCell) {
         _isLastCell = isLastCell;
+        _validSize = CGSizeZero;
         [self setNeedsLayout];
     }
 }
@@ -2016,6 +2727,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     
     CGFloat contentOffset = self.contentView.frame.origin.x;
     CGFloat contentWidth = self.contentView.frame.size.width;
+    if (_fastScrolling && !CGSizeEqualToSize(_validSize, CGSizeZero) && CGSizeEqualToSize(_fastLayoutSize, self.bounds.size) && ABS(_fastLayoutContentOffset - contentOffset) < FLT_EPSILON)
+        return;
     
     if ((_disableActions || contentOffset > FLT_EPSILON) && [_wrapView isExpanded]) {
         [_wrapView setExpanded:false animated:false];
@@ -2138,13 +2851,40 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     _wrapView.frame = CGRectMake(contentOffset, 0.0f, size.width, size.height);
 
     CGFloat avatarSize = TGDialogListAvatarSize();
-    _avatarView.frame = CGRectMake(TGDialogListClassicIOS6Style() ? 12.0f : 10.0f, TGDialogListClassicIOS6Style() ? 12.0f : 7.0f, avatarSize, avatarSize);
+    CGFloat avatarX = TGDialogListBrandedIOS6Style() ? 6.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 10.0f);
+    CGFloat avatarY = TGDialogListBrandedIOS6Style() ? 5.0f : (TGDialogListClassicIOS6Style() ? 12.0f : 7.0f);
+    _avatarView.frame = CGRectMake(avatarX, avatarY, avatarSize, avatarSize);
+    if (TGDialogListBrandedIOS6Style() && _brandedAvatarShadowView != nil)
+    {
+        _brandedAvatarShadowView.frame = _avatarView.frame;
+        _brandedAvatarShadowView.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_brandedAvatarShadowView.bounds cornerRadius:8.0f].CGPath;
+    }
+
+    if (TGDialogListBrandedIOS6Style() && _brandedDisclosureView != nil)
+    {
+        bool emphasized = !_unread;
+        if (_draft != nil && ![_draft isEmpty])
+            emphasized = true;
+        _brandedDisclosureView.image = TGDialogListBrandedDisclosureImage(emphasized);
+        CGSize disclosureSize = _brandedDisclosureView.image.size;
+        CGFloat disclosureY = CGFloor(CGRectGetMidY(_avatarView.frame) - disclosureSize.height / 2.0f);
+        _brandedDisclosureView.frame = CGRectMake(size.width - 20.0f, disclosureY, disclosureSize.width, disclosureSize.height);
+    }
     
     if (!CGSizeEqualToSize(_validSize, size))
     {
         if (_textView != nil)
         {
-            if (!CGSizeEqualToSize(_textView.frame.size, CGRectMake(contentX - 1.0f, 6, size.width - (contentX - 1.0f), 62).size))
+            if (TGDialogListBrandedIOS6Style())
+            {
+                CGRect textViewFrame = CGRectMake(contentX, 0.0f, size.width - contentX, 62.0f);
+                if (!CGRectEqualToRect(_textView.frame, textViewFrame))
+                {
+                    _textView.frame = textViewFrame;
+                    [_textView setNeedsDisplay];
+                }
+            }
+            else if (!CGSizeEqualToSize(_textView.frame.size, CGRectMake(contentX - 1.0f, 6, size.width - (contentX - 1.0f), 62).size))
             {
                 _textView.frame = CGRectMake(contentX, 6, size.width - contentX, 62);
                 [_textView setNeedsDisplay];
@@ -2155,13 +2895,31 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         CGFloat countTextWidth = _unreadCountLabel.hidden ? 9.0f : [_unreadCountLabel.text sizeWithFont:_unreadCountLabel.font].width;
         
-        CGFloat backgroundWidth = MAX(20.0f, countTextWidth + 11.0f);
-        CGRect unreadCountBackgroundFrame = CGRectMake(size.width - 11.0f - backgroundWidth, 38.0f, backgroundWidth, 20.0f);
+        CGFloat brandedBadgeHeight = 18.0f * TGDialogListBrandedIOS6BadgeScale;
+        CGFloat brandedBadgeHorizontalPadding = 10.0f * TGDialogListBrandedIOS6BadgeScale;
+        CGFloat backgroundWidth = TGDialogListBrandedIOS6Style() ? MAX(brandedBadgeHeight, countTextWidth + brandedBadgeHorizontalPadding) : MAX(20.0f, countTextWidth + 11.0f);
+        CGFloat brandedBadgeOriginOffset = (18.0f - brandedBadgeHeight) / 2.0f;
+        CGRect unreadCountBackgroundFrame = TGDialogListBrandedIOS6Style() ? CGRectMake(43.0f + brandedBadgeOriginOffset, 42.0f + brandedBadgeOriginOffset, backgroundWidth, brandedBadgeHeight) : CGRectMake(size.width - 11.0f - backgroundWidth, 38.0f, backgroundWidth, 20.0f);
         _unreadCountBackgrond.frame = unreadCountBackgroundFrame;
-        _pinnedBackgrond.frame = CGRectMake(size.width - 14.0f - 20.0f, 39.0f, 20.0f, 20.0f);
-        CGRect unreadCountLabelFrame = _unreadCountLabel.frame;
-        unreadCountLabelFrame.origin = CGPointMake(unreadCountBackgroundFrame.origin.x + TGScreenPixelFloor(((unreadCountBackgroundFrame.size.width - countTextWidth) / 2.0f)), unreadCountBackgroundFrame.origin.y + 1.0f - TGScreenPixel);
-        _unreadCountLabel.frame = unreadCountLabelFrame;
+        if (TGDialogListBrandedIOS6Style())
+        {
+            _unreadCountBackgrond.image = [TGPresentation brandedIOS6BadgeImageForWidth:unreadCountBackgroundFrame.size.width height:unreadCountBackgroundFrame.size.height];
+            _unreadCountBackgrond.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadCountBackgrond.bounds cornerRadius:unreadCountBackgroundFrame.size.height / 2.0f].CGPath;
+        }
+        _pinnedBackgrond.frame = TGDialogListBrandedIOS6Style() ? CGRectMake(size.width - 25.0f, 4.0f, 16.0f, 16.0f) : CGRectMake(size.width - 14.0f - 20.0f, 39.0f, 20.0f, 20.0f);
+        if (TGDialogListBrandedIOS6Style())
+        {
+            _unreadCountLabel.textAlignment = NSTextAlignmentCenter;
+            CGRect unreadCountLabelFrame = unreadCountBackgroundFrame;
+            unreadCountLabelFrame.origin.y = unreadCountBackgroundFrame.origin.y + TGScreenPixel;
+            _unreadCountLabel.frame = unreadCountLabelFrame;
+        }
+        else
+        {
+            CGRect unreadCountLabelFrame = _unreadCountLabel.frame;
+            unreadCountLabelFrame.origin = CGPointMake(unreadCountBackgroundFrame.origin.x + TGScreenPixelFloor(((unreadCountBackgroundFrame.size.width - countTextWidth) / 2.0f)), unreadCountBackgroundFrame.origin.y + 1.0f - TGScreenPixel);
+            _unreadCountLabel.frame = unreadCountLabelFrame;
+        }
         
         if (_unreadCountBackgrond.hidden && _pinnedBackgrond.hidden) {
             _unseenMentionsView.frame = CGRectMake(size.width - 11.0f - 20.0f, 38.0f, 20.0f, 20.0f);
@@ -2171,7 +2929,9 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         TG_TIMESTAMP_MEASURE(cellLayout);
         
-        if (!_unreadCountBackgrond.hidden || !_pinnedBackgrond.hidden)
+        if (TGDialogListBrandedIOS6Style())
+            rightPadding += 22;
+        else if (!_unreadCountBackgrond.hidden || !_pinnedBackgrond.hidden)
             rightPadding += unreadCountBackgroundFrame.size.width + 16;
         
         if (!_unseenMentionsView.hidden) {
@@ -2194,9 +2954,15 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         CGSize dateTextSize = [_dateLabel measureTextSize];
         
         CGFloat dateWidth = _date == 0 ? 0 : (int)(dateTextSize.width);
-        CGRect dateFrame = CGRectMake(size.width - dateWidth - 11.0f + (contentOffset > FLT_EPSILON ? 4.0f : 0.0f), 10.0f + TGScreenPixel - (TGIsPad() ? 1.0f : 0.0f), _isAd ? dateTextSize.width : 75, 20);
+        CGRect dateFrame = TGDialogListBrandedIOS6Style() ? CGRectMake(size.width - dateWidth - 8.0f, 48.0f, MAX(dateTextSize.width, 40.0f), 15.0f) : CGRectMake(size.width - dateWidth - 11.0f + (contentOffset > FLT_EPSILON ? 4.0f : 0.0f), 10.0f + TGScreenPixel - (TGIsPad() ? 1.0f : 0.0f), _isAd ? dateTextSize.width : 75, 20);
         _dateLabel.frame = dateFrame;
-        CGFloat titleLabelWidth = (int)(dateFrame.origin.x - 4 - contentX - 18);
+        CGFloat titleLabelWidth = TGDialogListBrandedIOS6Style() ? (size.width - contentX - 29.0f) : (int)(dateFrame.origin.x - 4 - contentX - 18);
+        CGFloat brandedStatusWidth = 0.0f;
+        if (TGDialogListBrandedIOS6Style() && !_brandedStatusLabel.hidden)
+        {
+            brandedStatusWidth = MIN(103.2f, CGCeil([_brandedStatusLabel.text sizeWithFont:_brandedStatusLabel.font].width));
+            titleLabelWidth = MAX(34.0f, titleLabelWidth - brandedStatusWidth - 3.0f);
+        }
         CGFloat groupChatIconWidth = 0.0f;
         if (_isEncrypted)
         {
@@ -2213,19 +2979,37 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             titleLabelWidth -= _premiumIcon.bounds.size.width + 10.0f;
         }
         
-        titleLabelWidth = MIN(titleLabelWidth, TGDialogListTextSize(_titleText, _textView.titleFont, 10000.0f, 1).width);
+        CGFloat titleTextWidth = CGCeil([_titleText sizeWithFont:_textView.titleFont].width) + (TGDialogListBrandedIOS6Style() ? 1.0f : 0.0f);
+        titleLabelWidth = MIN(titleLabelWidth, titleTextWidth);
         
         TG_TIMESTAMP_MEASURE(cellLayout);
         
-        _deliveredCheckmark.frame = CGRectMake(dateFrame.origin.x - 16, 13.0f, 14, 11);
-        _readCheckmark.frame = CGRectMake(dateFrame.origin.x - 20, 13.0f, 18, 11);
+        CGFloat checkmarkY = TGDialogListBrandedIOS6Style() ? 31.0f : 13.0f;
+        _deliveredCheckmark.frame = CGRectMake(dateFrame.origin.x - 16, checkmarkY, 14, 11);
+        _readCheckmark.frame = CGRectMake(dateFrame.origin.x - 20, checkmarkY, 18, 11);
         
         if (_pendingIndicator != nil)
             _pendingIndicator.frame = CGRectMake(dateFrame.origin.x - 16, 13, 12, 12);
         
-        CGRect titleRect = CGRectMake(contentX + groupChatIconWidth, 8.0f, titleLabelWidth, 20);
+        CGFloat brandedTitleY = 2.0f;
+        CGFloat brandedTitleHeight = CGCeil(_textView.titleFont.lineHeight);
+        CGFloat brandedBodyHeight = CGCeil(_textView.textFont.lineHeight);
+        CGRect titleRect = CGRectMake(contentX + groupChatIconWidth, TGDialogListBrandedIOS6Style() ? brandedTitleY : 8.0f, titleLabelWidth, TGDialogListBrandedIOS6Style() ? brandedTitleHeight : 20.0f);
+        if (TGDialogListBrandedIOS6Style() && !_brandedStatusLabel.hidden)
+        {
+            CGFloat statusHeight = CGCeil(_brandedStatusLabel.font.lineHeight);
+            CGFloat statusY = TGScreenPixelFloor(titleRect.origin.y + _textView.titleFont.ascender - _brandedStatusLabel.font.ascender + TGScreenPixel);
+            CGFloat statusX = CGRectGetMaxX(titleRect) + 2.0f;
+            if (_isVerified)
+                statusX += _verifiedIcon.bounds.size.width + 7.0f;
+            else if (_premiumIcon.superview != nil)
+                statusX += _premiumIcon.bounds.size.width + 7.0f;
+            _brandedStatusLabel.frame = CGRectMake(statusX, statusY, brandedStatusWidth, statusHeight);
+        }
 
-        CGRect messageRect = CGRectMake(contentX, 30.0f - TGScreenPixel, size.width - contentX - 7.0f - rightPadding, 40);
+        CGFloat brandedMessageY = brandedTitleY + brandedTitleHeight;
+        CGFloat brandedMessageHeight = MAX(brandedBodyHeight, 62.0f - brandedMessageY);
+        CGRect messageRect = CGRectMake(contentX, TGDialogListBrandedIOS6Style() ? brandedMessageY : 30.0f - TGScreenPixel, size.width - contentX - 7.0f - rightPadding, TGDialogListBrandedIOS6Style() ? brandedMessageHeight : 40.0f);
         
         CGRect typingRect = messageRect;
         typingRect.size.width -= 12;
@@ -2235,7 +3019,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         if (_typingDotsContainer.superview != nil)
         {
-            CGSize typingSize = TGDialogListTextSize(_textView.typingText, _textView.textFont, typingRect.size.width, 1);
+            CGSize typingSize = TGDialogListBrandedIOS6Style() ? [_textView.typingText sizeWithFont:_textView.textFont] : TGDialogListTextSize(_textView.typingText, _textView.textFont, typingRect.size.width, 1);
             
             CGRect typingDotsFrame = _typingDotsContainer.frame;
             typingDotsFrame.origin.x = TGIsRTL() ? messageRect.origin.x : (typingRect.origin.x + typingSize.width);
@@ -2245,17 +3029,21 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         if (_authorName != nil && !_hideAuthorName)
         {
-            _textView.authorNameFrame = CGRectMake(contentX, 29.0f + TGScreenPixel, size.width - contentX - 4.0f - rightPadding, 20);
+            _textView.authorNameFrame = CGRectMake(contentX, TGDialogListBrandedIOS6Style() ? brandedMessageY : 29.0f + TGScreenPixel, size.width - contentX - 4.0f - rightPadding, TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 20.0f);
             
-            messageRect.origin.y += iosMajorVersion() >= 7 ? (16 + TGScreenPixel) : 17;
-            messageRect.size.height -= 12;
+            CGFloat authorLineHeight = TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 12.0f;
+            messageRect.origin.y += TGDialogListBrandedIOS6Style() ? authorLineHeight : (iosMajorVersion() >= 7 ? (16 + TGScreenPixel) : 17);
+            messageRect.size.height -= authorLineHeight;
         }
+
+        if (TGDialogListBrandedIOS6Style() && !_unreadCountBackgrond.hidden)
+            messageRect = TGDialogListRectAvoidingBadge(messageRect, unreadCountBackgroundFrame, 4.0f);
         
         TG_TIMESTAMP_MEASURE(cellLayout);
         
         titleRect.size.width = titleLabelWidth;
         
-        if (iosMajorVersion() < 7 && _authorName != nil && !_hideAuthorName && TGDialogListTextSize(_messageText, _textView.textFont, messageRect.size.width, 2).height < 20)
+        if (!TGDialogListBrandedIOS6Style() && iosMajorVersion() < 7 && _authorName != nil && !_hideAuthorName && TGDialogListTextSize(_messageText, _textView.textFont, messageRect.size.width, 2).height < 20)
             messageRect.origin.y += 9;
         
         if (_isVerified) {
@@ -2271,11 +3059,30 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         if (_isMuted)
         {
             CGRect muteRect = _muteIcon.frame;
-            muteRect.origin = CGPointMake(titleRect.origin.x + titleRect.size.width + 3, titleRect.origin.y + 6);
-            if (_isVerified) {
-                muteRect.origin.x += _verifiedIcon.bounds.size.width + 7.0f;
-            } else if (_premiumIcon.superview != nil) {
-                muteRect.origin.x += _premiumIcon.bounds.size.width + 7.0f;
+            if (TGDialogListBrandedIOS6Style())
+            {
+                CGFloat muteX = titleRect.origin.x + titleRect.size.width + 3.0f;
+                CGFloat lineY = titleRect.origin.y;
+                CGFloat lineHeight = _textView.titleFont.lineHeight;
+                if (_isVerified)
+                    muteX += _verifiedIcon.bounds.size.width + 7.0f;
+                else if (_premiumIcon.superview != nil)
+                    muteX += _premiumIcon.bounds.size.width + 7.0f;
+                if (!_brandedStatusLabel.hidden)
+                {
+                    muteX = CGRectGetMaxX(_brandedStatusLabel.frame) + 3.0f;
+                    lineY = _brandedStatusLabel.frame.origin.y;
+                    lineHeight = _brandedStatusLabel.frame.size.height;
+                }
+                muteRect.origin = CGPointMake(muteX, TGScreenPixelFloor(lineY + (lineHeight - muteRect.size.height) / 2.0f));
+            }
+            else
+            {
+                muteRect.origin = CGPointMake(titleRect.origin.x + titleRect.size.width + 3, titleRect.origin.y + 6);
+                if (_isVerified)
+                    muteRect.origin.x += _verifiedIcon.bounds.size.width + 7.0f;
+                else if (_premiumIcon.superview != nil)
+                    muteRect.origin.x += _premiumIcon.bounds.size.width + 7.0f;
             }
             _muteIcon.frame = muteRect;
         }
@@ -2284,6 +3091,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         _textView.textFrame = messageRect;
 
         _validSize = size;
+        _fastLayoutSize = self.bounds.size;
+        _fastLayoutContentOffset = contentOffset;
         
         TG_TIMESTAMP_MEASURE(cellLayout);
     }
@@ -2324,7 +3133,14 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 }
 
 - (void)setEditingConrolsExpanded:(bool)expanded animated:(bool)animated {
+    if (expanded)
+        _wrapView.layer.shouldRasterize = false;
     [_wrapView setExpanded:expanded animated:animated];
+    if (!expanded && _fastScrolling && !_animatingTyping)
+    {
+        _wrapView.layer.shouldRasterize = true;
+        _wrapView.layer.rasterizationScale = [UIScreen mainScreen].scale;
+    }
 }
 
 - (void)setSwipeActionsEnabled:(bool)enabled {

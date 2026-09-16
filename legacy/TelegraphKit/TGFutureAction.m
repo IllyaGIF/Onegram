@@ -1,5 +1,7 @@
 #import "TGFutureAction.h"
 
+extern void TGAssert(bool value);
+
 @implementation TGFutureAction
 
 - (id)initWithType:(int)type

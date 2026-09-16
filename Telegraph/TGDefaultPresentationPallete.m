@@ -1,6 +1,7 @@
 #import "TGDefaultPresentationPallete.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageUtils.h"
+#import "TGPresentation.h"
 
 @implementation TGDefaultPresentationPallete
 
@@ -406,6 +407,8 @@
 
 - (UIColor *)chatOutgoingDateColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return UIColorRGBA(0x666666, 0.9f);
     return UIColorRGBA(0x008c09, 0.8f);
 }
 
@@ -545,6 +548,8 @@
 
 - (UIColor *)chatChecksColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return UIColorRGB(0x6c6c6c);
     return UIColorRGB(0x23ca0a);
 }
 

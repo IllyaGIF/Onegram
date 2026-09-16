@@ -19,6 +19,7 @@
 #import "TGUserInfoAddPhoneCollectionItem.h"
 #import "TGUserInfoVariantCollectionItem.h"
 #import "TGDisclosureActionCollectionItem.h"
+#import "TGSwitchCollectionItem.h"
 #import "TGUserInfoUsernameCollectionItem.h"
 #import "TGUserInfoCallsCollectionItem.h"
 
@@ -102,6 +103,7 @@
     
     TGCollectionMenuSection *_notificationSettingsSection;
     TGUserInfoVariantCollectionItem *_normalNotificationsItem;
+    TGSwitchCollectionItem *_brandedNotificationsItem;
     TGUserInfoEditingVariantCollectionItem *_notificationsItem;
     TGUserInfoEditingVariantCollectionItem *_soundItem;
     
@@ -118,6 +120,7 @@
     TGUserInfoButtonCollectionItem *_blockUserItem;
     
     NSIndexPath *_currentLabelPickerIndexPath;
+    id<SDisposable> _profileMusicDisposable;
     
     TGProgressWindow *_progressWindow;
     
@@ -210,6 +213,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _defaultPhonesSectionInsets = self.phonesSection.insets;
         
         [self.userInfoItem setUser:_user animated:false];
+        self.userInfoItem.phoneNumber = _user.phoneNumber.length == 0 ? nil : [TGPhoneUtils formatPhone:_user.phoneNumber forceInternational:true];
+        self.userInfoItem.username = _user.userName.length == 0 ? nil : [NSString stringWithFormat:@"@%@", _user.userName];
+        self.userInfoItem.brandedDetailsTextScale = 1.2f;
 
         // Saved Music uses the same compact row style as Settings.  The row is
         // inserted into the first (profile) section only when Telegram returns
@@ -273,12 +279,26 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         
         _startSecretChatItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.StartSecretChat") action:@selector(startSecretChatPressed)];
         _startSecretChatItem.deselectAutomatically = true;
-        _startSecretChatItem.titleColor = self.presentation.pallete.collectionMenuAccentColor;
+        _startSecretChatItem.iconName = @"chat-left-quote-fill";
+        _startSecretChatItem.titleColor = [TGPresentation brandedIOS6Style] ? [UIColor blackColor] : self.presentation.pallete.collectionMenuAccentColor;
         
         _normalNotificationsItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.Notifications") variant:nil action:@selector(notificationsPressed)];
         _normalNotificationsItem.deselectAutomatically = true;
+        _normalNotificationsItem.iconName = @"bell-fill";
+        _brandedNotificationsItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.Notifications") isOn:true];
+        _brandedNotificationsItem.iconName = @"bell-fill";
+        _brandedNotificationsItem.brandedUserInfoStyle = true;
+        __weak TGTelegraphUserInfoController *weakNotificationsSelf = self;
+        _brandedNotificationsItem.toggled = ^(bool value, __unused TGSwitchCollectionItem *item)
+        {
+            TGTelegraphUserInfoController *strongSelf = weakNotificationsSelf;
+            if (strongSelf != nil)
+                [strongSelf _commitEnableNotifications:@(value) orMuteFor:0];
+        };
         _sharedMediaItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.SharedMedia") variant:nil action:@selector(sharedMediaPressed)];
+        _sharedMediaItem.iconName = @"book-fill";
         _groupsInCommonItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.GroupsInCommon") variant:@"" action:@selector(groupsInCommonPressed)];
+        _groupsInCommonItem.iconName = @"person-lines-fill";
         _sharedMediaSection = [[TGCollectionMenuSection alloc] initWithItems:@[_sharedMediaItem, _normalNotificationsItem]];
         _sharedMediaSection.insets = UIEdgeInsetsMake(22.0f, 0.0f, 0.0f, 0.0f);
         
@@ -300,6 +320,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _userLink = [TGDatabaseInstance() loadUserLink:_uid outdated:&outdated];
         
         _about = [TGDatabaseInstance() _userCachedDataSync:_uid].about;
+        self.userInfoItem.about = _about;
         
         if (_uid == 777000 || _uid == 333000) {
             self.userInfoItem.automaticallyManageUserPresence = false;
@@ -333,6 +354,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         
         __weak TGTelegraphUserInfoController *weakSelf = self;
         [self _reloadProfileSavedMusic];
+        _updatedCachedDataDisposable = [[TGUserSignal updatedUserCachedDataWithUserId:_uid] startWithNext:nil];
         _cachedDataDisposable = [[[TGDatabaseInstance() userCachedData:_uid] deliverOn:[SQueue mainQueue]] startWithNext:^(TGCachedUserData *data) {
             __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
             if (strongSelf != nil) {
@@ -342,6 +364,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                         forceUpdate = true;
                     }
                     strongSelf->_about = data.about;
+                    strongSelf.userInfoItem.about = data.about;
                     strongSelf->_groupsInCommonCount = data.groupsInCommonCount;
                     [strongSelf->_groupsInCommonItem setVariant:[NSString stringWithFormat:@"%d", data.groupsInCommonCount]];
                     strongSelf->_supportsCalls = data.supportsCalls;
@@ -369,7 +392,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
 - (void)_reloadProfileSavedMusic
 {
     __weak TGTelegraphUserInfoController *weakSelf = self;
-    _updatedCachedDataDisposable = [[[[TGUserSignal profileSavedMusicWithUserId:_uid] deliverOn:[SQueue mainQueue]] take:1] startWithNext:^(id value)
+    _profileMusicDisposable = [[[[TGUserSignal profileSavedMusicWithUserId:_uid] deliverOn:[SQueue mainQueue]] take:1] startWithNext:^(id value)
     {
         TGTelegraphUserInfoController *strongSelf = weakSelf;
         if (strongSelf == nil)
@@ -380,10 +403,28 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         strongSelf->_profileMusicDocuments = documents;
         TGDocumentMediaAttachment *document = documents.count != 0 ? documents[0] : nil;
 
-        // v15 placed the button inside TGUserInfoCollectionItem.  Keep that path
-        // disabled: the requested UI is a normal one-line cell below the card.
-        strongSelf.userInfoItem.profileMusicDocument = nil;
+        if ([TGPresentation brandedIOS6Style])
+        {
+            strongSelf.userInfoItem.profileMusicDocument = document;
+            NSArray *sections = strongSelf.menuSections.sections;
+            for (NSUInteger i = 0; i < sections.count; i++)
+            {
+                TGCollectionMenuSection *section = sections[i];
+                NSUInteger musicIndex = [section.items indexOfObject:strongSelf->_profileMusicItem];
+                if (musicIndex != NSNotFound)
+                {
+                    [strongSelf.menuSections beginRecordingChanges];
+                    [strongSelf.menuSections deleteItemFromSection:i atIndex:musicIndex];
+                    [strongSelf.menuSections commitRecordedChanges:strongSelf.collectionView];
+                    break;
+                }
+            }
+            [strongSelf.collectionLayout invalidateLayout];
+            [strongSelf.collectionView layoutSubviews];
+            return;
+        }
 
+        strongSelf.userInfoItem.profileMusicDocument = nil;
         NSArray *sections = strongSelf.menuSections.sections;
         NSUInteger profileSectionIndex = NSNotFound;
         NSUInteger profileItemIndex = NSNotFound;
@@ -426,7 +467,6 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 strongSelf->_profileMusicItem.title = TGIOS6UserProfileMusicTitle(document);
             }
         }
-
     }];
 }
 
@@ -465,6 +505,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             if (trackItem != nil && !trackItem.isVoice)
                 [items addObject:trackItem];
         }
+    [_profileMusicDisposable dispose];
         if (items.count == 0)
             [items addObject:item];
         TGMusicPlayerPlaylist *playlist = [[TGMusicPlayerPlaylist alloc] initWithVoice:false items:items itemKeyAliases:@{} markItemAsViewed:nil];
@@ -482,7 +523,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
 {
     [super setPresentation:presentation];
     
-    _startSecretChatItem.titleColor = presentation.pallete.collectionMenuAccentColor;
+    _startSecretChatItem.titleColor = [TGPresentation brandedIOS6Style] ? [UIColor blackColor] : presentation.pallete.collectionMenuAccentColor;
     _blockUserItem.titleColor = presentation.pallete.collectionMenuDestructiveColor;
     _deleteContactItem.titleColor = presentation.pallete.collectionMenuDestructiveColor;
 }
@@ -558,7 +599,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 processUsername = !processUsername;
             //}
             
-            if (processAbout && !_editing && _about.length != 0)
+            if (processAbout && !_editing && _about.length != 0 && ![TGPresentation brandedIOS6Style])
             {
                 TGUserInfoTextCollectionItem *infoItem = [[TGUserInfoTextCollectionItem alloc] init];
                 infoItem.highlightLinks = _user.kind == TGUserKindBot || _user.kind == TGUserKindSmartBot;
@@ -574,7 +615,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 [self.menuSections addItemToSection:usernameSectionIndex item:infoItem];
             }
             
-            if (processUsername && !_editing && _user.userName.length != 0)
+            if (processUsername && !_editing && _user.userName.length != 0 && ![TGPresentation brandedIOS6Style])
             {
                 TGUserInfoUsernameCollectionItem *usernameItem = [[TGUserInfoUsernameCollectionItem alloc] initWithLabel:TGLocalized(@"Profile.Username") username:[[NSString alloc] initWithFormat:@"@%@", _user.userName]];
                 usernameItem.lastInList = true;
@@ -616,7 +657,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             [editingPhoneItem setPhone:phoneNumber.number];
             [self.menuSections addItemToSection:phonesSectionIndex item:editingPhoneItem];
         }
-        else
+        else if (![TGPresentation brandedIOS6Style])
         {
             TGUserInfoPhoneCollectionItem *phoneItem = [[TGUserInfoPhoneCollectionItem alloc] initWithLabel:phoneNumber.label phone:phoneNumber.number phoneColor:_phonebookInfo.phoneNumbers.count > 1 && [[TGPhoneUtils cleanPhone:phoneNumber.number] isEqualToString:[TGPhoneUtils cleanPhone:_user.phoneNumber]] ? self.presentation.pallete.dialogEncryptedColor : self.presentation.pallete.collectionMenuAccentColor action:@selector(phonePressed:)];
             phoneItem.lastInList = index == (int)_phonebookInfo.phoneNumbers.count - 1;
@@ -692,7 +733,62 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     }
     else
     {
-        if (!isCurrentUser)
+        if ([TGPresentation brandedIOS6Style] && !isCurrentUser)
+        {
+            NSUInteger sharedMediaSectionIndex = [self indexForSection:_sharedMediaSection];
+            if (sharedMediaSectionIndex != NSNotFound)
+                [self.menuSections deleteSection:sharedMediaSectionIndex];
+
+            NSUInteger actionsSectionIndex = [self indexForSection:self.actionsSection];
+            if (actionsSectionIndex == NSNotFound)
+            {
+                NSUInteger phonesSectionIndex = [self indexForSection:self.phonesSection];
+                if (phonesSectionIndex != NSNotFound)
+                    [self.menuSections insertSection:self.actionsSection atIndex:phonesSectionIndex + 1];
+                actionsSectionIndex = [self indexForSection:self.actionsSection];
+            }
+
+            if (actionsSectionIndex != NSNotFound)
+            {
+                for (int i = (int)self.actionsSection.items.count - 1; i >= 0; i--)
+                    [self.menuSections deleteItemFromSection:actionsSectionIndex atIndex:0];
+
+                [self.menuSections addItemToSection:actionsSectionIndex item:_brandedNotificationsItem];
+
+                if (!_withoutCompose)
+                {
+                    TGUserInfoButtonCollectionItem *sendMessageItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.SendMessage") action:@selector(sendMessagePressed)];
+                    sendMessageItem.iconName = @"chat-left-dots-fill";
+                    sendMessageItem.transparent = false;
+                    [self.menuSections addItemToSection:actionsSectionIndex item:sendMessageItem];
+                }
+
+                _startSecretChatItem.transparent = false;
+                [self.menuSections addItemToSection:actionsSectionIndex item:_startSecretChatItem];
+
+                if (_supportsCalls)
+                {
+                    TGUserInfoButtonCollectionItem *callItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Conversation.Call") action:@selector(callPressed)];
+                    callItem.iconName = @"telephone-fill";
+                    callItem.deselectAutomatically = true;
+                    callItem.transparent = false;
+                    [self.menuSections addItemToSection:actionsSectionIndex item:callItem];
+                }
+
+                _sharedMediaItem.transparent = false;
+                [self.menuSections addItemToSection:actionsSectionIndex item:_sharedMediaItem];
+                if (_groupsInCommonCount != 0)
+                {
+                    _groupsInCommonItem.transparent = false;
+                    [self.menuSections addItemToSection:actionsSectionIndex item:_groupsInCommonItem];
+                }
+            }
+
+            self.phonesSection.insets = UIEdgeInsetsZero;
+            self.usernameSection.insets = UIEdgeInsetsZero;
+            self.actionsSection.insets = UIEdgeInsetsMake(10.0f, 3.0f, 44.0f, 6.0f);
+        }
+        else if (!isCurrentUser)
         {
             NSUInteger notificationSettingsIndex = [self indexForSection:_notificationSettingsSection];
             if (notificationSettingsIndex != NSNotFound)
@@ -733,34 +829,31 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             actionsSectionIndex = [self indexForSection:self.actionsSection];
         }
         
-        if (_groupsInCommonCount == 0) {
-            [_sharedMediaSection deleteItem:_groupsInCommonItem];
-        } else if ([_sharedMediaSection indexOfItem:_groupsInCommonItem] == NSNotFound) {
-            [_sharedMediaSection addItem:_groupsInCommonItem];
-        }
-        
         NSUInteger sharedMediaSectionIndex = [self indexForSection:_sharedMediaSection];
-        if (sharedMediaSectionIndex == NSNotFound)
+        if (!([TGPresentation brandedIOS6Style] && !isCurrentUser))
         {
-            if (actionsSectionIndex != NSNotFound)
+            if (_groupsInCommonCount == 0)
+                [_sharedMediaSection deleteItem:_groupsInCommonItem];
+            else if ([_sharedMediaSection indexOfItem:_groupsInCommonItem] == NSNotFound)
+                [_sharedMediaSection addItem:_groupsInCommonItem];
+
+            if (sharedMediaSectionIndex == NSNotFound)
             {
-                [self.menuSections insertSection:_sharedMediaSection atIndex:actionsSectionIndex + 1];
+                if (actionsSectionIndex != NSNotFound)
+                    [self.menuSections insertSection:_sharedMediaSection atIndex:actionsSectionIndex + 1];
+                sharedMediaSectionIndex = [self indexForSection:_sharedMediaSection];
             }
-            
-            sharedMediaSectionIndex = [self indexForSection:_sharedMediaSection];
         }
-        
+
         NSUInteger blockUserSectionIndex = [self indexForSection:_blockUserSection];
-        if (blockUserSectionIndex == NSNotFound)
+        if (blockUserSectionIndex == NSNotFound && !isCurrentUser)
         {
-            if (sharedMediaSectionIndex != NSNotFound)
-            {
-                if (!isCurrentUser)
-                    [self.menuSections insertSection:_blockUserSection atIndex:sharedMediaSectionIndex + 1];
-            }
+            NSUInteger insertionIndex = [TGPresentation brandedIOS6Style] ? actionsSectionIndex : sharedMediaSectionIndex;
+            if (insertionIndex != NSNotFound)
+                [self.menuSections insertSection:_blockUserSection atIndex:insertionIndex + 1];
         }
         
-        if (!_withoutActions)
+        if (!_withoutActions && !([TGPresentation brandedIOS6Style] && !isCurrentUser))
         {
             if (actionsSectionIndex != NSNotFound)
             {
@@ -771,7 +864,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 
                 if (!_withoutCompose)
                 {
-                    [self.menuSections addItemToSection:actionsSectionIndex item:[[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.SendMessage") action:@selector(sendMessagePressed)]];
+                    TGUserInfoButtonCollectionItem *sendMessageItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.SendMessage") action:@selector(sendMessagePressed)];
+                    sendMessageItem.iconName = @"chat-left-dots-fill";
+                    [self.menuSections addItemToSection:actionsSectionIndex item:sendMessageItem];
                 }
                 
                 if (_phonebookInfo != nil)
@@ -797,6 +892,14 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 
                 if (!isCurrentUser)
                     [self.menuSections addItemToSection:actionsSectionIndex item:_startSecretChatItem];
+
+                if ([TGPresentation brandedIOS6Style] && !isCurrentUser && _supportsCalls)
+                {
+                    TGUserInfoButtonCollectionItem *callItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Conversation.Call") action:@selector(callPressed)];
+                    callItem.iconName = @"telephone-fill";
+                    callItem.deselectAutomatically = true;
+                    [self.menuSections addItemToSection:actionsSectionIndex item:callItem];
+                }
             }
         }
     }
@@ -842,6 +945,8 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     
     [_notificationsItem setVariant:variant];
     [_normalNotificationsItem setVariant:variant];
+    _normalNotificationsItem.iconName = muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime] ? @"bell-fill" : @"bell-slash-fill";
+    [_brandedNotificationsItem setIsOn:muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime] animated:false];
 
     bool isDefault = false;
     NSNumber *privateSoundId = _userNotificationSettings[@"soundId"];
@@ -875,6 +980,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     {
         [_notificationsItem setVariant:variant];
         [_normalNotificationsItem setVariant:variant];
+        _normalNotificationsItem.iconName = muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime] ? @"bell-fill" : @"bell-slash-fill";
     }
 }
 

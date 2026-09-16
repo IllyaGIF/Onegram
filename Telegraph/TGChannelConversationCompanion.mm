@@ -665,7 +665,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         
         [_pinnedMessage set:[pinnedId mapToSignal:^SSignal *(NSNumber *nPinnedMessageId) {
             int32_t pinnedMessageId = [nPinnedMessageId intValue];
-            return [[TGDatabaseInstance() modify:^id{
+            return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                 if (pinnedMessageId == 0) {
                     return [SSignal single:[NSNull null]];
                 } else {
@@ -674,7 +674,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                         return [SSignal single:message];
                     } else {
                         return [[TGDownloadMessagesSignal downloadMessages:@[[[TGDownloadMessage alloc] initWithPeerId:conversationId accessHash:accessHash messageId:pinnedMessageId]]] mapToSignal:^SSignal *(NSArray *messages) {
-                            return [TGDatabaseInstance() modify:^id{
+                            return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                                 for (TGMessage *message in messages) {
                                     if (message.mid == pinnedMessageId) {
                                         [TGDatabaseInstance() addMessagesToChannel:conversationId messages:@[message] deleteMessages:nil unimportantGroups:nil addedHoles:nil removedHoles:nil removedUnimportantHoles:nil updatedMessageSortKeys:nil returnGroups:false keepUnreadCounters:false skipFeedUpdate:true changedMessages:nil];
@@ -1770,7 +1770,8 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/importantMessages", _conversationId],
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/unimportantMessages", _conversationId],
         [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%lld)", _conversationId],
-        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2]
+        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2],
+        [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]
     ] watcher:self];
     
     [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _conversationId] options:@{@"peerId": @(_conversationId), @"accessHash": @(_accessHash)} watcher:self];
@@ -2267,6 +2268,13 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 }
 
 - (void)actionStageResourceDispatched:(NSString *)path resource:(id)resource arguments:(id)arguments {
+    if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]])
+    {
+        TGDispatchOnMainThread(^{
+            [self _refreshPinnedMessages];
+        });
+    }
+
     if ([path rangeOfString:[[NSString alloc] initWithFormat:@"%lld", _conversationId]].location != NSNotFound || [path hasPrefix:@"/tg/peerSettings/"])
         IOS6Trace(@"FULL channel.resource peer=%lld path=%@ resource=%@ args=%@", _conversationId, path, NSStringFromClass([resource class]), arguments);
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/typing", _conversationId]])
@@ -2761,7 +2769,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     }
     
     SSignal *remoteMembersSignal = [[TGChannelManagementSignals channelMembers:_conversationId accessHash:_accessHash offset:0 count:32] mapToSignal:^SSignal *(NSDictionary *dict) {
-        return [[TGDatabaseInstance() modify:^id{
+        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             [TGDatabaseInstance() updateChannelCachedData:_conversationId block:^TGCachedConversationData *(TGCachedConversationData *data) {
                 if (data == nil) {
                     data = [[TGCachedConversationData alloc] init];
@@ -3095,7 +3103,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 - (SSignal *)saveEditedMessageWithId:(int32_t)messageId text:(NSString *)text entities:(NSArray *)entities disableLinkPreviews:(bool)disableLinkPreviews {
     TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
     int64_t peerId = _conversationId;
-    SSignal *notModified = [[TGDatabaseInstance() modify:^id{
+    SSignal *notModified = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
         NSString *messageText = message.text;
         for (id attachment in message.mediaAttachments) {

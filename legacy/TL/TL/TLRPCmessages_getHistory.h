@@ -18,7 +18,7 @@
 @property (nonatomic) int32_t limit;
 @property (nonatomic) int32_t max_id;
 @property (nonatomic) int32_t min_id;
-@property (nonatomic) int64_t hash;
+@property (nonatomic) int64_t n_hash;
 
 - (Class)responseClass;
 

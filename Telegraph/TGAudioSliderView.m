@@ -49,10 +49,10 @@
     switch (style)
     {
         case TGAudioSliderViewStyleIncoming:
-            return presentation.pallete.chatIncomingSubtextColor;
+            return [TGPresentation brandedIOS6Style] ? UIColorRGB(0x717171) : presentation.pallete.chatIncomingSubtextColor;
             
         case TGAudioSliderViewStyleOutgoing:
-            return presentation.pallete.chatOutgoingSubtextColor;
+            return [TGPresentation brandedIOS6Style] ? UIColorRGB(0x717171) : presentation.pallete.chatOutgoingSubtextColor;
             
         case TGAudioSliderViewStyleNotification:
             return [UIColor whiteColor];
@@ -71,8 +71,8 @@
     if (cachedPresentation != presentation.currentId)
     {
         cachedPresentation = presentation.currentId;
-        incomingImage = TGCircleImage(3.0f, presentation.pallete.chatIncomingAudioDotColor);
-        outgoingImage = TGCircleImage(3.0f, presentation.pallete.chatOutgoingAudioDotColor);
+        incomingImage = [TGPresentation brandedIOS6Style] ? nil : TGCircleImage(3.0f, presentation.pallete.chatIncomingAudioDotColor);
+        outgoingImage = [TGPresentation brandedIOS6Style] ? nil : TGCircleImage(3.0f, presentation.pallete.chatOutgoingAudioDotColor);
     };
     
     switch (style)
@@ -99,11 +99,17 @@
         switch (_style)
         {
             case TGAudioSliderViewStyleIncoming:
-                [_waveformView setForegroundColor:TGAccentColor() backgroundColor:UIColorRGB(0xcacaca)];
+                if ([TGPresentation brandedIOS6Style])
+                    [_waveformView setForegroundColor:UIColorRGB(0xa3a3a3) backgroundColor:UIColorRGB(0xa3a3a3)];
+                else
+                    [_waveformView setForegroundColor:TGAccentColor() backgroundColor:UIColorRGB(0xcacaca)];
                 break;
                 
             case TGAudioSliderViewStyleOutgoing:
-                [_waveformView setForegroundColor:UIColorRGB(0x3fc33b) backgroundColor:UIColorRGB(0x93d987)];
+                if ([TGPresentation brandedIOS6Style])
+                    [_waveformView setForegroundColor:UIColorRGB(0xa3a3a3) backgroundColor:UIColorRGB(0xa3a3a3)];
+                else
+                    [_waveformView setForegroundColor:UIColorRGB(0x3fc33b) backgroundColor:UIColorRGB(0x93d987)];
                 break;
                 
             case TGAudioSliderViewStyleNotification:
@@ -123,7 +129,7 @@
         _durationLabel = [[UILabel alloc] init];
         _durationLabel.textAlignment = NSTextAlignmentLeft;
         _durationLabel.backgroundColor = [UIColor clearColor];
-        _durationLabel.font = TGSystemFontOfSize(11.0f);
+        _durationLabel.font = [TGPresentation brandedIOS6Style] ? TGSystemFontOfSize(10.0f) : TGSystemFontOfSize(11.0f);
         [self addSubview:_durationLabel];
         _durationLabelSeconds = -1;
         
@@ -152,11 +158,17 @@
     switch (_style)
     {
         case TGAudioSliderViewStyleIncoming:
-            [_waveformView setForegroundColor:presentation.pallete.chatIncomingAudioForegroundColor backgroundColor:presentation.pallete.chatIncomingAudioBackgroundColor];
+            if ([TGPresentation brandedIOS6Style])
+                [_waveformView setForegroundColor:UIColorRGB(0xa3a3a3) backgroundColor:UIColorRGB(0xa3a3a3)];
+            else
+                [_waveformView setForegroundColor:presentation.pallete.chatIncomingAudioForegroundColor backgroundColor:presentation.pallete.chatIncomingAudioBackgroundColor];
             break;
             
         case TGAudioSliderViewStyleOutgoing:
-            [_waveformView setForegroundColor:presentation.pallete.chatOutgoingAudioForegroundColor backgroundColor:presentation.pallete.chatOutgoingAudioBackgroundColor];
+            if ([TGPresentation brandedIOS6Style])
+                [_waveformView setForegroundColor:UIColorRGB(0xa3a3a3) backgroundColor:UIColorRGB(0xa3a3a3)];
+            else
+                [_waveformView setForegroundColor:presentation.pallete.chatOutgoingAudioForegroundColor backgroundColor:presentation.pallete.chatOutgoingAudioBackgroundColor];
             break;
             
         default:
@@ -183,11 +195,18 @@
         switch (_style)
         {
             case TGAudioSliderViewStyleIncoming:
-                [_waveformView setForegroundColor:_presentation.pallete.chatIncomingAudioForegroundColor backgroundColor:_presentation.pallete.chatIncomingAudioBackgroundColor];
+                if ([TGPresentation brandedIOS6Style])
+                    [_waveformView setForegroundColor:UIColorRGB(0xa3a3a3) backgroundColor:UIColorRGB(0xa3a3a3)];
+                else
+                    [_waveformView setForegroundColor:_presentation.pallete.chatIncomingAudioForegroundColor backgroundColor:_presentation.pallete.chatIncomingAudioBackgroundColor];
                 break;
                 
             case TGAudioSliderViewStyleOutgoing:
-                [_waveformView setForegroundColor:_presentation.pallete.chatOutgoingAudioForegroundColor backgroundColor:_presentation.pallete.chatOutgoingAudioBackgroundColor];
+                if ([TGPresentation brandedIOS6Style])
+                    [_waveformView setForegroundColor:UIColorRGB(0xa3a3a3) backgroundColor:UIColorRGB(0xa3a3a3)];
+                else
+                    [_waveformView setForegroundColor:_presentation.pallete.chatOutgoingAudioForegroundColor backgroundColor:_presentation.pallete.chatOutgoingAudioBackgroundColor];
+                break;
                 
             case TGAudioSliderViewStyleNotification:
                 [_waveformView setForegroundColor:UIColorRGB(0xf6f6f6) backgroundColor:UIColorRGB(0xf6f6f6)];
@@ -213,7 +232,10 @@
 - (void)setDurationLabelFromSeconds:(int32_t)seconds {
     if (_durationLabelSeconds != seconds) {
         _durationLabelSeconds = seconds;
-        _durationLabel.text = [[NSString alloc] initWithFormat:@"%d:%02d", seconds / 60, seconds % 60];
+        if ([TGPresentation brandedIOS6Style])
+            _durationLabel.text = [[NSString alloc] initWithFormat:@"%02d:%02d", seconds / 60, seconds % 60];
+        else
+            _durationLabel.text = [[NSString alloc] initWithFormat:@"%d:%02d", seconds / 60, seconds % 60];
         [_durationLabel sizeToFit];
     }
 }
@@ -332,23 +354,31 @@
         progressValue = _immediateProgress;
     }
     
-    CGRect sliderFrame = CGRectMake(2.0f, CGFloor((bounds.size.height - 22.0f) / 2.0f), bounds.size.width - 2.0f, 2.0f);
-    
-    _waveformView.frame = CGRectMake(2.0f, CGFloor((bounds.size.height - 22.0f) / 2.0f), bounds.size.width - 2.0f, 22.0f);
-    
-    [_waveformView backgroundView].frame = CGRectMake(0.0f, 0.0f, bounds.size.width - 2.0f, 22.0f);
-    [_waveformView foregroundView].frame = CGRectMake(0.0f, 0.0f, bounds.size.width - 2.0f, 22.0f);
-    
-    _waveformView.foregroundClippingView.frame = [self waveformClippingFrameForProgress:progressValue];
-    
-    _sliderArea.frame = CGRectMake(sliderFrame.origin.x, 0.0f, sliderFrame.size.width, bounds.size.height);
+    if ([TGPresentation brandedIOS6Style])
+    {
+        CGFloat waveformWidth = MIN(95.0f, MAX(0.0f, bounds.size.width - _durationLabel.frame.size.width - 7.0f));
+        _waveformView.frame = CGRectMake(0.0f, 0.0f, waveformWidth, 24.0f);
+        [_waveformView backgroundView].frame = CGRectMake(0.0f, 0.0f, waveformWidth, 24.0f);
+        [_waveformView foregroundView].frame = CGRectMake(0.0f, 0.0f, waveformWidth, 24.0f);
+        _waveformView.foregroundClippingView.frame = CGRectMake(0.0f, 0.0f, CGFloor(waveformWidth * progressValue), 24.0f);
+        _sliderArea.frame = CGRectMake(0.0f, 0.0f, waveformWidth, 24.0f);
+    }
+    else
+    {
+        CGRect sliderFrame = CGRectMake(2.0f, CGFloor((bounds.size.height - 22.0f) / 2.0f), bounds.size.width - 2.0f, 2.0f);
+        _waveformView.frame = CGRectMake(2.0f, CGFloor((bounds.size.height - 22.0f) / 2.0f), bounds.size.width - 2.0f, 22.0f);
+        [_waveformView backgroundView].frame = CGRectMake(0.0f, 0.0f, bounds.size.width - 2.0f, 22.0f);
+        [_waveformView foregroundView].frame = CGRectMake(0.0f, 0.0f, bounds.size.width - 2.0f, 22.0f);
+        _waveformView.foregroundClippingView.frame = [self waveformClippingFrameForProgress:progressValue];
+        _sliderArea.frame = CGRectMake(sliderFrame.origin.x, 0.0f, sliderFrame.size.width, bounds.size.height);
+    }
 }
 
 - (void)setListenedStatus:(bool)listenedStatus
 {
     _listenedStatus = listenedStatus;
     
-    _statusIconView.hidden = listenedStatus;
+    _statusIconView.hidden = listenedStatus || [TGPresentation brandedIOS6Style];
     [self setNeedsLayout];
 }
 
@@ -360,10 +390,20 @@
     
     CGSize durationSize = _durationLabel.frame.size;
     if (_style == TGAudioSliderViewStyleNotification)
+    {
         _durationLabel.frame = CGRectMake(bounds.size.width, -1, 39, durationSize.height);
+    }
+    else if ([TGPresentation brandedIOS6Style])
+    {
+        CGFloat waveformWidth = MIN(95.0f, MAX(0.0f, bounds.size.width - durationSize.width - 7.0f));
+        _durationLabel.frame = CGRectMake(waveformWidth + 7.0f, 1.0f, durationSize.width, durationSize.height);
+    }
     else
+    {
         _durationLabel.frame = CGRectMake(0.0f, CGFloor((bounds.size.height - durationSize.height) / 2.0f) + 27.0f, durationSize.width, durationSize.height);
+    }
     _statusIconView.frame = CGRectMake(CGRectGetMaxX(_durationLabel.frame) + 2.0f + TGRetinaPixel, _durationLabel.frame.origin.y + 5.0f + TGRetinaPixel, _statusIconView.frame.size.width, _statusIconView.frame.size.height);
+    _statusIconView.hidden = _statusIconView.hidden || [TGPresentation brandedIOS6Style];
     
     [self layoutProgress];
 }

@@ -8,9 +8,42 @@
 
 @interface TGCollectionItemView ()
 {
+    UIImageView *_classicIOS6BackgroundImageView;
+    UIImageView *_classicIOS6SelectedBackgroundImageView;
 }
 
 @end
+
+static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool selected, TGPresentation *presentation)
+{
+    if (itemPosition == 0)
+        return nil;
+
+    NSString *name = nil;
+    if ((itemPosition & TGCollectionItemViewPositionFirstInBlock) && (itemPosition & TGCollectionItemViewPositionLastInBlock))
+        name = @"GroupedCellSingle";
+    else if (itemPosition & TGCollectionItemViewPositionFirstInBlock)
+        name = @"GroupedCellTop";
+    else if (itemPosition & TGCollectionItemViewPositionLastInBlock)
+        name = @"GroupedCellBottom";
+    else
+        name = @"GroupedCellMiddle";
+
+    if (selected)
+        name = [name stringByAppendingString:@"_Selected"];
+
+    UIImage *image = [TGPresentation classicIOS6ResourceImage:name];
+    if (image == nil)
+        return nil;
+
+    if (presentation.pallete.isDark)
+    {
+        UIColor *tintColor = selected ? presentation.pallete.collectionMenuCellSelectionColor : presentation.pallete.collectionMenuCellBackgroundColor;
+        image = [TGPresentation classicIOS6ThemedImage:image tintColor:tintColor alpha:selected ? 0.78f : 0.88f];
+    }
+
+    return [image stretchableImageWithLeftCapWidth:(int)floor(image.size.width / 2.0f) topCapHeight:(int)floor(image.size.height / 2.0f)];
+}
 
 @implementation TGCollectionItemView
 
@@ -21,10 +54,17 @@
     {
         _itemPosition = 1 << 31;
         _separatorInset = 15.0f;
+        _classicIOS6HorizontalInset = 9.0f;
         
         self.backgroundView = [[UIView alloc] init];
+        _classicIOS6BackgroundImageView = [[UIImageView alloc] init];
+        _classicIOS6BackgroundImageView.userInteractionEnabled = false;
+        [self.backgroundView addSubview:_classicIOS6BackgroundImageView];
         
         self.selectedBackgroundView = [[UIView alloc] init];
+        _classicIOS6SelectedBackgroundImageView = [[UIImageView alloc] init];
+        _classicIOS6SelectedBackgroundImageView.userInteractionEnabled = false;
+        [self.selectedBackgroundView addSubview:_classicIOS6SelectedBackgroundImageView];
         
         if (_topStripeView == nil)
         {
@@ -45,18 +85,15 @@
 {
     _presentation = presentation;
     
-    if (!self.boundItem.transparent)
-        self.backgroundView.backgroundColor = presentation.pallete.collectionMenuCellBackgroundColor;
-    
-    self.selectedBackgroundView.backgroundColor = self.highlightDisabled ? [UIColor clearColor] : presentation.pallete.collectionMenuCellSelectionColor;
     _topStripeView.backgroundColor = presentation.pallete.collectionMenuSeparatorColor;
     _bottomStripeView.backgroundColor = presentation.pallete.collectionMenuSeparatorColor;
+    [self _updateStripes];
 }
 
 - (void)setHighlightDisabled:(bool)highlightDisabled
 {
     _highlightDisabled = highlightDisabled;
-    self.selectedBackgroundView.backgroundColor = highlightDisabled ? [UIColor clearColor] : _presentation.pallete.collectionMenuCellSelectionColor;
+    [self _updateStripes];
 }
 
 - (void)setItemPosition:(int)itemPosition
@@ -93,9 +130,29 @@
 
 - (void)_updateStripes
 {
-    _topStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionFirstInBlock | TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionMiddleInBlock)) == 0 ? 0.0f : 1.0f;
-    _bottomStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionIncludeNextSeparator)) == 0 ? 0.0f : 1.0f;
-    self.backgroundView.backgroundColor = _itemPosition == 0 ? [UIColor clearColor] : _presentation.pallete.collectionMenuCellBackgroundColor;
+    bool classicIOS6Style = [TGPresentation classicIOS6Style] && _itemPosition != 0;
+    if (classicIOS6Style)
+    {
+        _classicIOS6BackgroundImageView.image = TGCollectionItemViewClassicIOS6Image(_itemPosition, false, _presentation);
+        _classicIOS6SelectedBackgroundImageView.image = self.highlightDisabled ? nil : TGCollectionItemViewClassicIOS6Image(_itemPosition, true, _presentation);
+        _classicIOS6BackgroundImageView.hidden = false;
+        _classicIOS6SelectedBackgroundImageView.hidden = self.highlightDisabled;
+        _topStripeView.alpha = 0.0f;
+        _bottomStripeView.alpha = 0.0f;
+        self.backgroundView.backgroundColor = [UIColor clearColor];
+        self.selectedBackgroundView.backgroundColor = [UIColor clearColor];
+    }
+    else
+    {
+        _classicIOS6BackgroundImageView.image = nil;
+        _classicIOS6SelectedBackgroundImageView.image = nil;
+        _classicIOS6BackgroundImageView.hidden = true;
+        _classicIOS6SelectedBackgroundImageView.hidden = true;
+        _topStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionFirstInBlock | TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionMiddleInBlock)) == 0 ? 0.0f : 1.0f;
+        _bottomStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionIncludeNextSeparator)) == 0 ? 0.0f : 1.0f;
+        self.backgroundView.backgroundColor = _itemPosition == 0 ? [UIColor clearColor] : _presentation.pallete.collectionMenuCellBackgroundColor;
+        self.selectedBackgroundView.backgroundColor = self.highlightDisabled ? [UIColor clearColor] : _presentation.pallete.collectionMenuCellSelectionColor;
+    }
 }
 
 static void adjustSelectedBackgroundViewFrame(CGSize viewSize, int positionMask, UIEdgeInsets selectionInsets, UIView *backgroundView)
@@ -201,6 +258,17 @@ static void adjustSelectedBackgroundViewFrame(CGSize viewSize, int positionMask,
         stripeHeight = TGScreenPixel;
     });
     
+    if ([TGPresentation classicIOS6Style] && _itemPosition != 0)
+    {
+        CGFloat horizontalInset = _classicIOS6HorizontalInset > FLT_EPSILON ? _classicIOS6HorizontalInset : 9.0f;
+        CGFloat leftInset = horizontalInset + self.safeAreaInset.left;
+        CGFloat rightInset = horizontalInset + self.safeAreaInset.right;
+        CGFloat width = MAX(0.0f, viewSize.width - leftInset - rightInset);
+        _classicIOS6BackgroundImageView.frame = CGRectMake(leftInset, 0.0f, width, viewSize.height);
+        _classicIOS6SelectedBackgroundImageView.frame = CGRectMake(leftInset, 0.0f, width, self.selectedBackgroundView.bounds.size.height);
+        return;
+    }
+
     CGFloat separatorInset = !_ignoreSeparatorInset ? _separatorInset + self.safeAreaInset.left : 0.0f;
     
     if (_itemPosition & TGCollectionItemViewPositionFirstInBlock)

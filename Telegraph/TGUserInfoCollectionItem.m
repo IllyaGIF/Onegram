@@ -39,6 +39,7 @@
         _firstBind = true;
         
         _automaticallyManageUserPresence = true;
+        _brandedDetailsTextScale = 1.0f;
     }
     return self;
 }
@@ -55,7 +56,16 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, 97.0f + _additinalHeight + (_profileMusicDocument != nil ? 44.0f : 0.0f));
+    if ([TGPresentation brandedIOS6Style])
+    {
+        CGFloat baseHeight = _about.length > 0 ? 136.0f : 88.0f;
+        CGFloat musicHeight = _profileMusicDocument != nil ? 40.0f : 0.0f;
+        return CGSizeMake(containerSize.width, baseHeight + _additinalHeight + musicHeight);
+    }
+
+    CGFloat baseHeight = 97.0f;
+    CGFloat musicHeight = _profileMusicDocument != nil ? 44.0f : 0.0f;
+    return CGSizeMake(containerSize.width, baseHeight + _additinalHeight + musicHeight);
 }
 
 - (NSString *)currentFirstName
@@ -84,6 +94,10 @@
     view.isPremium = _user.isPremium;
     view.emojiStatusDocumentId = _user.emojiStatusDocumentId;
     [view setProfileMusicDocument:_profileMusicDocument];
+    [view setPhoneNumber:_phoneNumber];
+    [view setUsername:_username];
+    [view setAbout:_about];
+    [view setBrandedDetailsTextScale:_brandedDetailsTextScale];
     
     if (!_disableAvatar)
     {
@@ -178,6 +192,24 @@
         view.isPremium = _user.isPremium;
         view.emojiStatusDocumentId = _user.emojiStatusDocumentId;
     }
+}
+
+- (void)setPhoneNumber:(NSString *)phoneNumber
+{
+    _phoneNumber = phoneNumber;
+    [(TGUserInfoCollectionItemView *)[self boundView] setPhoneNumber:phoneNumber];
+}
+
+- (void)setUsername:(NSString *)username
+{
+    _username = username;
+    [(TGUserInfoCollectionItemView *)[self boundView] setUsername:username];
+}
+
+- (void)setAbout:(NSString *)about
+{
+    _about = about;
+    [(TGUserInfoCollectionItemView *)[self boundView] setAbout:about];
 }
 
 - (void)setProfileMusicDocument:(TGDocumentMediaAttachment *)profileMusicDocument
@@ -354,7 +386,7 @@
 
 - (void)actionStageActionRequested:(NSString *)action options:(id)options
 {
-    if ([action isEqualToString:@"avatarTapped"] || [action isEqualToString:@"callTapped"])
+    if ([action isEqualToString:@"avatarTapped"] || [action isEqualToString:@"callTapped"] || [action isEqualToString:@"profileMusicTapped"])
     {
         [_interfaceHandle requestAction:action options:options];
     }
@@ -367,6 +399,12 @@
         
         [_interfaceHandle requestAction:@"editingNameChanged" options:nil];
     }
+}
+
+- (void)setBrandedDetailsTextScale:(CGFloat)brandedDetailsTextScale
+{
+    _brandedDetailsTextScale = brandedDetailsTextScale > FLT_EPSILON ? brandedDetailsTextScale : 1.0f;
+    [(TGUserInfoCollectionItemView *)self.boundView setBrandedDetailsTextScale:_brandedDetailsTextScale];
 }
 
 @end

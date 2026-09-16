@@ -1223,6 +1223,12 @@
 
 @end
 
+@implementation TLUpdate$updatePinnedMessagesCodex : TLUpdate
+@end
+
+@implementation TLUpdate$updatePinnedChannelMessagesCodex : TLUpdate
+@end
+
 @implementation TLUpdate$updateContactLink : TLUpdate
 
 

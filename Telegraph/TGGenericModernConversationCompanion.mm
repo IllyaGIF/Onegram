@@ -4278,7 +4278,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     if (addToDatabaseMessages.count != 0)
     {
         if (TGIOS6ConversationPeerIdIsChannelLike(_conversationId)) {
-            [TGDatabaseInstance() addMessagesToChannel:_conversationId messages:addToDatabaseMessages deleteMessages:nil unimportantGroups:nil addedHoles:nil removedHoles:nil removedUnimportantHoles:nil updatedMessageSortKeys:nil returnGroups:nil keepUnreadCounters:false skipFeedUpdate:true changedMessages:nil];
+            [TGDatabaseInstance() addMessagesToChannel:_conversationId messages:addToDatabaseMessages deleteMessages:nil unimportantGroups:nil addedHoles:nil removedHoles:nil removedUnimportantHoles:nil updatedMessageSortKeys:nil returnGroups:false keepUnreadCounters:false skipFeedUpdate:true changedMessages:nil];
         } else {
             [TGDatabaseInstance() transactionAddMessages:addToDatabaseMessages updateConversationDatas:nil notifyAdded:false];
         }
@@ -4451,7 +4451,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 for (id desc in result.messages) {
                     [messages addObject:[[TGMessage alloc] initWithTelegraphMessageDesc:desc]];
                 }
-                return [TGDatabaseInstance() modify:^id{
+                return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() updateChannelPinnedMessageId:peerId pinnedMessageId:0 hidden:nil];
                     [TGDatabaseInstance() transactionAddMessages:messages notifyAddedMessages:false removeMessages:nil updateMessages:nil updatePeerDrafts:nil removeMessagesInteractive:nil keepDates:false removeMessagesInteractiveForEveryone:false updateConversationDatas:nil applyMaxIncomingReadIds:nil applyMaxOutgoingReadIds:nil applyMaxOutgoingReadDates:nil applyUnreadMarks:nil readHistoryForPeerIds:nil resetPeerReadStates:nil resetPeerUnseenMentionsStates:nil clearConversationsWithPeerIds:attachedPeerIds clearConversationsInteractive:false removeConversationsWithPeerIds:nil updatePinnedConversations:nil synchronizePinnedConversations:false forceReplacePinnedConversations:false readMessageContentsInteractive:nil deleteEarlierHistory:@{@(peerId): @(INT32_MAX - 1)} updateFeededChannels:nil newlyJoinedFeedId:nil synchronizeFeededChannels:false calculateUnreadChats:false];
                     return messages;
@@ -4890,7 +4890,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 indexSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(TGModernConversationControllerUnloadHistoryLimit, _items.count - TGModernConversationControllerUnloadHistoryLimit)];
                 [(NSMutableArray *)_items removeObjectsAtIndexes:indexSet];
                 
-                TGLog(@"Unloaded %d items above (%d now)", indexSet.count, _items.count);
+                TGLog(@"Unloaded %lu items above (%lu now)", (unsigned long)indexSet.count, (unsigned long)_items.count);
                 
                 _moreMessagesAvailableAbove = true;
             }
@@ -4899,7 +4899,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 indexSet = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, _items.count - TGModernConversationControllerUnloadHistoryLimit)];
                 [(NSMutableArray *)_items removeObjectsAtIndexes:indexSet];
                 
-                TGLog(@"Unloaded %d items below (%d now)", indexSet.count, _items.count);
+                TGLog(@"Unloaded %lu items below (%lu now)", (unsigned long)indexSet.count, (unsigned long)_items.count);
                 
                 _moreMessagesAvailableBelow = true;
             }
@@ -7383,7 +7383,7 @@ static id mediaIdForMessage(TGMessage *message)
 - (SSignal *)saveEditedMessageWithId:(int32_t)messageId text:(NSString *)text entities:(NSArray *)entities disableLinkPreviews:(bool)disableLinkPreviews {
     TGGenericModernConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
     int64_t peerId = _conversationId;
-    SSignal *notModified = [[TGDatabaseInstance() modify:^id{
+    SSignal *notModified = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
         NSString *messageText = message.text;
         for (id attachment in message.mediaAttachments) {

@@ -107,7 +107,7 @@
             removedImportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
             removedUnimportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
             
-            return [[TGDatabaseInstance() modify:^id {
+            return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
                 [TGDatabaseInstance() addMessagesToChannel:peerId messages:dict[@"messages"] deleteMessages:nil unimportantGroups:dict[@"unimportantGroups"] addedHoles:nil removedHoles:removedImportantHoles removedUnimportantHoles:removedUnimportantHoles updatedMessageSortKeys:nil returnGroups:false keepUnreadCounters:false skipFeedUpdate:true changedMessages:nil];
                 
                 return [SSignal complete];

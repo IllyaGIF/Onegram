@@ -1,6 +1,7 @@
 #import "TGAudioWaveformView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
+#import "TGPresentation.h"
 
 @interface TGAudioWaveformContentView : UIView
 
@@ -37,6 +38,79 @@
 }
 
 - (void)drawRect:(CGRect)__unused rect {
+    if ([TGPresentation brandedIOS6Style]) {
+        CGSize size = self.bounds.size;
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGFloat sampleWidth = 3.0f;
+        CGFloat distance = 1.0f;
+        CGFloat baseline = MIN(11.0f, size.height);
+        int numSamples = MAX(1, (int)CGFloor((size.width + distance) / (sampleWidth + distance)));
+        CGFloat heights[numSamples];
+        memset(heights, 0, sizeof(CGFloat) * numSamples);
+
+        if (_waveform == nil) {
+            for (int i = 0; i < numSamples; i++)
+                heights[i] = 3.0f;
+        } else {
+            uint16_t *samples = (uint16_t *)_waveform.samples.bytes;
+            int maxReadSamples = (int)_waveform.samples.length / 2;
+            uint16_t maxSample = 1;
+            for (int i = 0; i < maxReadSamples; i++) {
+                if (maxSample < samples[i])
+                    maxSample = samples[i];
+            }
+            CGFloat peaks[numSamples];
+            memset(peaks, 0, sizeof(CGFloat) * numSamples);
+            for (int i = 0; i < maxReadSamples; i++) {
+                int index = MIN(numSamples - 1, i * numSamples / MAX(1, maxReadSamples));
+                if (peaks[index] < samples[i])
+                    peaks[index] = samples[i];
+            }
+            for (int i = 0; i < numSamples; i++) {
+                CGFloat normalized = MIN(1.0f, peaks[i] / (CGFloat)maxSample);
+                heights[i] = 3.0f + CGRound(normalized * 8.0f);
+            }
+        }
+
+        UIColor *topColor = _color != nil ? _color : UIColorRGB(0xa3a3a3);
+        CGContextSaveGState(context);
+        CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 2.0f), 1.0f, UIColorRGBA(0x000000, 0.10f).CGColor);
+        CGContextSetFillColorWithColor(context, topColor.CGColor);
+        for (int i = 0; i < numSamples; i++) {
+            CGFloat x = i * (sampleWidth + distance);
+            CGFloat h = MIN(baseline, heights[i]);
+            CGFloat y = baseline - h;
+            CGFloat radius = sampleWidth / 2.0f;
+            CGContextFillRect(context, CGRectMake(x, y + radius, sampleWidth, MAX(0.0f, h - sampleWidth)));
+            CGContextFillEllipseInRect(context, CGRectMake(x, y, sampleWidth, sampleWidth));
+            CGContextFillEllipseInRect(context, CGRectMake(x, baseline - sampleWidth, sampleWidth, sampleWidth));
+        }
+        CGContextRestoreGState(context);
+
+        CGContextSaveGState(context);
+        CGContextBeginPath(context);
+        for (int i = 0; i < numSamples; i++) {
+            CGFloat x = i * (sampleWidth + distance);
+            CGFloat h = MIN(11.0f, heights[i]);
+            CGFloat radius = sampleWidth / 2.0f;
+            CGContextAddRect(context, CGRectMake(x, baseline, sampleWidth, MAX(0.0f, h - radius)));
+            CGContextAddEllipseInRect(context, CGRectMake(x, baseline + MAX(0.0f, h - sampleWidth), sampleWidth, sampleWidth));
+        }
+        CGContextClip(context);
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGFloat components[] = {
+            0.443f, 0.443f, 0.443f, 1.0f,
+            0.443f, 0.443f, 0.443f, 0.0f
+        };
+        CGFloat locations[] = {0.0f, 0.8278f};
+        CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+        CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, baseline), CGPointMake(0.0f, MIN(size.height, baseline + 13.0f)), 0);
+        CGGradientRelease(gradient);
+        CGColorSpaceRelease(colorSpace);
+        CGContextRestoreGState(context);
+        return;
+    }
+
     CGFloat sampleWidth = 2.0f;
     CGFloat halfSampleWidth = 1.0f;
     CGFloat distance = 1.0f;
@@ -111,6 +185,7 @@
             }
         }
     }
+
 }
 
 @end

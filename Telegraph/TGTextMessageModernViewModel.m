@@ -926,7 +926,7 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
     if (_context.commandsEnabled || _isBot)
         layoutFlags |= TGReusableLabelLayoutHighlightCommands;
     
-    CGFloat effectiveInfoWidth = infoWidth;
+    CGFloat effectiveInfoWidth = [TGPresentation brandedIOS6Style] ? 0.0f : infoWidth;
     if (_emojiOnly) {
         effectiveInfoWidth = 0.0f;
     }
@@ -949,6 +949,8 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
     }
     
     size.width = MAX(size.width, infoWidth - 5.0f);
+    if ([TGPresentation brandedIOS6Style] && !_isGame && !_isInvoice && !(_text.length == 0 && _webPage != nil))
+        size.height += 15.0f;
     
     if (_isGame || _isInvoice || (_text.length == 0 && _webPage != nil)) {
         size.height = 0.0f;

@@ -412,7 +412,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         self.view.backgroundColor = self.presentation.pallete.backgroundColor;
     _tableView.backgroundColor = self.presentation.pallete.backgroundColor;
     if ([_tableView respondsToSelector:@selector(setSectionIndexColor:)])
-        _tableView.sectionIndexColor = presentation.pallete.accentColor;
+        _tableView.sectionIndexColor = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts ? UIColorRGB(0x6f7883) : presentation.pallete.accentColor;
     
     _headerBackgroundView.backgroundColor = self.presentation.pallete.backgroundColor;
     [_searchBar setPallete:presentation.searchBarPallete];
@@ -452,6 +452,9 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     if ((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
     {
         if (_phonebookAccessOverlay != nil)
+            return nil;
+        
+        if ([TGPresentation brandedIOS6Style])
             return nil;
         
         if (_addButtonItem == nil)
@@ -511,7 +514,20 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 {
     [super loadView];
     
-    self.titleText = _customTitle != nil ? _customTitle : TGLocalized(@"Contacts.Title");
+    NSString *navigationTitle = _customTitle != nil ? _customTitle : TGLocalized(@"Contacts.Title");
+    self.titleText = navigationTitle;
+    if ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
+    {
+        UILabel *titleLabel = [[UILabel alloc] init];
+        titleLabel.backgroundColor = [UIColor clearColor];
+        titleLabel.font = TGBoldSystemFontOfSize(20.0f);
+        titleLabel.textColor = [UIColor whiteColor];
+        titleLabel.shadowColor = UIColorRGBA(0x000000, 0.55f);
+        titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        titleLabel.text = navigationTitle;
+        [titleLabel sizeToFit];
+        [self setTitleView:titleLabel];
+    }
     
     CGSize viewSize = self.view.frame.size;
     
@@ -533,7 +549,15 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     
     _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     if ([_tableView respondsToSelector:@selector(setSectionIndexColor:)])
-        _tableView.sectionIndexColor = self.presentation.pallete.accentColor;
+        _tableView.sectionIndexColor = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts ? UIColorRGB(0x6f7883) : self.presentation.pallete.accentColor;
+    if ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
+    {
+        SEL sectionIndexBackgroundColorSelector = NSSelectorFromString(@"setSectionIndexBackgroundColor:");
+        if ([_tableView respondsToSelector:sectionIndexBackgroundColorSelector])
+            ((void (*)(id, SEL, id))objc_msgSend)(_tableView, sectionIndexBackgroundColorSelector, [UIColor clearColor]);
+        if ([_tableView respondsToSelector:@selector(setSectionIndexTrackingBackgroundColor:)])
+            _tableView.sectionIndexTrackingBackgroundColor = UIColorRGB(0xf4f4f4);
+    }
     _tableView.delegate = self;
     _tableView.dataSource = self;
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
@@ -550,7 +574,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         [(TGListsTableView *)_tableView adjustBehaviour];
         
         _searchBar.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        NSString *placeholder = TGLocalized(@"Contacts.SearchLabel");
+        NSString *placeholder = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts ? TGLocalized(@"Common.Search") : TGLocalized(@"Contacts.SearchLabel");
         if ((_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite)
             placeholder = TGLocalized(@"Contacts.InviteSearchLabel");
         
@@ -672,7 +696,10 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         [_searchMixin controllerInsetUpdated:self.controllerInset];
     
     _tokenFieldView.safeAreaInset = self.controllerSafeAreaInset;
-    _searchBar.safeAreaInset = self.controllerSafeAreaInset;
+    if ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
+        _searchBar.safeAreaInset = UIEdgeInsetsMake(self.controllerSafeAreaInset.top, self.controllerSafeAreaInset.left, self.controllerSafeAreaInset.bottom, self.controllerSafeAreaInset.right + 24.0f);
+    else
+        _searchBar.safeAreaInset = self.controllerSafeAreaInset;
     [self updateSafeAreaInset];
     
     CGFloat indexOffset = self.controllerSafeAreaInset.right > FLT_EPSILON ? (self.interfaceOrientation == UIInterfaceOrientationLandscapeLeft ? self.controllerSafeAreaInset.right - 10.0f : 0.0f) : 0.0f;
@@ -1333,7 +1360,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     }
 }
 
-- (UIView *)generateSectionHeader:(NSString *)title first:(bool)first wide:(bool)wide
+- (UIView *)generateSectionHeader:(NSString *)title first:(bool)first wide:(bool)__unused wide
 {
     UIView *sectionContainer = nil;
     
@@ -1348,36 +1375,48 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         }
     }
     
+    bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
+    CGFloat headerHeight = brandedMainContacts ? 23.0f : 27.0f;
+    CGFloat sectionViewOriginY = brandedMainContacts ? 0.0f : (first ? 0.0f : -1.0f);
+    CGFloat sectionViewHeight = brandedMainContacts ? headerHeight : (first ? 10.0f : 11.0f);
+    
     if (sectionContainer == nil)
     {
-        sectionContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
+        sectionContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, headerHeight)];
         
         sectionContainer.clipsToBounds = false;
         sectionContainer.opaque = false;
         
-        UIView *sectionView = [[UIView alloc] initWithFrame:CGRectMake(0, first ? 0 : -1, 10, first ? 10 : 11)];
+        UIView *sectionView = [[UIView alloc] initWithFrame:CGRectMake(0, sectionViewOriginY, 10, sectionViewHeight)];
+        sectionView.tag = 10;
         sectionView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        sectionView.backgroundColor = self.presentation.pallete.sectionHeaderBackgroundColor;
+        sectionView.backgroundColor = brandedMainContacts ? UIColorRGB(0xd7d7d7) : self.presentation.pallete.sectionHeaderBackgroundColor;
         [sectionContainer addSubview:sectionView];
         
         UILabel *sectionLabel = [[UILabel alloc] init];
         sectionLabel.tag = 100;
         sectionLabel.backgroundColor = sectionView.backgroundColor;
-        sectionLabel.textColor = self.presentation.pallete.sectionHeaderTextColor;
+        sectionLabel.textColor = brandedMainContacts ? [UIColor blackColor] : self.presentation.pallete.sectionHeaderTextColor;
         sectionLabel.numberOfLines = 1;
         
         [sectionContainer addSubview:sectionLabel];
         
         [reusableList addObject:sectionContainer];
     }
-
+    
+    sectionContainer.frame = CGRectMake(0, 0, 10, headerHeight);
+    UIView *sectionView = [sectionContainer viewWithTag:10];
+    sectionView.frame = CGRectMake(0, sectionViewOriginY, sectionContainer.frame.size.width, sectionViewHeight);
+    sectionView.backgroundColor = brandedMainContacts ? UIColorRGB(0xd7d7d7) : self.presentation.pallete.sectionHeaderBackgroundColor;
+    
     UILabel *sectionLabel = (UILabel *)[sectionContainer viewWithTag:100];
-    sectionLabel.font = TGBoldSystemFontOfSize(12.0f);
-    sectionLabel.text = [title uppercaseString];
-    sectionLabel.textColor = self.presentation.pallete.sectionHeaderTextColor;
+    sectionLabel.font = brandedMainContacts ? TGBoldSystemFontOfSize(18.0f) : TGBoldSystemFontOfSize(12.0f);
+    sectionLabel.text = brandedMainContacts ? title : [title uppercaseString];
+    sectionLabel.textColor = brandedMainContacts ? [UIColor blackColor] : self.presentation.pallete.sectionHeaderTextColor;
+    sectionLabel.backgroundColor = sectionView.backgroundColor;
     [sectionLabel sizeToFit];
-
-    sectionLabel.frame = CGRectMake(14.0f + self.controllerSafeAreaInset.left, 6.0f, sectionLabel.frame.size.width, sectionLabel.frame.size.height);
+    
+    sectionLabel.frame = CGRectMake((brandedMainContacts ? 12.0f : 14.0f) + self.controllerSafeAreaInset.left, brandedMainContacts ? 1.0f : 6.0f, sectionLabel.frame.size.width, sectionLabel.frame.size.height);
     
     return sectionContainer;
 }
@@ -1386,7 +1425,10 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 {
     if (tableView == _tableView)
     {
-        if (((_contactsMode & TGContactsModeManualFirstSection) || _contactsMode && TGContactsModeModalInvite) && section == 0)
+        bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
+        if (brandedMainContacts && section >= 0 && section < (int)_sectionList.size() && _sectionList[section]->letter != nil)
+            return 23.0f;
+        if (((_contactsMode & TGContactsModeManualFirstSection) || ((_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite)) && section == 0)
             return 0.0f;
         
         if (section >= 0 && section < (int)_sectionList.size() && _sectionList[section]->letter != nil)
@@ -1429,13 +1471,14 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 //            return 80.0f;
 //        }
         
+        bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
         if ((((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption)) && indexPath.section == 0)
-            return TGIsPad() ? 55 : 48;
+            return TGIsPad() ? 55 : (brandedMainContacts ? 44.0f : 48.0f);
         
         if ((_contactsMode & TGContactsModeInvite) == TGContactsModeInvite)
             return 51;
         
-        return TGIsPad() ? 55.0f : 48.0f;
+        return TGIsPad() ? 55.0f : (brandedMainContacts ? 44.0f : 48.0f);
     }
     
     return 48.0f;
@@ -1490,7 +1533,9 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 {
     if (tableView == _tableView)
     {
-        if (index == 0)
+        bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
+        bool hasSearchIndex = ((_contactsMode & TGContactsModeSearchDisabled) != TGContactsModeSearchDisabled) && !brandedMainContacts;
+        if (hasSearchIndex && index == 0)
         {
             [_tableView setContentOffset:CGPointMake(0, -_tableView.contentInset.top) animated:false];
             return -1;
@@ -1500,7 +1545,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
             NSUInteger sectionIndex = [_sectionIndices indexOfObject:title];
             if (sectionIndex != NSNotFound)
             {
-                return MAX((NSInteger)sectionIndex - ((_contactsMode & TGContactsModeSearchDisabled) == TGContactsModeSearchDisabled ? 0 : 1), 0);
+                return MAX((NSInteger)sectionIndex - (hasSearchIndex ? 1 : 0), 0);
             }
         }
     }
@@ -1520,9 +1565,10 @@ static void adjustCellForSelectionEnabled(TGContactCell *contactCell, bool selec
     [contactCell setSelectionEnabled:selectionEnabled animated:animated];
 }
 
-static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int currentSortOrder, bool animated, std::map<int, TGUser *> const &selectedUsers, __unused bool showMessageBadge, bool isDisabled, bool isSearch, bool isGlobalSearch, NSString *searchString, TGPresentation *presentation)
+static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int currentSortOrder, bool animated, std::map<int, TGUser *> const &selectedUsers, bool showMessageBadge, bool isDisabled, bool isSearch, bool isGlobalSearch, NSString *searchString, TGPresentation *presentation)
 {
-    contactCell.hideAvatar = user.uid <= 0;
+    bool brandedMainContacts = showMessageBadge && [TGPresentation brandedIOS6Style];
+    contactCell.hideAvatar = brandedMainContacts || user.uid <= 0;
     contactCell.itemId = user.uid;
     contactCell.user = user;
     
@@ -1589,7 +1635,11 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int curr
     else
     {
         int importers = [user.customProperties[@"importers"] intValue];
-        if (importers > 0)
+        if (brandedMainContacts)
+        {
+            contactCell.subtitleText = nil;
+        }
+        else if (importers > 0)
         {
             NSString *formatPrefix = [TGStringUtils integerValueFormat:@"Contacts.ImportersCount_" value:importers];
             NSString *plus = @"";
@@ -2818,7 +2868,8 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 {
     NSMutableArray *result = [[NSMutableArray alloc] initWithCapacity:sections.size()];
     
-    if ((_contactsMode & TGContactsModeSearchDisabled) != TGContactsModeSearchDisabled)
+    bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
+    if ((_contactsMode & TGContactsModeSearchDisabled) != TGContactsModeSearchDisabled && !brandedMainContacts)
         [result addObject:UITableViewIndexSearch];
     
     for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::const_iterator it = sections.begin(); it != sections.end(); it++)
@@ -3167,13 +3218,14 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (bool)displaysIndices
 {
-    return ((_contactsMode & TGContactsModeCalls) == TGContactsModeCalls) || ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) || (_contactsMode & TGContactsModeCombineSections);
+    return ((_contactsMode & TGContactsModeCalls) == TGContactsModeCalls) || ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) || (_contactsMode & TGContactsModeCombineSections) || ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts);
 }
 
 - (void)updateContactList
 {
     //TGLog(@"Updating contact list view");
     
+    bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
     int sortOrder = [[TGSynchronizeContactsManager instance] sortOrder];
     
     NSCharacterSet *characterSet = [NSCharacterSet alphanumericCharacterSet];
@@ -3271,7 +3323,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             bool found = false;
             for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator it = newSectionListTelegraph.begin(); it != newSectionListTelegraph.end(); it++)
             {
-                if (!(_contactsMode & TGContactsModePhonebook) || (_contactsMode & TGContactsModeCombineSections))
+                if (!(_contactsMode & TGContactsModePhonebook) || (_contactsMode & TGContactsModeCombineSections) || brandedMainContacts)
                 {
                     if (it->get()->sortLetter == sectionLetter)
                     {
@@ -3386,7 +3438,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
                     else
                         sectionLetter = uppercaseIt->second;
                     
-                    if (_contactsMode & TGContactsModeCombineSections)
+                    if ((_contactsMode & TGContactsModeCombineSections) || brandedMainContacts)
                     {
                         bool found = false;
                         for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator it = newSectionListTelegraph.begin(); it != newSectionListTelegraph.end(); it++)
@@ -3499,7 +3551,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
                 else
                     sectionLetter = uppercaseIt->second;
                 
-                if (_contactsMode & TGContactsModeCombineSections)
+                if ((_contactsMode & TGContactsModeCombineSections) || brandedMainContacts)
                 {
                     bool found = false;
                     for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator it = newSectionListTelegraph.begin(); it != newSectionListTelegraph.end(); it++)
@@ -3567,7 +3619,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             it->get()->sortByLastName();
     }
     
-    if (newSectionListTelegraph.size() == 1 || (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
+    if (newSectionListTelegraph.size() == 1 || (((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts) && ![TGPresentation brandedIOS6Style]))
     {
         if (newSectionListTelegraph.size() > 0)
             newSectionListTelegraph[0]->letter = nil;
@@ -3581,7 +3633,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         std::tr1::shared_ptr<TGContactListSection> serviceSection(new TGContactListSection());
         newSectionListTelegraph.insert(newSectionListTelegraph.begin(), serviceSection);
     }
-    else if ((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) || ((_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite))
+    else if ((((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts) && ![TGPresentation brandedIOS6Style]) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) || ((_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite))
     {
             std::tr1::shared_ptr<TGContactListSection> serviceSection(new TGContactListSection());
         
@@ -3641,7 +3693,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         
         _sectionList = holder.sectionList;
         
-        if (newIndices.count > 10)
+        if (brandedMainContacts ? newIndices.count > 1 : newIndices.count > 10)
             _sectionIndices = newIndices;
         else
             _sectionIndices = nil;
@@ -3751,7 +3803,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 - (void)localizationUpdated
 {
     [_searchBar localizationUpdated];
-    NSString *placeholder = TGLocalized(@"Contacts.SearchLabel");
+    NSString *placeholder = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts ? TGLocalized(@"Common.Search") : TGLocalized(@"Contacts.SearchLabel");
     if ((_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite)
         placeholder = TGLocalized(@"Contacts.InviteSearchLabel");
     

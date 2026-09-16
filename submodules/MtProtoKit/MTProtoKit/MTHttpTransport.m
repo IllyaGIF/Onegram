@@ -464,7 +464,7 @@
                     {
                         MTHttpWorker *worker = [[MTHttpWorker alloc] initWithDelegate:self address:_address payloadData:transaction.payload performsLongPolling:performsLongPolling && transactionIndex == 0];
                         if (MTLogEnabled()) {
-                            MTLog(@"[MTHttpTransport#%x spawn MTHttpWorker#%x(longPolling: %s), %d active]", (int)self, (int)worker, worker.performsLongPolling ? "1" : "0", _workers.count + 1);
+                            MTLog(@"[MTHttpTransport#%p spawn MTHttpWorker#%p(longPolling: %s), %lu active]", (__bridge void *)self, (__bridge void *)worker, worker.performsLongPolling ? "1" : "0", (unsigned long)(_workers.count + 1));
                         }
                         worker.delegate = self;
                         

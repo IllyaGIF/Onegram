@@ -1639,6 +1639,7 @@
 		A314366525BADC0D00000001 /* ZikfolvStatusBadge@2x.png in Resources */ = {isa = PBXBuildFile; fileRef = A314366525BADC0D00000002 /* ZikfolvStatusBadge@2x.png */; };
 		C011CA110000000000000001 /* TGCallWebrtcRuntimeIOS6.mm in Sources */ = {isa = PBXBuildFile; fileRef = 6895F00026A7000000D68920 /* TGCallWebrtcRuntimeIOS6.mm */; };
 		C0D6A0012026072000000001 /* ClassicIOS6 in Resources */ = {isa = PBXBuildFile; fileRef = C0D6A0012026072000000002 /* ClassicIOS6 */; };
+		FEE1A0012026091400000001 /* ios6style in Resources */ = {isa = PBXBuildFile; fileRef = FEE1A0012026091400000002 /* ios6style */; };
 		D00040A515BCD2EA00AF9EBF /* TGMessage+Telegraph.m in Sources */ = {isa = PBXBuildFile; fileRef = D00040A415BCD2EA00AF9EBF /* TGMessage+Telegraph.m */; };
 		D00040AC15BCD53900AF9EBF /* TGImageInfo+Telegraph.mm in Sources */ = {isa = PBXBuildFile; fileRef = D00040AB15BCD53900AF9EBF /* TGImageInfo+Telegraph.mm */; };
 		D00040B815BCD73A00AF9EBF /* TGUser+Telegraph.m in Sources */ = {isa = PBXBuildFile; fileRef = D00040B715BCD73900AF9EBF /* TGUser+Telegraph.m */; };
@@ -7349,6 +7350,7 @@
 		93F6940516932F8700691086 /* TGBlockListRequestActor.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = TGBlockListRequestActor.mm; sourceTree = "<group>"; };
 		A314366525BADC0D00000002 /* ZikfolvStatusBadge@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = "ZikfolvStatusBadge@2x.png"; path = "Resources/ZikfolvStatusBadge@2x.png"; sourceTree = "<group>"; };
 		C0D6A0012026072000000002 /* ClassicIOS6 */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ClassicIOS6; path = Resources/ClassicIOS6; sourceTree = "<group>"; };
+		FEE1A0012026091400000002 /* ios6style */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ios6style; path = ../ios6style; sourceTree = "<group>"; };
 		D00040A315BCD2EA00AF9EBF /* TGMessage+Telegraph.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "TGMessage+Telegraph.h"; sourceTree = "<group>"; };
 		D00040A415BCD2EA00AF9EBF /* TGMessage+Telegraph.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "TGMessage+Telegraph.m"; sourceTree = "<group>"; };
 		D00040AA15BCD53900AF9EBF /* TGImageInfo+Telegraph.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "TGImageInfo+Telegraph.h"; sourceTree = "<group>"; };
@@ -18974,6 +18976,7 @@
 			isa = PBXGroup;
 			children = (
 				C0D6A0012026072000000002 /* ClassicIOS6 */,
+				FEE1A0012026091400000002 /* ios6style */,
 				09BC509720C9AF4F00B28F9D /* anim_read.json */,
 				09BC508920C9AF4E00B28F9D /* anim_unread.json */,
 				0976A39420C5EB9800CEB156 /* PassportSettingsLogo@2x.png */,
@@ -23742,6 +23745,7 @@
 			files = (
 				A314366525BADC0D00000001 /* ZikfolvStatusBadge@2x.png in Resources */,
 				C0D6A0012026072000000001 /* ClassicIOS6 in Resources */,
+				FEE1A0012026091400000001 /* ios6style in Resources */,
 				D02660321F34A5D5000E2DC5 /* LegacyComponentsResources.bundle in Resources */,
 				D0E352751E5E4127007E6EB8 /* stp_card_discover@2x.png in Resources */,
 				D0D97D851B3B99F5003457CD /* MusicPlayerControlForward@2x.png in Resources */,

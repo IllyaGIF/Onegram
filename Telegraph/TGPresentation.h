@@ -18,6 +18,13 @@
 @class TGPresentationAutoNightPreferences;
 @class UIImage;
 
+typedef enum
+{
+    TGInterfaceStyleModern = 0,
+    TGInterfaceStyleClassic = 1,
+    TGInterfaceStyleFekla = 2
+} TGInterfaceStyle;
+
 @interface TGPresentation : NSObject
 
 @property (nonatomic, readonly) TGPresentationPallete *pallete;
@@ -44,9 +51,19 @@
 + (SSignal *)signal;
 
 + (bool)classicIOS6StyleAvailable;
++ (TGInterfaceStyle)interfaceStyle;
++ (void)setInterfaceStyle:(TGInterfaceStyle)style;
 + (bool)classicIOS6Style;
++ (bool)brandedIOS6Style;
 + (void)setClassicIOS6Style:(bool)enabled;
 + (bool)classicIOS6UsesPaletteAdaptedAssets;
++ (UIImage *)classicIOS6ResourceImage:(NSString *)name;
++ (UIImage *)brandedIOS6ResourceImage:(NSString *)name;
++ (UIImage *)brandedIOS6GrayIconImage:(NSString *)name;
++ (UIImage *)brandedIOS6BadgeImage;
++ (UIImage *)brandedIOS6BadgeImageForWidth:(CGFloat)width;
++ (UIImage *)brandedIOS6BadgeImageForWidth:(CGFloat)width height:(CGFloat)height;
++ (NSString *)brandedIOS6BadgeTextForCount:(NSInteger)count;
 + (UIImage *)classicIOS6ThemedImage:(UIImage *)image tintColor:(UIColor *)tintColor;
 + (UIImage *)classicIOS6ThemedImage:(UIImage *)image tintColor:(UIColor *)tintColor alpha:(CGFloat)alpha;
 

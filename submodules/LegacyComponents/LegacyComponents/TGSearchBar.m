@@ -21,7 +21,28 @@ static bool TGSearchBarClassicIOS6Style(void)
     return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
 }
 
-static UIImage *TGSearchBarClassicFieldImage(void)
+static bool TGSearchBarBrandedIOS6Style(void)
+{
+    return [[NSUserDefaults standardUserDefaults] integerForKey:@"TGInterfaceStyle"] == 2;
+}
+
+static UIImage *TGSearchBarBrandedBackgroundImage(void)
+{
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(1.0f, 3.0f), true, 0.0f);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSetFillColorWithColor(context, UIColorRGB(0xf7f7f7).CGColor);
+        CGContextFillRect(context, CGRectMake(0.0f, 0.0f, 1.0f, 3.0f));
+        image = [UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:0 topCapHeight:1];
+        UIGraphicsEndImageContext();
+    });
+    return image;
+}
+
+static UIImage *TGSearchBarClassicFieldImage(bool darkStyle)
 {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(30.0f, 30.0f), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
@@ -29,8 +50,8 @@ static UIImage *TGSearchBarClassicFieldImage(void)
     UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:14.5f];
 
     CGContextSaveGState(context);
-    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 1.0f, UIColorRGBA(0x000000, 0.32f).CGColor);
-    CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
+    CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 1.0f, UIColorRGBA(0x000000, darkStyle ? 0.55f : 0.32f).CGColor);
+    CGContextSetFillColorWithColor(context, (darkStyle ? UIColorRGB(0x141416) : [UIColor whiteColor]).CGColor);
     CGContextAddPath(context, path.CGPath);
     CGContextFillPath(context);
     CGContextRestoreGState(context);
@@ -39,14 +60,20 @@ static UIImage *TGSearchBarClassicFieldImage(void)
     CGContextAddPath(context, path.CGPath);
     CGContextClip(context);
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGFloat components[] =
+    CGFloat lightComponents[] =
     {
         0.82f, 0.84f, 0.86f, 1.0f,
         1.00f, 1.00f, 1.00f, 1.0f,
         0.95f, 0.95f, 0.95f, 1.0f
     };
+    CGFloat darkComponents[] =
+    {
+        0.22f, 0.22f, 0.23f, 1.0f,
+        0.11f, 0.11f, 0.12f, 1.0f,
+        0.09f, 0.09f, 0.10f, 1.0f
+    };
     CGFloat locations[] = {0.0f, 0.18f, 1.0f};
-    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 3);
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, darkStyle ? darkComponents : lightComponents, locations, 3);
     if (context != NULL)
     {
         CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, 30.0f), 0);
@@ -57,10 +84,10 @@ static UIImage *TGSearchBarClassicFieldImage(void)
     CGContextRestoreGState(context);
 
     CGContextSetLineWidth(context, 1.0f);
-    CGContextSetStrokeColorWithColor(context, UIColorRGB(0x8d969f).CGColor);
+    CGContextSetStrokeColorWithColor(context, (darkStyle ? UIColorRGB(0x434345) : UIColorRGB(0x8d969f)).CGColor);
     CGContextAddPath(context, path.CGPath);
     CGContextStrokePath(context);
-    CGContextSetStrokeColorWithColor(context, UIColorRGBA(0xffffff, 0.72f).CGColor);
+    CGContextSetStrokeColorWithColor(context, (darkStyle ? UIColorRGBA(0x68686a, 0.42f) : UIColorRGBA(0xffffff, 0.72f)).CGColor);
     CGContextAddPath(context, [UIBezierPath bezierPathWithRoundedRect:CGRectInset(rect, 1.0f, 1.0f) cornerRadius:13.5f].CGPath);
     CGContextStrokePath(context);
 
@@ -69,18 +96,23 @@ static UIImage *TGSearchBarClassicFieldImage(void)
     return [image stretchableImageWithLeftCapWidth:14 topCapHeight:14];
 }
 
-static UIImage *TGSearchBarClassicBackgroundImage(void)
+static UIImage *TGSearchBarClassicBackgroundImage(bool darkStyle)
 {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(1.0f, 44.0f), true, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGFloat components[] =
+    CGFloat lightComponents[] =
     {
         0.91f, 0.93f, 0.95f, 1.0f,
         0.72f, 0.76f, 0.80f, 1.0f
     };
+    CGFloat darkComponents[] =
+    {
+        0.08f, 0.08f, 0.09f, 1.0f,
+        0.03f, 0.03f, 0.04f, 1.0f
+    };
     CGFloat locations[] = {0.0f, 1.0f};
-    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
+    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, darkStyle ? darkComponents : lightComponents, locations, 2);
     if (context != NULL)
     {
         CGContextDrawLinearGradient(context, gradient, CGPointZero, CGPointMake(0.0f, 44.0f), 0);
@@ -88,9 +120,9 @@ static UIImage *TGSearchBarClassicBackgroundImage(void)
 
     CGGradientRelease(gradient);
     CGColorSpaceRelease(colorSpace);
-    CGContextSetFillColorWithColor(context, UIColorRGBA(0xffffff, 0.70f).CGColor);
+    CGContextSetFillColorWithColor(context, (darkStyle ? UIColorRGBA(0x4a4a4c, 0.25f) : UIColorRGBA(0xffffff, 0.70f)).CGColor);
     CGContextFillRect(context, CGRectMake(0.0f, 0.0f, 1.0f, 1.0f));
-    CGContextSetFillColorWithColor(context, UIColorRGB(0x77818a).CGColor);
+    CGContextSetFillColorWithColor(context, (darkStyle ? UIColorRGB(0x1b1b1d) : UIColorRGB(0x77818a)).CGColor);
     CGContextFillRect(context, CGRectMake(0.0f, 43.0f, 1.0f, 1.0f));
     UIImage *image = [UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:0 topCapHeight:21];
     UIGraphicsEndImageContext();
@@ -271,9 +303,14 @@ static UIImage *TGSearchBarClassicBackgroundImage(void)
             }
         }
 
-        if (TGSearchBarClassicIOS6Style() && (_style == TGSearchBarStyleLight || _style == TGSearchBarStyleLightPlain || _style == TGSearchBarStyleLightAlwaysPlain || _style == TGSearchBarStyleHeader))
+        if (TGSearchBarBrandedIOS6Style() && (_style == TGSearchBarStyleLight || _style == TGSearchBarStyleLightPlain || _style == TGSearchBarStyleLightAlwaysPlain || _style == TGSearchBarStyleHeader))
         {
-            backgroundManualImage = TGSearchBarClassicBackgroundImage();
+            backgroundManualImage = TGSearchBarBrandedBackgroundImage();
+            backgroundManualActiveImage = backgroundManualImage;
+        }
+        else if (TGSearchBarClassicIOS6Style() && (_style == TGSearchBarStyleLight || _style == TGSearchBarStyleLightPlain || _style == TGSearchBarStyleLightAlwaysPlain || _style == TGSearchBarStyleHeader))
+        {
+            backgroundManualImage = TGSearchBarClassicBackgroundImage(false);
             backgroundManualActiveImage = backgroundManualImage;
         }
         
@@ -506,9 +543,15 @@ static UIImage *TGSearchBarClassicBackgroundImage(void)
         if (backgroundManualActiveImage != nil)
             _customActiveBackgroundView.image = backgroundManualActiveImage;
 
-        if (TGSearchBarClassicIOS6Style())
+        if (TGSearchBarBrandedIOS6Style())
         {
-            UIImage *classicBackground = TGSearchBarClassicBackgroundImage();
+            UIImage *brandedBackground = TGSearchBarBrandedBackgroundImage();
+            _customBackgroundView.image = brandedBackground;
+            _customActiveBackgroundView.image = brandedBackground;
+        }
+        else if (TGSearchBarClassicIOS6Style())
+        {
+            UIImage *classicBackground = TGSearchBarClassicBackgroundImage(_pallete != nil && _pallete.isDark);
             _customBackgroundView.image = classicBackground;
             _customActiveBackgroundView.image = classicBackground;
         }
@@ -520,7 +563,7 @@ static UIImage *TGSearchBarClassicBackgroundImage(void)
     if (TGSearchBarClassicIOS6Style() && (_style == TGSearchBarStyleLight || _style == TGSearchBarStyleLightPlain || _style == TGSearchBarStyleLightAlwaysPlain || _style == TGSearchBarStyleHeader))
     {
         if (_normalTextFieldBackgroundImage == nil)
-            _normalTextFieldBackgroundImage = TGSearchBarClassicFieldImage();
+            _normalTextFieldBackgroundImage = TGSearchBarClassicFieldImage(_pallete != nil && _pallete.isDark);
         return _normalTextFieldBackgroundImage;
     }
 

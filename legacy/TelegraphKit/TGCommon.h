@@ -2,7 +2,7 @@
 #define Telegraph_TGCommon_h
 
 #import <UIKit/UIKit.h>
-#import <inttypes.h>
+#include <inttypes.h>
 #import <stddef.h>
 
 #define TGUseSocial true
@@ -28,9 +28,18 @@ extern int TGLocalizedStaticVersion;
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef enum {
+    TGPerformanceClassConstrained = 0,
+    TGPerformanceClassBalanced = 1,
+    TGPerformanceClassFast = 2,
+    TGPerformanceClassHigh = 3
+} TGPerformanceClass;
+
 int cpuCoreCount();
 bool hasModernCpu();
 int deviceMemorySize();
+TGPerformanceClass devicePerformanceClass();
+int performanceBackgroundWorkerCount();
     
 void TGSetLocalizationFromFile(NSString *filePath);
 NSString *TGLocalized(NSString *s);
@@ -85,6 +94,9 @@ NSString *TGIOS6DiagnosticBreadcrumbPath();
 void TGIOS6PrepareDiagnosticBreadcrumbs();
 void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length);
 NSArray *TGGetLogFilePaths(int count);
+NSArray *TGGetArchivedLogFilePaths();
+NSString *TGSaveCurrentLogLines(int lineCount);
+NSString *TGArchiveCrashLogText(NSString *text, NSDate *date);
 NSArray *TGGetPackedLogs();
 
 #if defined(TG_PUBLIC_BUILD) && !defined(TGCOMMON_IMPLEMENTATION)

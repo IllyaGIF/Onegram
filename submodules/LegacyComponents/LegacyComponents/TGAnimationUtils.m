@@ -1,8 +1,11 @@
 #import "TGAnimationUtils.h"
 
 #import "LegacyComponents.h"
+#import <objc/runtime.h>
 
 NSString *kCAMediaTimingFunctionSpring = @"kCAMediaTimingFunctionSpring";
+
+static char TGAnimationCompletionDelegateKey;
 
 @interface TGLayerAnimationDelegate : NSObject <CAAnimationDelegate> {
     void (^_completion)(bool);
@@ -35,7 +38,9 @@ NSString *kCAMediaTimingFunctionSpring = @"kCAMediaTimingFunctionSpring";
 @implementation CAAnimation (AnimationUtils)
 
 - (void)setCompletionBlock:(void (^)(bool))block {
-    self.delegate = [[TGLayerAnimationDelegate alloc] initWithCompletion:block];
+    TGLayerAnimationDelegate *delegate = [[TGLayerAnimationDelegate alloc] initWithCompletion:block];
+    objc_setAssociatedObject(self, &TGAnimationCompletionDelegateKey, delegate, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    self.delegate = delegate;
 }
 
 @end

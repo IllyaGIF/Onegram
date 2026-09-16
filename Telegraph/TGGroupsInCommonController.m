@@ -145,7 +145,7 @@ static NSArray *sortedConversations(NSArray *conversations) {
 }
 
 - (void)navigateToPeerId:(int64_t)peerId cachedConversation:(TGConversation *)cachedConversation {
-    SSignal *signal = [[TGDatabaseInstance() modify:^id{
+    SSignal *signal = [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         if (TGPeerIdIsChannel(peerId)) {
             return [SSignal single:[TGDatabaseInstance() loadChannels:@[@(peerId)]][@(peerId)]];
         } else {

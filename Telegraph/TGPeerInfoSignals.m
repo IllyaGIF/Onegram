@@ -62,7 +62,7 @@
             }
         } else {
             SSignal *recentCached = [[[TGRecentContextBotsSignal recentBots] take:1] mapToSignal:^SSignal *(NSArray *uids) {
-                return [TGDatabaseInstance() modify:^id{
+                return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     for (NSNumber *nUid in uids) {
                         TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
                         if (user != nil && [user.userName.lowercaseString isEqualToString:query.lowercaseString]) {
@@ -156,7 +156,7 @@
         return [[TGDatabaseInstance() enqueuedDismissReportPeerSpamPeerIds] mapToQueue:^SSignal *(NSNumber *nPeerId) {
             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:[nPeerId longLongValue]];
             if (conversation == nil) {
-                return [[TGDatabaseInstance() modify:^id{
+                return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() commitDismissReportPeerSpam:[nPeerId longLongValue]];
                     
                     return [SSignal complete];
@@ -166,7 +166,7 @@
                     return [SSignal complete];
                 }] catch:^SSignal *(__unused id error) {
                     return [SSignal complete];
-                }] then:[[TGDatabaseInstance() modify:^id{
+                }] then:[[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     [TGDatabaseInstance() commitDismissReportPeerSpam:[nPeerId longLongValue]];
                     
                     return [SSignal complete];

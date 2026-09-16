@@ -9,6 +9,7 @@
 #import "TGAccountInfoCollectionItem.h"
 
 #import "TGUserInfoCollectionItemView.h"
+#import "TGPresentation.h"
 
 @interface TGAccountInfoCollectionItem ()
 {
@@ -57,7 +58,14 @@
 {
     [super bindView:view];
     
-    [view setStatus:_status active:_active];
+    NSString *status = _status;
+    bool active = _active;
+    if ([TGPresentation brandedIOS6Style] && status.length == 0)
+    {
+        status = TGLocalized(@"Presence.online");
+        active = false;
+    }
+    [view setStatus:status active:active];
     [view setShowDisclosureIndicator:self.hasDisclosureIndicator];
     [view setPhoneNumber:_phoneNumber];
     [view setUsername:_username];

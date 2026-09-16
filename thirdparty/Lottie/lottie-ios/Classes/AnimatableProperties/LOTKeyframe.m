@@ -147,10 +147,10 @@
         shouldUse255 = YES;
       }
     }
-    return [UIColor colorWithRed:[[colorArray objectAtIndex:0] floatValue] / (shouldUse255 ? 255.f : 1.f)
-                           green:[[colorArray objectAtIndex:1] floatValue] / (shouldUse255 ? 255.f : 1.f)
-                            blue:[[colorArray objectAtIndex:2] floatValue] / (shouldUse255 ? 255.f : 1.f)
-                           alpha:[[colorArray objectAtIndex:3] floatValue] / (shouldUse255 ? 255.f : 1.f)];
+    return [UIColor colorWithRed:[(NSNumber *)[colorArray objectAtIndex:0] floatValue] / (shouldUse255 ? 255.f : 1.f)
+                           green:[(NSNumber *)[colorArray objectAtIndex:1] floatValue] / (shouldUse255 ? 255.f : 1.f)
+                            blue:[(NSNumber *)[colorArray objectAtIndex:2] floatValue] / (shouldUse255 ? 255.f : 1.f)
+                           alpha:[(NSNumber *)[colorArray objectAtIndex:3] floatValue] / (shouldUse255 ? 255.f : 1.f)];
   }
   return nil;
 }
