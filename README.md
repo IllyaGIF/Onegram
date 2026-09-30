@@ -146,7 +146,7 @@ Prebuilt releases are available from the **GitHub Releases** section.
 
 ## License
 
-Onegram is distributed under the **GNU General Public License v2.0**.
+Onegram is distributed under the **GNU General Public License v3.0**.
 
 Parts of the project are based on the legacy Telegram for iOS codebase and other open-source components included in the repository.
 
