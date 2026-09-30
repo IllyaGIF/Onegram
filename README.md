@@ -150,8 +150,4 @@ Onegram is distributed under the **GNU General Public License v3.0**.
 
 Parts of the project are based on the legacy Telegram for iOS codebase and other open-source components included in the repository.
 
-## Disclaimer
-
-Onegram is an unofficial Telegram client and is not affiliated with or endorsed by Telegram.
-
-The project exists to keep Telegram usable on legacy iOS devices that are no longer supported by current official releases.
+Based on Twelve by theanazerka — https://github.com/theanazerka/twelve-project
