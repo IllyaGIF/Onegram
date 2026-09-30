@@ -150,4 +150,8 @@ Onegram is distributed under the **GNU General Public License v3.0**.
 
 Parts of the project are based on the legacy Telegram for iOS codebase and other open-source components included in the repository.
 
-Based on Twelve by theanazerka — https://github.com/theanazerka/twelve-project
+## Credits
+
+- Telegram — original Telegram for iOS codebase
+- Twelve / Twelvium by theanazerka — legacy iOS compatibility code and related modifications
+  https://github.com/theanazerka/twelve-project
