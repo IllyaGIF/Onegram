@@ -121,3 +121,9 @@ rm -rf .theos generated build
 make generate
 make -j"$(nproc)" CORE_JOBS=8 universal
 ```
+
+## Credits
+
+- Telegram — original Telegram for iOS codebase
+- Twelve / Twelvium by theanazerka — legacy iOS compatibility code and related modifications
+  https://github.com/theanazerka/twelve-project
