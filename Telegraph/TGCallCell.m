@@ -1,4 +1,5 @@
 #import "TGCallCell.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -144,7 +145,11 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
     TGDialogListCellEditingControls *_wrapView;
     UIImageView *_typeIcon;
     TGLetteredAvatarView *_avatarView;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+    UIView *_avatarShadowView;
+#else
     CALayer *_avatarShadowLayer;
+#endif
     
     UILabel *_nameLabel;
     UILabel *_subLabel;
@@ -192,9 +197,16 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
         _avatarView.fadeTransition = cpuCoreCount() > 1;
         [_wrapView addSubview:_avatarView];
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+        _avatarShadowView = [[UIView alloc] initWithFrame:CGRectZero];
+        _avatarShadowView.hidden = true;
+        _avatarShadowView.userInteractionEnabled = false;
+        [_wrapView insertSubview:_avatarShadowView belowSubview:_avatarView];
+#else
         _avatarShadowLayer = [[CALayer alloc] init];
         _avatarShadowLayer.hidden = true;
         [_wrapView.layer insertSublayer:_avatarShadowLayer below:_avatarView.layer];
+#endif
         
         _nameLabel = [[UILabel alloc] init];
         _nameLabel.font = [TGPresentation brandedIOS6Style] ? TGBoldSystemFontOfSize(15.0f) : TGSystemFontOfSize(17.0f);
@@ -267,7 +279,11 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
     _dateLabel.shadowOffset = brandedIOS6Style ? CGSizeMake(0.0f, 1.0f) : CGSizeZero;
     _nameLabel.backgroundColor = self.backgroundColor;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+    _avatarShadowView.hidden = !brandedIOS6Style;
+#else
     _avatarShadowLayer.hidden = !brandedIOS6Style;
+#endif
     _separatorLayer.backgroundColor = brandedIOS6Style ? UIColorRGB(0x9f9f9f).CGColor : presentation.pallete.separatorColor.CGColor;
     self.selectedBackgroundView.backgroundColor = presentation.pallete.selectionColor;
 }
@@ -364,10 +380,7 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
         _typeIcon.hidden = false;
         _typeIcon.contentMode = UIViewContentModeScaleAspectFit;
         _typeIcon.image = TGCallCellBrandedIOS6TypeIcon(iconName, missed);
-        _typeIcon.layer.shadowColor = [UIColor blackColor].CGColor;
-        _typeIcon.layer.shadowOpacity = 0.28f;
-        _typeIcon.layer.shadowRadius = 0.5f;
-        _typeIcon.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        OGPlatformApplyViewShadow(_typeIcon, [UIColor blackColor], 0.28f, 0.5f, CGSizeMake(0.0f, 1.0f));
     }
     else
     {
@@ -405,6 +418,12 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
         _avatarView.layer.cornerRadius = 7.0f;
         _avatarView.layer.borderWidth = 1.0f;
         _avatarView.layer.borderColor = UIColorRGBA(0x686868, 0.85f).CGColor;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+        _avatarShadowView.hidden = false;
+        _avatarShadowView.backgroundColor = UIColorRGB(0xfcfcfc);
+        _avatarShadowView.layer.cornerRadius = 7.0f;
+        OGPlatformApplyViewShadow(_avatarShadowView, [UIColor blackColor], 0.45f, 1.5f, CGSizeMake(0.0f, 1.5f));
+#else
         _avatarShadowLayer.hidden = false;
         _avatarShadowLayer.backgroundColor = UIColorRGB(0xfcfcfc).CGColor;
         _avatarShadowLayer.cornerRadius = 7.0f;
@@ -412,6 +431,7 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
         _avatarShadowLayer.shadowOpacity = 0.45f;
         _avatarShadowLayer.shadowRadius = 1.5f;
         _avatarShadowLayer.shadowOffset = CGSizeMake(0.0f, 1.5f);
+#endif
     }
 
     [self setNeedsLayout];
@@ -497,8 +517,12 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
         _avatarView.frame = CGRectMake(7.0f, 6.0f, 45.0f, 45.0f);
         _avatarView.clipsToBounds = true;
         _avatarView.layer.cornerRadius = 7.0f;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+        _avatarShadowView.frame = _avatarView.frame;
+#else
         _avatarShadowLayer.frame = _avatarView.frame;
         _avatarShadowLayer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_avatarShadowLayer.bounds cornerRadius:7.0f].CGPath;
+#endif
         _nameLabel.font = TGBoldSystemFontOfSize(15.0f);
         _subLabel.font = TGSystemFontOfSize(11.0f);
         _dateLabel.font = TGSystemFontOfSize(11.0f);
@@ -512,10 +536,7 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
         _typeIcon.frame = CGRectMake(CGRectGetMaxX(_nameLabel.frame) + 4.0f, 7.0f, 16.0f, 16.0f);
         _subLabel.frame = CGRectMake(left, 31.0f, MAX(0.0f, size.width - left - 43.0f), 16.0f);
         _infoButton.frame = CGRectMake(size.width - 39.0f, 24.0f, 31.0f, 31.0f);
-        _infoButton.imageView.layer.shadowColor = [UIColor blackColor].CGColor;
-        _infoButton.imageView.layer.shadowOpacity = 0.35f;
-        _infoButton.imageView.layer.shadowRadius = 0.75f;
-        _infoButton.imageView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        OGPlatformApplyViewShadow(_infoButton.imageView, [UIColor blackColor], 0.35f, 0.75f, CGSizeMake(0.0f, 1.0f));
         return;
     }
     
@@ -651,7 +672,7 @@ typedef enum {
     if (types.count > 1)
         [types removeObject:@(TGCallDisplayTypeCancelled)];
     
-    NSArray *typesArray = [types sortedArrayUsingDescriptors:@[[[NSSortDescriptor alloc] initWithKey:@"self" ascending:true]]];
+    NSArray *typesArray = [[types allObjects] sortedArrayUsingDescriptors:@[[[NSSortDescriptor alloc] initWithKey:@"self" ascending:true]]];
     for (NSNumber *typeValue in typesArray)
     {
         NSString *type = [self stringForDisplayType:(TGCallDisplayType)typeValue.integerValue];

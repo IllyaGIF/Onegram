@@ -10,7 +10,9 @@
 
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#if !TARGET_OS_IPHONE || __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
 #import <Security/SecureTransport.h>
+#endif
 #import <dispatch/dispatch.h>
 
 @class GCDAsyncReadPacket;
@@ -67,6 +69,7 @@ extern NSString *const GCDAsyncSocketThreadName;
 
 #if TARGET_OS_IPHONE
 extern NSString *const GCDAsyncSocketUseOpenSSL;
+extern NSString *const GCDAsyncSocketOpenSSLPeerName;
 extern NSString *const GCDAsyncSocketOpenSSLTrustedCertificates;
 extern NSString *const GCDAsyncSocketOpenSSLVerificationTime;
 #endif

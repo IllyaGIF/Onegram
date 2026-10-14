@@ -1,4 +1,9 @@
 #import "TGUserInfoVariantCollectionItemView.h"
+#import "../OnegramPlatform/OGPlatformText.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -14,6 +19,7 @@
     
     UIImageView *_variantImageView;
     UIImageView *_iconView;
+    NSString *_iconName;
 }
 
 @end
@@ -59,15 +65,29 @@
     [super setPresentation:presentation];
     
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
-    _titleLabel.textColor = brandedIOS6Style ? UIColorRGB(0x000000) : presentation.pallete.collectionMenuTextColor;
-    _variantLabel.textColor = brandedIOS6Style ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
+    OGTheme *theme = [OGTheme brandedTheme];
+    OGSettingsAppearance *rowAppearance = theme.profileAppearance.actionRowAppearance;
+    if (brandedIOS6Style)
+        [OGSettingsCell applyLegacyBrandedTitleStyleWithAppearance:rowAppearance titleLabel:_titleLabel];
+    else
+    {
+        _titleLabel.font = TGSystemFontOfSize(17.0f);
+        _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
+        _titleLabel.shadowColor = nil;
+        _titleLabel.shadowOffset = CGSizeZero;
+    }
+    if (brandedIOS6Style)
+        [OGSettingsCell applyLegacyBrandedVariantStyleWithTheme:theme variantLabel:_variantLabel];
+    else
+    {
+        _variantLabel.textColor = presentation.pallete.collectionMenuVariantColor;
+        _variantLabel.font = TGSystemFontOfSize(17.0f);
+    }
     _separatorLayer.backgroundColor = presentation.pallete.collectionMenuSeparatorColor.CGColor;
-    _arrowView.image = brandedIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
-    _titleLabel.font = brandedIOS6Style ? TGBoldSystemFontOfSize(18.0f) : TGSystemFontOfSize(17.0f);
-    _titleLabel.shadowColor = brandedIOS6Style ? UIColorRGBA(0x000000, 0.2f) : nil;
-    _titleLabel.shadowOffset = brandedIOS6Style ? CGSizeMake(0.0f, 1.0f) : CGSizeZero;
-    _variantLabel.font = TGSystemFontOfSize(brandedIOS6Style ? 14.0f : 17.0f);
-    self.classicIOS6HorizontalInset = 9.0f;
+    _arrowView.image = brandedIOS6Style ? [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme] : presentation.images.collectionMenuDisclosureIcon;
+    self.brandedGroupedAppearance = brandedIOS6Style ? rowAppearance : nil;
+    self.classicIOS6HorizontalInset = brandedIOS6Style ? rowAppearance.groupedHorizontalInset : 9.0f;
+    [self updateIcon];
 }
 
 - (void)setTitle:(NSString *)title
@@ -84,8 +104,19 @@
 
 - (void)setIconName:(NSString *)iconName
 {
-    _iconView.image = iconName.length == 0 ? nil : ([TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ResourceImage:iconName] : [TGPresentation brandedIOS6ResourceImage:iconName]);
-    _iconView.hidden = ![TGPresentation brandedIOS6Style] || _iconView.image == nil;
+    _iconName = iconName;
+    [self updateIcon];
+}
+
+- (void)updateIcon
+{
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    OGTheme *theme = [OGTheme brandedTheme];
+    OGSettingsAppearance *rowAppearance = theme.profileAppearance.actionRowAppearance;
+    _iconView.image = brandedIOS6Style ? [OGSettingsCell legacyBrandedIconNamed:_iconName appearance:rowAppearance theme:theme] : nil;
+    _iconView.hidden = !brandedIOS6Style || _iconView.image == nil;
+    if (!_iconView.hidden)
+        [OGSettingsCell applyLegacyBrandedIconStyleWithAppearance:rowAppearance iconView:_iconView];
     [self setNeedsLayout];
 }
 
@@ -116,17 +147,18 @@
     
     CGFloat separatorHeight = TGScreenPixel;
     CGFloat separatorInset = ([TGPresentation brandedIOS6Style] ? 0.0f : 15.0f) + self.safeAreaInset.left;
-    _separatorLayer.hidden = [TGPresentation brandedIOS6Style];
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    _separatorLayer.hidden = brandedIOS6Style && [OGTheme brandedTheme].profileAppearance.actionRowAppearance.hidesInlineSeparator;
     _separatorLayer.frame = CGRectMake(separatorInset, bounds.size.height - separatorHeight, bounds.size.width - separatorInset, separatorHeight);
     
-    CGFloat leftPadding = ([TGPresentation brandedIOS6Style] ? 50.0f : 15.0f + TGScreenPixel) + self.safeAreaInset.left;
+    CGFloat leftPadding = (brandedIOS6Style ? [OGTheme brandedTheme].profileAppearance.actionRowAppearance.titleX : 15.0f + TGScreenPixel) + self.safeAreaInset.left;
     
     CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(bounds.size.width - leftPadding - self.safeAreaInset.right - 10.0f, CGFLOAT_MAX)];
-    CGFloat titleHeight = MAX(titleSize.height, ceilf(_titleLabel.font.lineHeight));
+    CGFloat titleHeight = MAX(titleSize.height, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));
     _titleLabel.frame = CGRectMake(leftPadding, CGFloor((bounds.size.height - titleHeight) / 2.0f), titleSize.width, titleHeight);
     
     CGSize variantSize = [_variantLabel sizeThatFits:CGSizeMake(bounds.size.width - leftPadding - self.safeAreaInset.right - 10.0f, CGFLOAT_MAX)];
-    CGFloat variantHeight = MAX(variantSize.height, ceilf(_variantLabel.font.lineHeight));
+    CGFloat variantHeight = MAX(variantSize.height, ceilf(OGPlatformFontLineHeight(_variantLabel.font)));
     _variantLabel.frame = CGRectMake(bounds.size.width - 34.0f - variantSize.width - self.safeAreaInset.right, CGFloor((bounds.size.height - variantHeight) / 2.0f), variantSize.width, variantHeight);
     
     if (_variantImageView != nil)
@@ -136,32 +168,28 @@
     
     CGSize arrowSize = _arrowView.bounds.size;
     _arrowView.frame = CGRectMake(bounds.size.width - 15.0f - arrowSize.width - self.safeAreaInset.right, CGFloor((bounds.size.height - arrowSize.height) / 2.0f), arrowSize.width, arrowSize.height);
-    if ([TGPresentation brandedIOS6Style])
+    if (brandedIOS6Style)
     {
+        OGTheme *theme = [OGTheme brandedTheme];
+        OGSettingsAppearance *appearance = theme.profileAppearance.actionRowAppearance;
+        BOOL usesVariantImage = _variantImageView != nil && !_variantImageView.hidden;
+        CGFloat brandedVariantHeight = MAX(variantSize.height, ceilf(OGPlatformFontLineHeight(_variantLabel.font)));
+        CGSize trailingSize = usesVariantImage ? _variantImageView.frame.size : CGSizeMake(variantSize.width, brandedVariantHeight);
+        CGFloat trailingVerticalOffset = usesVariantImage ? 0.0f : appearance.variantVerticalOffset;
+        _arrowView.image = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme];
+        CGSize disclosureSize = _arrowView.image == nil ? CGSizeZero : _arrowView.image.size;
+        OGSettingsCellLegacyLayout layout;
+        OGSettingsCellGetLegacyLayout(appearance, bounds, self.safeAreaInset, disclosureSize, OGSettingsCellAccessoryDisclosure, trailingSize, trailingVerticalOffset, appearance.titleTrailingSpacing, &layout);
         if (_iconView.image != nil)
         {
-            _iconView.contentMode = UIViewContentModeScaleAspectFit;
-            _iconView.frame = CGRectMake(17.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 16.0f) / 2.0f) + 1.0f, 16.0f, 16.0f);
-            _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
-            _iconView.layer.shadowOpacity = 0.1f;
-            _iconView.layer.shadowRadius = 0.5f;
-            _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+            _iconView.frame = layout.iconFrame;
         }
-        _arrowView.image = [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"];
-        _arrowView.frame = CGRectMake(bounds.size.width - 23.0f - self.safeAreaInset.right - 8.0f, CGFloor((bounds.size.height - 14.0f) / 2.0f) + 1.0f, 8.0f, 14.0f);
-        CGFloat variantRightEdge = CGRectGetMinX(_arrowView.frame) - 8.0f;
-        if (_variantImageView != nil && !_variantImageView.hidden)
-        {
-            _variantImageView.frame = CGRectMake(variantRightEdge - _variantImageView.frame.size.width, CGFloor((bounds.size.height - _variantImageView.frame.size.height) / 2.0f), _variantImageView.frame.size.width, _variantImageView.frame.size.height);
-            variantRightEdge = CGRectGetMinX(_variantImageView.frame) - 8.0f;
-        }
+        _arrowView.frame = layout.accessoryFrame;
+        if (usesVariantImage)
+            _variantImageView.frame = layout.trailingFrame;
         else
-        {
-            CGFloat brandedVariantHeight = MAX(variantSize.height, ceilf(_variantLabel.font.lineHeight));
-            _variantLabel.frame = CGRectMake(variantRightEdge - variantSize.width, CGFloor((bounds.size.height - brandedVariantHeight) / 2.0f) + 1.0f, variantSize.width, brandedVariantHeight);
-            variantRightEdge = CGRectGetMinX(_variantLabel.frame) - 8.0f;
-        }
-        _titleLabel.frame = CGRectMake(43.0f + self.safeAreaInset.left, 7.0f, MAX(0.0f, variantRightEdge - 43.0f - self.safeAreaInset.left), 22.0f);
+            _variantLabel.frame = layout.trailingFrame;
+        _titleLabel.frame = layout.titleFrame;
     }
 }
 

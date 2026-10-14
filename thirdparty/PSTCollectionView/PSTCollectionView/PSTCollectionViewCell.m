@@ -86,7 +86,9 @@
     UIView *_contentView;
     UIView *_backgroundView;
     UIView *_selectedBackgroundView;
+#if !ONEGRAM_ARMV6
     UILongPressGestureRecognizer *_menuGesture;
+#endif
     id _selectionSegueTemplate;
     id _highlightingSupport;
     struct {
@@ -113,7 +115,9 @@
         _contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self addSubview:_contentView];
 
+#if !ONEGRAM_ARMV6
         _menuGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(menuGesture:)];
+#endif
     }
     return self;
 }
@@ -132,7 +136,9 @@
         _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self insertSubview:_backgroundView belowSubview:_contentView];
 
+#if !ONEGRAM_ARMV6
         _menuGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(menuGesture:)];
+#endif
     }
     return self;
 }
@@ -178,9 +184,11 @@
     }
 }
 
+#if !ONEGRAM_ARMV6
 - (void)menuGesture:(UILongPressGestureRecognizer *)recognizer {
     NSLog(@"Not yet implemented: %@", NSStringFromSelector(_cmd));
 }
+#endif
 
 - (void)setBackgroundView:(UIView *)backgroundView {
     if (_backgroundView != backgroundView) {

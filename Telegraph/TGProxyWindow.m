@@ -117,16 +117,7 @@ static bool TGProxyWindowIsLight = true;
              {
                  window.hidden = true;
                  
-//                 if (window.skipMakeKeyWindowOnDismiss)
-//                     return;
                  
-//                 NSArray *windows = [[LegacyComponentsGlobals provider] applicationWindows];
-//                 for (int i = (int)windows.count - 1; i >= 0; i--)
-//                 {
-//                     if ([windows objectAtIndex:i] != window) {
-//                         [[windows objectAtIndex:i] makeKeyWindow];
-//                     }
-//                 }
              }
          }];
     };

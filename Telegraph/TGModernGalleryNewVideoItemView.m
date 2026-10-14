@@ -190,7 +190,6 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     if ([self footerView] == _footerView)
     {
         [self footerView].hidden = true;
-        //[self detachScrubberView];
     }
     
     [_stateDisposable dispose];
@@ -214,7 +213,6 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     if ([self footerView] == _footerView)
     {
         [self footerView].hidden = true;
-//        [self attachScrubberView];
     }
     
     CGSize dimensions = CGSizeZero;

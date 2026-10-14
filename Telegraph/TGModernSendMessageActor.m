@@ -26,6 +26,8 @@
     NSTimeInterval _timeout;
     
     bool _notifiedUploadsStarted;
+    bool _finished;
+    bool _uploadProgressFinished;
     
     NSMutableDictionary *_uploadingActorPathToFileUrl;
     NSMutableDictionary *_uploadingProgressActorPaths;
@@ -83,7 +85,6 @@
 + (NSTimeInterval)defaultTimeoutInterval
 {
 #if TARGET_IPHONE_SIMULATOR
-    //return 5.0;
 #endif
     return 5.0 * 60.0;
 }
@@ -164,27 +165,49 @@
 
 - (void)_fail:(bool)__unused manual
 {
-    [self clearFailTimeout];
-    [self _cancelUploads];
-    
-    NSString *path = self.path;
-    int64_t peerId = [self peerId];
-    
-    [ActionStageInstance() actionFailed:self.path reason:-1];
-    
-    [TGUpdateStateRequestBuilder processDelayedMessagesInConversation:peerId completedPath:path];
+    [self finishSendingWithResult:nil failed:true];
 }
 
 - (void)_success:(id)result
 {
+    [self finishSendingWithResult:result failed:false];
+}
+
+- (void)finishSendingWithResult:(id)result failed:(bool)failed
+{
+    if (![ActionStageInstance() isCurrentQueueStageQueue])
+    {
+        [ActionStageInstance() dispatchOnStageQueue:^{
+            [self finishSendingWithResult:result failed:failed];
+        }];
+        return;
+    }
+    if (_finished)
+        return;
+    _finished = true;
     [self clearFailTimeout];
-    
+    [self _cancelUploads];
+    [self finishUploadProgress];
+    [_disposables dispose];
     NSString *path = self.path;
     int64_t peerId = [self peerId];
-    
-    [ActionStageInstance() actionCompleted:self.path result:result];
-    
+    if (failed)
+        [ActionStageInstance() actionFailed:path reason:-1];
+    else
+        [ActionStageInstance() actionCompleted:path result:result];
     [TGUpdateStateRequestBuilder processDelayedMessagesInConversation:peerId completedPath:path];
+}
+
+- (void)finishUploadProgress
+{
+    if (_uploadProgressFinished)
+        return;
+    _uploadProgressFinished = true;
+    [self clearFailTimeout];
+    _uploadProgress = -1.0f;
+    [_uploadingProgressActorPaths removeAllObjects];
+    if (_preparedMessage != nil)
+        [ActionStageInstance() dispatchMessageToWatchers:self.path messageType:@"messageProgressFinished" message:@{@"mid": @(_preparedMessage.mid)}];
 }
 
 - (void)cancel
@@ -231,6 +254,8 @@
 
 - (void)uploadFilesWithExtensions:(NSArray *)filePathsAndExtensions mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
+    if (_finished || _uploadProgressFinished)
+        return;
     if (filePathsAndExtensions.count == 0)
         return;
     
@@ -298,7 +323,9 @@
 
 - (void)beginUploadProgress
 {
-    if (_uploadProgress < 0.0f) // it may already be set by a file upload actor
+    if (_finished || _uploadProgressFinished)
+        return;
+    if (_uploadProgress < 0.0f)
     {
         _uploadProgress = 0.0f;
         
@@ -332,6 +359,8 @@
 
 - (void)updatePreDownloadsProgress:(float)preDownloadsProgress
 {
+    if (_finished || _uploadProgressFinished)
+        return;
     if (_uploadProgressContainsPreDownloads)
     {
         _uploadProgress = preDownloadsProgress / 2.0f;
@@ -343,12 +372,16 @@
 
 - (void)setUploadProgress:(float)uploadProgress
 {
+    if (_finished || _uploadProgressFinished)
+        return;
     _uploadProgress = uploadProgress;
     [ActionStageInstance() dispatchMessageToWatchers:self.path messageType:@"messageProgress" message:@{@"mid": @(_preparedMessage.mid), @"progress": @(_uploadProgress)}];
 }
 
 - (void)actorReportedProgress:(NSString *)path progress:(float)progress
 {
+    if (_finished || _uploadProgressFinished)
+        return;
     if ([_uploadingProgressActorPaths[path] boolValue])
     {
         if (_uploadProgressContainsPreDownloads)
@@ -370,6 +403,8 @@
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
+    if (_finished)
+        return;
     if (_uploadingActorPathToFileUrl[path] != nil)
     {
         NSString *filePath = _uploadingActorPathToFileUrl[path];

@@ -1,51 +1,6 @@
 #import "SQueue.h"
-#import <sys/utsname.h>
 
 static const void *SQueueSpecificKey = &SQueueSpecificKey;
-
-extern CFAbsoluteTime mainLaunchTimestamp;
-
-static double SQueueStartupTime()
-{
-    if (mainLaunchTimestamp <= 0.0)
-        return 0.0;
-    
-    return CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp;
-}
-
-static NSString *SQueueIOS6PerfBuildTag()
-{
-    static NSString *tag = nil;
-    static dispatch_once_t onceToken;
-    
-    dispatch_once(&onceToken, ^
-                  {
-                      NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
-                      NSString *build = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
-                      
-                      struct utsname systemInfo;
-                      uname(&systemInfo);
-                      
-                      NSString *machine = [[NSString alloc] initWithUTF8String:systemInfo.machine] ?: @"?";
-                      
-                      tag = [[NSString alloc] initWithFormat:@"version=%@ build=%@ device=%@", version, build, machine];
-                  });
-    
-    return tag;
-}
-
-static void SQueueIOS6PerfMaybeLog(NSString *queueName,
-                                   id queue,
-                                   bool synchronous,
-                                   CFAbsoluteTime waitMs,
-                                   CFAbsoluteTime execMs)
-{
-    (void)queueName;
-    (void)queue;
-    (void)synchronous;
-    (void)waitMs;
-    (void)execMs;
-}
 
 @interface SQueue ()
 {
@@ -158,62 +113,12 @@ static void SQueueIOS6PerfMaybeLog(NSString *queueName,
     if (block == nil)
         return;
     
-    if (_queueSpecific != NULL &&
-        dispatch_get_specific(SQueueSpecificKey) == _queueSpecific)
-    {
-        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-        
+    if (_queueSpecific != NULL && dispatch_get_specific(SQueueSpecificKey) == _queueSpecific)
         block();
-        
-        CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-        
-        SQueueIOS6PerfMaybeLog(
-                               @"current",
-                               self,
-                               false,
-                               0.0,
-                               (finishedAt - startedAt) * 1000.0
-                               );
-    }
     else if (_specialIsMainQueue && [NSThread isMainThread])
-    {
-        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-        
         block();
-        
-        CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-        
-        SQueueIOS6PerfMaybeLog(
-                               @"main-inline",
-                               self,
-                               false,
-                               0.0,
-                               (finishedAt - startedAt) * 1000.0
-                               );
-    }
     else
-    {
-        CFAbsoluteTime queuedAt = CFAbsoluteTimeGetCurrent();
-        
-        dispatch_async((dispatch_queue_t)_queue, ^
-                       {
-                           CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-                           
-                           block();
-                           
-                           CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-                           
-                           SQueueIOS6PerfMaybeLog(
-                                                  _specialIsMainQueue
-                                                  ? @"main"
-                                                  : (_queueSpecific == NULL ? @"concurrent" : @"serial"),
-                                                  self,
-                                                  false,
-                                                  (startedAt - queuedAt) * 1000.0,
-                                                  (finishedAt - startedAt) * 1000.0
-                                                  );
-                       });
-    }
+        dispatch_async((dispatch_queue_t)_queue, block);
 }
 
 - (void)dispatchSync:(dispatch_block_t)block
@@ -221,62 +126,12 @@ static void SQueueIOS6PerfMaybeLog(NSString *queueName,
     if (block == nil)
         return;
     
-    if (_queueSpecific != NULL &&
-        dispatch_get_specific(SQueueSpecificKey) == _queueSpecific)
-    {
-        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-        
+    if (_queueSpecific != NULL && dispatch_get_specific(SQueueSpecificKey) == _queueSpecific)
         block();
-        
-        CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-        
-        SQueueIOS6PerfMaybeLog(
-                               @"current",
-                               self,
-                               true,
-                               0.0,
-                               (finishedAt - startedAt) * 1000.0
-                               );
-    }
     else if (_specialIsMainQueue && [NSThread isMainThread])
-    {
-        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-        
         block();
-        
-        CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-        
-        SQueueIOS6PerfMaybeLog(
-                               @"main-inline",
-                               self,
-                               true,
-                               0.0,
-                               (finishedAt - startedAt) * 1000.0
-                               );
-    }
     else
-    {
-        CFAbsoluteTime queuedAt = CFAbsoluteTimeGetCurrent();
-        
-        dispatch_sync((dispatch_queue_t)_queue, ^
-                      {
-                          CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-                          
-                          block();
-                          
-                          CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-                          
-                          SQueueIOS6PerfMaybeLog(
-                                                 _specialIsMainQueue
-                                                 ? @"main"
-                                                 : (_queueSpecific == NULL ? @"concurrent" : @"serial"),
-                                                 self,
-                                                 true,
-                                                 (startedAt - queuedAt) * 1000.0,
-                                                 (finishedAt - startedAt) * 1000.0
-                                                 );
-                      });
-    }
+        dispatch_sync((dispatch_queue_t)_queue, block);
 }
 
 - (void)dispatch:(dispatch_block_t)block synchronous:(bool)synchronous
@@ -284,86 +139,14 @@ static void SQueueIOS6PerfMaybeLog(NSString *queueName,
     if (block == nil)
         return;
     
-    if (_queueSpecific != NULL &&
-        dispatch_get_specific(SQueueSpecificKey) == _queueSpecific)
-    {
-        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-        
+    if (_queueSpecific != NULL && dispatch_get_specific(SQueueSpecificKey) == _queueSpecific)
         block();
-        
-        CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-        
-        SQueueIOS6PerfMaybeLog(
-                               @"current",
-                               self,
-                               synchronous,
-                               0.0,
-                               (finishedAt - startedAt) * 1000.0
-                               );
-    }
     else if (_specialIsMainQueue && [NSThread isMainThread])
-    {
-        CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-        
         block();
-        
-        CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-        
-        SQueueIOS6PerfMaybeLog(
-                               @"main-inline",
-                               self,
-                               synchronous,
-                               0.0,
-                               (finishedAt - startedAt) * 1000.0
-                               );
-    }
+    else if (synchronous)
+        dispatch_sync((dispatch_queue_t)_queue, block);
     else
-    {
-        CFAbsoluteTime queuedAt = CFAbsoluteTimeGetCurrent();
-        
-        if (synchronous)
-        {
-            dispatch_sync((dispatch_queue_t)_queue, ^
-                          {
-                              CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-                              
-                              block();
-                              
-                              CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-                              
-                              SQueueIOS6PerfMaybeLog(
-                                                     _specialIsMainQueue
-                                                     ? @"main"
-                                                     : (_queueSpecific == NULL ? @"concurrent" : @"serial"),
-                                                     self,
-                                                     true,
-                                                     (startedAt - queuedAt) * 1000.0,
-                                                     (finishedAt - startedAt) * 1000.0
-                                                     );
-                          });
-        }
-        else
-        {
-            dispatch_async((dispatch_queue_t)_queue, ^
-                           {
-                               CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-                               
-                               block();
-                               
-                               CFAbsoluteTime finishedAt = CFAbsoluteTimeGetCurrent();
-                               
-                               SQueueIOS6PerfMaybeLog(
-                                                      _specialIsMainQueue
-                                                      ? @"main"
-                                                      : (_queueSpecific == NULL ? @"concurrent" : @"serial"),
-                                                      self,
-                                                      false,
-                                                      (startedAt - queuedAt) * 1000.0,
-                                                      (finishedAt - startedAt) * 1000.0
-                                                      );
-                           });
-        }
-    }
+        dispatch_async((dispatch_queue_t)_queue, block);
 }
 
 - (bool)isCurrentQueue

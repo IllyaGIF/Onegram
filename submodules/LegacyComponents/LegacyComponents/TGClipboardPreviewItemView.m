@@ -256,8 +256,6 @@ const CGFloat TGClipboardPreviewEdgeInset = 8.0f;
             strongSelf.sendPressed(item.image);
     };
     
-    //mixin.editorOpened = self.editorOpened;
-    //mixin.editorClosed = self.editorClosed;
 }
 
 - (TGClipboardGalleryMixin *)galleryMixinForIndexPath:(NSIndexPath *)indexPath

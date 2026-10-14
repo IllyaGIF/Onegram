@@ -1,4 +1,5 @@
 #import "PGCamera.h"
+#import "OGPlatformMedia.h"
 
 #import "LegacyComponentsInternal.h"
 
@@ -63,31 +64,36 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
             __strong PGCamera *strongSelf = weakSelf;
             if (strongSelf == nil || strongSelf->_previewView == nil)
                 return false;
-            
+#if defined(ONEGRAM_ARMV6)
+            return false;
+#else
             TGCameraPreviewView *previewView = strongSelf->_previewView;
-            return previewView.captureConnection.videoMirrored;
+            return OGPlatformCaptureConnectionIsVideoMirrored(previewView.captureConnection);
+#endif
         };
-        
+#if !defined(ONEGRAM_ARMV6)
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleEnteredBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleEnteredForeground:) name:UIApplicationWillEnterForegroundNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleRuntimeError:) name:AVCaptureSessionRuntimeErrorNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleInterrupted:) name:AVCaptureSessionWasInterruptedNotification object:nil];
+#endif
     }
     return self;
 }
 
 - (void)dealloc
 {
-    TGLegacyLog(@"Camera: dealloc");
     [_deviceAngleSampler stopMeasuring];
     [self _unsubscribeFromCameraChanges];
     
     self.captureSession.requestPreviewIsMirrored = nil;
     
+#if !defined(ONEGRAM_ARMV6)
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidEnterBackgroundNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillEnterForegroundNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureSessionRuntimeErrorNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureSessionWasInterruptedNotification object:nil];
+#endif
 }
 
 - (void)handleEnteredBackground:(NSNotification *)__unused notification
@@ -109,6 +115,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 - (void)handleRuntimeError:(NSNotification *)notification
 {
+#if !defined(ONEGRAM_ARMV6)
     TGLegacyLog(@"ERROR: Camera runtime error: %@", notification.userInfo[AVCaptureSessionErrorKey]);
 
     __weak PGCamera *weakSelf = self;
@@ -132,10 +139,14 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
                 [strongSelf _subscribeForCameraChanges];
         }];
     });
+#else
+    (void)notification;
+#endif
 }
 
 - (void)handleInterrupted:(NSNotification *)notification
 {
+#if !defined(ONEGRAM_ARMV6)
     if (iosMajorVersion() < 9)
         return;
     
@@ -143,30 +154,34 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
     TGLegacyLog(@"WARNING: Camera was interrupted with reason %d", reason);
     if (self.captureInterrupted != nil)
         self.captureInterrupted(reason);
+#else
+    (void)notification;
+#endif
 }
 
 - (void)_subscribeForCameraChanges
 {
     if (_subscribedForCameraChanges)
         return;
-    
+
     _subscribedForCameraChanges = true;
-    
+#if !defined(ONEGRAM_ARMV6)
     [self.captureSession.videoDevice addObserver:self forKeyPath:PGCameraFlashActiveKey options:NSKeyValueObservingOptionNew context:NULL];
     [self.captureSession.videoDevice addObserver:self forKeyPath:PGCameraFlashAvailableKey options:NSKeyValueObservingOptionNew context:NULL];
     [self.captureSession.videoDevice addObserver:self forKeyPath:PGCameraTorchActiveKey options:NSKeyValueObservingOptionNew context:NULL];
     [self.captureSession.videoDevice addObserver:self forKeyPath:PGCameraTorchAvailableKey options:NSKeyValueObservingOptionNew context:NULL];
     [self.captureSession.videoDevice addObserver:self forKeyPath:PGCameraAdjustingFocusKey options:NSKeyValueObservingOptionNew context:NULL];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(subjectAreaChanged:) name:AVCaptureDeviceSubjectAreaDidChangeNotification object:self.captureSession.videoDevice];
+#endif
 }
 
 - (void)_unsubscribeFromCameraChanges
 {
     if (!_subscribedForCameraChanges)
         return;
-    
+
     _subscribedForCameraChanges = false;
-    
+#if !defined(ONEGRAM_ARMV6)
     @try {
         [self.captureSession.videoDevice removeObserver:self forKeyPath:PGCameraFlashActiveKey];
         [self.captureSession.videoDevice removeObserver:self forKeyPath:PGCameraFlashAvailableKey];
@@ -175,6 +190,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         [self.captureSession.videoDevice removeObserver:self forKeyPath:PGCameraAdjustingFocusKey];
         [[NSNotificationCenter defaultCenter] removeObserver:self name:AVCaptureDeviceSubjectAreaDidChangeNotification object:self.captureSession.videoDevice];
     } @catch(NSException *e) { }
+#endif
 }
 
 - (void)attachPreviewView:(TGCameraPreviewView *)previewView
@@ -221,7 +237,6 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         
         _capturing = true;
         
-        TGLegacyLog(@"Camera: start capture");
 #if !TARGET_IPHONE_SIMULATOR
         [self.captureSession startRunning];
 #endif
@@ -248,7 +263,6 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
     if (!pause)
         _invalidated = true;
     
-    TGLegacyLog(@"Camera: stop capture");
     
     [[PGCamera cameraQueue] dispatch:^
     {
@@ -263,17 +277,18 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
             if (previewView != nil)
                 [previewView invalidate];
             
+#if !defined(ONEGRAM_ARMV6)
             for (AVCaptureInput *input in self.captureSession.inputs)
                 [self.captureSession removeInput:input];
             for (AVCaptureOutput *output in self.captureSession.outputs)
                 [self.captureSession removeOutput:output];
+#endif
             
 #if !TARGET_IPHONE_SIMULATOR
             [self.captureSession commitConfiguration];
 #endif
         }
         
-        TGLegacyLog(@"Camera: stop running");
 #if !TARGET_IPHONE_SIMULATOR
         [self.captureSession stopRunning];
 #endif
@@ -348,7 +363,21 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 - (void)takePhotoWithCompletion:(void (^)(UIImage *result, PGCameraShotMetadata *metadata))completion
 {
-    bool videoMirrored = !self.disableResultMirroring ? _previewView.captureConnection.videoMirrored : false;
+#if defined(ONEGRAM_ARMV6)
+    [self captureNextFrameCompletion:^(UIImage *image)
+    {
+        if (image == nil)
+            return;
+        PGCameraShotMetadata *metadata = [[PGCameraShotMetadata alloc] init];
+        UIInterfaceOrientation orientation = UIInterfaceOrientationPortrait;
+        if (self.requestedCurrentInterfaceOrientation != nil)
+            orientation = self.requestedCurrentInterfaceOrientation(NULL);
+        metadata.deviceAngle = [PGCameraShotMetadata relativeDeviceAngleFromAngle:_deviceAngleSampler.currentDeviceAngle orientation:orientation];
+        if (completion != nil)
+            completion([self normalizeImageOrientation:image], metadata);
+    }];
+#else
+    bool videoMirrored = !self.disableResultMirroring ? OGPlatformCaptureConnectionIsVideoMirrored(_previewView.captureConnection) : false;
     
     [[PGCamera cameraQueue] dispatch:^
     {
@@ -358,7 +387,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         void (^takePhoto)(void) = ^
         {
             AVCaptureConnection *imageConnection = TGAVCaptureConnectionWithMediaType(self.captureSession.imageOutput, AVMediaTypeVideo);
-            [imageConnection setVideoMirrored:videoMirrored];
+            OGPlatformSetCaptureConnectionVideoMirrored(imageConnection, videoMirrored);
             
             UIInterfaceOrientation orientation = UIInterfaceOrientationPortrait;
             if (self.requestedCurrentInterfaceOrientation != nil)
@@ -401,6 +430,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         else
             TGDispatchAfter(0.4 - delta, (dispatch_queue_t)[[PGCamera cameraQueue] _dispatch_queueRaw], takePhoto);
     }];
+#endif
 }
 
 - (void)startVideoRecordingForMoment:(bool)moment completion:(void (^)(NSURL *, CGAffineTransform transform, CGSize dimensions, NSTimeInterval duration, bool success))completion
@@ -522,7 +552,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
     {
         if ([keyPath isEqualToString:PGCameraAdjustingFocusKey])
         {
-            bool adjustingFocus = [[change objectForKey:NSKeyValueChangeNewKey] isEqualToNumber:@YES];
+            bool adjustingFocus = [[change objectForKey:NSKeyValueChangeNewKey] boolValue];
             
             if (adjustingFocus && self.beganAdjustingFocus != nil)
                 self.beganAdjustingFocus();
@@ -531,14 +561,14 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         }
         else if ([keyPath isEqualToString:PGCameraFlashActiveKey] || [keyPath isEqualToString:PGCameraTorchActiveKey])
         {
-            bool active = [[change objectForKey:NSKeyValueChangeNewKey] isEqualToNumber:@YES];
+            bool active = [[change objectForKey:NSKeyValueChangeNewKey] boolValue];
             
             if (self.flashActivityChanged != nil)
                 self.flashActivityChanged(active);
         }
         else if ([keyPath isEqualToString:PGCameraFlashAvailableKey] || [keyPath isEqualToString:PGCameraTorchAvailableKey])
         {
-            bool available = [[change objectForKey:NSKeyValueChangeNewKey] isEqualToNumber:@YES];
+            bool available = [[change objectForKey:NSKeyValueChangeNewKey] boolValue];
             
             if (self.flashAvailabilityChanged != nil)
                 self.flashAvailabilityChanged(available);
@@ -548,12 +578,20 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 - (bool)supportsExposurePOI
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     return [self.captureSession.videoDevice isExposurePointOfInterestSupported];
+#endif
 }
 
 - (bool)supportsFocusPOI
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     return [self.captureSession.videoDevice isFocusPointOfInterestSupported];
+#endif
 }
 
 - (void)resetFocusPoint
@@ -580,7 +618,11 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 - (bool)supportsExposureTargetBias
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     return [self.captureSession.videoDevice respondsToSelector:NSSelectorFromString(@"setExposureTargetBias:completionHandler:")];
+#endif
 }
 
 - (void)beginExposureTargetBiasChange
@@ -620,23 +662,33 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 - (bool)hasFlash
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     return self.captureSession.videoDevice.hasFlash;
+#endif
 }
 
 - (bool)flashActive
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     if (self.cameraMode == PGCameraModeVideo || self.cameraMode == PGCameraModeClip)
         return self.captureSession.videoDevice.torchActive;
-    
     return self.captureSession.videoDevice.flashActive;
+#endif
 }
 
 - (bool)flashAvailable
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     if (self.cameraMode == PGCameraModeVideo || self.cameraMode == PGCameraModeClip)
         return self.captureSession.videoDevice.torchAvailable;
-    
     return self.captureSession.videoDevice.flashAvailable;
+#endif
 }
 
 - (PGCameraFlashMode)flashMode
@@ -656,6 +708,20 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 - (PGCameraPosition)togglePosition
 {
+#if defined(ONEGRAM_ARMV6)
+    if (![PGCamera hasFrontCamera] || self.disabled)
+        return self.captureSession.currentCameraPosition;
+    PGCameraPosition targetCameraPosition = self.captureSession.currentCameraPosition == PGCameraPositionFront ? PGCameraPositionRear : PGCameraPositionFront;
+    void (^commitBlock)(void) = ^
+    {
+        self.captureSession.currentCameraPosition = targetCameraPosition;
+        if (self.finishedPositionChange != nil)
+            self.finishedPositionChange();
+    };
+    if (self.beganPositionChange != nil)
+        self.beganPositionChange(false, false, commitBlock);
+    return targetCameraPosition;
+#else
     if ([AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo].count < 2 || self.disabled)
         return self.captureSession.currentCameraPosition;
     
@@ -690,6 +756,7 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
         self.beganPositionChange(targetDevice.hasFlash, [PGCameraCaptureSession _isZoomAvailableForDevice:targetDevice], commitBlock);
     
     return targetCameraPosition;
+#endif
 }
 
 #pragma mark - Zoom
@@ -742,12 +809,20 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 + (bool)hasRearCamera
 {
+#if defined(ONEGRAM_ARMV6)
+    return [self cameraAvailable];
+#else
     return ([PGCameraCaptureSession _deviceWithCameraPosition:PGCameraPositionRear] != nil);
+#endif
 }
 
 + (bool)hasFrontCamera
 {
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
     return ([PGCameraCaptureSession _deviceWithCameraPosition:PGCameraPositionFront] != nil);
+#endif
 }
 
 + (SQueue *)cameraQueue
@@ -782,18 +857,24 @@ NSString *const PGCameraAdjustingFocusKey = @"adjustingFocus";
 
 + (PGCameraAuthorizationStatus)cameraAuthorizationStatus
 {
+#if defined(ONEGRAM_ARMV6)
+    return PGCameraAuthorizationStatusAuthorized;
+#else
     if ([AVCaptureDevice respondsToSelector:@selector(authorizationStatusForMediaType:)])
         return [PGCamera _cameraAuthorizationStatusForAuthorizationStatus:[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo]];
-    
     return PGCameraAuthorizationStatusAuthorized;
+#endif
 }
 
 + (PGMicrophoneAuthorizationStatus)microphoneAuthorizationStatus
 {
+#if defined(ONEGRAM_ARMV6)
+    return PGMicrophoneAuthorizationStatusAuthorized;
+#else
     if ([AVCaptureDevice respondsToSelector:@selector(authorizationStatusForMediaType:)])
         return [PGCamera _microphoneAuthorizationStatusForAuthorizationStatus:[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]];
-        
     return PGMicrophoneAuthorizationStatusAuthorized;
+#endif
 }
 
 + (PGCameraAuthorizationStatus)_cameraAuthorizationStatusForAuthorizationStatus:(AVAuthorizationStatus)authorizationStatus

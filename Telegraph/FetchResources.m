@@ -9,7 +9,6 @@ SSignal *fetchResource(id<MediaResource> resource, NSRange range, TGNetworkMedia
     if ([resource conformsToProtocol:@protocol(TelegramCloudMediaResource)]) {
         id<TelegramCloudMediaResource> cloudResource = (id<TelegramCloudMediaResource>)resource;
         if ([cloudResource datacenterId] <= 0) {
-            while (false) TGLog(@"MEDIA fetch skip invalid dc resource=%@ dc=%d", NSStringFromClass([resource class]), [cloudResource datacenterId]);
             return [SSignal single:[[MediaResourceDataFetchResult alloc] initWithData:[NSData data] complete:true]];
         }
         if ([resource isKindOfClass:[CloudFileMediaResource class]]) {

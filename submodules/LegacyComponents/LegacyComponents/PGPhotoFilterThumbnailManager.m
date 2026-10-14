@@ -58,7 +58,6 @@ const NSUInteger TGFilterThumbnailCacheHardMemoryLimit = 2 * 1024 * 1024;
     [self invalidateThumbnailImages];
     _thumbnailImage = image;
 
-    //_thumbnailPicture = [[PGPhotoEditorPicture alloc] initWithImage:_thumbnailImage];
 }
 
 - (void)requestThumbnailImageForFilter:(PGPhotoFilter *)filter completion:(void (^)(UIImage *image, bool cached, bool finished))completion

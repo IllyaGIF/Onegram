@@ -2,6 +2,10 @@
 
 @interface TGLetteredAvatarView : TGRemoteImageView
 
++ (void)prewarmImage:(UIImage *)image cornerRadius:(CGFloat)cornerRadius boundsSize:(CGSize)boundsSize;
++ (void)prepareLettersForFirstName:(NSString *)firstName lastName:(NSString *)lastName fontSize:(CGFloat)fontSize height:(CGFloat)height;
++ (void)prepareLettersForTitle:(NSString *)title fontSize:(CGFloat)fontSize height:(CGFloat)height;
+
 - (void)setSingleFontSize:(CGFloat)singleFontSize doubleFontSize:(CGFloat)doubleFontSize useBoldFont:(bool)useBoldFont;
 
 - (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName;

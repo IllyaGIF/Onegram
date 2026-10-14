@@ -8,7 +8,11 @@
 
 #import <UIKit/UIKit.h>
 
+#if __has_include(<CoreText/CoreText.h>)
 #import <CoreText/CoreText.h>
+#else
+#import "OGPlatformText.h"
+#endif
 
 @protocol TGConversationMessageAssetsSource <NSObject>
 

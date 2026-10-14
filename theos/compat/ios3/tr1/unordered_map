@@ -1,0 +1,367 @@
+#ifndef ONEGRAM_IOS3_TR1_UNORDERED_MAP_H
+#define ONEGRAM_IOS3_TR1_UNORDERED_MAP_H
+
+#include <cstddef>
+#include <cstdlib>
+#include <functional>
+#include <utility>
+#include <vector>
+
+namespace std
+{
+namespace tr1
+{
+    template <typename T> struct hash;
+
+    template <> struct hash<bool>
+    {
+        size_t operator()(bool value) const { return value ? 1u : 0u; }
+    };
+
+    template <> struct hash<char>
+    {
+        size_t operator()(char value) const { return (size_t)(unsigned char)value; }
+    };
+
+    template <> struct hash<signed char>
+    {
+        size_t operator()(signed char value) const { return (size_t)(unsigned char)value; }
+    };
+
+    template <> struct hash<unsigned char>
+    {
+        size_t operator()(unsigned char value) const { return (size_t)value; }
+    };
+
+    template <> struct hash<short>
+    {
+        size_t operator()(short value) const { return (size_t)(unsigned short)value; }
+    };
+
+    template <> struct hash<unsigned short>
+    {
+        size_t operator()(unsigned short value) const { return (size_t)value; }
+    };
+
+    template <> struct hash<int>
+    {
+        size_t operator()(int value) const { return (size_t)(uint32_t)value; }
+    };
+
+    template <> struct hash<unsigned int>
+    {
+        size_t operator()(unsigned int value) const { return (size_t)value; }
+    };
+
+    template <> struct hash<long>
+    {
+        size_t operator()(long value) const { return (size_t)(uint32_t)value; }
+    };
+
+    template <> struct hash<unsigned long>
+    {
+        size_t operator()(unsigned long value) const { return (size_t)value; }
+    };
+
+    template <> struct hash<long long>
+    {
+        size_t operator()(long long value) const
+        {
+            uint64_t mixed = (uint64_t)value;
+            mixed ^= mixed >> 33;
+            mixed *= 0xff51afd7ed558ccdULL;
+            mixed ^= mixed >> 33;
+            return (size_t)mixed;
+        }
+    };
+
+    template <> struct hash<unsigned long long>
+    {
+        size_t operator()(unsigned long long value) const
+        {
+            value ^= value >> 33;
+            value *= 0xff51afd7ed558ccdULL;
+            value ^= value >> 33;
+            return (size_t)value;
+        }
+    };
+
+    template <typename T> struct hash<T *>
+    {
+        size_t operator()(const T *value) const { return (size_t)value >> 2; }
+    };
+
+    template <typename Key, typename T, typename Hash = tr1::hash<Key>, typename Pred = std::equal_to<Key>, typename Alloc = std::allocator<std::pair<const Key, T> >, bool cache_hash_code = false>
+    class unordered_map
+    {
+    public:
+        struct Node
+        {
+            Key first;
+            T second;
+            Node *next;
+            size_t orderIndex;
+            bool erased;
+        };
+
+        typedef Node value_type;
+        typedef size_t size_type;
+        typedef Hash hasher;
+        typedef Pred key_equal;
+
+        class const_iterator;
+
+        class iterator
+        {
+            friend class unordered_map;
+
+            const std::vector<Node *> *_order;
+            size_t _index;
+
+            iterator(const std::vector<Node *> *order, size_t index) : _order(order), _index(index)
+            {
+                skipFree();
+            }
+
+            void skipFree()
+            {
+                while (_order != NULL && _index < _order->size() && (*_order)[_index] == NULL)
+                    ++_index;
+            }
+
+        public:
+            iterator() : _order(NULL), _index(0)
+            {
+            }
+
+            Node &operator*() const { return *(*_order)[_index]; }
+            Node *operator->() const { return (*_order)[_index]; }
+
+            iterator &operator++()
+            {
+                ++_index;
+                skipFree();
+                return *this;
+            }
+
+            bool operator==(const iterator &other) const { return _order == other._order && _index == other._index; }
+            bool operator!=(const iterator &other) const { return !(*this == other); }
+        };
+
+        class const_iterator
+        {
+            friend class unordered_map;
+
+            const std::vector<Node *> *_order;
+            size_t _index;
+
+            const_iterator(const std::vector<Node *> *order, size_t index) : _order(order), _index(index)
+            {
+                while (_order != NULL && _index < _order->size() && (*_order)[_index] == NULL)
+                    ++_index;
+            }
+
+        public:
+            const_iterator() : _order(NULL), _index(0)
+            {
+            }
+
+            const_iterator(const iterator &other) : _order(other._order), _index(other._index)
+            {
+            }
+
+            const Node &operator*() const { return *(*_order)[_index]; }
+            const Node *operator->() const { return (*_order)[_index]; }
+
+            const_iterator &operator++()
+            {
+                ++_index;
+                while (_order != NULL && _index < _order->size() && (*_order)[_index] == NULL)
+                    ++_index;
+                return *this;
+            }
+
+            bool operator==(const const_iterator &other) const { return _order == other._order && _index == other._index; }
+            bool operator!=(const const_iterator &other) const { return !(*this == other); }
+        };
+
+    private:
+        std::vector<Node *> _order;
+        std::vector<Node *> _buckets;
+        std::vector<size_t> _freeIndices;
+        size_t _count;
+        Hash _hash;
+        Pred _equal;
+
+        size_t bucketFor(const Key &key) const
+        {
+            return (size_t)(_hash(key) & (_buckets.size() - 1));
+        }
+
+        void rebuild(size_t target)
+        {
+            size_t bucketCount = 16;
+            while (bucketCount < target)
+                bucketCount <<= 1;
+            _buckets.assign(bucketCount, NULL);
+            for (size_t index = 0; index < _order.size(); index++)
+            {
+                Node *node = _order[index];
+                if (node == NULL)
+                    continue;
+                size_t bucket = (size_t)(_hash(node->first) & (bucketCount - 1));
+                node->next = _buckets[bucket];
+                _buckets[bucket] = node;
+            }
+        }
+
+        Node *findNode(const Key &key) const
+        {
+            if (_buckets.empty())
+                return NULL;
+            for (Node *node = _buckets[bucketFor(key)]; node != NULL; node = node->next)
+            {
+                if (_equal(node->first, key))
+                    return node;
+            }
+            return NULL;
+        }
+
+        std::pair<iterator, bool> insertKeyValue(const Key &key, const T &value)
+        {
+            Node *existing = findNode(key);
+            if (existing != NULL)
+                return std::pair<iterator, bool>(iterator(&_order, existing->orderIndex), false);
+
+            if (_buckets.empty() || _count + 1 > _buckets.size())
+                rebuild(_buckets.empty() ? 16 : _buckets.size() * 2);
+
+            size_t index;
+            if (!_freeIndices.empty())
+            {
+                index = _freeIndices.back();
+                _freeIndices.pop_back();
+            }
+            else
+            {
+                index = _order.size();
+                _order.push_back(NULL);
+            }
+
+            Node *node = new Node();
+            node->first = key;
+            node->second = value;
+            node->next = NULL;
+            node->orderIndex = index;
+            node->erased = false;
+            _order[index] = node;
+
+            size_t bucket = bucketFor(key);
+            node->next = _buckets[bucket];
+            _buckets[bucket] = node;
+            _count++;
+            return std::pair<iterator, bool>(iterator(&_order, node->orderIndex), true);
+        }
+
+        void freeNodes()
+        {
+            for (size_t index = 0; index < _order.size(); index++)
+                delete _order[index];
+            _order.clear();
+            _buckets.clear();
+            _freeIndices.clear();
+            _count = 0;
+        }
+
+    public:
+        unordered_map() : _count(0)
+        {
+        }
+
+        unordered_map(const unordered_map &other) : _count(0)
+        {
+            for (const_iterator it = other.begin(); it != other.end(); ++it)
+                insertKeyValue(it->first, it->second);
+        }
+
+        unordered_map &operator=(const unordered_map &other)
+        {
+            if (this != &other)
+            {
+                freeNodes();
+                for (const_iterator it = other.begin(); it != other.end(); ++it)
+                    insertKeyValue(it->first, it->second);
+            }
+            return *this;
+        }
+
+        ~unordered_map()
+        {
+            freeNodes();
+        }
+
+        iterator begin() { return iterator(&_order, 0); }
+        iterator end() { return iterator(&_order, _order.size()); }
+        const_iterator begin() const { return const_iterator(&_order, 0); }
+        const_iterator end() const { return const_iterator(&_order, _order.size()); }
+
+        bool empty() const { return _count == 0; }
+        size_type size() const { return _count; }
+
+        iterator find(const Key &key)
+        {
+            Node *node = findNode(key);
+            return node != NULL ? iterator(&_order, node->orderIndex) : end();
+        }
+
+        const_iterator find(const Key &key) const
+        {
+            Node *node = findNode(key);
+            return node != NULL ? const_iterator(&_order, node->orderIndex) : end();
+        }
+
+        size_type count(const Key &key) const { return findNode(key) != NULL ? 1 : 0; }
+
+        std::pair<iterator, bool> insert(const std::pair<const Key, T> &value)
+        {
+            return insertKeyValue(value.first, value.second);
+        }
+
+        T &operator[](const Key &key)
+        {
+            Node *node = findNode(key);
+            if (node != NULL)
+                return node->second;
+            node = insertKeyValue(key, T()).first.operator->();
+            return node->second;
+        }
+
+        size_type erase(const Key &key)
+        {
+            if (_buckets.empty())
+                return 0;
+            size_t bucket = bucketFor(key);
+            for (Node **link = &_buckets[bucket]; *link != NULL; link = &(*link)->next)
+            {
+                Node *node = *link;
+                if (!_equal(node->first, key))
+                    continue;
+                *link = node->next;
+                _order[node->orderIndex] = NULL;
+                _freeIndices.push_back(node->orderIndex);
+                delete node;
+                _count--;
+                return 1;
+            }
+            return 0;
+        }
+
+        void clear()
+        {
+            freeNodes();
+        }
+    };
+}
+}
+
+#endif

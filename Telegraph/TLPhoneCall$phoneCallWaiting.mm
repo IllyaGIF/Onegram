@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//phoneCallWaiting flags:# id:long access_hash:long date:int admin_id:int participant_id:int protocol:PhoneCallProtocol receive_date:flags.0?int = PhoneCall;
 
 @implementation TLPhoneCall$phoneCallWaiting
 
@@ -11,7 +10,6 @@
     TGLog(@"***** TLPhoneCall$phoneCallWaiting serialization not supported");
 }
 
-//phoneCallWaiting#1b8f4ad1 flags:# id:long access_hash:long date:int admin_id:int participant_id:int protocol:PhoneCallProtocol receive_date:flags.0?int = PhoneCall;
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {

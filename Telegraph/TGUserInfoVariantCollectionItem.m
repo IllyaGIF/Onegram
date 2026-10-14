@@ -10,6 +10,9 @@
 
 #import "TGUserInfoVariantCollectionItemView.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 @interface TGUserInfoVariantCollectionItem ()
 {
@@ -41,7 +44,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] ? 35.0f : 44.0f);
+    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.actionRowAppearance.rowHeight : 44.0f);
 }
 
 - (void)itemSelected:(id)actionTarget

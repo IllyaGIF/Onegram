@@ -94,6 +94,8 @@ typedef NS_ENUM(NSUInteger, PSTCollectionElementCategory) {
 - (PSTCollectionViewCell *)cellForItemAtIndexPath:(NSIndexPath *)indexPath;
 
 - (NSArray *)visibleCells;
+- (BOOL)isParkedReusableView:(UIView *)view;
+- (BOOL)shiftVisibleItemIndexPathsByOffset:(NSInteger)offset;
 
 - (NSArray *)indexPathsForVisibleItems;
 

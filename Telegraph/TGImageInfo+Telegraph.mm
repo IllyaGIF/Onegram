@@ -62,7 +62,6 @@ NSString *extractFileUrl(id fileLocation)
             if (![loggedInvalidFileLocationClasses containsObject:className])
             {
                 [loggedInvalidFileLocationClasses addObject:className];
-                while (false) TGLog(@"MEDIA invalid fileLocation class=%@", className);
             }
         }
     }
@@ -154,7 +153,6 @@ NSString *extractFileUrl(id fileLocation)
                 NSString *urlLocation = extractFileUrl(concreteSize.location);
                 if (urlLocation == nil)
                     urlLocation = modernPhotoUrl(photo, concreteSize);
-                // High-volume success path; media download diagnostics live in MultipartFetch.
                 [self addImageWithSize:CGSizeMake(concreteSize.w, concreteSize.h) url:urlLocation fileSize:concreteSize.size];
             }
             else if ([sizeDesc isKindOfClass:[TLPhotoSize$photoCachedSize class]])

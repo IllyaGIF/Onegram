@@ -5,6 +5,7 @@
 #import "TGStringUtils.h"
 #import "TGUser.h"
 #import "TGLocalization.h"
+#import "../../../OnegramPlatform/OGPlatformText.h"
 
 static bool value_dateHas12hFormat = false;
 static __strong NSString *value_monthNamesGenShort[] = {
@@ -45,7 +46,7 @@ static void initializeTGDateUtils()
     if ([dateFormatter.locale respondsToSelector:@selector(countryCode)] && [[dateFormatter.locale performSelector:@selector(countryCode)] isEqualToString:@"UA"])
         value_dateHas12hFormat = false;
     
-    dateString = [NSDateFormatter dateFormatFromTemplate:@"MdY" options:0 locale:[NSLocale currentLocale]];
+    dateString = OGPlatformDateFormatFromTemplate(@"MdY", 0, [NSLocale currentLocale]);
     if ([dateString rangeOfString:@"."].location != NSNotFound)
     {
         value_date_separator = @".";

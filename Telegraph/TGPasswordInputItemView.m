@@ -5,6 +5,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGTextField.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGPasswordInputItemView () <UITextFieldDelegate>
 {
@@ -28,8 +29,7 @@
         _textField.placeholderColor = UIColorRGB(0xbfbfbf);
         _textField.autocorrectionType = UITextAutocorrectionTypeNo;
         _textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        if ([_textField respondsToSelector:@selector(setSpellCheckingType:)])
-            _textField.spellCheckingType = UITextSpellCheckingTypeNo;
+        OGPlatformDisableSpellChecking(_textField);
         _textField.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
         _textField.backgroundColor = [UIColor clearColor];
         _textField.leftInset = 15.0f;

@@ -4,7 +4,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messages.getInlineBotResults flags:# bot:InputUser peer:InputPeer geo_point:flags.0?InputGeoPoint query:string offset:string = messages.BotResults;
 
 @implementation TLRPCmessages_getInlineBotResults
 

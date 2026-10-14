@@ -496,7 +496,9 @@ const CGFloat TGPhotoAvatarCropButtonsWrapperSize = 61.0f;
 
 - (void)viewWillLayoutSubviews
 {
+#if !defined(ONEGRAM_ARMV6)
     [super viewWillLayoutSubviews];
+#endif
     
     [self updateLayout:[[LegacyComponentsGlobals provider] applicationStatusBarOrientation]];
 }

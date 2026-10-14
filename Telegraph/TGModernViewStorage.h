@@ -13,7 +13,9 @@
 @interface TGModernViewStorage : NSObject
 
 - (UIView<TGModernView> *)dequeueViewWithIdentifier:(NSString *)identifier viewStateIdentifier:(NSString *)viewStateIdentifier;
+- (UIView<TGModernView> *)dequeueViewWithIdentifier:(NSString *)identifier viewStateIdentifier:(NSString *)viewStateIdentifier preferredSuperview:(UIView *)preferredSuperview;
 - (void)enqueueView:(UIView<TGModernView> *)view;
+- (void)parkView:(UIView<TGModernView> *)view;
 
 - (void)allowResurrectionForOperations:(dispatch_block_t)block;
 

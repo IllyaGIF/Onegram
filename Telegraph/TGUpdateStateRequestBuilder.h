@@ -21,6 +21,7 @@
 @property (nonatomic, strong) ASHandle *actionHandle;
 
 + (void)scheduleInitialUpdates;
++ (void)requestDialogReconciliation;
 
 + (void)clearStateHistory;
 + (int)stateVersion;

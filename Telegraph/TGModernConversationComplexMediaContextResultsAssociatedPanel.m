@@ -389,8 +389,6 @@
     availableSize.height -= insets.top + insets.bottom;
     availableSize.width = MAX(1.0f, availableSize.width);
     availableSize.height = MAX(1.0f, availableSize.height);
-    // PSUICollectionViewFlowLayout on iOS 6 requires the item height to be
-    // strictly smaller than the collection height minus section insets.
     CGSize maximumItemSize = CGSizeMake(availableSize.width, MAX(1.0f, availableSize.height - 1.0f));
     return TGScaleToFill(TGFitSize(preferredSize, maximumItemSize), CGSizeMake(10.0f, maximumItemSize.height));
 }
@@ -471,7 +469,6 @@
     _separatorView.frame = CGRectMake(0.0f, self.frame.size.height - separatorHeight, self.frame.size.width, separatorHeight);
     
     UIEdgeInsets previousInset = _collectionView.contentInset;
-    //CGPoint contentOffset = _tableView.contentOffset;
     
     _collectionView.frame = CGRectMake(0.0f, 0.0f, self.frame.size.width, self.frame.size.height);
     
@@ -491,12 +488,9 @@
             _collectionView.contentInset = finalInset;
             _collectionView.contentOffset = CGPointMake(0.0f, -_collectionView.contentInset.top);
         } else if (ABS(insetDifference) > FLT_EPSILON) {
-            //if (ABS(insetDifference) <= 36.0f + 0.1) {
             {
                 [self _autoAdjustInsetsForScrollView:_collectionView finalInset:finalInset previousInset:previousInset];
                 
-                //contentOffset.y -= insetDifference;
-                //_tableView.contentOffset = contentOffset;
             }
         }
     } else {

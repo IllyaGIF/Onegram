@@ -2,7 +2,7 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
-#import <CoreText/CoreText.h>
+#import "OGPlatformText.h"
 
 #import "TGInstantPageImageView.h"
 #import "TGInstantPageEmbedView.h"
@@ -1219,7 +1219,7 @@ typedef enum {
         lineSpacingFactor = [lineSpacingFactorAttribute floatValue];
     }
     
-    CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)string);
+    CTTypesetterRef typesetter = OGPlatformTextCreateTypesetter((__bridge CFAttributedStringRef)string);
     if (typesetter != nil) {
         NSAssert(font != nil, @"font != nil");
         CGFloat fontAscent = font.ascender;
@@ -1281,7 +1281,6 @@ typedef enum {
                             rightAligned = true;
                     }
                     
-                    //hadRTL |= rightAligned;
                     
                     currentLineOrigin.x = 0.0f;
                     currentLineOrigin.y += fontLineHeight + fontLineSpacing;
@@ -1346,7 +1345,7 @@ typedef enum {
             [styleStack pushItem:[[TGInstantPageStyleFontSerifItem alloc] initWithSerif:true]];
         
         TGRichText *text = nil;
-        NSString *dateStringPlain = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:authorAndDateBlock.date] dateStyle:NSDateFormatterLongStyle timeStyle:NSDateFormatterNoStyle];
+        NSString *dateStringPlain = OGPlatformLocalizedStringFromDate([NSDate dateWithTimeIntervalSince1970:authorAndDateBlock.date], NSDateFormatterLongStyle, NSDateFormatterNoStyle);
         TGRichText *dateText = [[TGRichTextPlain alloc] initWithText:dateStringPlain];
         if (richPlainText(authorAndDateBlock.author).length > 0) {
             if (authorAndDateBlock.date != 0) {
@@ -1820,7 +1819,7 @@ typedef enum {
             if (items.count != 0) {
                 contentSize.height += itemSpacing;
             }
-            NSString *dateString = [NSDateFormatter localizedStringFromDate:[NSDate dateWithTimeIntervalSince1970:postBlock.date] dateStyle:NSDateFormatterLongStyle timeStyle:NSDateFormatterNoStyle];
+            NSString *dateString = OGPlatformLocalizedStringFromDate([NSDate dateWithTimeIntervalSince1970:postBlock.date], NSDateFormatterLongStyle, NSDateFormatterNoStyle);
             
             TGInstantPageStyleStack *styleStack = [[TGInstantPageStyleStack alloc] init];
             [styleStack pushItem:[[TGInstantPageStyleFontSizeItem alloc] initWithSize:round(15.0f * multiplier)]];

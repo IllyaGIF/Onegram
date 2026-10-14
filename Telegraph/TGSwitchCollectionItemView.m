@@ -1,4 +1,10 @@
 #import "TGSwitchCollectionItemView.h"
+#import "../OnegramPlatform/OGPlatformText.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -14,6 +20,7 @@
     bool _isLocked;
     UIImageView *_iconView;
     bool _brandedUserInfoStyle;
+    NSString *_iconName;
 }
 
 @end
@@ -50,28 +57,24 @@
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
     if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
     {
-        _titleLabel.font = TGBoldSystemFontOfSize(18.0f);
-        _titleLabel.textColor = UIColorRGB(0x000000);
-        _titleLabel.shadowColor = UIColorRGBA(0x000000, 0.2f);
-        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
-        self.classicIOS6HorizontalInset = 9.0f;
+        OGSettingsAppearance *rowAppearance = [OGTheme brandedTheme].profileAppearance.actionRowAppearance;
+        [OGSettingsCell applyLegacyBrandedTitleStyleWithAppearance:rowAppearance titleLabel:_titleLabel];
+        self.brandedGroupedAppearance = rowAppearance;
+        self.classicIOS6HorizontalInset = rowAppearance.groupedHorizontalInset;
     }
     else
     {
         _titleLabel.font = TGSystemFontOfSize(17.0f);
         _titleLabel.shadowColor = nil;
         _titleLabel.shadowOffset = CGSizeZero;
+        self.brandedGroupedAppearance = nil;
         self.classicIOS6HorizontalInset = 9.0f;
     }
-    if ([_switchView isKindOfClass:[UISwitch class]] && [_switchView respondsToSelector:@selector(setOnTintColor:)])
+    [self updateIcon];
+    if (OGPlatformSetSwitchColors(_switchView, presentation.pallete.collectionMenuSwitchColor, presentation.pallete.collectionMenuSwitchColor != nil ? presentation.pallete.collectionMenuAccessoryColor : nil))
     {
-        _switchView.onTintColor = presentation.pallete.collectionMenuSwitchColor;
         if ([_switchView isKindOfClass:[TGIconSwitchView class]])
             _switchView.backgroundColor = presentation.pallete.collectionMenuDestructiveColor;
-        if (presentation.pallete.collectionMenuSwitchColor != nil)
-            _switchView.tintColor = presentation.pallete.collectionMenuAccessoryColor;
-        else
-            _switchView.tintColor = nil;
     }
 }
 
@@ -108,7 +111,18 @@
 - (void)setIconName:(NSString *)iconName brandedUserInfoStyle:(bool)brandedUserInfoStyle
 {
     _brandedUserInfoStyle = brandedUserInfoStyle;
-    UIImage *image = iconName.length == 0 ? nil : ([TGPresentation brandedIOS6Style] && brandedUserInfoStyle ? [TGPresentation brandedIOS6ResourceImage:iconName] : nil);
+    _iconName = iconName;
+    if (self.presentation != nil)
+        [self setPresentation:self.presentation];
+    else
+        [self updateIcon];
+}
+
+- (void)updateIcon
+{
+    OGTheme *theme = [OGTheme brandedTheme];
+    OGSettingsAppearance *rowAppearance = theme.profileAppearance.actionRowAppearance;
+    UIImage *image = [TGPresentation brandedIOS6Style] && _brandedUserInfoStyle ? [OGSettingsCell legacyBrandedIconNamed:_iconName appearance:rowAppearance theme:theme] : nil;
     if (_iconView == nil && image != nil)
     {
         _iconView = [[UIImageView alloc] init];
@@ -117,14 +131,8 @@
     }
     _iconView.image = image;
     _iconView.hidden = image == nil;
-    if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
-    {
-        _titleLabel.font = TGBoldSystemFontOfSize(18.0f);
-        _titleLabel.textColor = UIColorRGB(0x000000);
-        _titleLabel.shadowColor = UIColorRGBA(0x000000, 0.2f);
-        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
-        self.classicIOS6HorizontalInset = 9.0f;
-    }
+    if (image != nil)
+        [OGSettingsCell applyLegacyBrandedIconStyleWithAppearance:rowAppearance iconView:_iconView];
     [self setNeedsLayout];
 }
 
@@ -138,28 +146,30 @@
 - (void)layoutSubviews
 {
     [super layoutSubviews];
-    
+
     CGRect bounds = self.bounds;
-    
     CGSize switchSize = _switchView.bounds.size;
-    CGFloat switchY = CGFloor((bounds.size.height - switchSize.height) / 2.0f);
-    CGFloat switchRightInset = _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 14.0f : 20.0f;
-    _switchView.frame = CGRectMake(bounds.size.width - switchSize.width - switchRightInset - self.safeAreaInset.right, switchY, switchSize.width, switchSize.height);
-    CGFloat titleX = 15.0f + self.safeAreaInset.left;
+
     if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
     {
+        OGSettingsAppearance *rowAppearance = [OGTheme brandedTheme].profileAppearance.actionRowAppearance;
+        OGSettingsCellLegacyLayout layout;
+        OGSettingsCellGetLegacyLayout(rowAppearance, bounds, self.safeAreaInset, switchSize, OGSettingsCellAccessoryControl, CGSizeZero, 0.0f, rowAppearance.titleTrailingSpacing, &layout);
+        _switchView.frame = layout.accessoryFrame;
+        _titleLabel.frame = layout.titleFrame;
         if (_iconView.image != nil)
         {
-            _iconView.frame = CGRectMake(17.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 16.0f) / 2.0f) + 1.0f, 16.0f, 16.0f);
-            _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
-            _iconView.layer.shadowOpacity = 0.1f;
-            _iconView.layer.shadowRadius = 0.5f;
-            _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+            _iconView.frame = layout.iconFrame;
         }
-        titleX = 43.0f + self.safeAreaInset.left;
+        return;
     }
-    CGFloat titleHeight = _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 22.0f : MAX(24.0f, ceilf(_titleLabel.font.lineHeight));
-    CGFloat titleY = _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 7.0f : CGFloor((bounds.size.height - titleHeight) / 2.0f);
+
+    CGFloat switchY = CGFloor((bounds.size.height - switchSize.height) / 2.0f);
+    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
+    _switchView.frame = CGRectMake(bounds.size.width - switchSize.width - 20.0f - self.safeAreaInset.right, switchY, switchSize.width, switchSize.height);
+    CGFloat titleX = 15.0f + classicInset + self.safeAreaInset.left;
+    CGFloat titleHeight = MAX(24.0f, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));
+    CGFloat titleY = CGFloor((bounds.size.height - titleHeight) / 2.0f);
     _titleLabel.frame = CGRectMake(titleX, titleY, MAX(0.0f, CGRectGetMinX(_switchView.frame) - titleX - 8.0f), titleHeight);
 }
 

@@ -18,6 +18,7 @@
 #import <MediaPlayer/MediaPlayer.h>
 
 #import "TGLegacyComponentsContext.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 const CGFloat TGEmbedSwipeMinimumVelocity = 600.0f;
 const CGFloat TGEmbedSwipeVelocityThreshold = 700.0f;
@@ -291,10 +292,7 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     _volumeView = sliderView;
 #else
     MPVolumeView *volumeView = [[MPVolumeView alloc] init];
-    [volumeView setMinimumVolumeSliderImage:minimumTrackImage forState:UIControlStateNormal];
-    [volumeView setMaximumVolumeSliderImage:maximumTrackImage forState:UIControlStateNormal];
-    [volumeView setVolumeThumbImage:[UIImage imageNamed:@"VolumeControlSliderButton.png"] forState:UIControlStateNormal];
-    volumeView.showsRouteButton = false;
+    OGPlatformConfigureVolumeView(volumeView, minimumTrackImage, maximumTrackImage, [UIImage imageNamed:@"VolumeControlSliderButton.png"], false);
     _volumeView = volumeView;
 #endif
     
@@ -663,11 +661,11 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
     
     if (animated)
     {
-        _scrubber.layer.rasterizationScale = TGScreenScaling();
-        _scrubber.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(_scrubber.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(_scrubber.layer, true);
         
-        _volumeView.layer.rasterizationScale = TGScreenScaling();
-        _volumeView.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(_volumeView.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(_volumeView.layer, true);
         
         _topPanelView.userInteractionEnabled = !hidden;
         _bottomPanelView.userInteractionEnabled = !hidden;
@@ -684,8 +682,8 @@ static inline UIView *TGEmbedPanelContentView(UIView *view)
             _bottomPanelView.alpha = hidden ? 0.0f : 1.0f;
         } completion:^(__unused BOOL finished)
         {
-            _scrubber.layer.shouldRasterize = false;
-            _volumeView.layer.shouldRasterize = false;
+            TGSetLayerShouldRasterize(_scrubber.layer, false);
+            TGSetLayerShouldRasterize(_volumeView.layer, false);
         }];
     }
     else

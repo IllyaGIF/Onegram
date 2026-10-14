@@ -121,8 +121,6 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                     action = [[TGBotReplyMarkupButtonActionPurchase alloc] initWithText:purchaseButton.text];
                 }
                 
-                if (TGIOS6BotVerboseButtonLogs)
-                    TGLog(@"BOT markupButton inline=0 user=%d msg=%d row=%d col=%d tl=%@ action=%@", userId, messageId, rowIndex, buttonIndex, NSStringFromClass([button class]), action == nil ? @"text" : NSStringFromClass([action class]));
                 [buttons addObject:[[TGBotReplyMarkupButton alloc] initWithText:button.text action:action]];
                 buttonIndex++;
             }
@@ -166,8 +164,6 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                     action = [[TGBotReplyMarkupButtonActionPurchase alloc] initWithText:purchaseButton.text];
                 }
                 
-                if (TGIOS6BotVerboseButtonLogs)
-                    TGLog(@"BOT markupButton inline=1 user=%d msg=%d row=%d col=%d tl=%@ action=%@", userId, messageId, rowIndex, buttonIndex, NSStringFromClass([button class]), action == nil ? @"text" : NSStringFromClass([action class]));
                 [buttons addObject:[[TGBotReplyMarkupButton alloc] initWithText:button.text action:action]];
                 buttonIndex++;
             }
@@ -690,13 +686,6 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
             return [SSignal fail:nil];
         } else {
             TLRPCmessages_forwardMessages$messages_forwardMessages *forwardMessages = [[TLRPCmessages_forwardMessages$messages_forwardMessages alloc] init];
-            /*
-             @property (nonatomic) int32_t flags;
-             @property (nonatomic, retain) TLInputPeer *from_peer;
-             @property (nonatomic, retain) NSArray *n_id;
-             @property (nonatomic, retain) NSArray *random_id;
-             @property (nonatomic, retain) TLInputPeer *to_peer;
-            */
             forwardMessages.flags |= (withScore ? (1 << 8) : 0);
             forwardMessages.from_peer = peers[0];
             forwardMessages.n_id = @[@(messageId)];
@@ -867,7 +856,6 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     }];
 }
 
-//payments.sendPaymentForm flags:# msg_id:int requested_info_id:flags.0?string shipping_option_id:flags.1?string credentials:InputPaymentCredentials = payments.PaymentResult;
 + (SSignal *)sendPayment:(int32_t)messageId infoId:(NSString *)infoId shippingOptionId:(NSString *)shippingOptionId credentials:(id)credentials {
     TLPayments_sendPaymentForm *sendPaymentForm = [[TLPayments_sendPaymentForm alloc] init];
     

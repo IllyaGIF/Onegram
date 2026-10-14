@@ -11,7 +11,6 @@
 #import "POPAnimatorPrivate.h"
 
 #import <list>
-#import <objc/objc-auto.h>
 #import <vector>
 #import <tr1/memory>
 
@@ -22,9 +21,7 @@
 #import "POPBasicAnimationInternal.h"
 #import "POPDecayAnimation.h"
 
-#if !TARGET_OS_IPHONE
 #import <libkern/OSAtomic.h>
-#endif
 
 using namespace std;
 using namespace POP;

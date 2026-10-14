@@ -1,6 +1,5 @@
 #import "TGInputTextTag.h"
 
-#import <CoreText/CoreText.h>
 
 @implementation TGInputTextTag
 

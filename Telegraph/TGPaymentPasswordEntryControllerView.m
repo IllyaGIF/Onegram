@@ -109,7 +109,9 @@
         _textField = [[UITextField alloc] init];
         _textField.textColor = presentation.pallete.menuTextColor;
         _textField.font = TGSystemFontOfSize(12.0f);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
         _textField.typingAttributes = @{NSFontAttributeName: TGSystemFontOfSize(12.0f)};
+#endif
         _textField.secureTextEntry = true;
         _textField.keyboardAppearance = presentation.pallete.isDark ? UIKeyboardAppearanceAlert : UIKeyboardAppearanceDefault;
         [_textField addTarget:self action:@selector(textFieldTextChanged:) forControlEvents:UIControlEventEditingChanged];
@@ -136,7 +138,6 @@
         _rightButton = [[TGModernButton alloc] init];
         _rightButton.titleLabel.font = TGBoldSystemFontOfSize(17.0f);
         [_rightButton setTitleColor:presentation.pallete.menuAccentColor];
-        //_rightButton.modernHighlight = true;
         [_backgroundView addSubview:_rightButton];
         [_rightButton setTitle:TGLocalized(@"Checkout.PasswordEntry.Pay") forState:UIControlStateNormal];
         [_rightButton addTarget:self action:@selector(payPressed) forControlEvents:UIControlEventTouchUpInside];
@@ -188,11 +189,6 @@
             completion();
         }
     }];
-    /*[_backgroundView.layer animateScaleFrom:1.0f to:8.0f duration:0.3 timingFunction:kCAMediaTimingFunctionEaseInEaseOut removeOnCompletion:false completion:^(__unused bool flag) {
-        if (completion) {
-            completion();
-        }
-    }];*/
 }
 
 - (void)layoutSubviews {
@@ -278,7 +274,7 @@
               {
                   [UIView setAnimationRepeatCount:3];
                   v.frame = r;
-              } completion:^(__unused BOOL finished)
+              } completion:^(__unused BOOL secondFinished)
               {
                   v.frame = originalFrame;
               }];

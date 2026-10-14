@@ -1,4 +1,6 @@
 #import "TGInstantPageSettingsView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -117,7 +119,7 @@
         _brightnessSliderView.minimumValue = 0.0f;
         _brightnessSliderView.startValue = 0.0f;
         _brightnessSliderView.maximumValue = 100.0f;
-        _brightnessSliderView.value = [UIScreen mainScreen].brightness * 100.0f;
+        _brightnessSliderView.value = OGPlatformScreenBrightness() * 100.0f;
         [_brightnessSliderView addTarget:self action:@selector(brightnessChanged:) forControlEvents:UIControlEventValueChanged];
         
         __weak TGInstantPageSettingsView *weakSelf = self;
@@ -303,7 +305,7 @@
         _autoThemeLabel.text = TGLocalized(@"InstantPage.AutoNightTheme");
         _autoThemeLabel.font = TGSystemFontOfSize(17.0f);
         if ([_autoThemeLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            _autoThemeLabel.minimumScaleFactor = 0.7f;
+            OGPlatformSetLabelMinimumScaleFactor(_autoThemeLabel, 0.7f);
         else
             _autoThemeLabel.minimumFontSize = _autoThemeLabel.font.pointSize * 0.7f;
         _autoThemeLabel.adjustsFontSizeToFitWidth = true;
@@ -352,7 +354,7 @@
 }
 
 - (void)brightnessChanged:(TGPhotoEditorSliderView *)sender {
-    [UIScreen mainScreen].brightness = sender.value / 100.0f;
+    OGPlatformSetScreenBrightness(sender.value / 100.0f);
 }
 
 - (void)fontSizeChanged:(TGPhotoEditorSliderView *)sender {
@@ -402,7 +404,7 @@
 - (void)themeChanged:(TGInstantPageColorView *)sender {
     TGInstantPagePresentationTheme theme = (TGInstantPagePresentationTheme)sender.tag;
     
-    if (iosMajorVersion() >= 11 && UIAccessibilityIsInvertColorsEnabled() && theme == TGInstantPagePresentationThemeBlack)
+    if (iosMajorVersion() >= 11 && OGPlatformAccessibilityInvertColorsEnabled() && theme == TGInstantPagePresentationThemeBlack)
         return;
     
     for (TGInstantPageColorView *view in _colorViews) {
@@ -429,19 +431,19 @@
 
 - (void)transitionIn {
     self.alpha = 0.0f;
-    _panelView.layer.rasterizationScale = TGScreenScaling();
-    _panelView.layer.shouldRasterize = true;
+    TGSetLayerRasterizationScale(_panelView.layer, TGScreenScaling());
+    TGSetLayerShouldRasterize(_panelView.layer, true);
     [UIView animateWithDuration:0.2 animations:^{
         self.alpha = 1.0f;
     } completion:^(BOOL finished) {
         if (finished) {
-            _panelView.layer.shouldRasterize = false;
+            TGSetLayerShouldRasterize(_panelView.layer, false);
         }
     }];
 }
 
 - (void)transitionOut:(void (^)(void))completion {
-    _panelView.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(_panelView.layer, true);
     [UIView animateWithDuration:0.2 animations:^{
         self.alpha = 0.0f;
     } completion:^(__unused BOOL finished) {
@@ -599,12 +601,12 @@
     }
     
     bool switchDisabled = false;
-    if (iosMajorVersion() >= 11 && UIAccessibilityIsInvertColorsEnabled())
+    if (iosMajorVersion() >= 11 && OGPlatformAccessibilityInvertColorsEnabled())
         switchDisabled = true;
     
     if (switchDisabled || presentation.initialTheme == TGInstantPagePresentationThemeBlack) {
-        _autoThemeWrapperView.layer.rasterizationScale = TGScreenScaling();
-        _autoThemeWrapperView.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(_autoThemeWrapperView.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(_autoThemeWrapperView.layer, true);
         
         [_autoThemeSwitch setOn:false animated:animated];
         _autoThemeSwitch.userInteractionEnabled = false;
@@ -620,7 +622,7 @@
     
     void (^completionBlock)(BOOL) = ^(BOOL finished) {
         if (finished && presentation.initialTheme != TGInstantPagePresentationThemeBlack) {
-            _autoThemeWrapperView.layer.shouldRasterize = false;
+            TGSetLayerShouldRasterize(_autoThemeWrapperView.layer, false);
         }
     };
 

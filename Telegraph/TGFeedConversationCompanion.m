@@ -376,9 +376,6 @@
                         }
                     }
                     
-                    if (atMessageId != 0) {
-                        TGLog(@"Reloading at %d", atMessageId);
-                    }
                     
                     [self _replaceMessages:messages atMessageId:atMessageId peerId:atPeerId expandFrom:0 jump:jump top:top messageIdForVisibleHoleDirection:messageIdForVisibleHoleDirection scrollBackMessageId:0 animated:animated];
                     
@@ -413,22 +410,7 @@
         _enableVisibleMessagesProcessing = true;
         
         TGMessage *maxMessage = [self.controller latestVisibleMessage];
-        bool shouldRead = _feed.maxKnownMessageId == maxMessage.mid;
-        if (shouldRead) {
-            //[self updateLatestVisibleMessageIndex:[TGMessageIndex indexWithPeerId:maxMessage.cid messageId:maxMessage.mid] date:(int32_t)maxMessage.date force:true];
-        }
         
-//        if (_invalidatedPtsDisposable == nil) {
-//            __unsafe_unretained TGChannelConversationCompanion *weakSelf = self;
-//            _invalidatedPtsDisposable = [[TGDatabaseInstance() channelHistoryPtsForPeerId:_conversationId] startWithNext:^(NSNumber *nInvalidatedPts) {
-//                [TGModernConversationCompanion dispatchOnMessageQueue:^{
-//                    __strong TGChannelConversationCompanion *strongSelf = weakSelf;
-//                    if (strongSelf != nil) {
-//                        [strongSelf setInvalidatedPts:[nInvalidatedPts intValue]];
-//                    }
-//                }];
-//            }];
-//        }
         
         [TGModernConversationCompanion dispatchOnMessageQueue:^{
             [self _updateVisibleHoles];
@@ -608,7 +590,6 @@
         _requestingHoleDisposable = [[SMetaDisposable alloc] init];
     }
     
-    TGLog(@"request hole %d ... %d, %s", hole.hole.minId, hole.hole.maxId, hole.direction == TGVisibleMessageHoleDirectionEarlier ? "earlier" : "later");
     
     __weak TGFeedConversationCompanion *weakSelf = self;
     [_requestingHoleDisposable setDisposable:[[TGFeedManagementSignals feedMessageHoleForFeedId:_feed.fid hole:hole.hole direction:hole.direction == TGVisibleMessageHoleDirectionEarlier ? TGFeedHistoryHoleDirectionEarlier : TGFeedHistoryHoleDirectionLater] startWithNext:^(NSDictionary *dict) {
@@ -864,28 +845,6 @@
 {
     [self navigateToGrouping];
     
-//    TGModernConversationController *controller = self.controller;
-//    TGDialogListController *dialogsController = [[TGDialogListController alloc] initWithCompanion:[[TGFeedDialogListCompanion alloc] initWithFeed:_feed]];
-//    dialogsController.presentation = controller.presentation;
-//
-//    if (controller.currentSizeClass == UIUserInterfaceSizeClassCompact) {
-//        [controller.navigationController pushViewController:dialogsController animated:true];
-//    }
-//    else
-//    {
-//        if (controller != nil)
-//        {
-//            TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[dialogsController] navigationBarClass:[TGWhiteNavigationBar class]];
-//            navigationController.presentationStyle = TGNavigationControllerPresentationStyleRootInPopover;
-//            TGPopoverController *popoverController = [[TGPopoverController alloc] initWithContentViewController:navigationController];
-//            navigationController.parentPopoverController = popoverController;
-//            navigationController.detachFromPresentingControllerInCompactMode = true;
-//            [popoverController setContentSize:CGSizeMake(320.0f, 528.0f)];
-//
-//            controller.associatedPopoverController = popoverController;
-//            [popoverController presentPopoverFromBarButtonItem:controller.navigationItem.rightBarButtonItem permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
-//        }
-//    }
 }
 
 - (void)navigateToGrouping
@@ -1010,45 +969,6 @@
 }
 
 - (void)maybeScheduleSequentialRead {
-//    if (self.previewMode)
-//        return;
-//
-//    if (!_enableVisibleMessagesProcessing)
-//        return;
-//
-//    TGDispatchOnMainThread(^
-//    {
-//        TGModernConversationController *controller = self.controller;
-//        TGMessageIndex *latestVisibleMessageIndex = _latestVisibleMessageIndex;
-//        int32_t latestVisibleMessageDate = _latestVisibleMessageDate;
-//
-//        if ([controller canReadHistory])
-//        {
-//            [TGModernConversationCompanion dispatchOnMessageQueue:^
-//            {
-//                if (latestVisibleMessageDate <= _latestReadPosition.date && !(latestVisibleMessageDate == _latestReadPosition.date && _feed.unreadCount > 0))
-//                    return;
-//
-//                bool started = false;
-//                int32_t count = 0;
-//                for (TGMessageModernConversationItem *item in _items) {
-//                    if (item->_message.fromUid == latestVisibleMessageIndex.peerId && item->_message.mid == latestVisibleMessageIndex.messageId) {
-//                        started = true;
-//                    }
-//
-//                    if ((item->_message.fromUid == _latestReadPosition.peerId && item->_message.mid == _latestReadPosition.mid) || item->_message.date < _latestVisibleMessageDate) {
-//                        break;
-//                    }
-//
-//                    if (started)
-//                        count++;
-//                }
-//
-//                _latestReadPosition = [[TGFeedPosition alloc] initWithDate:_latestVisibleMessageDate mid:latestVisibleMessageIndex.messageId peerId:latestVisibleMessageIndex.peerId];
-//                [TGDatabaseInstance() transactionReadHistoryForPeerIds:@[[[TGReadPeerMessagesRequest alloc] initWithPeerId:_conversationId maxMessageIndex:[TGMessageIndex indexWithPeerId:latestVisibleMessageIndex.peerId messageId:latestVisibleMessageIndex.messageId] date:latestVisibleMessageDate length:count]]];
-//            }];
-//        }
-//    });
 }
 
 @end

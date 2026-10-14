@@ -85,7 +85,13 @@ static void MTNetworkAvailabilityContextRelease(const void *info)
                  [_timer start];
                  
                  if (SCNetworkReachabilitySetCallback(_reachability, &MTAvailabilityCallback, &context))
+                 {
+#if ONEGRAM_ARMV6
+                     SCNetworkReachabilityScheduleWithRunLoop(_reachability, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+#else
                      SCNetworkReachabilitySetDispatchQueue(_reachability, [MTNetworkAvailability networkAvailabilityQueue].nativeQueue);
+#endif
+                 }
              }
          }];
     }
@@ -104,8 +110,12 @@ static void MTNetworkAvailabilityContextRelease(const void *info)
      {
          [timer invalidate];
          
-         SCNetworkReachabilitySetCallback(reachability, NULL, NULL);
+#if ONEGRAM_ARMV6
+         SCNetworkReachabilityUnscheduleFromRunLoop(reachability, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+#else
          SCNetworkReachabilitySetDispatchQueue(reachability, NULL);
+#endif
+         SCNetworkReachabilitySetCallback(reachability, NULL, NULL);
      }];
 }
 
@@ -154,9 +164,6 @@ static void MTNetworkAvailabilityContextRelease(const void *info)
          if (![currentReachabilityState isEqualToString:_lastReachabilityState])
          {
              _lastReachabilityState = currentReachabilityState;
-             if (MTLogEnabled()) {
-                 MTLog(@"[MTNetworkAvailability#%p state: %@]", self, _lastReachabilityState);
-             }
              
              if (notify)
              {

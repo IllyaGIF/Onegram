@@ -24,12 +24,6 @@
     return self;
 }
 
-//- (UIEdgeInsets)alignmentRectInsets
-//{
-//    UIEdgeInsets insets = UIEdgeInsetsZero;
-//    insets = UIEdgeInsetsMake(0.0f, 0.0f, 8.0f, 0.0f);
-//    return insets;
-//}
 
 - (UIImage *)icon
 {

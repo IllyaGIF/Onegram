@@ -186,13 +186,8 @@ extern NSString *authorNameYou;
         else
             user = [[TGDatabase instance] loadUser:(int)userId];
         
-        NSString *title = nil;
+        NSString *title = [user displayName];
         NSArray *titleLetters = nil;
-        
-        if ((user.phoneNumber.length != 0 && ![TGDatabaseInstance() uidIsRemoteContact:user.uid]) && user.uid != 333000)
-            title = user.formattedPhoneNumber;
-        else
-            title = [user displayName];
         
         if (user.firstName.length != 0 && user.lastName.length != 0)
             titleLetters = [[NSArray alloc] initWithObjects:user.firstName, user.lastName, nil];

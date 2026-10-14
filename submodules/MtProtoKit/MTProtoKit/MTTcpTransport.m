@@ -59,7 +59,6 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
 @implementation MTTcpTransportContext
 
 
-
 @end
 
 @interface MTTcpTransport () <MTTcpConnectionDelegate, MTTcpConnectionBehaviourDelegate>
@@ -249,36 +248,6 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
 
 - (void)startSleepWatchdogTimer
 {
-/*#if false
-    MTTcpTransportContext *transportContext = _transportContext;
-    [[MTTcpTransport tcpTransportQueue] dispatchOnQueue:^
-    {
-        if (transportContext.sleepWatchdogTimer == nil)
-        {
-            transportContext.sleepWatchdogTimerLastTime = MTAbsoluteSystemTime();
-            
-            __weak MTTcpTransport *weakSelf = self;
-            transportContext.sleepWatchdogTimer = [[MTTimer alloc] initWithTimeout:MTTcpTransportSleepWatchdogTimeout repeat:true completion:^
-            {
-                CFAbsoluteTime currentTime = CFAbsoluteTimeGetCurrent();
-                
-                __strong MTTcpTransport *strongSelf = weakSelf;
-                if (strongSelf != nil)
-                {
-                    if (ABS(currentTime - strongSelf->_transportContext.sleepWatchdogTimerLastTime) > MTTcpTransportSleepWatchdogTimeout * 2.0)
-                    {
-                        if (MTLogEnabled()) {
-                            MTLog(@"[MTTcpTransport#%p system sleep detected, resetting connection]", strongSelf);
-                        }
-                        [strongSelf reset];
-                    }
-                    strongSelf->_transportContext.sleepWatchdogTimerLastTime = currentTime;
-                }
-            } queue:[MTTcpConnection tcpQueue].nativeQueue];
-            [_sleepWatchdogTimer start];
-        }
-    }];
-#endif*/
 }
 
 - (void)restartSleepWatchdogTimer
@@ -547,9 +516,6 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
     {
         if (!transportContext.didSendActualizationPingAfterConnection)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTTcpTransport#%p unlocking transaction processing due to connection context update task]", (__bridge void *)self);
-            }
             transportContext.isWaitingForTransactionToBecomeReady = false;
             transportContext.transactionLockTime = 0.0;
         }
@@ -563,9 +529,6 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
         }
         else
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTTcpTransport#%p skipping transaction request]", (__bridge void *)self);
-            }
             transportContext.requestAnotherTransactionWhenReady = true;
             
             return;
@@ -623,11 +586,6 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
                     if (transaction.payload.length != 0)
                         {
                             bool acceptTransaction = true;
-/*#ifdef DEBUG
-                            if (arc4random_uniform(10) < 5) {
-                                acceptTransaction = false;
-                            }
-#endif*/
                             if (transportContext.connection != nil && acceptTransaction)
                             {
                                 id transactionId = transportContext.connection.internalId;

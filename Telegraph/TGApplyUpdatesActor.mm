@@ -2,6 +2,9 @@
 #include <inttypes.h>
 #import "IOS6NotificationProbe.h"
 #import "IOS6FeatureProbe.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -123,7 +126,7 @@ static NSMutableArray *delayedNotifications()
 
 static bool TGIOS6ConsumeLocalNotificationBudget(NSUInteger batchCount)
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] > 6)
+    if (iosMajorVersion() > 6)
         return true;
 
     (void)batchCount;
@@ -272,7 +275,8 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     static CFAbsoluteTime lastSoundTime = 0.0;
     static CFAbsoluteTime aggregateBlockUntil = 0.0;
     bool shouldPresent = false;
-    bool isAggregate = [notification.userInfo[@"ios6Aggregate"] boolValue];
+    NSDictionary *notificationUserInfo = OGPlatformLocalNotificationUserInfo(notification);
+    bool isAggregate = [[notificationUserInfo objectForKey:@"ios6Aggregate"] boolValue];
 
     @synchronized(self)
     {
@@ -283,10 +287,11 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
                 aggregateBlockUntil = now + 10.0;
             shouldPresent = true;
 
-            if (notification.soundName.length != 0)
+            NSString *soundName = OGPlatformLocalNotificationSoundName(notification);
+            if (soundName.length != 0)
             {
                 if (lastSoundTime != 0.0 && now - lastSoundTime < 3.0)
-                    notification.soundName = nil;
+                    OGPlatformSetLocalNotificationSoundName(notification, nil);
                 else
                     lastSoundTime = now;
             }
@@ -296,11 +301,11 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     if (!shouldPresent)
         return;
 
-    notification.alertBody = safeText;
+    OGPlatformSetLocalNotificationAlertBody(notification, safeText);
     dispatch_async(dispatch_get_main_queue(), ^
     {
         if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive)
-            [[UIApplication sharedApplication] presentLocalNotificationNow:notification];
+            OGPlatformPresentLocalNotificationNow([UIApplication sharedApplication], notification);
     });
 }
 
@@ -339,6 +344,9 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
                 IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=invalid peer=%lld mid=%d outgoing=%d", message.cid, message.mid, message.outgoing ? 1 : 0);
                 continue;
             }
+
+            if (TGPeerIdIsChannel(message.cid) && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
+                continue;
 
             NSString *key = [[NSString alloc] initWithFormat:@"%lld:%d", message.cid, message.mid];
             if ([recentNotificationKeys containsObject:key]) {
@@ -407,7 +415,6 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
 - (void)execute:(NSDictionary *)options
 {
-    [self dumpUpdates:[options objectForKey:@"updates"]];
     
     [_updateList addObjectsFromArray:[options objectForKey:@"updates"]];
     
@@ -424,27 +431,6 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 - (void)completeAction
 {
     [ActionStageInstance() actionCompleted:self.path result:nil];
-}
-
-- (void)dumpUpdates:(NSArray *)updateList
-{
-    for (id updates in updateList)
-    {
-        if ([updates isKindOfClass:[TGUpdatesWithPts class]])
-        {
-            for (id<TGSyntheticUpdateWithPts> update in ((TGUpdatesWithPts *)updates).updates)
-                while (false) TGLog(@"enqueued update with pts: %d [+%d]", [update pts], [update pts_count]);
-        }
-        else if ([updates isKindOfClass:[TGUpdatesWithSeq class]])
-        {
-            while (false) TGLog(@"enqueued updates with seq: %d..%d", ((TGUpdatesWithSeq *)updates).seqStart, ((TGUpdatesWithSeq *)updates).seqEnd);
-        }
-        else if ([updates isKindOfClass:[TGUpdatesWithQts class]])
-        {
-            for (id<TGSyntheticUpdateWithQts> update in ((TGUpdatesWithQts *)updates).updates)
-                while (false) TGLog(@"enqueued update with qts: %d", [update qts]);
-        }
-    }
 }
 
 - (void)checkDateUpdates
@@ -484,8 +470,10 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
     int32_t finalDate = ((TGUpdatesWithDate *)sortedDateUpdates.lastObject).date;
     TGDatabaseState databaseState = [[TGDatabase instance] databaseState];
-    if (wrappedUpdates.count == 0 && finalDate <= databaseState.date)
+    if (wrappedUpdates.count == 0 && users.count == 0 && chats.count == 0)
     {
+        if (finalDate > databaseState.date)
+            [[TGDatabase instance] applyPts:0 date:finalDate seq:0 qts:0 unreadCount:-1];
         [self checkDateUpdates];
         return;
     }
@@ -506,7 +494,6 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
 - (void)watcherJoined:(ASHandle *)watcherHandle options:(NSDictionary *)options waitingInActorQueue:(bool)waitingInActorQueue
 {
-    [self dumpUpdates:[options objectForKey:@"updates"]];
     
     if (_waitingForApplyUpdates)
         [_waitingForApplyUpdatesQueue addObjectsFromArray:[options objectForKey:@"updates"]];
@@ -558,7 +545,6 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
         if (strongSelf != nil)
         {
             strongSelf->_timeoutTimer = nil;
-            while (false) TGLog(@"update timeout timer fired at %f", timeout);
             [strongSelf timeoutReached];
         }
     } queue:[ActionStageInstance() globalStageDispatchQueue]];
@@ -946,6 +932,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
 
 - (bool)_tryApplyingUpdates:(NSArray *)updates users:(NSArray *)users chats:(NSArray *)chats optionalFinalSeq:(int32_t)optionalFinalSeq optionalFinalDate:(int32_t)optionalFinalDate completion:(void (^)(bool))completion
 {
+    OGRuntimeCooperateWithInteraction();
     static Class updateNewMessageClass = nil;
     static Class updateNewEncryptedMessageClass = nil;
     static Class updateDeleteMessagesClass = nil;
@@ -987,6 +974,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     
     for (TGWrappedUpdate *update in updates)
     {
+        OGRuntimeCooperateWithInteraction();
         if ([update.update hasPts])
             statePts = MAX(statePts, [(id<TGSyntheticUpdateWithPts>)update.update pts]);
         if ([update.update respondsToSelector:@selector(qts)])
@@ -1016,11 +1004,13 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     
     for (TLUser *userDesc in users)
     {
+        OGRuntimeCooperateWithInteraction();
         maybeProcessUser(userDesc, processedUsers);
     }
     
     for (TLChat *chatDesc in chats)
     {
+        OGRuntimeCooperateWithInteraction();
         maybeProcessChat(chatDesc, processedChats);
     }
     
@@ -1029,6 +1019,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
 
     for (TGWrappedUpdate *wrappedUpdate in updates)
     {
+        OGRuntimeCooperateWithInteraction();
         if ([wrappedUpdate.update isKindOfClass:[TLUpdate$updateReadHistoryInbox class]])
         {
             TLUpdate$updateReadHistoryInbox *concreteUpdate = wrappedUpdate.update;
@@ -1069,6 +1060,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     
     for (TGWrappedUpdate *wrappedUpdate in updates)
     {
+        OGRuntimeCooperateWithInteraction();
         id update = wrappedUpdate.update;
         int32_t date = wrappedUpdate.date;
         
@@ -1152,7 +1144,6 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         [messagesForLocalNotification addObject:newMessage.message];
                 }
                 
-                TGLog(@"message date: %d", (int32_t)parsedMessage.date);
             }
             else
                 TGLog(@"Message %d does not match for local notification", (int)message.n_id);
@@ -1426,7 +1417,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             
             [delayedNotifications() addObjectsFromArray:messagesForLocalNotification];
 
-            if ([[UIDevice currentDevice].systemVersion intValue] <= 6 &&
+            if (OGPlatformSupportsBackgroundVoipTransport() &&
                 [UIApplication sharedApplication].applicationState != UIApplicationStateActive &&
                 messagesForLocalNotification.count != 0)
             {
@@ -1464,12 +1455,6 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             
             if ([self.path isEqualToString:@"/tg/service/tryupdates/(withPts)"] || [self.path isEqualToString:@"/tg/service/tryupdates/(withSeq)"] || [self.path isEqualToString:@"/tg/service/tryupdates/(withQts)"])
             {
-                if (statePts != 0)
-                    TGLog(@"=== pts: %d", statePts);
-                if (optionalFinalSeq != 0)
-                    TGLog(@"=== seq: %d", optionalFinalSeq);
-                if (stateQts != 0)
-                    TGLog(@"=== qts: %d", stateQts);
                 
                 [[TGDatabase instance] applyPts:statePts date:optionalFinalDate seq:optionalFinalSeq qts:stateQts unreadCount:-1];
             }
@@ -1689,6 +1674,9 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         
                         bool messageIsChannel = TGPeerIdIsChannel(message.cid);
 
+                        if (messageIsChannel && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
+                            continue;
+
                         if (message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId)
                             continue;
 
@@ -1707,7 +1695,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             }
                         }
                         
-                        UILocalNotification *localNotification = [[UILocalNotification alloc] init];
+                        id localNotification = OGPlatformCreateLocalNotification();
                         if (localNotification == nil)
                             continue;
                         
@@ -2244,13 +2232,13 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         }
                         
                         bool notificationWithoutSound = [midsWithoutSound containsObject:@(message.mid)];
-                        if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && !notificationWithoutSound)
+                        if (iosMajorVersion() <= 6 && !notificationWithoutSound)
                         {
-                            localNotification.soundName = @"notification.caf";
+                            OGPlatformSetLocalNotificationSoundName(localNotification, @"notification.caf");
                         }
                         else if (soundId > 0 && !notificationWithoutSound)
                         {
-                            localNotification.soundName = [[NSString alloc] initWithFormat:@"%d.m4a", soundId];
+                            OGPlatformSetLocalNotificationSoundName(localNotification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
 
                         }
 
@@ -2309,42 +2297,42 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             text = [[NSString alloc] initWithFormat:TGLocalized(@"LOCKED_MESSAGE"), @""];
                         }
                         
-                        localNotification.userInfo = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil];
+                        OGPlatformSetLocalNotificationUserInfo(localNotification, [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil]);
 
                         NSString *notificationTitle = chatName;
                         if (notificationTitle.length == 0)
                             notificationTitle = authorName;
-                        SEL setAlertTitleSelector = NSSelectorFromString(@"setAlertTitle:");
-                        if (notificationTitle.length != 0 && [localNotification respondsToSelector:setAlertTitleSelector])
-                            [localNotification setValue:notificationTitle forKey:@"alertTitle"];
+                        if (notificationTitle.length != 0)
+                            OGPlatformSetLocalNotificationAlertTitle(localNotification, notificationTitle);
                         
                         if (iosMajorVersion() >= 8 && !isLocked)
                         {
                             if (phoneCall)
-                                localNotification.category = @"p";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"p");
                             else if (TGPeerIdIsGroup(message.cid))
-                                localNotification.category = @"m";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"m");
                             else if (TGPeerIdIsChannel(message.cid))
-                                localNotification.category = @"c";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"c");
                             else if (message.cid > INT_MIN)
-                                localNotification.category = @"r";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"r");
                         }
                         
                         NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-                        if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && notificationBatchCount >= 5)
+                        if (iosMajorVersion() <= 6 && notificationBatchCount >= 5)
                         {
                             text = TGIOS6AggregateNotificationText(notificationBatchCount);
-                            NSMutableDictionary *aggregateInfo = [localNotification.userInfo mutableCopy];
+                            NSMutableDictionary *aggregateInfo = [OGPlatformLocalNotificationUserInfo(localNotification) mutableCopy];
+                            if (aggregateInfo == nil)
+                                aggregateInfo = [[NSMutableDictionary alloc] init];
                             aggregateInfo[@"ios6Aggregate"] = @true;
-                            localNotification.userInfo = aggregateInfo;
+                            OGPlatformSetLocalNotificationUserInfo(localNotification, aggregateInfo);
                         }
                         IOS6NotificationProbe(@"NOTIFY_READY", @"peer=%lld title=%@ mid=%d batch=%d", message.cid, chatName ?: @"", message.mid, (int)notificationBatchCount);
-                        [TGApplyUpdatesActor presentSafeLocalNotification:localNotification text:text];
+                        [TGApplyUpdatesActor presentSafeLocalNotification:(UILocalNotification *)localNotification text:text];
                     }
                 }
                 @catch (NSException *e)
                 {
-                    TGLog(@"%@", e);
                 }
             }
             else

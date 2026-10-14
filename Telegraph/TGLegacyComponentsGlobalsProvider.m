@@ -6,6 +6,8 @@
 #import "TGApplication.h"
 #import "TGTelegraph.h"
 #import "TGAudioSessionManager.h"
+#import "TGAudioPlayer.h"
+#import "../submodules/LegacyComponents/LegacyComponents/ASQueue.h"
 
 #import "TGStickersSignals.h"
 #import "TGMaskStickersSignals.h"
@@ -21,6 +23,9 @@
 #import "TGEmbedPIPController.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGNavigationAppearance.h"
 
 #import "../submodules/MtProtoKit/MTProtoKit/AFHTTPRequestOperation.h"
 
@@ -44,7 +49,6 @@ static bool userInteractionIgnoredByProvider = false;
 }
 
 - (void)log:(NSString *)string {
-    TGLog(@"%@", string);
 }
 
 - (UIViewController *)rootController {
@@ -113,7 +117,7 @@ static bool userInteractionIgnoredByProvider = false;
 }
 
 - (void)setStatusBarHidden:(BOOL)hidden withAnimation:(UIStatusBarAnimation)animation {
-    [[UIApplication sharedApplication] setStatusBarHidden:hidden withAnimation:animation];
+    OGPlatformSetStatusBarHidden([UIApplication sharedApplication], hidden, animation);
 }
 
 - (UIStatusBarStyle)statusBarStyle {
@@ -196,6 +200,24 @@ static bool userInteractionIgnoredByProvider = false;
 
 - (id<SDisposable>)requestAudioSession:(TGAudioSessionType)type interrupted:(void (^)())interrupted {
     return [[TGAudioSessionManager instance] requestSessionWithType:type interrupted:interrupted];
+}
+
+- (void)prepareAudioForVideoCapture:(void (^)(void))completion {
+    void (^releaseSession)(void) = ^{
+        [[TGAudioSessionManager instance] cancelCurrentSession];
+        [[TGAudioPlayer _playerQueue] dispatchOnQueue:^{
+            if (completion != nil)
+                completion();
+        }];
+    };
+    if (TGTelegraphInstance.musicPlayer != nil)
+        [TGTelegraphInstance.musicPlayer controlPause:releaseSession];
+    else
+        releaseSession();
+}
+
+- (id<SDisposable>)suppressNotificationSoundsForCapture {
+    return [[TGAudioSessionManager instance] suppressNotificationSounds];
 }
 
 - (SSignal *)stickerPacksSignal {
@@ -291,6 +313,83 @@ static bool userInteractionIgnoredByProvider = false;
 - (TGNavigationBarPallete *)navigationBarPallete
 {
     return TGPresentation.current.navigationBarPallete;
+}
+
+- (UIImage *)brandedIOS6NavigationBarBackgroundImageForSize:(CGSize)size overflow:(CGFloat)overflow variant:(TGNavigationBarBackgroundVariant)variant
+{
+    if (variant == TGNavigationBarBackgroundVariantContacts)
+        return [TGPresentation brandedIOS6ContactNavigationBarImageForSize:size overflow:overflow];
+    return [TGPresentation brandedIOS6NavigationBarBackgroundImageForSize:size overflow:overflow gloss:variant == TGNavigationBarBackgroundVariantGloss];
+}
+
+- (UIImage *)brandedIOS6NavigationBarBackButtonImageForWidth:(CGFloat)width highlighted:(bool)highlighted
+{
+    return [TGPresentation brandedIOS6NavigationButtonImage:true highlighted:highlighted landscape:false width:width];
+}
+
+- (UIFont *)brandedIOS6NavigationBarTitleFont
+{
+    return [TGPresentation brandedIOS6NavigationTitleFont];
+}
+
+- (UIColor *)brandedIOS6NavigationBarTitleShadowColor
+{
+    return [TGPresentation brandedIOS6NavigationTitleShadowColor];
+}
+
+- (UIFont *)brandedIOS6NavigationBarButtonFont
+{
+    return [TGPresentation brandedIOS6NavigationButtonFont];
+}
+
+- (UIColor *)brandedIOS6NavigationBarButtonShadowColor
+{
+    return [TGPresentation brandedIOS6NavigationButtonShadowColor];
+}
+
+- (UIColor *)brandedIOS6NavigationBarTintColor
+{
+    return [OGTheme brandedTheme].navigationAppearance.tintColor;
+}
+
+- (bool)brandedIOS6NavigationBarHidesBottomStripe
+{
+    return [OGTheme brandedTheme].navigationAppearance.hidesBottomStripe;
+}
+
+- (UIColor *)brandedIOS6NavigationBarTitleColor
+{
+    return [OGTheme brandedTheme].navigationAppearance.titleColor;
+}
+
+- (UIColor *)brandedIOS6NavigationBarButtonTitleColor
+{
+    return [OGTheme brandedTheme].navigationAppearance.buttonTitleColor;
+}
+
+- (UIImage *)brandedIOS6SearchBarBackgroundImageForSize:(CGSize)size
+{
+    return [TGPresentation brandedIOS6SearchBarBackgroundImageForSize:size];
+}
+
+- (UIImage *)brandedIOS6SearchBarFieldImageForSize:(CGSize)size
+{
+    return [TGPresentation brandedIOS6SearchBarFieldImageForSize:size];
+}
+
+- (UIImage *)brandedIOS6SearchBarIconImage
+{
+    return [TGPresentation brandedIOS6SearchBarIconImage];
+}
+
+- (UIOffset)brandedIOS6SearchBarIconOffset
+{
+    return [TGPresentation brandedIOS6SearchBarIconOffset];
+}
+
+- (UIOffset)brandedIOS6SearchBarPlaceholderOffset
+{
+    return [TGPresentation brandedIOS6SearchBarPlaceholderOffset];
 }
 
 - (TGMenuSheetPallete *)menuSheetPallete

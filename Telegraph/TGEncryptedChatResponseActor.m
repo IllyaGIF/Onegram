@@ -110,7 +110,6 @@
     {
         uint8_t zero = 0;
         [_key replaceBytesInRange:NSMakeRange(0, 0) withBytes:&zero length:1];
-        TGLog(@"(adding key padding)");
     }
     
     NSData *keyHash = MTSha1(_key);

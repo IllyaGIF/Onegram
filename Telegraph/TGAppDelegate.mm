@@ -1,4 +1,9 @@
+#import "../OnegramRuntime/OGStartupDiagnostics.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
+#import "../submodules/LegacyComponents/LegacyComponents/LegacyComponentsGlobals.h"
 #import "TGAppDelegate.h"
+#import "TGRichMessageMediaAttachment.h"
+#import "TGPollMediaAttachment.h"
 
 #import <unistd.h>
 #import <sys/utsname.h>
@@ -14,11 +19,9 @@
 #include <mach-o/loader.h>
 #include <dlfcn.h>
 #include <stdint.h>
+#include <vector>
 #include <sys/xattr.h>
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../../config.h"
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -31,6 +34,16 @@
 #import "IOS6NotificationProbe.h"
 #import "TGApplyUpdatesActor.h"
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformText.h"
+#import "../OnegramPlatform/OGMemoryCache.h"
+#import "../OnegramRuntime/OGRuntime.h"
+#include <libkern/OSAtomic.h>
+#import "../OnegramRuntime/OGDatabaseRuntime.h"
+#import "../legacy/TL/TLMetaClassStore.h"
 
 @implementation NSArray (TGIOS6FirstObject)
 
@@ -89,11 +102,6 @@ static NSString *TGIOS6BotContext()
     return [NSString stringWithFormat:@"version=%@ build=%@ os=%@ %@ idiom=%@ device=%@", version, build, device.systemName, device.systemVersion, idiom, TGIOS6PerfDeviceDescription()];
 }
 
-static bool TGIOS6PerfLoggingEnabled()
-{
-    return false;
-}
-
 static const bool TGIOS6NotificationSettingsGateEnabled = false;
 
 NSString *const TGIOS6BackgroundNotificationsEnabledKey = @"TGIOS6BackgroundNotificationsEnabled";
@@ -110,107 +118,6 @@ bool TGIOS6APNsNotificationsEnabled(void)
     id storedValue = [[NSUserDefaults standardUserDefaults] objectForKey:TGIOS6APNsNotificationsEnabledKey];
     return storedValue == nil ? false : [storedValue boolValue];
 }
-
-static void TGIOS6PerfLogAppStart()
-{
-    if (!TGIOS6PerfLoggingEnabled())
-        return;
-
-    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
-    NSString *build = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
-    UIDevice *device = [UIDevice currentDevice];
-    UIScreen *screen = [UIScreen mainScreen];
-    CGSize screenSize = screen.bounds.size;
-    NSString *idiom = device.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";
-    while (false) NSLog(@"PERF appStart version=%@ build=%@ idiom=%@ model=%@ system=%@ %@ screen=%.0fx%.0f scale=%.1f", version, build, idiom, TGIOS6PerfDeviceDescription(), device.systemName, device.systemVersion, screenSize.width, screenSize.height, screen.scale);
-}
-
-static NSString *TGIOS6TrimVersionString(NSString *string)
-{
-    if (![string isKindOfClass:[NSString class]])
-        return nil;
-    
-    NSString *trimmed = [string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (trimmed.length == 0)
-        return nil;
-    
-    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"0123456789."];
-    NSRange badRange = [trimmed rangeOfCharacterFromSet:[allowed invertedSet]];
-    if (badRange.location != NSNotFound)
-        trimmed = [trimmed substringToIndex:badRange.location];
-    
-    return trimmed.length == 0 ? nil : trimmed;
-}
-
-static double TGIOS6VersionNumber(NSString *version)
-{
-    NSString *cleanVersion = TGIOS6TrimVersionString(version);
-    if (cleanVersion.length == 0)
-        return 0.0;
-    return [cleanVersion doubleValue];
-}
-
-static bool TGIOS6ShouldExitForRemoteMinimumVersion()
-{
-    return false;
-}
-
-@interface TGIOS6MainThreadWatchdog : NSObject
-{
-    CADisplayLink *_displayLink;
-    CFTimeInterval _lastTimestamp;
-    CFTimeInterval _lastReport;
-}
-@end
-
-@implementation TGIOS6MainThreadWatchdog
-
-+ (instancetype)sharedWatchdog
-{
-    static TGIOS6MainThreadWatchdog *watchdog = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        watchdog = [[TGIOS6MainThreadWatchdog alloc] init];
-    });
-    return watchdog;
-}
-
-- (void)start
-{
-    if (_displayLink != nil)
-        return;
-    
-    _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
-    [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
-}
-
-- (void)tick:(CADisplayLink *)displayLink
-{
-    CFTimeInterval timestamp = displayLink.timestamp;
-    if (_lastTimestamp > 0.0)
-    {
-        CFTimeInterval gap = timestamp - _lastTimestamp;
-        CFTimeInterval now = CFAbsoluteTimeGetCurrent();
-        if (gap > 0.75 && now - _lastReport > 20.0)
-        {
-            _lastReport = now;
-            NSString *topController = @"?";
-            @try
-            {
-                UIViewController *controller = TGAppDelegateInstance.rootController.presentedViewController ?: TGAppDelegateInstance.rootController.viewControllers.lastObject;
-                topController = NSStringFromClass([controller class]) ?: @"?";
-            }
-            @catch (__unused NSException *exception)
-            {
-            }
-            while (false) NSLog(@"HANG main_thread_stall %@ gap_ms=%.1f top=%@", TGIOS6BotContext(), gap * 1000.0, topController);
-        }
-    }
-    _lastTimestamp = timestamp;
-}
-
-@end
 
 #import "TGTelegraph.h"
 #import "TGTelegramNetworking.h"
@@ -231,6 +138,7 @@ static bool TGIOS6ShouldExitForRemoteMinimumVersion()
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGCache.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGFont.h"
 
 #import "TGTelegraphDialogListCompanion.h"
 
@@ -242,11 +150,9 @@ static bool TGIOS6ShouldExitForRemoteMinimumVersion()
 
 #import <QuartzCore/QuartzCore.h>
 #import <AudioToolbox/AudioToolbox.h>
-#import <ImageIO/ImageIO.h>
-
-#import "RMIntroViewController.h"
 
 #import "TGLoginPhoneController.h"
+#import "TGLoginPasswordController.h"
 #import "TGLoginCodeController.h"
 #import "TGLoginProfileController.h"
 
@@ -310,14 +216,16 @@ static UIColor *TGClassicIOS6TintColorForImageStem(NSString *stem)
 
 static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
 {
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"] || name.length == 0 || TGClassicIOS6NativeNavigationImageName(name))
+    if (!(TGCurrentInterfaceStyle() != 0) || name.length == 0 || TGClassicIOS6NativeNavigationImageName(name))
         return nil;
 
-    static NSMutableDictionary *imageCache = nil;
+    static OGMemoryCache *imageCache = nil;
+    static OGMemoryCache *themedCache = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        imageCache = [[NSMutableDictionary alloc] init];
+        imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:8 * 1024 * 1024];
+        themedCache = [[OGMemoryCache alloc] initWithCountLimit:256 costLimit:4 * 1024 * 1024];
     });
 
     NSString *component = [name lastPathComponent];
@@ -325,28 +233,43 @@ static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
     NSString *stem = [component stringByDeletingPathExtension];
     if (!TGClassicIOS6AllowImageNamedOverride(stem))
         return nil;
-    bool hasExplicitScale = [stem rangeOfString:@"@2x"].location != NSNotFound || [stem rangeOfString:@"@3x"].location != NSNotFound;
-    NSString *resourceName = hasExplicitScale ? stem : ([UIScreen mainScreen].scale > 1.5f ? [stem stringByAppendingFormat:@"%c2x", 64] : stem);
-    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:extension inDirectory:@"ClassicIOS6"];
-    if (path.length == 0 && !hasExplicitScale)
-    {
-        resourceName = [stem stringByAppendingFormat:@"%c2x", 64];
-        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:extension inDirectory:@"ClassicIOS6"];
-    }
-    if (path.length == 0)
+    CGFloat scale = [UIScreen mainScreen].scale;
+    NSArray *resourceKey = @[name, @(scale)];
+    id cached = [imageCache objectForKey:resourceKey];
+    if (cached == [NSNull null])
         return nil;
-
-    UIImage *image = imageCache[path];
+    UIImage *image = cached;
     if (image == nil)
     {
-        image = [UIImage imageWithContentsOfFile:path];
+        bool hasExplicitScale = [stem rangeOfString:@"@2x"].location != NSNotFound || [stem rangeOfString:@"@3x"].location != NSNotFound;
+        NSString *resourceName = hasExplicitScale ? stem : (scale > 1.5f ? [stem stringByAppendingString:@"@2x"] : stem);
+        NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:extension inDirectory:@"ClassicIOS6"];
+        if (path.length == 0 && !hasExplicitScale)
+        {
+            resourceName = [stem stringByAppendingString:@"@2x"];
+            path = [[NSBundle mainBundle] pathForResource:resourceName ofType:extension inDirectory:@"ClassicIOS6"];
+        }
+        image = path.length == 0 ? nil : [UIImage imageWithContentsOfFile:path];
         if (image != nil && [resourceName rangeOfString:@"@2x"].location != NSNotFound && image.CGImage != NULL)
             image = [UIImage imageWithCGImage:image.CGImage scale:2.0f orientation:UIImageOrientationUp];
-        if (image != nil)
-            imageCache[path] = image;
+        NSUInteger cost = image.CGImage == NULL ? 64 : CGImageGetBytesPerRow(image.CGImage) * CGImageGetHeight(image.CGImage);
+        [imageCache setObject:image ?: [NSNull null] forKey:resourceKey cost:cost];
     }
-    if ([TGPresentation classicIOS6UsesPaletteAdaptedAssets])
-        image = [TGPresentation classicIOS6ThemedImage:image tintColor:TGClassicIOS6TintColorForImageStem(stem) alpha:0.8f];
+    if (image != nil && [TGPresentation classicIOS6UsesPaletteAdaptedAssets])
+    {
+        UIColor *tint = TGClassicIOS6TintColorForImageStem(stem);
+        TGPresentation *presentation = [TGPresentation current];
+        TGPresentationPallete *pallete = presentation != nil ? presentation.pallete : [TGPresentation currentSavedPallete];
+        NSArray *themedKey = @[resourceKey, tint ?: [NSNull null], @(pallete.isDark)];
+        UIImage *themed = [themedCache objectForKey:themedKey];
+        if (themed == nil)
+        {
+            themed = [TGPresentation classicIOS6ThemedImage:image tintColor:tint alpha:0.8f];
+            NSUInteger cost = themed.CGImage == NULL ? 64 : CGImageGetBytesPerRow(themed.CGImage) * CGImageGetHeight(themed.CGImage);
+            [themedCache setObject:themed forKey:themedKey cost:cost];
+        }
+        image = themed;
+    }
     return image;
 }
 
@@ -432,6 +355,8 @@ static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
 
 #import "TGStickersMenu.h"
 #import "TGProxyMenu.h"
+#import "TGOnegramCoreController.h"
+#import "../OnegramDante/OGDanteSocket.h"
 
 #import "TGGroupInviteSheet.h"
 
@@ -478,6 +403,562 @@ CFAbsoluteTime mainLaunchTimestamp = 0;
 
 TGAppDelegate *TGAppDelegateInstance = nil;
 TGTelegraph *telegraph = nil;
+
+#if defined(ONEGRAM_DIAGNOSTICS)
+#include <mach/mach_time.h>
+#include <sys/resource.h>
+#include <limits.h>
+
+static pthread_mutex_t TGDiagnosticLock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t TGDiagnosticOrigin = 0;
+static double TGDiagnosticTickSeconds = 0.0;
+static volatile int32_t TGDiagnosticCollecting = 0;
+static thread_t TGDiagnosticMainThreadPort = MACH_PORT_NULL;
+static uintptr_t TGDiagnosticMainStackLow = 0;
+static uintptr_t TGDiagnosticMainStackHigh = 0;
+static CFRunLoopObserverRef TGDiagnosticObserver = NULL;
+static bool TGDiagnosticUISettledReported = false;
+static bool TGDiagnosticStagePending = false;
+static bool TGDiagnosticDatabasePending = false;
+static bool TGDiagnosticPingPending = false;
+static double TGDiagnosticStageSent = 0.0;
+static double TGDiagnosticDatabaseSent = 0.0;
+static double TGDiagnosticPingSent = 0.0;
+static double TGDiagnosticPingDelay = -1.0;
+
+struct TGDiagnosticDatabaseSite {
+    const char *file;
+    int line;
+    uint64_t count;
+    double execution;
+    double slowCPU;
+    double maximumQueued;
+};
+
+struct TGDiagnosticStatistics {
+    uint64_t databaseTasks;
+    uint64_t databaseSlowTasks;
+    uint64_t databaseUntrackedSlowTasks;
+    double databaseExecution;
+    double databaseSlowCPU;
+    double maximumDatabaseQueued;
+    uint64_t mainDatabaseWaits;
+    double mainDatabaseWait;
+    uint64_t mainReplies;
+    uint64_t mainHitches;
+    double mainHitchTime;
+    double maximumMainDelay;
+    uint64_t stageProbes;
+    uint64_t databaseProbes;
+    double maximumStageProbe;
+    double maximumDatabaseProbe;
+};
+
+struct TGDiagnosticStartupState {
+    bool syncSucceeded;
+    bool networkNormal;
+    bool uiNormal;
+    bool visible;
+    bool dialogsPresented;
+    bool dialogsComplete;
+    bool settled;
+    bool uiWorkPending;
+    bool verificationPending;
+    bool ready;
+    uint64_t generation;
+    uint64_t verifiedGeneration;
+    NSUInteger dialogCount;
+    double readyTime;
+};
+
+static TGDiagnosticStatistics TGDiagnosticStats = {};
+static TGDiagnosticDatabaseSite TGDiagnosticSites[32] = {};
+static TGDiagnosticStartupState TGDiagnosticStartup = {};
+static struct rusage TGDiagnosticInitialUsage;
+
+NSTimeInterval OGStartupDiagnosticsTime(void)
+{
+    return (mach_absolute_time() - TGDiagnosticOrigin) * TGDiagnosticTickSeconds;
+}
+
+BOOL OGStartupDiagnosticsIsCollecting(void)
+{
+    return OSAtomicAdd32Barrier(0, &TGDiagnosticCollecting) != 0;
+}
+
+static bool TGDiagnosticReadyConditions(const TGDiagnosticStartupState *state)
+{
+    return state->syncSucceeded && state->networkNormal && state->uiNormal && state->visible && state->dialogsPresented && state->dialogsComplete && state->settled && !state->uiWorkPending;
+}
+
+void OGStartupDiagnosticsInitialize(uint64_t ticks, NSTimeInterval unixTime)
+{
+    mach_timebase_info_data_t timebase;
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0)
+        return;
+    TGDiagnosticOrigin = ticks;
+    TGDiagnosticTickSeconds = (double)timebase.numer / (double)timebase.denom / 1000000000.0;
+    getrusage(RUSAGE_SELF, &TGDiagnosticInitialUsage);
+    OSAtomicCompareAndSwap32Barrier(0, 1, &TGDiagnosticCollecting);
+    OGPlatformDiagnosticLog(@"STARTUP_ORIGIN pid=%d unix_ms=%.0f ticks=%llu", getpid(), unixTime * 1000.0, (unsigned long long)ticks);
+}
+
+void OGStartupDiagnosticsMark(const char *stage)
+{
+    if (OGStartupDiagnosticsIsCollecting())
+        OGPlatformDiagnosticLog(@"STARTUP_PHASE name=%s elapsed_ms=%.0f", stage, OGStartupDiagnosticsTime() * 1000.0);
+}
+
+void OGStartupDiagnosticsSyncStarted(void)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool collecting = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready;
+    if (collecting) {
+        TGDiagnosticStartup.syncSucceeded = false;
+        TGDiagnosticStartup.generation++;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (collecting)
+        OGStartupDiagnosticsMark("sync_begin");
+}
+
+void OGStartupDiagnosticsSyncFinished(BOOL success, const char *source)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool collecting = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready;
+    if (collecting) {
+        TGDiagnosticStartup.syncSucceeded = success;
+        TGDiagnosticStartup.generation++;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (collecting)
+        OGPlatformDiagnosticLog(@"STARTUP_SYNC source=%s success=%d elapsed_ms=%.0f", source, success ? 1 : 0, OGStartupDiagnosticsTime() * 1000.0);
+}
+
+void OGStartupDiagnosticsNetworkState(int state)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool normal = state == 0;
+    bool changed = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && TGDiagnosticStartup.networkNormal != normal;
+    if (changed) {
+        TGDiagnosticStartup.networkNormal = normal;
+        TGDiagnosticStartup.generation++;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (changed)
+        OGPlatformDiagnosticLog(@"STARTUP_NETWORK state=%d elapsed_ms=%.0f", state, OGStartupDiagnosticsTime() * 1000.0);
+}
+
+void OGStartupDiagnosticsUIState(BOOL normal, BOOL visible)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool changed = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && (TGDiagnosticStartup.uiNormal != (bool)normal || TGDiagnosticStartup.visible != (bool)visible);
+    if (changed) {
+        TGDiagnosticStartup.uiNormal = normal;
+        TGDiagnosticStartup.visible = visible;
+        TGDiagnosticStartup.settled = false;
+        TGDiagnosticStartup.generation++;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (changed)
+        OGPlatformDiagnosticLog(@"STARTUP_UI normal=%d visible=%d elapsed_ms=%.0f", normal ? 1 : 0, visible ? 1 : 0, OGStartupDiagnosticsTime() * 1000.0);
+}
+
+void OGStartupDiagnosticsDialogsPresented(NSUInteger count, BOOL complete)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool collecting = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready;
+    bool first = collecting && !TGDiagnosticStartup.dialogsPresented;
+    bool completed = collecting && complete && !TGDiagnosticStartup.dialogsComplete;
+    if (collecting) {
+        TGDiagnosticStartup.dialogsPresented = true;
+        TGDiagnosticStartup.dialogsComplete = complete;
+        TGDiagnosticStartup.dialogCount = count;
+        TGDiagnosticStartup.settled = false;
+        TGDiagnosticStartup.generation++;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (first || completed)
+        OGPlatformDiagnosticLog(@"STARTUP_LIST complete=%d rows=%lu elapsed_ms=%.0f", complete ? 1 : 0, (unsigned long)count, OGStartupDiagnosticsTime() * 1000.0);
+}
+
+void OGStartupDiagnosticsUIWorkPending(BOOL pending)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    if (OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && TGDiagnosticStartup.uiWorkPending != (bool)pending) {
+        TGDiagnosticStartup.uiWorkPending = pending;
+        TGDiagnosticStartup.settled = false;
+        TGDiagnosticStartup.generation++;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+}
+
+void OGStartupDiagnosticsRecordDatabaseTask(const char *file, int line, NSTimeInterval execution, NSTimeInterval slowCPU, NSTimeInterval queued)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    if (OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready) {
+        TGDiagnosticStats.databaseTasks++;
+        TGDiagnosticStats.databaseExecution += execution;
+        TGDiagnosticStats.maximumDatabaseQueued = MAX(TGDiagnosticStats.maximumDatabaseQueued, queued);
+        if (execution >= 0.05) {
+            TGDiagnosticStats.databaseSlowTasks++;
+            TGDiagnosticStats.databaseSlowCPU += slowCPU;
+            bool tracked = false;
+            for (NSUInteger i = 0; i < 32; i++) {
+                TGDiagnosticDatabaseSite *site = &TGDiagnosticSites[i];
+                if (site->file == NULL || (site->line == line && strcmp(site->file, file) == 0)) {
+                    site->file = file;
+                    site->line = line;
+                    site->count++;
+                    site->execution += execution;
+                    site->slowCPU += slowCPU;
+                    site->maximumQueued = MAX(site->maximumQueued, queued);
+                    tracked = true;
+                    break;
+                }
+            }
+            if (!tracked)
+                TGDiagnosticStats.databaseUntrackedSlowTasks++;
+        }
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+}
+
+void OGStartupDiagnosticsRecordMainDatabaseWait(NSTimeInterval duration)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    if (OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready) {
+        TGDiagnosticStats.mainDatabaseWaits++;
+        TGDiagnosticStats.mainDatabaseWait += duration;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+}
+
+static void TGDiagnosticRunLoopSettled(CFRunLoopObserverRef, CFRunLoopActivity, void *)
+{
+    if (!OGStartupDiagnosticsIsCollecting())
+        return;
+    bool report = false;
+    NSUInteger rows = 0;
+    pthread_mutex_lock(&TGDiagnosticLock);
+    if (OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && TGDiagnosticStartup.visible && TGDiagnosticStartup.dialogsPresented && !TGDiagnosticStartup.uiWorkPending) {
+        TGDiagnosticStartup.settled = true;
+        if (!TGDiagnosticUISettledReported) {
+            TGDiagnosticUISettledReported = true;
+            report = true;
+            rows = TGDiagnosticStartup.dialogCount;
+        }
+        if (TGDiagnosticStartup.verificationPending && TGDiagnosticStartup.verifiedGeneration != 0 && TGDiagnosticStartup.verifiedGeneration != TGDiagnosticStartup.generation) {
+            TGDiagnosticStartup.verificationPending = false;
+            TGDiagnosticStartup.verifiedGeneration = 0;
+        }
+        if (TGDiagnosticStartup.verificationPending && TGDiagnosticStartup.verifiedGeneration == TGDiagnosticStartup.generation && TGDiagnosticReadyConditions(&TGDiagnosticStartup)) {
+            TGDiagnosticStartup.ready = true;
+            TGDiagnosticStartup.readyTime = OGStartupDiagnosticsTime();
+        }
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (report)
+        OGPlatformDiagnosticLog(@"STARTUP_UI_SETTLED elapsed_ms=%.0f rows=%lu", OGStartupDiagnosticsTime() * 1000.0, (unsigned long)rows);
+}
+
+static void TGDiagnosticVerifyReadiness(void)
+{
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool verify = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && !TGDiagnosticStartup.verificationPending && TGDiagnosticReadyConditions(&TGDiagnosticStartup);
+    uint64_t generation = TGDiagnosticStartup.generation;
+    if (verify) {
+        TGDiagnosticStartup.verificationPending = true;
+        TGDiagnosticStartup.verifiedGeneration = 0;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (!verify)
+        return;
+    [ActionStageInstance() dispatchOnStageQueue:^{
+        [TGDatabaseInstance() dispatchOnDatabaseThread:^{
+            [ActionStageInstance() dispatchOnStageQueue:^{
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    pthread_mutex_lock(&TGDiagnosticLock);
+                    if (OGStartupDiagnosticsIsCollecting() && TGDiagnosticStartup.generation == generation && TGDiagnosticReadyConditions(&TGDiagnosticStartup))
+                        TGDiagnosticStartup.verifiedGeneration = generation;
+                    else
+                        TGDiagnosticStartup.verificationPending = false;
+                    pthread_mutex_unlock(&TGDiagnosticLock);
+                });
+            }];
+        } synchronous:false];
+    }];
+}
+
+static double TGDiagnosticCPUTime(const struct timeval *value)
+{
+    return value->tv_sec + value->tv_usec / 1000000.0;
+}
+
+static void TGDiagnosticReport(BOOL final)
+{
+    double elapsed = OGStartupDiagnosticsTime();
+    pthread_mutex_lock(&TGDiagnosticLock);
+    TGDiagnosticStatistics stats = TGDiagnosticStats;
+    TGDiagnosticStartupState state = TGDiagnosticStartup;
+    TGDiagnosticDatabaseSite sites[32];
+    memcpy(sites, TGDiagnosticSites, sizeof(sites));
+    double stagePending = TGDiagnosticStagePending ? MAX(0.0, elapsed - TGDiagnosticStageSent) : 0.0;
+    double databasePending = TGDiagnosticDatabasePending ? MAX(0.0, elapsed - TGDiagnosticDatabaseSent) : 0.0;
+    double mainPending = TGDiagnosticPingPending ? MAX(0.0, elapsed - TGDiagnosticPingSent) : 0.0;
+    if (final)
+        OSAtomicCompareAndSwap32Barrier(1, 0, &TGDiagnosticCollecting);
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    struct rusage usage;
+    memset(&usage, 0, sizeof(usage));
+    getrusage(RUSAGE_SELF, &usage);
+    double cpu = MAX(0.0, TGDiagnosticCPUTime(&usage.ru_utime) + TGDiagnosticCPUTime(&usage.ru_stime) - TGDiagnosticCPUTime(&TGDiagnosticInitialUsage.ru_utime) - TGDiagnosticCPUTime(&TGDiagnosticInitialUsage.ru_stime));
+    OGPlatformDiagnosticLog(@"STARTUP_STATS elapsed_ms=%.0f final=%d cpu_ms=%.0f db_tasks=%llu db_slow=%llu db_untracked_slow=%llu db_exec_ms=%.0f db_slow_cpu_ms=%.0f db_queue_max_ms=%.0f main_db_waits=%llu main_db_wait_ms=%.0f main_replies=%llu main_hitches=%llu main_hitch_ms=%.0f main_max_ms=%.0f main_pending_ms=%.0f stage_probes=%llu stage_probe_max_ms=%.0f stage_pending_ms=%.0f db_probes=%llu db_probe_max_ms=%.0f db_pending_ms=%.0f", elapsed * 1000.0, final ? 1 : 0, cpu * 1000.0, (unsigned long long)stats.databaseTasks, (unsigned long long)stats.databaseSlowTasks, (unsigned long long)stats.databaseUntrackedSlowTasks, stats.databaseExecution * 1000.0, stats.databaseSlowCPU * 1000.0, stats.maximumDatabaseQueued * 1000.0, (unsigned long long)stats.mainDatabaseWaits, stats.mainDatabaseWait * 1000.0, (unsigned long long)stats.mainReplies, (unsigned long long)stats.mainHitches, stats.mainHitchTime * 1000.0, stats.maximumMainDelay * 1000.0, mainPending * 1000.0, (unsigned long long)stats.stageProbes, stats.maximumStageProbe * 1000.0, stagePending * 1000.0, (unsigned long long)stats.databaseProbes, stats.maximumDatabaseProbe * 1000.0, databasePending * 1000.0);
+    for (NSUInteger rank = 0; rank < 3; rank++) {
+        NSUInteger best = 32;
+        for (NSUInteger i = 0; i < 32; i++)
+            if (sites[i].file != NULL && (best == 32 || sites[i].execution > sites[best].execution))
+                best = i;
+        if (best == 32)
+            break;
+        TGDiagnosticDatabaseSite site = sites[best];
+        OGPlatformDiagnosticLog(@"STARTUP_DB_SITE elapsed_ms=%.0f file=%s line=%d count=%llu exec_ms=%.0f cpu_ms=%.0f queue_max_ms=%.0f", elapsed * 1000.0, site.file, site.line, (unsigned long long)site.count, site.execution * 1000.0, site.slowCPU * 1000.0, site.maximumQueued * 1000.0);
+        sites[best].file = NULL;
+    }
+    if (final)
+        OGPlatformDiagnosticLog(@"STARTUP_%s elapsed_ms=%.0f rows=%lu sync=%d network=%d ui=%d visible=%d list=%d complete=%d settled=%d ui_pending=%d", state.ready ? "READY" : "INCOMPLETE", (state.ready ? state.readyTime : elapsed) * 1000.0, (unsigned long)state.dialogCount, state.syncSucceeded ? 1 : 0, state.networkNormal ? 1 : 0, state.uiNormal ? 1 : 0, state.visible ? 1 : 0, state.dialogsPresented ? 1 : 0, state.dialogsComplete ? 1 : 0, state.settled ? 1 : 0, state.uiWorkPending ? 1 : 0);
+    if (final)
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (TGDiagnosticObserver != NULL) {
+                CFRunLoopRemoveObserver(CFRunLoopGetMain(), TGDiagnosticObserver, kCFRunLoopCommonModes);
+                CFRelease(TGDiagnosticObserver);
+                TGDiagnosticObserver = NULL;
+            }
+        });
+}
+
+static int TGDiagnosticSampleMainThread(uintptr_t *frames, int capacity)
+{
+    if (thread_suspend(TGDiagnosticMainThreadPort) != KERN_SUCCESS)
+        return 0;
+    int count = 0;
+    uintptr_t pointer = 0;
+#if defined(__arm64__)
+    arm_thread_state64_t state;
+    mach_msg_type_number_t stateCount = ARM_THREAD_STATE64_COUNT;
+    if (thread_get_state(TGDiagnosticMainThreadPort, ARM_THREAD_STATE64, (thread_state_t)&state, &stateCount) == KERN_SUCCESS) {
+        frames[count++] = state.__pc;
+        frames[count++] = state.__lr;
+        pointer = state.__fp;
+    }
+#elif defined(__arm__)
+    arm_thread_state_t state;
+    mach_msg_type_number_t stateCount = ARM_THREAD_STATE_COUNT;
+    if (thread_get_state(TGDiagnosticMainThreadPort, ARM_THREAD_STATE, (thread_state_t)&state, &stateCount) == KERN_SUCCESS) {
+        frames[count++] = state.__pc;
+        frames[count++] = state.__lr;
+        pointer = state.__r[7];
+    }
+#endif
+    while (count != 0 && count < capacity && pointer >= TGDiagnosticMainStackLow && pointer <= TGDiagnosticMainStackHigh - 2 * sizeof(uintptr_t) && (pointer & (sizeof(uintptr_t) - 1)) == 0) {
+        uintptr_t next = ((uintptr_t *)pointer)[0];
+        uintptr_t address = ((uintptr_t *)pointer)[1];
+        if (address == 0 || next <= pointer)
+            break;
+        frames[count++] = address;
+        pointer = next;
+    }
+    thread_resume(TGDiagnosticMainThreadPort);
+    return count;
+}
+
+static void TGDiagnosticLogRawStack(double delay)
+{
+    uintptr_t frames[12];
+    int count = TGDiagnosticSampleMainThread(frames, 12);
+    NSMutableString *line = [[NSMutableString alloc] initWithFormat:@"STARTUP_STACK elapsed_ms=%.0f delay_ms=%.0f frames=", OGStartupDiagnosticsTime() * 1000.0, delay * 1000.0];
+    for (int i = 0; i < count; i++) {
+        uintptr_t address = frames[i] & ~(uintptr_t)1;
+        Dl_info info;
+        memset(&info, 0, sizeof(info));
+        if (dladdr((const void *)address, &info) != 0 && info.dli_fname != NULL) {
+            const char *name = strrchr(info.dli_fname, '/');
+            [line appendFormat:@"%s%s+0x%lx", i == 0 ? "" : ",", name == NULL ? info.dli_fname : name + 1, (unsigned long)(address - (uintptr_t)info.dli_fbase)];
+        } else {
+            [line appendFormat:@"%s0x%lx", i == 0 ? "" : ",", (unsigned long)address];
+        }
+    }
+    OGPlatformDiagnosticLog(@"%@", line);
+}
+
+static void TGDiagnosticSendQueueProbes(void)
+{
+    double sent = OGStartupDiagnosticsTime();
+    pthread_mutex_lock(&TGDiagnosticLock);
+    bool stage = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && !TGDiagnosticStagePending;
+    bool database = OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready && TGDiagnosticStartup.dialogsPresented && !TGDiagnosticDatabasePending;
+    if (stage) {
+        TGDiagnosticStagePending = true;
+        TGDiagnosticStageSent = sent;
+    }
+    if (database) {
+        TGDiagnosticDatabasePending = true;
+        TGDiagnosticDatabaseSent = sent;
+    }
+    pthread_mutex_unlock(&TGDiagnosticLock);
+    if (stage)
+        [ActionStageInstance() dispatchOnStageQueue:^{
+            double delay = OGStartupDiagnosticsTime() - sent;
+            pthread_mutex_lock(&TGDiagnosticLock);
+            if (OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready) {
+                TGDiagnosticStats.stageProbes++;
+                TGDiagnosticStats.maximumStageProbe = MAX(TGDiagnosticStats.maximumStageProbe, delay);
+            }
+            TGDiagnosticStagePending = false;
+            pthread_mutex_unlock(&TGDiagnosticLock);
+        }];
+    if (database)
+        [TGDatabaseInstance() dispatchOnDatabaseThread:^{
+            double delay = OGStartupDiagnosticsTime() - sent;
+            pthread_mutex_lock(&TGDiagnosticLock);
+            if (OGStartupDiagnosticsIsCollecting() && !TGDiagnosticStartup.ready) {
+                TGDiagnosticStats.databaseProbes++;
+                TGDiagnosticStats.maximumDatabaseProbe = MAX(TGDiagnosticStats.maximumDatabaseProbe, delay);
+            }
+            TGDiagnosticDatabasePending = false;
+            pthread_mutex_unlock(&TGDiagnosticLock);
+        } synchronous:false];
+}
+
+static void *TGDiagnosticMonitorThreadMain(void *)
+{
+    pthread_t thread = pthread_self();
+    int policy = 0;
+    struct sched_param parameters;
+    if (pthread_getschedparam(thread, &policy, &parameters) == 0) {
+        int priority = sched_get_priority_min(policy);
+        if (priority != -1) {
+            parameters.sched_priority = priority;
+            pthread_setschedparam(thread, policy, &parameters);
+        }
+    }
+    thread_extended_policy_data_t extended;
+    extended.timeshare = true;
+    thread_policy_set(pthread_mach_thread_np(thread), THREAD_EXTENDED_POLICY, (thread_policy_t)&extended, THREAD_EXTENDED_POLICY_COUNT);
+    double nextPing = 0.0;
+    double nextProbe = 5.0;
+    double nextReport = 10.0;
+    double pingSent = 0.0;
+    double lastStack = -30.0;
+    int stacks = 0;
+    bool sampled = false;
+    while (OGStartupDiagnosticsIsCollecting()) {
+        usleep(250000);
+        @autoreleasepool {
+            double now = OGStartupDiagnosticsTime();
+            pthread_mutex_lock(&TGDiagnosticLock);
+            bool ready = TGDiagnosticStartup.ready;
+            double reply = TGDiagnosticPingDelay;
+            TGDiagnosticPingDelay = -1.0;
+            bool pending = TGDiagnosticPingPending;
+            if (reply >= 0.0) {
+                TGDiagnosticStats.mainReplies++;
+                TGDiagnosticStats.maximumMainDelay = MAX(TGDiagnosticStats.maximumMainDelay, reply);
+                if (reply >= 0.1) {
+                    TGDiagnosticStats.mainHitches++;
+                    TGDiagnosticStats.mainHitchTime += reply;
+                }
+                TGDiagnosticPingPending = false;
+                pending = false;
+                nextPing = now + 1.0;
+            }
+            pthread_mutex_unlock(&TGDiagnosticLock);
+            if (ready || now >= 300.0) {
+                TGDiagnosticReport(true);
+                break;
+            }
+            if (pending && !sampled && now - pingSent >= 2.0 && stacks < 3 && now - lastStack >= 30.0) {
+                sampled = true;
+                lastStack = now;
+                stacks++;
+                TGDiagnosticLogRawStack(now - pingSent);
+            }
+            if (!pending && now >= nextPing) {
+                pingSent = now;
+                sampled = false;
+                pthread_mutex_lock(&TGDiagnosticLock);
+                TGDiagnosticPingPending = true;
+                TGDiagnosticPingSent = now;
+                pthread_mutex_unlock(&TGDiagnosticLock);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    double delay = OGStartupDiagnosticsTime() - now;
+                    pthread_mutex_lock(&TGDiagnosticLock);
+                    if (OGStartupDiagnosticsIsCollecting())
+                        TGDiagnosticPingDelay = delay;
+                    pthread_mutex_unlock(&TGDiagnosticLock);
+                });
+            }
+            if (now >= nextProbe) {
+                nextProbe = now + 5.0;
+                TGDiagnosticSendQueueProbes();
+            }
+            if (now >= nextReport) {
+                nextReport = now + 10.0;
+                TGDiagnosticReport(false);
+            }
+            TGDiagnosticVerifyReadiness();
+        }
+    }
+    return NULL;
+}
+
+static void TGStartMainThreadStallMonitor(void)
+{
+    static bool started = false;
+    if (started || !OGStartupDiagnosticsIsCollecting())
+        return;
+    started = true;
+    pthread_t mainThread = pthread_self();
+    TGDiagnosticMainThreadPort = pthread_mach_thread_np(mainThread);
+    TGDiagnosticMainStackHigh = (uintptr_t)pthread_get_stackaddr_np(mainThread);
+    TGDiagnosticMainStackLow = TGDiagnosticMainStackHigh - (uintptr_t)pthread_get_stacksize_np(mainThread);
+    TGDiagnosticObserver = CFRunLoopObserverCreate(NULL, kCFRunLoopBeforeWaiting, true, LONG_MAX, TGDiagnosticRunLoopSettled, NULL);
+    if (TGDiagnosticObserver != NULL)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), TGDiagnosticObserver, kCFRunLoopCommonModes);
+    else
+        OGStartupDiagnosticsMark("observer_failed");
+    pthread_t monitor;
+    if (pthread_create(&monitor, NULL, TGDiagnosticMonitorThreadMain, NULL) == 0)
+        pthread_detach(monitor);
+    else {
+        OGStartupDiagnosticsMark("monitor_failed");
+        TGDiagnosticReport(true);
+    }
+}
+#endif
+
+static void TGEarlyLaunchPerf(NSString *stage)
+{
+#if defined(ONEGRAM_DIAGNOSTICS)
+    OGStartupDiagnosticsMark(stage.UTF8String);
+#endif
+}
 
 #if defined(__IPHONE_OS_VERSION_MIN_REQUIRED) && __IPHONE_OS_VERSION_MIN_REQUIRED < 50000
 #include <pthread.h>
@@ -833,7 +1314,9 @@ static void TGIOS6PrepareCrashEnvironment()
     TGIOS6PrepareExecutableImageRange();
     TGIOS6PrepareLoadedImageRanges();
 
-#if defined(__arm__)
+#if defined(ONEGRAM_ARMV6)
+    const char *architecture = "armv6";
+#elif defined(__arm__)
     const char *architecture = "armv7";
 #elif defined(__arm64__)
     const char *architecture = "arm64";
@@ -900,9 +1383,201 @@ static void TGIOS6WriteImageAddressLine(int fd, const char *name, uintptr_t addr
     write(fd, "\n", 1);
 }
 
+static bool TGIOS6ReadCrashMemory(uintptr_t address, void *buffer, size_t length)
+{
+    if (address == 0 || length == 0 || address > UINTPTR_MAX - length)
+        return false;
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    mach_vm_size_t bytesRead = 0;
+#else
+    vm_size_t bytesRead = 0;
+#endif
+    kern_return_t result = vm_read_overwrite(mach_task_self(), (vm_address_t)address,
+        (vm_size_t)length, (vm_address_t)buffer, &bytesRead);
+    return result == KERN_SUCCESS && bytesRead == length;
+}
+
+static void TGIOS6WriteSignalStack(int fd, uintptr_t pc, uintptr_t lr, uintptr_t sp)
+{
+    TGIOS6WriteImageAddressLine(fd, "pc_image", pc);
+    TGIOS6WriteImageAddressLine(fd, "lr_image", lr);
+    if (TGIOS6ExecutableImageBase != 0 && pc >= TGIOS6ExecutableImageBase && pc < TGIOS6ExecutableImageEnd)
+        TGIOS6WriteRegisterLine(fd, "pc_app_offset", pc - TGIOS6ExecutableImageBase);
+    if (TGIOS6ExecutableImageBase != 0 && lr >= TGIOS6ExecutableImageBase && lr < TGIOS6ExecutableImageEnd)
+        TGIOS6WriteRegisterLine(fd, "lr_app_offset", lr - TGIOS6ExecutableImageBase);
+
+    if (sp == 0)
+        return;
+
+    int stackAppCount = 0;
+    int stackImageCount = 0;
+    uintptr_t previousImageCandidate = 0;
+    for (size_t i = 0; i < 64; i++)
+    {
+        size_t offset = i * sizeof(uintptr_t);
+        uintptr_t candidate = 0;
+        if (sp > UINTPTR_MAX - offset || !TGIOS6ReadCrashMemory(sp + offset, &candidate, sizeof(candidate)))
+            break;
+        uintptr_t normalizedCandidate = candidate & ~(uintptr_t)1;
+        TGIOS6WriteRegisterLine(fd, "stack_raw", candidate);
+        if (TGIOS6ExecutableImageBase != 0 && normalizedCandidate >= TGIOS6ExecutableImageBase && normalizedCandidate < TGIOS6ExecutableImageEnd && stackAppCount < 20)
+        {
+            TGIOS6WriteRegisterLine(fd, "stack_app", (uintptr_t)((intptr_t)normalizedCandidate - TGIOS6ExecutableImageSlide));
+            stackAppCount++;
+        }
+        if (stackImageCount < 32 && normalizedCandidate != previousImageCandidate && TGIOS6CrashImageRangeForAddress(normalizedCandidate) != NULL)
+        {
+            TGIOS6WriteImageAddressLine(fd, "stack_image", normalizedCandidate);
+            previousImageCandidate = normalizedCandidate;
+            stackImageCount++;
+        }
+    }
+}
+
+#if defined(__arm64__)
+static void TGIOS6WriteArm64Frames(int fd, uintptr_t fp, uintptr_t sp)
+{
+    for (int i = 0; i < 32; i++)
+    {
+        if (sp == 0 || fp < sp || fp - sp > 8 * 1024 * 1024 || (fp & 15) != 0)
+            break;
+        uintptr_t frame[2];
+        if (!TGIOS6ReadCrashMemory(fp, frame, sizeof(frame)))
+            break;
+        uintptr_t returnAddress = frame[1];
+        TGIOS6WriteRegisterLine(fd, "frame_lr", returnAddress);
+        TGIOS6WriteImageAddressLine(fd, "frame_image", returnAddress);
+        if (TGIOS6ExecutableImageBase != 0 && returnAddress >= TGIOS6ExecutableImageBase && returnAddress < TGIOS6ExecutableImageEnd)
+            TGIOS6WriteRegisterLine(fd, "frame_app", (uintptr_t)((intptr_t)returnAddress - TGIOS6ExecutableImageSlide));
+        if (frame[0] <= fp)
+            break;
+        fp = frame[0];
+    }
+}
+#endif
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#import <objc/message.h>
+#import <execinfo.h>
+#import <float.h>
+#import <stdlib.h>
+
+typedef NSInteger TGIOS3BackgroundTaskIdentifier;
+#define TGIOS3BackgroundTaskInvalid ((NSInteger)-1)
+
+static bool TGIOS3SupportsBackgroundTasks(void)
+{
+    return [UIApplication instancesRespondToSelector:@selector(beginBackgroundTaskWithExpirationHandler:)];
+}
+
+static TGIOS3BackgroundTaskIdentifier TGIOS3BeginBackgroundTask(UIApplication *application, void (^expirationHandler)(void))
+{
+    if (!TGIOS3SupportsBackgroundTasks())
+        return TGIOS3BackgroundTaskInvalid;
+    typedef NSInteger (*BeginBackgroundTaskMsgSend)(id, SEL, void (^)(void));
+    return ((BeginBackgroundTaskMsgSend)objc_msgSend)(application, @selector(beginBackgroundTaskWithExpirationHandler:), expirationHandler);
+}
+
+static void TGIOS3EndBackgroundTask(UIApplication *application, TGIOS3BackgroundTaskIdentifier identifier)
+{
+    if (!TGIOS3SupportsBackgroundTasks() || identifier == TGIOS3BackgroundTaskInvalid)
+        return;
+    typedef void (*EndBackgroundTaskMsgSend)(id, SEL, NSInteger);
+    ((EndBackgroundTaskMsgSend)objc_msgSend)(application, @selector(endBackgroundTask:), identifier);
+}
+
+static double TGIOS3BackgroundTimeRemaining(UIApplication *application)
+{
+    if (![UIApplication instancesRespondToSelector:@selector(backgroundTimeRemaining)])
+        return DBL_MAX;
+    typedef double (*BackgroundTimeRemainingMsgSend)(id, SEL);
+    return ((BackgroundTimeRemainingMsgSend)objc_msgSend)(application, @selector(backgroundTimeRemaining));
+}
+
+static bool TGIOS3SupportsVoipKeepAlive(void)
+{
+    return [UIApplication instancesRespondToSelector:@selector(setKeepAliveTimeout:handler:)];
+}
+
+static bool TGIOS3SetKeepAliveTimeout(UIApplication *application, NSTimeInterval timeout, void (^handler)(void))
+{
+    if (!TGIOS3SupportsVoipKeepAlive())
+        return false;
+    typedef BOOL (*SetKeepAliveTimeoutMsgSend)(id, SEL, NSTimeInterval, void (^)(void));
+    return ((SetKeepAliveTimeoutMsgSend)objc_msgSend)(application, @selector(setKeepAliveTimeout:handler:), timeout, handler) != NO;
+}
+
+static void TGIOS3ClearKeepAliveTimeout(UIApplication *application)
+{
+    if (!TGIOS3SupportsVoipKeepAlive())
+        return;
+    typedef void (*ClearKeepAliveTimeoutMsgSend)(id, SEL);
+    ((ClearKeepAliveTimeoutMsgSend)objc_msgSend)(application, @selector(clearKeepAliveTimeout));
+}
+#else
+typedef UIBackgroundTaskIdentifier TGIOS3BackgroundTaskIdentifier;
+#define TGIOS3BackgroundTaskInvalid UIBackgroundTaskInvalid
+
+static TGIOS3BackgroundTaskIdentifier TGIOS3BeginBackgroundTask(UIApplication *application, void (^expirationHandler)(void))
+{
+    return [application beginBackgroundTaskWithExpirationHandler:expirationHandler];
+}
+
+static void TGIOS3EndBackgroundTask(UIApplication *application, TGIOS3BackgroundTaskIdentifier identifier)
+{
+    if (identifier != TGIOS3BackgroundTaskInvalid)
+        [application endBackgroundTask:identifier];
+}
+
+static double TGIOS3BackgroundTimeRemaining(UIApplication *application)
+{
+    return [application backgroundTimeRemaining];
+}
+
+static bool TGIOS3SetKeepAliveTimeout(UIApplication *application, NSTimeInterval timeout, void (^handler)(void))
+{
+    return [application setKeepAliveTimeout:timeout handler:handler];
+}
+
+static void TGIOS3ClearKeepAliveTimeout(UIApplication *application)
+{
+    [application clearKeepAliveTimeout];
+}
+#endif
+
+static NSString *TGIOS6ExceptionStackSymbols(NSException *exception)
+{
+    if ([exception respondsToSelector:@selector(callStackSymbols)])
+        return [[exception performSelector:@selector(callStackSymbols)] componentsJoinedByString:@"\n"];
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    void *frames[128];
+    int frameCount = backtrace(frames, 128);
+    if (frameCount <= 0)
+        return nil;
+
+    char **symbols = backtrace_symbols(frames, frameCount);
+    if (symbols == NULL)
+        return nil;
+
+    NSMutableString *stack = [[NSMutableString alloc] initWithCapacity:frameCount * 64];
+    for (int index = 0; index < frameCount; index++)
+    {
+        if (index > 0)
+            [stack appendString:@"\n"];
+        [stack appendFormat:@"%s", symbols[index]];
+    }
+    free(symbols);
+    return stack;
+#else
+    return nil;
+#endif
+}
+
 static void TGIOS6UncaughtExceptionHandler(NSException *exception)
 {
-    NSString *stack = [[exception callStackSymbols] componentsJoinedByString:@"\n"];
+    NSString *stack = TGIOS6ExceptionStackSymbols(exception);
     NSString *breadcrumbs = [NSString stringWithContentsOfFile:TGIOS6DiagnosticBreadcrumbPath() encoding:NSUTF8StringEncoding error:nil];
     if (breadcrumbs.length > 128 * 1024)
         breadcrumbs = [breadcrumbs substringFromIndex:breadcrumbs.length - 128 * 1024];
@@ -1002,9 +1677,19 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
             TGIOS6WriteSignalNumber(fd, signalInfo != NULL ? signalInfo->si_code : 0);
             write(fd, addressPrefix, sizeof(addressPrefix) - 1);
             TGIOS6WriteHexPointer(fd, signalInfo != NULL ? signalInfo->si_addr : NULL);
+            write(fd, "\nCRASH tl_current=", 18);
+            TGIOS6WriteHexPointer(fd, (const void *)(uintptr_t)(uint32_t)TGTLParserCurrentSignature);
+            write(fd, "\nCRASH tl_last=", 15);
+            TGIOS6WriteHexPointer(fd, (const void *)(uintptr_t)(uint32_t)TGTLParserLastSignature);
+            write(fd, "\nCRASH tl_vector_signature=", 27);
+            TGIOS6WriteHexPointer(fd, (const void *)(uintptr_t)(uint32_t)TGTLParserVectorItemSignature);
+            write(fd, "\nCRASH tl_vector_index=", 23);
+            TGIOS6WriteSignalNumber(fd, TGTLParserVectorItemIndex);
+            write(fd, "\nCRASH tl_vector_count=", 23);
+            TGIOS6WriteSignalNumber(fd, TGTLParserVectorItemCount);
             write(fd, "\n", 1);
 
-            if (context != NULL)
+            if (context != NULL && ((ucontext_t *)context)->uc_mcontext != NULL)
             {
                 ucontext_t *ucontext = (ucontext_t *)context;
 #if defined(__arm__)
@@ -1028,8 +1713,6 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 TGIOS6WriteRegisterLine(fd, "r10", (uintptr_t)ucontext->uc_mcontext->__ss.__r[10]);
                 TGIOS6WriteRegisterLine(fd, "r11", (uintptr_t)ucontext->uc_mcontext->__ss.__r[11]);
                 TGIOS6WriteRegisterLine(fd, "r12", (uintptr_t)ucontext->uc_mcontext->__ss.__r[12]);
-                TGIOS6WriteImageAddressLine(fd, "pc_image", pc);
-                TGIOS6WriteImageAddressLine(fd, "lr_image", lr);
 #else
                 uintptr_t pc = (uintptr_t)ucontext->uc_mcontext->ss.pc;
                 uintptr_t lr = (uintptr_t)ucontext->uc_mcontext->ss.lr;
@@ -1050,41 +1733,46 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 TGIOS6WriteRegisterLine(fd, "r10", (uintptr_t)ucontext->uc_mcontext->ss.r[10]);
                 TGIOS6WriteRegisterLine(fd, "r11", (uintptr_t)ucontext->uc_mcontext->ss.r[11]);
                 TGIOS6WriteRegisterLine(fd, "r12", (uintptr_t)ucontext->uc_mcontext->ss.r[12]);
-                TGIOS6WriteImageAddressLine(fd, "pc_image", pc);
-                TGIOS6WriteImageAddressLine(fd, "lr_image", lr);
 #endif
-                if (TGIOS6ExecutableImageBase != 0 && pc >= TGIOS6ExecutableImageBase && pc < TGIOS6ExecutableImageEnd)
+                TGIOS6WriteSignalStack(fd, pc, lr, sp);
+#elif defined(__arm64__)
+#if __DARWIN_UNIX03
+                const _STRUCT_ARM_THREAD_STATE64 *state = &ucontext->uc_mcontext->__ss;
+                uintptr_t pc = (uintptr_t)state->__pc;
+                uintptr_t lr = (uintptr_t)state->__lr;
+                uintptr_t sp = (uintptr_t)state->__sp;
+                uintptr_t fp = (uintptr_t)state->__fp;
+                const uint64_t *registers = state->__x;
+                TGIOS6WriteRegisterLine(fd, "far", (uintptr_t)ucontext->uc_mcontext->__es.__far);
+                TGIOS6WriteRegisterLine(fd, "esr", (uintptr_t)ucontext->uc_mcontext->__es.__esr);
+                TGIOS6WriteRegisterLine(fd, "cpsr", (uintptr_t)state->__cpsr);
+#else
+                const _STRUCT_ARM_THREAD_STATE64 *state = &ucontext->uc_mcontext->ss;
+                uintptr_t pc = (uintptr_t)state->pc;
+                uintptr_t lr = (uintptr_t)state->lr;
+                uintptr_t sp = (uintptr_t)state->sp;
+                uintptr_t fp = (uintptr_t)state->fp;
+                const uint64_t *registers = state->x;
+                TGIOS6WriteRegisterLine(fd, "far", (uintptr_t)ucontext->uc_mcontext->es.far);
+                TGIOS6WriteRegisterLine(fd, "esr", (uintptr_t)ucontext->uc_mcontext->es.esr);
+                TGIOS6WriteRegisterLine(fd, "cpsr", (uintptr_t)state->cpsr);
+#endif
+                TGIOS6WriteRegisterLine(fd, "pc", pc);
+                TGIOS6WriteRegisterLine(fd, "lr", lr);
+                TGIOS6WriteRegisterLine(fd, "sp", sp);
+                TGIOS6WriteRegisterLine(fd, "fp", fp);
+                for (int i = 0; i < 29; i++)
                 {
-                    TGIOS6WriteRegisterLine(fd, "pc_app_offset", pc - TGIOS6ExecutableImageBase);
-                }
-                if (TGIOS6ExecutableImageBase != 0 && lr >= TGIOS6ExecutableImageBase && lr < TGIOS6ExecutableImageEnd)
-                {
-                    TGIOS6WriteRegisterLine(fd, "lr_app_offset", lr - TGIOS6ExecutableImageBase);
-                }
-                if (sp != 0)
-                {
-                    const uintptr_t *stackWords = (const uintptr_t *)sp;
-                    int stackAppCount = 0;
-                    int stackImageCount = 0;
-                    uintptr_t previousImageCandidate = 0;
-                    for (int i = 0; i < 64; i++)
+                    char name[4] = {'x', (char)('0' + i / 10), (char)('0' + i % 10), 0};
+                    if (i < 10)
                     {
-                        uintptr_t candidate = stackWords[i];
-                        uintptr_t normalizedCandidate = candidate & ~(uintptr_t)1;
-                        TGIOS6WriteRegisterLine(fd, "stack_raw", candidate);
-                        if (TGIOS6ExecutableImageBase != 0 && normalizedCandidate >= TGIOS6ExecutableImageBase && normalizedCandidate < TGIOS6ExecutableImageEnd && stackAppCount < 20)
-                        {
-                            TGIOS6WriteRegisterLine(fd, "stack_app", (uintptr_t)((intptr_t)normalizedCandidate - TGIOS6ExecutableImageSlide));
-                            stackAppCount++;
-                        }
-                        if (stackImageCount < 32 && normalizedCandidate != previousImageCandidate && TGIOS6CrashImageRangeForAddress(normalizedCandidate) != NULL)
-                        {
-                            TGIOS6WriteImageAddressLine(fd, "stack_image", normalizedCandidate);
-                            previousImageCandidate = normalizedCandidate;
-                            stackImageCount++;
-                        }
+                        name[1] = name[2];
+                        name[2] = 0;
                     }
+                    TGIOS6WriteRegisterLine(fd, name, (uintptr_t)registers[i]);
                 }
+                TGIOS6WriteSignalStack(fd, pc, lr, sp);
+                TGIOS6WriteArm64Frames(fd, fp, sp);
 #elif defined(__i386__)
 #if __DARWIN_UNIX03
                 TGIOS6WriteRegisterLine(fd, "pc", (uintptr_t)ucontext->uc_mcontext->__ss.__eip);
@@ -1143,6 +1831,9 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
     }
 
     signal(signalNumber, SIG_DFL);
+    if (signalInfo != NULL && signalInfo->si_code > 0 &&
+        (signalNumber == SIGSEGV || signalNumber == SIGBUS || signalNumber == SIGILL || signalNumber == SIGFPE))
+        return;
     raise(signalNumber);
     _exit(128 + signalNumber);
 }
@@ -1178,6 +1869,11 @@ static void TGIOS6InstallCrashReporter()
     sigaction(SIGBUS, &action, NULL);
     sigaction(SIGILL, &action, NULL);
     sigaction(SIGFPE, &action, NULL);
+#if defined(ONEGRAM_DIAGNOSTICS) && ONEGRAM_DIAGNOSTICS
+    struct sigaction previousPipeAction;
+    if (sigaction(SIGPIPE, NULL, &previousPipeAction) == 0 && previousPipeAction.sa_handler == SIG_DFL)
+        sigaction(SIGPIPE, &action, NULL);
+#endif
 #ifdef SIGTRAP
     sigaction(SIGTRAP, &action, NULL);
 #endif
@@ -1276,7 +1972,9 @@ static void TGIOS6SendPendingCrashReport()
     NSString *localMessage = [NSString stringWithContentsOfFile:localPath encoding:NSUTF8StringEncoding error:nil];
     if (localMessage.length != 0)
     {
-        uintptr_t selectorAddress = TGIOS6CrashRegisterValue(localMessage, @"r1");
+        uintptr_t selectorAddress = TGIOS6CrashRegisterValue(localMessage, @"x1");
+        if (selectorAddress == 0)
+            selectorAddress = TGIOS6CrashRegisterValue(localMessage, @"r1");
         NSString *selectorName = TGIOS6CrashSelectorName(selectorAddress);
         if (selectorName.length != 0)
             localMessage = [localMessage stringByAppendingFormat:@"CRASH selector=%@\n", selectorName];
@@ -1415,7 +2113,7 @@ static void TGIOS6SendLatestSystemCrashReport()
 + (void)setGestureServiceEnabled:(BOOL)arg1;
 
 - (void)dealloc;
-- (id /* block */)gestureHandler;
+- (id )gestureHandler;
 - (id)init;
 - (id)initWithPriority:(int)arg1;
 - (void)setGestureHandler:(void(^)(int a, int b))arg1;
@@ -1457,10 +2155,10 @@ static void TGIOS6SendLatestSystemCrashReport()
     CFAbsoluteTime _ios6VoipLastProactiveTransportRefreshTime;
     CFAbsoluteTime _ios6VoipLastScheduledHealthCheckTime;
     int32_t _ios6VoipLastPrimaryReceiveUptime;
-    UIBackgroundTaskIdentifier _ios6VoipHealthCheckTaskIdentifier;
+    TGIOS3BackgroundTaskIdentifier _ios6VoipHealthCheckTaskIdentifier;
     bool _ios6VoipHealthCheckTaskActive;
     bool _ios6NotificationTransportAllowedForBackgroundSession;
-    UIBackgroundTaskIdentifier _ios6ColdLaunchTaskIdentifier;
+    TGIOS3BackgroundTaskIdentifier _ios6ColdLaunchTaskIdentifier;
     bool _ios6ColdLaunchTaskActive;
     
     TGGroupInviteSheet *_groupInviteSheet;
@@ -1469,6 +2167,7 @@ static void TGIOS6SendLatestSystemCrashReport()
     SVariable *_isActive;
     
     PKPushRegistry *_pushRegistry;
+    bool _ios6LocalNotificationSettingsRegistered;
     SPipe *_localizationUpdatedPipe;
     SPipe *_statusBarPressedPipe;
 }
@@ -1477,7 +2176,7 @@ static void TGIOS6SendLatestSystemCrashReport()
 @property (nonatomic) NSData *pushToken;
 @property (nonatomic, strong) id<TGDeviceTokenListener> deviceTokenListener;
 
-@property (nonatomic) UIBackgroundTaskIdentifier backgroundTaskIdentifier;
+@property (nonatomic) TGIOS3BackgroundTaskIdentifier backgroundTaskIdentifier;
 @property (nonatomic, strong) NSTimer *backgroundTaskExpirationTimer;
 
 @property (nonatomic, strong) NSMutableDictionary *loadedSoundSamples;
@@ -1515,6 +2214,647 @@ static void TGIOS6SendLatestSystemCrashReport()
 
 @end
 
+static NSString *TGLoginAppTitle(void)
+{
+    NSString *title = [[[NSBundle mainBundle] localizedInfoDictionary] objectForKey:@"CFBundleDisplayName"];
+    if (title.length == 0)
+        title = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"];
+    return title.length == 0 ? @"Telegram" : title;
+}
+
+static NSString *TGLoginTourText(NSString *text)
+{
+    NSString *result = text ?: @"";
+    result = [result stringByReplacingOccurrencesOfString:@"Telegram" withString:TGLoginAppTitle()];
+    result = [result stringByReplacingOccurrencesOfString:@"**" withString:@""];
+    return result;
+}
+
+static UIImage *TGLoginTourImage(NSString *name, size_t maximumPixelSize)
+{
+    NSString *path = [[NSBundle mainBundle] pathForResource:name ofType:@"png" inDirectory:@"Tour.bundle"];
+    if (path.length == 0)
+        return nil;
+    if (OGPlatformUsesConstrainedBackgroundExecution())
+        return OGPlatformThumbnailFromImageFile(path, maximumPixelSize);
+    return [UIImage imageWithContentsOfFile:path];
+}
+
+static UIButton *TGLoginPrimaryButton(NSString *title)
+{
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    button.backgroundColor = UIColorRGB(0x168de2);
+    button.layer.cornerRadius = 6.0f;
+    button.layer.masksToBounds = true;
+    button.showsTouchWhenHighlighted = OGPlatformControlAnimationsEnabled();
+    [button setTitle:title forState:UIControlStateNormal];
+    [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    button.titleLabel.font = TGMediumSystemFontOfSize(18.0f);
+    return button;
+}
+
+static NSString *TGLoginQRBase64UrlString(NSData *data)
+{
+    if (data.length == 0)
+        return @"";
+
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger length = data.length;
+    NSMutableString *result = [[NSMutableString alloc] initWithCapacity:((length + 2) / 3) * 4];
+    for (NSUInteger i = 0; i < length; i += 3)
+    {
+        uint32_t value = ((uint32_t)bytes[i]) << 16;
+        NSUInteger remaining = length - i;
+        if (remaining > 1)
+            value |= ((uint32_t)bytes[i + 1]) << 8;
+        if (remaining > 2)
+            value |= bytes[i + 2];
+
+        [result appendFormat:@"%c", table[(value >> 18) & 63]];
+        [result appendFormat:@"%c", table[(value >> 12) & 63]];
+        if (remaining > 1)
+            [result appendFormat:@"%c", table[(value >> 6) & 63]];
+        if (remaining > 2)
+            [result appendFormat:@"%c", table[value & 63]];
+    }
+
+    [result replaceOccurrencesOfString:@"+" withString:@"-" options:0 range:NSMakeRange(0, result.length)];
+    [result replaceOccurrencesOfString:@"/" withString:@"_" options:0 range:NSMakeRange(0, result.length)];
+    return result;
+}
+
+static NSString *TGLoginQRCodeJavaScript(void)
+{
+    static NSString *script = nil;
+    if (script == nil)
+    {
+        static const char source[] =
+#include "../thirdparty/RMIntro/platform/ios/TGIOS6QRCodeJavaScript.inc"
+        ;
+        script = [[NSString alloc] initWithBytes:source length:sizeof(source) - 1 encoding:NSUTF8StringEncoding];
+    }
+    return script;
+}
+
+@interface TGUIKitQRLoginController : UIViewController
+{
+    UILabel *_titleLabel;
+    UILabel *_helpLabel;
+    UIView *_qrContainerView;
+    UIWebView *_qrWebView;
+    UILabel *_statusLabel;
+    UIButton *_phoneButton;
+    NSTimer *_refreshTimer;
+    NSObject *_requestToken;
+    bool _requestInProgress;
+    bool _refreshPending;
+    bool _hasQrCode;
+    bool _passwordControllerPresented;
+}
+@end
+
+@implementation TGUIKitQRLoginController
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+    {
+        TGIOS6SetQRLoginFlowActive(true);
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(loginTokenUpdated:) name:TGLoginTokenUpdatedNotification object:nil];
+    }
+    return self;
+}
+
+- (void)loadView
+{
+    [super loadView];
+    self.view.backgroundColor = [UIColor whiteColor];
+
+    _titleLabel = [[UILabel alloc] init];
+    _titleLabel.backgroundColor = [UIColor clearColor];
+    _titleLabel.textAlignment = NSTextAlignmentCenter;
+    _titleLabel.textColor = UIColorRGB(0x222222);
+    _titleLabel.font = TGMediumSystemFontOfSize(25.0f);
+    _titleLabel.text = TGLocalized(@"Login.QRTitle");
+    [self.view addSubview:_titleLabel];
+
+    _helpLabel = [[UILabel alloc] init];
+    _helpLabel.backgroundColor = [UIColor clearColor];
+    _helpLabel.textAlignment = NSTextAlignmentCenter;
+    _helpLabel.textColor = UIColorRGB(0x777777);
+    _helpLabel.font = TGSystemFontOfSize(14.0f);
+    _helpLabel.numberOfLines = 0;
+    _helpLabel.text = TGLocalized(@"Login.QRHelp");
+    [self.view addSubview:_helpLabel];
+
+    _qrContainerView = [[UIView alloc] init];
+    _qrContainerView.backgroundColor = [UIColor whiteColor];
+    _qrContainerView.layer.borderWidth = 1.0f;
+    _qrContainerView.layer.borderColor = UIColorRGB(0xe3e6e8).CGColor;
+    _qrContainerView.layer.cornerRadius = 8.0f;
+    _qrContainerView.clipsToBounds = true;
+    [self.view addSubview:_qrContainerView];
+
+    _qrWebView = [[UIWebView alloc] init];
+    _qrWebView.backgroundColor = [UIColor whiteColor];
+    _qrWebView.opaque = false;
+    _qrWebView.userInteractionEnabled = false;
+    _qrWebView.hidden = true;
+    _qrWebView.scalesPageToFit = false;
+    [_qrContainerView addSubview:_qrWebView];
+
+    _statusLabel = [[UILabel alloc] init];
+    _statusLabel.backgroundColor = [UIColor clearColor];
+    _statusLabel.textColor = UIColorRGB(0x8a8a8a);
+    _statusLabel.font = TGSystemFontOfSize(13.0f);
+    _statusLabel.textAlignment = NSTextAlignmentCenter;
+    _statusLabel.text = TGLocalized(@"Login.QRLoading");
+    [self.view addSubview:_statusLabel];
+
+    _phoneButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    [_phoneButton setTitle:TGLocalized(@"Login.PhoneLogin") forState:UIControlStateNormal];
+    [_phoneButton setTitleColor:TGAccentColor() forState:UIControlStateNormal];
+    _phoneButton.titleLabel.font = TGMediumSystemFontOfSize(17.0f);
+    _phoneButton.showsTouchWhenHighlighted = OGPlatformControlAnimationsEnabled();
+    [_phoneButton addTarget:self action:@selector(phoneButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_phoneButton];
+
+    [self layoutQrLoginViews];
+}
+
+- (void)layoutQrLoginViews
+{
+    CGFloat width = self.view.bounds.size.width;
+    CGFloat height = self.view.bounds.size.height;
+    bool compact = height <= 480.0f;
+
+    CGFloat titleTop = compact ? 4.0f : 14.0f;
+    CGFloat titleHeight = compact ? 30.0f : 34.0f;
+    _titleLabel.frame = CGRectMake(16.0f, titleTop, width - 32.0f, titleHeight);
+
+    CGFloat helpTop = CGRectGetMaxY(_titleLabel.frame) + (compact ? 2.0f : 4.0f);
+    CGFloat helpHeight = compact ? 34.0f : 44.0f;
+    _helpLabel.frame = CGRectMake(22.0f, helpTop, width - 44.0f, helpHeight);
+
+    CGFloat qrSize = MIN(width - (compact ? 116.0f : 76.0f), compact ? 158.0f : 190.0f);
+    qrSize = MAX(132.0f, qrSize);
+    CGFloat qrTop = CGRectGetMaxY(_helpLabel.frame) + (compact ? 4.0f : 10.0f);
+    _qrContainerView.frame = CGRectMake(floor((width - qrSize) / 2.0f), qrTop, qrSize, qrSize);
+    _qrWebView.frame = _qrContainerView.bounds;
+
+    CGFloat statusTop = CGRectGetMaxY(_qrContainerView.frame) + 3.0f;
+    _statusLabel.frame = CGRectMake(16.0f, statusTop, width - 32.0f, compact ? 18.0f : 20.0f);
+
+    CGFloat phoneTop = CGRectGetMaxY(_statusLabel.frame) + (compact ? 1.0f : 6.0f);
+    CGFloat phoneHeight = compact ? 40.0f : 44.0f;
+    _phoneButton.frame = CGRectMake(16.0f, phoneTop, width - 32.0f, phoneHeight);
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self.navigationController setNavigationBarHidden:false animated:false];
+    TGIOS6SetQRLoginFlowActive(true);
+    [self layoutQrLoginViews];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    if (_passwordControllerPresented)
+    {
+        _passwordControllerPresented = false;
+        return;
+    }
+    [self refreshQrLoginToken];
+}
+
+- (void)loginTokenUpdated:(__unused NSNotification *)notification
+{
+    [self refreshQrLoginToken];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    [_refreshTimer invalidate];
+    _refreshTimer = nil;
+    if (_requestToken != nil)
+    {
+        [TGTelegraphInstance cancelRequestByToken:_requestToken softCancel:true];
+        _requestToken = nil;
+    }
+    _requestInProgress = false;
+}
+
+- (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
+{
+    [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
+    [self layoutQrLoginViews];
+}
+
+- (bool)renderQrLoginToken:(NSData *)token targetSize:(CGFloat)targetSize
+{
+    if (token.length == 0)
+        return false;
+
+    NSString *payload = [NSString stringWithFormat:@"tg://login?token=%@", TGLoginQRBase64UrlString(token)];
+    NSString *script = TGLoginQRCodeJavaScript();
+    if (script.length == 0)
+        return false;
+
+    int pixelSize = MAX(120, (int)floor(targetSize));
+    NSString *html = [NSString stringWithFormat:
+        @"<html><head><meta name='viewport' content='width=%d,initial-scale=1.0,maximum-scale=1.0,user-scalable=no'><style>html,body{margin:0;padding:0;width:%dpx;height:%dpx;background:#fff;overflow:hidden}#wrap{position:relative;width:%dpx;height:%dpx;overflow:hidden;background:#fff}canvas{position:absolute;display:block}</style></head><body><div id='wrap'><canvas id='q'></canvas></div><script>%@;var q=new QRCode(0,QRErrorCorrectLevel.M);q.addData('%@');q.make();var n=q.getModuleCount(),quiet=4,scale=Math.max(1,Math.floor(%d/(n+quiet*2))),size=(n+quiet*2)*scale,c=document.getElementById('q'),x=c.getContext('2d'),left=Math.floor((%d-size)/2),top=Math.floor((%d-size)/2);c.width=size;c.height=size;c.style.left=left+'px';c.style.top=top+'px';x.fillStyle='#fff';x.fillRect(0,0,size,size);x.fillStyle='#000';for(var r=0;r<n;r++){for(var col=0;col<n;col++){if(q.isDark(r,col))x.fillRect((col+quiet)*scale,(r+quiet)*scale,scale,scale);}}</script></body></html>",
+        pixelSize, pixelSize, pixelSize, pixelSize, pixelSize, script, payload, pixelSize, pixelSize, pixelSize];
+
+    [_qrWebView loadHTMLString:html baseURL:nil];
+    _qrWebView.hidden = false;
+    return true;
+}
+
+- (void)scheduleRefreshAtExpires:(int32_t)expires
+{
+    [_refreshTimer invalidate];
+    _refreshTimer = nil;
+    NSTimeInterval remoteNow = [[TGTelegramNetworking instance] approximateRemoteTime];
+    NSTimeInterval delay = expires > 0 ? ((NSTimeInterval)expires - remoteNow - 3.0) : 20.0;
+    delay = MAX(5.0, MIN(25.0, delay));
+    _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:delay target:self selector:@selector(refreshTimerFired) userInfo:nil repeats:false];
+}
+
+- (void)refreshTimerFired
+{
+    _refreshTimer = nil;
+    [self refreshQrLoginToken];
+}
+
+- (void)refreshQrLoginToken
+{
+    if (!self.isViewLoaded || self.view.window == nil)
+        return;
+
+    if (_requestInProgress)
+    {
+        _refreshPending = true;
+        return;
+    }
+
+    TGTelegramNetworking *networking = [TGTelegramNetworking instance];
+    [networking prepareForUnauthorizedRequests];
+
+    _requestInProgress = true;
+    _refreshPending = false;
+    if (!_hasQrCode)
+        _statusLabel.text = TGLocalized(@"Login.QRLoading");
+
+    __unsafe_unretained TGUIKitQRLoginController *weakSelf = self;
+    _requestToken = [TGTelegraphInstance doExportLoginTokenWithCompletion:^(NSData *token, int32_t expires, bool authorized, NSString *errorText)
+    {
+        TGDispatchOnMainThread(^{
+            __strong TGUIKitQRLoginController *strongSelf = weakSelf;
+            if (strongSelf == nil)
+                return;
+
+            strongSelf->_requestToken = nil;
+            strongSelf->_requestInProgress = false;
+
+            if (authorized)
+            {
+                TGIOS6SetQRLoginFlowActive(false);
+                strongSelf->_statusLabel.text = TGLocalized(@"Login.QRAuthorized");
+                [strongSelf->_refreshTimer invalidate];
+                strongSelf->_refreshTimer = nil;
+                [TGAppDelegateInstance presentMainController];
+                return;
+            }
+
+            if (token.length != 0)
+            {
+                bool rendered = [strongSelf renderQrLoginToken:token targetSize:strongSelf->_qrContainerView.bounds.size.width];
+                if (rendered)
+                {
+                    strongSelf->_hasQrCode = true;
+                    strongSelf->_statusLabel.text = @"";
+                    [strongSelf scheduleRefreshAtExpires:expires];
+                }
+                else
+                {
+                    strongSelf->_statusLabel.text = TGLocalized(@"Login.QRError");
+                    [strongSelf scheduleRefreshAtExpires:0];
+                }
+            }
+            else if ([errorText hasPrefix:@"SESSION_PASSWORD_NEEDED"])
+            {
+                [strongSelf->_refreshTimer invalidate];
+                strongSelf->_refreshTimer = nil;
+                strongSelf->_refreshPending = false;
+                strongSelf->_statusLabel.text = @"";
+                if (!strongSelf->_passwordControllerPresented)
+                {
+                    strongSelf->_passwordControllerPresented = true;
+                    TGLoginPasswordController *passwordController = [[TGLoginPasswordController alloc] initForQrLogin];
+                    [strongSelf.navigationController pushViewController:passwordController animated:true];
+                }
+                return;
+            }
+            else if ([errorText isEqualToString:@"AUTH_RESTART"])
+            {
+                strongSelf->_statusLabel.text = TGLocalized(@"Login.QRLoading");
+                [strongSelf->_refreshTimer invalidate];
+                strongSelf->_refreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:strongSelf selector:@selector(refreshTimerFired) userInfo:nil repeats:false];
+            }
+            else
+            {
+                strongSelf->_statusLabel.text = TGLocalized(@"Login.QRError");
+                [strongSelf scheduleRefreshAtExpires:0];
+            }
+
+            if (strongSelf->_refreshPending)
+            {
+                strongSelf->_refreshPending = false;
+                [strongSelf refreshQrLoginToken];
+            }
+        });
+    }];
+}
+
+- (void)phoneButtonPressed
+{
+    TGIOS6SetQRLoginFlowActive(false);
+    [self.navigationController pushViewController:[[TGLoginPhoneController alloc] init] animated:true];
+}
+
+- (void)dealloc
+{
+    TGIOS6SetQRLoginFlowActive(false);
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [_refreshTimer invalidate];
+    if (_requestToken != nil)
+        [TGTelegraphInstance cancelRequestByToken:_requestToken softCancel:true];
+}
+
+@end
+
+UIViewController *TGCreateLoginQRController(void)
+{
+    Class controllerClass = NSClassFromString(@"TGIOS6QRLoginController");
+    if (controllerClass != Nil)
+        return [[controllerClass alloc] init];
+    return [[TGUIKitQRLoginController alloc] init];
+}
+
+@interface TGUIKitLoginIntroController : UIViewController <UIScrollViewDelegate>
+{
+    UIScrollView *_pageScrollView;
+    UIPageControl *_pageControl;
+    UIButton *_startButton;
+    UIButton *_onegramCoreButton;
+    bool _onegramCoreButtonVisible;
+    NSArray *_imageNames;
+    NSMutableIndexSet *_loadedImagePages;
+    NSArray *_pageViews;
+    NSInteger _currentPage;
+}
+@end
+
+@interface TGUIKitLoginIntroController (Private)
+- (void)loadImageForPage:(NSUInteger)pageIndex;
+- (void)prefetchRemainingImages;
+- (void)updateOnegramCoreButton;
+- (void)onegramCoreButtonPressed;
+@end
+
+@implementation TGUIKitLoginIntroController
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        self.wantsFullScreenLayout = true;
+    return self;
+}
+
+- (void)loadView
+{
+    [super loadView];
+    self.view.backgroundColor = [UIColor whiteColor];
+
+    _pageScrollView = [[UIScrollView alloc] init];
+    _pageScrollView.backgroundColor = [UIColor whiteColor];
+    _pageScrollView.pagingEnabled = true;
+    _pageScrollView.showsHorizontalScrollIndicator = false;
+    _pageScrollView.showsVerticalScrollIndicator = false;
+    _pageScrollView.bounces = true;
+    _pageScrollView.delegate = self;
+    [self.view addSubview:_pageScrollView];
+
+    NSString *appTitle = TGLoginAppTitle();
+    NSArray *titles = @[appTitle, TGLocalized(@"Tour.Title2"), TGLocalized(@"Tour.Title6"), TGLocalized(@"Tour.Title3"), TGLocalized(@"Tour.Title4"), TGLocalized(@"Tour.Title5")];
+    NSArray *texts = @[TGLocalized(@"Tour.Text1"), TGLocalized(@"Tour.Text2"), TGLocalized(@"Tour.Text6"), TGLocalized(@"Tour.Text3"), TGLocalized(@"Tour.Text4"), TGLocalized(@"Tour.Text5")];
+    _imageNames = @[@"TourLogo@2x", @"TourIcon1@2x", @"TourIcon5@2x", @"TourIcon2@2x", @"TourIcon3@2x", @"TourIcon4@2x"];
+    _loadedImagePages = [[NSMutableIndexSet alloc] init];
+    NSMutableArray *pages = [[NSMutableArray alloc] initWithCapacity:titles.count];
+
+    for (NSUInteger i = 0; i < titles.count; i++)
+    {
+        UIView *page = [[UIView alloc] init];
+        page.backgroundColor = [UIColor whiteColor];
+
+        UIImageView *imageView = [[UIImageView alloc] initWithImage:nil];
+        imageView.tag = 1;
+        imageView.contentMode = UIViewContentModeScaleAspectFit;
+        [page addSubview:imageView];
+
+        UILabel *titleLabel = [[UILabel alloc] init];
+        titleLabel.tag = 2;
+        titleLabel.backgroundColor = [UIColor clearColor];
+        titleLabel.textAlignment = NSTextAlignmentCenter;
+        titleLabel.textColor = UIColorRGB(0x222222);
+        titleLabel.font = TGMediumSystemFontOfSize(27.0f);
+        titleLabel.text = TGLoginTourText([titles objectAtIndex:i]);
+        [page addSubview:titleLabel];
+
+        UILabel *descriptionLabel = [[UILabel alloc] init];
+        descriptionLabel.tag = 3;
+        descriptionLabel.backgroundColor = [UIColor clearColor];
+        descriptionLabel.textAlignment = NSTextAlignmentCenter;
+        descriptionLabel.textColor = UIColorRGB(0x777777);
+        descriptionLabel.font = TGSystemFontOfSize(16.0f);
+        descriptionLabel.numberOfLines = 0;
+        descriptionLabel.text = TGLoginTourText([texts objectAtIndex:i]);
+        [page addSubview:descriptionLabel];
+
+        [_pageScrollView addSubview:page];
+        [pages addObject:page];
+    }
+    _pageViews = pages;
+
+    _pageControl = [[UIPageControl alloc] init];
+    _pageControl.numberOfPages = _pageViews.count;
+    _pageControl.currentPage = 0;
+    [_pageControl addTarget:self action:@selector(pageControlChanged) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:_pageControl];
+
+    _startButton = TGLoginPrimaryButton(TGLocalized(@"Tour.StartButton"));
+    [_startButton addTarget:self action:@selector(startButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_startButton];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramCoreStateChanged:) name:OGOnegramCoreDidChangeNotification object:nil];
+    _onegramCoreButton = [[UIButton alloc] initWithFrame:CGRectZero];
+    _onegramCoreButton.adjustsImageWhenHighlighted = false;
+    [_onegramCoreButton addTarget:self action:@selector(onegramCoreButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_onegramCoreButton];
+    [self updateOnegramCoreButton];
+
+    [self layoutIntroViews];
+    [self loadImageForPage:0];
+    [self prefetchRemainingImages];
+}
+
+- (void)loadImageForPage:(NSUInteger)pageIndex
+{
+    if (pageIndex >= _pageViews.count || pageIndex >= _imageNames.count || [_loadedImagePages containsIndex:pageIndex])
+        return;
+
+    [_loadedImagePages addIndex:pageIndex];
+    UIView *page = [_pageViews objectAtIndex:pageIndex];
+    UIImageView *imageView = (UIImageView *)[page viewWithTag:1];
+    NSString *name = [_imageNames objectAtIndex:pageIndex];
+    size_t maximumPixelSize = (size_t)ceilf(MAX(imageView.bounds.size.width, imageView.bounds.size.height));
+    UIImage *image = TGLoginTourImage(name, maximumPixelSize);
+    if (image != nil)
+        imageView.image = image;
+}
+
+- (void)prefetchRemainingImages
+{
+    if (!OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        for (NSUInteger i = 1; i < _pageViews.count; i++)
+            [self loadImageForPage:i];
+    }
+}
+
+- (void)layoutIntroViews
+{
+    CGFloat width = self.view.bounds.size.width;
+    CGFloat height = self.view.bounds.size.height;
+    CGFloat statusBarHeight = iosMajorVersion() >= 7 ? 0.0f : 20.0f;
+    _onegramCoreButton.frame = CGRectMake(width - 52.0f, statusBarHeight + 4.0f, 44.0f, 44.0f);
+    CGFloat buttonHeight = 46.0f;
+    CGFloat buttonBottom = height <= 480.0f ? 14.0f : 22.0f;
+    _startButton.frame = CGRectMake(20.0f, height - buttonBottom - buttonHeight, width - 40.0f, buttonHeight);
+    _pageControl.frame = CGRectMake(20.0f, CGRectGetMinY(_startButton.frame) - 34.0f, width - 40.0f, 20.0f);
+
+    CGFloat scrollHeight = CGRectGetMinY(_pageControl.frame) - 2.0f;
+    _pageScrollView.frame = CGRectMake(0.0f, 0.0f, width, scrollHeight);
+    _pageScrollView.contentSize = CGSizeMake(width * _pageViews.count, scrollHeight);
+
+    CGFloat imageTop = height <= 480.0f ? 34.0f : 54.0f;
+    CGFloat imageHeight = height <= 480.0f ? 150.0f : 190.0f;
+    CGFloat titleTop = imageTop + imageHeight + (height <= 480.0f ? 8.0f : 18.0f);
+    CGFloat descriptionTop = titleTop + 39.0f;
+
+    for (NSUInteger i = 0; i < _pageViews.count; i++)
+    {
+        UIView *page = [_pageViews objectAtIndex:i];
+        page.frame = CGRectMake(width * i, 0.0f, width, scrollHeight);
+        UIImageView *imageView = (UIImageView *)[page viewWithTag:1];
+        UILabel *titleLabel = (UILabel *)[page viewWithTag:2];
+        UILabel *descriptionLabel = (UILabel *)[page viewWithTag:3];
+        imageView.frame = CGRectMake(42.0f, imageTop, width - 84.0f, imageHeight);
+        titleLabel.frame = CGRectMake(18.0f, titleTop, width - 36.0f, 34.0f);
+        descriptionLabel.frame = CGRectMake(24.0f, descriptionTop, width - 48.0f, MAX(44.0f, scrollHeight - descriptionTop - 6.0f));
+    }
+
+    _pageScrollView.contentOffset = CGPointMake(width * _currentPage, 0.0f);
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self.navigationController setNavigationBarHidden:true animated:false];
+    _onegramCoreButtonVisible = true;
+    [self updateOnegramCoreButton];
+    [self layoutIntroViews];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    _onegramCoreButtonVisible = false;
+    _onegramCoreButton.hidden = true;
+    [self.navigationController setNavigationBarHidden:false animated:false];
+}
+
+- (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
+{
+    [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
+    [self layoutIntroViews];
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+    if (scrollView.bounds.size.width <= 0.0f)
+        return;
+    NSInteger page = (NSInteger)floor((scrollView.contentOffset.x + scrollView.bounds.size.width * 0.5f) / scrollView.bounds.size.width);
+    page = MAX(0, MIN((NSInteger)_pageViews.count - 1, page));
+    _currentPage = page;
+    [self loadImageForPage:(NSUInteger)page];
+    _pageControl.currentPage = page;
+}
+
+- (void)pageControlChanged
+{
+    _currentPage = _pageControl.currentPage;
+    [self loadImageForPage:(NSUInteger)_currentPage];
+    [_pageScrollView setContentOffset:CGPointMake(_pageScrollView.bounds.size.width * _currentPage, 0.0f) animated:true];
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:OGOnegramCoreDidChangeNotification object:nil];
+}
+
+- (void)startButtonPressed
+{
+    [self.navigationController pushViewController:TGCreateLoginQRController() animated:true];
+}
+
+- (void)updateOnegramCoreButton
+{
+    _onegramCoreButton.hidden = !_onegramCoreButtonVisible || TGTelegraphInstance.clientUserId != 0;
+    bool enabled = [[TGTelegramNetworking instance] onegramCoreMode] != OGOnegramCoreModeNone;
+    [_onegramCoreButton setImage:[TGOnegramCoreController lockImageEnabled:enabled highlighted:false] forState:UIControlStateNormal];
+    [_onegramCoreButton setImage:[TGOnegramCoreController lockImageEnabled:enabled highlighted:true] forState:UIControlStateHighlighted];
+    _onegramCoreButton.accessibilityLabel = @"Onegram Core";
+    _onegramCoreButton.accessibilityValue = [TGOnegramCoreController statusText];
+}
+
+- (void)onegramCoreButtonPressed
+{
+    if (_onegramCoreButton.hidden) return;
+    [TGOnegramCoreController presentFromViewController:self];
+}
+
+- (void)onegramCoreStateChanged:(NSNotification *)notification
+{
+    [self updateOnegramCoreButton];
+}
+
+@end
+
+static UIViewController *TGCreateLoginEntryController(void)
+{
+    Class introClass = NSClassFromString(@"RMIntroViewController");
+    if (introClass != Nil && OGPlatformSupportsModernLoginIntro())
+        return [[introClass alloc] init];
+    return [[TGUIKitLoginIntroController alloc] init];
+}
+
 @implementation TGAppDelegate
 
 static NSString *TGAppDelegateDocumentsPathCompat()
@@ -1547,9 +2887,9 @@ static NSUserDefaults *TGAppDelegateUserDefaultsCompat()
         _finishedLaunching = [[SVariable alloc] init];
         _isActive = [[SVariable alloc] init];
         [_isActive set:[SSignal single:@true]];
-        _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-        _ios6VoipHealthCheckTaskIdentifier = UIBackgroundTaskInvalid;
-        _ios6ColdLaunchTaskIdentifier = UIBackgroundTaskInvalid;
+        _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+        _ios6VoipHealthCheckTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+        _ios6ColdLaunchTaskIdentifier = TGIOS3BackgroundTaskInvalid;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6PrimaryTransportReceivedData:) name:@"TGIOS6PrimaryTransportReceivedData" object:nil];
     }
     return self;
@@ -1559,9 +2899,8 @@ static NSUserDefaults *TGAppDelegateUserDefaultsCompat()
 {
     if (_loginNavigationController == nil)
     {
-        UIViewController *rootController = [[RMIntroViewController alloc] init];
-        TGLog(@"QR login root=RMIntro bundle=%@", [[NSBundle mainBundle] bundleIdentifier]);
-        
+        UIViewController *rootController = TGCreateLoginEntryController();
+        TGLog(@"AUTH login.entry=%@", NSStringFromClass([rootController class]));
         _loginNavigationController = [TGNavigationController navigationControllerWithControllers:@[rootController] navigationBarClass:[TGTransparentNavigationBar class] inhibitPresentation:true];
         _loginNavigationController.restrictLandscape = !TGIsPad();
         _loginNavigationController.disableInteractiveKeyboardTransition = true;
@@ -1650,9 +2989,30 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
+    NSDictionary *buildInfo = [[NSBundle mainBundle] infoDictionary];
+    TGLog(@"ONEGRAM build=%@ arch=%@ diagnostics=%d transport=%s",
+          [buildInfo objectForKey:@"OGOnegramBuildIdentifier"] ?: @"unrecorded",
+          [buildInfo objectForKey:@"OGOnegramBuildArchitecture"] ?: @"unrecorded",
+          [[buildInfo objectForKey:@"OGOnegramBuildDiagnostics"] boolValue], OGDanteSocketRevision());
+#if defined(ONEGRAM_DIAGNOSTICS)
+    TGStartMainThreadStallMonitor();
+#endif
+    TGEarlyLaunchPerf(@"didFinish.enter");
+    OGPlatformInstallUIKitGuards();
+    TGEarlyLaunchPerf(@"didFinish.uikitGuards");
     bool ios6ColdBackgroundApplicationLaunch =
-    [[UIDevice currentDevice].systemVersion intValue] <= 6 &&
+    OGPlatformSupportsBackgroundVoipTransport() &&
     application.applicationState == UIApplicationStateBackground;
+    if (!ios6ColdBackgroundApplicationLaunch)
+    {
+        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityMaintenance, ^
+        {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+            {
+                [TGStickersSignals prewarmCachedStickerPacks];
+            });
+        });
+    }
     
     bool ios6ColdBackgroundLaunch =
     ios6ColdBackgroundApplicationLaunch &&
@@ -1662,7 +3022,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     {
         _inBackground = true;
         _ios6NotificationTransportAllowedForBackgroundSession = false;
-        [application clearKeepAliveTimeout];
+        TGIOS3ClearKeepAliveTimeout(application);
     }
     
     if (ios6ColdBackgroundLaunch)
@@ -1670,8 +3030,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         _inBackground = true;
         _ios6NotificationTransportAllowedForBackgroundSession = true;
         
-        __block UIBackgroundTaskIdentifier coldLaunchTaskIdentifier = UIBackgroundTaskInvalid;
-        coldLaunchTaskIdentifier = [application beginBackgroundTaskWithExpirationHandler:^
+        __block TGIOS3BackgroundTaskIdentifier coldLaunchTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+        coldLaunchTaskIdentifier = TGIOS3BeginBackgroundTask(application, ^
                                     {
                                         IOS6NotificationProbe(@"LEASE", @"cold_launch_expiration id=%d", (int)coldLaunchTaskIdentifier);
                                         
@@ -1681,15 +3041,15 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                             dispatch_async(dispatch_get_main_queue(), ^{
                                                 [self ios6EndColdLaunchTask];
                                             });
-                                    }];
+                                    });
         
-        if (coldLaunchTaskIdentifier != UIBackgroundTaskInvalid)
+        if (coldLaunchTaskIdentifier != TGIOS3BackgroundTaskInvalid)
         {
             _ios6ColdLaunchTaskIdentifier = coldLaunchTaskIdentifier;
             _ios6ColdLaunchTaskActive = true;
         }
         
-        BOOL provisionalKeepAliveInstalled = [application setKeepAliveTimeout:600.0 handler:^
+        BOOL provisionalKeepAliveInstalled = TGIOS3SetKeepAliveTimeout(application, 600.0, ^
                                               {
                                                   void (^wakeBlock)(void) = ^
                                                   {
@@ -1704,18 +3064,17 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                                       wakeBlock();
                                                   else
                                                       dispatch_async(dispatch_get_main_queue(), wakeBlock);
-                                              }];
+                                              });
         
         IOS6NotificationProbe(@"LIFECYCLE",
                               @"cold_launch_guard task=%d keepAlive=%d remaining=%.1f",
                               (int)coldLaunchTaskIdentifier,
                               provisionalKeepAliveInstalled ? 1 : 0,
-                              application.backgroundTimeRemaining);
+                              TGIOS3BackgroundTimeRemaining(application));
     }
     
     TGIOS6InstallCrashReporter();
-    if (TGIOS6ShouldExitForRemoteMinimumVersion())
-        _exit(0);
+    TGEarlyLaunchPerf(@"didFinish.crashReporter");
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
     if (iosMajorVersion() >= 9) {
@@ -1729,13 +3088,23 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [LegacyComponentsGlobals setProvider:[[TGLegacyComponentsGlobalsProvider alloc] init]];
     [TGViewController setDefaultContext:[TGLegacyComponentsContext shared]];
     [TGNavigationBar setMusicPlayerProvider:[[TGNavigationBarMusicPlayerProvider alloc] init]];
+    TGEarlyLaunchPerf(@"didFinish.legacyGlobals");
+    TGLocalization *launchLocalization = effectiveLocalization();
+    void (^preloadLaunchFonts)(void) = ^
+    {
+        [launchLocalization preloadFallback];
+        OGPlatformTextWarmFallbackFonts();
+    };
+    if (OGPlatformUsesConstrainedBackgroundExecution())
+        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityUtility, preloadLaunchFonts);
+    else
+        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, preloadLaunchFonts);
     
     TGIsRetina();
     TGLogSetEnabled([self enableLogging]);
 
-    TGIOS6PerfLogAppStart();
     
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (OGPlatformSupportsBackgroundVoipTransport())
     {
         IOS6NotificationProbe(@"SESSION", @"launch version=%@ build=%@ state=%d",
                               [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?",
@@ -1743,8 +3112,20 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                               (int)application.applicationState);
     }
     
-    TGIOS6SendPendingCrashReport();
-    TGIOS6SendLatestSystemCrashReport();
+    if (OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityMaintenance, ^
+        {
+            TGIOS6SendPendingCrashReport();
+            TGIOS6SendLatestSystemCrashReport();
+        });
+    }
+    else
+    {
+        TGIOS6SendPendingCrashReport();
+        TGIOS6SendLatestSystemCrashReport();
+    }
+    TGEarlyLaunchPerf(@"didFinish.crashReportsSent");
 
     if ([TGAppDelegate respondsToSelector:@selector(movePathsToContainer)])
         [TGAppDelegate movePathsToContainer];
@@ -1753,6 +3134,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if (documentsDirectory.length != 0)
     {
         NSURL *documentsURL = [NSURL fileURLWithPath:documentsDirectory];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50100
         if (&NSURLIsExcludedFromBackupKey != NULL && [documentsURL respondsToSelector:@selector(setResourceValue:forKey:error:)])
         {
             @try
@@ -1763,7 +3145,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             {
             }
         }
-        else if (iosMajorVersion() == 5)
+        else
+#endif
+        if (iosMajorVersion() == 5)
         {
             const char *filePath = [documentsDirectory fileSystemRepresentation];
             if (filePath != NULL)
@@ -1793,6 +3177,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [TGMessage registerMediaAttachmentParser:TGGameAttachmentType parser:[[TGGameMediaAttachment alloc] init]];
     [TGMessage registerMediaAttachmentParser:TGInvoiceMediaAttachmentType parser:[[TGInvoiceMediaAttachment alloc] init]];
     [TGMessage registerMediaAttachmentParser:TGAuthorSignatureMediaAttachmentType parser:[[TGAuthorSignatureMediaAttachment alloc] init]];
+    [TGMessage registerMediaAttachmentParser:TGRichMessageMediaAttachmentType parser:[[TGRichMessageMediaAttachment alloc] init]];
+    [TGMessage registerMediaAttachmentParser:TGPollMediaAttachmentType parser:[[TGPollMediaAttachment alloc] init]];
+    TGEarlyLaunchPerf(@"didFinish.mediaParsers");
     
     [TGDatabase setPasswordRequiredBlock:^TGDatabasePasswordCheckResultBlock (void (^verifyBlock)(NSString *), bool simple)
     {
@@ -1893,14 +3280,14 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             });
         };
     }];
-    __block TGProgressWindow *progressWindow = nil;
     [TGDatabase setUpgradingBlock:^TGDatabaseUpgradeCompletedBlock ()
     {
+        if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
+            return nil;
+
+        __block TGProgressWindow *progressWindow = nil;
         TGDispatchOnMainThread(^
         {
-            if (progressWindow != nil) {
-                [progressWindow dismiss:false];
-            }
             progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
             [progressWindow show:true];
         });
@@ -1916,8 +3303,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     [TGDatabase setLiveMessagesDispatchPath:@"/tg/conversations"];
     [TGDatabase setLiveUnreadCountDispatchPath:@"/tg/unreadCount"];
+    TGEarlyLaunchPerf(@"didFinish.databaseHooks");
 
+#if !defined(ONEGRAM_ARMV6)
     [[TGDatabase instance] markAllPendingMessagesAsFailed];
+#endif
 
     _deviceProximityListeners = [[TGHolderSet alloc] init];
     _deviceProximityListeners.emptyStateChanged = ^(bool listenersExist)
@@ -1952,11 +3342,24 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         {
             restrictPasscodeWindow = true;
         }
-        return [_window.rootViewController shouldAutorotate] && !restrictPasscodeWindow;
+
+        UIViewController *rootController = _window.rootViewController;
+        bool shouldRotate = true;
+        if (rootController != nil)
+        {
+            if ([rootController respondsToSelector:@selector(shouldAutorotate)])
+                shouldRotate = [rootController shouldAutorotate];
+            else
+                shouldRotate = [rootController shouldAutorotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation];
+        }
+
+        return shouldRotate && !restrictPasscodeWindow;
     }];
     
+    TGEarlyLaunchPerf(@"didFinish.beforeFreedom");
     freedomInit();
     freedomUIKitInit();
+    TGEarlyLaunchPerf(@"didFinish.afterFreedom");
 
     TGAppDelegateInstance = self;
     
@@ -1966,8 +3369,10 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         [TGViewController disableAutorotation];
     
     _window = [[TGApplicationMainWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
+    TGEarlyLaunchPerf(@"didFinish.window");
     
     [(TGApplication *)application forceSetStatusBarStyle:UIStatusBarStyleBlackTranslucent animated:false];
+    TGEarlyLaunchPerf(@"didFinish.statusBar");
     
     if (iosMajorVersion() < 7)
     {
@@ -1986,38 +3391,80 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         
         freedomClassAutoDecorate(0xf457bfb2U, NULL, 0, instanceDecorations, sizeof(instanceDecorations) / sizeof(instanceDecorations[0]));
     }
+    TGEarlyLaunchPerf(@"didFinish.decorate");
     
     _loadedSoundSamples = [[NSMutableDictionary alloc] init];
+    TGEarlyLaunchPerf(@"didFinish.soundSamples");
     
     _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:false];
+    TGEarlyLaunchPerf(@"didFinish.actionHandle");
     
     [ASActor registerActorClass:[TGImageDownloadActor class]];
+    TGEarlyLaunchPerf(@"didFinish.imageActor");
     
+    TGEarlyLaunchPerf(@"didFinish.beforeInterfaceManager");
     [TGInterfaceManager instance];
+    TGEarlyLaunchPerf(@"didFinish.interfaceManager");
 
+    TGEarlyLaunchPerf(@"didFinish.beforeTelegraph");
     telegraph = [[TGTelegraph alloc] init];
+    TGEarlyLaunchPerf(@"didFinish.afterTelegraph");
 
     [TGHacks hackSetAnimationDuration];
     
     [self loadShowCallsTab];
 
-    _rootController = [[TGRootController alloc] init];
-    
-    self.window.rootViewController = _rootController;
+    [self loadSettings];
+    TGEarlyLaunchPerf(@"didFinish.settings");
+    bool launchAuthorized = TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated;
+    if (launchAuthorized && !OGPlatformUsesConstrainedBackgroundExecution())
+        [TGTelegramNetworking prepareInstanceWithCompletion:nil];
+    bool deferAuthorizedRoot = launchAuthorized && OGPlatformUsesConstrainedBackgroundExecution();
+    if (deferAuthorizedRoot)
+        (void)TGDatabaseInstance();
 
+    if (deferAuthorizedRoot)
+    {
+        UIViewController *launchController = [[UIViewController alloc] init];
+        launchController.view.backgroundColor = [UIColor blackColor];
+        self.window.rootViewController = launchController;
+    }
+    else if (launchAuthorized || !OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        _rootController = [[TGRootController alloc] init];
+        self.window.rootViewController = launchAuthorized ? _rootController : [self loginNavigationController];
+    }
+    else
+    {
+        self.window.rootViewController = [self loginNavigationController];
+    }
+
+    TGLog(@"AUTH startup.route=%@ userId=%d activated=%d", launchAuthorized ? @"main" : @"login", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
+
+    if (!launchAuthorized)
+    {
+        [ActionStageInstance() dispatchOnStageQueue:^
+        {
+            [[TGTelegramNetworking instance] prepareForUnauthorizedRequests];
+        }];
+    }
+
+    TGEarlyLaunchPerf(@"didFinish.rootController");
     self.window.backgroundColor = [UIColor blackColor];
     
     [self.window makeKeyAndVisible];
+    TGEarlyLaunchPerf(@"didFinish.keyAndVisible");
 
     [TGPresentation startAutoNight];
+    [TGPresentation prewarmBrandedIOS6ConversationSurfaces];
 
-    if ([TGKeyCommandController keyCommandsSupported])
+    if (_rootController != nil && [TGKeyCommandController keyCommandsSupported])
         _keyCommandController = [[TGKeyCommandController alloc] initWithRootController:_rootController];
     
     TGCache *sharedCache = [[TGCache alloc] init];
     [TGRemoteImageView setSharedCache:sharedCache];
     
-    if (![TGDatabaseInstance() isEncryptionEnabled])
+    if ((launchAuthorized || !OGPlatformUsesConstrainedBackgroundExecution()) && ![TGDatabaseInstance() isEncryptionEnabled])
     {
         TGDispatchOnMainThread(^
         {
@@ -2027,19 +3474,68 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         });
     }
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^
+    __block bool initialAuthorizationProcessed = false;
+    __block bool initialNetworkingStarted = false;
+    __block void (^pendingInitialDialogsDelivery)(void) = nil;
+
+    void (^loadInitialDialogs)(void) = ^
     {
-        
-        [self loadSettings];
-        
+            if (!launchAuthorized && OGPlatformUsesConstrainedBackgroundExecution())
+            {
+                [ActionStageInstance() dispatchOnStageQueue:^
+                {
+                    [TGTelegraphInstance processUnauthorized];
+                    NSDictionary *blockStateDict = [self loadLoginState];
+
+                    OGPlatformDispatchOnMainThread(^
+                    {
+                        NSDictionary *stateDict = blockStateDict;
+                        int currentDate = ((int)CFAbsoluteTimeGetCurrent());
+                        int stateDate = [[stateDict objectForKey:@"date"] intValue];
+                        if (currentDate - stateDate > 60 * 60 * 23 && [blockStateDict objectForKey:@"resetAccountState"] == nil)
+                        {
+                            stateDict = nil;
+                            [self resetLoginState];
+                        }
+
+                        [self presentLoginController:false animated:false phoneNumber:[stateDict objectForKey:@"phoneNumber"] phoneCode:[stateDict objectForKey:@"phoneCode"] phoneCodeHash:[stateDict objectForKey:@"phoneCodeHash"] codeSentToTelegram:[[stateDict objectForKey:@"codeSentToTelegram"] boolValue] codeSentViaPhone:[[stateDict objectForKey:@"codeSentViaPhone"] boolValue] profileFirstName:[stateDict objectForKey:@"firstName"] profileLastName:[stateDict objectForKey:@"lastName"] resetAccountState:[blockStateDict objectForKey:@"resetAccountState"] termsOfService:[blockStateDict objectForKey:@"termsOfService"]];
+
+                        if (!TGIsPad())
+                        {
+                            [TGViewController enableAutorotation];
+                            [TGViewController attemptAutorotation];
+                        }
+                    });
+
+                    [[TGTelegramNetworking instance] start];
+                    if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch)
+                        [[TGTelegramNetworking instance] pause];
+                    [_finishedLaunching set:[SSignal single:@true]];
+
+                    if ([launchOptions objectForKey:UIApplicationLaunchOptionsRemoteNotificationKey] != nil)
+                        [self processPossibleConfigUpdateNotification:[launchOptions objectForKey:UIApplicationLaunchOptionsRemoteNotificationKey]];
+                }];
+                return;
+            }
+
+        bool legacyConstrained = OGPlatformUsesConstrainedBackgroundExecution();
+        int initialDialogLimit = legacyConstrained ? 18 : 50;
+        if (legacyConstrained)
+            OGDatabaseRuntimeBeginStartupCritical();
+#if defined(ONEGRAM_DIAGNOSTICS)
+        TGLog(@"STARTUP dialogs load requested limit=%d at=%.0fms", initialDialogLimit, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
+#endif
         [TGDatabaseInstance() loadConversationListFromDate:INT32_MAX
-                                                     limit:50
+                                                     limit:initialDialogLimit
                                     excludeConversationIds:nil
                                                   folderId:0
-                                                completion:^(NSArray *dialogList, bool loadedAllRegular)
+                                                completion:^(NSArray *dialogList, __unused bool loadedAllRegular)
          {
              
+#if defined(ONEGRAM_DIAGNOSTICS)
              bool dialogListLoaded = [TGDatabaseInstance() customProperty:@"dialogListLoaded"].length != 0;
+             TGLog(@"STARTUP dialogs loaded count=%d listLoaded=%d loadedAll=%d at=%.0fms", (int)dialogList.count, dialogListLoaded ? 1 : 0, loadedAllRegular ? 1 : 0, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
+#endif
              
              NSMutableArray *filteredResult = [[NSMutableArray alloc] initWithArray:dialogList];
              [filteredResult sortUsingComparator:^NSComparisonResult(TGConversation *lhs, TGConversation *rhs) {
@@ -2056,15 +3552,36 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                  }
              }];
              
-             if (!dialogListLoaded || !loadedAllRegular) {
-                 while (filteredResult.count != 0 && (((TGConversation *)[filteredResult lastObject]).isChannel || ((TGConversation *)[filteredResult lastObject]).isBroadcast)) {
-                     [filteredResult removeLastObject];
-                 }
-             }
-             
              SGraphListNode *node = [[SGraphListNode alloc] init];
              node.items = filteredResult;
-             
+
+             if (legacyConstrained && filteredResult.count != 0)
+             {
+                 NSMutableArray *initialUserIds = [[NSMutableArray alloc] init];
+                 for (TGConversation *conversation in filteredResult)
+                 {
+                     if ([conversation isKindOfClass:[TGConversation class]] && conversation.conversationId > 0 && conversation.conversationId <= INT32_MAX)
+                         [initialUserIds addObject:@((int32_t)conversation.conversationId)];
+                 }
+                 if (initialUserIds.count != 0)
+                 {
+                     OGRuntimeDispatch(OGRuntimePriorityUtility, ^
+                     {
+                         std::vector<int> userIds;
+                         userIds.reserve(initialUserIds.count);
+                         for (NSNumber *userId in initialUserIds)
+                             userIds.push_back([userId intValue]);
+                         [TGDatabaseInstance() loadUsers:userIds];
+                     });
+                 }
+             }
+
+             if (legacyConstrained)
+                 OGDatabaseRuntimeEndStartupCritical();
+
+             bool deferForegroundStartupServices = legacyConstrained && launchAuthorized && !ios6ColdBackgroundLaunch && !ios6ColdBackgroundApplicationLaunch;
+             void (^deliverInitialDialogs)(void) = ^
+             {
              [ActionStageInstance() dispatchOnStageQueue:^
              {
                  
@@ -2072,24 +3589,41 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                   actorCompleted:ASStatusSuccess
                   path:@"/tg/dialoglist/(0)"
                   result:node];
-                 
-                 [TGTelegraphInstance.liveLocationManager restoreSessions];
-                 [TGTelegraphInstance startPresenceUpdates];
-                 
-                 if (TGTelegraphInstance.clientUserId != 0)
+#if defined(ONEGRAM_DIAGNOSTICS)
+                 TGLog(@"STARTUP cached dialogs delivered count=%d at=%.0fms", (int)filteredResult.count, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
+#endif
+#if defined(ONEGRAM_ARMV6)
+                 TGDispatchAfter(2.0, dispatch_get_main_queue(), ^
                  {
-                     [TGTelegraphInstance processAuthorizedWithUserId:TGTelegraphInstance.clientUserId clientIsActivated:TGTelegraphInstance.clientIsActivated];
+                     [[TGDatabase instance] markAllPendingMessagesAsFailed];
+                 });
+#endif
+                 
+                 if (!deferForegroundStartupServices)
+                 {
+                     [TGTelegraphInstance.liveLocationManager restoreSessions];
+                     [TGTelegraphInstance startPresenceUpdates];
+                 }
+                 
+                 if (TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated)
+                 {
+                     if (!initialAuthorizationProcessed && !deferForegroundStartupServices)
+                     {
+                         initialAuthorizationProcessed = true;
+                         [TGTelegraphInstance processAuthorizedWithUserId:TGTelegraphInstance.clientUserId clientIsActivated:TGTelegraphInstance.clientIsActivated];
+                     }
+                     id launchLocalNotification = OGPlatformLocalNotificationFromLaunchOptions(launchOptions);
                      
                      if (launchOptions[UIApplicationLaunchOptionsURLKey] != nil)
                      {
-                         dispatch_async(dispatch_get_main_queue(), ^
+                         OGPlatformDispatchOnMainThread(^
                          {
                              [self handleOpenDocument:launchOptions[UIApplicationLaunchOptionsURLKey] animated:false keepStack:false bundleId:launchOptions[UIApplicationLaunchOptionsSourceApplicationKey]];
                          });
                      }
                      else if (launchOptions[UIApplicationLaunchOptionsRemoteNotificationKey] != nil)
                      {
-                         dispatch_async(dispatch_get_main_queue(), ^
+                         OGPlatformDispatchOnMainThread(^
                          {
                              id nFromId = [launchOptions[UIApplicationLaunchOptionsRemoteNotificationKey] objectForKey:@"from_id"];
                              id nChatId = [launchOptions[UIApplicationLaunchOptionsRemoteNotificationKey] objectForKey:@"chat_id"];
@@ -2114,15 +3648,17 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                  TGIOS6OpenNotificationPeer(peerId);
                          });
                      }
-                     else if (launchOptions[UIApplicationLaunchOptionsLocalNotificationKey] != nil)
+                     else if (launchLocalNotification != nil)
                      {
                          if ([UIApplication sharedApplication].applicationState == UIApplicationStateInactive)
                          {
-                             dispatch_async(dispatch_get_main_queue(), ^
+                             OGPlatformDispatchOnMainThread(^
                              {
-                                 if ([launchOptions respondsToSelector:@selector(objectForKeyedSubscript:)] && [launchOptions[UIApplicationLaunchOptionsLocalNotificationKey] respondsToSelector:@selector(objectForKey:)] && [launchOptions[UIApplicationLaunchOptionsLocalNotificationKey][@"cid"] respondsToSelector:@selector(longLongValue)])
+                                 NSDictionary *userInfo = OGPlatformLocalNotificationUserInfo(launchLocalNotification);
+                                 id cid = [userInfo objectForKey:@"cid"];
+                                 if ([cid respondsToSelector:@selector(longLongValue)])
                                  {
-                                     int64_t peerId = [[launchOptions[UIApplicationLaunchOptionsLocalNotificationKey] objectForKey:@"cid"] longLongValue];
+                                     int64_t peerId = [cid longLongValue];
                                      TGIOS6OpenNotificationPeer(peerId);
                                  }
                              });
@@ -2168,25 +3704,24 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                      [[TGDatabase instance] dropDatabase];
                  }
                  
-                 TGDispatchOnMainThread(^{
-                    [_rootController.callsController initialize];
-                 });
-                 
                  if (filteredResult.count > 0)
                  {
-                     int cachedUnreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
-                     int cachedUnreadChannelsCount = [TGDatabaseInstance() unreadChannelsCount];
-                     
-                     if (cachedUnreadChatsCount < 0 || cachedUnreadChannelsCount < 0)
-                         [TGDatabaseInstance() transactionCalculateUnreadChats];
+                     [TGDatabaseInstance() transactionCalculateUnreadChats];
                  }
                  
-                 [[TGTelegramNetworking instance] start];
+                 if (!deferForegroundStartupServices)
+                 {
+                     if (!initialNetworkingStarted)
+                     {
+                         initialNetworkingStarted = true;
+                         [[TGTelegramNetworking instance] start];
+                     }
 
-                 if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch)
-                     [[TGTelegramNetworking instance] pause];
-                 
-                 [_finishedLaunching set:[SSignal single:@true]];
+                     if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch)
+                         [[TGTelegramNetworking instance] pause];
+
+                     [_finishedLaunching set:[SSignal single:@true]];
+                 }
 
                  if (ios6ColdBackgroundLaunch)
                  {
@@ -2199,7 +3734,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                              [self ios6InstallVoipKeepAliveForApplication:[UIApplication sharedApplication] source:@"cold_launch_ready"];
                              if ([[TGTelegramNetworking instance] isNetworkAvailable])
                              {
-                                 int32_t coldBootstrapUptime = (int32_t)[[NSProcessInfo processInfo] systemUptime];
+                                 int32_t coldBootstrapUptime = (int32_t)OGPlatformSystemUptime();
                                  IOS6NotificationProbe(@"UPDATES", @"catchup_requested source=cold_bootstrap");
                                  [TGTelegraphInstance stateUpdateRequired];
                                  TGDispatchAfter(8.0, dispatch_get_main_queue(), ^
@@ -2262,10 +3797,118 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                  
                  if (launchOptions[UIApplicationLaunchOptionsRemoteNotificationKey] != nil)
                      [self processPossibleConfigUpdateNotification:launchOptions[UIApplicationLaunchOptionsRemoteNotificationKey]];
+
+                 if (deferForegroundStartupServices)
+                 {
+                     if (!initialAuthorizationProcessed)
+                     {
+                         initialAuthorizationProcessed = true;
+                         [TGTelegraphInstance processAuthorizedWithUserId:TGTelegraphInstance.clientUserId clientIsActivated:TGTelegraphInstance.clientIsActivated];
+                     }
+                     if (!initialNetworkingStarted)
+                     {
+                         initialNetworkingStarted = true;
+                         [[TGTelegramNetworking instance] start];
+                     }
+                     [_finishedLaunching set:[SSignal single:@true]];
+
+                     OGRuntimeDispatchAfter(OGRuntimePriorityMaintenance, 2.0, ^
+                     {
+                         [ActionStageInstance() dispatchOnStageQueue:^
+                         {
+                             [TGTelegraphInstance.liveLocationManager restoreSessions];
+                             [TGTelegraphInstance startPresenceUpdates];
+                         }];
+                     });
+                 }
                  
              }];
+             };
+
+             OGPlatformDispatchOnMainThread(^
+             {
+#if defined(ONEGRAM_DIAGNOSTICS)
+                 TGLog(@"STARTUP dialogs deliver root=%d companion=%@ at=%.0fms", _rootController != nil ? 1 : 0, NSStringFromClass([_rootController.dialogListController.dialogListCompanion class]), (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
+#endif
+                 if (_rootController != nil)
+                     deliverInitialDialogs();
+                 else
+                     pendingInitialDialogsDelivery = [deliverInitialDialogs copy];
+             });
           }];
-    });
+    };
+
+    if (deferAuthorizedRoot)
+    {
+        OGPlatformDispatchAfterCurrentMainRunLoop(^
+        {
+            CFAbsoluteTime rootPhaseStart = CFAbsoluteTimeGetCurrent();
+            _rootController = [[TGRootController alloc] init];
+            rootPhaseStart = CFAbsoluteTimeGetCurrent();
+            self.window.rootViewController = _rootController;
+            if (launchAuthorized && OGPlatformUsesConstrainedBackgroundExecution() && !ios6ColdBackgroundLaunch && !ios6ColdBackgroundApplicationLaunch)
+            {
+                bool processAuthorization = !initialAuthorizationProcessed;
+                bool startNetworking = !initialNetworkingStarted;
+                initialAuthorizationProcessed = true;
+                initialNetworkingStarted = true;
+                if (processAuthorization || startNetworking)
+                {
+                    [TGTelegramNetworking prepareInstanceWithCompletion:^
+                    {
+                        if (processAuthorization)
+                            [TGTelegraphInstance processAuthorizedWithUserId:TGTelegraphInstance.clientUserId clientIsActivated:TGTelegraphInstance.clientIsActivated];
+                        if (startNetworking)
+                        {
+                            [ActionStageInstance() dispatchOnStageQueue:^
+                            {
+                                [[TGTelegramNetworking instance] start];
+                            }];
+                        }
+                    }];
+                }
+            }
+            loadInitialDialogs();
+            bool deferServicesUntilDialogs = launchAuthorized && OGPlatformUsesConstrainedBackgroundExecution() && !ios6ColdBackgroundLaunch && !ios6ColdBackgroundApplicationLaunch;
+            if (pendingInitialDialogsDelivery != nil)
+            {
+                void (^delivery)(void) = pendingInitialDialogsDelivery;
+                pendingInitialDialogsDelivery = nil;
+                delivery();
+            }
+            if (!deferServicesUntilDialogs && launchAuthorized && !initialAuthorizationProcessed)
+            {
+                initialAuthorizationProcessed = true;
+                [TGTelegraphInstance processAuthorizedWithUserId:TGTelegraphInstance.clientUserId clientIsActivated:TGTelegraphInstance.clientIsActivated];
+            }
+            if (!deferServicesUntilDialogs && launchAuthorized && !initialNetworkingStarted)
+            {
+                initialNetworkingStarted = true;
+                [ActionStageInstance() dispatchOnStageQueue:^
+                {
+                    [[TGTelegramNetworking instance] start];
+                }];
+            }
+            if (OGPlatformUsesConstrainedBackgroundExecution())
+            {
+                OGRuntimeDispatchAfter(OGRuntimePriorityMaintenance, 30.0, ^
+                {
+                    TGPreloadEmojiPack();
+                });
+            }
+            else
+            {
+                OGRuntimeDispatch(OGRuntimePriorityMaintenance, ^
+                {
+                    TGPreloadEmojiPack();
+                });
+            }
+        });
+    }
+    else
+    {
+        loadInitialDialogs();
+    }
     
     _foregroundResumeTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(checkForegroundResume) interval:2.0 repeat:true];
     
@@ -2281,9 +3924,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         }
     });
     
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (iosMajorVersion() <= 6)
     {
-        [application beginReceivingRemoteControlEvents];
+        OGPlatformBeginReceivingRemoteControlEvents(application);
         [self becomeFirstResponder];
     }
     
@@ -2328,7 +3971,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive)
     {
         if (_passcodeWindow == nil || _passcodeWindow.hidden) {
-            [[TGTelegramNetworking instance] resume];
+            [[TGTelegramNetworking maybeInstance] resume];
         }
     }
 }
@@ -2336,15 +3979,18 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)__unused application
 {
     TGLog(@"******* Memory warning ******");
+    [[TGRemoteImageView sharedCache] clearCache:TGCacheMemory];
+    TGClearEmojiImageCache();
 }
 
 - (void)applicationWillResignActive:(UIApplication *)__unused application
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (OGPlatformSupportsBackgroundVoipTransport())
         IOS6NotificationProbe(@"LIFECYCLE", @"resign_active state=%d", (int)[UIApplication sharedApplication].applicationState);
 
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
     {
+        [TGDatabaseInstance() transactionCalculateUnreadChats];
         int unreadChatsCount = [TGDatabaseInstance() unreadChatsCount];
         int unreadChannelsCount = [TGDatabaseInstance() unreadChannelsCount];
         int unreadCount = MAX(0, unreadChatsCount) + MAX(0, unreadChannelsCount);
@@ -2352,7 +3998,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         {
             [[UIApplication sharedApplication] setApplicationIconBadgeNumber:unreadCount];
         });
-    }];
+    } synchronous:false];
     
     if ([self respondsToSelector:@selector(onBecomeInactive)])
         [self onBecomeInactive];
@@ -2655,7 +4301,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)ios6PrimaryTransportReceivedData:(NSNotification *)__unused notification
 {
-    _ios6VoipLastPrimaryReceiveUptime = (int32_t)[[NSProcessInfo processInfo] systemUptime];
+    _ios6VoipLastPrimaryReceiveUptime = (int32_t)OGPlatformSystemUptime();
 }
 
 - (void)ios6PerformScheduledVoipHealthCheck
@@ -2671,7 +4317,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (BOOL)ios6InstallVoipKeepAliveForApplication:(UIApplication *)application source:(NSString *)source
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] > 6 ||
+    if (!OGPlatformSupportsBackgroundVoipTransport() ||
         _disableBackgroundMode ||
         application.applicationState == UIApplicationStateActive)
     {
@@ -2685,22 +4331,20 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     bool privateNotificationsEnabled = false;
     bool groupNotificationsEnabled = false;
     _ios6NotificationTransportAllowedForBackgroundSession = [self ios6NotificationTransportAllowedWithSystemTypes:&systemTypes privateEnabled:&privateNotificationsEnabled groupEnabled:&groupNotificationsEnabled];
-    TGLog(@"PUSH notificationGate allowed=%d systemTypes=0x%x private=%d groups=%d activeCall=%d source=%@", _ios6NotificationTransportAllowedForBackgroundSession ? 1 : 0, (unsigned int)systemTypes, privateNotificationsEnabled ? 1 : 0, groupNotificationsEnabled ? 1 : 0, TGTelegraphInstance.callManager.hasActiveCall ? 1 : 0, source ?: @"unknown");
 
     if (!_ios6NotificationTransportAllowedForBackgroundSession)
     {
         [self ios6StopNotificationTransport];
-        TGLog(@"PUSH voipKeepAlive disabled source=%@", source ?: @"unknown");
         return false;
     }
 
     _ios6VoipLastScheduledHealthCheckTime = CFAbsoluteTimeGetCurrent();
 
-    BOOL keepAliveInstalled = [application setKeepAliveTimeout:600.0 handler:^
+    BOOL keepAliveInstalled = TGIOS3SetKeepAliveTimeout(application, 600.0, ^
     {
         IOS6NotificationProbe(@"WAKE", @"keepalive_callback state=%d remaining=%.1f thread=%@",
                               (int)[UIApplication sharedApplication].applicationState,
-                              [UIApplication sharedApplication].backgroundTimeRemaining,
+                              TGIOS3BackgroundTimeRemaining([UIApplication sharedApplication]),
                               [NSThread isMainThread] ? @"main" : @"worker");
         if ([NSThread isMainThread])
             [self ios6PerformScheduledVoipHealthCheck];
@@ -2709,10 +4353,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             {
                 [self ios6PerformScheduledVoipHealthCheck];
             });
-    }];
+    });
     IOS6NotificationProbe(@"LIFECYCLE", @"keepalive_registered result=%d scheduler=600 healthInterval=%d source=%@",
                           keepAliveInstalled ? 1 : 0, (int)[self ios6VoipHealthCheckInterval], source ?: @"unknown");
-    TGLog(@"PUSH voipKeepAlive installed=%d scheduler=600 healthInterval=%d source=%@", keepAliveInstalled ? 1 : 0, (int)[self ios6VoipHealthCheckInterval], source ?: @"unknown");
     return keepAliveInstalled;
 }
 
@@ -2721,13 +4364,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if (!_ios6ColdLaunchTaskActive)
         return;
 
-    UIBackgroundTaskIdentifier identifier = _ios6ColdLaunchTaskIdentifier;
-    _ios6ColdLaunchTaskIdentifier = UIBackgroundTaskInvalid;
+    TGIOS3BackgroundTaskIdentifier identifier = _ios6ColdLaunchTaskIdentifier;
+    _ios6ColdLaunchTaskIdentifier = TGIOS3BackgroundTaskInvalid;
     _ios6ColdLaunchTaskActive = false;
-    if (identifier != UIBackgroundTaskInvalid)
+    if (identifier != TGIOS3BackgroundTaskInvalid)
     {
         IOS6NotificationProbe(@"LEASE", @"cold_launch_end id=%d", (int)identifier);
-        [[UIApplication sharedApplication] endBackgroundTask:identifier];
+        TGIOS3EndBackgroundTask([UIApplication sharedApplication], identifier);
     }
 }
 
@@ -2819,7 +4462,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }
 
     _ios6NotificationTransportAllowedForBackgroundSession = false;
-    [[UIApplication sharedApplication] clearKeepAliveTimeout];
+    TGIOS3ClearKeepAliveTimeout([UIApplication sharedApplication]);
     [self ios6CancelVoipHealthCheck];
     [self ios6EndColdLaunchTask];
     if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive)
@@ -2835,15 +4478,20 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     UIApplication *application = [UIApplication sharedApplication];
     if (!enabled)
     {
-        [application cancelAllLocalNotifications];
+        if ([application respondsToSelector:@selector(cancelAllLocalNotifications)])
+            [application performSelector:@selector(cancelAllLocalNotifications)];
         application.applicationIconBadgeNumber = 0;
         [self ios6StopNotificationTransport];
     }
-    else if ([[UIDevice currentDevice].systemVersion intValue] <= 6 &&
-             application.applicationState != UIApplicationStateActive)
+    else
     {
-        [[TGTelegramNetworking instance] resume];
-        [self ios6InstallVoipKeepAliveForApplication:application source:@"settings_enabled"];
+        [self ios6RegisterLocalNotificationSettings];
+        if (OGPlatformSupportsBackgroundVoipTransport() &&
+            application.applicationState != UIApplicationStateActive)
+        {
+            [[TGTelegramNetworking instance] resume];
+            [self ios6InstallVoipKeepAliveForApplication:application source:@"settings_enabled"];
+        }
     }
 }
 
@@ -2852,13 +4500,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if (!_ios6VoipHealthCheckTaskActive)
         return;
 
-    UIBackgroundTaskIdentifier identifier = _ios6VoipHealthCheckTaskIdentifier;
-    _ios6VoipHealthCheckTaskIdentifier = UIBackgroundTaskInvalid;
+    TGIOS3BackgroundTaskIdentifier identifier = _ios6VoipHealthCheckTaskIdentifier;
+    _ios6VoipHealthCheckTaskIdentifier = TGIOS3BackgroundTaskInvalid;
     _ios6VoipHealthCheckTaskActive = false;
-    if (identifier != UIBackgroundTaskInvalid)
+    if (identifier != TGIOS3BackgroundTaskInvalid)
     {
         IOS6NotificationProbe(@"LEASE", @"health_task_end id=%d", (int)identifier);
-        [[UIApplication sharedApplication] endBackgroundTask:identifier];
+        TGIOS3EndBackgroundTask([UIApplication sharedApplication], identifier);
     }
 }
 
@@ -2873,7 +4521,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     if (!success && _ios6VoipLastPrimaryReceiveUptime > 0)
     {
-        int32_t receiveAge = MAX(0, (int32_t)[[NSProcessInfo processInfo] systemUptime] - _ios6VoipLastPrimaryReceiveUptime);
+        int32_t receiveAge = MAX(0, (int32_t)OGPlatformSystemUptime() - _ios6VoipLastPrimaryReceiveUptime);
         if (receiveAge <= 6 && [[TGTelegramNetworking instance] isNetworkAvailable])
         {
             success = true;
@@ -2904,7 +4552,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         if (attempt != 0)
         {
             _ios6VoipLastProactiveTransportRefreshTime = CFAbsoluteTimeGetCurrent();
-            TGLog(@"PUSH healthCheck recovered primary MTProto transport");
             IOS6NotificationProbe(@"UPDATES", @"catchup_requested source=recovered_transport");
             [TGTelegraphInstance stateUpdateRequired];
 
@@ -2938,14 +4585,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     {
         _ios6VoipHealthCheckPending = false;
         IOS6NotificationProbe(@"HEALTH", @"reset_throttled reason=%@ age=%.1f", reason ?: @"failed", now - _ios6VoipLastTransportResetTime);
-        TGLog(@"PUSH healthCheck %@; transport reset throttled", reason ?: @"failed");
         [self ios6EndVoipHealthCheckTask];
         return;
     }
 
     _ios6VoipLastTransportResetTime = now;
     IOS6NotificationProbe(@"SOCKET", @"primary_reset reason=%@ source=health", reason ?: @"failed");
-    TGLog(@"PUSH healthCheck %@; resetting primary MTProto transport", reason ?: @"failed");
     _ios6VoipHealthCheckAttempt = 1;
 
     [[TGTelegramNetworking instance] resume];
@@ -3033,12 +4678,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                           _ios6NotificationTransportAllowedForBackgroundSession ? 1 : 0);
     if (!_ios6NotificationTransportAllowedForBackgroundSession)
     {
-        TGLog(@"PUSH healthCheck stopped by notification settings");
         [self ios6StopNotificationTransport];
         return;
     }
 
-    int32_t currentUptime = (int32_t)[[NSProcessInfo processInfo] systemUptime];
+    int32_t currentUptime = (int32_t)OGPlatformSystemUptime();
     int32_t receiveAge = _ios6VoipLastPrimaryReceiveUptime > 0 ? MAX(0, currentUptime - _ios6VoipLastPrimaryReceiveUptime) : INT_MAX;
     if ([[TGTelegramNetworking instance] isNetworkAvailable] &&
         ![[TGTelegramNetworking instance] isConnecting] &&
@@ -3052,8 +4696,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     _ios6VoipHealthCheckPending = true;
     int32_t generation = _ios6VoipHealthCheckGeneration;
 
-    __block UIBackgroundTaskIdentifier taskIdentifier = UIBackgroundTaskInvalid;
-    taskIdentifier = [application beginBackgroundTaskWithExpirationHandler:^
+    __block TGIOS3BackgroundTaskIdentifier taskIdentifier = TGIOS3BackgroundTaskInvalid;
+    taskIdentifier = TGIOS3BeginBackgroundTask(application, ^
     {
         IOS6NotificationProbe(@"LEASE", @"health_task_expiration_handler id=%d", (int)taskIdentifier);
         if ([NSThread isMainThread])
@@ -3069,15 +4713,15 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                     [self ios6CancelVoipHealthCheck];
             });
         }
-    }];
-    if (taskIdentifier != UIBackgroundTaskInvalid)
+    });
+    if (taskIdentifier != TGIOS3BackgroundTaskInvalid)
     {
         _ios6VoipHealthCheckTaskIdentifier = taskIdentifier;
         _ios6VoipHealthCheckTaskActive = true;
-        IOS6NotificationProbe(@"LEASE", @"health_task_begin id=%d remaining=%.1f", (int)taskIdentifier, application.backgroundTimeRemaining);
+        IOS6NotificationProbe(@"LEASE", @"health_task_begin id=%d remaining=%.1f", (int)taskIdentifier, TGIOS3BackgroundTimeRemaining(application));
     }
     else
-        IOS6NotificationProbe(@"LEASE", @"health_task_denied remaining=%.1f", application.backgroundTimeRemaining);
+        IOS6NotificationProbe(@"LEASE", @"health_task_denied remaining=%.1f", TGIOS3BackgroundTimeRemaining(application));
 
     [[TGTelegramNetworking instance] resume];
 
@@ -3090,24 +4734,27 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGLogSynchronize();
 #endif
     
-    bool isIos6 = [[UIDevice currentDevice].systemVersion intValue] <= 6;
-    if (isIos6 && _ios6BackgroundLifecycleEntered)
+    bool voipTransport = OGPlatformSupportsBackgroundVoipTransport();
+    if (voipTransport && _ios6BackgroundLifecycleEntered)
         return;
 
-    if (isIos6)
+    if (voipTransport)
     {
         _ios6BackgroundLifecycleEntered = true;
-        IOS6NotificationProbe(@"LIFECYCLE", @"background_enter state=%d remaining=%.1f", (int)application.applicationState, application.backgroundTimeRemaining);
+        IOS6NotificationProbe(@"LIFECYCLE", @"background_enter state=%d remaining=%.1f", (int)application.applicationState, TGIOS3BackgroundTimeRemaining(application));
     }
 
     _inBackground = true;
 
     _ios6NotificationTransportAllowedForBackgroundSession = TGIOS6BackgroundNotificationsEnabled() || TGTelegraphInstance.callManager.hasActiveCall;
 
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (iosMajorVersion() <= 6)
     {
-        [application beginReceivingRemoteControlEvents];
+        OGPlatformBeginReceivingRemoteControlEvents(application);
         [self becomeFirstResponder];
+    }
+    if (voipTransport)
+    {
         [self ios6InstallVoipKeepAliveForApplication:application source:@"background_enter"];
         if (_ios6NotificationTransportAllowedForBackgroundSession)
             [[TGTelegramNetworking instance] resume];
@@ -3124,16 +4771,16 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         _backgroundTaskExpirationTimer = nil;
     }
     
-    if (_backgroundTaskIdentifier != UIBackgroundTaskInvalid)
+    if (_backgroundTaskIdentifier != TGIOS3BackgroundTaskInvalid)
     {
-        UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
-        _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-        [application endBackgroundTask:identifier];
+        TGIOS3BackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+        _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+        TGIOS3EndBackgroundTask(application, identifier);
     }
 
-    _backgroundTaskIdentifier = [application beginBackgroundTaskWithExpirationHandler:^
+    _backgroundTaskIdentifier = TGIOS3BeginBackgroundTask(application, ^
     {
-        if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+        if (voipTransport)
             IOS6NotificationProbe(@"LEASE", @"initial_task_expiration_handler id=%d", (int)_backgroundTaskIdentifier);
         if (_backgroundTaskExpirationTimer != nil)
         {
@@ -3142,21 +4789,20 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             _backgroundTaskExpirationTimer = nil;
         }
         
-        UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
-        _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-        if (identifier != UIBackgroundTaskInvalid)
-            [application endBackgroundTask:identifier];
-    }];
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
-        IOS6NotificationProbe(@"LEASE", @"initial_task_begin id=%d remaining=%.1f", (int)_backgroundTaskIdentifier, application.backgroundTimeRemaining);
+        TGIOS3BackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+        _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+        if (identifier != TGIOS3BackgroundTaskInvalid)
+            TGIOS3EndBackgroundTask(application, identifier);
+    });
+    if (voipTransport)
+        IOS6NotificationProbe(@"LEASE", @"initial_task_begin id=%d remaining=%.1f", (int)_backgroundTaskIdentifier, TGIOS3BackgroundTimeRemaining(application));
     
     _enteredBackgroundTime = CFAbsoluteTimeGetCurrent();
     
-    double systemRemainingTime = [application backgroundTimeRemaining];
-    TGLog(@"System allowed background time remaining: %d m %d s", (int)(systemRemainingTime / 60.0), ((int)systemRemainingTime) % 60);
+    double systemRemainingTime = TGIOS3BackgroundTimeRemaining(application);
     
-    double maxBackgroundTime = MAX(15.0, MIN(40.0, [application backgroundTimeRemaining] - 0.5 * 60.0));
-    if (_disableBackgroundMode || ([[UIDevice currentDevice].systemVersion intValue] <= 6 && !_ios6NotificationTransportAllowedForBackgroundSession && !TGTelegraphInstance.callManager.hasActiveCall))
+    double maxBackgroundTime = MAX(15.0, MIN(40.0, TGIOS3BackgroundTimeRemaining(application) - 0.5 * 60.0));
+    if (_disableBackgroundMode || (voipTransport && !_ios6NotificationTransportAllowedForBackgroundSession && !TGTelegraphInstance.callManager.hasActiveCall))
         maxBackgroundTime = 1;
     
 #ifdef DEBUG
@@ -3186,18 +4832,18 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)backgroundExpirationTimerEvent:(NSTimer *)__unused timer
 {
-    bool isIos6 = [[UIDevice currentDevice].systemVersion intValue] <= 6;
-    if (TGIOS6NotificationSettingsGateEnabled && isIos6 && _ios6NotificationTransportAllowedForBackgroundSession && !TGTelegraphInstance.callManager.hasActiveCall)
+    bool voipTransport = OGPlatformSupportsBackgroundVoipTransport();
+    if (TGIOS6NotificationSettingsGateEnabled && voipTransport && _ios6NotificationTransportAllowedForBackgroundSession && !TGTelegraphInstance.callManager.hasActiveCall)
     {
         UIRemoteNotificationType enabledTypes = [[UIApplication sharedApplication] enabledRemoteNotificationTypes];
         if ((enabledTypes & (UIRemoteNotificationTypeBadge | UIRemoteNotificationTypeSound | UIRemoteNotificationTypeAlert)) == UIRemoteNotificationTypeNone)
         {
             _ios6NotificationTransportAllowedForBackgroundSession = false;
-            [[UIApplication sharedApplication] clearKeepAliveTimeout];
+            TGIOS3ClearKeepAliveTimeout([UIApplication sharedApplication]);
         }
     }
-    bool preserveIos6NotificationTransport = isIos6 && !_disableBackgroundMode && _ios6NotificationTransportAllowedForBackgroundSession;
-    if (isIos6)
+    bool preserveIos6NotificationTransport = voipTransport && !_disableBackgroundMode && _ios6NotificationTransportAllowedForBackgroundSession;
+    if (voipTransport)
         IOS6NotificationProbe(@"LIFECYCLE", @"initial_task_expire preserve=%d network=%d connecting=%d updating=%d",
                               preserveIos6NotificationTransport ? 1 : 0,
                               [[TGTelegramNetworking instance] isNetworkAvailable] ? 1 : 0,
@@ -3205,28 +4851,25 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                               [[TGTelegramNetworking instance] isUpdating] ? 1 : 0);
     if (preserveIos6NotificationTransport)
     {
-        TGLog(@"PUSH voipKeepAlive preserving MTProto network after background task");
     }
-    else if (!isIos6 || !TGTelegraphInstance.callManager.hasActiveCall)
+    else if (!voipTransport || !TGTelegraphInstance.callManager.hasActiveCall)
     {
         [[TGTelegramNetworking instance] pause];
     }
     
     _backgroundTaskExpirationTimer = nil;
     
-    UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+    TGIOS3BackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
     
-    TGLog(@"Background: task %lu end imminent", (unsigned long)identifier);
-    _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-    if (identifier == UIBackgroundTaskInvalid)
+    _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+    if (identifier == TGIOS3BackgroundTaskInvalid)
         TGLog(@"***** Strange. *****");
     
-    if (identifier != UIBackgroundTaskInvalid)
+    if (identifier != TGIOS3BackgroundTaskInvalid)
     {
         TGDispatchAfter(3.0, dispatch_get_main_queue(), ^
         {
-            TGLog(@"Background: ended task it %lu", (unsigned long)identifier);
-            [[UIApplication sharedApplication] endBackgroundTask:identifier];
+            TGIOS3EndBackgroundTask([UIApplication sharedApplication], identifier);
         });
     }
 }
@@ -3238,7 +4881,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)applicationWillEnterForeground:(UIApplication *)application
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (OGPlatformSupportsBackgroundVoipTransport())
         IOS6NotificationProbe(@"LIFECYCLE", @"foreground_enter network=%d connecting=%d updating=%d",
                               [[TGTelegramNetworking instance] isNetworkAvailable] ? 1 : 0,
                               [[TGTelegramNetworking instance] isConnecting] ? 1 : 0,
@@ -3246,10 +4889,10 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     _enteringForeground = true;
 
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (OGPlatformSupportsBackgroundVoipTransport())
     {
         _ios6BackgroundLifecycleEntered = false;
-        [application clearKeepAliveTimeout];
+        TGIOS3ClearKeepAliveTimeout(application);
         [self ios6CancelVoipHealthCheck];
         [self ios6EndColdLaunchTask];
         _ios6VoipLastProactiveTransportRefreshTime = 0.0;
@@ -3264,11 +4907,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         _enteringForeground = false;
     });
     
-    if (_backgroundTaskIdentifier != UIBackgroundTaskInvalid)
+    if (_backgroundTaskIdentifier != TGIOS3BackgroundTaskInvalid)
     {
-        UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
-        _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-        [application endBackgroundTask:identifier];
+        TGIOS3BackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+        _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+        TGIOS3EndBackgroundTask(application, identifier);
     }
     if (_backgroundTaskExpirationTimer != nil)
     {
@@ -3289,7 +4932,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)applicationDidBecomeActive:(UIApplication *)__unused application
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    OGRuntimeConfigureMainThread();
+    if (OGPlatformSupportsBackgroundVoipTransport())
     {
         IOS6NotificationProbe(@"LIFECYCLE", @"became_active network=%d connecting=%d updating=%d",
                               [[TGTelegramNetworking instance] isNetworkAvailable] ? 1 : 0,
@@ -3340,13 +4984,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)remoteControlReceivedWithEvent:(UIEvent *)event
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (iosMajorVersion() <= 6)
         [[TGRemoteControlsManager instance] handleLegacyRemoteControlEvent:event];
 }
 
 - (void)applicationWillTerminate:(UIApplication *)__unused application
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+    if (OGPlatformSupportsBackgroundVoipTransport())
         IOS6NotificationProbe(@"LIFECYCLE", @"will_terminate");
     TGLogSynchronize();
 }
@@ -3427,21 +5071,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         
         [loginNavigationController setViewControllers:viewControllers animated:animated];
         
-        if (TGAppDelegateInstance.rootController.presentedViewController != nil)
-        {
-            if (TGAppDelegateInstance.rootController.presentedViewController == loginNavigationController)
-                return;
-            
-            [TGAppDelegateInstance.rootController dismissViewControllerAnimated:true completion:nil];
-            TGDispatchAfter(0.5, dispatch_get_main_queue(), ^
-            {
-                [TGAppDelegateInstance.rootController presentViewController:loginNavigationController animated:[[UIApplication sharedApplication] applicationState] == UIApplicationStateActive completion:nil];
-            });
-        }
-        else
+        if (self.window.rootViewController != loginNavigationController)
         {
             [TGAppDelegateInstance.rootController resetControllers];
-            [TGAppDelegateInstance.rootController presentViewController:loginNavigationController animated:[[UIApplication sharedApplication] applicationState] == UIApplicationStateActive completion:nil];
+            [TGAppDelegateInstance.rootController dismissViewControllerAnimated:false completion:nil];
+            self.window.rootViewController = loginNavigationController;
+            [self.window makeKeyAndVisible];
         }
         
         if (clearControllerStates)
@@ -3464,6 +5099,19 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)presentMainController
 {
+
+    if (_rootController == nil)
+    {
+        _rootController = [[TGRootController alloc] init];
+        if ([TGKeyCommandController keyCommandsSupported])
+            _keyCommandController = [[TGKeyCommandController alloc] initWithRootController:_rootController];
+        [TGTelegraphInstance.liveLocationManager restoreSessions];
+        [TGTelegraphInstance startPresenceUpdates];
+        OGPlatformDispatchOnMainThreadAfter(1.0, ^
+        {
+            [_rootController.callsController initialize];
+        });
+    }
     if (![[NSThread currentThread] isMainThread])
     {
         dispatch_async(dispatch_get_main_queue(), ^
@@ -3474,12 +5122,26 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         return;
     }
     
+    TGNavigationController *loginNavigationController = self.loginNavigationController;
+    if (self.window.rootViewController == loginNavigationController)
+    {
+        self.window.rootViewController = _rootController;
+        [self.window makeKeyAndVisible];
+        self.loginNavigationController = nil;
+        if (self.onSuccessfulLogin != nil)
+        {
+            self.onSuccessfulLogin();
+            self.onSuccessfulLogin = nil;
+        }
+        return;
+    }
+
     self.loginNavigationController = nil;
     
     UIViewController *presentedViewController = nil;
     presentedViewController = TGAppDelegateInstance.rootController.presentedViewController;
     
-    if ([presentedViewController respondsToSelector:@selector(isBeingDismissed)] && ([presentedViewController isBeingDismissed] || [presentedViewController isBeingPresented]))
+    if (OGPlatformViewControllerIsTransitioning(presentedViewController))
     {
         [[UIApplication sharedApplication] beginIgnoringInteractionEvents];
         TGDispatchAfter(0.1, dispatch_get_main_queue(), ^
@@ -3813,6 +5475,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     else
         _autoPlayAnimations = cpuCoreCount() > 1;
     
+    if (OGPlatformMediaDownloadsRequireUserAction())
+    {
+        _autoPlayAudio = false;
+        _autoPlayAnimations = false;
+    }
+
     if ((value = [userDefaults objectForKey:@"alwaysShowStickersMode"]) != nil)
         _alwaysShowStickersMode = [value intValue];
     else
@@ -4015,7 +5683,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         if ([[UIApplication sharedApplication] applicationState] != UIApplicationStateActive)
             return;
         
-        if (name != nil && TGAppDelegateInstance.soundEnabled)
+        if (name != nil && TGAppDelegateInstance.soundEnabled && ![[TGAudioSessionManager instance] notificationSoundsSuppressed])
         {
             static NSMutableDictionary *soundPlayed = nil;
             static dispatch_once_t onceToken;
@@ -4043,9 +5711,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                 [_loadedSoundSamples setObject:soundId forKey:name];
             }
             
-            CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
             AudioServicesPlaySystemSound((SystemSoundID)[soundId unsignedLongValue]);
-            TGLog(@"sound time: %f ms", (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
         }
         
         if (vibrate && TGAppDelegateInstance.vibrationEnabled)
@@ -4059,11 +5725,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 {
     dispatch_async(dispatch_get_main_queue(), ^
     {
+        if ([[TGAudioSessionManager instance] notificationSoundsSuppressed])
+            return;
         _currentAudioPlayer.delegate = nil;
         _currentAudioPlayer = nil;
         
         NSError *error = nil;
-        AVAudioPlayer *audioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:[[NSBundle mainBundle] URLForResource:name withExtension:@"m4a"] error:&error];
+        AVAudioPlayer *audioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:OGPlatformBundleResourceURL([NSBundle mainBundle], name, @"m4a") error:&error];
         if (error == nil)
         {
             if (_currentAudioPlayerSession == nil)
@@ -4106,11 +5774,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)requestDeviceToken:(id<TGDeviceTokenListener>)listener
 {
-    TGLog(@"PUSH request bundle=%@ state=%d alreadyRequested=%d hasToken=%d",
-        [[NSBundle mainBundle] bundleIdentifier],
-        (int)[UIApplication sharedApplication].applicationState,
-        _tokenAlreadyRequested ? 1 : 0,
-        _pushToken != nil ? 1 : 0);
 
     if (!TGIOS6APNsNotificationsEnabled())
     {
@@ -4121,7 +5784,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     if (_tokenAlreadyRequested)
     {
-        TGLog(@"PUSH request skipped reason=alreadyRequested");
         NSString *token = nil;
         if (_pushToken != nil)
         {
@@ -4134,238 +5796,55 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     _deviceTokenListener = listener;
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-    if ([[UIApplication sharedApplication] respondsToSelector:@selector(registerUserNotificationSettings:)])
+    UIApplication *application = [UIApplication sharedApplication];
+    if (OGPlatformRegisterUserNotificationSettings(application, [self ios6UserNotificationCategories]))
     {
-        UIMutableUserNotificationCategory *muteActionCategory = [[UIMutableUserNotificationCategory alloc] init];
-        [muteActionCategory setIdentifier:@"m"];
-        
-        UIMutableUserNotificationCategory *replyActionCategory = [[UIMutableUserNotificationCategory alloc] init];
-        [replyActionCategory setIdentifier:@"r"];
-        
-        UIMutableUserNotificationCategory *channelActionCategory = [[UIMutableUserNotificationCategory alloc] init];
-        [channelActionCategory setIdentifier:@"c"];
-        
-        UIMutableUserNotificationCategory *callActionCategory = [[UIMutableUserNotificationCategory alloc] init];
-        [callActionCategory setIdentifier:@"p"];
-
-        bool exclusiveQuickReplySupported = ((iosMajorVersion() == 9 && iosMinorVersion() >= 1) || iosMajorVersion() > 9);
-        {
-            UIMutableUserNotificationAction *replyAction = [[UIMutableUserNotificationAction alloc] init];
-            [replyAction setTitle:TGLocalized(@"Notification.Reply")];
-            [replyAction setIdentifier:@"reply"];
-            [replyAction setDestructive:false];
-            if (iosMajorVersion() >= 9)
-            {
-                [replyAction setAuthenticationRequired:false];
-                [replyAction setBehavior:UIUserNotificationActionBehaviorTextInput];
-                [replyAction setActivationMode:UIUserNotificationActivationModeBackground];
-            }
-            else
-            {
-                [replyAction setAuthenticationRequired:true];
-                [replyAction setActivationMode:UIUserNotificationActivationModeForeground];
-            }
-            
-            UIMutableUserNotificationAction *muteAction = [[UIMutableUserNotificationAction alloc] init];
-            [muteAction setActivationMode:UIUserNotificationActivationModeBackground];
-            [muteAction setTitle:TGLocalized(@"Notification.Mute1h")];
-            [muteAction setIdentifier:@"mute"];
-            [muteAction setDestructive:true];
-            [muteAction setAuthenticationRequired:false];
-            
-            if (exclusiveQuickReplySupported)
-            {
-                [muteActionCategory setActions:@[replyAction] forContext:UIUserNotificationActionContextDefault];
-            }
-            else
-            {
-                [muteActionCategory setActions:@[replyAction, muteAction] forContext:UIUserNotificationActionContextDefault];
-            }
-        }
-        {
-            UIMutableUserNotificationAction *replyAction = [[UIMutableUserNotificationAction alloc] init];
-            [replyAction setTitle:TGLocalized(@"Notification.Reply")];
-            [replyAction setIdentifier:@"reply"];
-            [replyAction setDestructive:false];
-            if (iosMajorVersion() >= 9)
-            {
-                [replyAction setAuthenticationRequired:false];
-                [replyAction setBehavior:UIUserNotificationActionBehaviorTextInput];
-                [replyAction setActivationMode:UIUserNotificationActivationModeBackground];
-            }
-            else
-            {
-                [replyAction setAuthenticationRequired:true];
-                [replyAction setActivationMode:UIUserNotificationActivationModeForeground];
-            }
-            
-            UIMutableUserNotificationAction *muteAction = [[UIMutableUserNotificationAction alloc] init];
-            [muteAction setActivationMode:UIUserNotificationActivationModeBackground];
-            [muteAction setTitle:TGLocalized(@"Notification.Mute1hMin")];
-            [muteAction setIdentifier:@"mute"];
-            [muteAction setDestructive:true];
-            [muteAction setAuthenticationRequired:false];
-            
-            if (exclusiveQuickReplySupported)
-            {
-                [muteActionCategory setActions:@[replyAction] forContext:UIUserNotificationActionContextMinimal];
-            }
-            else
-            {
-                [muteActionCategory setActions:@[replyAction, muteAction] forContext:UIUserNotificationActionContextMinimal];
-            }
-        }
-        
-        {
-            UIMutableUserNotificationAction *replyAction = [[UIMutableUserNotificationAction alloc] init];
-            [replyAction setTitle:TGLocalized(@"Notification.Reply")];
-            [replyAction setIdentifier:@"reply"];
-            [replyAction setDestructive:false];
-            if (iosMajorVersion() >= 9)
-            {
-                [replyAction setAuthenticationRequired:false];
-                [replyAction setBehavior:UIUserNotificationActionBehaviorTextInput];
-                [replyAction setActivationMode:UIUserNotificationActivationModeBackground];
-            }
-            else
-            {
-                [replyAction setAuthenticationRequired:true];
-                [replyAction setActivationMode:UIUserNotificationActivationModeForeground];
-            }
-            
-            UIMutableUserNotificationAction *likeAction = [[UIMutableUserNotificationAction alloc] init];
-            [likeAction setActivationMode:UIUserNotificationActivationModeBackground];
-            [likeAction setTitle:@"👍"];
-            [likeAction setIdentifier:@"like"];
-            [likeAction setDestructive:false];
-            [likeAction setAuthenticationRequired:false];
-            
-            if (exclusiveQuickReplySupported)
-            {
-                [replyActionCategory setActions:@[replyAction] forContext:UIUserNotificationActionContextDefault];
-            }
-            else
-            {
-                [replyActionCategory setActions:@[replyAction, likeAction] forContext:UIUserNotificationActionContextDefault];
-            }
-        }
-        {
-            UIMutableUserNotificationAction *replyAction = [[UIMutableUserNotificationAction alloc] init];
-            [replyAction setTitle:TGLocalized(@"Notification.Reply")];
-            [replyAction setIdentifier:@"reply"];
-            [replyAction setDestructive:false];
-            if (iosMajorVersion() >= 9)
-            {
-                [replyAction setAuthenticationRequired:false];
-                [replyAction setBehavior:UIUserNotificationActionBehaviorTextInput];
-                [replyAction setActivationMode:UIUserNotificationActivationModeBackground];
-            }
-            else
-            {
-                [replyAction setAuthenticationRequired:true];
-                [replyAction setActivationMode:UIUserNotificationActivationModeForeground];
-            }
-            
-            UIMutableUserNotificationAction *likeAction = [[UIMutableUserNotificationAction alloc] init];
-            [likeAction setActivationMode:UIUserNotificationActivationModeBackground];
-            [likeAction setTitle:@"👍"];
-            [likeAction setIdentifier:@"like"];
-            [likeAction setDestructive:false];
-            [likeAction setAuthenticationRequired:false];
-            
-            if (exclusiveQuickReplySupported)
-            {
-                [replyActionCategory setActions:@[replyAction] forContext:UIUserNotificationActionContextMinimal];
-            }
-            else
-            {
-                [replyActionCategory setActions:@[replyAction, likeAction] forContext:UIUserNotificationActionContextMinimal];
-            }
-        }
-        
-        {
-            UIMutableUserNotificationAction *mute1Action = [[UIMutableUserNotificationAction alloc] init];
-            [mute1Action setActivationMode:UIUserNotificationActivationModeBackground];
-            [mute1Action setTitle:TGLocalized(@"Notification.Mute1h")];
-            [mute1Action setIdentifier:@"mute"];
-            [mute1Action setDestructive:true];
-            [mute1Action setAuthenticationRequired:false];
-            
-            UIMutableUserNotificationAction *mute8Action = [[UIMutableUserNotificationAction alloc] init];
-            [mute8Action setActivationMode:UIUserNotificationActivationModeBackground];
-            [mute8Action setTitle:[effectiveLocalization() getPluralized:@"MuteFor.Hours" count:8]];
-            [mute8Action setIdentifier:@"mute8h"];
-            [mute8Action setDestructive:true];
-            [mute8Action setAuthenticationRequired:false];
-            
-            [channelActionCategory setActions:@[mute1Action, mute8Action] forContext:UIUserNotificationActionContextDefault];
-        }
-        {
-            UIMutableUserNotificationAction *muteAction = [[UIMutableUserNotificationAction alloc] init];
-            [muteAction setActivationMode:UIUserNotificationActivationModeBackground];
-            [muteAction setTitle:TGLocalized(@"Notification.Mute1hMin")];
-            [muteAction setIdentifier:@"mute"];
-            [muteAction setDestructive:true];
-            [muteAction setAuthenticationRequired:false];
-            
-            [channelActionCategory setActions:@[muteAction] forContext:UIUserNotificationActionContextMinimal];
-        }
-        
-        {
-            UIMutableUserNotificationAction *callAction = [[UIMutableUserNotificationAction alloc] init];
-            [callAction setTitle:TGLocalized(@"Notification.CallBack")];
-            [callAction setIdentifier:@"call"];
-            [callAction setDestructive:false];
-            [callAction setAuthenticationRequired:true];
-            [callAction setActivationMode:UIUserNotificationActivationModeForeground];
-            
-            UIMutableUserNotificationAction *replyAction = [[UIMutableUserNotificationAction alloc] init];
-            [replyAction setTitle:TGLocalized(@"Notification.Reply")];
-            [replyAction setIdentifier:@"reply"];
-            [replyAction setDestructive:false];
-            [replyAction setAuthenticationRequired:true];
-            [replyAction setActivationMode:UIUserNotificationActivationModeForeground];
-            
-            [callActionCategory setActions:@[callAction, replyAction] forContext:UIUserNotificationActionContextDefault];
-        }
-        {
-            UIMutableUserNotificationAction *callAction = [[UIMutableUserNotificationAction alloc] init];
-            [callAction setTitle:TGLocalized(@"Notification.CallBack")];
-            [callAction setIdentifier:@"call"];
-            [callAction setDestructive:false];
-            [callAction setAuthenticationRequired:true];
-            [callAction setActivationMode:UIUserNotificationActivationModeForeground];
-            
-            UIMutableUserNotificationAction *replyAction = [[UIMutableUserNotificationAction alloc] init];
-            [replyAction setTitle:TGLocalized(@"Notification.Reply")];
-            [replyAction setIdentifier:@"reply"];
-            [replyAction setDestructive:false];
-            [replyAction setAuthenticationRequired:true];
-            [replyAction setActivationMode:UIUserNotificationActivationModeForeground];
-            
-            [callActionCategory setActions:@[callAction, replyAction] forContext:UIUserNotificationActionContextMinimal];
-        }
-        
-        NSSet *categories = [NSSet setWithObjects:muteActionCategory, replyActionCategory, channelActionCategory, callActionCategory, nil];
-        UIUserNotificationType types = (UIUserNotificationTypeAlert | UIUserNotificationTypeSound | UIUserNotificationTypeBadge);
-        
-        UIUserNotificationSettings *settings = [UIUserNotificationSettings settingsForTypes:types categories:categories];
-        
-        [[UIApplication sharedApplication] registerUserNotificationSettings:settings];
-        
-        [[UIApplication sharedApplication] registerForRemoteNotifications];
+        _ios6LocalNotificationSettingsRegistered = true;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+        [application registerForRemoteNotifications];
         
         _pushRegistry = [[PKPushRegistry alloc] initWithQueue:dispatch_get_main_queue()];
         _pushRegistry.delegate = self;
         _pushRegistry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
+#endif
     }
     else
-#endif
     {
-        TGLog(@"PUSH register legacy types bundle=%@", [[NSBundle mainBundle] bundleIdentifier]);
-        [[UIApplication sharedApplication] registerForRemoteNotificationTypes:(UIRemoteNotificationTypeBadge | UIRemoteNotificationTypeSound | UIRemoteNotificationTypeAlert)];
+        [application registerForRemoteNotificationTypes:(UIRemoteNotificationType)(UIRemoteNotificationTypeBadge | UIRemoteNotificationTypeSound | UIRemoteNotificationTypeAlert)];
     }
+}
+
+- (NSArray *)ios6UserNotificationCategories
+{
+    bool textInputReply = iosMajorVersion() >= 9;
+    bool exclusiveQuickReplySupported = ((iosMajorVersion() == 9 && iosMinorVersion() >= 1) || iosMajorVersion() > 9);
+    
+    id replyAction = OGPlatformCreateUserNotificationAction(@"reply", TGLocalized(@"Notification.Reply"), NO, !textInputReply, !textInputReply, textInputReply);
+    id foregroundReplyAction = OGPlatformCreateUserNotificationAction(@"reply", TGLocalized(@"Notification.Reply"), NO, YES, YES, NO);
+    id muteAction = OGPlatformCreateUserNotificationAction(@"mute", TGLocalized(@"Notification.Mute1h"), YES, NO, NO, NO);
+    id minimalMuteAction = OGPlatformCreateUserNotificationAction(@"mute", TGLocalized(@"Notification.Mute1hMin"), YES, NO, NO, NO);
+    id mute8Action = OGPlatformCreateUserNotificationAction(@"mute8h", [effectiveLocalization() getPluralized:@"MuteFor.Hours" count:8], YES, NO, NO, NO);
+    id likeAction = OGPlatformCreateUserNotificationAction(@"like", @"👍", NO, NO, NO, NO);
+    id callAction = OGPlatformCreateUserNotificationAction(@"call", TGLocalized(@"Notification.CallBack"), NO, YES, YES, NO);
+    if (replyAction == nil || foregroundReplyAction == nil || muteAction == nil || minimalMuteAction == nil || mute8Action == nil || likeAction == nil || callAction == nil)
+        return nil;
+    
+    id muteCategory = OGPlatformCreateUserNotificationCategory(@"m", exclusiveQuickReplySupported ? @[replyAction] : @[replyAction, muteAction], exclusiveQuickReplySupported ? @[replyAction] : @[replyAction, minimalMuteAction]);
+    id replyCategory = OGPlatformCreateUserNotificationCategory(@"r", exclusiveQuickReplySupported ? @[replyAction] : @[replyAction, likeAction], exclusiveQuickReplySupported ? @[replyAction] : @[replyAction, likeAction]);
+    id channelCategory = OGPlatformCreateUserNotificationCategory(@"c", @[muteAction, mute8Action], @[minimalMuteAction]);
+    id callCategory = OGPlatformCreateUserNotificationCategory(@"p", @[callAction, foregroundReplyAction], @[callAction, foregroundReplyAction]);
+    if (muteCategory == nil || replyCategory == nil || channelCategory == nil || callCategory == nil)
+        return nil;
+    
+    return @[muteCategory, replyCategory, channelCategory, callCategory];
+}
+
+- (void)ios6RegisterLocalNotificationSettings
+{
+    if (_ios6LocalNotificationSettingsRegistered || !TGIOS6BackgroundNotificationsEnabled())
+        return;
+    if (OGPlatformRegisterUserNotificationSettings([UIApplication sharedApplication], [self ios6UserNotificationCategories]))
+        _ios6LocalNotificationSettingsRegistered = true;
 }
 
 - (void)application:(UIApplication *)application didRegisterUserNotificationSettings:(UIUserNotificationSettings *)__unused notificationSettings
@@ -4391,7 +5870,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     NSString *token = [[deviceToken description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
     token = [token stringByReplacingOccurrencesOfString:@" " withString:@""];
-    TGLog(@"PUSH token success bundle=%@ bytes=%d hexLength=%d", [[NSBundle mainBundle] bundleIdentifier], (int)deviceToken.length, (int)token.length);
     
     [_deviceTokenListener deviceTokenRequestCompleted:token];
     _deviceTokenListener = nil;
@@ -4418,7 +5896,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     NSString *token = [[credentials.token description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
     token = [token stringByReplacingOccurrencesOfString:@" " withString:@""];
-    TGLog(@"Device VoIP token received (%d hex characters)", (int)token.length);
     
     [[TGAccountSignals registerDeviceToken:token voip:true] startWithNext:nil];
 }
@@ -4440,16 +5917,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if (!_inBackground || [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
         return;
     
-    int64_t peerId = [[notification.userInfo objectForKey:@"cid"] longLongValue];
+    int64_t peerId = [[OGPlatformLocalNotificationUserInfo(notification) objectForKey:@"cid"] longLongValue];
     TGIOS6OpenNotificationPeer(peerId);
 }
 
 - (void)application:(UIApplication *)__unused application didReceiveRemoteNotification:(NSDictionary *)userInfo
 {
-    TGLog(@"PUSH remote received state=%d inBackground=%d keys=%@",
-        (int)[UIApplication sharedApplication].applicationState,
-        _inBackground ? 1 : 0,
-        [[userInfo allKeys] componentsJoinedByString:@","]);
 #ifdef DEBUG
     TGLog(@"remoteNotification: %@", userInfo);
 #endif
@@ -4488,14 +5961,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                         if (!TGTelegraphInstance.callManager.hasActiveCall)
                         {
                             [[TGTelegramNetworking instance] pause];
-                            TGLog(@"paused network");
                         }
                         
-                        NSTimeInterval remainingTime = [[UIApplication sharedApplication] backgroundTimeRemaining];
+                        NSTimeInterval remainingTime = TGIOS3BackgroundTimeRemaining([UIApplication sharedApplication]);
                         if (remainingTime > 2.0) {
                             TGDispatchAfter(MIN(remainingTime, 5.0), dispatch_get_main_queue(), ^
                             {
-                                TGLog(@"completed fetch");
                                 completionHandler(UIBackgroundFetchResultNewData);
                             });
                         } else {
@@ -4639,7 +6110,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                             return;
                         }
                         
-                        UILocalNotification *localNotification = [[UILocalNotification alloc] init];
+                        id localNotification = OGPlatformCreateLocalNotification();
                         if (localNotification == nil) {
                             return;
                         }
@@ -4689,7 +6160,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                         bool attachmentFound = false;
                         
                         if (soundId > 0)
-                            localNotification.soundName = [[NSString alloc] initWithFormat:@"%d.m4a", soundId];
+                            OGPlatformSetLocalNotificationSoundName(localNotification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
                         
                         if (message.cid <= INT_MIN)
                         {
@@ -4719,19 +6190,19 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 #ifdef INTERNAL_RELEASE
                         text = [@"[L] " stringByAppendingString:text];
 #endif
-                        localNotification.userInfo = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil];
+                        OGPlatformSetLocalNotificationUserInfo(localNotification, [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil]);
                         
                         if (iosMajorVersion() >= 8 && !isLocked)
                         {
                             if (TGPeerIdIsGroup(message.cid))
-                                localNotification.category = @"m";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"m");
                             else if (TGPeerIdIsChannel(message.cid))
-                                localNotification.category = @"c";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"c");
                             else if (message.cid > INT_MIN)
-                                localNotification.category = @"r";
+                                OGPlatformSetLocalNotificationCategory(localNotification, @"r");
                         }
                         
-                        [TGApplyUpdatesActor presentSafeLocalNotification:localNotification text:text];
+                        [TGApplyUpdatesActor presentSafeLocalNotification:(UILocalNotification *)localNotification text:text];
                     }
                 });
             }];
@@ -4750,11 +6221,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         {
             if (willPerform)
             {
-                if (_backgroundTaskIdentifier != UIBackgroundTaskInvalid)
+                if (_backgroundTaskIdentifier != TGIOS3BackgroundTaskInvalid)
                 {
-                    UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
-                    _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-                    [[UIApplication sharedApplication] endBackgroundTask:identifier];
+                    TGIOS3BackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+                    _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+                    TGIOS3EndBackgroundTask([UIApplication sharedApplication], identifier);
                 }
                 if (_backgroundTaskExpirationTimer != nil)
                 {
@@ -4775,20 +6246,19 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     UIApplication *application = [UIApplication sharedApplication];
     if ([application applicationState] != UIApplicationStateActive)
     {
-        UIBackgroundTaskIdentifier taskIdentifier = [application beginBackgroundTaskWithExpirationHandler:^
+        TGIOS3BackgroundTaskIdentifier taskIdentifier = TGIOS3BeginBackgroundTask(application, ^
         {
             if (_inBackground)
             {
                 [[TGTelegramNetworking instance] pause];
-                TGLog(@"Paused network on task expiration after VoIP notification");
             }
-        }];
+        });
         
-        if (_backgroundTaskIdentifier != UIBackgroundTaskInvalid)
+        if (_backgroundTaskIdentifier != TGIOS3BackgroundTaskInvalid)
         {
-            UIBackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
-            _backgroundTaskIdentifier = UIBackgroundTaskInvalid;
-            [application endBackgroundTask:identifier];
+            TGIOS3BackgroundTaskIdentifier identifier = _backgroundTaskIdentifier;
+            _backgroundTaskIdentifier = TGIOS3BackgroundTaskInvalid;
+            TGIOS3EndBackgroundTask(application, identifier);
         }
         if (_backgroundTaskExpirationTimer != nil)
         {
@@ -4803,14 +6273,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             }];
         }] deliverOn:[SQueue mainQueue]] startWithNext:^(__unused id next)
         {
-            [application endBackgroundTask:taskIdentifier];
+            TGIOS3EndBackgroundTask(application, taskIdentifier);
             
             TGDispatchAfter(2.0, dispatch_get_main_queue(), ^
             {
                 if (_inBackground)
                 {
                     [[TGTelegramNetworking instance] pause];
-                    TGLog(@"Paused network after VoIP notification");
                 }
             });
         }];
@@ -4846,7 +6315,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             NSString *ip = [addr substringWithRange:NSMakeRange(0, range.location)];
             int port = [[addr substringWithRange:NSMakeRange(range.location + 1, addr.length - range.location - 1)] intValue];
             
-            TGLog(@"Updating dc%d: %@:%d", datacenterId, ip, port);
             
             if (ip.length != 0)
             {
@@ -4868,21 +6336,27 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 - (void)reloadSettingsController:(int)uid
 {
     TGAccountSettingsController *accountSettingsController = [[TGAccountSettingsController alloc] initWithUid:uid];
-    
-    int index = -1;
-    for (id controller in _rootController.mainTabsController.viewControllers)
+    NSArray *currentViewControllers = _rootController.mainTabsController.viewControllers;
+    NSUInteger index = NSNotFound;
+    for (NSUInteger i = 0; i < currentViewControllers.count; i++)
     {
-        index++;
-        if ([controller isKindOfClass:[TGAccountSettingsController class]])
+        if ([[currentViewControllers objectAtIndex:i] isKindOfClass:[TGAccountSettingsController class]])
+        {
+            index = i;
             break;
+        }
     }
-    
-    if (index != -1)
+
+    _rootController.accountSettingsController = accountSettingsController;
+
+    if (index != NSNotFound)
     {
-        NSMutableArray *viewControllers = [_rootController.mainTabsController.viewControllers mutableCopy];
+        NSUInteger selectedIndex = [_rootController.mainTabsController logicalSelectedIndex];
+        NSMutableArray *viewControllers = [currentViewControllers mutableCopy];
         [viewControllers replaceObjectAtIndex:index withObject:accountSettingsController];
-        [_rootController.mainTabsController setViewControllers:viewControllers];
-        _rootController.accountSettingsController = accountSettingsController;
+        [_rootController.mainTabsController setViewControllers:viewControllers animated:false];
+        if (selectedIndex < viewControllers.count)
+            [_rootController.mainTabsController setSelectedIndex:selectedIndex];
     }
 }
 
@@ -5178,14 +6652,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                      {
                          if (okButtonPressed)
                          {
-                             TGNavigationController *presentedController = (TGNavigationController *)TGAppDelegateInstance.rootController.presentedViewController;
-                             if ([presentedController isKindOfClass:[TGNavigationController class]])
+                             TGNavigationController *loginController = TGAppDelegateInstance.loginNavigationController;
+                             if (TGAppDelegateInstance.window.rootViewController == loginController || loginController.presentingViewController != nil)
                              {
-                                 if ([presentedController.topViewController isKindOfClass:[RMIntroViewController class]])
-                                 {
-                                     TGLoginPhoneController *phoneController = [[TGLoginPhoneController alloc] init];
-                                     [presentedController pushViewController:phoneController animated:true];
-                                 }
+                                 if (![loginController.topViewController isKindOfClass:[TGLoginPhoneController class]])
+                                     [loginController pushViewController:[[TGLoginPhoneController alloc] init] animated:true];
                              }
                              self.onSuccessfulLogin = [displayRequestBlock copy];
                          }
@@ -5340,15 +6811,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             }
             else if ([url.host isEqualToString:@"addstickers"])
             {
-                IOS6_NOOP_LOG(@"STICKER app.addstickers url=%@ set=%@", url.absoluteString, dict[@"set"]);
                 if ([dict[@"set"] respondsToSelector:@selector(characterAtIndex:)])
                 {
                     TGStickerPackShortnameReference *packReference = [[TGStickerPackShortnameReference alloc] initWithShortName:dict[@"set"]];
-                    IOS6_NOOP_LOG(@"STICKER app.addstickers.preview shortName=%@ ref=%@", dict[@"set"], packReference);
                     [self previewStickerPackWithReference:packReference];
                 }
-                else
-                    IOS6_NOOP_LOG(@"STICKER app.addstickers.badSet dict=%@", dict);
             }
             else if ([url.host isEqualToString:@"msg_url"])
             {
@@ -5576,7 +7043,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if (controller.presentedViewController != nil)
         controller = controller.presentedViewController;
     
-    IOS6_NOOP_LOG(@"STICKER app.previewPack ref=%@ controller=%@ presented=%@", packReference, controller, self.rootController.presentedViewController);
     [controller.view endEditing:true];
     [TGStickersMenu presentInParentController:(TGViewController *)controller stickerPackReference:packReference showShareAction:false sendSticker:nil stickerPackRemoved:nil stickerPackHidden:nil sourceView:controller.view centered:true];
 }
@@ -5806,8 +7272,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)application:(UIApplication *)__unused application handleActionWithIdentifier:(NSString *)identifier forLocalNotification:(UILocalNotification *)notification withResponseInfo:( NSDictionary *)responseInfo completionHandler:( void (^)())completionHandler
 {
-    int64_t peerId = [notification.userInfo[@"cid"] longLongValue];
-    int32_t mid = [notification.userInfo[@"mid"] intValue];
+    NSDictionary *userInfo = OGPlatformLocalNotificationUserInfo(notification);
+    int64_t peerId = [[userInfo objectForKey:@"cid"] longLongValue];
+    int32_t mid = [[userInfo objectForKey:@"mid"] intValue];
     
     [[_finishedLaunching.signal deliverOn:[SQueue mainQueue]] startWithNext:^(__unused id next)
     {
@@ -6187,7 +7654,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             
             [fileManager copyItemAtPath:localizationPath toPath:[documentsPath stringByAppendingPathComponent:@"localization"] error:nil];
             
-            TGLog(@"Moved %d document items to container", documentFileCount);
             
             NSString *cachesPath = [[groupURL path] stringByAppendingPathComponent:@"Caches"];
             
@@ -6202,7 +7668,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                 [fileManager moveItemAtPath:[defaultCachesPath stringByAppendingPathComponent:fileName] toPath:[cachesPath stringByAppendingPathComponent:fileName] error:nil];
             }
             
-            TGLog(@"Moved %d cache items to container", cacheFileCount);
         }
     }
 }

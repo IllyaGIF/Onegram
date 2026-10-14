@@ -44,8 +44,6 @@
             }
         };
         
-        /*TGCommentCollectionItem *commentItem = [[TGCommentCollectionItem alloc] initWithFormattedText:_conversation.isChannelGroup ? TGLocalized(@"Group.About.Help") : TGLocalized(@"Channel.About.Help")];
-        commentItem.topInset = 1.0f;*/
         
         _aboutSection = [[TGCollectionMenuSection alloc] initWithItems:@[_inputItem]];
         _aboutSection.insets = UIEdgeInsetsMake(35.0f, 0.0f, 0.0f, 0.0f);

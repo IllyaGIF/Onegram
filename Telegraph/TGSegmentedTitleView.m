@@ -1,4 +1,5 @@
 #import "TGSegmentedTitleView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGFont.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageUtils.h"
@@ -22,7 +23,7 @@
     if (self != nil)
     {
         if (iosMajorVersion() >= 11)
-            self.translatesAutoresizingMaskIntoConstraints = false;
+            OGPlatformSetViewTranslatesAutoresizingMaskIntoConstraints(self, false);
         
         _label = [[UILabel alloc] init];
         _label.backgroundColor = [UIColor clearColor];
@@ -38,13 +39,12 @@
         CGFloat width = 0.0f;
         for (NSString *itemName in segments)
         {
-            CGSize size = [[[NSAttributedString alloc] initWithString:itemName attributes:@{NSFontAttributeName: TGSystemFontOfSize(13)}] boundingRectWithSize:CGSizeMake(FLT_MAX, FLT_MAX) options:NSStringDrawingUsesLineFragmentOrigin context:nil].size;
+            CGSize size = [itemName sizeWithFont:TGSystemFontOfSize(13)];
             if (size.width > width)
                 width = size.width;
         }
         width = (width + 34.0f) * 2.0f;
         
-        //_segmentedControl.frame = CGRectMake((self.view.frame.size.width - width) / 2.0f, 8.0f, width, 29.0f);
         _segmentedControl.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin;
         
         [_segmentedControl setSelectedSegmentIndex:0];
@@ -80,14 +80,14 @@
     
     _label.textColor = presentation.pallete.navigationTitleColor;
     
-    [_segmentedControl setBackgroundImage:_presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:_presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:_presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:_presentation.images.segmentedControlHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setDividerImage:_presentation.images.segmentedControlDividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, _presentation.images.segmentedControlBackgroundImage, UIControlStateNormal, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, _presentation.images.segmentedControlSelectedImage, UIControlStateSelected, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, _presentation.images.segmentedControlSelectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, _presentation.images.segmentedControlHighlightedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlDividerImage(_segmentedControl, _presentation.images.segmentedControlDividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
     
-    [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:_presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
-    [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:_presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+    OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:_presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateNormal);
+    OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:_presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateSelected);
 }
 
 - (void)segmentedControlChanged

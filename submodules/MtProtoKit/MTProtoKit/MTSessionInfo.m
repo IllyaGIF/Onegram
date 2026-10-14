@@ -252,6 +252,20 @@
 {
     NSMutableArray *array = [[NSMutableArray alloc] init];
     
+#if ONEGRAM_ARMV6
+    for (NSNumber *nContainerMessageId in _containerMessagesMappingDict)
+    {
+        NSArray *messageIds = [_containerMessagesMappingDict objectForKey:nContainerMessageId];
+        int64_t containerMessageId = (int64_t)[nContainerMessageId longLongValue];
+        for (NSNumber *nMessageId in messageIds)
+        {
+            if (containerMessageId >= firstMessageId || ((int64_t)[nMessageId longLongValue]) >= firstMessageId)
+            {
+                [array addObject:nMessageId];
+            }
+        }
+    }
+#else
     [_containerMessagesMappingDict enumerateKeysAndObjectsUsingBlock:^(NSNumber *nContainerMessageId, NSArray *messageIds, __unused BOOL *stop)
     {
         int64_t containerMessageId = (int64_t)[nContainerMessageId longLongValue];
@@ -263,6 +277,7 @@
             }
         }
     }];
+#endif
     
     return array;
 }

@@ -6,12 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * Small FLAC decoder used by Onegram on iOS versions where AVFoundation
- * cannot decode FLAC. It implements the FLAC stream format needed for normal
- * music files: STREAMINFO, constant/verbatim/fixed/LPC subframes, Rice/Rice2
- * residuals and independent/left-side/right-side/mid-side channel coding.
- */
 
 typedef struct TGFLACBitReader {
     FILE *file;
@@ -337,7 +331,7 @@ static int tgflac_decode_frame(TGFLACDecoder *d)
     tgflac_br_init(&br, d->file);
     sync = tgflac_br_bits(&br, 14);
     reserved = tgflac_br_bits(&br, 1);
-    (void)tgflac_br_bits(&br, 1); /* blocking strategy */
+    (void)tgflac_br_bits(&br, 1);
     blockCode = tgflac_br_bits(&br, 4);
     sampleRateCode = tgflac_br_bits(&br, 4);
     channelAssignment = tgflac_br_bits(&br, 4);
@@ -355,7 +349,7 @@ static int tgflac_decode_frame(TGFLACDecoder *d)
     (void)tgflac_read_utf8_uint(&br);
     blockSize = (uint32_t)tgflac_frame_block_size(&br, blockCode);
     tgflac_consume_sample_rate_extra(&br, sampleRateCode);
-    (void)tgflac_br_bits(&br, 8); /* header CRC-8 */
+    (void)tgflac_br_bits(&br, 8);
     if (br.failed)
     {
         clearerr(d->file);
@@ -428,7 +422,7 @@ static int tgflac_decode_frame(TGFLACDecoder *d)
     }
 
     tgflac_br_align(&br);
-    (void)tgflac_br_bits(&br, 16); /* frame CRC-16 */
+    (void)tgflac_br_bits(&br, 16);
     if (br.failed)
     {
         clearerr(d->file);

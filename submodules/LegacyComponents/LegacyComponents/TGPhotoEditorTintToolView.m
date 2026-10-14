@@ -60,7 +60,7 @@
         
         _sliderView = [[TGPhotoEditorSliderView alloc] initWithFrame:CGRectZero];
         _sliderView.backgroundColor = [UIColor clearColor];
-        _sliderView.layer.rasterizationScale = TGScreenScaling();
+        TGSetLayerRasterizationScale(_sliderView.layer, TGScreenScaling());
         _sliderView.minimumValue = editorItem.minimumValue;
         _sliderView.maximumValue = editorItem.maximumValue;
         _sliderView.startValue = 0;
@@ -249,8 +249,8 @@
     bool enabled = ![color isEqual:[UIColor clearColor]];
     _sliderView.trackColor = enabled ? color : [UIColor whiteColor];
 
-    _sliderView.layer.rasterizationScale = TGScreenScaling();
-    _sliderView.layer.shouldRasterize = !enabled;
+    TGSetLayerRasterizationScale(_sliderView.layer, TGScreenScaling());
+    TGSetLayerShouldRasterize(_sliderView.layer, !enabled);
     _sliderView.alpha = enabled ? 1.0f : 0.3f;
     _sliderView.userInteractionEnabled = enabled;
 }

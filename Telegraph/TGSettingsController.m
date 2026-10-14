@@ -371,33 +371,15 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
 
 - (void)groqApiKeyButtonPressed
 {
-    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Groq API key"
-                                                    message:@"The key is stored only on this device and is sent directly to Groq."
-                                                   delegate:self
-                                          cancelButtonTitle:@"Cancel"
-                                          otherButtonTitles:@"Save", nil];
-    alert.alertViewStyle = UIAlertViewStyleSecureTextInput;
-    UITextField *field = [alert textFieldAtIndex:0];
-    field.placeholder = @"gsk_...";
-    field.text = [[NSUserDefaults standardUserDefaults] stringForKey:TGGroqApiKeyDefaultsKey()];
-    [alert show];
-}
-
-- (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex
-{
-    if (![alertView.title isEqualToString:@"Groq API key"] || buttonIndex != 1)
-        return;
-
-    UITextField *field = [alertView textFieldAtIndex:0];
-    NSString *enteredKey = field.text;
-    if (enteredKey == nil)
-        enteredKey = @"";
-    NSString *key = [[enteredKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
-    if (key.length != 0)
-        [[NSUserDefaults standardUserDefaults] setObject:key forKey:TGGroqApiKeyDefaultsKey()];
-    else
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:TGGroqApiKeyDefaultsKey()];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    [TGCustomAlertView presentSecureTextInputAlertWithTitle:@"Groq API key" message:@"The key is stored only on this device and is sent directly to Groq." placeholder:@"gsk_..." text:[[NSUserDefaults standardUserDefaults] stringForKey:TGGroqApiKeyDefaultsKey()] cancelButtonTitle:@"Cancel" okButtonTitle:@"Save" completionBlock:^(NSString *enteredKey)
+    {
+        NSString *key = [[(enteredKey ?: @"") stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
+        if (key.length != 0)
+            [[NSUserDefaults standardUserDefaults] setObject:key forKey:TGGroqApiKeyDefaultsKey()];
+        else
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:TGGroqApiKeyDefaultsKey()];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }];
 }
 
 - (void)logoutButtonPressed
@@ -455,7 +437,6 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
 
 - (void)clearChatListCacheButtonPressed
 {
-    TGLog(@"ARCHIVE settings clear chat list cache");
     [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
@@ -575,15 +556,6 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
     [self dismissViewControllerAnimated:true completion:nil];
 }
 
-/*- (void)switchDisplayMids
-{
-    [TGConversationMessageItemView setDisplayMids:![TGConversationMessageItemView displayMids]];
-}
-
-- (void)switchDoNotRead
-{
-    [TGTelegraphConversationCompanion setDoNotRead:![TGTelegraphConversationCompanion doNotRead]];
-}*/
 
 - (void)switchDoNotJump
 {
@@ -601,11 +573,7 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
     {
         dispatch_async(dispatch_get_main_queue(), ^
         {
-            if (resultCode == ASStatusSuccess)
-            {
-                TGLog(@"Other sessions revoked");
-            }
-            else
+            if (resultCode != ASStatusSuccess)
             {
                 TGLog(@"Failed to revoke other sessions");                
             }

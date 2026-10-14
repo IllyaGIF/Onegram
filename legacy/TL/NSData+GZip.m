@@ -13,15 +13,15 @@
 - (NSData *)compressGZip
 {
     NSUInteger length = [self length];
-    int windowBits = 15 + 16; //Default + gzip header instead of zlib header
-    int memLevel = 8; //Default
+    int windowBits = 15 + 16;
+    int memLevel = 8;
     int retCode;
     NSMutableData *result;
     z_stream stream;
     unsigned char output[kMemoryChunkSize];
     uInt gotBack;
     
-    if ((length == 0) || (length > UINT_MAX)) //FIXME: Support 64 bit inputs
+    if ((length == 0) || (length > UINT_MAX))
         return nil;
     
     bzero(&stream, sizeof(z_stream));
@@ -60,14 +60,14 @@
 - (NSData *)decompressGZip
 {
     NSUInteger length = [self length];
-    int windowBits = 15 + 32; //Default + gzip header instead of zlib header
+    int windowBits = 15 + 32;
     int retCode;
     unsigned char output[kMemoryChunkSize];
     uInt gotBack;
     NSMutableData *result;
     z_stream stream;
     
-    if ((length == 0) || (length > UINT_MAX)) //FIXME: Support 64 bit inputs
+    if ((length == 0) || (length > UINT_MAX))
         return nil;
     
     bzero(&stream, sizeof(z_stream));

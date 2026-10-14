@@ -27,7 +27,6 @@
             
             for (int x = 0; x < (int)width; x += 2)
             {
-                //(0.299*R + 0.587*G + 0.114*B)
                 uint32_t color = *((uint32_t *)&pixels[y * stride + x * 4]);
                 
                 uint32_t r = (color >> 24) & 0xff;

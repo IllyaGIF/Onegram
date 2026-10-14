@@ -42,8 +42,6 @@
     [imageUri appendFormat:@"&renderWidth=%d", (int)imageSize.width];
     [imageUri appendFormat:@"&renderHeight=%d", (int)imageSize.height];
     
-    //[imageUri appendFormat:@"&messageId=%" PRId32 "", (int32_t)messageId];
-    //[imageUri appendFormat:@"&conversationId=%" PRId64 "", (int64_t)peerId];
     [imageUri appendFormat:@"&legacy-cache-url=%@", legacyCacheUrl];
     
     self = [super initWithImageUri:imageUri];

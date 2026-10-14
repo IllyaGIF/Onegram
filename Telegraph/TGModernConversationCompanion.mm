@@ -1,4 +1,11 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGModernConversationCompanion.h"
+#import "../OnegramRuntime/OGRuntime.h"
+#import "../OnegramRuntime/OGStartupDiagnostics.h"
+
+#include <mach/mach.h>
+#include <pthread.h>
+#import <objc/runtime.h>
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGBotContextResultAttachment.h"
@@ -13,6 +20,7 @@
 #import "TGInterfaceManager.h"
 
 #import "TGMessageModernConversationItem.h"
+#import "TGMessageViewModel.h"
 
 #import "TGModernConversationViewContext.h"
 #import "TGModernTemporaryView.h"
@@ -67,6 +75,7 @@
 #import "TGLiveLocationSignals.h"
 
 #import "TGReportPeerOtherTextController.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 
 @interface TGModernConversationController (IOS6ReactionTap)
 - (void)_ios6SendReaction:(NSString *)reaction messageId:(int32_t)messageId;
@@ -139,6 +148,17 @@ static void markMessagesAsSeen(int64_t peerId, NSArray *messageIds) {
 
 static SQueue *_messageQueue = nil;
 
+#if defined(ONEGRAM_DIAGNOSTICS)
+static double TGModernConversationCompanionThreadTime(void)
+{
+    thread_basic_info_data_t basicInfo;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, (thread_info_t)&basicInfo, &count) != KERN_SUCCESS)
+        return 0.0;
+    return (double)basicInfo.user_time.seconds + (double)basicInfo.user_time.microseconds / 1000000.0 + (double)basicInfo.system_time.seconds + (double)basicInfo.system_time.microseconds / 1000000.0;
+}
+#endif
+
 static SQueue *messageQueue()
 {
     static dispatch_once_t onceToken;
@@ -170,11 +190,10 @@ static bool TGIsInternalTelegramLink(NSString *urlString)
 
 static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 {
-    if (synchronous) {
+    if (synchronous)
         [messageQueue() dispatchSync:block];
-    } else {
+    else
         [messageQueue() dispatch:block];
-    }
 }
 
 @interface TGModernConversationCompanion ()
@@ -186,6 +205,16 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     NSIndexSet *_tempVisibleItemsIndices;
     
     CGFloat _controllerWidthForItemCalculation;
+#if defined(ONEGRAM_ARMV6)
+    bool _initialItemsPreparationPending;
+    uint64_t _initialItemsPreparationGeneration;
+    volatile int32_t _controllerBindingGeneration;
+#endif
+#if defined(ONEGRAM_DIAGNOSTICS)
+    double _diagnosticLayoutThreadTime;
+#endif
+    
+    volatile bool _historyAboveReadAheadAllowed;
     
     dispatch_semaphore_t _sendMessageSemaphore;
     
@@ -213,6 +242,8 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     bool _askedForSecretPages;
     
     std::set<int32_t> _messageViewsRequested;
+    std::set<int32_t> _visibleMessageIdsForDownloads;
+    NSMutableDictionary *_pendingAutomaticDownloads;
     NSMutableArray *_messageViewsRequestedBuffer;
     STimer *_messageViewsRequestedBufferTimer;
     
@@ -222,6 +253,44 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 }
 
 @end
+
+static NSMutableSet *TGUnsupportedMessageRequestKeys(void)
+{
+    static NSMutableSet *keys = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        keys = [[NSMutableSet alloc] init];
+    });
+    return keys;
+}
+
+static NSString *TGUnsupportedMessageRequestKey(int64_t peerId, int32_t messageId)
+{
+    return [[NSString alloc] initWithFormat:@"%d:%lld:%d", TGTelegraphInstance.clientUserId, peerId, messageId];
+}
+
+static bool TGUnsupportedMessageRequestBegin(int64_t peerId, int32_t messageId)
+{
+    NSMutableSet *keys = TGUnsupportedMessageRequestKeys();
+    NSString *key = TGUnsupportedMessageRequestKey(peerId, messageId);
+    @synchronized (keys)
+    {
+        if ([keys containsObject:key])
+            return false;
+        [keys addObject:key];
+        return true;
+    }
+}
+
+static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
+{
+    NSMutableSet *keys = TGUnsupportedMessageRequestKeys();
+    @synchronized (keys)
+    {
+        [keys removeObject:TGUnsupportedMessageRequestKey(peerId, messageId)];
+    }
+}
 
 @implementation TGModernConversationCompanion
 
@@ -244,7 +313,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         viewContext.companion = self;
         viewContext.companionHandle = _actionHandle;
         viewContext.viewStatusEnabled = true;
-        viewContext.autoplayAnimations = TGAppDelegateInstance.autoPlayAnimations;
+        viewContext.autoplayAnimations = TGAppDelegateInstance.autoPlayAnimations && !OGPlatformMediaDownloadsRequireUserAction();
         viewContext.playingAudioMessageStatus = [[[TGTelegraphInstance musicPlayer] playingStatus] deliverOn:[SQueue mainQueue]];
         
         _callbackInProgress = [[SVariable alloc] init];
@@ -338,7 +407,6 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                         }
                     }
                     bool playAsSingleInlineGif = foundRoundVideo && hasInlineBotAttribution;
-                    while (false) TGLog(@"MEDIA play mid=%d cid=%lld voice=%d visible=%d documentAudio=%d attachments=%d", message.mid, message.cid, isVoice ? 1 : 0, messageFromVisibleItems ? 1 : 0, foundDocumentAudio ? 1 : 0, (int)message.mediaAttachments.count);
                     if (playAsSingleInlineGif || [strongSelf isKindOfClass:[TGAdminLogConversationCompanion class]]) {
                         TGUser *author = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
                         TGMusicPlayerItem *item = [TGMusicPlayerItem itemWithMessage:message author:author];
@@ -573,9 +641,20 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
 - (void)bindController:(TGModernConversationController *)controller
 {
+#if defined(ONEGRAM_DIAGNOSTICS)
+    NSTimeInterval bindStart = OGStartupDiagnosticsTime();
+    OGPlatformDiagnosticLog(@"CHAT_BIND_BEGIN kind=%@ since_main_ms=%.0f", NSStringFromClass([self class]), bindStart * 1000.0);
+#endif
+#if defined(ONEGRAM_ARMV6)
+    OSAtomicIncrement32Barrier(&_controllerBindingGeneration);
+    _initialItemsPreparationPending = false;
+#endif
     self.controller = controller;
     
     _viewContext.presentation = self.controller.presentation;
+#if defined(ONEGRAM_ARMV6)
+    _controllerWidthForItemCalculation = [controller referenceViewSizeForOrientation:controller.interfaceOrientation].width;
+#endif
     
     [self loadInitialState];
     
@@ -583,7 +662,17 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     {
         [self subscribeToUpdates];
     }];
+#if defined(ONEGRAM_DIAGNOSTICS)
+    OGPlatformDiagnosticLog(@"CHAT_BIND_END kind=%@ duration_ms=%.0f since_main_ms=%.0f", NSStringFromClass([self class]), (OGStartupDiagnosticsTime() - bindStart) * 1000.0, OGStartupDiagnosticsTime() * 1000.0);
+#endif
 }
+
+#if defined(ONEGRAM_ARMV6)
+- (bool)initialItemsPreparationPending
+{
+    return _initialItemsPreparationPending;
+}
+#endif
 
 - (void)_ensureReferenceMethod
 {
@@ -591,6 +680,10 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
 - (void)unbindController
 {
+#if defined(ONEGRAM_ARMV6)
+    OSAtomicIncrement32Barrier(&_controllerBindingGeneration);
+    _initialItemsPreparationPending = false;
+#endif
     [_actionHandle reset];
     @synchronized (_ios4LifetimeReference)
     {
@@ -628,6 +721,9 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         if (false && self.useInitialSnapshot && animated && [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone) {
             [self _createInitialSnapshot];
         } else {
+#if defined(ONEGRAM_ARMV6)
+            if (!_initialItemsPreparationPending)
+#endif
             for (TGMessageModernConversationItem *item in [_items copy])
             {
                 [self _updateImportantMediaStatusDataInplace:item];
@@ -650,7 +746,6 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     if (firstTime)
     {
 #if TARGET_IPHONE_SIMULATOR
-        //sleep(1);
 #endif
         
         [_tempViewStorage allowResurrectionForOperations:^
@@ -1357,7 +1452,6 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         CGContextRef context = UIGraphicsGetCurrentContext();
         
         CGContextTranslateCTM(context, screenSize.width / 2.0f, screenSize.height / 2.0f);
-        //CGContextScaleCTM(context, -1.0f, -1.0f);
         CGContextRotateCTM(context, (CGFloat)M_PI);
         CGContextTranslateCTM(context, -screenSize.width / 2.0f, -screenSize.height / 2.0f);
         
@@ -1457,10 +1551,15 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     {
         context = [TGModernConversationCompanion _createSnapshotContext:screenSize memoryToRelease:&_tempMemory];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
         CGContextSetAllowsFontSubpixelQuantization(context, false);
         CGContextSetShouldSubpixelQuantizeFonts(context, false);
         CGContextSetAllowsFontSubpixelPositioning(context, true);
         CGContextSetShouldSubpixelPositionFonts(context, true);
+#else
+        CGContextSetShouldAntialias(context, true);
+        CGContextSetShouldSmoothFonts(context, true);
+#endif
     }
     
     TG_TIMESTAMP_MEASURE(_createInitialSnapshot);
@@ -1570,6 +1669,12 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
             {
                 [item.viewModel bindViewToContainer:backgroundViewContainer viewStorage:_tempViewStorage];
                 [item.viewModel _offsetBoundViews:CGSizeMake(0.0f, currentVerticalPosition)];
+                if ([item.viewModel isKindOfClass:[TGMessageViewModel class]])
+                {
+                    TGMessageViewModel *messageViewModel = (TGMessageViewModel *)item.viewModel;
+                    if (messageViewModel.needsRelativeBoundsUpdates)
+                        [messageViewModel relativeBoundsUpdated:CGRectMake(0.0f, -currentVerticalPosition, screenSize.width, screenSize.height)];
+                }
             }
             else
             {
@@ -1633,7 +1738,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         else
             contextImageRef = [TGModernConversationCompanion createSnapshotFromContextAndRelease:context];
         
-        [controller setInitialSnapshot:contextImageRef backgroundView:backgroundViewContainer viewStorage:nil topEdge:topEdge + 45.0f displayScrollDownButton:contentOffsetY >= 200.0f /*|| ![self canAddNewMessagesToTop]*/];
+        [controller setInitialSnapshot:contextImageRef backgroundView:backgroundViewContainer viewStorage:nil topEdge:topEdge + 45.0f displayScrollDownButton:contentOffsetY >= 200.0f ];
         
         CGImageRelease(contextImageRef);
         
@@ -1646,6 +1751,10 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 }
 
 #pragma mark -
+
+- (void)_historyItemsPreparedForMessages:(NSArray *)__unused messages intent:(TGModernConversationAddMessageIntent)__unused intent
+{
+}
 
 - (void)_updateMessageItemsWithData:(NSArray *)__unused items
 {
@@ -1701,12 +1810,13 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     NSMutableArray *regularDownloads = [[NSMutableArray alloc] init];
     NSMutableArray *requestMessages = [[NSMutableArray alloc] init];
     
-    bool automaticallyDownloadPhotos = [self shouldAutomaticallyDownloadPhotos];
-    bool automaticallyDownloadAudios = [self shouldAutomaticallyDownloadAudios];
-    bool automaticallyDownloadAnimations = [self shouldAutomaticallyDownloadAnimations];
-    bool automaticallyDownloadVideos = [self shouldAutomaticallyDownloadVideos];
-    bool automaticallyDownloadDocuments = [self shouldAutomaticallyDownloadDocuments];
-    bool automaticallyDownloadVideoMessages = [self shouldAutomaticallyDownloadVideoMessages];
+    bool automaticDownloadsAllowed = !OGPlatformMediaDownloadsRequireUserAction();
+    bool automaticallyDownloadPhotos = automaticDownloadsAllowed && [self shouldAutomaticallyDownloadPhotos];
+    bool automaticallyDownloadAudios = automaticDownloadsAllowed && [self shouldAutomaticallyDownloadAudios];
+    bool automaticallyDownloadAnimations = automaticDownloadsAllowed && [self shouldAutomaticallyDownloadAnimations];
+    bool automaticallyDownloadVideos = automaticDownloadsAllowed && [self shouldAutomaticallyDownloadVideos];
+    bool automaticallyDownloadDocuments = automaticDownloadsAllowed && [self shouldAutomaticallyDownloadDocuments];
+    bool automaticallyDownloadVideoMessages = automaticDownloadsAllowed && [self shouldAutomaticallyDownloadVideoMessages];
     
     if (_updateMediaStatusDataImpl != NULL)
     {
@@ -1844,6 +1954,8 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                 }
             }
             
+            downloadMessage = downloadMessage && automaticDownloadsAllowed;
+
             if (updatedItem != nil)
             {
                 bool delayUpdateAvailability = false;
@@ -1871,7 +1983,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                 [updatedItems addObject:updatedItem];
                 [updatedDelayAvailability addObject:@(delayUpdateAvailability)];
                 [atIndices addObject:@(indices[i])];
-            } else if (forceCheckDownload) {
+            } else if (forceCheckDownload || !previousItem->_automaticMediaDownloadChecked) {
                 if (!previousItem->_mediaAvailabilityStatus && downloadMessage)
                 {
                     if (!TGMessageRangeIsEmpty(_unreadMessageRange) && TGMessageRangeContains(_unreadMessageRange, previousItem->_message.fromUid, previousItem->_message.mid, (int)previousItem->_message.date))
@@ -1882,6 +1994,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
             }
             
             TGMessageModernConversationItem *messageItem = _items[indices[i]];
+            messageItem->_automaticMediaDownloadChecked = true;
             if (messageItem->_message.mid < TGMessageLocalMidBaseline)
             {
                 for (TGMediaAttachment *attachment in messageItem->_message.mediaAttachments)
@@ -1915,40 +2028,23 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     [self _updateProgressForItemsInIndexSet:indexSet animated:animated];
     
     if (highPriorityDownloads.count != 0 || regularDownloads.count != 0) {
-        NSMutableArray *downloadList = [[NSMutableArray alloc] init];
-        for (id message in [highPriorityDownloads reverseObjectEnumerator])
-            [downloadList addObject:message];
-        [downloadList addObjectsFromArray:regularDownloads];
-    
-        for (TGMessage *message in downloadList) {
-            [self _downloadMediaInMessage:message highPriority:false];
-        }
+        if (_pendingAutomaticDownloads == nil)
+            _pendingAutomaticDownloads = [[NSMutableDictionary alloc] init];
+        for (TGMessage *message in regularDownloads)
+            _pendingAutomaticDownloads[@(message.mid)] = @[message, @false];
+        for (TGMessage *message in highPriorityDownloads)
+            _pendingAutomaticDownloads[@(message.mid)] = @[message, @true];
+        [self _flushPendingAutomaticDownloads];
     }
     
     if (requestMessages.count != 0)
     {
-        static NSMutableDictionary *requestedMessageAccounts = nil;
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^
-        {
-            requestedMessageAccounts = [[NSMutableDictionary alloc] init];
-        });
-        
-        NSMutableSet *messageSet = requestedMessageAccounts[@(TGTelegraphInstance.clientUserId)];
-        if (messageSet == nil)
-        {
-            messageSet = [[NSMutableSet alloc] init];
-            requestedMessageAccounts[@(TGTelegraphInstance.clientUserId)] = messageSet;
-        }
-        
         NSMutableArray *requestMids = [[NSMutableArray alloc] init];
+        int64_t requestPeerId = [self requestPeerId];
         for (NSNumber *nMid in requestMessages)
         {
-            if (![messageSet containsObject:nMid])
-            {
-                [messageSet addObject:nMid];
+            if (TGUnsupportedMessageRequestBegin(requestPeerId, [nMid intValue]))
                 [requestMids addObject:nMid];
-            }
         }
         
         if (requestMids.count != 0)
@@ -1987,6 +2083,21 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 {
 }
 
+- (void)setHistoryAboveReadAheadAllowed:(bool)allowed
+{
+    _historyAboveReadAheadAllowed = allowed;
+}
+
+- (bool)historyAboveReadAheadAllowed
+{
+    return _historyAboveReadAheadAllowed;
+}
+
+- (bool)historyAboveMayBeAvailable
+{
+    return false;
+}
+
 - (void)loadMoreMessagesBelow
 {
 }
@@ -2012,6 +2123,42 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
 - (void)_replaceMessages:(NSArray *)newMessages atMessageId:(int32_t)atMessageId peerId:(int64_t)peerId expandFrom:(int32_t)expandMessageId jump:(bool)jump top:(bool)top messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection scrollBackMessageId:(int32_t)scrollBackMessageId animated:(bool)animated
 {
+#if defined(ONEGRAM_ARMV6)
+    if ([NSThread isMainThread])
+    {
+        NSArray *messages = [newMessages copy];
+        _initialItemsPreparationPending = true;
+        uint64_t generation = ++_initialItemsPreparationGeneration;
+        int32_t bindingGeneration = OSAtomicAdd32Barrier(0, &_controllerBindingGeneration);
+        TGModernConversationCompanionReference *reference = _ios4LifetimeReference;
+#if defined(ONEGRAM_DIAGNOSTICS)
+        NSTimeInterval preparationStart = OGStartupDiagnosticsTime();
+#endif
+        [TGModernConversationCompanion dispatchOnMessageQueue:^
+        {
+            TGModernConversationCompanion *companion = TGIOS4ResolveModernConversationCompanion(reference);
+            if (companion == nil || companion.controller == nil || OSAtomicAdd32Barrier(0, &companion->_controllerBindingGeneration) != bindingGeneration)
+                return;
+            [companion _replaceMessages:messages atMessageId:atMessageId peerId:peerId expandFrom:expandMessageId jump:jump top:top messageIdForVisibleHoleDirection:messageIdForVisibleHoleDirection scrollBackMessageId:scrollBackMessageId animated:animated];
+            dispatch_async(dispatch_get_main_queue(), ^
+            {
+                TGModernConversationCompanion *current = TGIOS4ResolveModernConversationCompanion(reference);
+                if (current == nil || OSAtomicAdd32Barrier(0, &current->_controllerBindingGeneration) != bindingGeneration || current->_initialItemsPreparationGeneration != generation)
+                    return;
+                current->_initialItemsPreparationPending = false;
+                [current controllerCanReadHistoryUpdated];
+#if defined(ONEGRAM_DIAGNOSTICS)
+                if (current.controller != nil)
+                    OGPlatformDiagnosticLog(@"CHAT_PREPARED messages=%lu duration_ms=%.0f since_main_ms=%.0f", (unsigned long)messages.count, (OGStartupDiagnosticsTime() - preparationStart) * 1000.0, OGStartupDiagnosticsTime() * 1000.0);
+#endif
+            });
+        }];
+        return;
+    }
+#endif
+#if defined(ONEGRAM_ARMV6)
+    int32_t bindingGeneration = OSAtomicAdd32Barrier(0, &_controllerBindingGeneration);
+#endif
     [(NSMutableArray *)_items removeAllObjects];
     
     for (TGMessage *message in newMessages)
@@ -2049,12 +2196,18 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     }
     
     [self _updateMessageItemsWithData:_items];
+    if (![NSThread isMainThread])
+        [self _prepareLayoutForItemsAtIndices:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, _items.count)]];
     [self _itemsUpdated];
     
     NSArray *itemsCopy = [[NSArray alloc] initWithArray:_items];
     
     TGDispatchOnMainThread(^
     {
+#if defined(ONEGRAM_ARMV6)
+        if (OSAtomicAdd32Barrier(0, &_controllerBindingGeneration) != bindingGeneration)
+            return;
+#endif
         TGModernConversationController *controller = self.controller;
         if (atMessageId != 0) {
             [controller replaceItems:itemsCopy positionAtMessageId:atMessageId peerId:peerId expandAt:expandMessageId jump:jump top:top messageIdForVisibleHoleDirection:messageIdForVisibleHoleDirection scrollBackMessageId:scrollBackMessageId animated:animated];
@@ -2088,6 +2241,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         }
         
         [self _updateMessageItemsWithData:_items];
+        [self _prepareLayoutForItemsAtIndices:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, _items.count)]];
         
         NSArray *itemsCopy = [[NSArray alloc] initWithArray:_items];
         
@@ -2150,6 +2304,107 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
     return editedMessage;
 }
 
+- (void)_prepareLayoutForItemsAtIndices:(NSIndexSet *)indices
+{
+    CGFloat containerWidth = _controllerWidthForItemCalculation;
+    if (indices.count == 0 || containerWidth <= FLT_EPSILON)
+        return;
+    
+    int dateOffset = (int)[[TGTelegramNetworking instance] timeOffset];
+    TGMessageRange unreadMessageRange = _unreadMessageRange;
+    NSUInteger itemCount = _items.count;
+    NSMutableArray *ranges = [[NSMutableArray alloc] init];
+    NSUInteger rangeStart = [indices firstIndex];
+    while (rangeStart != NSNotFound && rangeStart < itemCount)
+    {
+        NSUInteger rangeEnd = rangeStart;
+        NSUInteger nextIndex = [indices indexGreaterThanIndex:rangeEnd];
+        while (nextIndex != NSNotFound && nextIndex == rangeEnd + 1 && nextIndex < itemCount)
+        {
+            rangeEnd = nextIndex;
+            nextIndex = [indices indexGreaterThanIndex:rangeEnd];
+        }
+        
+        [ranges addObject:[_items subarrayWithRange:NSMakeRange(rangeStart, rangeEnd - rangeStart + 1)]];
+        
+        rangeStart = nextIndex;
+    }
+    
+#if defined(ONEGRAM_DIAGNOSTICS)
+    __block double layoutThreadTime = 0.0;
+#endif
+    OGRuntimePerformOnLatencyLane(OGRuntimeLatencyLaneLayout, ^
+    {
+#if defined(ONEGRAM_DIAGNOSTICS)
+        double startThreadTime = TGModernConversationCompanionThreadTime();
+#endif
+        for (NSArray *rangeItems in ranges)
+        {
+            [TGModernConversationViewLayout prepareItems:rangeItems containerWidth:containerWidth dateOffset:dateOffset unreadMessageRange:unreadMessageRange];
+        }
+#if defined(ONEGRAM_DIAGNOSTICS)
+        layoutThreadTime = TGModernConversationCompanionThreadTime() - startThreadTime;
+#endif
+    });
+#if defined(ONEGRAM_DIAGNOSTICS)
+    _diagnosticLayoutThreadTime = layoutThreadTime;
+#endif
+}
+
+static const NSUInteger TGModernConversationStreamedInsertionFirstChunk = 12;
+static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
+
+- (void)_streamInsertionOfItems:(NSArray *)insertItems atIndices:(NSIndexSet *)insertAtIndices animated:(bool)animated intent:(TGModernConversationInsertItemIntent)insertIntent
+{
+    NSUInteger total = insertItems.count;
+    NSUInteger *indices = (NSUInteger *)malloc(sizeof(NSUInteger) * total);
+    if (indices == NULL)
+    {
+        [self _prepareLayoutForItemsAtIndices:insertAtIndices];
+        TGDispatchOnMainThread(^
+        {
+            [self.controller insertItems:insertItems atIndices:insertAtIndices animated:animated intent:insertIntent removeAtIndices:nil];
+        });
+        return;
+    }
+    [insertAtIndices getIndexes:indices maxCount:total inIndexRange:NULL];
+    
+    NSUInteger itemCount = _items.count;
+    NSUInteger position = 0;
+    NSUInteger chunkSize = TGModernConversationStreamedInsertionFirstChunk;
+    while (position < total)
+    {
+        NSUInteger length = MIN(chunkSize, total - position);
+        NSMutableIndexSet *chunkIndices = [[NSMutableIndexSet alloc] init];
+        for (NSUInteger index = position; index < position + length; index++)
+            [chunkIndices addIndex:indices[index]];
+        NSArray *chunkItems = [insertItems subarrayWithRange:NSMakeRange(position, length)];
+        
+        NSMutableIndexSet *layoutIndices = [[NSMutableIndexSet alloc] initWithIndexSet:chunkIndices];
+        NSUInteger lastIndex = chunkIndices.lastIndex;
+        if (lastIndex + 1 < itemCount && position + length < total && indices[position + length] == lastIndex + 1)
+            [layoutIndices addIndex:lastIndex + 1];
+#if defined(ONEGRAM_DIAGNOSTICS)
+        CFAbsoluteTime chunkStartTime = CFAbsoluteTimeGetCurrent();
+        double chunkStartThreadTime = TGModernConversationCompanionThreadTime();
+#endif
+        [self _prepareLayoutForItemsAtIndices:layoutIndices];
+        
+#if defined(ONEGRAM_DIAGNOSTICS)
+        OGPlatformDiagnosticLog(@"HISTORY chunk ready count=%d offset=%d total=%d ms=%.0f cpu=%.0f queueCpu=%.0f", (int)length, (int)position, (int)total, (CFAbsoluteTimeGetCurrent() - chunkStartTime) * 1000.0, _diagnosticLayoutThreadTime * 1000.0, (TGModernConversationCompanionThreadTime() - chunkStartThreadTime) * 1000.0);
+#endif
+        TGDispatchOnMainThread(^
+        {
+            [self.controller insertItems:chunkItems atIndices:chunkIndices animated:animated intent:insertIntent removeAtIndices:nil];
+        });
+        
+        position += length;
+        chunkSize = TGModernConversationStreamedInsertionChunk;
+    }
+    
+    free(indices);
+}
+
 - (void)_addMessages:(NSArray *)addedMessages animated:(bool)animated intent:(TGModernConversationAddMessageIntent)intent
 {
     [self _addMessages:addedMessages animated:animated intent:intent deletedMessages:nil];
@@ -2157,7 +2412,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
 - (void)_addMessages:(NSArray *)addedMessages animated:(bool)animated intent:(TGModernConversationAddMessageIntent)intent deletedMessages:(NSArray *)deletedMessages
 {
-    [TGModernConversationCompanion dispatchOnMessageQueue:^
+    dispatch_block_t addMessagesBlock = ^
     {
         NSMutableDictionary *removedMidsByPeerId = [[NSMutableDictionary alloc] init];
         for (id nMessage in deletedMessages)
@@ -2210,6 +2465,24 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         TGMutableArrayWithIndices *insertArray = [[TGMutableArrayWithIndices alloc] initWithArray:(NSMutableArray *)_items];
         NSMutableArray *duplicateDiscussionUpdatedItems = [[NSMutableArray alloc] init];
         
+        bool hasOldestItem = false;
+        int oldestItemDate = 0;
+        int32_t oldestItemMid = 0;
+        for (TGMessageModernConversationItem *messageItem in _items)
+        {
+            TGMessage *itemMessage = messageItem->_message;
+            if (itemMessage == nil)
+                continue;
+            int itemDate = (int)itemMessage.date;
+            int32_t itemMid = itemMessage.mid;
+            if (!hasOldestItem || itemDate < oldestItemDate || (itemDate == oldestItemDate && itemMid < oldestItemMid))
+            {
+                hasOldestItem = true;
+                oldestItemDate = itemDate;
+                oldestItemMid = itemMid;
+            }
+        }
+        
         for (TGMessage *message in addedMessages)
         {
             TGMessage *finalMessage = message;
@@ -2247,7 +2520,8 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                             oldDiscussion.replies != incomingDiscussion.replies ||
                             oldDiscussion.channelId != incomingDiscussion.channelId ||
                             oldDiscussion.maxId != incomingDiscussion.maxId ||
-                            oldDiscussion.readMaxId != incomingDiscussion.readMaxId;
+                            oldDiscussion.readMaxId != incomingDiscussion.readMaxId ||
+                            !TGObjectCompare(oldDiscussion.recentRepliers, incomingDiscussion.recentRepliers);
 
                         if (discussionChanged)
                         {
@@ -2263,8 +2537,6 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
                             [duplicateDiscussionUpdatedItems addObject:updatedItem];
 
-                            NSLog(@"COMMENTS duplicate.merge mid=%d replies=%d channel=%lld index=%d",
-                                  finalMessage.mid, incomingDiscussion.replies, incomingDiscussion.channelId, (int)existingIndex);
                         }
                     }
                 }
@@ -2310,26 +2582,41 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                 finalMessage = [self _editedMessage:finalMessage withMediaMessage:_uploadingEditMessages[@(finalMessage.mid)]];
             }
             
-            int index = -1;
-            for (TGMessageModernConversationItem *messageItem in _items)
+            bool olderThanAllItems = !hasOldestItem || !(oldestItemDate < date || (oldestItemDate == date && oldestItemMid < mid));
+            if (!olderThanAllItems)
             {
-                index++;
-                
-                if (messageItem->_message == nil)
-                    continue;
-                
-                int itemDate = (int)messageItem->_message.date;
-                int32_t itemMid = messageItem->_message.mid;
-                bool passes = itemMid < mid;
-                if (itemDate < date || (itemDate == date && passes))
+                int index = -1;
+                for (TGMessageModernConversationItem *messageItem in _items)
                 {
-                    [insertArray insertObject:[[TGMessageModernConversationItem alloc] initWithMessage:finalMessage context:_viewContext] atIndex:index];
-                    inserted = true;
-                    break;
+                    index++;
+                    
+                    if (messageItem->_message == nil)
+                        continue;
+                    
+                    int itemDate = (int)messageItem->_message.date;
+                    int32_t itemMid = messageItem->_message.mid;
+                    bool passes = itemMid < mid;
+                    if (itemDate < date || (itemDate == date && passes))
+                    {
+                        [insertArray insertObject:[[TGMessageModernConversationItem alloc] initWithMessage:finalMessage context:_viewContext] atIndex:index];
+                        inserted = true;
+                        break;
+                    }
                 }
             }
             if (!inserted) {
                 [insertArray insertObject:[[TGMessageModernConversationItem alloc] initWithMessage:finalMessage context:_viewContext] atIndex:_items.count];
+            }
+            if (finalMessage != nil)
+            {
+                int insertedDate = (int)finalMessage.date;
+                int32_t insertedMid = finalMessage.mid;
+                if (!hasOldestItem || insertedDate < oldestItemDate || (insertedDate == oldestItemDate && insertedMid < oldestItemMid))
+                {
+                    hasOldestItem = true;
+                    oldestItemDate = insertedDate;
+                    oldestItemMid = insertedMid;
+                }
             }
         }
         
@@ -2337,36 +2624,43 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         NSArray *insertItems = [insertArray objectsForInsertOperations:&insertAtIndices];
         
         [self _updateMessageItemsWithData:insertItems];
+        [self _historyItemsPreparedForMessages:addedMessages intent:intent];
         
-        for (TGModernConversationItem *item in insertItems)
+        TGModernConversationInsertItemIntent insertIntent = TGModernConversationInsertItemIntentGeneric;
+        switch (intent)
         {
-            [item sizeForContainerSize:CGSizeMake(_controllerWidthForItemCalculation, 0.0f) viewStorage:nil];
+            case TGModernConversationAddMessageIntentLoadMoreMessagesAbove:
+                insertIntent = TGModernConversationInsertItemIntentLoadMoreMessagesAbove;
+                break;
+            case TGModernConversationAddMessageIntentLoadMoreMessagesBelow:
+                insertIntent = TGModernConversationInsertItemIntentLoadMoreMessagesBelow;
+                break;
+            case TGModernConversationAddMessageIntentSendTextMessage:
+                insertIntent = TGModernConversationInsertItemIntentSendTextMessage;
+                break;
+            case TGModernConversationAddMessageIntentSendOtherMessage:
+                insertIntent = TGModernConversationInsertItemIntentSendOtherMessage;
+                break;
+            default:
+                break;
+        }
+        
+        bool streamInsertion = intent == TGModernConversationAddMessageIntentLoadMoreMessagesAbove && deletedIndexSet.count == 0 && duplicateDiscussionUpdatedItems.count == 0 && insertItems.count > TGModernConversationStreamedInsertionFirstChunk && ![NSThread isMainThread];
+        if (streamInsertion)
+        {
+            [self _streamInsertionOfItems:insertItems atIndices:insertAtIndices animated:animated intent:insertIntent];
+        }
+        else
+        {
+            [self _prepareLayoutForItemsAtIndices:insertAtIndices];
         }
         
         TGDispatchOnMainThread(^
         {
             TGModernConversationController *controller = self.controller;
             
-            TGModernConversationInsertItemIntent insertIntent = TGModernConversationInsertItemIntentGeneric;
-            switch (intent)
-            {
-                case TGModernConversationAddMessageIntentLoadMoreMessagesAbove:
-                    insertIntent = TGModernConversationInsertItemIntentLoadMoreMessagesAbove;
-                    break;
-                case TGModernConversationAddMessageIntentLoadMoreMessagesBelow:
-                    insertIntent = TGModernConversationInsertItemIntentLoadMoreMessagesBelow;
-                    break;
-                case TGModernConversationAddMessageIntentSendTextMessage:
-                    insertIntent = TGModernConversationInsertItemIntentSendTextMessage;
-                    break;
-                case TGModernConversationAddMessageIntentSendOtherMessage:
-                    insertIntent = TGModernConversationInsertItemIntentSendOtherMessage;
-                    break;
-                default:
-                    break;
-            }
-            
-            [controller insertItems:insertItems atIndices:insertAtIndices animated:animated intent:insertIntent removeAtIndices:deletedIndexSet];
+            if (!streamInsertion)
+                [controller insertItems:insertItems atIndices:insertAtIndices animated:animated intent:insertIntent removeAtIndices:deletedIndexSet];
 
             for (TGMessageModernConversationItem *updatedItem in duplicateDiscussionUpdatedItems)
             {
@@ -2386,7 +2680,10 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
         [self _updateMediaStatusDataForItemsInIndexSet:insertAtIndices animated:false forceforceCheckDownload:false];
         [self _updateControllerEmptyState:_items.count == 0 force:false];
         [self _itemsUpdated];
-    }];
+    };
+    
+    bool latencyCritical = intent == TGModernConversationAddMessageIntentLoadMoreMessagesAbove || intent == TGModernConversationAddMessageIntentLoadMoreMessagesBelow;
+    [TGModernConversationCompanion dispatchOnMessageQueue:latencyCritical ? OGRuntimeLatencyCriticalBlock(addMessagesBlock) : addMessagesBlock];
 }
 
 - (void)_deleteMessages:(NSArray *)messages animated:(bool)animated
@@ -2494,6 +2791,63 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 {
     [TGModernConversationCompanion dispatchOnMessageQueue:^
     {
+        if (mid != 0 && mid != previousMid)
+        {
+            int localIndex = -1;
+            int scanIndex = -1;
+            int64_t localPeerId = 0;
+            for (TGMessageModernConversationItem *messageItem in _items)
+            {
+                scanIndex++;
+                if (messageItem->_message.mid == previousMid)
+                {
+                    localIndex = scanIndex;
+                    localPeerId = messageItem->_message.fromUid;
+                    break;
+                }
+            }
+            bool alreadyPresent = false;
+            if (localIndex >= 0)
+            {
+                for (TGMessageModernConversationItem *messageItem in _items)
+                {
+                    if (messageItem->_message.mid == mid && messageItem->_message.fromUid == localPeerId)
+                    {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+            }
+            if (alreadyPresent)
+            {
+                TGMessageModernConversationItem *localItem = _items[(NSUInteger)localIndex];
+                NSIndexSet *removedIndices = [NSIndexSet indexSetWithIndex:(NSUInteger)localIndex];
+                [self _resetProgressForItemsInIndexSet:removedIndices];
+                if (localItem->_message.deliveryState != TGMessageDeliveryStateDelivered && TGAppDelegateInstance.soundEnabled)
+                    [TGAppDelegateInstance playSound:@"sent.caf" vibrate:false];
+                [(NSMutableArray *)_items removeObjectAtIndex:(NSUInteger)localIndex];
+                TGDispatchOnMainThread(^
+                {
+                    TGMessageIndex *previousMessageIndex = [TGMessageIndex indexWithPeerId:localPeerId messageId:previousMid];
+                    TGMessageIndex *messageIndex = [TGMessageIndex indexWithPeerId:localPeerId messageId:mid];
+                    if (_mediaHiddenMessageIndex.peerId == localPeerId && _mediaHiddenMessageIndex.messageId == previousMid)
+                        _mediaHiddenMessageIndex = messageIndex;
+                    bool selectionChanged = [self _isMessageChecked:previousMessageIndex];
+                    if (selectionChanged)
+                    {
+                        [self setMessageChecked:previousMessageIndex checked:false];
+                        [self setMessageChecked:messageIndex checked:true];
+                    }
+                    TGModernConversationController *controller = self.controller;
+                    [controller _deleteItemsAtIndices:removedIndices animated:false animationFactor:1.0f];
+                    if (selectionChanged)
+                        [controller updateCheckedMessages];
+                });
+                [self _itemsUpdated];
+                return;
+            }
+        }
+        
         int index = -1;
         int foundIndex = -1;
         int64_t peerId = 0;
@@ -2519,6 +2873,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                     updatedItem->_additionalDate = date;
                 updatedMessage.pts = pts;
                 updatedMessage.deliveryState = TGMessageDeliveryStateDelivered;
+                [self _resetProgressForItemsInIndexSet:[NSIndexSet indexSetWithIndex:index]];
                 
                 if (date != 0) {
                     bool changesOrder = false;
@@ -2672,7 +3027,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
                 [(NSMutableArray *)_items replaceObjectAtIndex:index withObject:updatedItem];
                 
-                if (previousMediaId != updatedMediaId)
+                if (previousMediaId != updatedMediaId || previousMessage.mid != updatedMessage.mid || (previousMessage.deliveryState == TGMessageDeliveryStatePending && updatedMessage.deliveryState != TGMessageDeliveryStatePending))
                     [progressResets addIndex:index];
 
                 [itemUpdates addObject:@(index)];
@@ -3152,7 +3507,18 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 {
     if ([path hasPrefix:@"/tg/downloadMessages/"])
     {
-        if (status == ASStatusSuccess)
+        if (status != ASStatusSuccess)
+        {
+            NSRange openRange = [path rangeOfString:@"(" options:NSBackwardsSearch];
+            NSRange closeRange = [path rangeOfString:@")" options:NSBackwardsSearch];
+            if (openRange.location != NSNotFound && closeRange.location != NSNotFound && closeRange.location > openRange.location)
+            {
+                NSArray *components = [[path substringWithRange:NSMakeRange(openRange.location + 1, closeRange.location - openRange.location - 1)] componentsSeparatedByString:@","];
+                if (components.count == 2)
+                    TGUnsupportedMessageRequestFailed([components[0] longLongValue], [components[1] intValue]);
+            }
+        }
+        else
         {
             [TGModernConversationCompanion dispatchOnMessageQueue:^
             {
@@ -3222,6 +3588,92 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 
 - (void)markMessagesAsViewed:(NSArray *)__unused messageIds
 {
+}
+
+- (NSArray *)recentMentionUserIds
+{
+    NSMutableArray *userIds = [[NSMutableArray alloc] init];
+    NSMutableSet *existingIds = [[NSMutableSet alloc] init];
+    for (TGMessageModernConversationItem *item in [self.controller _items]) {
+        if (TGPeerIdIsUser(item->_message.fromUid)) {
+            NSNumber *userId = @(item->_message.fromUid);
+            if (![existingIds containsObject:userId]) {
+                [existingIds addObject:userId];
+                [userIds addObject:userId];
+            }
+        }
+    }
+    return userIds;
+}
+
++ (NSArray *)mentionUsersForQuery:(NSString *)query memberUserIds:(NSArray *)memberUserIds recentUserIds:(NSArray *)recentUserIds contextBotIds:(NSArray *)contextBotIds includeSelf:(bool)includeSelf
+{
+    NSString *normalizedQuery = [query lowercaseString];
+    NSMutableArray *queryTokens = [[NSMutableArray alloc] init];
+    for (NSString *token in [normalizedQuery componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]) {
+        if (token.length != 0) {
+            [queryTokens addObject:token];
+        }
+    }
+    bool (^matchesUser)(TGUser *) = ^bool(TGUser *user) {
+        if (user == nil || user.isDeleted || user.displayName.length == 0 || (!includeSelf && user.uid == TGTelegraphInstance.clientUserId)) {
+            return false;
+        }
+        if (normalizedQuery.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedQuery]) {
+            return true;
+        }
+        NSArray *nameTokens = [[user.displayName lowercaseString] componentsSeparatedByCharactersInSet:[[NSCharacterSet alphanumericCharacterSet] invertedSet]];
+        for (NSString *queryToken in queryTokens) {
+            bool matchesToken = false;
+            for (NSString *nameToken in nameTokens) {
+                if ([nameToken hasPrefix:queryToken]) {
+                    matchesToken = true;
+                    break;
+                }
+            }
+            if (!matchesToken) {
+                return false;
+            }
+        }
+        return queryTokens.count != 0;
+    };
+    NSMutableSet *existingIds = [[NSMutableSet alloc] init];
+    NSMutableArray *users = [[NSMutableArray alloc] init];
+    for (NSNumber *userId in contextBotIds) {
+        TGUser *user = [TGDatabaseInstance() loadUser:[userId intValue]];
+        if (user.isContextBot && user.userName.length != 0 && matchesUser(user) && ![existingIds containsObject:userId]) {
+            [existingIds addObject:userId];
+            [users addObject:user];
+        }
+    }
+    for (NSNumber *userId in recentUserIds) {
+        if (![existingIds containsObject:userId]) {
+            TGUser *user = [TGDatabaseInstance() loadUser:[userId intValue]];
+            if (matchesUser(user)) {
+                [existingIds addObject:userId];
+                [users addObject:user];
+            }
+        }
+    }
+    NSMutableArray *remainingUsers = [[NSMutableArray alloc] init];
+    for (NSNumber *userId in memberUserIds) {
+        if (![existingIds containsObject:userId]) {
+            TGUser *user = [TGDatabaseInstance() loadUser:[userId intValue]];
+            if (matchesUser(user)) {
+                [existingIds addObject:userId];
+                [remainingUsers addObject:user];
+            }
+        }
+    }
+    [remainingUsers sortUsingComparator:^NSComparisonResult(TGUser *lhs, TGUser *rhs) {
+        NSComparisonResult result = [lhs.displayName caseInsensitiveCompare:rhs.displayName];
+        if (result == NSOrderedSame) {
+            return lhs.uid < rhs.uid ? NSOrderedAscending : (lhs.uid > rhs.uid ? NSOrderedDescending : NSOrderedSame);
+        }
+        return result;
+    }];
+    [users addObjectsFromArray:remainingUsers];
+    return users;
 }
 
 - (SSignal *)userListForMention:(NSString *)__unused mention canBeContextBot:(bool)__unused canBeContextBot includeSelf:(bool)__unused includeSelf
@@ -3558,6 +4010,86 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
 {
 }
 
+- (void)_controllerDidUpdateVisibleMessageIds:(NSArray *)messageIds
+{
+    [TGModernConversationCompanion dispatchOnMessageQueue:^
+    {
+        _visibleMessageIdsForDownloads.clear();
+        for (NSNumber *nMid in messageIds)
+            _visibleMessageIdsForDownloads.insert([nMid intValue]);
+        [self _flushPendingAutomaticDownloads];
+    }];
+}
+
+- (void)_flushPendingAutomaticDownloads
+{
+    if (_pendingAutomaticDownloads.count == 0 || _visibleMessageIdsForDownloads.empty())
+        return;
+
+    static const NSInteger margin = 12;
+    Class messageItemClass = [TGMessageModernConversationItem class];
+    NSInteger count = (NSInteger)_items.count;
+    NSInteger minVisibleIndex = NSIntegerMax;
+    NSInteger maxVisibleIndex = -1;
+    bool prune = _pendingAutomaticDownloads.count > 512;
+    std::set<int32_t> loadedMessageIds;
+    for (NSInteger index = 0; index < count; index++)
+    {
+        TGMessageModernConversationItem *item = _items[(NSUInteger)index];
+        if (object_getClass(item) != messageItemClass && ![item isKindOfClass:messageItemClass])
+            continue;
+        int32_t mid = item->_message.mid;
+        if (prune)
+            loadedMessageIds.insert(mid);
+        if (_visibleMessageIdsForDownloads.find(mid) != _visibleMessageIdsForDownloads.end())
+        {
+            minVisibleIndex = MIN(minVisibleIndex, index);
+            maxVisibleIndex = MAX(maxVisibleIndex, index);
+        }
+    }
+
+    if (prune)
+    {
+        NSMutableArray *staleKeys = [[NSMutableArray alloc] init];
+        for (NSNumber *nMid in _pendingAutomaticDownloads)
+        {
+            if (loadedMessageIds.find([nMid intValue]) == loadedMessageIds.end())
+                [staleKeys addObject:nMid];
+        }
+        [_pendingAutomaticDownloads removeObjectsForKeys:staleKeys];
+    }
+
+    if (maxVisibleIndex < 0)
+        return;
+
+    NSMutableArray *requests = [[NSMutableArray alloc] init];
+    void (^collect)(NSInteger, bool) = ^(NSInteger index, bool visible)
+    {
+        if (index < 0 || index >= count)
+            return;
+        TGMessageModernConversationItem *item = _items[(NSUInteger)index];
+        if (object_getClass(item) != messageItemClass && ![item isKindOfClass:messageItemClass])
+            return;
+        NSNumber *key = @(item->_message.mid);
+        NSArray *entry = _pendingAutomaticDownloads[key];
+        if (entry == nil)
+            return;
+        [_pendingAutomaticDownloads removeObjectForKey:key];
+        [requests addObject:@[entry[0], @(visible || [entry[1] boolValue])]];
+    };
+
+    for (NSInteger index = minVisibleIndex; index <= maxVisibleIndex; index++)
+        collect(index, true);
+    for (NSInteger distance = 1; distance <= margin; distance++)
+    {
+        collect(minVisibleIndex - distance, false);
+        collect(maxVisibleIndex + distance, false);
+    }
+
+    for (NSArray *request in requests)
+        [self _downloadMediaInMessage:request[0] highPriority:[request[1] boolValue]];
+}
+
 - (void)_controllerDidUpdateVisibleUnseenMessageIds:(NSArray *)unseenMessageIds {
     [TGModernConversationCompanion dispatchOnMessageQueue:^{
         NSMutableArray *consumeIds = [[NSMutableArray alloc] init];
@@ -3610,7 +4142,7 @@ static void dispatchOnMessageQueue(dispatch_block_t block, bool synchronous)
                         contentProperties[@"contentsRead"] = [[TGMessageViewedContentProperty alloc] init];
                         TGMessageModernConversationItem *updatedItem = [item deepCopy];
                         updatedItem->_message.contentProperties = contentProperties;
-                        item->_message.containsUnseenMention = false;
+                        updatedItem->_message.containsUnseenMention = false;
                         ((NSMutableArray *)_items)[index] = updatedItem;
                         
                         [updateItemsAtIndices addObject:@(index)];

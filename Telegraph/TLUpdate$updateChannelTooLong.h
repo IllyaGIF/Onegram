@@ -1,6 +1,5 @@
 #import "TLUpdate.h"
 
-//updateChannelTooLong flags:# channel_id:int pts:flags.0?int = Update
 
 @interface TLUpdate$updateChannelTooLong : TLUpdate
 

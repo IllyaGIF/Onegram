@@ -45,6 +45,7 @@
 - (void)acquireMediaUploadActivityHolderForPreparedMessage:(TGPreparedMessage *)preparedMessage;
 - (void)uploadFilesWithExtensions:(NSArray *)filePathsAndExtensions mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag;
 - (void)beginUploadProgress;
+- (void)finishUploadProgress;
 - (void)uploadsStarted;
 - (void)uploadProgressChanged;
 - (void)uploadsCompleted:(NSDictionary *)filePathToUploadedFile;

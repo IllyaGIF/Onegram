@@ -90,7 +90,6 @@ const CGFloat TGCallAvatarNormalScale = 0.75f;
     dispatch_once(&onceToken, ^
     {
         CGSize screenSize = TGScreenSize();
-        //int width = (int)screenSize.width;
         int height = (int)screenSize.height;
         if (height == 736)
             scale = 1.0f;
@@ -154,7 +153,6 @@ const CGFloat TGCallAvatarNormalScale = 0.75f;
     {
         _currentPeerId = displayPeer.uid;
 
-        TGLog(@"CALL ui.avatar peer=%d photo=%d", displayPeer.uid, displayPeer.photoUrlSmall.length > 0 ? 1 : 0);
         
         CGSize size = TGCallAvatarLargeSize;
         static UIImage *placeholder = nil;

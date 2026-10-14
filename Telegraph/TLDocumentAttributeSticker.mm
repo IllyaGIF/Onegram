@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//documentAttributeSticker#6319d612 flags:# alt:string stickerset:InputStickerSet mask_coords:flags.0?MaskCoords = DocumentAttribute;
 
 @implementation TLDocumentAttributeSticker
 

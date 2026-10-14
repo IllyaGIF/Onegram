@@ -1,4 +1,6 @@
+#import "LegacyComponentsGlobals.h"
 #import "TGToolbarButton.h"
+#import "OGPlatformVersion.h"
 
 #import "LegacyComponentsInternal.h"
 #import "TGImageUtils.h"
@@ -359,7 +361,7 @@ static UIColor *shadowColorForButton(int type)
 
 - (void)setupNativeClassicButtonIfNeeded
 {
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"] || _nativeClassicButton != nil)
+    if (!(TGCurrentInterfaceStyle() != 0) || _nativeClassicButton != nil)
         return;
 
     _nativeClassicButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
@@ -384,7 +386,7 @@ static UIColor *shadowColorForButton(int type)
 
 - (void)updateBackground
 {
-    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"] && _nativeClassicButton == nil)
+    if ((TGCurrentInterfaceStyle() != 0) && _nativeClassicButton == nil)
         [self setupNativeClassicButtonIfNeeded];
 
     if (_nativeClassicButton != nil)
@@ -665,14 +667,12 @@ static UIColor *shadowColorForButton(int type)
 
 - (void)setHighlighted:(BOOL)highlighted
 {
-    //_buttonLabelView.shadowColor = shadowColorForButton(_type, highlighted || self.selected);
     
     [super setHighlighted:highlighted];
 }
 
 - (void)setSelected:(BOOL)selected
 {
-    //_buttonLabelView.shadowColor = shadowColorForButton(_type, selected || self.highlighted);
     
     [super setSelected:selected];
 }

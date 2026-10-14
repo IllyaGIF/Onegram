@@ -1,4 +1,5 @@
 #import "TGShareSheetSharePeersCell.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -253,7 +254,7 @@
     _avatarView.center = CGPointMake(CGFloor(self.bounds.size.width / 2.0f), _avatarView.center.y);
     _selectedCircleView.center = _avatarView.center;
     
-    CGFloat titleHeight = ceilf(_titleLabel.font.lineHeight);
+    CGFloat titleHeight = ceilf(OGPlatformFontLineHeight(_titleLabel.font));
     _titleLabel.frame = CGRectMake(0.0f, CGRectGetMaxY(_avatarView.frame) + 4.0f, self.bounds.size.width, titleHeight);
     
     _checkView.frame = CGRectMake(self.bounds.size.width / 2.0f + 30.0f - _checkView.frame.size.width + 6.0f, 60.0f - _checkView.frame.size.height + 6.0f, _checkView.frame.size.width, _checkView.frame.size.height);
@@ -275,8 +276,6 @@
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)__unused gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)__unused otherGestureRecognizer
 {
-    //if ([otherGestureRecognizer isKindOfClass:[UILongPressGestureRecognizer class]])
-    //    return true;
     
     return false;
 }

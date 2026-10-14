@@ -46,14 +46,10 @@ public:
     TGIOS6WebrtcCppBridge(TGIOS6WebrtcCallbackProxy *callbackProxy) :
     _callbackProxy(callbackProxy) {
         static bool registered = false;
-        TGLog(@"WEBRTC cpp.bridge.init.before registered=%d", registered ? 1 : 0);
         if (!registered) {
-            TGLog(@"WEBRTC cpp.register.before");
             tgcalls::Register<tgcalls::InstanceImpl>();
             registered = true;
-            TGLog(@"WEBRTC cpp.register.after");
         }
-        TGLog(@"WEBRTC cpp.bridge.init.after");
     }
 
     bool start(
@@ -113,13 +109,6 @@ public:
                 descriptor.rtcServers.push_back(server);
         }
         
-        TGLog(@"WEBRTC cpp.descriptor version=%s outgoing=%d rtcServers=%lu customParametersLen=%lu allowP2P=%d allowTCP=%d",
-              descriptor.version.c_str(),
-              isOutgoing ? 1 : 0,
-              (unsigned long)descriptor.rtcServers.size(),
-              (unsigned long)descriptor.config.customParameters.size(),
-              allowP2P ? 1 : 0,
-              allowTCP ? 1 : 0);
 
         void (^sendSignalingDataCopy)(NSData *) = [sendSignalingData copy];
         int emittedSignalingPackets = 0;
@@ -132,22 +121,11 @@ public:
                 }
                 NSData *payload = [[NSData alloc] initWithBytes:data.data() length:data.size()];
                 const unsigned long payloadLength = (unsigned long)data.size();
-                const int packetIndex = emittedSignalingPackets;
-                const int candidateIndex = emittedCandidatePackets;
-                TGLog(@"WEBRTC cpp.signaling.callback len=%lu packet=%d candidate=%d main=%d",
-                      payloadLength,
-                      packetIndex,
-                      candidateIndex,
-                      [NSThread isMainThread] ? 1 : 0);
                 if ([NSThread isMainThread]) {
-                    TGLog(@"WEBRTC cpp.signaling.emit len=%lu packet=%d candidate=%d main=1", payloadLength, packetIndex, candidateIndex);
                     sendSignalingDataCopy(payload);
-                    TGLog(@"WEBRTC cpp.signaling.emit.done len=%lu packet=%d", payloadLength, packetIndex);
                 } else {
                     dispatch_async(dispatch_get_main_queue(), ^{
-                        TGLog(@"WEBRTC cpp.signaling.emit len=%lu packet=%d candidate=%d main=1", payloadLength, packetIndex, candidateIndex);
                         sendSignalingDataCopy(payload);
-                        TGLog(@"WEBRTC cpp.signaling.emit.done len=%lu packet=%d", payloadLength, packetIndex);
                     });
                 }
             }
@@ -156,7 +134,6 @@ public:
             [callbackProxy emitSignalBars:(int32_t)bars];
         };
         descriptor.stateUpdated = [callbackProxy](tgcalls::State state) {
-            TGLog(@"WEBRTC cpp.state callback=%d", (int)state);
             int32_t mapped = 0;
             if (state == tgcalls::State::Established)
                 mapped = 1;
@@ -175,26 +152,18 @@ public:
         descriptor.audioLevelUpdated = [](float) {
         };
 
-        TGLog(@"WEBRTC cpp.create.before version=%s rtcServers=%lu keyOutgoing=%d",
-              descriptor.version.c_str(),
-              (unsigned long)descriptor.rtcServers.size(),
-              isOutgoing ? 1 : 0);
         @try {
             _instance = tgcalls::Meta::Create(descriptor.version, std::move(descriptor));
         } @catch (NSException *exception) {
             TGLog(@"WEBRTC cpp.create.exception name=%@ reason=%@", exception.name, exception.reason);
             return false;
         }
-        TGLog(@"WEBRTC cpp.create.after instance=%p", _instance.get());
         if (!_instance) {
             TGLog(@"WEBRTC cpp.start.fail noInstance version=%@ servers=%d", version, (int)connections.count);
             return false;
         }
 
-        TGLog(@"WEBRTC cpp.network.before");
         _instance->setNetworkType(tgcalls::NetworkType::WiFi);
-        TGLog(@"WEBRTC cpp.network.after");
-        TGLog(@"WEBRTC cpp.start.ok version=%@ servers=%d", version, (int)connections.count);
         return true;
     }
 
@@ -203,9 +172,7 @@ public:
             return;
 
         std::vector<uint8_t> payload((const uint8_t *)data.bytes, (const uint8_t *)data.bytes + data.length);
-        TGLog(@"WEBRTC cpp.receive.before len=%d", (int)data.length);
         _instance->receiveSignalingData(payload);
-        TGLog(@"WEBRTC cpp.receive.after len=%d", (int)data.length);
     }
 
     void stop(void (^completion)(NSString *, int64_t, int64_t, int64_t, int64_t)) {
@@ -315,14 +282,8 @@ private:
         _sendSignalingData = [sendSignalingData copy];
         _callbackProxy = [[TGIOS6WebrtcCallbackProxy alloc] init];
         
-        TGLog(@"WEBRTC runtime.stub.init version=%@ outgoing=%d keyLen=%d connections=%d customParametersLen=%d maxLayer=%d allowTCP=%d",
-              _version, _isOutgoing ? 1 : 0, (int)_key.length, (int)_connections.count, (int)_customParameters.length, maxLayer, allowTCP ? 1 : 0);
-        TGLog(@"WEBRTC runtime.cpp.bridge.before");
         _cppBridge = new TGIOS6WebrtcCppBridge(_callbackProxy);
-        TGLog(@"WEBRTC runtime.cpp.bridge.after ptr=%p", _cppBridge);
-        TGLog(@"WEBRTC runtime.cpp.start.before");
         bool started = _cppBridge->start(_version, _customParameters, _key, _isOutgoing, _connections, maxLayer, allowP2P, allowTCP, _sendSignalingData, _callbackProxy);
-        TGLog(@"WEBRTC runtime.cpp.startResult started=%d", started ? 1 : 0);
     }
     return self;
 }
@@ -337,32 +298,26 @@ private:
 {
     _signalBarsChanged = [signalBarsChanged copy];
     _callbackProxy.signalBarsChanged = _signalBarsChanged;
-    TGLog(@"WEBRTC runtime.callback.signalBars.set has=%d", _signalBarsChanged != nil ? 1 : 0);
 }
 
 - (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged
 {
     _stateChanged = [stateChanged copy];
     _callbackProxy.stateChanged = _stateChanged;
-    TGLog(@"WEBRTC runtime.callback.state.set has=%d", _stateChanged != nil ? 1 : 0);
 }
 
 - (void)addSignalingData:(NSData *)data
 {
-    TGLog(@"WEBRTC runtime.cpp.receiveSignaling.before len=%d bridge=%p", (int)data.length, _cppBridge);
     if (_cppBridge != NULL)
         _cppBridge->receiveSignalingData(data);
-    TGLog(@"WEBRTC runtime.cpp.receiveSignaling.after len=%d", (int)data.length);
 }
 
 - (void)stop:(void (^)(NSString *, int64_t, int64_t, int64_t, int64_t))completion
 {
-    TGLog(@"WEBRTC runtime.cpp.stop.before bridge=%p", _cppBridge);
     if (_cppBridge != NULL)
         _cppBridge->stop(completion);
     else if (completion != nil)
         completion(@"", 0, 0, 0, 0);
-    TGLog(@"WEBRTC runtime.cpp.stop.after");
 }
 
 @end

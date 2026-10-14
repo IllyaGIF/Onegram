@@ -14,7 +14,7 @@
 #define FAUXPAS_IGNORED_ON_LINE(...)
 
 #import <Foundation/Foundation.h>
-#import <PassKit/PassKit.h>
+#import "STPPassKitCompatibility.h"
 
 /**
  *  What set of billing address information you need to collect from your user.

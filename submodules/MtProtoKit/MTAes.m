@@ -10,7 +10,6 @@ typedef struct {
     unsigned long data[N_WORDS];
 } aes_block_t;
 
-/* XXX: probably some better way to do this */
 #if defined(__i386__) || defined(__x86_64__)
 # define UNALIGNED_MEMOPS_ARE_FAST 1
 #else
@@ -191,7 +190,6 @@ static void ctr128_inc_aligned(unsigned char *counter)
     do {
         --n;
         d = data[n] += c;
-        /* did addition carry? */
         c = ((d - c) ^ d) >> (sizeof(size_t) * 8 - 1);
     } while (n);
 }
@@ -260,7 +258,7 @@ static void ctr128_inc_aligned(unsigned char *counter)
     
     n = _num;
     
-    if (16 % sizeof(size_t) == 0) { /* always true actually */
+    if (16 % sizeof(size_t) == 0) {
         do {
             while (n && len) {
                *(out++) = *(in++) ^ _ecount[n];
@@ -297,7 +295,6 @@ static void ctr128_inc_aligned(unsigned char *counter)
             return;
         } while (0);
     }
-    /* the rest would be commonly eliminated by x86* compiler */
     
     while (l < len) {
         if (n == 0) {

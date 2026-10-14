@@ -18,14 +18,13 @@ NSString *const PGPhotoEnhanceToolInterpolationShaderString = PGShaderString
  }
  
  float enhance(float value) {
-     const vec2 offset = vec2(0.001953125, 0.03125); // vec2(0.5 / 256.0, 0.5 / 16.0)
+     const vec2 offset = vec2(0.001953125, 0.03125);
      value = value + offset.x;
      
      vec2 coord = (clamp(texCoord, 0.125, 1.0 - 0.125001) - 0.125) * 4.0;
      vec2 frac = fract(coord);
-     coord = floor(coord); // vec2(0..3, 0..3)
+     coord = floor(coord);
      
-     // 1.0 / 16.0 = 0.0625
      float p00 = float(coord.y * 4.0 + coord.x) * 0.0625 + offset.y;
      float p01 = float(coord.y * 4.0 + coord.x + 1.0) * 0.0625 + offset.y;
      float p10 = float((coord.y + 1.0) * 4.0 + coord.x) * 0.0625 + offset.y;
@@ -36,7 +35,6 @@ NSString *const PGPhotoEnhanceToolInterpolationShaderString = PGShaderString
      vec3 c10 = texture2D(inputImageTexture2, vec2(value, p10)).rgb;
      vec3 c11 = texture2D(inputImageTexture2, vec2(value, p11)).rgb;
      
-     // r - cdf, g - cdfMin, b - cdfMax
      float c1 = ((c00.r - c00.g) / (c00.b - c00.g));
      float c2 = ((c01.r - c01.g) / (c01.b - c01.g));
      float c3 = ((c10.r - c10.g) / (c10.b - c10.g));

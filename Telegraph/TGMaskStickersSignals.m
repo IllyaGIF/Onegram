@@ -44,7 +44,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 {
     if (![dict isKindOfClass:[NSDictionary class]])
     {
-        while (false) TGLog(@"MEDIA mask stickers.safe fallback class=%@", NSStringFromClass([dict class]));
         return TGIOS6EmptyMaskStickerPacks();
     }
     
@@ -89,7 +88,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                 
                 int cacheInvalidationTimeout = 60 * 60;
 #ifdef DEBUG
-                //cacheInvalidationTimeout = 10;
 #endif
                 
                 NSDictionary *cachedPacks = [self cachedStickerPacks];
@@ -127,7 +125,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                 
                 int cacheInvalidationTimeout = 60 * 60;
 #ifdef DEBUG
-                //cacheInvalidationTimeout = 10;
 #endif
                 
                 NSDictionary *cachedPacks = [self cachedStickerPacks];
@@ -294,24 +291,16 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
         NSDictionary *emptyPacks = TGIOS6EmptyMaskStickerPacks();
         data = [NSKeyedArchiver archivedDataWithRootObject:emptyPacks];
         NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-        __autoreleasing NSError *createError = nil;
-        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:&createError];
-        if (createError != nil)
-            while (false) TGLog(@"MEDIA mask stickers cache mkdir error=%@ path=%@", createError, directory);
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
         if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true])
             TGLog(@"***** TGMaskStickersSignalsClass loadPacksData couldn't write to file");
-        else
-            while (false) TGLog(@"MEDIA mask stickers cache bootstrap empty path=%@", [self filePath]);
     }
     return data;
 }
 
 + (void)storePacksData:(NSData *)data {
     NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-    __autoreleasing NSError *createError = nil;
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:&createError];
-    if (createError != nil)
-        while (false) TGLog(@"MEDIA mask stickers cache mkdir error=%@ path=%@", createError, directory);
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
     
     if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true]) {
         TGLog(@"***** TGMaskStickersSignalsClass storePacksData couldn't write to file");
@@ -349,7 +338,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
     
     if (dict == nil || ![dict isKindOfClass:[NSDictionary class]])
     {
-        while (false) TGLog(@"MEDIA mask stickers cache invalid, using empty");
         dict = TGIOS6EmptyMaskStickerPacks();
     }
     
@@ -615,7 +603,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)remoteStickerPacksWithCacheHash:(int32_t)cacheHash
 {
-    while (false) TGLog(@"MEDIA mask stickers disabled: skip getMaskStickers hash=%d", cacheHash);
     NSDictionary *cached = [self cachedStickerPacks];
     return [SSignal single:TGIOS6SafeMaskStickerPacks(cached)];
     
@@ -687,9 +674,8 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                                                     if (foundPack != nil)
                                                         [finalStickerPacks addObject:foundPack];
                                                 }
-                                                
-                                                
-                                                
+
+
                                                 NSDictionary *result = [self replaceCachedStickerPacks:finalStickerPacks cacheUpdateDate:(int32_t)[[NSDate date] timeIntervalSince1970]];
                                                 return result;
                                             }];
@@ -700,20 +686,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                                 return [SSignal single:[NSNull null]];
                             }];
     
-    /*TLRPCmessages_getArchivedStickers$messages_getArchivedStickers *getArchivedStickers = [[TLRPCmessages_getArchivedStickers$messages_getArchivedStickers alloc] init];
-    getArchivedStickers.offset_id = 0;
-    getArchivedStickers.limit = 1;
-    
-    SSignal *archivedStickers = [[[TGTelegramNetworking instance] requestSignal:getArchivedStickers] mapToSignal:^SSignal *(TLmessages_ArchivedStickers *result) {
-        TGArchivedStickerPacksSummary *summary = [[TGArchivedStickerPacksSummary alloc] initWithCount:result.count];
-        NSDictionary *dict = [self replaceArchivedStickerPacksSummary:summary];
-        
-        if (dict != nil) {
-            return [SSignal single:dict];
-        }
-        
-        return [SSignal single:[NSNull null]];
-    }];*/
     
     SSignal *archivedStickers = [SSignal single:[NSNull null]];
     
@@ -730,7 +702,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)remoteFeaturedPacksWithCacheHash:(int32_t)cacheHash
 {
-    while (false) TGLog(@"MEDIA mask stickers disabled: skip getFeaturedStickers hash=%d", cacheHash);
     NSDictionary *cached = [self cachedStickerPacks];
     return [SSignal single:TGIOS6SafeMaskStickerPacks(cached)];
     
@@ -740,91 +711,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
     
     return [SSignal complete];
     
-    /*TLRPCmessages_getFeaturedStickers$messages_getFeaturedStickers *getFeaturedStickers = [[TLRPCmessages_getFeaturedStickers$messages_getFeaturedStickers alloc] init];
-    
-    getFeaturedStickers.n_hash = cacheHash;
-    
-    return [[[TGTelegramNetworking instance] requestSignal:getFeaturedStickers] mapToSignal:^SSignal *(TLmessages_FeaturedStickers *result)
-            {
-                if ([result isKindOfClass:[TLmessages_FeaturedStickers$messages_featuredStickers class]])
-                {
-                    TLmessages_FeaturedStickers$messages_featuredStickers *allStickers = (TLmessages_FeaturedStickers$messages_featuredStickers *)result;
-                    
-                    NSMutableDictionary *currentStickerPacks = [self cachedStickerPacks][@"featuredPacks"];
-                    
-                    NSMutableArray *resultingPackReferences = [[NSMutableArray alloc] init];
-                    NSMutableArray *missingPackSignals = [[NSMutableArray alloc] init];
-                    
-                    for (TLStickerSetCovered *resultPackCovered in allStickers.sets)
-                    {
-                        TLStickerSet *resultPack = resultPackCovered.set;
-                        TGStickerPackIdReference *resultPackReference = [[TGStickerPackIdReference alloc] initWithPackId:resultPack.n_id packAccessHash:resultPack.access_hash shortName:resultPack.short_name];
-                        
-                        TGStickerPack *currentPack = nil;
-                        for (TGStickerPack *pack in currentStickerPacks)
-                        {
-                            if ([pack.packReference isEqual:resultPackReference])
-                            {
-                                currentPack = pack;
-                                break;
-                            }
-                        }
-                        
-                        if (currentPack == nil || currentPack.packHash != resultPack.n_hash)
-                        {
-                            [missingPackSignals addObject:[self stickerPackInfo:resultPackReference packHash:resultPack.n_hash]];
-                        }
-                        
-                        [resultingPackReferences addObject:resultPackReference];
-                    }
-                    
-                    return [[SSignal combineSignals:missingPackSignals] map:^id (NSArray *additionalPacks)
-                            {
-                                NSMutableArray *finalStickerPacks = [[NSMutableArray alloc] init];
-                                
-                                for (id<TGStickerPackReference> reference in resultingPackReferences)
-                                {
-                                    TGStickerPack *foundPack = nil;
-                                    
-                                    for (TGStickerPack *pack in additionalPacks)
-                                    {
-                                        if ([pack.packReference isEqual:reference])
-                                        {
-                                            foundPack = pack;
-                                            break;
-                                        }
-                                    }
-                                    
-                                    if (foundPack == nil)
-                                    {
-                                        for (TGStickerPack *pack in currentStickerPacks)
-                                        {
-                                            if ([pack.packReference isEqual:reference])
-                                            {
-                                                foundPack = pack;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    
-                                    if (foundPack != nil)
-                                        [finalStickerPacks addObject:foundPack];
-                                }
-                                
-                                NSMutableArray *unreadPackIds = [[NSMutableArray alloc] init];
-                                for (NSNumber *nPackId in allStickers.unread) {
-                                    [unreadPackIds addObject:nPackId];
-                                }
-                                
-                                NSDictionary *result = [self replaceCachedFeaturedPacks:finalStickerPacks unreadPackIds:unreadPackIds cacheUpdateDate:(int32_t)[[NSDate date] timeIntervalSince1970]];
-                                return result;
-                            }];
-                }
-                
-                [self replaceFeaturedCacheUpdateDate:(int32_t)[[NSDate date] timeIntervalSince1970]];
-                
-                return [SSignal complete];
-            }];*/
 }
 
 + (TLInputStickerSet *)_inputStickerSetFromPackReference:(id<TGStickerPackReference>)packReference
@@ -1193,7 +1079,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
                             {
                                 if ([next isKindOfClass:[NSData class]])
                                 {
-                                    TGLog(@"preloaded sticker preview to %@", path);
                                     [(NSData *)next writeToFile:path atomically:true];
                                 }
                             }];
@@ -1211,7 +1096,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 }
 
 
-
 + (SSignal *)updatedFeaturedStickerPacks {
     return [[[TGTelegramNetworking instance] genericTasksSignalManager] multicastedSignalForKey:@"updateFeaturedMaskStickers" producer:^SSignal *{
         return [[self updateFeaturedStickerPacks] onNext:^(NSDictionary *dict) {
@@ -1222,8 +1106,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 
 + (SSignal *)readRemoteFeaturedStickerPacks {
     return [SSignal complete];
-    /*TLRPCmessages_readFeaturedStickers$messages_readFeaturedStickers *readFeaturedStickers = [[TLRPCmessages_readFeaturedStickers$messages_readFeaturedStickers alloc] init];
-    return [[TGTelegramNetworking instance] requestSignal:readFeaturedStickers];*/
 }
 
 + (void)markFeaturedStickersAsRead {
@@ -1243,7 +1125,6 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
 }
 
 + (SSignal *)archivedStickerPacksWithOffsetId:(int64_t)offsetId limit:(NSUInteger)limit {
-    while (false) TGLog(@"MEDIA mask stickers disabled: skip getArchivedStickers offset=%lld limit=%d", offsetId, (int)limit);
     return [SSignal single:@{@"packs": @[], @"count": @0}];
     
     TLRPCmessages_getArchivedStickers$messages_getArchivedStickers *getArchivedStickers = [[TLRPCmessages_getArchivedStickers$messages_getArchivedStickers alloc] init];

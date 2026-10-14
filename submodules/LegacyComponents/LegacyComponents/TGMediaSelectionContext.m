@@ -73,7 +73,6 @@
     NSString *identifier = item.uniqueIdentifier;
     if (identifier.length == 0)
     {
-        while (false) TGLog(@"MEDIA selection ignored item with nil identifier item=%@", item);
         return;
     }
     if (selected)
@@ -234,7 +233,6 @@
             NSString *identifier = item.uniqueIdentifier;
             if (identifier.length == 0)
             {
-                while (false) TGLog(@"MEDIA selection update ignored item with nil identifier item=%@", item);
                 continue;
             }
             [strongSelf->_selectedIdentifiers addObject:identifier];

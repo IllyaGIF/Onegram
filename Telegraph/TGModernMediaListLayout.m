@@ -18,19 +18,6 @@
     return self;
 }
 
-/*- (void)prepareForCollectionViewUpdates:(NSArray *)updateItems
- {
- _updatingCollectionItems = true;
- 
- [super prepareForCollectionViewUpdates:updateItems];
- }
- 
- - (void)finalizeCollectionViewUpdates
- {
- _updatingCollectionItems = false;
- 
- [super finalizeCollectionViewUpdates];
- }*/
 
 - (PSUICollectionViewLayoutAttributes *)initialLayoutAttributesForAppearingItemAtIndexPath:(NSIndexPath *)itemIndexPath
 {

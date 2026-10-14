@@ -14,6 +14,7 @@
     UILabel *_helpLabel;
     TGModernButton *_forgotPasswordButton;
     TGModernButton *_resetButton;
+    CGFloat _keyboardHeight;
 }
 
 @end
@@ -81,6 +82,16 @@
     return self;
 }
 
+
+- (void)setKeyboardHeight:(CGFloat)keyboardHeight
+{
+    if (ABS(_keyboardHeight - keyboardHeight) > FLT_EPSILON)
+    {
+        _keyboardHeight = keyboardHeight;
+        [self setNeedsLayout];
+    }
+}
+
 - (void)setHint:(NSString *)hint
 {
     _hint = hint;
@@ -107,9 +118,6 @@
     CGFloat titleLabelOffset = 0.0f;
     CGFloat noticeLabelOffset = 0.0f;
     CGFloat sideInset = 0.0f;
-    CGFloat hintOffset = 0.0f;
-    CGFloat helpOffset = 0.0f;
-    CGFloat buttonOffset = 0.0f;
     
     CGFloat resetFirstButtonOffset = 0.0f;
     CGFloat resetSecondButtonOffset = 0.0f;
@@ -200,37 +208,6 @@
         sideInset = 32.0f;
     }
     
-    /*if (TGIsPad())
-    {
-        if (self.frame.size.width < self.frame.size.height)
-        {
-            topOffset = 305.0f;
-            titleLabelOffset = topOffset - 108.0f;
-        }
-        else
-        {
-            topOffset = 135.0f;
-            titleLabelOffset = topOffset - 78.0f;
-        }
-        
-        noticeLabelOffset = topOffset + 143.0f;
-        sideInset = 130.0f;
-        hintOffset = 13.0f;
-        helpOffset = 24.0f;
-        buttonOffset = 0.0f;
-    }
-    else
-    {
-        topOffset = [TGViewController isWidescreen] ? 131.0f : 90.0f;
-        titleLabelOffset = ([TGViewController isWidescreen] ? 66.0f : 48.0f) + 9.0f;
-        noticeLabelOffset = [TGViewController isWidescreen] ? 274.0f : 214.0f;
-        hintOffset = [TGViewController isWidescreen] ? 13.0f : 13.0f;
-        helpOffset = [TGViewController isWidescreen] ? 24.0f : 24.0f;
-        buttonOffset = [TGViewController isWidescreen] ? 0.0f : 0.0f;
-        sideInset = 32.0f;
-        resetFirstButtonOffset = 24.0f;
-        resetSecondButtonOffset = 6.0f;
-    }*/
     
     _titleLabel.frame = CGRectMake(CGFloor((self.frame.size.width - _titleLabel.frame.size.width) / 2), titleLabelOffset, _titleLabel.frame.size.width, _titleLabel.frame.size.height);
     
@@ -248,6 +225,21 @@
     
     [_resetButton sizeToFit];
     _resetButton.frame = CGRectMake(CGFloor((self.frame.size.width - _resetButton.frame.size.width) / 2.0f), CGRectGetMaxY(_forgotPasswordButton.frame) + resetSecondButtonOffset, _resetButton.frame.size.width, _resetButton.frame.size.height);
+
+    if (!TGIsPad() && _keyboardHeight > FLT_EPSILON)
+    {
+        CGFloat visibleBottom = self.bounds.size.height - _keyboardHeight - 10.0f;
+        CGFloat shift = MAX(0.0f, CGRectGetMaxY(_passwordField.frame) - visibleBottom);
+        if (shift > 0.0f)
+        {
+            _titleLabel.frame = CGRectOffset(_titleLabel.frame, 0.0f, -shift);
+            _passwordSeparatorView.frame = CGRectOffset(_passwordSeparatorView.frame, 0.0f, -shift);
+            _passwordField.frame = CGRectOffset(_passwordField.frame, 0.0f, -shift);
+            _helpLabel.frame = CGRectOffset(_helpLabel.frame, 0.0f, -shift);
+            _forgotPasswordButton.frame = CGRectOffset(_forgotPasswordButton.frame, 0.0f, -shift);
+            _resetButton.frame = CGRectOffset(_resetButton.frame, 0.0f, -shift);
+        }
+    }
 }
 
 - (BOOL)textField:(UITextField *)textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)string

@@ -32,7 +32,7 @@
         _peerId = peerId;
         _accessHash = accessHash;
         _completion = [completion copy];
-        _includeContacts = true;//includeContacts;
+        _includeContacts = true;
         
         _searchDisposable = [[SMetaDisposable alloc] init];
         

@@ -79,9 +79,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     int64_t value = 0;
     
     if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
-    {
-        TGLog(@"***** Couldn't read int64");
-    }
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readInt64 end of stream" userInfo:@{}];
     
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 #elif __BYTE_ORDER == __BIG_ENDIAN
@@ -118,9 +116,7 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
     double value = 0.0;
     
     if (TLReadExactly(self, (uint8_t *)&value, 8) != 8)
-    {
-        TGLog(@"***** Couldn't read double");
-    }
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readDouble end of stream" userInfo:@{}];
     
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 #elif __BYTE_ORDER == __BIG_ENDIAN
@@ -154,247 +150,256 @@ static NSInteger TLReadExactly(NSInputStream *stream, uint8_t *buffer, NSUIntege
 
 - (NSData *)readData:(int)length
 {
-    uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-    if (readLen != length)
+    if (length < 0)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readData invalid length" userInfo:@{}];
+    if (length == 0)
+        return [NSData data];
+    uint8_t *bytes = (uint8_t *)malloc((size_t)length);
+    if (bytes == NULL)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readData allocation failed" userInfo:@{}];
+    if (TLReadExactly(self, bytes, (NSUInteger)length) != length)
     {
-        TGLog(@"***** Couldn't read %d bytes", length);
+        free(bytes);
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readData end of stream" userInfo:@{}];
     }
-    NSData *data = [[NSData alloc] initWithBytesNoCopy:bytes length:length freeWhenDone:true];
-    return data;
+    return [[NSData alloc] initWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
 }
 
 - (NSData *)readData:(int)length failed:(bool *)failed
 {
-    uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-    if (readLen != length)
+    if (length < 0)
     {
-        free(bytes);
         *failed = true;
         return nil;
     }
-    NSData *data = [[NSData alloc] initWithBytesNoCopy:bytes length:length freeWhenDone:true];
-    return data;
+    if (length == 0)
+        return [NSData data];
+    uint8_t *bytes = (uint8_t *)malloc((size_t)length);
+    if (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    {
+        if (bytes != NULL)
+            free(bytes);
+        *failed = true;
+        return nil;
+    }
+    return [[NSData alloc] initWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
 }
 
 - (NSMutableData *)readMutableData:(int)length
 {
-    uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-    if (readLen != length)
+    if (length < 0)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readMutableData invalid length" userInfo:@{}];
+    if (length == 0)
+        return [[NSMutableData alloc] init];
+    uint8_t *bytes = (uint8_t *)malloc((size_t)length);
+    if (bytes == NULL)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readMutableData allocation failed" userInfo:@{}];
+    if (TLReadExactly(self, bytes, (NSUInteger)length) != length)
     {
-        TGLog(@"***** Couldn't read %d bytes", length);
+        free(bytes);
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readMutableData end of stream" userInfo:@{}];
     }
-    NSMutableData *data = [[NSMutableData alloc] initWithBytesNoCopy:bytes length:length freeWhenDone:true];
-    return data;
+    return [[NSMutableData alloc] initWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
 }
 
 - (NSMutableData *)readMutableData:(int)length failed:(bool *)failed
 {
-    uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-    if (readLen != length)
+    if (length < 0)
     {
-        free(bytes);
         *failed = true;
         return nil;
     }
-    NSMutableData *data = [[NSMutableData alloc] initWithBytesNoCopy:bytes length:length freeWhenDone:true];
-    return data;
+    if (length == 0)
+        return [[NSMutableData alloc] init];
+    uint8_t *bytes = (uint8_t *)malloc((size_t)length);
+    if (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length)
+    {
+        if (bytes != NULL)
+            free(bytes);
+        *failed = true;
+        return nil;
+    }
+    return [[NSMutableData alloc] initWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
 }
 
 - (NSString *)readString
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
-    
+    if (TLReadExactly(self, &tmp, 1) != 1)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString end of stream" userInfo:@{}];
+
     int paddingBytes = 0;
-    
     int32_t length = tmp;
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString length end of stream" userInfo:@{}];
         length >>= 8;
-        
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#elif __BYTE_ORDER == __BIG_ENDIAN
-#   error "Big endian is not implemented"
-#else
-#   error "Unknown byte order"
-#endif
-        
         paddingBytes = roundUpInput(length, 4) - length;
     }
     else
-    {
         paddingBytes = roundUpInput(length + 1, 4) - (length + 1);
-    }
-    
-    NSString *string = nil;
-    
+
+    NSString *string = @"";
     if (length > 0)
     {
-        uint8_t *bytes = (uint8_t *)malloc(length);
-        int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-        if (readLen != length)
+        uint8_t *bytes = (uint8_t *)malloc((size_t)length);
+        if (bytes == NULL)
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString allocation failed" userInfo:@{}];
+        if (TLReadExactly(self, bytes, (NSUInteger)length) != length)
         {
-            TGLog(@"***** Couldn't read %d bytes", length);
+            free(bytes);
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString data end of stream" userInfo:@{}];
         }
-        
-        string = [[NSString alloc] initWithBytesNoCopy:bytes length:length encoding:NSUTF8StringEncoding freeWhenDone:true];
+        string = [[NSString alloc] initWithBytesNoCopy:bytes length:(NSUInteger)length encoding:NSUTF8StringEncoding freeWhenDone:true];
+        if (string == nil)
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString invalid UTF-8" userInfo:@{}];
     }
-    else
-    {
-        string = @"";
-    }
-    
+
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
-    
+    {
+        if (TLReadExactly(self, &tmp, 1) != 1)
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readString padding end of stream" userInfo:@{}];
+    }
     return string;
 }
 
 - (NSString *)readString:(bool *)failed
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
-    
+    if (TLReadExactly(self, &tmp, 1) != 1)
+    {
+        *failed = true;
+        return nil;
+    }
+
     int paddingBytes = 0;
-    
     int32_t length = tmp;
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
-        length >>= 8;
-        
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#elif __BYTE_ORDER == __BIG_ENDIAN
-#   error "Big endian is not implemented"
-#else
-#   error "Unknown byte order"
-#endif
-        
-        paddingBytes = roundUpInput(length, 4) - length;
-    }
-    else
-    {
-        paddingBytes = roundUpInput(length + 1, 4) - (length + 1);
-    }
-    
-    NSString *string = nil;
-    
-    if (length > 0)
-    {
-        uint8_t *bytes = (uint8_t *)malloc(length);
-        int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-        if (readLen != length)
+        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
         {
-            free(bytes);
             *failed = true;
             return nil;
         }
-        
-        string = [[NSString alloc] initWithBytesNoCopy:bytes length:length encoding:NSUTF8StringEncoding freeWhenDone:true];
+        length >>= 8;
+        paddingBytes = roundUpInput(length, 4) - length;
     }
     else
+        paddingBytes = roundUpInput(length + 1, 4) - (length + 1);
+
+    NSString *string = @"";
+    if (length > 0)
     {
-        string = @"";
+        uint8_t *bytes = (uint8_t *)malloc((size_t)length);
+        if (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length)
+        {
+            if (bytes != NULL)
+                free(bytes);
+            *failed = true;
+            return nil;
+        }
+        string = [[NSString alloc] initWithBytesNoCopy:bytes length:(NSUInteger)length encoding:NSUTF8StringEncoding freeWhenDone:true];
+        if (string == nil)
+        {
+            *failed = true;
+            return nil;
+        }
     }
-    
+
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
-    
+    {
+        if (TLReadExactly(self, &tmp, 1) != 1)
+        {
+            *failed = true;
+            return nil;
+        }
+    }
     return string;
 }
 
 - (NSData *)readBytes
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
-    
+    if (TLReadExactly(self, &tmp, 1) != 1)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes end of stream" userInfo:@{}];
+
     int paddingBytes = 0;
-    
     int32_t length = tmp;
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes length end of stream" userInfo:@{}];
         length >>= 8;
-        
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#elif __BYTE_ORDER == __BIG_ENDIAN
-#   error "Big endian is not implemented"
-#else
-#   error "Unknown byte order"
-#endif
-        
         paddingBytes = roundUpInput(length, 4) - length;
     }
     else
-    {
         paddingBytes = roundUpInput(length + 1, 4) - (length + 1);
-    }
-    
-    uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-    if (readLen != length)
+
+    uint8_t *bytes = length == 0 ? NULL : (uint8_t *)malloc((size_t)length);
+    if (length != 0 && bytes == NULL)
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes allocation failed" userInfo:@{}];
+    if (length != 0 && TLReadExactly(self, bytes, (NSUInteger)length) != length)
     {
-        TGLog(@"***** Couldn't read %d bytes", length);
+        free(bytes);
+        @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes data end of stream" userInfo:@{}];
     }
-    
-    NSData *result = [NSData dataWithBytesNoCopy:bytes length:length freeWhenDone:true];
-    
+
+    NSData *result = length == 0 ? [NSData data] : [NSData dataWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
-    
+    {
+        if (TLReadExactly(self, &tmp, 1) != 1)
+            @throw [[NSException alloc] initWithName:@"NSInputStream+TLException" reason:@"readBytes padding end of stream" userInfo:@{}];
+    }
     return result;
 }
 
 - (NSData *)readBytes:(bool *)failed
 {
     uint8_t tmp = 0;
-    TLReadExactly(self, &tmp, 1);
-    
+    if (TLReadExactly(self, &tmp, 1) != 1)
+    {
+        *failed = true;
+        return nil;
+    }
+
     int paddingBytes = 0;
-    
     int32_t length = tmp;
     if (length == 254)
     {
         length = 0;
-        TLReadExactly(self, ((uint8_t *)&length) + 1, 3);
+        if (TLReadExactly(self, ((uint8_t *)&length) + 1, 3) != 3)
+        {
+            *failed = true;
+            return nil;
+        }
         length >>= 8;
-        
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#elif __BYTE_ORDER == __BIG_ENDIAN
-#   error "Big endian is not implemented"
-#else
-#   error "Unknown byte order"
-#endif
-        
         paddingBytes = roundUpInput(length, 4) - length;
     }
     else
-    {
         paddingBytes = roundUpInput(length + 1, 4) - (length + 1);
-    }
-    
-    uint8_t *bytes = (uint8_t *)malloc(length);
-    int readLen = (int)TLReadExactly(self, bytes, (NSUInteger)length);
-    if (readLen != length)
+
+    uint8_t *bytes = length == 0 ? NULL : (uint8_t *)malloc((size_t)length);
+    if (length != 0 && (bytes == NULL || TLReadExactly(self, bytes, (NSUInteger)length) != length))
     {
-        free(bytes);
+        if (bytes != NULL)
+            free(bytes);
         *failed = true;
         return nil;
     }
-    
-    NSData *result = [NSData dataWithBytesNoCopy:bytes length:length freeWhenDone:true];
-    
+
+    NSData *result = length == 0 ? [NSData data] : [NSData dataWithBytesNoCopy:bytes length:(NSUInteger)length freeWhenDone:true];
     for (int i = 0; i < paddingBytes; i++)
-        TLReadExactly(self, &tmp, 1);
-    
+    {
+        if (TLReadExactly(self, &tmp, 1) != 1)
+        {
+            *failed = true;
+            return nil;
+        }
+    }
     return result;
 }
 

@@ -2,17 +2,6 @@
 
 @class TGVCard;
 
-@interface TGPhoneNumberModel : NSObject
-
-@property (nonatomic, strong, readonly) NSString *phoneNumber;
-@property (nonatomic, strong, readonly) NSString *displayPhoneNumber;
-
-@property (nonatomic, strong, readonly) NSString *label;
-
-- (instancetype)initWithPhoneNumber:(NSString *)string label:(NSString *)label;
-
-@end
-
 
 @interface TGContactModel : NSObject
 

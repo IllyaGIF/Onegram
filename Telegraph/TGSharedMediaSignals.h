@@ -23,15 +23,6 @@ typedef enum {
 
 @end
 
-@interface TGSharedMediaImageProgress : NSObject
-
-@property (nonatomic, readonly) bool hasProgress;
-@property (nonatomic, readonly) CGFloat value;
-
-- (instancetype)initWithHasProgress:(bool)hasProgress value:(CGFloat)value;
-
-@end
-
 @interface TGSharedMediaSignals : NSObject
 
 + (TLInputFileLocation *)inputFileLocationForImageUrl:(NSString *)imageUrl datacenterId:(NSInteger *)outDatacenterId originInfo:(TGMediaOriginInfo *)originInfo;

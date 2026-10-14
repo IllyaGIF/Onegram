@@ -155,7 +155,6 @@
 
 - (CGSize)contentSizeForContainerSize:(CGSize)__unused containerSize contentSize:(CGSize)__unused topContentSize infoWidth:(CGFloat)infoWidth needsContentsUpdate:(bool *)__unused needsContentsUpdate
 {
-    //CGSize contentContainerSize = CGSizeMake(MAX(containerSize.width - 10.0f - 20.0f, topContentSize.width - 10.0f - 20.0f), containerSize.height);
     
     CGFloat additionalWidth = 0.0f;
     if (_performerModel.frame.size.width < _titleModel.frame.size.width)
@@ -180,7 +179,6 @@
 }
 
 - (void)setMediaIsAvailable:(bool)mediaIsAvailable {
-    //bool wasAvailable = self.mediaIsAvailable;
     
     [super setMediaIsAvailable:mediaIsAvailable];
     
@@ -198,7 +196,6 @@
 
 - (void)updateImageOverlay:(bool)animated
 {
-    //_iconModel.viewUserInteractionDisabled = (_incoming && _mediaIsAvailable) || !_progressVisible;
     
     if (self.mediaProgressVisible)
     {

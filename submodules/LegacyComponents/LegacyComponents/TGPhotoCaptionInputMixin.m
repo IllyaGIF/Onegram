@@ -1,3 +1,4 @@
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 #import "TGPhotoCaptionInputMixin.h"
 
 #import "LegacyComponents.h"
@@ -339,10 +340,9 @@
     
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [parentView convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, parentView);
     
-    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (parentView.frame.size.height - keyboardFrame.origin.y);
+    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (parentView.bounds.size.height - keyboardFrame.origin.y);
     keyboardHeight = MAX(keyboardHeight, 0.0f);
     
     _keyboardHeight = keyboardHeight;

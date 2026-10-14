@@ -19,6 +19,7 @@
 
 #include <vector>
 
+static NSDictionary *_cachedContactListForMainThread = nil;
 static NSDictionary *_cachedPhonebookForMainThread = nil;
 static NSDictionary *_cachedInviteesForMainThread = nil;
 
@@ -42,9 +43,11 @@ static int _phonebookVersion = 0;
     {
         _contactListVersion++;
         NSDictionary *invitees = [TGDatabaseInstance() loadPopularInvitees];
-        NSDictionary *newCachedList = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_contactListVersion], @"version", [TGDatabaseInstance() loadContactUsers], @"contacts", invitees, @"invitees", nil];
+        NSArray *contacts = [TGDatabaseInstance() loadContactUsers];
+        NSDictionary *newCachedList = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_contactListVersion], @"version", contacts, @"contacts", invitees, @"invitees", nil];
         dispatch_async(dispatch_get_main_queue(), ^
         {
+            _cachedContactListForMainThread = newCachedList;
             _cachedInviteesForMainThread = invitees;
         });
         [ActionStageInstance() dispatchResource:@"/tg/contactlist" resource:[[SGraphObjectNode alloc] initWithObject:newCachedList]];
@@ -66,6 +69,11 @@ static int _phonebookVersion = 0;
     }];
 }
 
++ (NSDictionary *)cachedContactList
+{
+    return _cachedContactListForMainThread;
+}
+
 + (NSDictionary *)cachedPhonebook
 {
     return _cachedPhonebookForMainThread;
@@ -79,6 +87,8 @@ static int _phonebookVersion = 0;
 + (NSDictionary *)synchronousContactList
 {
     NSDictionary *newCachedList = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_contactListVersion], @"version", [TGDatabaseInstance() loadContactUsers], @"contacts", [TGDatabaseInstance() loadPopularInvitees], @"invitees", nil];
+    _cachedContactListForMainThread = newCachedList;
+    _cachedInviteesForMainThread = [newCachedList objectForKey:@"invitees"];
     return newCachedList;
 }
 
@@ -86,7 +96,9 @@ static int _phonebookVersion = 0;
 {
     dispatch_async(dispatch_get_main_queue(), ^
     {
+        _cachedContactListForMainThread = nil;
         _cachedPhonebookForMainThread = nil;
+        _cachedInviteesForMainThread = nil;
     });
 }
 
@@ -102,7 +114,11 @@ static int _phonebookVersion = 0;
     {   
         NSArray *contactList = [TGDatabaseInstance() loadContactUsers];
         NSDictionary *newCachedList = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_contactListVersion], @"version", contactList, @"contacts", [TGDatabaseInstance() loadPopularInvitees], @"invitees", nil];
-        
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            _cachedContactListForMainThread = newCachedList;
+            _cachedInviteesForMainThread = [newCachedList objectForKey:@"invitees"];
+        });
         [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphObjectNode alloc] initWithObject:newCachedList]];
     }
 }

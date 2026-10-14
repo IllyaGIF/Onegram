@@ -3,9 +3,9 @@
 #import "Reachability.h"
 
 #import <libkern/OSAtomic.h>
-#import <CoreTelephony/CTCall.h>
-#import <CoreTelephony/CTCallCenter.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGObserverProxy.h"
 

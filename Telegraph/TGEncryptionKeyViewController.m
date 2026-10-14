@@ -73,18 +73,6 @@
     _fingerprintLabel.userInteractionEnabled = true;
     [self.view addSubview:_fingerprintLabel];
     
-//    UITapGestureRecognizer *gestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(keyTapped:)];
-//    [_fingerprintLabel addGestureRecognizer:gestureRecognizer];
-//    
-//    _emojiLabel = [[UILabel alloc] init];
-//    _emojiLabel.alpha = 0.0f;
-//    _emojiLabel.backgroundColor = [UIColor clearColor];
-//    _emojiLabel.font = TGSystemFontOfSize(48.0f);
-//    _emojiLabel.userInteractionEnabled = false;
-//    [self.view addSubview:_emojiLabel];
-//    
-//    gestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(keyTapped:)];
-//    [_emojiLabel addGestureRecognizer:gestureRecognizer];
     
     _descriptionLabel = [[UILabel alloc] init];
     _descriptionLabel.textColor = self.presentation.pallete.textColor;
@@ -152,13 +140,6 @@
                 
                 _fingerprintLabel.attributedText = fingerprintString;
                 
-//                NSAttributedString *emojiString = [[NSAttributedString alloc] initWithString:[TGStringUtils stringForEmojiHashOfData:additionalSignature count:5 positionExtractor:^int32_t(uint8_t *bytes, int32_t i, int32_t count)
-//                {
-//                    int32_t num = ((bytes[i * 4] & 0x7f) << 24) | ((bytes[i * 4 + 1] & 0xff) << 16) | ((bytes[i * 4 + 2] & 0xff) << 8) | (bytes[i * 4 + 3] & 0xff);
-//                    return num % count;
-//                }] attributes:@{NSFontAttributeName: _emojiLabel.font, NSKernAttributeName: @(2.0f)}];
-//                
-//                _emojiLabel.attributedText = emojiString;
             }
             
             UIImage *image = TGIdenticonImage(hashData, additionalSignature, CGSizeMake(264, 264));

@@ -266,7 +266,7 @@
     
     if ([currentUserIds isEqualToArray:updatedUserIds]) {
         for (TGGroupInfoUserCollectionItem *userItem in _usersSection.items) {
-            userItem.selectable = false;//userItem.user.uid != TGTelegraphInstance.clientUserId;
+            userItem.selectable = false;
             userItem.displaySwitch = true;
             if (userItem.user.uid == TGTelegraphInstance.clientUserId) {
                 userItem.enableSwitch = false;
@@ -294,7 +294,7 @@
             TGGroupInfoUserCollectionItem *userItem = [[TGGroupInfoUserCollectionItem alloc] init];
             userItem.interfaceHandle = _actionHandle;
             
-            userItem.selectable = false;//user.uid != TGTelegraphInstance.clientUserId;
+            userItem.selectable = false;
             userItem.displaySwitch = true;
             if (user.uid == TGTelegraphInstance.clientUserId) {
                 userItem.enableSwitch = false;

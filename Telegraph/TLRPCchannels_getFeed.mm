@@ -5,7 +5,6 @@
 
 #import "TLmessages_FeedMessages.h"
 
-//channels.getFeed flags:# feed_id:int offset_position:flags.0?FeedPosition add_offset:int limit:int max_position:flags.1?FeedPosition min_position:flags.2?FeedPosition sources_hash:int hash:int = messages.FeedMessages;
 
 @implementation TLRPCchannels_getFeed
 

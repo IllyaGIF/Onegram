@@ -92,18 +92,12 @@ const int32_t TGCallLegacyMaxLayer = 92;
     if (phoneCallProtocol.library_versions == nil)
         phoneCallProtocol.library_versions = [NSArray array];
     
-    TGLog(@"CALL protocol local flags=%d min=%d max=%d libs=%@",
-          phoneCallProtocol.flags,
-          phoneCallProtocol.min_layer,
-          phoneCallProtocol.max_layer,
-          phoneCallProtocol.library_versions);
     
     return phoneCallProtocol;
 }
 
 + (SSignal *)requestedOutgoingCallWithPeerId:(int64_t)peerId
 {
-    TGLog(@"CALL signal.requestedOutgoing peer=%lld", peerId);
     
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id
              {
@@ -112,13 +106,9 @@ const int32_t TGCallLegacyMaxLayer = 92;
             {
                 if (inputUser == nil)
                 {
-                    TGLog(@"CALL signal.requestedOutgoing.noInputUser peer=%lld", peerId);
                     return [SSignal fail:nil];
                 }
                 
-                TGLog(@"CALL signal.requestedOutgoing.inputUser peer=%lld class=%@",
-                      peerId,
-                      NSStringFromClass([inputUser class]));
                 
                 return [[self encryptionConfig] mapToSignal:^SSignal *(TLmessages_DhConfig$messages_dhConfig *config)
                         {
@@ -154,29 +144,17 @@ const int32_t TGCallLegacyMaxLayer = 92;
                             requestCall.g_a_hash = gAHash;
                             requestCall.protocol = [self protocol];
                             
-                            TGLog(@"CALL rpc.phone.requestCall peer=%lld minLayer=%d maxLayer=%d libs=%@",
-                                  peerId,
-                                  requestCall.protocol.min_layer,
-                                  requestCall.protocol.max_layer,
-                                  requestCall.protocol.library_versions);
                             
                             return [[[TGTelegramNetworking instance] requestSignal:requestCall continueOnServerErrors:false failOnFloodErrors:true] mapToSignal:^SSignal *(TLphone_PhoneCall *result)
                                     {
-                                        TGLog(@"CALL rpc.phone.requestCall.result peer=%lld result=%@ call=%@",
-                                              peerId,
-                                              NSStringFromClass([result class]),
-                                              NSStringFromClass([result.phone_call class]));
 
                 if (result.users.count != 0)
                 {
                     [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
-                    TGLog(@"CALL phone.users.store count=%d", (int)result.users.count);
                 }
                                         
                                         if (result.phone_call == nil)
                                         {
-                                            TGLog(@"CALL rpc.phone.requestCall.nilPhoneCall peer=%lld keepContext=1 pendingWaiting=1",
-                                                  peerId);
                                             
                                             return [SSignal single:[[TGCallWaitingContext alloc]
                                                                     initWithCallId:0
@@ -193,11 +171,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                         {
                                             TLPhoneCall$phoneCallWaitingMeta *concreteCall = (TLPhoneCall$phoneCallWaitingMeta *)result.phone_call;
                                             
-                                            TGLog(@"CALL rpc.phone.requestCall.waiting call=%lld access=%lld admin=%d participant=%d",
-                                                  concreteCall.n_id,
-                                                  concreteCall.access_hash,
-                                                  concreteCall.admin_id,
-                                                  concreteCall.participant_id);
                                             
                                             return [SSignal single:[[TGCallWaitingContext alloc]
                                                                     initWithCallId:concreteCall.n_id
@@ -214,9 +187,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                         {
                                             TLPhoneCall$phoneCallDiscardedMeta *concreteCall = (TLPhoneCall$phoneCallDiscardedMeta *)result.phone_call;
                                             
-                                            TGLog(@"CALL rpc.phone.requestCall.discarded call=%lld reason=%@",
-                                                  concreteCall.n_id,
-                                                  NSStringFromClass([concreteCall.reason class]));
                                             
                                             bool needsRating = concreteCall.flags & (1 << 2);
                                             bool needsDebug = concreteCall.flags & (1 << 3);
@@ -370,24 +340,13 @@ const int32_t TGCallLegacyMaxLayer = 92;
     acceptCall.g_b = gBBytes;
     acceptCall.protocol = [self protocol];
     
-    TGLog(@"CALL rpc.phone.acceptCall call=%lld access=%lld minLayer=%d maxLayer=%d libs=%@",
-          callId,
-          accessHash,
-          acceptCall.protocol.min_layer,
-          acceptCall.protocol.max_layer,
-          acceptCall.protocol.library_versions);
     
     return [[[TGTelegramNetworking instance] requestSignal:acceptCall] mapToSignal:^SSignal *(TLphone_PhoneCall *result)
             {
-                TGLog(@"CALL rpc.phone.acceptCall.result call=%lld result=%@ phoneCall=%@",
-                      callId,
-                      NSStringFromClass([result class]),
-                      NSStringFromClass([result.phone_call class]));
 
                 if (result.users.count != 0)
                 {
                     [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
-                    TGLog(@"CALL phone.users.store count=%d", (int)result.users.count);
                 }
                 
                 if ([result.phone_call isKindOfClass:[TLPhoneCall$phoneCallWaitingMeta class]])
@@ -448,25 +407,13 @@ const int32_t TGCallLegacyMaxLayer = 92;
     confirmCall.key_fingerprint = keyId;
     confirmCall.protocol = [self protocol];
     
-    TGLog(@"CALL rpc.phone.confirmCall call=%lld access=%lld key=%lld minLayer=%d maxLayer=%d libs=%@",
-          callId,
-          accessHash,
-          keyId,
-          confirmCall.protocol.min_layer,
-          confirmCall.protocol.max_layer,
-          confirmCall.protocol.library_versions);
     
     return [[[TGTelegramNetworking instance] requestSignal:confirmCall] mapToSignal:^SSignal *(TLphone_PhoneCall *result)
             {
-                TGLog(@"CALL rpc.phone.confirmCall.result call=%lld result=%@ phoneCall=%@",
-                      callId,
-                      NSStringFromClass([result class]),
-                      NSStringFromClass([result.phone_call class]));
 
                 if (result.users.count != 0)
                 {
                     [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
-                    TGLog(@"CALL phone.users.store count=%d", (int)result.users.count);
                 }
                 
                 if ([result.phone_call isKindOfClass:[TLPhoneCall$phoneCall class]])
@@ -477,28 +424,8 @@ const int32_t TGCallLegacyMaxLayer = 92;
                     int32_t protocolMinLayer = concreteCall.protocol.min_layer;
                     int32_t protocolMaxLayer = concreteCall.protocol.max_layer;
                     
-                    TGLog(@"CALL confirmed.protocol call=%lld min=%d max=%d versions=%@",
-                          concreteCall.n_id,
-                          protocolMinLayer,
-                          protocolMaxLayer,
-                          protocolLibraryVersions);
                     
-                    TGLog(@"CALL confirmed.full call=%lld access=%lld key=%lld rawConn=%@ rawAlt=%@ rawConnections=%@ rawConnectionsCount=%d protocol=%@",
-                          concreteCall.n_id,
-                          concreteCall.access_hash,
-                          concreteCall.key_fingerprint,
-                          concreteCall.connection,
-                          concreteCall.alternative_connections,
-                          concreteCall.connections,
-                          (int)concreteCall.connections.count,
-                          concreteCall.protocol);
                     
-                    TGLog(@"CALL key.check call=%lld authKeyLen=%lu keyFingerprintLocal=%lld keyFingerprintServer=%lld match=%d outgoing=1",
-                          concreteCall.n_id,
-                          (unsigned long)key.length,
-                          keyId,
-                          concreteCall.key_fingerprint,
-                          keyId == concreteCall.key_fingerprint ? 1 : 0);
                     
                     NSMutableArray *webrtcConnections = [[NSMutableArray alloc] init];
                     NSString *customParameters = @"";
@@ -516,9 +443,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
                         }
                     }
                     
-                    TGLog(@"CALL confirmed.customParameters len=%d data=%@",
-                          (int)customParameters.length,
-                          customParameters);
                     
                     TGCallConnectionDescription *(^deserializeConnection)(id) = ^TGCallConnectionDescription *(id connection)
                     {
@@ -526,12 +450,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
                         {
                             TLPhoneConnection$phoneConnection *concreteConnection = (TLPhoneConnection$phoneConnection *)connection;
                             
-                            TGLog(@"CALL confirmed.connection id=%lld ip=%@ ipv6=%@ port=%d peerTagLen=%d",
-                                  concreteConnection.n_id,
-                                  concreteConnection.ip,
-                                  concreteConnection.ipv6,
-                                  concreteConnection.port,
-                                  (int)concreteConnection.peer_tag.length);
                             
                             if (concreteConnection.port == 0 ||
                                 concreteConnection.peer_tag == nil ||
@@ -560,16 +478,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
                         {
                             TLPhoneConnection$phoneConnectionWebrtc *webRtcConnection = (TLPhoneConnection$phoneConnectionWebrtc *)connection;
                             
-                            TGLog(@"CALL confirmed.webrtc id=%lld flags=%d turn=%d stun=%d ip=%@ ipv6=%@ port=%d user=%@ passLen=%d",
-                                  webRtcConnection.n_id,
-                                  webRtcConnection.flags,
-                                  (webRtcConnection.flags & (1 << 0)) ? 1 : 0,
-                                  (webRtcConnection.flags & (1 << 1)) ? 1 : 0,
-                                  webRtcConnection.ip,
-                                  webRtcConnection.ipv6,
-                                  webRtcConnection.port,
-                                  webRtcConnection.username,
-                                  (int)webRtcConnection.password.length);
                             
                             if (webRtcConnection.port != 0 &&
                                 (webRtcConnection.ip.length != 0 || webRtcConnection.ipv6.length != 0))
@@ -595,8 +503,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
                             return nil;
                         }
                         
-                        TGLog(@"CALL confirmed.connection.skip class=%@",
-                              NSStringFromClass([connection class]));
                         
                         return nil;
                     };
@@ -635,19 +541,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                             [alternativeConnections addObject:[allConnections objectAtIndex:i]];
                     }
                     
-                    TGLog(@"CALL confirmed.deserialized default=%@ alt=%d total=%d",
-                          defaultConnection,
-                          (int)alternativeConnections.count,
-                          (int)allConnections.count);
                     
-                    TGLog(@"CALL webrtc.context.ready call=%lld storedWebRtc=%d legacy=%d customParametersLen=%d protocolMin=%d protocolMax=%d protocolVersions=%@",
-                          concreteCall.n_id,
-                          (int)webrtcConnections.count,
-                          (int)allConnections.count,
-                          (int)customParameters.length,
-                          protocolMinLayer,
-                          protocolMaxLayer,
-                          protocolLibraryVersions);
                     
                     TGCallOngoingContext *callContext = [[TGCallOngoingContext alloc]
                                                          initWithCallId:callId
@@ -697,7 +591,6 @@ const int32_t TGCallLegacyMaxLayer = 92;
 {
     if (data.length == 0)
     {
-        TGLog(@"CALL signaling.send.skipEmpty call=%lld", callId);
         return [SSignal complete];
     }
     
@@ -710,16 +603,9 @@ const int32_t TGCallLegacyMaxLayer = 92;
     sendSignalingData.peer = inputPhoneCall;
     sendSignalingData.data = data;
     
-    TGLog(@"CALL signaling.send call=%lld access=%lld dataLen=%d",
-          callId,
-          accessHash,
-          (int)data.length);
     
     return [[[TGTelegramNetworking instance] requestSignal:sendSignalingData] map:^id(id result)
             {
-                TGLog(@"CALL signaling.send.result call=%lld result=%@",
-                      callId,
-                      NSStringFromClass([result class]));
                 
                 return result;
             }];

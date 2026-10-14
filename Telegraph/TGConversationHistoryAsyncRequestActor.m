@@ -1,5 +1,4 @@
 #import "TGConversationHistoryAsyncRequestActor.h"
-#import "IOS6Trace.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
@@ -91,7 +90,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
     }
     
     int32_t generation = ++_timeoutGeneration;
-    IOS6Trace(@"FULL asyncHistory.request path=%@ peer=%lld maxMid=%d limit=%d offset=%d down=%d generation=%d", self.path, _conversationId, _currentMaxMid, _currentLimit, _currentOffset, _down ? 1 : 0, generation);
     self.cancelToken = [TGTelegraphInstance doRequestConversationHistory:_conversationId accessHash:0 maxMid:_currentMaxMid orOffset:_currentOffset limit:_currentLimit actor:self];
     
     TGConversationHistoryAsyncRequestActor *strongSelf = self;
@@ -100,21 +98,18 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
         if (strongSelf->_completed || generation != strongSelf->_timeoutGeneration)
             return;
         
-        IOS6Trace(@"FULL asyncHistory.timeout path=%@ peer=%lld maxMid=%d limit=%d generation=%d", strongSelf.path, strongSelf->_conversationId, strongSelf->_currentMaxMid, strongSelf->_currentLimit, generation);
         
         if (!strongSelf->_down)
         {
             if (strongSelf->_currentLimit > 10)
             {
                 strongSelf->_currentLimit = 10;
-                IOS6Trace(@"FULL asyncHistory.retrySmaller path=%@ peer=%lld maxMid=%d limit=%d", strongSelf.path, strongSelf->_conversationId, strongSelf->_currentMaxMid, strongSelf->_currentLimit);
                 [strongSelf _startHistoryRequest];
                 return;
             }
             else if (strongSelf->_currentLimit > 1)
             {
                 strongSelf->_currentLimit = 1;
-                IOS6Trace(@"FULL asyncHistory.retrySingle path=%@ peer=%lld maxMid=%d limit=%d", strongSelf.path, strongSelf->_conversationId, strongSelf->_currentMaxMid, strongSelf->_currentLimit);
                 [strongSelf _startHistoryRequest];
                 return;
             }
@@ -123,7 +118,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
                 strongSelf->_skipAttempts++;
                 strongSelf->_currentMaxMid--;
                 strongSelf->_currentLimit = 30;
-                IOS6Trace(@"FULL asyncHistory.skipBadMid path=%@ peer=%lld nextMaxMid=%d skipped=%d", strongSelf.path, strongSelf->_conversationId, strongSelf->_currentMaxMid, strongSelf->_skipAttempts);
                 [strongSelf _startHistoryRequest];
                 return;
             }
@@ -161,7 +155,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
             offset = -limit;
         _currentOffset = offset;
         
-        IOS6Trace(@"FULL asyncHistory.execute path=%@ peer=%lld maxMid=%d limit=%d offset=%d down=%d options=%@", self.path, conversationId, maxMid, limit, offset, _down ? 1 : 0, options);
         
         [self _startHistoryRequest];
     }
@@ -181,7 +174,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
         return;
     _completed = true;
     TGLog(@"TRACE asyncHistory invalidPeer path=%@ reason=%@", self.path, reason);
-    IOS6Trace(@"FULL asyncHistory.invalidPeer path=%@ reason=%@", self.path, reason);
     [ActionStageInstance() nodeRetrieveFailed:self.path];
 }
 
@@ -233,7 +225,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
             if (messageDesc.n_id < _requestedMaxMid)
                 [filteredSourceMessages addObject:messageDesc];
         }
-        IOS6Trace(@"FULL asyncHistory.filterFallback peer=%lld requestedMax=%d before=%d after=%d", conversationId, _requestedMaxMid, (int)sourceMessages.count, (int)filteredSourceMessages.count);
         sourceMessages = filteredSourceMessages;
     }
     
@@ -262,7 +253,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
         }
         [messageItems addObject:message];
     }
-    IOS6Trace(@"FULL asyncHistory.parsed peer=%lld down=%d fromMid=%d count=%d minMid=%d maxMid=%d minDate=%d maxDate=%d incoming=%d outgoing=%d chats=%d users=%d", conversationId, _down ? 1 : 0, _fromMid, (int)messageItems.count, minRemoteMid == INT_MAX ? 0 : minRemoteMid, maxRemoteMid, minRemoteDate, maxRemoteDate, incomingCount, outgoingCount, (int)messages.chats.count, (int)messages.users.count);
     if (latestIncomingBotReplyMarkupMessage != nil)
     {
         [TGDatabaseInstance() storeBotReplyMarkup:latestIncomingBotReplyMarkupMessage.replyMarkup hideMarkupAuthorId:(int32_t)latestIncomingBotReplyMarkupMessage.fromUid forPeerId:conversationId messageId:latestIncomingBotReplyMarkupMessage.mid];
@@ -274,10 +264,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
     {
         [TGDatabaseInstance() transactionAddMessages:messageItems updateConversationDatas:otherConversations notifyAdded:false];
 
-        // Existing message rows are intentionally not replaced by
-        // transactionAddMessages.  Synchronize only the reaction property and
-        // dispatch an edit, otherwise an old emoji survives every history
-        // refresh and remains visible after the server reaction was removed.
         NSMutableArray *reactionUpdates = [[NSMutableArray alloc] init];
         for (TGMessage *remoteMessage in messageItems)
         {
@@ -304,7 +290,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
                 [properties removeObjectForKey:@"ios6ReactionSummary"];
             storedMessage.contentProperties = properties;
             [reactionUpdates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:conversationId messageId:remoteMessage.mid message:storedMessage dispatchEdited:true]];
-            IOS6Trace(@"FEATURE REACTION history.sync peer=%lld mid=%d old=%@ new=%@", conversationId, remoteMessage.mid, storedSummary, remoteSummary);
         }
         if (reactionUpdates.count != 0)
             [TGDatabaseInstance() transactionUpdateMessages:reactionUpdates updateConversationDatas:nil];
@@ -370,11 +355,6 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
         }
     }
 
-    // Do not hold the history actor open while fetching optional reply targets.
-    // Once the history RPC has completed its timeout is no longer active, so a
-    // stalled reply lookup used to leave one-message groups stuck permanently.
-    if (unresolvedReplyCount != 0)
-        IOS6Trace(@"HISTORY legacyReplyLookupDeferred peer=%lld messages=%d replies=%d", _conversationId, (int)completeMessages.count, (int)unresolvedReplyCount);
     return [SSignal single:completeMessages];
 }
 

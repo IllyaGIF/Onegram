@@ -40,8 +40,6 @@
 {
     [super mtProtoDidAddService:mtProto];
 
-    // The request contains its own layer-213 initConnection.  Never let the
-    // base request service prepend the layer-181 initializer.
     self.apiEnvironment = nil;
 
     MTRequest *pendingRequest = nil;
@@ -58,7 +56,6 @@
 
 - (void)mtProtoApiEnvironmentUpdated:(MTProto *)__unused mtProto apiEnvironment:(MTApiEnvironment *)__unused apiEnvironment
 {
-    // Keep automatic request decoration disabled for this isolated service.
     self.apiEnvironment = nil;
 }
 
@@ -106,10 +103,6 @@ static void TGIOS6ProfileMusicResolveForeignUser(TGUser *user, int64_t *userId, 
     int64_t resolvedUserId = TGModernUserIdForLegacyId(user.uid);
     int64_t resolvedAccessHash = user.phoneNumberHash;
 
-    // Modern 64-bit ids are collapsed into a synthetic int32 uid for the old
-    // TelegraphKit database.  The in-memory map is lost after an app restart,
-    // but modern peer-photo urls persist the real id and access hash:
-    // peerphoto:dc:type:peerId:accessHash:photoId:big
     NSString *photoUrl = user.photoUrlSmall.length != 0 ? user.photoUrlSmall : user.photoUrlBig;
     if ([photoUrl hasPrefix:@"peerphoto:"])
     {
@@ -135,13 +128,8 @@ static NSData *TGIOS6ProfileSavedMusicRequestPayload(MTApiEnvironment *environme
 {
     MTBuffer *buffer = [[MTBuffer alloc] init];
 
-    // The main Onegram connection intentionally stays on layer 181.  Saved
-    // Music was introduced in layer 213, so this payload initializes only a
-    // short-lived secondary MTProto connection at layer 213.
-    [buffer appendInt32:(int32_t)0xda9b0d0d]; // invokeWithLayer
-    [buffer appendInt32:213];
-
-    // initConnection#c1cd5ea9 (the constructor used by layer 213)
+    [buffer appendInt32:(int32_t)0xda9b0d0d];
+    [buffer appendInt32:[environment.layer intValue]];
     int32_t flags = 0;
     if (environment.socksProxySettings.secret != nil)
         flags |= (1 << 0);
@@ -158,29 +146,27 @@ static NSData *TGIOS6ProfileSavedMusicRequestPayload(MTApiEnvironment *environme
 
     if (flags & (1 << 0))
     {
-        [buffer appendInt32:(int32_t)0x75588b3f]; // inputClientProxy
+        [buffer appendInt32:(int32_t)0x75588b3f];
         [buffer appendTLString:environment.socksProxySettings.ip ?: @""];
         [buffer appendInt32:(int32_t)environment.socksProxySettings.port];
     }
 
-    // Do not subscribe this secondary connection for updates.
-    [buffer appendInt32:(int32_t)0xbf9459b7]; // invokeWithoutUpdates
+    [buffer appendInt32:(int32_t)0xbf9459b7];
 
-    // users.getSavedMusic#788d7fe3 id:InputUser offset:int limit:int hash:long
     [buffer appendInt32:(int32_t)0x788d7fe3];
     if (isSelf)
     {
-        [buffer appendInt32:(int32_t)0xf7c1b13f]; // inputUserSelf
+        [buffer appendInt32:(int32_t)0xf7c1b13f];
     }
     else
     {
-        [buffer appendInt32:(int32_t)0xf21158c6]; // inputUser
+        [buffer appendInt32:(int32_t)0xf21158c6];
         [buffer appendInt64:(int64_t)userId];
         [buffer appendInt64:accessHash];
     }
-    [buffer appendInt32:0]; // offset
-    [buffer appendInt32:100]; // fetch the whole Saved Music page for the player queue
-    [buffer appendInt64:0]; // hash: force the full result
+    [buffer appendInt32:0];
+    [buffer appendInt32:100];
+    [buffer appendInt64:0];
 
     return buffer.data;
 }
@@ -199,9 +185,8 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
         MTApiEnvironment *environment = context.apiEnvironment;
         MTDatacenterAuthInfo *authInfo = [context authInfoForDatacenterWithId:datacenterId];
 
-        if (context == nil || environment == nil || authInfo == nil || authInfo.authKey.length == 0)
+        if (context == nil || environment == nil || environment.layer == nil || authInfo == nil || authInfo.authKey.length == 0)
         {
-            TGLog(@"PROFILEMUSIC layer213 unavailable uid=%d dc=%ld context=%d env=%d auth=%d", user.uid, (long)datacenterId, context != nil, environment != nil, authInfo.authKey.length != 0);
             [subscriber putNext:[NSNull null]];
             [subscriber putCompletion];
             return nil;
@@ -215,16 +200,11 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
 
         if (!isSelf && (profileMusicUserId == 0 || profileMusicAccessHash == 0))
         {
-            TGLog(@"PROFILEMUSIC layer213 invalid input legacy=%d modern=%lld hash=%lld", user.uid, profileMusicUserId, profileMusicAccessHash);
+            TGLog(@"PROFILEMUSIC invalid input legacy=%d modern=%lld hash=%lld", user.uid, profileMusicUserId, profileMusicAccessHash);
             [subscriber putNext:[NSNull null]];
             [subscriber putCompletion];
             return nil;
         }
-
-        // invokeWithLayer is effectively sticky for this authorization key.
-        // Freeze the legacy connection while the short-lived layer-213 request is
-        // active so it can never receive layer-213 Updates/Message constructors.
-        [mainMtProto pause];
 
         MTProto *mtProto = [[MTProto alloc] initWithContext:context datacenterId:datacenterId usageCalculationInfo:nil];
         mtProto.useTempAuthKeys = false;
@@ -235,7 +215,7 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
 
         MTRequest *request = [[MTRequest alloc] init];
         NSData *payload = TGIOS6ProfileSavedMusicRequestPayload(environment, profileMusicUserId, profileMusicAccessHash, isSelf);
-        [request setPayload:payload metadata:@"profile.savedMusic.layer213" responseParser:^id(NSData *responseData)
+        [request setPayload:payload metadata:[NSString stringWithFormat:@"profile.savedMusic.layer%@", environment.layer] responseParser:^id(NSData *responseData)
         {
             return [TGTLSerialization parseProfileSavedMusicResponse:responseData];
         }];
@@ -246,7 +226,7 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
             id outputValue = [NSNull null];
             if (error != nil)
             {
-                TGLog(@"PROFILEMUSIC layer213 rpc error uid=%d code=%d description=%@", user.uid, (int)error.errorCode, error.errorDescription);
+                TGLog(@"PROFILEMUSIC rpc error uid=%d layer=%@ code=%d description=%@", user.uid, environment.layer, (int)error.errorCode, error.errorDescription);
             }
             else
             {
@@ -263,18 +243,14 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
                 }
                 if (profileMusic.count != 0)
                 {
-                    TGLog(@"PROFILEMUSIC loaded uid=%d tracks=%lu", user.uid, (unsigned long)profileMusic.count);
                     outputValue = profileMusic;
                 }
                 else
                 {
-                    TGLog(@"PROFILEMUSIC layer213 empty uid=%d", user.uid);
                     outputValue = @[];
                 }
             }
 
-            // Shut down layer 213 before mapToSignal starts the legacy-layer
-            // restore.  This prevents the two layer initializations from racing.
             [profileMtProto removeMessageService:requestService];
             [profileMtProto stop];
             [subscriber putNext:outputValue];
@@ -289,68 +265,6 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
             [requestService cancelProfileMusicRequest:request];
             [mtProto removeMessageService:requestService];
             [mtProto stop];
-
-            // Cancellation may happen after layer 213 was already sent.  Mark the
-            // shared key as uninitialized before resuming the legacy connection.
-            [context performBatchUpdates:^
-            {
-                MTDatacenterAuthInfo *currentAuthInfo = [context authInfoForDatacenterWithId:datacenterId];
-                if (currentAuthInfo != nil)
-                {
-                    NSMutableDictionary *attributes = [[NSMutableDictionary alloc] initWithDictionary:currentAuthInfo.authKeyAttributes];
-                    [attributes removeObjectForKey:@"apiInitializationHash"];
-                    [context updateAuthInfoForDatacenterWithId:datacenterId authInfo:[currentAuthInfo withUpdatedAuthKeyAttributes:attributes]];
-                }
-            }];
-        }];
-    }];
-}
-
-static void TGIOS6ProfileMusicInvalidateMainApiInitialization(TGTelegramNetworking *networking, NSInteger datacenterId)
-{
-    MTContext *context = networking.context;
-    [context performBatchUpdates:^
-    {
-        MTDatacenterAuthInfo *authInfo = [context authInfoForDatacenterWithId:datacenterId];
-        if (authInfo != nil)
-        {
-            NSMutableDictionary *attributes = [[NSMutableDictionary alloc] initWithDictionary:authInfo.authKeyAttributes];
-            [attributes removeObjectForKey:@"apiInitializationHash"];
-            [context updateAuthInfoForDatacenterWithId:datacenterId authInfo:[authInfo withUpdatedAuthKeyAttributes:attributes]];
-        }
-    }];
-}
-
-static SSignal *TGIOS6ProfileMusicRestoreLegacyLayerSignal(TGTelegramNetworking *networking, NSInteger datacenterId, id value)
-{
-    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
-    {
-        TGIOS6ProfileMusicInvalidateMainApiInitialization(networking, datacenterId);
-
-        // Queue the reset request while the legacy MTProto is still paused.
-        // When it resumes, MTRequestMessageService sees the missing
-        // apiInitializationHash and wraps this request (and any queued ordinary
-        // requests) in invokeWithLayer(181)+initConnection before anything can
-        // receive layer-213 updates.
-        MTRequest *resetRequest = [[MTRequest alloc] init];
-        resetRequest.body = [[TLRPCupdates_getState$updates_getState alloc] init];
-        [resetRequest setCompleted:^(__unused id result, __unused NSTimeInterval timestamp, MTRpcError *error)
-        {
-            if (error != nil)
-                TGLog(@"PROFILEMUSIC restore layer181 error dc=%ld code=%d description=%@", (long)datacenterId, (int)error.errorCode, error.errorDescription);
-
-            [subscriber putNext:value ?: [NSNull null]];
-            [subscriber putCompletion];
-        }];
-
-        [networking addRequest:resetRequest];
-        [networking.mtProto resume];
-
-        // Never cancel the reset request: even if the UI subscription disappears,
-        // the shared authorization key must be returned to layer 181.
-        return [[SBlockDisposable alloc] initWithBlock:^
-        {
-            [networking.mtProto resume];
         }];
     }];
 }
@@ -361,14 +275,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
     NSString *key = [[NSString alloc] initWithFormat:@"profileSavedMusic:%d", user.uid];
     return [networking.genericTasksSignalManager multicastedSignalForKey:key producer:^SSignal *
     {
-        NSInteger datacenterId = networking.mtProto.datacenterId;
-        return [[TGIOS6ProfileSavedMusicRawSignal(user) mapToSignal:^SSignal *(id value)
-        {
-            return TGIOS6ProfileMusicRestoreLegacyLayerSignal(networking, datacenterId, value);
-        }] onDispose:^
-        {
-            [networking.mtProto resume];
-        }];
+        return TGIOS6ProfileSavedMusicRawSignal(user);
     }];
 }
 
@@ -452,7 +359,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
         
         return [[SBlockDisposable alloc] initWithBlock:^
         {
-            [adapter description]; //keep reference
+            [adapter description];
         }];
     }];
     
@@ -497,10 +404,6 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
                         }
                     }];
 
-                    // Layer 181 userFull cannot contain profile Saved Music.  Keep
-                    // accepting saved_music if a compatible server ever sends it, but
-                    // normally fetch the first attached track through a short-lived
-                    // layer-213 connection.
                     if (result.saved_music != nil)
                     {
                         TGDocumentMediaAttachment *profileMusic = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:result.saved_music];

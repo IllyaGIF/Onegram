@@ -198,6 +198,9 @@
         int32_t valuesLength = (int32_t)valuesBytes.length;
         [data appendBytes:&valuesLength length:4];
         [data appendData:valuesBytes];
+    } else if (actionType == TGMessageActionCommunityChanged) {
+        int64_t communityId = [_actionData[@"communityId"] longLongValue];
+        [data appendBytes:&communityId length:8];
     }
 
     int dataLength = (int)data.length - dataLengthPtr - 4;
@@ -423,6 +426,10 @@
         if (values == nil)
             values = @"";
         actionAttachment.actionData = @{@"values": values};
+    } else if (actionType == TGMessageActionCommunityChanged) {
+        int64_t communityId = 0;
+        [is read:(uint8_t *)&communityId maxLength:8];
+        actionAttachment.actionData = @{@"communityId": @(communityId)};
     }
     
     return actionAttachment;

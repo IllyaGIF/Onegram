@@ -46,11 +46,11 @@
 
 + (NSData *)payloadData:(MTPayloadData *)outPayloadData context:(MTContext *)context address:(MTDatacenterAddress *)address {
     uint8_t reqPqBytes[] = {
-        0, 0, 0, 0, 0, 0, 0, 0, // zero * 8
-        0, 0, 0, 0, 0, 0, 0, 0, // message id
-        20, 0, 0, 0, // message length
-        0xf1, 0x8e, 0x7e, 0xbe, // req_pq_multi
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 // nonce
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        20, 0, 0, 0,
+        0xf1, 0x8e, 0x7e, 0xbe,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     
     MTPayloadData payloadData;
@@ -134,9 +134,6 @@
             [processedData swap:@true];
             if ([self isResponseValid:data payloadData:payloadData])
             {
-                if (MTLogEnabled()) {
-                    MTLog(@"success tcp://%@:%d", address.ip, (int)address.port);
-                }
                 [subscriber putCompletion];
             }
             else
@@ -161,9 +158,6 @@
                 [subscriber putError:nil];
             }
         };
-        if (MTLogEnabled()) {
-            MTLog(@"trying tcp://%@:%d", address.ip, (int)address.port);
-        }
         [connection start];
         
         return [[MTBlockDisposable alloc] initWithBlock:^
@@ -194,14 +188,11 @@
             [subscriber putError:nil];
         };
         
-        if (MTLogEnabled()) {
-            MTLog(@"trying http://%@:%d", address.ip, (int)address.port);
-        }
         MTHttpWorker *httpWorker = [[MTHttpWorker alloc] initWithDelegate:delegate address:address payloadData:data performsLongPolling:false];
         
         return [[MTBlockDisposable alloc] initWithBlock:^
         {
-            [delegate description]; // keep reference
+            [delegate description];
             [httpWorker stop];
         }];
     }];
@@ -238,7 +229,6 @@
     
     for (MTDatacenterAddress *address in bestAddressList) {
         MTTransportScheme *tcpTransportScheme = [[MTTransportScheme alloc] initWithTransportClass:[MTTcpTransport class] address:address media:media];
-        //MTTransportScheme *httpTransportScheme = [[MTTransportScheme alloc] initWithTransportClass:[MTHttpTransport class] address:address media:media];
         
         if ([self isIpv6:address.ip])
         {
@@ -272,23 +262,6 @@
             }
         }
         
-        /*if (!address.restrictToTcp && !isProxy) {
-            MTSignal *signal = [[[[self httpConnectionWithAddress:address] then:[MTSignal single:httpTransportScheme]] timeout:5.0 onQueue:[MTQueue concurrentDefaultQueue] orSignal:[MTSignal fail:nil]] catch:^MTSignal *(__unused id error)
-            {
-                return [MTSignal complete];
-            }];
-            [bestHttpSignals addObject:signal];
-            
-            if (address.port != 80) {
-                MTDatacenterAddress *httpAddress = [[MTDatacenterAddress alloc] initWithIp:address.ip port:80 preferForMedia:address.preferForMedia restrictToTcp:false cdn:address.cdn preferForProxy:address.preferForProxy];
-                
-                MTTransportScheme *alternateHttpTransportScheme = [[MTTransportScheme alloc] initWithTransportClass:[MTHttpTransport class] address:httpAddress media:media];
-                
-                [bestHttpSignals addObject:[[[[self httpConnectionWithAddress:httpAddress] then:[MTSignal single:alternateHttpTransportScheme]] timeout:5.0 onQueue:[MTQueue concurrentDefaultQueue] orSignal:[MTSignal fail:nil]] catch:^MTSignal *(__unused id error) {
-                    return [MTSignal complete];
-                }]];
-            }
-        }*/
     }
     
     MTSignal *repeatDelaySignal = [[MTSignal complete] delay:1.0 onQueue:[MTQueue concurrentDefaultQueue]];

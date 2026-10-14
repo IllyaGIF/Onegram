@@ -87,7 +87,6 @@
         }
     }
     
-    TGLog(@"receivedMessages: maxId: %d, mids: %@, withoutSound: %@", maxMid, mids, midsWithoutSound);
     
     [TGApplyUpdatesActor applyDelayedNotifications:maxMid mids:mids midsWithoutSound:midsWithoutSound maxQts:0 randomIds:nil];
     
@@ -129,7 +128,6 @@
 
 - (void)reportQtsSuccess:(int32_t)qts randomIds:(NSArray *)randomIds
 {
-    TGLog(@"receivedQueue: qts: %d, randomIds: %@", qts, randomIds);
     
     [TGApplyUpdatesActor applyDelayedNotifications:0 mids:nil midsWithoutSound:nil maxQts:qts randomIds:randomIds];
     

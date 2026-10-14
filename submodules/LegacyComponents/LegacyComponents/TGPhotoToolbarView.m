@@ -74,7 +74,6 @@
                     pallete = [[LegacyComponentsGlobals provider] mediaAssetsPallete];
                 
                 doneImage = pallete != nil ? pallete.sendIconImage : TGComponentsImageNamed(@"PhotoPickerSendIcon");
-                //buttonSize = CGSizeMake(52.0f, 52.0f);
             }
                 break;
         }

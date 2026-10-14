@@ -17,6 +17,8 @@ typedef enum {
 
 - (id<SDisposable>)requestSessionWithType:(TGAudioSessionType)type interrupted:(void (^)())interrupted;
 - (void)cancelCurrentSession;
+- (id<SDisposable>)suppressNotificationSounds;
+- (bool)notificationSoundsSuppressed;
 + (SSignal *)routeChange;
 
 - (void)applyRoute:(TGAudioRoute *)route;
@@ -33,9 +35,15 @@ typedef enum {
 @property (nonatomic, readonly) bool isBluetooth;
 @property (nonatomic, readonly) bool isHeadphones;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 @property (nonatomic, readonly) AVAudioSessionPortDescription *device;
 
 + (instancetype)routeWithDescription:(AVAudioSessionPortDescription *)description;
+#else
+@property (nonatomic, readonly) id device;
+
++ (instancetype)routeWithDescription:(id)description;
+#endif
 + (instancetype)routeForBuiltIn:(bool)headphones;
 + (instancetype)routeForSpeaker;
 

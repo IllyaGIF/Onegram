@@ -1,4 +1,5 @@
 #import "opusenc.h"
+#include "TGOpusPacketTiming.h"
 
 #include "opus.h"
 #include "opus_multistream.h"
@@ -87,8 +88,15 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
     return self;
 }
 
+- (void)dealloc
+{
+    [self cleanup];
+}
+
 - (void)cleanup
 {
+    free(inopt.comments);
+    inopt.comments = NULL;
     if (_encoder != NULL)
     {
         opus_encoder_destroy(_encoder);
@@ -106,6 +114,13 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
 
 - (bool)beginWithDataItem:(TGDataItem *)dataItem
 {
+    return [self beginWithDataItem:dataItem sampleRate:16000 bitrate:16 * 1024];
+}
+
+- (bool)beginWithDataItem:(TGDataItem *)dataItem sampleRate:(int32_t)sampleRate bitrate:(int32_t)targetBitrate
+{
+    if (_encoder != NULL || (sampleRate != 8000 && sampleRate != 12000 && sampleRate != 16000 && sampleRate != 24000 && sampleRate != 48000) || targetBitrate < 6000 || targetBitrate > 510000)
+        return false;
     _dataItem = dataItem;
     
     inopt.channels = 1;
@@ -122,12 +137,13 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
     const char *opus_version = opus_get_version_string();
     comment_init(&inopt.comments, &inopt.comments_length, opus_version);
     
-    bitrate = 16 * 1024;
+    bitrate = targetBitrate;
     
     inopt.rawmode = 1;
     inopt.ignorelength = 1;
     inopt.samplesize = 16;
-    inopt.rate = 16000;
+    inopt.rate = sampleRate;
+    frame_size = sampleRate * 60 / 1000;
     inopt.channels = 1;
     
     rate = (opus_int32)inopt.rate;
@@ -166,6 +182,8 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
     
     min_bytes = max_frame_bytes = (1275 * 3 + 7) * header.nb_streams;
     _packet = malloc(max_frame_bytes);
+    if (_packet == NULL)
+        return false;
     
     result = opus_encoder_ctl(_encoder, OPUS_SET_BITRATE(bitrate));
     if (result != OPUS_OK)
@@ -253,12 +271,15 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
     }
     
     free(inopt.comments);
+    inopt.comments = NULL;
     
     return true;
 }
 
 - (bool)writeFrame:(uint8_t *)framePcmBytes frameByteCount:(NSUInteger)frameByteCount
 {
+    if (_encoder == NULL || op.e_o_s != 0 || frameByteCount % sizeof(int16_t) != 0 || frameByteCount > (NSUInteger)frame_size * sizeof(int16_t) || (frameByteCount != 0 && framePcmBytes == NULL))
+        return false;
     nb_samples = -1;
 
     int cur_frame_size = frame_size;
@@ -296,7 +317,7 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
                           (opus_int16 *)paddedFrameBytes,
                           cur_frame_size,
                           _packet,
-                          max_frame_bytes / 10);
+                          max_frame_bytes);
     
     if (freePaddedFrameBytes)
     {
@@ -335,13 +356,17 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
         pages_out++;
     }
     
+    ogg_int64_t finalGranulePosition = TGOpusFinalGranulePosition(total_samples, rate, header.preskip);
+    bool needsPadding = op.e_o_s && TGOpusPacketNeedsPadding(enc_granulepos, total_samples, rate, header.preskip);
+    if (needsPadding)
+        op.e_o_s = 0;
     op.packet = (unsigned char *)_packet;
     op.bytes = nbBytes;
     op.b_o_s = 0;
     op.granulepos = enc_granulepos;
     if (op.e_o_s)
     {
-        op.granulepos = ((total_samples * 48000 + rate - 1) / rate) + header.preskip;
+        op.granulepos = finalGranulePosition;
     }
     op.packetno = 2 + _packetId;
     ogg_stream_packetin(&os, &op);
@@ -363,6 +388,8 @@ static inline int writeOggPage(ogg_page *page, TGDataItem *fileItem)
         pages_out++;
     }
     
+    if (needsPadding)
+        return [self writeFrame:NULL frameByteCount:0];
     return true;
 }
 

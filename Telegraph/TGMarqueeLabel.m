@@ -1,4 +1,5 @@
 #import "TGMarqueeLabel.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 #import <QuartzCore/QuartzCore.h>
 
 NSString *const kMarqueeLabelAnimationCompletionBlock = @"MarqueeLabelAnimationCompletionBlock";
@@ -163,8 +164,7 @@ CGPoint MLOffsetCGPoint(CGPoint point, CGFloat offset);
     
     CGSize expectedLabelSize = [self subLabelSize];
     
-    if ([self respondsToSelector:@selector(invalidateIntrinsicContentSize)])
-        [self invalidateIntrinsicContentSize];
+    OGPlatformInvalidateViewIntrinsicContentSize(self);
     
     [self returnLabelToOriginImmediately];
     
@@ -352,8 +352,8 @@ CGPoint MLOffsetCGPoint(CGPoint point, CGFloat offset);
     
     if (!gradientMask) {
         gradientMask = [CAGradientLayer layer];
-        gradientMask.shouldRasterize = YES;
-        gradientMask.rasterizationScale = [UIScreen mainScreen].scale;
+        TGSetLayerShouldRasterize(gradientMask, YES);
+        TGSetLayerRasterizationScale(gradientMask, [UIScreen mainScreen].scale);
         gradientMask.startPoint = CGPointMake(0.0f, 0.5f);
         gradientMask.endPoint = CGPointMake(1.0f, 0.5f);
     }
@@ -660,6 +660,28 @@ CGPoint MLOffsetCGPoint(CGPoint point, CGFloat offset);
     super.textColor = textColor;
 }
 
+- (UIColor *)shadowColor
+{
+    return self.internalLabel.shadowColor;
+}
+
+- (void)setShadowColor:(UIColor *)shadowColor
+{
+    self.internalLabel.shadowColor = shadowColor;
+    super.shadowColor = shadowColor;
+}
+
+- (CGSize)shadowOffset
+{
+    return self.internalLabel.shadowOffset;
+}
+
+- (void)setShadowOffset:(CGSize)shadowOffset
+{
+    self.internalLabel.shadowOffset = shadowOffset;
+    super.shadowOffset = shadowOffset;
+}
+
 - (void)setNumberOfLines:(NSInteger)__unused numberOfLines
 {
     [super setNumberOfLines:1];
@@ -688,19 +710,23 @@ CGPoint MLOffsetCGPoint(CGPoint point, CGFloat offset);
 
 - (CGSize)intrinsicContentSize
 {
-    CGSize contentSize = self.internalLabel.intrinsicContentSize;
+    CGSize contentSize = OGPlatformViewIntrinsicContentSize(self.internalLabel);
     contentSize.width += self.leadingBuffer;
     return contentSize;
 }
 
 - (void)setAdjustsLetterSpacingToFitWidth:(BOOL)__unused adjustsLetterSpacingToFitWidth
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     [super setAdjustsLetterSpacingToFitWidth:false];
+#endif
 }
 
 - (void)setMinimumScaleFactor:(CGFloat)__unused minimumScaleFactor
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     [super setMinimumScaleFactor:0.0f];
+#endif
 }
 
 #pragma mark - Custom Getters and Setters

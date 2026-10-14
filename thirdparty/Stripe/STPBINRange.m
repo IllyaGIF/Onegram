@@ -93,22 +93,26 @@
 }
 
 + (NSArray *)binRangesForNumber:(NSString *)number {
-    return [[self allRanges] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(STPBINRange *range, __unused NSDictionary *bindings) {
-        return [range matchesNumber:number];
-    }]];
+    NSMutableArray *ranges = [NSMutableArray array];
+    for (STPBINRange *range in [self allRanges]) {
+        if ([range matchesNumber:number])
+            [ranges addObject:range];
+    }
+    return ranges;
 }
 
 + (instancetype)mostSpecificBINRangeForNumber:(NSString *)number {
-    NSArray *validRanges = [[self allRanges] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(STPBINRange *range, __unused NSDictionary *bindings) {
-        return [range matchesNumber:number];
-    }]];
+    NSArray *validRanges = [self binRangesForNumber:number];
     return [[validRanges sortedArrayUsingSelector:@selector(compare:)] lastObject];
 }
 
 + (NSArray *)binRangesForBrand:(STPCardBrand)brand {
-    return [[self allRanges] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(STPBINRange *range, __unused NSDictionary *bindings) {
-        return range.brand == brand;
-    }]];
+    NSMutableArray *ranges = [NSMutableArray array];
+    for (STPBINRange *range in [self allRanges]) {
+        if (range.brand == brand)
+            [ranges addObject:range];
+    }
+    return ranges;
 }
 
 @end

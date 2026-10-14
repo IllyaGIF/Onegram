@@ -13,6 +13,8 @@
 
 + (instancetype)presentAlertWithTitle:(NSString *)title customView:(UIView *)customView cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(bool))completionBlock disableKeyboardWorkaround:(bool)disableKeyboardWorkaround;
 
++ (instancetype)presentSecureTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *text))completionBlock;
+
 + (void)dismissAllAlertViews;
 
 @end

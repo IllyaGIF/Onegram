@@ -60,13 +60,6 @@ static inline int colorIndexForGroupId(int64_t groupId)
                     [UIColor hexColor:0x3d72ed],
                     [UIColor hexColor:0x895dd5]
                     ];
-//        colors = @[ [UIColor hexColor:0xfc5b67],
-//                    [UIColor hexColor:0xfd9527],
-//                    [UIColor hexColor:0x25dc75],
-//                    [UIColor hexColor:0x1eb7fa],
-//                    [UIColor hexColor:0x2b96f7],
-//                    [UIColor hexColor:0x8d74e8]
-//                    ];
     });
     
     return colors;

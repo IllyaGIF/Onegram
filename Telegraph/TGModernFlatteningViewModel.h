@@ -27,4 +27,13 @@ extern CGFloat TGModernFlatteningViewModelTilingLimit;
 - (void)updateSubmodelContentsIfNeeded;
 - (void)updateSubmodelContentsForVisibleRect:(CGRect)rect;
 
++ (NSUInteger)prerenderBudgetBytes;
+- (NSUInteger)estimatedContentsBytes;
+
+- (void)prepareContentsAsynchronouslyWithPriority:(CGFloat)priority fromBottomEdge:(bool)fromBottomEdge;
+- (void)cancelAsynchronousContentsPreparation;
+#if defined(ONEGRAM_DIAGNOSTICS)
++ (void)logRenderingStatistics;
+#endif
+
 @end

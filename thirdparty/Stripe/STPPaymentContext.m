@@ -6,7 +6,7 @@
 //  Copyright © 2016 Stripe, Inc. All rights reserved.
 //
 
-#import <PassKit/PassKit.h>
+#import "STPPassKitCompatibility.h"
 #import <objc/runtime.h>
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
 #import "PKPaymentAuthorizationViewController+Stripe_Blocks.h"

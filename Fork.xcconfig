@@ -1,4 +1,0 @@
-TELEGRAM_APP_NAME = Onegram
-TELEGRAPH_BUNDLE_ID=dev.IllyaGIF.Onegram
-
-#include "Common.xcconfig"

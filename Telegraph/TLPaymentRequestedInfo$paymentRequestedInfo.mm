@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//paymentRequestedInfo flags:# name:flags.0?string phone:flags.1?string email:flags.2?string shipping_address:flags.3?PostAddress = PaymentRequestedInfo;
 
 @implementation TLPaymentRequestedInfo$paymentRequestedInfo
 

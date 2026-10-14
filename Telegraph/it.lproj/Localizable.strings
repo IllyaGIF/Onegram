@@ -2521,3 +2521,15 @@
 "Settings.DonateInfo" = "Support Onegram to help maintain and improve the app. Choose any amount on the donation page; every contribution is optional and appreciated.";
 "Settings.DonateButton" = "Open donation page";
 
+"RichMessage.Thinking" = "Ragionamento";
+"RichMessage.ShowMore" = "Mostra altro";
+"RichMessage.Unsupported" = "Questo contenuto non è ancora supportato";
+"RichMessage.Embed" = "Contenuto incorporato";
+"RichMessage.TapToReveal" = "Tocca per mostrare";
+"RichMessage.Relative.Now" = "ora";
+"RichMessage.Relative.InMinutes" = "tra %@ min";
+"RichMessage.Relative.MinutesAgo" = "%@ min fa";
+"RichMessage.Relative.InHours" = "tra %@ h";
+"RichMessage.Relative.HoursAgo" = "%@ h fa";
+"RichMessage.Relative.InDays" = "tra %@ g";
+"RichMessage.Relative.DaysAgo" = "%@ g fa";

@@ -59,7 +59,6 @@
 }
 
 - (SSignal *)requestCallWithPeerId:(int64_t)peerId {
-    TGLog(@"CALL manager.request peer=%lld", peerId);
     return [self requestCallWithPeerId:peerId uuid:[NSUUID UUID] session:nil];
 }
 
@@ -71,7 +70,6 @@
             int32_t internalId = _nextInternalId;
             _nextInternalId += 1;
             
-            TGLog(@"CALL manager.create peer=%lld internal=%d uuid=%@", peerId, internalId, uuid);
             
             TGCallContext *context = [[TGCallContext alloc] init];
             context.uuid = uuid;
@@ -130,7 +128,6 @@
             }
             
             [context.disposable setDisposable:[[[TGCallSignals requestedOutgoingCallWithPeerId:peerId] deliverOn:_queue] startWithNext:^(id next) {
-                TGLog(@"CALL manager.request.next peer=%lld internal=%d context=%@", peerId, internalId, next);
                 
                 __strong TGCallManager *strongSelf = weakSelf;
                 if (strongSelf != nil) {
@@ -182,7 +179,6 @@
 
 - (void)updateCallContextWithCallId:(int64_t)callId callContext:(id)callContext {
     [_queue dispatch:^{
-        TGLog(@"CALL manager.update call=%lld incoming=%@ contexts=%d", callId, NSStringFromClass([callContext class]), (int)_callContexts.count);
         __block int32_t internalId = -1;
         
         [_callContexts enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, TGCallContext *context, BOOL *stop) {
@@ -207,10 +203,6 @@
                         (waitingContext.participantId == acceptedContext.participantId ||
                          context.state.peerId == acceptedContext.participantId)) {
                             
-                            TGLog(@"CALL manager.attachAccepted call=%lld peer=%d internal=%d",
-                                  acceptedContext.callId,
-                                  acceptedContext.participantId,
-                                  [key intValue]);
                             
                             internalId = [key intValue];
                             *stop = true;
@@ -228,16 +220,11 @@
         }
         else if ([callContext isKindOfClass:[TGCallRequestedContext class]]) {
             if ([_discardedCallIds containsObject:@(callId)]) {
-                TGLog(@"CallManager: ignoring incoming call id %lld, because it's already discarded", callId);
                 return;
             }
             
             TGCallRequestedContext *requestedContext = (TGCallRequestedContext *)callContext;
             
-            TGLog(@"CALL manager.incomingRequested call=%lld admin=%d participant=%d",
-                  requestedContext.callId,
-                  requestedContext.adminId,
-                  requestedContext.participantId);
             
             bool hasActiveCall = false;
             
@@ -257,7 +244,6 @@
             context.uuid = [NSUUID UUID];
             
             _callContexts[@(internalId)] = context;
-            TGLog(@"CALL manager.context.created internal=%d call=%lld count=%d", internalId, requestedContext.callId, (int)_callContexts.count);
             
             if (!hasActiveCall)
             {
@@ -323,18 +309,8 @@
         }];
         
         if (matchedContext.session != nil) {
-            TGLog(@"CALL signaling.route call=%lld internal=%d dataLen=%d",
-                  callId,
-                  [matchedInternalId intValue],
-                  (int)data.length);
             
             [matchedContext.session receiveSignalingData:data];
-        }
-        else {
-            TGLog(@"CALL signaling.route.miss call=%lld dataLen=%d contexts=%d",
-                  callId,
-                  (int)data.length,
-                  (int)_callContexts.count);
         }
     }];
 }
@@ -469,9 +445,7 @@
         }
     }
     else if ([toCallContext isKindOfClass:[TGCallDiscardedContext class]]) {
-        if ([context.context isKindOfClass:[TGCallDiscardedContext class]]) {
-        }
-        else {
+        if (![context.context isKindOfClass:[TGCallDiscardedContext class]]) {
             TGCallDiscardedContext *discardedContext = (TGCallDiscardedContext *)toCallContext;
             
             bool declined = false;
@@ -716,18 +690,11 @@
         if ([toCallContext isKindOfClass:[TGCallWaitingConfirmContext class]]) {
             TGCallWaitingConfirmContext *waitingConfirmContext = toCallContext;
             context.context = waitingConfirmContext;
-            TGLog(@"CALL manager.accept.waitingConfirm internal=%d call=%lld", internalId, waitingConfirmContext.callId);
-            // phone.acceptCall also carries users; re-emit the current state so
-            // TGCallSession can resolve the caller name from the freshly updated DB.
             [self setContextState:internalId state:context.state];
         }
         else if ([toCallContext isKindOfClass:[TGCallConfirmedContext class]]) {
-            // The server can push updatePhoneCall(phoneCall) before the
-            // phone.acceptCall RPC result reaches us. The old state machine
-            // treated Received -> Confirmed as invalid and destroyed the call.
             TGCallReceivedContext *receivedContext = (TGCallReceivedContext *)context.context;
             TGCallConfirmedContext *confirmedContext = (TGCallConfirmedContext *)toCallContext;
-            TGLog(@"CALL manager.accept.race receivedToConfirmed internal=%d call=%lld", internalId, confirmedContext.callId);
 
             TGCallWaitingConfirmContext *syntheticWaiting = [[TGCallWaitingConfirmContext alloc]
                                                               initWithCallId:receivedContext.callId
@@ -784,12 +751,6 @@
                 
                 NSData *visKeyHash = MTSha256(hashedData);
                 
-                TGLog(@"CALL manager.confirmed.protocol call=%lld min=%d max=%d versions=%@ webrtc=%d",
-                      confirmedContext.callId,
-                      confirmedContext.minLayer,
-                      confirmedContext.maxLayer,
-                      confirmedContext.libraryVersions,
-                      (int)confirmedContext.webrtcConnections.count);
                 
                 context.context = [[TGCallOngoingContext alloc]
                                    initWithCallId:confirmedContext.callId
@@ -861,12 +822,6 @@
             
             NSData *visKeyHash = MTSha256(hashedData);
             
-            TGLog(@"CALL manager.ongoing.protocol call=%lld min=%d max=%d versions=%@ webrtc=%d",
-                  ongoingContext.callId,
-                  ongoingContext.minLayer,
-                  ongoingContext.maxLayer,
-                  ongoingContext.libraryVersions,
-                  (int)ongoingContext.webrtcConnections.count);
             
             TGCallConnection *connection = [[TGCallConnection alloc]
                                             initWithKey:ongoingContext.key
@@ -896,9 +851,6 @@
         if ([toCallContext isKindOfClass:[TGCallConfirmedContext class]])
             return;
         if ([toCallContext isKindOfClass:[TGCallWaitingConfirmContext class]]) {
-            TGLog(@"CALL manager.accept.staleWaitingConfirm internal=%d ignored", internalId);
-            // The RPC result may be the first place where the caller's User
-            // object arrives. Refresh the session without changing call state.
             [self setContextState:internalId state:context.state];
             return;
         }
@@ -925,11 +877,8 @@
     NSAssert([_queue isCurrentQueue], @"[_queue isCurrentQueue]");
     
     TGCallContext *context = _callContexts[@(internalId)];
-    TGLog(@"CALL manager.context.cleanup internal=%d call=%lld state=%d context=%@ subscribers=%d",
-          internalId, context.state.callId, (int)context.state.state, NSStringFromClass([context.context class]), (int)[[context.stateSubscribers copyItems] count]);
     [_callContexts removeObjectForKey:@(internalId)];
     
-    TGLog(@"CallManager: cleanup call context with internalId %d", internalId);
 }
 
 - (SSignal *)callStateWithInternalId:(id)internalId {
@@ -1035,12 +984,6 @@
                 __strong TGCallManager *strongSelf = weakSelf;
                 
                 if (strongSelf != nil) {
-                    // [SSignal fail:nil] is used by the TL adapter when an RPC
-                    // succeeded but its phone.phoneCall payload could not be
-                    // represented by the legacy generated class. Do not hang up
-                    // a perfectly valid incoming call in that case; keep enough
-                    // DH state to accept the authoritative updatePhoneCall that
-                    // immediately follows from the server.
                     if (error == nil) {
                         [strongSelf->_queue dispatch:^{
                             TGCallContext *liveContext = strongSelf->_callContexts[internalId];
@@ -1058,9 +1001,6 @@
                                                                         dhConfig:receivedContext.dhConfig
                                                                         receiveDate:0];
                                 liveContext.context = fallback;
-                                TGLog(@"CALL manager.accept.parseFallback internal=%d call=%lld", internalIdVal, receivedContext.callId);
-                            } else {
-                                TGLog(@"CALL manager.accept.parseFallback ignored internal=%d context=%@", internalIdVal, NSStringFromClass([liveContext.context class]));
                             }
                         }];
                         return;

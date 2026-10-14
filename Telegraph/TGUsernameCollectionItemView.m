@@ -5,6 +5,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGTextField.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGUsernameCollectionItemView () <UITextFieldDelegate>
 {
@@ -52,8 +53,7 @@
         _textField.placeholderOffset = 0.0f;
         _textField.autocorrectionType = UITextAutocorrectionTypeNo;
         _textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        if ([_textField respondsToSelector:@selector(setSpellCheckingType:)])
-            _textField.spellCheckingType = UITextSpellCheckingTypeNo;
+        OGPlatformDisableSpellChecking(_textField);
         _textField.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
         [self.contentView addSubview:_textField];
         

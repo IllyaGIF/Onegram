@@ -53,11 +53,13 @@
 @property (nonatomic, readonly) int64_t channelId;
 @property (nonatomic, readonly) int32_t maxId;
 @property (nonatomic, readonly) int32_t readMaxId;
+@property (nonatomic, copy, readonly) NSArray *recentRepliers;
 
 - (instancetype)initWithComments:(bool)comments
                          replies:(int32_t)replies
                        channelId:(int64_t)channelId
                            maxId:(int32_t)maxId
-                       readMaxId:(int32_t)readMaxId;
+                       readMaxId:(int32_t)readMaxId
+                  recentRepliers:(NSArray *)recentRepliers;
 
 @end

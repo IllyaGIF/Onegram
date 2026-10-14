@@ -10,6 +10,42 @@
 #import "TGTextCheckingResult.h"
 #import "TGPeerIdAdapter.h"
 #import "TGPhoneUtils.h"
+#import "OGMemoryCache.h"
+
+@interface TGMessageTextCheckingKey : NSObject <NSCopying>
+{
+@public
+    NSString *_text;
+    NSArray *_entities;
+    NSUInteger _flags;
+}
+@end
+
+@implementation TGMessageTextCheckingKey
+
+- (id)copyWithZone:(NSZone *)__unused zone
+{
+    return self;
+}
+
+- (NSUInteger)hash
+{
+    return _text.hash ^ (_flags << 24) ^ (_entities.count << 16);
+}
+
+- (BOOL)isEqual:(id)object
+{
+    if (object == self)
+        return YES;
+    if (![object isKindOfClass:[TGMessageTextCheckingKey class]])
+        return NO;
+    TGMessageTextCheckingKey *other = object;
+    if (_flags != other->_flags || ![_text isEqualToString:other->_text])
+        return NO;
+    return _entities == other->_entities || [_entities isEqualToArray:other->_entities];
+}
+
+@end
 
 
 static void *NSTextCheckingResultTelegramHiddenLinkKey = &NSTextCheckingResultTelegramHiddenLinkKey;
@@ -359,12 +395,60 @@ typedef enum {
     return _mid >= TGMessageLocalMidBaseline;
 }
 
+static bool TGMessageTextMayContainPhone(NSString *text)
+{
+    NSUInteger length = text.length;
+    if (length < 7)
+        return false;
+    SEL sel = @selector(characterAtIndex:);
+    unichar (*characterAtIndexImp)(id, SEL, NSUInteger) = (unichar (*)(id, SEL, NSUInteger))[text methodForSelector:sel];
+    int spanDigits = 0;
+    for (NSUInteger i = 0; i < length; i++)
+    {
+        unichar c = characterAtIndexImp(text, sel, i);
+        if (c >= '0' && c <= '9')
+        {
+            spanDigits++;
+            if (spanDigits >= 7)
+                return true;
+        }
+        else if (!(c == ' ' || c == '-' || c == '(' || c == ')' || c == '+' || c == '.' || c == 0x00a0 || c == 0x2010 || c == 0x2011 || c == 0x2012 || c == 0x2013))
+            spanDigits = 0;
+    }
+    return false;
+}
+
 + (NSArray *)textCheckingResultsForText:(NSString *)text highlightMentionsAndTags:(bool)highlightMentionsAndTags highlightCommands:(bool)highlightCommands entities:(NSArray *)entities
 {
     return [self textCheckingResultsForText:text highlightMentionsAndTags:highlightMentionsAndTags highlightCommands:highlightCommands entities:entities highlightAsExternalMentionsAndHashtags:false];
 }
 
 + (NSArray *)textCheckingResultsForText:(NSString *)text highlightMentionsAndTags:(bool)highlightMentionsAndTags highlightCommands:(bool)highlightCommands entities:(NSArray *)entities highlightAsExternalMentionsAndHashtags:(bool)highlightAsExternalMentionsAndHashtags
+{
+    if (text.length == 0)
+        return [self _uncachedTextCheckingResultsForText:text highlightMentionsAndTags:highlightMentionsAndTags highlightCommands:highlightCommands entities:entities highlightAsExternalMentionsAndHashtags:highlightAsExternalMentionsAndHashtags];
+
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[OGMemoryCache alloc] initWithCountLimit:768 costLimit:1024 * 1024];
+    });
+
+    TGMessageTextCheckingKey *key = [[TGMessageTextCheckingKey alloc] init];
+    key->_text = [text copy];
+    key->_entities = [entities copy];
+    key->_flags = (highlightMentionsAndTags ? 1u : 0u) | (highlightCommands ? 2u : 0u) | (highlightAsExternalMentionsAndHashtags ? 4u : 0u) | (entities != nil ? 8u : 0u);
+    id cached = [cache objectForKey:key];
+    if (cached != nil)
+        return cached == [NSNull null] ? nil : [(NSArray *)cached mutableCopy];
+
+    NSArray *results = [self _uncachedTextCheckingResultsForText:text highlightMentionsAndTags:highlightMentionsAndTags highlightCommands:highlightCommands entities:entities highlightAsExternalMentionsAndHashtags:highlightAsExternalMentionsAndHashtags];
+    [cache setObject:results != nil ? [results copy] : [NSNull null] forKey:key cost:64 + text.length * sizeof(unichar)];
+    return results;
+}
+
++ (NSArray *)_uncachedTextCheckingResultsForText:(NSString *)text highlightMentionsAndTags:(bool)highlightMentionsAndTags highlightCommands:(bool)highlightCommands entities:(NSArray *)entities highlightAsExternalMentionsAndHashtags:(bool)highlightAsExternalMentionsAndHashtags
 {
     if (entities != nil) {
         NSMutableArray *textCheckingResults = [[NSMutableArray alloc] init];
@@ -446,7 +530,7 @@ typedef enum {
                 }
             }
             
-            if (digitCount >= 2) {
+            if (digitCount >= 2 && TGMessageTextMayContainPhone(text)) {
                 NSError *error = nil;
                 static NSDataDetector *dataDetector = nil;
                 if (dataDetector == nil)
@@ -466,10 +550,11 @@ typedef enum {
     }
     
     bool containsSomething = false;
+    bool containsTokens = false;
+    bool containsLink = false;
     
     int length = (int)text.length;
     
-    int digitsInRow = 0;
     int schemeSequence = 0;
     int dotSequence = 0;
     
@@ -483,25 +568,13 @@ typedef enum {
         unichar c = characterAtIndexImp(text, sel, i);
         
         if (highlightMentionsAndTags && (c == '@' || c == '#' || c == '$'))
-        {
-            containsSomething = true;
-            break;
-        }
+            containsTokens = true;
         
         if (c >= '0' && c <= '9')
         {
-            digitsInRow++;
-            if (digitsInRow >= 3)
-            {
-                containsSomething = true;
-                break;
-            }
-            
             schemeSequence = 0;
             dotSequence = 0;
         }
-        else if (!(c != ' ' && digitsInRow > 0))
-            digitsInRow = 0;
         
         if (c == ':')
         {
@@ -513,14 +586,11 @@ typedef enum {
         else if (c == '/')
         {
             if (highlightCommands)
-            {
-                containsSomething = true;
-                break;
-            }
+                containsTokens = true;
             
             if (schemeSequence == 2)
             {
-                containsSomething = true;
+                containsLink = true;
                 break;
             }
             
@@ -538,7 +608,7 @@ typedef enum {
         }
         else if (c != ' ' && lastChar == '.' && dotSequence == 1)
         {
-            containsSomething = true;
+            containsLink = true;
             break;
         }
         else
@@ -549,22 +619,38 @@ typedef enum {
         lastChar = c;
     }
     
+    if (containsLink)
+    {
+        for (int i = 0; i < length && !containsTokens; i++)
+        {
+            unichar c = characterAtIndexImp(text, sel, i);
+            if ((highlightMentionsAndTags && (c == '@' || c == '#' || c == '$')) || (highlightCommands && c == '/'))
+                containsTokens = true;
+        }
+    }
+    
+    bool needsDetector = containsLink || TGMessageTextMayContainPhone(text);
+    containsSomething = needsDetector || containsTokens;
+    
     if (containsSomething)
     {
-        NSError *error = nil;
-        static NSDataDetector *dataDetector = nil;
-        if (dataDetector == nil)
-            dataDetector = [NSDataDetector dataDetectorWithTypes:(int)(NSTextCheckingTypeLink | NSTextCheckingTypePhoneNumber) error:&error];
-        
         NSMutableArray *results = [[NSMutableArray alloc] init];
-        [dataDetector enumerateMatchesInString:text options:0 range:NSMakeRange(0, text.length) usingBlock:^(NSTextCheckingResult *match, __unused NSMatchingFlags flags, __unused BOOL *stop)
+        if (needsDetector)
         {
-            NSTextCheckingType type = [match resultType];
-            if (type == NSTextCheckingTypeLink || type == NSTextCheckingTypePhoneNumber)
+            NSError *error = nil;
+            static NSDataDetector *dataDetector = nil;
+            if (dataDetector == nil)
+                dataDetector = [NSDataDetector dataDetectorWithTypes:(int)(NSTextCheckingTypeLink | NSTextCheckingTypePhoneNumber) error:&error];
+            
+            [dataDetector enumerateMatchesInString:text options:0 range:NSMakeRange(0, text.length) usingBlock:^(NSTextCheckingResult *match, __unused NSMatchingFlags flags, __unused BOOL *stop)
             {
-                [results addObject:match];
-            }
-        }];
+                NSTextCheckingType type = [match resultType];
+                if (type == NSTextCheckingTypeLink || type == NSTextCheckingTypePhoneNumber)
+                {
+                    [results addObject:match];
+                }
+            }];
+        }
         
         static NSCharacterSet *characterSet = nil;
         static NSCharacterSet *punctuationSet = nil;
@@ -867,9 +953,7 @@ typedef enum {
                     } else if ([entity isKindOfClass:[TGMessageEntityPre class]]) {
                         [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeCode contents:@""]];
                     } else if ([entity isKindOfClass:[TGMessageEntityTextUrl class]]) {
-                        //NSTextCheckingResult *result = [NSTextCheckingResult linkCheckingResultWithRange:entity.range URL:[NSURL URLWithString:((TGMessageEntityTextUrl *)entity).url]];
                         TGTextCheckingResult *result = [[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeLink contents:((TGMessageEntityTextUrl *)entity).url value:nil highlightAsLink:true];
-                        //[result setIsTelegramHiddenLink:true];
                         [textCheckingResults addObject:result];
                     } else if ([entity isKindOfClass:[TGMessageEntityUrl class]]) {
                         NSString *link = [_text substringWithRange:entity.range];
@@ -914,7 +998,7 @@ typedef enum {
                         }
                     }
                     
-                    if (digitCount >= 2) {
+                    if (digitCount >= 2 && TGMessageTextMayContainPhone(text)) {
                         static NSDataDetector *dataDetector = nil;
                         static dispatch_once_t onceToken;
                         dispatch_once(&onceToken, ^{
@@ -1193,8 +1277,6 @@ typedef enum {
     {
         if ([value respondsToSelector:@selector(encodeWithKeyValueCoder:)])
             [encoder encodeObject:(id<PSCoding>)value forKey:key];
-        else
-            TGLegacyLog(@"STABILITY contentProperty.skip key=%@ class=%@", key, NSStringFromClass([value class]));
     }];
     
     return encoder.data;
@@ -1210,8 +1292,6 @@ typedef enum {
     {
         if ([value respondsToSelector:@selector(encodeWithKeyValueCoder:)])
             [encoder encodeObject:(id<PSCoding>)value forKey:key];
-        else
-            TGLegacyLog(@"STABILITY contentProperty.skip key=%@ class=%@", key, NSStringFromClass([value class]));
     }];
     
     return encoder.data;

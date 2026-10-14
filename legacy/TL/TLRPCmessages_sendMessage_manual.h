@@ -2,6 +2,7 @@
 #import "TLMetaRpc.h"
 
 @class TLInputPeer;
+@class TLCodexPollValue;
 
 @interface TLRPCmessages_sendMessage_manual : TLMetaRpc
 
@@ -14,9 +15,6 @@
 
 @end
 
-// Modern reactions are not part of the original layer-26 generated classes,
-// so keep the small request serializer beside the existing manual message
-// serializer.  The response is a regular TLUpdates object.
 @interface TLRPCmessages_sendReaction_manual : TLMetaRpc
 
 @property (nonatomic) int32_t flags;
@@ -26,9 +24,6 @@
 
 @end
 
-// Lightweight modern response objects used only to obtain Telegram's active
-// Unicode reaction list.  Animation documents are consumed by the TL parser
-// but intentionally not retained on iOS 6.
 @interface TLAvailableReaction_manual : NSObject <TLObject>
 
 @property (nonatomic) bool inactive;
@@ -48,5 +43,30 @@
 @interface TLRPCmessages_getAvailableReactions_manual : TLMetaRpc
 
 @property (nonatomic) int32_t hashValue;
+
+@end
+
+@interface TLRPCmessages_sendVote_manual : TLMetaRpc
+
+@property (nonatomic, strong) TLInputPeer *peer;
+@property (nonatomic) int32_t msg_id;
+@property (nonatomic, strong) NSArray *options;
+
+@end
+
+@interface TLRPCmessages_getPollResults_manual : TLMetaRpc
+
+@property (nonatomic, strong) TLInputPeer *peer;
+@property (nonatomic) int32_t msg_id;
+@property (nonatomic) int64_t poll_hash;
+
+@end
+
+@interface TLRPCmessages_editMessagePoll_manual : TLMetaRpc
+
+@property (nonatomic, strong) TLInputPeer *peer;
+@property (nonatomic) int32_t msg_id;
+@property (nonatomic, strong) TLCodexPollValue *poll;
+@property (nonatomic, strong) NSArray *correct_answers;
 
 @end

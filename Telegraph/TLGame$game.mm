@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//game flags:# id:long access_hash:long short_name:string title:string description:string url:string photo:Photo document:flags.0?Document = Game;
 
 @implementation TLGame$game
 

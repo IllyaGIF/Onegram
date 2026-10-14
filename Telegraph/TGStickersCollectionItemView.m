@@ -1,8 +1,5 @@
 #import "TGStickersCollectionItemView.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -153,7 +150,9 @@ const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
         [_scrollIndicator setHidden:true animated:false];        
         [_collectionView addSubview:_scrollIndicator];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
         [self.menuController.panGestureRecognizer requireGestureRecognizerToFail:_collectionView.panGestureRecognizer];
+#endif
         
         _separator = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, TGScreenPixel)];
         _separator.alpha = 0.0f;
@@ -745,11 +744,9 @@ const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
             NSInteger index = [options[@"userInfo"][@"index"] integerValue];
             if (index < 0 || index >= (NSInteger)_stickerPack.documents.count)
             {
-                IOS6_NOOP_LOG(@"STICKER menu.send invalidIndex=%d count=%d", (int)index, (int)_stickerPack.documents.count);
                 return;
             }
             TGDocumentMediaAttachment *sticker = _stickerPack.documents[index];
-            IOS6_NOOP_LOG(@"STICKER menu.send index=%d doc=%lld access=%lld dc=%d size=%d mime=%@", (int)index, (long long)sticker.documentId, (long long)sticker.accessHash, sticker.datacenterId, sticker.size, sticker.mimeType);
             if (self.sendSticker != nil)
                 self.sendSticker(sticker);
         }
@@ -758,7 +755,6 @@ const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
             NSInteger index = [options[@"userInfo"][@"index"] integerValue];
             if (index < 0 || index >= (NSInteger)_stickerPack.documents.count)
             {
-                IOS6_NOOP_LOG(@"STICKER menu.fave invalidIndex=%d count=%d action=%@", (int)index, (int)_stickerPack.documents.count, menuAction);
                 return;
             }
             TGDocumentMediaAttachment *sticker = _stickerPack.documents[index];

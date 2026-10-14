@@ -263,23 +263,6 @@
     NSUInteger sectionIndex = [self indexForSection:_customShareSection];
     while (_customShareSection.items.count > 1)
     {
-        /*if (animated)
-        {
-            TGCollectionItem *item = _customShareSection.items[0];
-            if (item.boundView != nil)
-            {
-                UIView *copyView = [item.boundView snapshotViewAfterScreenUpdates:false];
-                copyView.frame = item.boundView.frame;
-                [item.boundView.superview insertSubview:copyView aboveSubview:item.boundView];
-                [UIView animateWithDuration:0.15 animations:^
-                {
-                    copyView.alpha = 0.0f;
-                } completion:^(__unused BOOL finished)
-                {
-                    [copyView removeFromSuperview];
-                }];
-            }
-        }*/
         
         [self.menuSections deleteItemFromSection:sectionIndex atIndex:0];
     }
@@ -298,10 +281,6 @@
         default:
             break;
     }
-    //[TGHacks setAnimationDurationFactor:0.01f];
-    //[self.collectionView reloadSections:[NSIndexSet indexSetWithIndex:sectionIndex]];
-    //[self.collectionView layoutSubviews];
-    //[TGHacks setAnimationDurationFactor:1.0f];
     NSIndexPath *indexPath = [self.collectionView indexPathsForSelectedItems].firstObject;
     [self.collectionView reloadData];
     [self.collectionView selectItemAtIndexPath:indexPath animated:false scrollPosition:UICollectionViewScrollPositionNone];

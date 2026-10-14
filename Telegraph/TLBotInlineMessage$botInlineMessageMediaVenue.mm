@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//botInlineMessageMediaVenue#8a86659c flags:# geo:GeoPoint title:string address:string provider:string venue_id:string venue_type:string reply_markup:flags.2?ReplyMarkup = BotInlineMessage;
 
 @implementation TLBotInlineMessage$botInlineMessageMediaVenue
 

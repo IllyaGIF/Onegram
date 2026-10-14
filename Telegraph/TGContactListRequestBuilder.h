@@ -23,6 +23,7 @@
 + (void)dispatchNewContactList;
 + (void)dispatchNewPhonebook;
 
++ (NSDictionary *)cachedContactList;
 + (NSDictionary *)cachedPhonebook;
 + (NSDictionary *)cachedInvitees;
 + (NSDictionary *)synchronousContactList;

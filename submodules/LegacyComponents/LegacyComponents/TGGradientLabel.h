@@ -8,4 +8,6 @@
 @property (nonatomic) int bottomColor;
 @property (nonatomic) UIColor *textColor;
 
++ (void)prepareText:(NSString *)text font:(UIFont *)font textColor:(UIColor *)textColor height:(CGFloat)height;
+
 @end

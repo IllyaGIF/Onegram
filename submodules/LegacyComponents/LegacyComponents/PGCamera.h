@@ -2,7 +2,9 @@
 #import <UIKit/UIKit.h>
 #import "LegacyComponentsIos6Compat.h"
 #import <AVFoundation/AVFoundation.h>
+#if __has_include(<CoreMedia/CoreMedia.h>)
 #import <CoreMedia/CoreMedia.h>
+#endif
 
 #import "PGCameraShotMetadata.h"
 

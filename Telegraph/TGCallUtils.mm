@@ -1,9 +1,7 @@
 #import "TGCallUtils.h"
 #import "Reachability.h"
 
-#import <CoreTelephony/CTCall.h>
-#import <CoreTelephony/CTCallCenter.h>
-#import <CoreTelephony/CTTelephonyNetworkInfo.h>
+#import "../OnegramPlatform/OGPlatformTelephony.h"
 
 # define AES_MAXNR 14
 # define AES_BLOCK_SIZE 16
@@ -13,7 +11,6 @@ typedef struct {
     unsigned long data[N_WORDS];
 } aes_block_t;
 
-/* XXX: probably some better way to do this */
 #if defined(__i386__) || defined(__x86_64__)
 # define UNALIGNED_MEMOPS_ARE_FAST 1
 #else
@@ -123,7 +120,6 @@ void TGCallAesIgeDecrypt(uint8_t *inBytes, uint8_t *outBytes, size_t length, uin
     unsigned char ccIv[AES_BLOCK_SIZE];
     memcpy(ccIv, (void *)((uint8_t *)iv + AES_BLOCK_SIZE), AES_BLOCK_SIZE);
     
-    //assert(((size_t)inBytes | (size_t)outBytes | (size_t)aesIv | (size_t)ccIv) % sizeof(long) == 0);
     
     CCCryptorRef decryptor = NULL;
     CCCryptorCreate(kCCDecrypt, kCCAlgorithmAES128, kCCOptionECBMode, key, 32, nil, &decryptor);
@@ -211,7 +207,6 @@ static void ctr128_inc_aligned(unsigned char *counter)
     do {
         --n;
         d = data[n] += c;
-        /* did addition carry? */
         c = ((d - c) ^ d) >> (sizeof(size_t) * 8 - 1);
     } while (n);
 }
@@ -267,7 +262,7 @@ static void ctr128_inc_aligned(unsigned char *counter)
     
     n = _num;
     
-    if (16 % sizeof(size_t) == 0) { /* always true actually */
+    if (16 % sizeof(size_t) == 0) {
         do {
             while (n && len) {
                *(out++) = *(in++) ^ _ecount[n];
@@ -300,7 +295,6 @@ static void ctr128_inc_aligned(unsigned char *counter)
             return;
         } while (0);
     }
-    /* the rest would be commonly eliminated by x86* compiler */
     
     while (l < len) {
         if (n == 0) {
@@ -350,7 +344,6 @@ void TGCallRandomBytes(uint8_t *buffer, size_t length)
 
 void TGCallLoggingFunction(const char *msg)
 {
-    TGLog(@"%s", msg);
 }
 
 @implementation TGCallUtils
@@ -365,13 +358,7 @@ void TGCallLoggingFunction(const char *msg)
     if (![self canCheckPhoneCallState])
         return false;
 
-    CTCallCenter *callCenter = [[CTCallCenter alloc] init];
-    for (CTCall *call in callCenter.currentCalls)
-    {
-        if (call.callState == CTCallStateConnected)
-            return true;
-    }
-    return false;
+    return OGPlatformIsOnPhoneCall();
 }
 
 @end

@@ -169,14 +169,11 @@ static NSString *TGModernCacheHexString(NSData *data)
     [upperBound appendBytes:&afterKeyspace length:1];
     PSData upperBoundKey = {.data = (void *)upperBound.bytes, .length = upperBound.length};
     
-    NSLog(@"-----------------------------");
     [readerWriter enumerateKeysAndValuesBetweenLowerBoundKey:&lowerBoundKey upperBoundKey:&upperBoundKey options:PSKeyValueReaderEnumerationUpperBoundExclusive withBlock:^(__unused PSConstData *key, PSConstData *value, __unused bool *stop)
     {
         NSData *originalKey = [[NSData alloc] initWithBytes:value->data + 4 length:value->length - 4];
         NSString *filePath = [self _filePathForKey:originalKey];
-        NSLog(@"%@", filePath);
     }];
-    NSLog(@"-----------------------------");
 }
 
 - (void)_evictValuesOfTotalSize:(NSUInteger)totalSize removedSize:(NSUInteger *)removedSize readerWriter:(id<PSKeyValueReader,PSKeyValueWriter>)readerWriter
@@ -203,7 +200,6 @@ static NSString *TGModernCacheHexString(NSData *data)
         {
             int32_t sortingValue = 0;
             memcpy(&sortingValue, key->data + 1 + 4, 4);
-            //TGLog(@"removing %d", sortingValue);
         }
         
         [keysToRemove addObject:[[NSData alloc] initWithBytes:key->data length:key->length]];
@@ -217,7 +213,6 @@ static NSString *TGModernCacheHexString(NSData *data)
         NSData *originalKey = [[NSData alloc] initWithBytes:value->data + 4 length:value->length - 4];
         NSString *filePath = [self _filePathForKey:originalKey];
         
-        //TGLog(@"remove %d %@", (int)size, filePath);
         
         NSMutableData *primaryKeyData = [[NSMutableData alloc] init];
         int8_t keyspace = TGModernCacheKeyspaceLastUsageByPath;
@@ -309,7 +304,6 @@ static NSString *TGModernCacheHexString(NSData *data)
 {
     [_queue dispatch:^
     {
-        //TGLog(@"store %d %@", (int)value.length, [self _filePathForKey:key]);
         
         [_keyValueStore readWriteInTransaction:^(id<PSKeyValueReader,PSKeyValueWriter> readerWriter)
         {
@@ -333,7 +327,6 @@ static NSString *TGModernCacheHexString(NSData *data)
 
             [self _updateLastAccessDateForKey:key size:value.length readerWriter:readerWriter];
             
-            //[self _dumpState:readerWriter];
         }];
     }];
 }
@@ -357,10 +350,6 @@ static NSString *TGModernCacheHexString(NSData *data)
                     [self _updateLastAccessDateForKey:key size:data.length readerWriter:readerWriter];
                 }
             }];
-        }
-        else
-        {
-            //TGLog(@"no data for %@", [self _filePathForKey:key]);
         }
         
         if (completion)

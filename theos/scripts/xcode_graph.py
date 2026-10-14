@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Read OpenStep project files without third party dependencies."""
 import fnmatch
 import os
 from functools import lru_cache
@@ -72,7 +71,6 @@ def string(value):
 
 @lru_cache(maxsize=None)
 def actual_path(path):
-    """Resolve a unique case-insensitive path as on a legacy Mac volume."""
     path = Path(path)
     if path.exists():
         return path

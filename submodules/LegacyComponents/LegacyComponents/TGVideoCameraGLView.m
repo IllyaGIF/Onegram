@@ -50,10 +50,12 @@ static bool TGVideoCameraGLViewSupportsBGRAUpload(void)
 	self = [super initWithFrame:frame];
     if (self != nil)
 	{
+#if !defined(ONEGRAM_ARMV6)
 		if (iosMajorVersion() >= 8)
 			self.contentScaleFactor = [UIScreen mainScreen].scale;
 		else
 			self.contentScaleFactor = [UIScreen mainScreen].scale;
+#endif
 		
 		CAEAGLLayer *eaglLayer = (CAEAGLLayer *)self.layer;
 		eaglLayer.opaque = true;

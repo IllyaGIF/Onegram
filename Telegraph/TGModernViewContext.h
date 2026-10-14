@@ -15,6 +15,15 @@
 @class TGMessage;
 @class TGPresentation;
 
+@interface TGPollMessageViewState : NSObject
+
+@property (nonatomic, strong, readonly) NSArray *selectedOptions;
+@property (nonatomic, readonly) bool voting;
+
+- (instancetype)initWithSelectedOptions:(NSArray *)selectedOptions voting:(bool)voting;
+
+@end
+
 typedef struct {
     int32_t mid;
     bool paused;
@@ -36,6 +45,7 @@ typedef struct {
 @property (nonatomic) bool isBot;
 @property (nonatomic) bool isPublicGroup;
 @property (nonatomic) bool autoplayAnimations;
+@property (nonatomic) bool inlineMediaActivationDeferred;
 @property (nonatomic, strong) NSSet *adminIds;
 
 @property (nonatomic, strong) TGPresentation *presentation;
@@ -68,6 +78,12 @@ typedef struct {
 - (bool)isSecretMessageViewed:(int32_t)messageId;
 - (bool)isSecretMessageScreenshotted:(int32_t)messageId;
 - (NSTimeInterval)secretMessageViewDate:(int32_t)messageId;
+
+- (NSSet *)richMessageExpandedKeysForMessageId:(int32_t)messageId peerId:(int64_t)peerId;
+- (void)setRichMessageExpandedKeys:(NSSet *)keys forMessageId:(int32_t)messageId peerId:(int64_t)peerId;
+
+- (TGPollMessageViewState *)pollStateForMessageId:(int32_t)messageId peerId:(int64_t)peerId;
+- (void)setPollState:(TGPollMessageViewState *)state forMessageId:(int32_t)messageId peerId:(int64_t)peerId;
 
 - (bool)isMessageUnread:(TGMessage *)message;
 - (bool)isByAdmin:(TGMessage *)message;

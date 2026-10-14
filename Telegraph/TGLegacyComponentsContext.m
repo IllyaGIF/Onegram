@@ -8,6 +8,7 @@
 #import "TGCustomActionSheet.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGLegacyComponentsOverlayWindowManager : NSObject <LegacyComponentsOverlayWindowManager>
 
@@ -72,7 +73,7 @@
 }
 
 - (void)setStatusBarHidden:(BOOL)hidden withAnimation:(UIStatusBarAnimation)animation {
-    [[UIApplication sharedApplication] setStatusBarHidden:hidden withAnimation:animation];
+    OGPlatformSetStatusBarHidden([UIApplication sharedApplication], hidden, animation);
 }
 
 - (UIStatusBarStyle)statusBarStyle {

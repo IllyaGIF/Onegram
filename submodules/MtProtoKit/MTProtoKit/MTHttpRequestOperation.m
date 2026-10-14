@@ -22,9 +22,16 @@
 + (MTSignal *)dataForHttpUrl:(NSURL *)url headers:(NSDictionary *)headers {
     return [[MTSignal alloc] initWithGenerator:^id<MTDisposable>(MTSubscriber *subscriber) {
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+#if defined(ONEGRAM_ARMV6)
+        for (NSString *key in headers) {
+            NSString *value = [headers objectForKey:key];
+            [request setValue:value forHTTPHeaderField:key];
+        }
+#else
         [headers enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, __unused BOOL *stop) {
             [request setValue:value forHTTPHeaderField:key];
         }];
+#endif
         AFHTTPRequestOperation *operation = [[AFHTTPRequestOperation alloc] initWithRequest:request];
         
         [operation setSuccessCallbackQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)];

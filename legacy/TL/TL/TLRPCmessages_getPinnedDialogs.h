@@ -10,6 +10,7 @@
 
 @interface TLRPCmessages_getPinnedDialogs : TLMetaRpc
 
+@property (nonatomic) int32_t folder_id;
 
 - (Class)responseClass;
 

@@ -5,7 +5,9 @@
 #import "TGImageUtils.h"
 #import "TGStringUtils.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <AVFoundation/AVFoundation.h>
+#endif
 #import <MediaPlayer/MediaPlayer.h>
 
 #import "TGPhotoEditorUtils.h"
@@ -236,7 +238,7 @@
     if (_volumeOverlayFixView != nil)
         return;
     
-    UIWindow *keyWindow = self.window; //[UIApplication sharedApplication].keyWindow;
+    UIWindow *keyWindow = self.window;
     UIView *rootView = keyWindow.rootViewController.view;
     
     _volumeOverlayFixView = [[MPVolumeView alloc] initWithFrame:CGRectMake(10000, 10000, 20, 20)];
@@ -772,6 +774,9 @@
 
 - (UIImage *)screenImage
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    return _lastRenderedScreenImage != nil ? _lastRenderedScreenImage : _imageView.image;
+#else
     if (_videoView != nil)
     {
         UIImage *image = nil;
@@ -796,10 +801,18 @@
     {
         return _imageView.image;
     }
+#endif
 }
 
 - (UIImage *)transitionImage
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    UIGraphicsBeginImageContextWithOptions(_playerWrapperView.bounds.size, true, 0.0f);
+    [_playerWrapperView.layer renderInContext:UIGraphicsGetCurrentContext()];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+#else
     UIGraphicsBeginImageContextWithOptions(_playerWrapperView.bounds.size, true, 0.0f);
 
     _lastRenderedScreenImage = nil;
@@ -845,6 +858,7 @@
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return image;
+#endif
 }
 
 - (CGRect)editorTransitionViewRect
@@ -963,10 +977,12 @@
     if (_player != nil)
     {
         _didPlayToEndObserver = nil;
-        
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        [_player stop];
+#else
         [_player removeObserver:self forKeyPath:@"rate" context:nil];
-        
         [_player pause];
+#endif
         _player = nil;
     }
     
@@ -998,6 +1014,45 @@
 
 - (void)preparePlayerAndPlay:(bool)play
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    __weak TGMediaPickerGalleryVideoItemView *weakSelf = self;
+    [[SQueue concurrentDefaultQueue] dispatch:^
+    {
+        [_currentAudioSession setDisposable:[[LegacyComponentsGlobals provider] requestAudioSession:TGAudioSessionTypePlayVideo interrupted:^
+        {
+            TGDispatchOnMainThread(^
+            {
+                __strong TGMediaPickerGalleryVideoItemView *strongSelf = weakSelf;
+                if (strongSelf != nil)
+                    [strongSelf pausePressed];
+            });
+        }]];
+    }];
+
+    [self inhibitVolumeOverlay];
+
+    NSURL *url = nil;
+    if ([self.item.asset isKindOfClass:[TGMediaAsset class]])
+        url = ((TGMediaAsset *)self.item.asset).url;
+    else if ([self.item.asset respondsToSelector:@selector(url)])
+        url = [self.item.asset performSelector:@selector(url)];
+
+    if (url == nil)
+        return;
+
+    _player = [[MPMoviePlayerController alloc] initWithContentURL:url];
+    _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+
+    TGVideoEditAdjustments *adjustments = (TGVideoEditAdjustments *)[self.item.editingContext adjustmentsForItem:self.item.editableMediaItem];
+    [self _seekToPosition:adjustments.trimStartValue manual:false];
+
+    if (play)
+    {
+        self.isPlaying = true;
+        [_player play];
+    }
+#else
+
     __weak TGMediaPickerGalleryVideoItemView *weakSelf = self;
     [[SQueue concurrentDefaultQueue] dispatch:^
     {
@@ -1066,8 +1121,10 @@
         
         [strongSelf _mutePlayer:strongSelf->_sendAsGif];
     }]];
+#endif
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)__unused change context:(void *)__unused context
 {
     if (object == _player && [keyPath isEqualToString:@"rate"])
@@ -1079,6 +1136,8 @@
     }
 }
 
+#endif
+
 - (void)playPressed
 {
     if (_downloadRequired)
@@ -1089,6 +1148,18 @@
 
 - (void)play
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (_player == nil)
+    {
+        [self preparePlayerAndPlay:true];
+    }
+    else
+    {
+        self.isPlaying = true;
+        [_player play];
+    }
+#else
+
     if (_player == nil)
     {
         [self preparePlayerAndPlay:true];
@@ -1109,6 +1180,7 @@
         _positionTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(positionTimerEvent) interval:0.25 repeat:true];
         [self positionTimerEvent];
     }
+#endif
 }
 
 - (void)playIfAvailable
@@ -1126,7 +1198,11 @@
 - (void)stop
 {
     self.isPlaying = false;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [_player stop];
+#else
     [_player pause];
+#endif
     
     [_positionTimer invalidate];
     _positionTimer = nil;
@@ -1145,7 +1221,11 @@
     if (!_sendAsGif)
     {
         self.isPlaying = false;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        [_player stop];
+#else
         [_player pause];
+#endif
     
         if (![self usePhotoBehavior])
             [self setPlayButtonHidden:false animated:true];
@@ -1170,14 +1250,46 @@
 
 - (void)updatePositionAndForceStartTime:(bool)forceStartTime
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSTimeInterval value = _scrubberView.trimStartValue;
+    SEL selector = @selector(currentPlaybackTime);
+    if (!forceStartTime && [_player respondsToSelector:selector])
+    {
+        NSTimeInterval (*implementation)(id, SEL) = (NSTimeInterval (*)(id, SEL))[_player methodForSelector:selector];
+        if (implementation != NULL)
+            value = implementation(_player, selector);
+    }
+    [_scrubberView setValue:value];
+#else
     NSTimeInterval value = forceStartTime ? _scrubberView.trimStartValue : CMTimeGetSeconds(_player.currentItem.currentTime);
     [_scrubberView setValue:value];
+#endif
 }
 
 - (void)_seekToPosition:(NSTimeInterval)position manual:(bool)__unused manual
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    SEL currentSelector = @selector(setCurrentPlaybackTime:);
+    if ([_player respondsToSelector:currentSelector])
+    {
+        void (*implementation)(id, SEL, NSTimeInterval) = (void (*)(id, SEL, NSTimeInterval))[_player methodForSelector:currentSelector];
+        if (implementation != NULL)
+            implementation(_player, currentSelector, position);
+    }
+    else
+    {
+        SEL initialSelector = @selector(setInitialPlaybackTime:);
+        if ([_player respondsToSelector:initialSelector])
+        {
+            void (*implementation)(id, SEL, NSTimeInterval) = (void (*)(id, SEL, NSTimeInterval))[_player methodForSelector:initialSelector];
+            if (implementation != NULL)
+                implementation(_player, initialSelector, position);
+        }
+    }
+#else
     CMTime targetTime = CMTimeMakeWithSeconds(position, NSEC_PER_SEC);
     [self.player.currentItem seekToTime:targetTime toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+#endif
 }
 
 #pragma mark - Video Scrubber Data Source & Delegate
@@ -1257,7 +1369,11 @@
 
 - (void)updatePlayerRange:(NSTimeInterval)trimEndValue
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     _player.currentItem.forwardPlaybackEndTime = CMTimeMakeWithSeconds(trimEndValue, NSEC_PER_SEC);
+#else
+    (void)trimEndValue;
+#endif
 }
 
 #pragma mark - Edit Adjustments
@@ -1351,8 +1467,12 @@
 
 - (void)_mutePlayer:(bool)mute
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (iosMajorVersion() >= 7)
         _player.muted = mute;
+#else
+    (void)mute;
+#endif
 }
 
 - (void)updateEditAdjusments
@@ -1363,6 +1483,23 @@
     {
         if (fabs(_scrubberView.trimStartValue - adjustments.trimStartValue) > DBL_EPSILON)
         {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            UIImage *image = _imageView.image;
+            if (image != nil)
+            {
+                CGSize thumbnailSize = TGPhotoThumbnailSizeForCurrentScreen();
+                thumbnailSize.width = CGCeil(thumbnailSize.width);
+                thumbnailSize.height = CGCeil(thumbnailSize.height);
+                CGSize fillSize = TGScaleToFillSize(_videoDimensions, thumbnailSize);
+                UIGraphicsBeginImageContextWithOptions(fillSize, true, 0.0f);
+                [image drawInRect:CGRectMake(0, 0, fillSize.width, fillSize.height)];
+                if (_paintingImageView.image != nil)
+                    [_paintingImageView.image drawInRect:CGRectMake(0, 0, fillSize.width, fillSize.height)];
+                UIImage *thumbnailImage = UIGraphicsGetImageFromCurrentImageContext();
+                UIGraphicsEndImageContext();
+                [self.item.editingContext setImage:image thumbnailImage:thumbnailImage forItem:self.item.editableMediaItem synchronous:true];
+            }
+#else
             [[SQueue concurrentDefaultQueue] dispatch:^
             {
                 AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:_player.currentItem.asset];
@@ -1396,6 +1533,7 @@
                 
                 [self.item.editingContext setImage:image thumbnailImage:thumbnailImage forItem:self.item.editableMediaItem synchronous:true];
             }];
+#endif
         }
         else if (_scrubberView.trimStartValue < DBL_EPSILON)
         {
@@ -1439,6 +1577,16 @@
 {
     if (timestamps.count == 0)
         return;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    UIImage *image = _imageView.image;
+    if (image == nil)
+        return;
+    for (NSNumber *timestamp in timestamps)
+        [_scrubberView setThumbnailImage:image forTimestamp:[timestamp doubleValue] isSummaryThubmnail:isSummaryThumbnails];
+#else
+
+    if (timestamps.count == 0)
+        return;
     
     AVAsset *avAsset = self.item.avAsset ?: _player.currentItem.asset;
     
@@ -1468,6 +1616,7 @@
         if (strongSelf != nil)
             strongSelf->_requestingThumbnails = false;
     }]];
+#endif
 }
 
 - (void)videoScrubberDidFinishRequestingThumbnails:(TGMediaPickerGalleryVideoScrubber *)__unused videoScrubber

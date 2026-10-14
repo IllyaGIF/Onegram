@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messageMediaInvoice flags:# shipping_address_requested:flags.1?true title:string description:string photo:flags.0?WebDocument receipt_msg_id:flags.2?int currency:string total_amount:int = MessageMedia;
 
 @implementation TLMessageMedia$messageMediaInvoice
 

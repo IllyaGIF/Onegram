@@ -4,6 +4,8 @@
 
 #import "TGUserInfoCollectionItemView.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
 
@@ -58,8 +60,9 @@
 {
     if ([TGPresentation brandedIOS6Style])
     {
-        CGFloat baseHeight = _about.length > 0 ? 136.0f : 88.0f;
-        CGFloat musicHeight = _profileMusicDocument != nil ? 40.0f : 0.0f;
+        OGProfileAppearance *appearance = [OGTheme brandedTheme].profileAppearance;
+        CGFloat baseHeight = _about.length > 0 ? appearance.itemHeightWithAbout : appearance.itemHeight;
+        CGFloat musicHeight = _profileMusicDocument != nil ? appearance.itemMusicHeight : 0.0f;
         return CGSizeMake(containerSize.width, baseHeight + _additinalHeight + musicHeight);
     }
 

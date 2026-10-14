@@ -32,7 +32,7 @@
 @property (nonatomic, readonly) int64_t cid;
 @property (nonatomic, readonly) int32_t messageId;
 
-+ (NSAttributedString *)attributedStringForText:(NSString *)text entities:(NSArray *)entities fontSize:(CGFloat)fontSize;
++ (NSAttributedString *)attributedStringForText:(NSString *)text entities:(NSArray *)entities font:(UIFont *)font;
 
 - (instancetype)initWithText:(NSString *)text entities:(NSArray *)entities isCaption:(bool)isCaption hasMedia:(bool)hasMedia cid:(int64_t)cid messageId:(int32_t)messageId;
 
@@ -211,5 +211,6 @@
 - (UIView *)keyboardSnapshotView;
 
 - (CGFloat)fontSize;
+- (UIFont *)inputFieldFont;
 
 @end

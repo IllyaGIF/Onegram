@@ -6,7 +6,11 @@
 #import "TGModernTextViewModel.h"
 #import "TGTelegraphConversationMessageAssetsSource.h"
 
+#if __has_include(<CoreText/CoreText.h>)
 #import <CoreText/CoreText.h>
+#else
+#import "OGPlatformText.h"
+#endif
 
 #import "TGPresentation.h"
 

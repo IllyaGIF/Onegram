@@ -1,4 +1,5 @@
 #import "TGVCardUserInfoController.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import <AddressBook/AddressBook.h>
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -27,7 +28,7 @@
 
 #import "TGCustomActionSheet.h"
 
-#import <MessageUI/MessageUI.h>
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "TGPresentation.h"
 
@@ -38,7 +39,7 @@
 #import "TGUserAvatarGalleryModel.h"
 #import "TGUserAvatarGalleryItem.h"
 
-@interface TGVCardUserInfoController () <MFMessageComposeViewControllerDelegate, TGUserInfoEditingPhoneCollectionItemDelegate>
+@interface TGVCardUserInfoController () <TGUserInfoEditingPhoneCollectionItemDelegate>
 {
     TGUser *_user;
     TGVCard *_vcard;
@@ -302,7 +303,7 @@
                 valueString = [dateFormatter stringFromDate:valueDate.value];
             }
             else {
-                valueString = [NSDateFormatter localizedStringFromDate:valueDate.value dateStyle:NSDateFormatterLongStyle timeStyle:NSDateFormatterNoStyle];
+                valueString = OGPlatformLocalizedStringFromDate(valueDate.value, NSDateFormatterLongStyle, NSDateFormatterNoStyle);
             }
             
             TGUserInfoUsernameCollectionItem *item = [[TGUserInfoUsernameCollectionItem alloc] initWithLabel:labelString username:valueString];
@@ -424,7 +425,7 @@
                     
                     [items addObject:item];
                 }];
-            } else if (property == kABPersonSocialProfileProperty || property == kABPersonInstantMessageProperty) {
+            } else if (property == TGVCardSocialProfileProperty || property == kABPersonInstantMessageProperty) {
                 [valueArray.values enumerateObjectsUsingBlock:^(TGVCardValueArrayItem *value, NSUInteger index, __unused BOOL *stop) {
                     NSDictionary *valueDictionary = value.value;
                     NSString *service = valueDictionary[@"service"];
@@ -432,7 +433,7 @@
                     
                     NSString *labelString = nil;
                     NSString *valueString = nil;
-                    if (property == kABPersonSocialProfileProperty) {
+                    if (property == TGVCardSocialProfileProperty) {
                         labelString = [TGVCardUserInfoController labelForSocialService:service];
                         if ([service isEqualToString:@"twitter"]) {
                             valueString = [NSString stringWithFormat:@"@%@", username];
@@ -813,35 +814,34 @@
 
 - (void)_inviteWithPhoneNumber:(NSString *)phoneNumber
 {
-    if ([MFMessageComposeViewController canSendText])
+    if (OGPlatformCanSendTextMessage())
     {
-        MFMessageComposeViewController *messageComposer = [[MFMessageComposeViewController alloc] init];
+        NSArray *recipients = [[NSArray alloc] initWithObjects:phoneNumber, nil];
+        NSString *body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), [TGContactsController downloadLink]];
+        id messageComposer = OGPlatformCreateTextMessageComposer(self, recipients, body);
         
         if (messageComposer != nil)
         {
-            messageComposer.recipients = [[NSArray alloc] initWithObjects:phoneNumber, nil];
-            messageComposer.messageComposeDelegate = self;
-            
-            NSString *body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), [TGContactsController downloadLink]];
-            messageComposer.body = body;
-            
             [self presentViewController:messageComposer animated:true completion:nil];
-            
             [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleBlackOpaque];
+        }
+        else
+        {
+            OGPlatformOpenTextMessage(recipients);
         }
     }
 }
 
-- (void)messageComposeViewController:(MFMessageComposeViewController *)__unused controller didFinishWithResult:(MessageComposeResult)result
+- (void)messageComposeViewController:(id)controller didFinishWithResult:(NSInteger)result
 {
     [self dismissViewControllerAnimated:true completion:nil];
     
-    if (result == MessageComposeResultSent)
+    if (result == OGPlatformMessageComposeResultSent)
     {
         @try
         {
             static int inviteAction = 0;
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:controller.body, @"text", controller.recipients, @"phones", nil] watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:OGPlatformTextMessageComposerBody(controller), @"text", OGPlatformTextMessageComposerRecipients(controller), @"phones", nil] watcher:TGTelegraphInstance];
         }
         @catch (NSException *exception)
         {

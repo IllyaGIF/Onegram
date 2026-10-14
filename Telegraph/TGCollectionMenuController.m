@@ -3,6 +3,9 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
 
 #import "TGCollectionMenuView.h"
 #import "TGCollectionMenuLayout.h"
@@ -54,6 +57,7 @@ TGCollectionMenuLayoutDelegateFlowLayout
     CGFloat _currentLayoutWidth;
     
     UIView *_headerBackgroundView;
+    UIView *_brandedScreenBackgroundView;
     
     id<SDisposable> _presentationDisposable;
     
@@ -86,9 +90,50 @@ TGCollectionMenuLayoutDelegateFlowLayout
     return self;
 }
 
+- (bool)usesBrandedScreenBackground
+{
+    return [TGPresentation brandedIOS6Style] && [OGTheme brandedTheme].settingsAppearance.screenBackgroundSurfaceStyle != nil;
+}
+
 - (UIColor *)collectionMenuBackgroundColor
 {
+    if ([self usesBrandedScreenBackground])
+        return [UIColor clearColor];
+    if ([TGPresentation brandedIOS6Style])
+        return [OGSettingsCell legacyCollectionBackgroundColorWithTheme:[OGTheme brandedTheme]];
     return [TGPresentation classicIOS6Style] && !_presentation.pallete.isDark ? TGCollectionMenuClassicIOS6BackgroundColor() : _presentation.pallete.collectionMenuBackgroundColor;
+}
+
+- (TGNavigationBarBackgroundVariant)navigationBarBackgroundVariant
+{
+    return [self usesBrandedScreenBackground] ? TGNavigationBarBackgroundVariantGloss : TGNavigationBarBackgroundVariantDefault;
+}
+
+- (void)updateBrandedScreenBackground
+{
+    if (![self isViewLoaded])
+        return;
+
+    UIColor *screenBackgroundColor = [self usesBrandedScreenBackground] ? [OGSettingsCell legacyScreenBackgroundColorWithTheme:[OGTheme brandedTheme]] : nil;
+    if (screenBackgroundColor == nil)
+    {
+        [_brandedScreenBackgroundView removeFromSuperview];
+        _brandedScreenBackgroundView = nil;
+        return;
+    }
+
+    if (_brandedScreenBackgroundView == nil)
+    {
+        _brandedScreenBackgroundView = [[UIView alloc] init];
+        _brandedScreenBackgroundView.userInteractionEnabled = false;
+        [self.view insertSubview:_brandedScreenBackgroundView atIndex:0];
+    }
+    _brandedScreenBackgroundView.backgroundColor = screenBackgroundColor;
+
+    CGFloat navigationBarHeight = self.navigationController.navigationBar.frame.size.height;
+    CGFloat top = MAX(0.0f, self.controllerInset.top - navigationBarHeight);
+    CGSize viewSize = self.view.bounds.size;
+    _brandedScreenBackgroundView.frame = CGRectMake(0.0f, top, viewSize.width, MAX(0.0f, viewSize.height - top));
 }
 
 - (void)dealloc
@@ -212,6 +257,7 @@ TGCollectionMenuLayoutDelegateFlowLayout
         UIColor *backgroundColor = [self collectionMenuBackgroundColor];
         self.view.backgroundColor = backgroundColor;
         _headerBackgroundView.backgroundColor = backgroundColor;
+        [self updateBrandedScreenBackground];
     }
     
     for (TGCollectionMenuSection *section in _menuSections.sections)
@@ -335,6 +381,14 @@ TGCollectionMenuLayoutDelegateFlowLayout
     
     if (![self _updateControllerInset:false])
         [self controllerInsetUpdated:UIEdgeInsetsZero];
+
+    [self updateBrandedScreenBackground];
+}
+
+- (void)viewWillLayoutSubviews
+{
+    [super viewWillLayoutSubviews];
+    [self updateBrandedScreenBackground];
 }
 
 #pragma mark -
@@ -357,6 +411,8 @@ TGCollectionMenuLayoutDelegateFlowLayout
         {
             itemView.safeAreaInset = self.controllerSafeAreaInset;
         }
+
+        [self updateBrandedScreenBackground];
     }
 }
 
@@ -407,30 +463,6 @@ TGCollectionMenuLayoutDelegateFlowLayout
     [super viewDidDisappear:animated];
 }
 
-/*
- - (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation
- duration:(NSTimeInterval)duration
- {
- CGFloat currentLayoutWidth =
- [self inPopover]
- ? self.view.frame.size.width
- : [TGViewController screenSizeForInterfaceOrientation:toInterfaceOrientation].width;
- 
- _currentLayoutWidth = currentLayoutWidth;
- 
- [_collectionLayout invalidateLayout];
- 
- [super willRotateToInterfaceOrientation:toInterfaceOrientation
- duration:duration];
- }
- 
- - (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation
- duration:(NSTimeInterval)duration
- {
- [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation
- duration:duration];
- }
- */
 
 - (NSInteger)numberOfSectionsInCollectionView:(PSUICollectionView *)collectionView
 {

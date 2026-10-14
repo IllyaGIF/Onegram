@@ -64,7 +64,6 @@ typedef enum
         _selectionView.alpha = 0.0f;
         _selectionView.backgroundColor = [UIColor whiteColor];
         _selectionView.userInteractionEnabled = false;
-        //[self addSubview:_selectionView];
         
         _blacksLevelLabel = [self _levelLabel];
         _blacksLevelLabel.text = @"0.00";

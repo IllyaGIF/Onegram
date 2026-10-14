@@ -212,8 +212,13 @@
 {
     [super layoutSubviews];
     
+    bool brandedGroupedSurface = [self usesBrandedGroupedSurface];
+    _backgroundView.hidden = brandedGroupedSurface;
     _backgroundView.frame = self.bounds;
-    _collectionView.frame = CGRectMake(self.safeAreaInset.left, 0.0f, self.frame.size.width - self.safeAreaInset.left - self.safeAreaInset.right, self.frame.size.height);
+    if (brandedGroupedSurface)
+        _collectionView.frame = [self classicIOS6GroupedFrame];
+    else
+        _collectionView.frame = CGRectMake(self.safeAreaInset.left, 0.0f, self.frame.size.width - self.safeAreaInset.left - self.safeAreaInset.right, self.frame.size.height);
 }
 
 @end

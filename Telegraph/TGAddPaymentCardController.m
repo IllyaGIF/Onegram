@@ -98,7 +98,6 @@
             _nameItem.title = @"";
             _nameItem.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
             _nameItem.placeholder = TGLocalized(@"Checkout.NewCard.CardholderNamePlaceholder");
-            //_nameItem.minimalInset = minimalInset;
             _nameItem.usernameChanged = ^(__unused NSString *text) {
                 checkFields();
             };
@@ -126,7 +125,6 @@
             
             if (requestCountry) {
                 _countryItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"CheckoutInfo.ShippingInfoCountry") variant:@"" action:@selector(countryPressed)];
-                //_countryItem.minLeftPadding = minimalInset + 20.0f;
                 _countryItem.variantColor = TGPresentation.current.pallete.collectionMenuTextColor;
                 [postcodeItems addObject:_countryItem];
             }
@@ -135,7 +133,6 @@
                 _postcodeItem = [[TGUsernameCollectionItem alloc] init];
                 _postcodeItem.placeholder = TGLocalized(@"Checkout.NewCard.PostcodePlaceholder");
                 _postcodeItem.title = @"";
-                //_nameItem.minimalInset = minimalInset;
                 _postcodeItem.usernameChanged = ^(__unused NSString *text) {
                     checkFields();
                 };
@@ -161,18 +158,7 @@
                 }
             };
             [saveItems addObject:_saveItem];
-            /*if (!allowSaving) {
-                TGCommentCollectionItem *commentItem = [[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"Checkout.NewCard.SaveInfoEnableHelp") paragraphSpacing:0.0 clearFormatting:true];
-                commentItem.action = ^{
-                    __strong TGAddPaymentCardController *strongSelf = weakSelf;
-                    if (strongSelf != nil) {
-                        
-                    }
-                };
-                [saveItems addObject:commentItem];
-            } else {*/
                 [saveItems addObject:[[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"Checkout.NewCard.SaveInfoHelp")]];
-            //}
             TGCollectionMenuSection *saveSection = [[TGCollectionMenuSection alloc] initWithItems:saveItems];
             [self.menuSections addSection:saveSection];
         }
@@ -220,7 +206,7 @@
         STPPaymentConfiguration *configuration = [[STPPaymentConfiguration sharedConfiguration] copy];
         configuration.smsAutofillDisabled = true;
         configuration.publishableKey = _publishableKey;
-        configuration.appleMerchantIdentifier = @""; // Configure your own merchant ID for Apple Pay.
+        configuration.appleMerchantIdentifier = @"";
         
         _apiClient = [[STPAPIClient alloc] initWithConfiguration:configuration];
         

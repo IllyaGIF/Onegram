@@ -881,8 +881,8 @@
                             NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
                             dict[@"type"] = @"file";
                             dict[@"tempFileUrl"] = [NSURL fileURLWithPath:filePath];
-                            dict[@"fileName"] = @"animation.mp4";
-                            dict[@"mimeType"] = @"video/mp4";
+                            dict[@"fileName"] = result[@"fileName"] ?: @"animation.mp4";
+                            dict[@"mimeType"] = result[@"mimeType"] ?: @"video/mp4";
                             dict[@"isAnimation"] = @true;
                             if (result[@"dimensions"] != nil) {
                                 dict[@"dimensions"] = result[@"dimensions"];
@@ -970,48 +970,6 @@
     if (self.requestSearchController) {
         _searchController = self.requestSearchController();
     }
-    /*TGWebSearchController *searchController = [[TGWebSearchController alloc] initWithContext:[TGLegacyComponentsContext shared] forAvatarSelection:(_intent == TGMediaAssetsControllerSetProfilePhotoIntent) embedded:true];
-    searchController.captionsEnabled = self.captionsEnabled;
-    searchController.suggestionContext = self.suggestionContext;
-
-    __weak TGWebSearchController *weakController = searchController;
-    searchController.avatarCompletionBlock = ^(UIImage *image)
-    {
-        TGMediaAssetsController *strongSelf = weakSelf;
-        if (strongSelf == nil || strongSelf.avatarCompletionBlock == nil)
-            return;
-        
-        strongSelf.avatarCompletionBlock(image);
-    };
-    searchController.completionBlock = ^(__unused TGWebSearchController *sender)
-    {
-        TGMediaAssetsController *strongSelf = weakSelf;
-        if (strongSelf == nil || strongSelf.completionBlock == nil)
-            return;
-        
-        __strong TGWebSearchController *strongController = weakController;
-        if (strongController == nil)
-            return;
-        
-        NSDictionary *(^descriptionGenerator)(id, NSString *) = ^(id result, NSString *caption)
-        {
-            return strongSelf.descriptionGenerator(result, caption, nil);
-        };
-        
-        strongSelf.completionBlock([strongController selectedItemSignals:descriptionGenerator]);
-    };
-    searchController.dismiss = ^
-    {
-        __strong TGWebSearchController *strongController = weakController;
-        if (strongController == nil)
-            return;
-        
-        [strongController dismissEmbeddedAnimated:true];
-    };
-    searchController.parentNavigationController = self;
-    [searchController presentEmbeddedInController:self animated:true];
-
-    _searchController = searchController;*/
 }
 
 - (void)navigationController:(UINavigationController *)__unused navigationController willShowViewController:(UIViewController *)viewController animated:(BOOL)__unused animated

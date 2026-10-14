@@ -200,7 +200,6 @@
             
             CGContextSetStrokeColorWithColor(context, UIColorRGB(0xd9d9d9).CGColor);
             CGContextSetLineWidth(context, 1.0f);
-            //CGContextStrokeRect(context, CGRectMake(0.5f, 0.5f, 3.0f, 3.0f));
             
             placeholderImage = [UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:2 topCapHeight:2];
             UIGraphicsEndImageContext();

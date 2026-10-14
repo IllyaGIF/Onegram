@@ -104,7 +104,6 @@
     _titleLabel.textColor = _isSecret ? self.presentation.pallete.dialogEncryptedColor : self.presentation.pallete.collectionMenuTextColor;
     _sizeLabel.text = [TGStringUtils stringForFileSize:totalSize];
     
-    //_peerId = peerId;
     
     [self setNeedsLayout];
 }

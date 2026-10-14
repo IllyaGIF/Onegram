@@ -106,13 +106,13 @@ static std::map<int64_t, int> gidToColor;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        userColors[0] = UIColorRGB(0xfc5c51); // red
-        userColors[1] = UIColorRGB(0xfa790f); // orange
-        userColors[2] = UIColorRGB(0x895dd5); // violet
-        userColors[3] = UIColorRGB(0x0fb297); // green
-        userColors[4] = UIColorRGB(0x00c0c2); // cyan
-        userColors[5] = UIColorRGB(0x3ca5ec); // light blue
-        userColors[6] = UIColorRGB(0x3d72ed); // blue
+        userColors[0] = UIColorRGB(0xfc5c51);
+        userColors[1] = UIColorRGB(0xfa790f);
+        userColors[2] = UIColorRGB(0x895dd5);
+        userColors[3] = UIColorRGB(0x0fb297);
+        userColors[4] = UIColorRGB(0x00c0c2);
+        userColors[5] = UIColorRGB(0x3ca5ec);
+        userColors[6] = UIColorRGB(0x3d72ed);
     });
     
     return userColors[[self groupColorIndex:groupId]];

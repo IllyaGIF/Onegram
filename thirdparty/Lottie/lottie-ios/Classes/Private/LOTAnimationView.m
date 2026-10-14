@@ -14,6 +14,9 @@
 #import "LOTAnimationView_Internal.h"
 #import "LOTAnimationCache.h"
 #import "LOTCompositionContainer.h"
+#if ONEGRAM_ARMV6
+#import "../../../../../submodules/MtProtoKit/thirdparty/AFNetworking/AFJSONUtilities.h"
+#endif
 
 static NSString * const kCompContainerAnimationKey = @"play";
 
@@ -73,8 +76,12 @@ static NSString * const kCompContainerAnimationKey = @"play";
           return;
         }
         NSError *error;
+#if ONEGRAM_ARMV6
+        NSDictionary *animationJSON = AFJSONDecode(animationData, &error);
+#else
         NSDictionary  *animationJSON = [NSJSONSerialization JSONObjectWithData:animationData
                                                                        options:0 error:&error];
+#endif
         if (error || !animationJSON) {
           return;
         }

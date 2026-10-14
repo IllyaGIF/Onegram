@@ -143,6 +143,8 @@
     while (retry);
     
     _db = nil;
+    _inTransaction = NO;
+    _nestedTransactionDepth = 0;
     return YES;
 }
 
@@ -910,7 +912,33 @@
     return result;
 }
 
+- (NSString *)nestedTransactionSavePointName:(NSUInteger)depth {
+    return [[NSString alloc] initWithFormat:@"fmdb_nested_%lu", (unsigned long)depth];
+}
+
+- (BOOL)beginNestedTransaction {
+    _nestedTransactionDepth++;
+    return [self executeUpdate:[[NSString alloc] initWithFormat:@"savepoint %@", [self nestedTransactionSavePointName:_nestedTransactionDepth]]];
+}
+
+- (BOOL)endNestedTransactionWithRollback:(BOOL)rollback {
+    NSString *name = [self nestedTransactionSavePointName:_nestedTransactionDepth];
+    _nestedTransactionDepth--;
+    
+    BOOL rolledBack = YES;
+    if (rollback) {
+        rolledBack = [self executeUpdate:[[NSString alloc] initWithFormat:@"rollback transaction to savepoint %@", name]];
+    }
+    
+    BOOL released = [self executeUpdate:[[NSString alloc] initWithFormat:@"release savepoint %@", name]];
+    return rolledBack && released;
+}
+
 - (BOOL)rollback {
+    if (_nestedTransactionDepth != 0) {
+        return [self endNestedTransactionWithRollback:YES];
+    }
+    
     BOOL b = [self executeUpdate:@"rollback transaction"];
     
     if (b) {
@@ -921,6 +949,10 @@
 }
 
 - (BOOL)commit {
+    if (_nestedTransactionDepth != 0) {
+        return [self endNestedTransactionWithRollback:NO];
+    }
+    
     BOOL b =  [self executeUpdate:@"commit transaction"];
     
     if (b) {
@@ -931,6 +963,9 @@
 }
 
 - (BOOL)beginDeferredTransaction {
+    if (_inTransaction) {
+        return [self beginNestedTransaction];
+    }
     
     BOOL b = [self executeUpdate:@"begin deferred transaction"];
     if (b) {
@@ -941,6 +976,9 @@
 }
 
 - (BOOL)beginTransaction {
+    if (_inTransaction) {
+        return [self beginNestedTransaction];
+    }
     
     BOOL b = [self executeUpdate:@"begin exclusive transaction"];
     if (b) {
@@ -952,6 +990,20 @@
 
 - (BOOL)inTransaction {
     return _inTransaction;
+}
+
+- (BOOL)commitOutstandingTransaction {
+    if (!_inTransaction) {
+        return YES;
+    }
+    
+    _nestedTransactionDepth = 0;
+    BOOL b = [self executeUpdate:@"commit transaction"];
+    if (b) {
+        _inTransaction = NO;
+    }
+    
+    return b;
 }
 
 #if SQLITE_VERSION_NUMBER >= 3007000

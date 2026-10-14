@@ -69,8 +69,6 @@
                             if (webpage.url != nil) {
                                 [subscriber putNext:webpage];
                                 [subscriber putCompletion];
-                            } else {
-                                TGLog(@"updateWebPage with pending page for %@", url);
                             }
                             break;
                         }
@@ -79,7 +77,7 @@
             }];
             
             return [[SBlockDisposable alloc] initWithBlock:^{
-                [helper description]; // keep reference
+                [helper description];
             }];
         }];
         
@@ -104,9 +102,6 @@
         SSignal *pollingSignal = [[SSignal mergeSignals:@[resourceSignal, [[requestSignal then:delaySignal] restart]]] take:1];
         
 #ifdef DEBUG
-        /*pollingSignal = [pollingSignal mapToSignal:^SSignal *(__unused id next) {
-            return [SSignal fail:nil];
-        }];*/
 #endif
         
         return pollingSignal;

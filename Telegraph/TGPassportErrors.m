@@ -16,39 +16,33 @@ NSString *const TGPassportErrorTargetFiles = @"files";
 @implementation NSArray (DeepCopy)
 
 - (NSArray *)deepCopy {
-    NSUInteger count = [self count];
-    id cArray[count];
-    
-    for (unsigned int i = 0; i < count; ++i) {
-        id obj = [self objectAtIndex:i];
+    NSMutableArray *result = [[NSMutableArray alloc] initWithCapacity:[self count]];
+    for (id obj in self) {
+        id copiedObject = nil;
         if ([obj respondsToSelector:@selector(deepCopy)])
-            cArray[i] = [obj deepCopy];
+            copiedObject = [obj deepCopy];
         else
-            cArray[i] = [obj copy];
+            copiedObject = [obj copy];
+        [result addObject:copiedObject];
     }
-    
-    NSArray *ret = [NSArray arrayWithObjects:cArray count:count];
-    return ret;
+    return [NSArray arrayWithArray:result];
 }
+
 - (NSMutableArray *)mutableDeepCopy {
-    NSUInteger count = [self count];
-    id cArray[count];
-    
-    for (unsigned int i = 0; i < count; ++i) {
-        id obj = [self objectAtIndex:i];
-        
+    NSMutableArray *result = [[NSMutableArray alloc] initWithCapacity:[self count]];
+    for (id obj in self) {
+        id copiedObject = nil;
         if ([obj respondsToSelector:@selector(mutableDeepCopy)])
-            cArray[i] = [obj mutableDeepCopy];
+            copiedObject = [obj mutableDeepCopy];
         else if ([obj respondsToSelector:@selector(mutableCopyWithZone:)])
-            cArray[i] = [obj mutableCopy];
+            copiedObject = [obj mutableCopy];
         else if ([obj respondsToSelector:@selector(deepCopy)])
-            cArray[i] = [obj deepCopy];
+            copiedObject = [obj deepCopy];
         else
-            cArray[i] = [obj copy];
+            copiedObject = [obj copy];
+        [result addObject:copiedObject];
     }
-    
-    NSMutableArray *ret = [NSMutableArray arrayWithObjects:cArray count:count];
-    return ret;
+    return result;
 }
 
 @end
@@ -56,62 +50,51 @@ NSString *const TGPassportErrorTargetFiles = @"files";
 @implementation NSDictionary (DeepCopy)
 
 - (NSDictionary *)deepCopy {
-    NSUInteger count = [self count];
-    id cObjects[count];
-    id cKeys[count];
-    
-    NSEnumerator *e = [self keyEnumerator];
-    unsigned int i = 0;
-    id thisKey;
-    while ((thisKey = [e nextObject]) != nil) {
-        id obj = [self objectForKey:thisKey];
-        
+    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithCapacity:[self count]];
+    for (id key in self) {
+        id obj = [self objectForKey:key];
+        id copiedObject = nil;
+        id copiedKey = nil;
+
         if ([obj respondsToSelector:@selector(deepCopy)])
-            cObjects[i] = [obj deepCopy];
+            copiedObject = [obj deepCopy];
         else
-            cObjects[i] = [obj copy];
-        
-        if ([thisKey respondsToSelector:@selector(deepCopy)])
-            cKeys[i] = [thisKey deepCopy];
+            copiedObject = [obj copy];
+
+        if ([key respondsToSelector:@selector(deepCopy)])
+            copiedKey = [key deepCopy];
         else
-            cKeys[i] = [thisKey copy];
-        
-        ++i;
+            copiedKey = [key copy];
+
+        [result setObject:copiedObject forKey:copiedKey];
     }
-    
-    NSDictionary *ret = [NSDictionary dictionaryWithObjects:cObjects forKeys:cKeys count:count];
-    return ret;
+    return [NSDictionary dictionaryWithDictionary:result];
 }
+
 - (NSMutableDictionary *)mutableDeepCopy {
-    NSUInteger count = [self count];
-    id cObjects[count];
-    id cKeys[count];
-    
-    NSEnumerator *e = [self keyEnumerator];
-    unsigned int i = 0;
-    id thisKey;
-    while ((thisKey = [e nextObject]) != nil) {
-        id obj = [self objectForKey:thisKey];
-        
+    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithCapacity:[self count]];
+    for (id key in self) {
+        id obj = [self objectForKey:key];
+        id copiedObject = nil;
+        id copiedKey = nil;
+
         if ([obj respondsToSelector:@selector(mutableDeepCopy)])
-            cObjects[i] = [obj mutableDeepCopy];
+            copiedObject = [obj mutableDeepCopy];
         else if ([obj respondsToSelector:@selector(mutableCopyWithZone:)])
-            cObjects[i] = [obj mutableCopy];
+            copiedObject = [obj mutableCopy];
         else if ([obj respondsToSelector:@selector(deepCopy)])
-            cObjects[i] = [obj deepCopy];
+            copiedObject = [obj deepCopy];
         else
-            cObjects[i] = [obj copy];
-        
-        if ([thisKey respondsToSelector:@selector(deepCopy)])
-            cKeys[i] = [thisKey deepCopy];
+            copiedObject = [obj copy];
+
+        if ([key respondsToSelector:@selector(deepCopy)])
+            copiedKey = [key deepCopy];
         else
-            cKeys[i] = [thisKey copy];
-        
-        ++i;
+            copiedKey = [key copy];
+
+        [result setObject:copiedObject forKey:copiedKey];
     }
-    
-    NSMutableDictionary *ret = [NSMutableDictionary dictionaryWithObjects:cObjects forKeys:cKeys count:count];
-    return ret;
+    return result;
 }
 
 @end

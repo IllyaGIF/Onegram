@@ -126,8 +126,6 @@ NSString *const TGLocationPinAnnotationKind = @"TGLocationPinAnnotation";
         _animating = true;
         if (selected)
         {
-            //dispatch_async(dispatch_get_main_queue(), ^
-            //{
                 UIView *avatarSnapshot = [_avatarView snapshotViewAfterScreenUpdates:false];
                 [_smallView addSubview:avatarSnapshot];
                 avatarSnapshot.transform = _avatarView.transform;
@@ -165,7 +163,6 @@ NSString *const TGLocationPinAnnotationKind = @"TGLocationPinAnnotation";
                 {
                     _dotView.alpha = 1.0f;
                 }];
-            //});
         }
         else
         {
@@ -350,7 +347,6 @@ NSString *const TGLocationPinAnnotationKind = @"TGLocationPinAnnotation";
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(diameter, diameter), false, 0.0f);
         CGContextRef context = UIGraphicsGetCurrentContext();
         
-        //!placeholder
         CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
         CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, diameter, diameter));
         CGContextSetStrokeColorWithColor(context, UIColorRGB(0xd9d9d9).CGColor);

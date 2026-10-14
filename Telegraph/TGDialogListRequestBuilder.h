@@ -9,8 +9,17 @@
 #import "../submodules/LegacyComponents/LegacyComponents/ASActor.h"
 
 #import "TL/TLMetaScheme.h"
+#import "../submodules/LegacyComponents/LegacyComponents/SGraphListNode.h"
 
 @class SSignal;
+
+@interface TGDialogListSynchronizationNode : SGraphListNode
+
+@property (nonatomic) int32_t folderId;
+@property (nonatomic) bool complete;
+@property (nonatomic, strong) NSSet *removedPeerIds;
+
+@end
 
 @interface TGDialogListRequestBuilder : ASActor
 
@@ -19,6 +28,7 @@
 - (void)dialogListRequestSuccess:(TLmessages_Dialogs *)dialogs;
 - (void)dialogListRequestNotModified:(int32_t)count;
 - (void)dialogListRequestFailed;
+- (void)startDialogListSynchronizationWithLimit:(int)limit folderId:(int32_t)folderId;
 
 + (SSignal *)signalForCompleteMessages:(NSArray *)completeMessages channels:(NSDictionary *)channels;
 

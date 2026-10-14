@@ -74,7 +74,6 @@
 #import "TGCollectionMultilineInputItem.h"
 
 #import "TGShareMenu.h"
-#import "TGSendMessageSignals.h"
 
 #import "../submodules/LegacyComponents/SafariServices/SafariServices.h"
 #import "TGOpenInMenu.h"
@@ -268,10 +267,6 @@
          {
              [ActionStageInstance() watchForPaths:@[
                                                     [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/conversation", _peerId],
-                                                    //@"/tg/userdatachanges",
-                                                    //@"/tg/userpresencechanges",
-                                                    //@"/as/updateRelativeTimestamps",
-                                                    //[[NSString alloc] initWithFormat:@"/tg/sharedMediaCount/(%" PRIx64 ")", (int64_t)_conversationId]
                                                     ] watcher:self];
              
              [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _peerId] watcher:self];
@@ -1209,11 +1204,9 @@
     }
     else if ([path isEqualToString:@"/tg/userdatachanges"] || [path isEqualToString:@"/tg/userpresencechanges"])
     {
-        //NSArray *users = ((SGraphObjectNode *)resource).object;
         
         TGDispatchOnMainThread(^
                                {
-                                   //[self _updateUsers:users];
                                });
     }
     else if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/sharedMediaCount/(%" PRIx64 ")", (int64_t)_peerId]])
@@ -1311,39 +1304,16 @@
 - (void)sharePressed
 {
     __weak TGChannelInfoController *weakSelf = self;
-    if (_conversation.username.length != 0)
+    CGRect (^sourceRect)(void) = ^CGRect
     {
-        NSString *linkString = [NSString stringWithFormat:@"https://t.me/%@", _conversation.username];
-        NSString *shareString = linkString;
-        NSString *externalString = shareString;
-        if (_conversation.about.length > 0)
-        {
-            NSString *aboutText = _conversation.about;
-            if (aboutText.length > 200)
-                aboutText = [[aboutText substringToIndex:200] stringByAppendingString:@"..."];
-
-            externalString = [NSString stringWithFormat:@"%@ %@", aboutText, externalString];
-        }
+        __strong TGChannelInfoController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return CGRectZero;
         
-        CGRect (^sourceRect)(void) = ^CGRect
-        {
-            __strong TGChannelInfoController *strongSelf = weakSelf;
-            if (strongSelf == nil)
-                return CGRectZero;
-            
-            return [strongSelf->_linkItem.view convertRect:strongSelf->_linkItem.view.bounds toView:strongSelf.view];
-        };
-        
-        [TGShareMenu presentInParentController:self menuController:nil buttonTitle:TGLocalized(@"ShareMenu.CopyShareLink") buttonAction:^
-        {
-            [[UIPasteboard generalPasteboard] setString:linkString];
-        } shareAction:^(NSArray *peerIds, NSString *caption)
-        {
-            [[TGShareSignals shareText:shareString toPeerIds:peerIds caption:caption] startWithNext:nil];
-            
-            [[[TGProgressWindow alloc] init] dismissWithSuccess];
-        } externalShareItemSignal:[SSignal single:externalString] sourceView:self.view sourceRect:sourceRect barButtonItem:nil];
-    }
+        return [strongSelf->_linkItem.view convertRect:strongSelf->_linkItem.view.bounds toView:strongSelf.view];
+    };
+    
+    [TGShareMenu presentChannelShareMenuInParentController:self conversation:_conversation sourceView:self.view sourceRect:sourceRect];
 }
 
 - (void)leavePressed {

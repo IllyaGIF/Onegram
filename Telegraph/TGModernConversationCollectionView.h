@@ -21,6 +21,7 @@
 - (void)scrollToTopIfNeeded;
 
 - (void)updateVisibleItemsNow;
+- (bool)itemCountChangesRequireReload;
 - (bool)disableDecorationViewUpdates;
 - (void)setDisableDecorationViewUpdates:(bool)disableDecorationViewUpdates;
 - (bool)updateRelativeBounds;

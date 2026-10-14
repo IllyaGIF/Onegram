@@ -61,7 +61,6 @@
         
         NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:cleanText attributes:@{
             NSFontAttributeName: _label.font,
-            //NSForegroundColorAttributeName: _label.textColor
         }];
         
         NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];

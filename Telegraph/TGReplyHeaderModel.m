@@ -2,7 +2,11 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
+#if __has_include(<CoreText/CoreText.h>)
 #import <CoreText/CoreText.h>
+#else
+#import "OGPlatformText.h"
+#endif
 
 #import "TGModernColorViewModel.h"
 #import "TGModernTextViewModel.h"
@@ -73,31 +77,6 @@ static NSString *TGReplyHeaderSafeText(NSString *text)
     return safeText;
 }
 
-//static UIColor *colorForTitle(bool incoming)
-//{
-//    static UIColor *incomingColor = nil;
-//    static UIColor *outgoingColor = nil;
-//    static dispatch_once_t onceToken;
-//    dispatch_once(&onceToken, ^
-//    {
-//        incomingColor = UIColorRGB(0x0b8bed);
-//        outgoingColor = UIColorRGB(0x00a700);
-//    });
-//    return incoming ? incomingColor : outgoingColor;
-//}
-//
-//static UIColor *colorForLine(bool incoming)
-//{
-//    static UIColor *incomingColor = nil;
-//    static UIColor *outgoingColor = nil;
-//    static dispatch_once_t onceToken;
-//    dispatch_once(&onceToken, ^
-//    {
-//        incomingColor = UIColorRGB(0x3ca7fe);
-//        outgoingColor = UIColorRGB(0x29cc10);
-//    });
-//    return incoming ? incomingColor : outgoingColor;
-//}
 
 - (instancetype)initWithPeer:(id)peer incoming:(bool)incoming text:(NSString *)text truncateTextInTheMiddle:(bool)truncateTextInTheMiddle textColor:(UIColor *)textColor leftInset:(CGFloat)leftInset system:(bool)system presentation:(TGPresentation *)presentation
 {

@@ -1,6 +1,10 @@
+#define ONEGRAM_LOG_IMPLEMENTATION 1
 #import "LegacyComponentsInternal.h"
 
 #import "TGLocalization.h"
+#import "OGPlatformVersion.h"
+#import "OGPlatformDispatch.h"
+#import "OGMemoryCache.h"
 
 #import <UIKit/UIKit.h>
 
@@ -31,8 +35,13 @@ bool TGStringCompare(NSString *s1, NSString *s2) {
     return s1 == nil || [s1 isEqualToString:s2];
 }
 
+#undef TGLegacyLog
 void TGLegacyLog(NSString *format, ...)
 {
+#if !defined(ONEGRAM_DIAGNOSTICS)
+    (void)format;
+    return;
+#endif
     va_list L;
     va_start(L, format);
     NSString *string = [[NSString alloc] initWithFormat:format arguments:L];
@@ -42,47 +51,7 @@ void TGLegacyLog(NSString *format, ...)
 
 int iosMajorVersion()
 {
-    static bool initialized = false;
-    static int version = 7;
-    if (!initialized)
-    {
-        switch ([[[UIDevice currentDevice] systemVersion] intValue])
-        {
-            case 4:
-                version = 4;
-                break;
-            case 5:
-                version = 5;
-                break;
-            case 6:
-                version = 6;
-                break;
-            case 7:
-                version = 7;
-                break;
-            case 8:
-                version = 8;
-                break;
-            case 9:
-                version = 9;
-                break;
-            case 10:
-                version = 10;
-                break;
-            case 11:
-                version = 11;
-                break;
-            case 12:
-                version = 12;
-                break;
-            default:
-                version = 9;
-                break;
-        }
-        
-        initialized = true;
-    }
-    return version;
+    return (int)OGPlatformMajorVersion();
 }
 
 int iosMinorVersion()
@@ -149,10 +118,7 @@ int cpuCoreCount()
 
 void TGDispatchOnMainThread(dispatch_block_t block)
 {
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
+    OGPlatformDispatchOnMainThread(block);
 }
 
 void TGDispatchAfter(double delay, dispatch_queue_t queue, dispatch_block_t block)
@@ -171,7 +137,36 @@ static NSBundle *frameworkBundle() {
     return currentBundle;
 }
 
+static OGMemoryCache *TGComponentsImageCache(void) {
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:6u * 1024u * 1024u];
+    });
+    return cache;
+}
+
+static UIImage *TGComponentsLoadImageNamed(NSString *name);
+
 UIImage *TGComponentsImageNamed(NSString *name) {
+    if (name.length == 0)
+        return nil;
+    OGMemoryCache *cache = TGComponentsImageCache();
+    id cached = [cache objectForKey:name];
+    if (cached != nil)
+        return cached == [NSNull null] ? nil : (UIImage *)cached;
+    UIImage *image = TGComponentsLoadImageNamed(name);
+    if (image != nil) {
+        CGFloat scale = image.scale > 0.0f ? image.scale : 1.0f;
+        NSUInteger cost = (NSUInteger)MAX(1.0f, image.size.width * scale * image.size.height * scale * 4.0f);
+        [cache setObject:image forKey:name cost:cost];
+    } else {
+        [cache setObject:[NSNull null] forKey:name cost:64];
+    }
+    return image;
+}
+
+static UIImage *TGComponentsLoadImageNamed(NSString *name) {
     NSString *resourceName = [name stringByDeletingPathExtension];
     NSString *resourceType = [name pathExtension];
     NSString *path = nil;

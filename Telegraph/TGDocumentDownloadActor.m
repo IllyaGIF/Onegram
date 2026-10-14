@@ -245,11 +245,9 @@
             
             if (thumbnailUri != nil)
             {
-                //bool isImage = [self fileIsImage];
                 
                 [ActionStageInstance() actionCompleted:self.path result:nil];
                 
-                //if (isImage)
                 {
                     [ActionStageInstance() dispatchResource:[[NSString alloc] initWithFormat:@"/as/media/imageThumbnailUpdated"] resource:thumbnailUri];
                 }

@@ -111,7 +111,9 @@ static const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
         [_scrollIndicator setHidden:true animated:false];
         [_collectionView addSubview:_scrollIndicator];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
         [self.menuController.panGestureRecognizer requireGestureRecognizerToFail:_collectionView.panGestureRecognizer];
+#endif
         
         _activityIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
         [self addSubview:_activityIndicator];
@@ -201,8 +203,6 @@ static const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
             _collectionView.frame = targetFrame;
         });
         
-        //for (TGStickersCollectionCell *cell in _collectionView.visibleCells)
-        //    [cell performTransitionIn];
     }
     else
     {
@@ -230,8 +230,6 @@ static const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
     _altTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(altTimerTick) interval:2.5 repeat:false];
     _altTimerTick = (_altTimerTick + 1) % TGStickersCollectionNumberOfTimerTicks;
     
-    //for (TGStickersCollectionCell *cell in _collectionView.visibleCells)
-    //    [cell setAltTick:_altTimerTick];
 }
 
 #pragma mark -
@@ -274,34 +272,16 @@ static const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
     if (_previewController == nil)
         return;
     
-    /*if (gestureRecognizer.state == UIGestureRecognizerStateChanged)
-    {
-        TGStickerItemPreviewView *previewView = (TGStickerItemPreviewView *)_previewController.previewView;
-        
-        TGStickersCollectionCell *highlightedCell = nil;
-        TGDocumentMediaAttachment *document = [self stickerAtPoint:[gestureRecognizer locationInView:_collectionView] stickerCell:&highlightedCell];
-        if (document != nil)
-        {
-            [previewView setSticker:document associations:_stickerPack.stickerAssociations];
-            
-            for (TGStickersCollectionCell *cell in _collectionView.visibleCells)
-                [cell setHighlighted:(highlightedCell == cell) animated:true];
-        }
-    }*/
 }
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)__unused gestureRecognizer
 {
-    /*if (gestureRecognizer == _panGestureRecognizer)
-        return (_longPressGestureRecognizer.state == UIGestureRecognizerStateBegan || _longPressGestureRecognizer.state == UIGestureRecognizerStateChanged);*/
     
     return true;
 }
 
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)__unused gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)__unused otherGestureRecognizer
 {
-    /*if ((gestureRecognizer == _longPressGestureRecognizer && otherGestureRecognizer == _panGestureRecognizer) || (gestureRecognizer == _panGestureRecognizer && otherGestureRecognizer == _longPressGestureRecognizer))
-        return true;*/
     
     return true;
 }
@@ -355,8 +335,6 @@ static const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
 {
     TGMultipleStickerPacksCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"TGMultipleStickerPacksCell" forIndexPath:indexPath];
     cell.pallete = _pallete;
-    //[cell setAltTick:_altTimerTick];
-    //[cell setSticker:_stickerPack.documents[indexPath.row] associations:_stickerPack.stickerAssociations];
     [cell setStickerPack:_stickerPacks[indexPath.row]];
     
     return cell;
@@ -390,7 +368,6 @@ static const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
     CGFloat currentHeight = _collapsedHeight + _expandOffset;
     CGFloat bottomContentOffset = (scrollView.contentSize.height - scrollView.frame.size.height);
     
-    //[_scrollIndicator updateScrollViewDidScroll];
     
     bool atTop = (scrollView.contentOffset.y < FLT_EPSILON);
     bool atBottom = (scrollView.contentOffset.y - bottomContentOffset > -FLT_EPSILON);

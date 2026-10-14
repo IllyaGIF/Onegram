@@ -220,7 +220,6 @@
         _uidToAdd =  uid;
         _phoneNumberToAdd = phoneNumber;
         
-        //self.userInfoItem.disableAvatar = true;
         [self.userInfoItem setUser:_user animated:false];
         self.navigationItem.rightBarButtonItem.enabled = _user.firstName.length != 0 || _user.lastName.length != 0;
         

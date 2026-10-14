@@ -67,7 +67,7 @@ checksum countChecksum(const void *data, std::size_t size);
 
 utf16string GetReplacementEmoji(utf16string replacement);
 
-} // namespace internal
+}
 
 class Suggestion {
 public:
@@ -103,5 +103,5 @@ inline utf16string GetSuggestionEmoji(utf16string replacement) {
 int GetSuggestionMaxLength();
 
 
-} // namespace Emoji
-} // namespace Ui
+}
+}

@@ -58,7 +58,9 @@
         TG_SYNCHRONIZED_END(_taskList);
         
         if (executeTask)
+        {
             [queuedTask execute];
+        }
     }];
 }
 

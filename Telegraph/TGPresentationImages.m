@@ -176,6 +176,48 @@
     }];
 }
 
+- (UIImage *)dialogBrandedPinIcon
+{
+    return [self imageWithKey:@"dialogBrandedPin" generator:^UIImage *{
+        return [TGPresentation brandedIOS6DialogPinImage];
+    }];
+}
+
+- (UIImage *)dialogBrandedMentionIcon
+{
+    return [self imageWithKey:@"dialogBrandedMention" generator:^UIImage *{
+        return [TGPresentation brandedIOS6DialogMentionImage];
+    }];
+}
+
+- (UIImage *)dialogBrandedDisclosureIcon
+{
+    return [self imageWithKey:@"dialogBrandedDisclosure" generator:^UIImage *{
+        return [TGPresentation brandedIOS6DialogDisclosureImageUnread:false];
+    }];
+}
+
+- (UIImage *)dialogBrandedDisclosureUnreadIcon
+{
+    return [self imageWithKey:@"dialogBrandedDisclosureUnread" generator:^UIImage *{
+        return [TGPresentation brandedIOS6DialogDisclosureImageUnread:true];
+    }];
+}
+
+- (UIImage *)dialogBrandedBackgroundImage
+{
+    return [self imageWithKey:@"dialogBrandedBackground" generator:^UIImage *{
+        return [TGPresentation brandedIOS6DialogCellBackgroundImage];
+    }];
+}
+
+- (UIImage *)contactBrandedSectionHeaderImage
+{
+    return [self imageWithKey:@"contactBrandedSectionHeader" generator:^UIImage *{
+        return [TGPresentation brandedIOS6ContactSectionHeaderImage];
+    }];
+}
+
 - (UIImage *)dialogPinnedIcon
 {
     return [self imageWithKey:@"dialogPinned" generator:^UIImage *{
@@ -271,6 +313,13 @@
 {
     return [self imageWithKey:@"dialogUngroup" generator:^UIImage *{
         return [TGPresentationAssets chatEditUngroupIcon:self.pallete.dialogEditTextColor];
+    }];
+}
+
+- (UIImage *)dialogEditCommunityIcon
+{
+    return [self imageWithKey:@"dialogCommunity" generator:^UIImage *{
+        return [TGPresentationAssets chatEditCommunityIcon:self.pallete.dialogEditTextColor];
     }];
 }
 
@@ -480,6 +529,9 @@
 - (UIImage *)chatMentionsImage
 {
     return [self imageWithKey:@"chatMentions" generator:^UIImage *{
+        UIImage *brandedImage = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ScrollButtonImageMentions:true] : nil;
+        if (brandedImage != nil)
+            return brandedImage;
         return [TGPresentationAssets chatMentionsButton:self.pallete.chatInputButtonColor backgroundColor:self.pallete.barBackgroundColor borderColor:self.pallete.barSeparatorColor];
     }];
 }
@@ -487,6 +539,9 @@
 - (UIImage *)chatDownImage
 {
     return [self imageWithKey:@"chatDown" generator:^UIImage *{
+        UIImage *brandedImage = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ScrollButtonImageMentions:false] : nil;
+        if (brandedImage != nil)
+            return brandedImage;
         return [TGPresentationAssets chatDownButton:self.pallete.chatInputButtonColor backgroundColor:self.pallete.barBackgroundColor borderColor:self.pallete.barSeparatorColor];
     }];
 }
@@ -501,48 +556,64 @@
 - (UIImage *)chatBubbleIncomingFullImage
 {
     return [self imageWithKey:@"chatBubbleIncomingFull" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:false];
         return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingBubbleColor borderColor:self.pallete.chatIncomingBubbleBorderColor outgoing:false hasTail:true];
     }];
 }
 
 - (UIImage *)chatBubbleIncomingFullHighlightedImage
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:true];
     return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingHighlightedBubbleColor borderColor:self.pallete.chatIncomingHighlightedBubbleBorderColor outgoing:false hasTail:true];
 }
 
 - (UIImage *)chatBubbleIncomingPartialImage
 {
     return [self imageWithKey:@"chatBubbleIncomingPartial" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:false];
         return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingBubbleColor borderColor:self.pallete.chatIncomingBubbleBorderColor outgoing:false hasTail:false];
     }];
 }
 
 - (UIImage *)chatBubbleIncomingPartialHighlightedImage
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:true];
     return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingHighlightedBubbleColor borderColor:self.pallete.chatIncomingHighlightedBubbleBorderColor outgoing:false hasTail:false];
 }
 
 - (UIImage *)chatBubbleOutgoingFullImage
 {
     return [self imageWithKey:@"chatBubbleOutgoingFull" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:false];
         return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingBubbleColor borderColor:self.pallete.chatOutgoingBubbleBorderColor outgoing:true hasTail:true];
     }];
 }
 
 - (UIImage *)chatBubbleOutgoingFullHighlightedImage
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:true];
     return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingHighlightedBubbleColor borderColor:self.pallete.chatOutgoingHighlightedBubbleBorderColor outgoing:true hasTail:true];
 }
 
 - (UIImage *)chatBubbleOutgoingPartialImage
 {
     return [self imageWithKey:@"chatBubbleOutgoingPartial" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:false];
         return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingBubbleColor borderColor:self.pallete.chatOutgoingBubbleBorderColor outgoing:true hasTail:false];
     }];
 }
 
 - (UIImage *)chatBubbleOutgoingPartialHighlightedImage
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:true];
     return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingHighlightedBubbleColor borderColor:self.pallete.chatOutgoingHighlightedBubbleBorderColor outgoing:true hasTail:false];
 }
 
@@ -808,6 +879,8 @@
 - (UIImage *)chatIncomingMessageViewsIcon
 {
     return [self imageWithKey:@"chatMessageViewsIncoming" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6MessageViewsIconWithColor:self.pallete.chatIncomingDateColor];
         return [TGPresentationAssets chatMessageViewsIcon:self.pallete.chatIncomingDateColor];
     }];
 }
@@ -815,6 +888,8 @@
 - (UIImage *)chatOutgoingMessageViewsIcon
 {
     return [self imageWithKey:@"chatMessageViewsOutgoing" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6MessageViewsIconWithColor:self.pallete.chatOutgoingDateColor];
         return [TGPresentationAssets chatMessageViewsIcon:self.pallete.chatOutgoingDateColor];
     }];
 }
@@ -822,6 +897,8 @@
 - (UIImage *)chatMediaMessageViewsIcon
 {
     return [self imageWithKey:@"chatMessageViewsMedia" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6MessageViewsIconWithColor:self.pallete.chatChecksMediaColor];
         return [TGPresentationAssets chatMessageViewsIcon:self.pallete.chatChecksMediaColor];
     }];
 }
@@ -829,6 +906,8 @@
 - (UIImage *)chatStickerMessageViewsIcon
 {
     return [self imageWithKey:@"chatMessageViewsSticker" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6MessageViewsIconWithColor:self.pallete.chatSystemTextColor];
         return [TGPresentationAssets chatMessageViewsIcon:self.pallete.chatSystemTextColor];
     }];
 }
@@ -843,6 +922,8 @@
 - (UIImage *)chatInputAttachIcon
 {
     return [self imageWithKey:@"chatAttach" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6InputButtonImageWithGlyph:TGBrandedIOS6InputGlyphAttach accentColor:nil];
         return [TGPresentationAssets inputPanelAttachIcon:self.pallete.chatInputButtonColor accentColor:nil];
     }];
 }
@@ -850,6 +931,8 @@
 - (UIImage *)chatInputAttachEditIcon
 {
     return [self imageWithKey:@"chatAttachEdit" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6InputButtonImageWithGlyph:TGBrandedIOS6InputGlyphAttachEdit accentColor:self.pallete.chatInputSendButtonColor];
         return [TGPresentationAssets inputPanelAttachIcon:self.pallete.chatInputButtonColor accentColor:self.pallete.chatInputSendButtonColor];
     }];
 }
@@ -857,6 +940,8 @@
 - (UIImage *)chatInputSendIcon
 {
     return [self imageWithKey:@"chatSend" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6InputButtonImageWithGlyph:TGBrandedIOS6InputGlyphSend accentColor:nil];
         return [TGPresentationAssets inputPanelSendIcon:self.pallete.chatInputSendButtonColor color:self.pallete.chatInputSendButtonIconColor];
     }];
 }
@@ -864,6 +949,8 @@
 - (UIImage *)chatInputConfirmIcon
 {
     return [self imageWithKey:@"chatConfirm" generator:^UIImage *{
+        if ([TGPresentation brandedIOS6Style])
+            return [TGPresentation brandedIOS6InputButtonImageWithGlyph:TGBrandedIOS6InputGlyphConfirm accentColor:nil];
         return [TGPresentationAssets inputPanelConfirmIcon:self.pallete.chatInputSendButtonColor color:self.pallete.chatInputSendButtonIconColor];
     }];
 }
@@ -879,6 +966,24 @@
 {
     return [self imageWithKey:@"chatVM" generator:^UIImage *{
         return [TGPresentationAssets inputPanelVideoMessageIcon:self.pallete.chatInputButtonColor];
+    }];
+}
+
+- (UIImage *)chatInputMicrophoneButtonIcon
+{
+    if (![TGPresentation brandedIOS6Style])
+        return [self chatInputMicrophoneIcon];
+    return [self imageWithKey:@"chatMicButton" generator:^UIImage *{
+        return [TGPresentation brandedIOS6InputButtonImageWithGlyph:TGBrandedIOS6InputGlyphMicrophone accentColor:nil];
+    }];
+}
+
+- (UIImage *)chatInputVideoMessageButtonIcon
+{
+    if (![TGPresentation brandedIOS6Style])
+        return [self chatInputVideoMessageIcon];
+    return [self imageWithKey:@"chatVMButton" generator:^UIImage *{
+        return [TGPresentation brandedIOS6InputButtonImageWithGlyph:TGBrandedIOS6InputGlyphVideoMessage accentColor:nil];
     }];
 }
 
@@ -1421,8 +1526,11 @@
 
 - (UIImage *)avatarPlaceholderWithDiameter:(CGFloat)diameter color:(UIColor *)color borderColor:(UIColor *)borderColor
 {
-    NSString *key = [NSString stringWithFormat:@"avatarPlaceholder_%lf_%d_%d", diameter, TGColorHexCode(color), TGColorHexCode(borderColor)];
+    TGInterfaceStyle style = [TGPresentation interfaceStyle];
+    NSString *key = [NSString stringWithFormat:@"avatarPlaceholder_%lf_%d_%d_%d", diameter, TGColorHexCode(color), TGColorHexCode(borderColor), (int)style];
     return [self imageWithKey:key generator:^UIImage *{
+        if (style != TGInterfaceStyleModern)
+            return [TGPresentationAssets avatarPlaceholderWithSide:diameter cornerRadius:CGFloor(diameter * (style == TGInterfaceStyleFekla ? 0.16f : 0.135f)) color:color border:1.0f borderColor:borderColor];
         return [TGPresentationAssets avatarPlaceholderWithDiameter:diameter color:color border:1.0f borderColor:borderColor];
     }];
 }
@@ -1468,6 +1576,16 @@
     UIImage *cachedImage = [_cache objectForKey:key];
     if (cachedImage != nil)
         return cachedImage;
+
+    if (![NSThread isMainThread])
+    {
+        __block UIImage *mainThreadImage = nil;
+        dispatch_sync(dispatch_get_main_queue(), ^
+        {
+            mainThreadImage = [self imageWithKey:key generator:generator];
+        });
+        return mainThreadImage;
+    }
     
     cachedImage = generator();
     NSAssert(cachedImage != nil, @"Nil image returned from generator");

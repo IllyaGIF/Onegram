@@ -204,7 +204,6 @@
 {
     [ActionStageInstance() dispatchOnStageQueue:^{
         if (fromIndex < toIndex) {
-            //toIndex--;
         }
         
         id object = [_conversationList objectAtIndex:fromIndex];
@@ -369,7 +368,6 @@
          }
          else
          {
-             //_canLoadMore = false;
              
              dispatch_async(dispatch_get_main_queue(), ^
              {
@@ -609,7 +607,6 @@
             
             NSArray *items = [NSArray arrayWithArray:_conversationList];
             
-            //_canLoadMore = canLoadMore;
             
             NSMutableArray *currentConversationIds = [[NSMutableArray alloc] init];
             for (TGConversation *conversation in _conversationList) {

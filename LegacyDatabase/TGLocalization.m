@@ -2,16 +2,19 @@
 
 #import "TGPluralization.h"
 
+#import <pthread.h>
+
 static NSDictionary *fallbackDict(NSString *code) {
     if (code == nil) {
         code = @"en";
     }
     static NSMutableDictionary *dicts = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&lock);
+    if (dicts == nil) {
         dicts = [[NSMutableDictionary alloc] init];
-    });
-    NSDictionary *dict = dicts[@"code"];
+    }
+    NSDictionary *dict = dicts[code];
     if (dict == nil) {
         NSBundle *bundle = [NSBundle bundleWithPath:[[NSBundle mainBundle] pathForResource:code ofType:@"lproj"]];
         NSString *path = [bundle pathForResource:@"Localizable" ofType:@"strings"];
@@ -21,6 +24,7 @@ static NSDictionary *fallbackDict(NSString *code) {
         }
         dicts[code] = dict;
     }
+    pthread_mutex_unlock(&lock);
     return dict;
 }
 

@@ -1724,7 +1724,6 @@
 - (void)presentEmbeddedInController:(UIViewController *)controller animated:(bool)__unused animated
 {
     _embedded = true;
-    //[controller addChildViewController:self];
     
     self.view.frame = controller.view.bounds;
     

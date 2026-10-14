@@ -1,6 +1,7 @@
 #import "TGModernLabelViewModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 @interface TGModernLabelViewModel ()
 {
@@ -75,55 +76,44 @@
     
     if (_font != NULL)
     {
-        _line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)[[NSAttributedString alloc] initWithString:text attributes:[[NSDictionary alloc] initWithObjectsAndKeys:(__bridge id)_font, (__bridge id)kCTFontAttributeName, kCFBooleanTrue, (__bridge id)kCTForegroundColorFromContextAttributeName, nil]]);
-        if (_line != NULL)
+        NSAttributedString *attributedText = [[NSAttributedString alloc] initWithString:text attributes:[[NSDictionary alloc] initWithObjectsAndKeys:(__bridge id)_font, (__bridge id)kCTFontAttributeName, kCFBooleanTrue, (__bridge id)kCTForegroundColorFromContextAttributeName, nil]];
+        if (maxWidth < FLT_MAX - FLT_EPSILON)
         {
-            if (maxWidth < FLT_MAX - FLT_EPSILON)
+            static NSString *tokenString = nil;
+            if (tokenString == nil)
             {
-                if (CTLineGetTypographicBounds(_line, NULL, NULL, NULL) - (float)CTLineGetTrailingWhitespaceWidth(_line) > maxWidth)
-                {
-                    static NSString *tokenString = nil;
-                    if (tokenString == nil)
-                    {
-                        unichar tokenChar = 0x2026;
-                        tokenString = [[NSString alloc] initWithCharacters:&tokenChar length:1];
-                    }
-                    
-                    NSMutableDictionary *truncationTokenAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)_font, (NSString *)kCTFontAttributeName, (__bridge id)_textColor.CGColor, (NSString *)kCTForegroundColorAttributeName, nil];
-                    
-                    NSAttributedString *truncationTokenString = [[NSAttributedString alloc] initWithString:tokenString attributes:truncationTokenAttributes];
-                    CTLineRef truncationToken = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)truncationTokenString);
-                    
-                    CTLineRef truncatedLine = CTLineCreateTruncatedLine(_line, maxWidth, _truncateInTheMiddle ? kCTLineTruncationMiddle : kCTLineTruncationEnd, truncationToken);
-                    CFRelease(truncationToken);
-                    
-                    CFRelease(_line);
-                    _line = truncatedLine;
-                }
+                unichar tokenChar = 0x2026;
+                tokenString = [[NSString alloc] initWithCharacters:&tokenChar length:1];
             }
             
-            if (_line != NULL)
+            NSMutableDictionary *truncationTokenAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)_font, (__bridge NSString *)kCTFontAttributeName, (__bridge id)_textColor.CGColor, (__bridge NSString *)kCTForegroundColorAttributeName, nil];
+            NSAttributedString *truncationTokenString = [[NSAttributedString alloc] initWithString:tokenString attributes:truncationTokenAttributes];
+            _line = OGPlatformCreateTruncatedLine(NULL, (__bridge CFAttributedStringRef)attributedText, CFRangeMake(0, (CFIndex)attributedText.length), 0.0, maxWidth, _truncateInTheMiddle ? kCTLineTruncationMiddle : kCTLineTruncationEnd, (__bridge CFAttributedStringRef)truncationTokenString, false);
+        }
+        else
+            _line = OGPlatformTextCreateLine((__bridge CFAttributedStringRef)attributedText);
+        
+        if (_line != NULL)
+        {
+            CGFloat ascent = 0.0f;
+            CGFloat descent = 0.0f;
+            CGFloat leading = 0.0f;
+            CGFloat width = (CGFloat)CTLineGetTypographicBounds(_line, &ascent, &descent, &leading);
+            
+            CGRect bounds = CGRectMake(0.0f, -descent, width, ascent + descent + leading);
+            bounds.origin = CGPointZero;
+            bounds.size.width = CGFloor(bounds.size.width);
+            bounds.size.height = CGFloor(bounds.size.height);
+            if (!CGRectIsNull(bounds))
             {
-                CGFloat ascent = 0.0f;
-                CGFloat descent = 0.0f;
-                CGFloat leading = 0.0f;
-                CGFloat width = (CGFloat)CTLineGetTypographicBounds(_line, &ascent, &descent, &leading);
-                
-                CGRect bounds = CGRectMake(0.0f, -descent, width, ascent + descent + leading);
-                bounds.origin = CGPointZero;
-                bounds.size.width = CGFloor(bounds.size.width);
-                bounds.size.height = CGFloor(bounds.size.height);
-                if (!CGRectIsNull(bounds))
-                {
-                    CGRect frame = self.frame;
-                    frame.size = bounds.size;
-                    self.frame = frame;
-                }
-                
-                if (needsContentUpdate)
-                    *needsContentUpdate = CGSizeEqualToSize(bounds.size, _lastSize);
-                _lastSize = bounds.size;
+                CGRect frame = self.frame;
+                frame.size = bounds.size;
+                self.frame = frame;
             }
+            
+            if (needsContentUpdate)
+                *needsContentUpdate = CGSizeEqualToSize(bounds.size, _lastSize);
+            _lastSize = bounds.size;
         }
     }
 }
@@ -140,6 +130,31 @@
         _maxWidth = maxWidth;
         [self setText:_text maxWidth:_maxWidth];
     }
+}
+
+static void TGModernLabelViewModelDrawOperation(CGContextRef context, TGModernDrawingOperation *operation)
+{
+    CGContextSetTextPosition(context, 0.0f, 0.0f);
+    CGAffineTransform xform = CGAffineTransformMake(1.0, 0.0, 0.0, -1.0f, 0.0, CGFloor(operation.rect.size.height / 1.0f));
+    CGContextSetTextMatrix(context, xform);
+    
+    CGContextSetFillColorWithColor(context, operation.color.CGColor);
+    
+    CTLineRef line = (__bridge CTLineRef)operation.object;
+    if (line != NULL)
+        CTLineDraw(line, context);
+    
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernLabelViewModel class]])
+        return false;
+    if (![self recordBaseDrawing:recording])
+        return false;
+    [recording addOperationWithFunction:&TGModernLabelViewModelDrawOperation rect:CGRectMake(0.0f, 0.0f, self.frame.size.width, self.frame.size.height) object:(__bridge id)_line secondaryObject:nil color:_textColor == nil ? [UIColor blackColor] : _textColor size:CGSizeZero value:0.0f flags:0];
+    return true;
 }
 
 - (void)drawInContext:(CGContextRef)context

@@ -335,11 +335,6 @@
     
     self.view.backgroundColor = [UIColor whiteColor];
     
-//    _pickerView = [[UIPickerView alloc] initWithFrame:CGRectMake(0.0f, 44.0f, 320.0f, 216.0)];
-//    _pickerView.dataSource = self;
-//    _pickerView.delegate = self;
-//    [_pickerView reloadAllComponents];
-//    [self.view addSubview:_pickerView];
 
     if (_dateMode) {
         _datePicker = [[UIDatePicker alloc] initWithFrame:CGRectMake(0.0f, 44.0f, 320.0f, 216.0)];

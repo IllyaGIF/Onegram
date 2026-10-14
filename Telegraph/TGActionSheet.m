@@ -91,4 +91,16 @@
     [super showInView:view];
 }
 
+- (void)showFromRect:(CGRect)rect inView:(UIView *)view animated:(BOOL)animated
+{
+    [view.window endEditing:true];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
+    [super showFromRect:rect inView:view animated:animated];
+#else
+    (void)rect;
+    (void)animated;
+    [super showInView:view];
+#endif
+}
+
 @end

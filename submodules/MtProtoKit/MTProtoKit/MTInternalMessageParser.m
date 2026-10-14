@@ -686,14 +686,14 @@
     const int kMemoryChunkSize = 1024;
     
     NSUInteger length = [data length];
-    int windowBits = 15 + 32; //Default + gzip header instead of zlib header
+    int windowBits = 15 + 32;
     int retCode;
     unsigned char output[kMemoryChunkSize];
     uInt gotBack;
     NSMutableData *result;
     z_stream stream;
     
-    if ((length == 0) || (length > UINT_MAX)) //FIXME: Support 64 bit inputs
+    if ((length == 0) || (length > UINT_MAX))
         return nil;
     
     bzero(&stream, sizeof(z_stream));

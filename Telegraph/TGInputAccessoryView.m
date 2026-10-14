@@ -1,4 +1,5 @@
 #import "TGInputAccessoryView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @implementation TGInputAccessoryView
 
@@ -24,7 +25,7 @@
         height = 0.1f;
     
     _height = height;
-    [self invalidateIntrinsicContentSize];
+    OGPlatformInvalidateViewIntrinsicContentSize(self);
     [self.superview layoutSubviews];
 }
 

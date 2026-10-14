@@ -128,6 +128,9 @@ typedef enum {
 
 - (void)bindController:(TGModernConversationController *)controller;
 - (void)unbindController;
+#if defined(ONEGRAM_ARMV6)
+- (bool)initialItemsPreparationPending;
+#endif
 - (void)loadInitialState;
 - (void)subscribeToUpdates;
 
@@ -249,6 +252,7 @@ typedef enum {
 
 - (void)updateMessagesLive:(NSDictionary *)messageIdToMessage animated:(bool)animated;
 - (void)_updateMessageItemsWithData:(NSArray *)items;
+- (void)_historyItemsPreparedForMessages:(NSArray *)messages intent:(TGModernConversationAddMessageIntent)intent;
 - (void)_updateMediaStatusDataForCurrentItems;
 - (void)_updateMediaStatusDataForItemsInIndexSet:(NSIndexSet *)indexSet animated:(bool)animated forceforceCheckDownload:(bool)forceCheckDownload;
 - (void)_updateMediaStatusDataForItemsWithMessageIdsInSet:(NSMutableSet *)messageIds;
@@ -264,6 +268,9 @@ typedef enum {
 
 - (void)loadMoreMessagesAbove;
 - (void)loadMoreMessagesBelow;
+- (void)setHistoryAboveReadAheadAllowed:(bool)allowed;
+- (bool)historyAboveReadAheadAllowed;
+- (bool)historyAboveMayBeAvailable;
 - (void)unloadMessagesAbove;
 - (void)unloadMessagesBelow;
 
@@ -290,6 +297,8 @@ typedef enum {
 - (void)markMessagesAsViewed:(NSArray *)messageIds;
 
 - (SSignal *)userListForMention:(NSString *)mention canBeContextBot:(bool)canBeContextBot includeSelf:(bool)includeSelf;
+- (NSArray *)recentMentionUserIds;
++ (NSArray *)mentionUsersForQuery:(NSString *)query memberUserIds:(NSArray *)memberUserIds recentUserIds:(NSArray *)recentUserIds contextBotIds:(NSArray *)contextBotIds includeSelf:(bool)includeSelf;
 - (SSignal *)inlineResultForMentionText:(NSString *)mention text:(NSString *)text;
 - (SSignal *)hashtagListForHashtag:(NSString *)hashtag;
 - (SSignal *)commandListForCommand:(NSString *)command;
@@ -303,6 +312,7 @@ typedef enum {
 
 - (void)_controllerDidUpdateVisibleHoles:(NSArray *)holes;
 - (void)_controllerDidUpdateVisibleUnseenMessageIds:(NSArray *)unseenMessageIds;
+- (void)_controllerDidUpdateVisibleMessageIds:(NSArray *)messageIds;
 - (void)_controllerDidUpdateVisibleUnseenMentionMessageIds:(NSArray *)unseenMentionMessageIds;
 - (bool)_controllerShouldHideInputTextByDefault;
 - (bool)canDeleteMessage:(TGMessage *)message;

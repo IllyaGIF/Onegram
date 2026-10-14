@@ -1,8 +1,5 @@
 #import "TGFavoriteStickersSignal.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import <libkern/OSAtomic.h>
 
@@ -59,18 +56,11 @@ static NSArray *TGIOS6FavoriteStaticStickerDocuments(NSArray *documents)
         return @[];
     
     NSMutableArray *result = [[NSMutableArray alloc] init];
-    NSUInteger skipped = 0;
     for (TGDocumentMediaAttachment *document in documents)
     {
-        if (TGIOS6FavoriteStickerDocumentIsAnimated(document))
-        {
-            skipped++;
-            continue;
-        }
-        [result addObject:document];
+        if (!TGIOS6FavoriteStickerDocumentIsAnimated(document))
+            [result addObject:document];
     }
-    if (skipped != 0)
-        IOS6_NOOP_LOG(@"STICKER favorite.filterAnimated skipped=%d kept=%d", (int)skipped, (int)result.count);
     return result;
 }
 
@@ -212,16 +202,13 @@ static OSSpinLock idsLock = OS_SPINLOCK_INIT;
 }
 
 + (SSignal *)_remoteFavedStickers:(int32_t)hash {
-    IOS6_NOOP_LOG(@"STICKER favorite.remote start hash=%d", hash);
     
     TLRPCmessages_getFavedStickers$messages_getFavedStickers *getFavedStickers = [[TLRPCmessages_getFavedStickers$messages_getFavedStickers alloc] init];
     getFavedStickers.n_hash = hash;
     
     return [[[TGTelegramNetworking instance] requestSignal:getFavedStickers] mapToSignal:^SSignal *(id result) {
-        IOS6_NOOP_LOG(@"STICKER favorite.remote result=%@", NSStringFromClass([result class]));
         if ([result isKindOfClass:[TLmessages_FavedStickers$messages_favedStickers class]]) {
             TLmessages_FavedStickers$messages_favedStickers *favedStickers = result;
-            IOS6_NOOP_LOG(@"STICKER favorite.remote stickers=%d hash=%d", (int)favedStickers.stickers.count, favedStickers.n_hash);
             
             NSMutableArray *array = [[NSMutableArray alloc] init];
             for (id desc in [favedStickers.stickers reverseObjectEnumerator]) {

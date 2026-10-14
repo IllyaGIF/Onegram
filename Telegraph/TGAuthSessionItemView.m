@@ -6,12 +6,14 @@
 
 #import "TGPresentation.h"
 
-@interface TGAuthSessionItemView ()
+@interface TGAuthSessionItemView () <UIGestureRecognizerDelegate>
 {
     UILabel *_titleLabel;
     UILabel *_infoLabel;
     UILabel *_subtitleLabel;
     UILabel *_statusLabel;
+    UISwipeGestureRecognizer *_rightSwipe;
+    bool _currentSession;
 }
 
 @end
@@ -24,6 +26,10 @@
     if (self != nil)
     {
         self.optionText = TGLocalized(@"Common.Close");
+        _rightSwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(rightSwipe:)];
+        _rightSwipe.direction = UISwipeGestureRecognizerDirectionRight;
+        _rightSwipe.delegate = self;
+        [self addGestureRecognizer:_rightSwipe];
         
         _titleLabel = [[UILabel alloc] init];
         _titleLabel.textAlignment = NSTextAlignmentLeft;
@@ -62,6 +68,27 @@
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
     _infoLabel.textColor = presentation.pallete.collectionMenuTextColor;
     _subtitleLabel.textColor = presentation.pallete.collectionMenuVariantColor;
+    _statusLabel.textColor = _currentSession ? presentation.pallete.collectionMenuAccentColor : presentation.pallete.collectionMenuVariantColor;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
+{
+    return recognizer != _rightSwipe || (self.enableEditing && !self.disableControls && !_currentSession);
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)recognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherRecognizer
+{
+    return recognizer == _rightSwipe && [otherRecognizer.view isKindOfClass:[UIScrollView class]];
+}
+
+- (void)rightSwipe:(UISwipeGestureRecognizer *)recognizer
+{
+    if (recognizer.state == UIGestureRecognizerStateRecognized && self.enableEditing && !self.disableControls && !_currentSession)
+    {
+        [self setShowsEditingOptions:false animated:true];
+        if (_removeRequested != nil)
+            _removeRequested();
+    }
 }
 
 - (void)setAuthSession:(TGAuthSession *)authSession
@@ -84,7 +111,8 @@
     NSString *locationString = [[NSString alloc] initWithFormat:@"%@ • %@", authSession.ip, authSession.country];
     _subtitleLabel.text = locationString;
     
-    if (authSession.sessionHash == 0)
+    _currentSession = authSession.sessionHash == 0 || (authSession.flags & 1) != 0;
+    if (_currentSession)
     {
         _statusLabel.text = TGLocalized(@"Presence.online");
         _statusLabel.textColor = self.presentation.pallete.collectionMenuAccentColor;
@@ -109,7 +137,7 @@
     CGFloat leftInset = 16.0f + (self.enableEditing && self.showsDeleteIndicator ? 38.0f : 0.0f) + self.safeAreaInset.left;
     
     CGSize titleSize = [_titleLabel.text sizeWithFont:_titleLabel.font];
-    titleSize.width = MIN(CGCeil(titleSize.width), _statusLabel.frame.origin.x - 10.0f - leftInset);
+    titleSize.width = MAX(0.0f, MIN(CGCeil(titleSize.width), _statusLabel.frame.origin.x - 10.0f - leftInset));
     titleSize.height = CGCeil(titleSize.height);
     _titleLabel.frame = CGRectMake(leftInset, 8.0f + TGScreenPixel, titleSize.width, titleSize.height);
     

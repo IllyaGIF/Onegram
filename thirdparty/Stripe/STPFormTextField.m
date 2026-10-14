@@ -12,6 +12,7 @@
 #import "NSString+Stripe.h"
 #import "STPDelegateProxy.h"
 #import "STPWeakStrongMacros.h"
+#import "../../OnegramPlatform/OGPlatformUIKit.h"
 
 #define FAUXPAS_IGNORED_IN_METHOD(...)
 
@@ -34,9 +35,6 @@
         inputText = sanitized;
     }
     
-    UITextPosition *beginning = textField.beginningOfDocument;
-    UITextPosition *start = [textField positionFromPosition:beginning offset:range.location];
-    
     if ([textField.text isEqualToString:inputText]) {
         return NO;
     }
@@ -44,13 +42,14 @@
     textField.text = inputText;
     
     if (self.autoformattingBehavior == STPFormTextFieldAutoFormattingBehaviorNone && self.selectionEnabled) {
-        
-        // this will be the new cursor location after insert/paste/typing
-        NSInteger cursorOffset = [textField offsetFromPosition:beginning toPosition:start] + string.length;
-        
+        NSInteger cursorOffset = range.location + string.length;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
         UITextPosition *newCursorPosition = [textField positionFromPosition:textField.beginningOfDocument offset:cursorOffset];
         UITextRange *newSelectedRange = [textField textRangeFromPosition:newCursorPosition toPosition:newCursorPosition];
         [textField setSelectedTextRange:newSelectedRange];
+#else
+        OGPlatformSetTextFieldSelectionRange(textField, NSMakeRange((NSUInteger)cursorOffset, 0));
+#endif
     }
     
     return NO;
@@ -86,7 +85,9 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
     if (self.skipsReloadingInputViews) {
         return;
     }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
     [super reloadInputViews];
+#endif
 }
 
 + (NSDictionary *)attributesForAttributedString:(NSAttributedString *)attributedString {
@@ -174,6 +175,10 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
     [self setText:[self.text stringByAppendingString:text]];
 }
 
+- (BOOL)hasText {
+    return self.text.length != 0;
+}
+
 - (void)deleteBackward {
     [super deleteBackward];
     if (self.text.length == 0) {
@@ -184,7 +189,11 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
 }
 
 - (CGSize)measureTextSize {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     return self.attributedText.size;
+#else
+    return [self.text sizeWithFont:self.font ?: [UIFont systemFontOfSize:17.0f]];
+#endif
 }
 
 - (void)setText:(NSString *)text {
@@ -199,16 +208,28 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
 }
 
 - (void)setAttributedText:(NSAttributedString *)attributedText {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     NSAttributedString *oldValue = [self attributedText];
+#else
+    NSString *oldValue = [super text];
+#endif
     BOOL shouldModify = self.formDelegate && [self.formDelegate respondsToSelector:@selector(formTextField:modifyIncomingTextChange:)];
     NSAttributedString *modified = shouldModify ?
         [self.formDelegate formTextField:self modifyIncomingTextChange:attributedText] :
         attributedText;
     NSAttributedString *transformed = self.textFormattingBlock ? self.textFormattingBlock(modified) : modified;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     [super setAttributedText:transformed];
+#else
+    [super setText:transformed.string];
+#endif
     [self sendActionsForControlEvents:UIControlEventEditingChanged];
     if ([self.formDelegate respondsToSelector:@selector(formTextFieldTextDidChange:)]) {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
         if (![transformed isEqualToAttributedString:oldValue]) {
+#else
+        if (![transformed.string isEqualToString:oldValue]) {
+#endif
             [self.formDelegate formTextFieldTextDidChange:self];
         }
     }
@@ -222,10 +243,11 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
 
 - (void)setAttributedPlaceholder:(NSAttributedString *)attributedPlaceholder {
     NSAttributedString *transformed = self.textFormattingBlock ? self.textFormattingBlock(attributedPlaceholder) : attributedPlaceholder;
-    if (iosMajorVersion() < 6)
-        [super setPlaceholder:transformed.string];
-    else
-        [super setAttributedPlaceholder:transformed];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+    [super setAttributedPlaceholder:transformed];
+#else
+    [super setPlaceholder:transformed.string];
+#endif
 }
 
 - (NSDictionary *)placeholderTextAttributes {
@@ -271,7 +293,11 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
     }
     
     CGFloat const scale = UIScreen.mainScreen.scale;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     CGFloat const preferred = self.attributedText.size.height;
+#else
+    CGFloat const preferred = [self.text sizeWithFont:self.font ?: [UIFont systemFontOfSize:17.0f]].height;
+#endif
     CGFloat const delta = (CGFloat)ceil(preferred) - preferred;
     CGFloat const adjustment = (CGFloat)floor(delta * scale) / scale;
     
@@ -293,12 +319,14 @@ typedef NSAttributedString* (^STPFormTextTransformationBlock)(NSAttributedString
     self.text = @"";
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
 - (UITextPosition *)closestPositionToPoint:(CGPoint)point {
     if (self.selectionEnabled) {
         return [super closestPositionToPoint:point];
     }
     return [self positionFromPosition:self.beginningOfDocument offset:self.text.length];
 }
+#endif
 
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
     return [super canPerformAction:action withSender:sender] && action == @selector(paste:);

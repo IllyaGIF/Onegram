@@ -6,23 +6,20 @@
 
 #import "TGLocalization.h"
 #import "TGPluralization.h"
+#import "OGMemoryCache.h"
 
 typedef struct {
     __unsafe_unretained NSString *escapeSequence;
     unichar uchar;
 } HTMLEscapeMap;
 
-// Taken from http://www.w3.org/TR/xhtml1/dtds.html#a_dtd_Special_characters
-// Ordered by uchar lowest to highest for bsearching
 static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
-    // A.2.2. Special characters
     { @"&quot;", 34 },
     { @"&amp;", 38 },
     { @"&apos;", 39 },
     { @"&lt;", 60 },
     { @"&gt;", 62 },
     
-    // A.2.1. Latin-1 characters
     { @"&nbsp;", 160 }, 
     { @"&iexcl;", 161 }, 
     { @"&cent;", 162 }, 
@@ -120,21 +117,17 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
     { @"&thorn;", 254 }, 
     { @"&yuml;", 255 },
     
-    // A.2.2. Special characters cont'd
     { @"&OElig;", 338 },
     { @"&oelig;", 339 },
     { @"&Scaron;", 352 },
     { @"&scaron;", 353 },
     { @"&Yuml;", 376 },
     
-    // A.2.3. Symbols
     { @"&fnof;", 402 }, 
     
-    // A.2.2. Special characters cont'd
     { @"&circ;", 710 },
     { @"&tilde;", 732 },
     
-    // A.2.3. Symbols cont'd
     { @"&Alpha;", 913 }, 
     { @"&Beta;", 914 }, 
     { @"&Gamma;", 915 }, 
@@ -188,7 +181,6 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
     { @"&upsih;", 978 }, 
     { @"&piv;", 982 }, 
     
-    // A.2.2. Special characters cont'd
     { @"&ensp;", 8194 },
     { @"&emsp;", 8195 },
     { @"&thinsp;", 8201 },
@@ -206,29 +198,22 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
     { @"&bdquo;", 8222 },
     { @"&dagger;", 8224 },
     { @"&Dagger;", 8225 },
-    // A.2.3. Symbols cont'd  
     { @"&bull;", 8226 }, 
     { @"&hellip;", 8230 }, 
     
-    // A.2.2. Special characters cont'd
     { @"&permil;", 8240 },
     
-    // A.2.3. Symbols cont'd  
     { @"&prime;", 8242 }, 
     { @"&Prime;", 8243 }, 
     
-    // A.2.2. Special characters cont'd
     { @"&lsaquo;", 8249 },
     { @"&rsaquo;", 8250 },
     
-    // A.2.3. Symbols cont'd  
     { @"&oline;", 8254 }, 
     { @"&frasl;", 8260 }, 
     
-    // A.2.2. Special characters cont'd
     { @"&euro;", 8364 },
     
-    // A.2.3. Symbols cont'd  
     { @"&image;", 8465 },
     { @"&weierp;", 8472 }, 
     { @"&real;", 8476 }, 
@@ -311,7 +296,7 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
     if (unescapedString == nil)
         unescapedString = string;
     
-    return (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, (__bridge CFStringRef)unescapedString, NULL, (CFStringRef)kAFLegalCharactersToBeEscaped, CFStringConvertNSStringEncodingToEncoding(NSUTF8StringEncoding));
+    return (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, (__bridge CFStringRef)unescapedString, NULL, (__bridge CFStringRef)kAFLegalCharactersToBeEscaped, CFStringConvertNSStringEncodingToEncoding(NSUTF8StringEncoding));
 }
 
 + (NSString *)stringByEscapingForActorURL:(NSString *)string
@@ -322,7 +307,7 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
     if (unescapedString == nil)
         unescapedString = string;
     
-    return (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, (__bridge CFStringRef)unescapedString, NULL, (CFStringRef)kAFLegalCharactersToBeEscaped, CFStringConvertNSStringEncodingToEncoding(NSUTF8StringEncoding));
+    return (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, (__bridge CFStringRef)unescapedString, NULL, (__bridge CFStringRef)kAFLegalCharactersToBeEscaped, CFStringConvertNSStringEncodingToEncoding(NSUTF8StringEncoding));
 }
 
 + (NSString *)stringByEncodingInBase64:(NSData *)data
@@ -378,7 +363,6 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
             NSRange semiColonRange = NSMakeRange(subrange.location, NSMaxRange(range) - subrange.location);
             semiColonRange = [srcString rangeOfString:@";" options:0 range:semiColonRange];
             range = NSMakeRange(0, subrange.location);
-            // if we don't find a semicolon in the range, we don't have a sequence
             if (semiColonRange.location == NSNotFound)
             {
                 continue;
@@ -387,14 +371,12 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
             NSString *escapeString = [srcString substringWithRange:escapeRange];
             NSUInteger length = [escapeString length];
             
-            // a squence must be longer than 3 (&lt;) and less than 11 (&thetasym;)
             if (length > 3 && length < 11)
             {
                 if ([escapeString characterAtIndex:1] == '#')
                 {
                     unichar char2 = [escapeString characterAtIndex:2];
                     if (char2 == 'x' || char2 == 'X') {
-                        // Hex escape squences &#xa3;
                         NSString *hexSequence = [escapeString substringWithRange:NSMakeRange(3, length - 4)];
                         NSScanner *scanner = [NSScanner scannerWithString:hexSequence];
                         unsigned value;
@@ -410,7 +392,6 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
                     }
                     else
                     {
-                        // Decimal Sequences &#123;
                         NSString *numberSequence = [escapeString substringWithRange:NSMakeRange(2, length - 3)];
                         NSScanner *scanner = [NSScanner scannerWithString:numberSequence];
                         int value;
@@ -474,16 +455,11 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
 
 + (NSString *)md5:(NSString *)string
 {
-    /*static const char *md5PropertyKey = "MD5Key";
-    NSString *result = objc_getAssociatedObject(string, md5PropertyKey);
-    if (result != nil)
-        return result;*/
 
     const char *ptr = [string UTF8String];
     unsigned char md5Buffer[16];
     CC_MD5(ptr, (CC_LONG)[string lengthOfBytesUsingEncoding:NSUTF8StringEncoding], md5Buffer);
     NSString *output = [[NSString alloc] initWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x", md5Buffer[0], md5Buffer[1], md5Buffer[2], md5Buffer[3], md5Buffer[4], md5Buffer[5], md5Buffer[6], md5Buffer[7], md5Buffer[8], md5Buffer[9], md5Buffer[10], md5Buffer[11], md5Buffer[12], md5Buffer[13], md5Buffer[14], md5Buffer[15]];
-    //objc_setAssociatedObject(string, md5PropertyKey, output, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return output;
 }
 
@@ -494,7 +470,34 @@ static HTMLEscapeMap gAsciiHTMLEscapeMap[] = {
     return output;
 }
 
+static OGMemoryCache *TGStringUtilsArgumentDictionaryCache(void)
+{
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:512u * 1024u];
+    });
+    return cache;
+}
+
 + (NSDictionary *)argumentDictionaryInUrlString:(NSString *)string
+{
+    if (string.length == 0)
+        return [[NSMutableDictionary alloc] init];
+    
+    OGMemoryCache *cache = TGStringUtilsArgumentDictionaryCache();
+    NSString *key = [string copy];
+    NSDictionary *cachedDictionary = [cache objectForKey:key];
+    if (cachedDictionary != nil)
+        return [cachedDictionary mutableCopy];
+    
+    NSDictionary *dictionary = [self _parseArgumentDictionaryInUrlString:key];
+    [cache setObject:[dictionary copy] forKey:key cost:key.length * 2 + 64];
+    return dictionary;
+}
+
++ (NSDictionary *)_parseArgumentDictionaryInUrlString:(NSString *)string
 {
     NSMutableDictionary *queryStringDictionary = [[NSMutableDictionary alloc] init];
     NSArray *urlComponents = [string componentsSeparatedByString:@"&"];
@@ -1005,9 +1008,8 @@ static bool isEmojiCharacter(NSString *singleChar)
 
 #define BIG_CONSTANT(x) (x)
 
-// Other compilers
 
-#else   // defined(_MSC_VER)
+#else
 
 #define FORCE_INLINE __attribute__((always_inline))
 
@@ -1021,19 +1023,14 @@ static inline uint32_t rotl32 ( uint32_t x, int8_t r )
 
 #define BIG_CONSTANT(x) (x##LLU)
 
-#endif // !defined(_MSC_VER)
+#endif
 
-//-----------------------------------------------------------------------------
-// Block read - if your platform needs to do endian-swapping or can only
-// handle aligned reads, do the conversion here
 
 static FORCE_INLINE uint32_t getblock ( const uint32_t * p, int i )
 {
     return p[i];
 }
 
-//-----------------------------------------------------------------------------
-// Finalization mix - force all bits of a hash block to avalanche
 
 static FORCE_INLINE uint32_t fmix ( uint32_t h )
 {
@@ -1046,9 +1043,6 @@ static FORCE_INLINE uint32_t fmix ( uint32_t h )
     return h;
 }
 
-//----------
-
-//-----------------------------------------------------------------------------
 
 static void MurmurHash3_x86_32 ( const void * key, int len,
                          uint32_t seed, void * out )
@@ -1061,8 +1055,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
     const uint32_t c1 = 0xcc9e2d51;
     const uint32_t c2 = 0x1b873593;
     
-    //----------
-    // body
     
     const uint32_t * blocks = (const uint32_t *)(data + nblocks*4);
     
@@ -1079,8 +1071,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
         h1 = h1*5+0xe6546b64;
     }
     
-    //----------
-    // tail
     
     const uint8_t * tail = (const uint8_t*)(data + nblocks*4);
     
@@ -1094,8 +1084,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
             k1 *= c1; k1 = ROTL32(k1,15); k1 *= c2; h1 ^= k1;
     };
     
-    //----------
-    // finalization
     
     h1 ^= len;
     
@@ -1144,18 +1132,44 @@ int32_t phoneMatchHash(NSString *phone)
     return result;
 }
 
+static bool TGIsRTLLanguageCode(NSString *language)
+{
+    if (language.length == 0)
+        return false;
+
+    NSString *normalized = [language lowercaseString];
+    NSRange separatorRange = [normalized rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"-_"]];
+    if (separatorRange.location != NSNotFound)
+        normalized = [normalized substringToIndex:separatorRange.location];
+
+    static NSSet *rtlLanguages = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        rtlLanguages = [NSSet setWithObjects:@"ar", @"arc", @"ckb", @"dv", @"fa", @"he", @"iw", @"ku", @"ps", @"sd", @"syr", @"ug", @"ur", @"yi", nil];
+    });
+
+    return [rtlLanguages containsObject:normalized];
+}
+
 bool TGIsRTL()
 {
     static bool value = false;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         value = ([NSLocale characterDirectionForLanguage:[[NSLocale preferredLanguages] objectAtIndex:0]] == NSLocaleLanguageDirectionRightToLeft);
+#else
+        value = TGIsRTLLanguageCode([[NSLocale preferredLanguages] objectAtIndex:0]);
+#endif
     });
-    
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     if (!value && iosMajorVersion() >= 9)
         value = ((UIView *)[UIView appearance]).semanticContentAttribute == UISemanticContentAttributeForceRightToLeft;
-    
+#endif
+
     return value;
 }
 
@@ -1209,9 +1223,7 @@ bool TGIsLocaleArabic()
     {
         if (substring.length != 0)
             length++;
-        //TGLegacyLog(@"substringRange %@, enclosingRange %@, length %d", NSStringFromRange(substringRange), NSStringFromRange(enclosingRange), length);
     }];
-    //TGLegacyLog(@"length %d", length);
     
     return (int)length;
 }

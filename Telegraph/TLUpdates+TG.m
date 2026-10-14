@@ -32,62 +32,55 @@
 
 - (NSArray *)messages
 {
-    if ([self isKindOfClass:[TLUpdates$updates class]])
+    NSMutableArray *messages = [[NSMutableArray alloc] init];
+    for (TLUpdate *update in [self updatesList])
     {
-        NSMutableArray *messages = [[NSMutableArray alloc] init];
-        
-        for (id update in ((TLUpdates$updates *)self).updates)
-        {
-            if ([update isKindOfClass:[TLUpdate$updateNewMessage class]])
-                [messages addObject:((TLUpdate$updateNewMessage *)update).message];
-            else if ([update isKindOfClass:[TLUpdate$updateNewChannelMessage class]])
-                [messages addObject:((TLUpdate$updateNewChannelMessage *)update).message];
-            else if ([update isKindOfClass:[TLUpdate$updateEditChannelMessage class]])
-                [messages addObject:((TLUpdate$updateEditChannelMessage *)update).message];
-            else if ([update isKindOfClass:[TLUpdate$updateEditMessage class]])
-                [messages addObject:((TLUpdate$updateEditMessage *)update).message];
-        }
-        
-        return messages;
+        TLMessage *message = nil;
+        if ([update isKindOfClass:[TLUpdate$updateNewMessage class]])
+            message = ((TLUpdate$updateNewMessage *)update).message;
+        else if ([update isKindOfClass:[TLUpdate$updateNewChannelMessage class]])
+            message = ((TLUpdate$updateNewChannelMessage *)update).message;
+        else if ([update isKindOfClass:[TLUpdate$updateEditChannelMessage class]])
+            message = ((TLUpdate$updateEditChannelMessage *)update).message;
+        else if ([update isKindOfClass:[TLUpdate$updateEditMessage class]])
+            message = ((TLUpdate$updateEditMessage *)update).message;
+        if (message != nil)
+            [messages addObject:message];
     }
-    
-    return @[];
+    return messages;
 }
 
 - (TLMessage *)messageAtIndex:(NSUInteger)index pts:(int32_t *)pts pts_count:(int32_t *)pts_count
 {
-    NSInteger i = -1;
-    if ([self isKindOfClass:[TLUpdates$updates class]])
+    NSUInteger messageIndex = 0;
+    for (TLUpdate *update in [self updatesList])
     {
-        for (id update in ((TLUpdates$updates *)self).updates)
+        TLMessage *message = nil;
+        int32_t messagePts = 0;
+        int32_t messagePtsCount = 0;
+        if ([update isKindOfClass:[TLUpdate$updateNewMessage class]])
         {
-            if ([update isKindOfClass:[TLUpdate$updateNewMessage class]])
-            {
-                i++;
-                if (i == (NSInteger)index)
-                {
-                    if (pts)
-                        *pts = ((TLUpdate$updateNewMessage *)update).pts;
-                    if (pts_count)
-                        *pts_count = ((TLUpdate$updateNewMessage *)update).pts_count;
-                    return ((TLUpdate$updateNewMessage *)update).message;
-                }
-            }
-            else if ([update isKindOfClass:[TLUpdate$updateNewChannelMessage class]])
-            {
-                i++;
-                if (i == (NSInteger)index)
-                {
-                    if (pts)
-                        *pts = ((TLUpdate$updateNewChannelMessage *)update).pts;
-                    if (pts_count)
-                        *pts_count = ((TLUpdate$updateNewChannelMessage *)update).pts_count;
-                    return ((TLUpdate$updateNewChannelMessage *)update).message;
-                }
-            }
+            TLUpdate$updateNewMessage *newMessage = (TLUpdate$updateNewMessage *)update;
+            message = newMessage.message;
+            messagePts = newMessage.pts;
+            messagePtsCount = newMessage.pts_count;
+        }
+        else if ([update isKindOfClass:[TLUpdate$updateNewChannelMessage class]])
+        {
+            TLUpdate$updateNewChannelMessage *newMessage = (TLUpdate$updateNewChannelMessage *)update;
+            message = newMessage.message;
+            messagePts = newMessage.pts;
+            messagePtsCount = newMessage.pts_count;
+        }
+        if (message != nil && messageIndex++ == index)
+        {
+            if (pts != NULL)
+                *pts = messagePts;
+            if (pts_count != NULL)
+                *pts_count = messagePtsCount;
+            return message;
         }
     }
-    
     return nil;
 }
 
@@ -209,6 +202,11 @@
         return ((TLUpdates$updatesCombined *)self).updates;
     }
     
+    if ([self isKindOfClass:[TLUpdates$updateShort class]])
+    {
+        TLUpdate *update = ((TLUpdates$updateShort *)self).update;
+        return update == nil ? @[] : @[update];
+    }
     return @[];
 }
 

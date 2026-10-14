@@ -113,7 +113,6 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 {
     NSString *_initialActivity;
     
-    NSString *_cachedPhone;
     
     bool _isLoadingFirstMessages;
     
@@ -124,26 +123,26 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     bool _supportsCalls;
     bool _callsPrivate;
     
-    bool _isBlocked; // Main Thread
-    bool _isContact; // Main Thread
+    bool _isBlocked;
+    bool _isContact;
     
-    bool _isMuted; // Main Thread
+    bool _isMuted;
     
     NSMutableDictionary *_defaultNotificationSettings;
     NSMutableDictionary *_userNotificationSettings;
     
-    NSArray *_additionalTitleIcons; // Main Thread
+    NSArray *_additionalTitleIcons;
     
-    TGPhoneSharingStatus _phoneSharingStatus; // Main Thread
+    TGPhoneSharingStatus _phoneSharingStatus;
     
-    TGBotConversationHeaderView *_botHeaderView; // Main Thread
+    TGBotConversationHeaderView *_botHeaderView;
     
     bool _isBot;
     id<SDisposable> _botInfoDisposable;
     TGBotInfo *_botInfo;
     
     TGModernConversationActionInputPanel *_unblockPanel;
-    TGModernConversationActionInputPanel *_botStartPanel; // Main Thread
+    TGModernConversationActionInputPanel *_botStartPanel;
     bool _botStartPanelDismissed;
     
     SMetaDisposable *_botStartDisposable;
@@ -480,8 +479,6 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         if (classicIOS6Style)
         {
             NSString *buttonTitle = [NSString stringWithFormat:@"%d. %@", (int)index + 1, title];
-            // UIActionSheet scales long labels down independently.  Keep every
-            // pinned-message button short enough to preserve one font size.
             if (buttonTitle.length > 24)
             {
                 NSRange range = [buttonTitle rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 23)];
@@ -1007,7 +1004,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     }
 }
 
-- (NSString *)stringForTitle:(TGUser *)user isContact:(bool)isContact
+- (NSString *)stringForTitle:(TGUser *)user
 {
     if (user.uid == TGTelegraphInstance.clientUserId) {
         return TGLocalized(@"Conversation.SavedMessages");
@@ -1019,13 +1016,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     if (user.uid == [TGTelegraphInstance voipSupportUserUid])
         return @"VoIP Support";
     
-    if (isContact || user.phoneNumber.length == 0)
-        return user.displayName;
-    
-    if (_cachedPhone == nil)
-        _cachedPhone = [TGPhoneUtils formatPhone:user.phoneNumber forceInternational:true];
-    
-    return _cachedPhone;
+    return user.displayName;
 }
 
 - (NSString *)statusStringForUser:(TGUser *)user accentColored:(bool *)accentColored
@@ -1099,7 +1090,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 - (NSString *)title
 {
     TGUser *user = [TGDatabaseInstance() loadUser:_uid];
-    return [self stringForTitle:user isContact:_isContact];
+    return [self stringForTitle:user];
 }
 
 - (void)loadInitialState
@@ -1120,7 +1111,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     [super loadInitialState];
     _isLoadingFirstMessages = false;
     
-    [self _setTitle:[self stringForTitle:user isContact:_isContact]];
+    [self _setTitle:[self stringForTitle:user]];
     [self _setAvatarConversationId:_uid firstName:user.firstName lastName:user.lastName];
     [self _setAvatarUrl:user.photoFullUrlSmall];
     bool accentColored = false;
@@ -1340,7 +1331,6 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     else
         [actions addObject:@{@"title": TGLocalized(@"Conversation.Mute"), @"icon": presentation.images.chatTitleMuteIcon, @"action": @"mute"}];
     
-    TGLog(@"CALL ui.titlePanel peer=%d supports=%d private=%d forceShow=1", _uid, _supportsCalls ? 1 : 0, _callsPrivate ? 1 : 0);
     [actions addObject:@{@"title": TGLocalized(@"Conversation.Call"), @"icon": presentation.images.chatTitleCallIcon, @"action": @"call"}];
     
     [actions addObject:@{@"title": TGLocalized(@"Conversation.Info"), @"icon": presentation.images.chatTitleInfoIcon, @"action": @"info"}];
@@ -1585,7 +1575,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
             {
                 bool accentColored = false;
                 NSString *statusString = [self statusStringForUser:user accentColored:&accentColored];
-                [self _setTitle:[self stringForTitle:user isContact:[TGDatabaseInstance() uidIsRemoteContact:_uid]] andStatus:statusString accentColored:accentColored allowAnimatioon:true toggleMode:TGModernConversationControllerTitleToggleNone];
+                [self _setTitle:[self stringForTitle:user] andStatus:statusString accentColored:accentColored allowAnimatioon:true toggleMode:TGModernConversationControllerTitleToggleNone];
                 [self _setAvatarConversationId:_uid firstName:user.firstName lastName:user.lastName];
                 [self _setAvatarUrl:user.photoFullUrlSmall];
                 
@@ -1599,7 +1589,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         
         bool accentColored = false;
         NSString *statusString = [self statusStringForUser:user accentColored:&accentColored];
-        [self _setTitle:[self stringForTitle:user isContact:[TGDatabaseInstance() uidIsRemoteContact:_uid]] andStatus:statusString accentColored:accentColored allowAnimatioon:false toggleMode:TGModernConversationControllerTitleToggleNone];
+        [self _setTitle:[self stringForTitle:user] andStatus:statusString accentColored:accentColored allowAnimatioon:false toggleMode:TGModernConversationControllerTitleToggleNone];
         [self _setAvatarConversationId:_uid firstName:user.firstName lastName:user.lastName];
         [self _setAvatarUrl:user.photoFullUrlSmall];
     }
@@ -1864,9 +1854,6 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
                                 TGDispatchOnMainThread(^{
                                     if (botContextPeerId != nil) {
                                         [[TGInterfaceManager instance] navigateToConversationWithId:[botContextPeerId longLongValue] conversation:nil performActions:@{@"replaceInitialText": [[NSString alloc] initWithFormat:@"@%@ %@", user.userName, query]} atMessage:nil clearStack:true openKeyboard:true canOpenKeyboardWhileInTransition:false animated:true];
-                                    } else {
-                                        //[self.controller setInputText:[[NSString alloc] initWithFormat:@"@%@ %@", user.userName, query] replace:true selectRange:NSMakeRange(0, 0)];
-                                        //[self.controller openKeyboard];
                                     }
                                 });
                                 
@@ -1898,7 +1885,6 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 }
 
 - (void)startVoiceCall {
-    TGLog(@"CALL ui.startVoiceCall peer=%d supports=%d private=%d", _uid, _supportsCalls ? 1 : 0, _callsPrivate ? 1 : 0);
     if (_callsPrivate) {
         TGUser *user = [TGDatabaseInstance() loadUser:_uid];
         [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Call.ConnectionErrorTitle") message:[NSString stringWithFormat:TGLocalized(@"Call.PrivacyErrorMessage"), user.displayFirstName] cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];

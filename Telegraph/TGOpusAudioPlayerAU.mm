@@ -1,75 +1,88 @@
 #import "TGOpusAudioPlayerAU.h"
-
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
-
 #import "../submodules/LegacyComponents/LegacyComponents/ASQueue.h"
-
-#import "TGAudioBuffer.h"
-
+#import "TGPCMBuffer.h"
 #import "opusfile.h"
-
 #import <AudioUnit/AudioUnit.h>
+#import <AudioToolbox/AUGraph.h>
+#import <AudioToolbox/AudioServices.h>
+#include <pthread.h>
+#include <math.h>
 
-#import <map>
-#import <libkern/OSAtomic.h>
+static const int TGOpusAudioPlayerSampleRate = 48000;
+static const uint32_t TGOpusAudioPlayerDecodeFrames = 5760;
 
-#import "../submodules/MtProtoKit/MTProtoKit/MTTime.h"
+@interface TGOpusAudioPlayerReference : NSObject
+@property (nonatomic, weak) TGOpusAudioPlayerAU *value;
+@end
 
-#define kOutputBus 0
-#define kInputBus 1
-
-static const int TGOpusAudioPlayerBufferCount = 3;
-static const int TGOpusAudioPlayerSampleRate = 48000; // libopusfile is bound to use 48 kHz
-
-static std::map<intptr_t, CFTypeRef> activeAudioPlayers;
-
-static TG_SYNCHRONIZED_DEFINE(filledBuffersLock) = PTHREAD_MUTEX_INITIALIZER;
-
-static volatile OSSpinLock audioPositionLock = OS_SPINLOCK_INIT;
+@implementation TGOpusAudioPlayerReference
+@end
 
 @interface TGOpusAudioPlayerAU ()
 {
-@public
-    intptr_t _playerId;
-    
     NSString *_filePath;
-    NSInteger _fileSize;
-    
     CGFloat _rate;
-    bool _isSeekable;
-    int64_t _totalPcmDuration;
-    
     bool _isPaused;
-    
+    bool _isSeekable;
+    bool _finished;
     OggOpusFile *_opusFile;
     AUGraph _graph;
     AudioComponentInstance _timePitchAudioUnit;
-    bool _audioGraphInitialized;
-    
-    TGAudioBuffer *_filledAudioBuffers[TGOpusAudioPlayerBufferCount];
-    int _filledAudioBufferCount;
-    int _filledAudioBufferPosition;
-    
+    AudioComponentInstance _converterAudioUnit;
+    AudioComponentInstance _outputAudioUnit;
+    TGPCMBuffer *_pcmBuffer;
+    dispatch_source_t _decodeTimer;
+    TGOpusAudioPlayerReference *_timerReference;
+    int64_t _bufferStartPcmOffset;
+    int64_t _renderedPcmOffset;
+    uint32_t _lastReadOffset;
     int64_t _currentPcmOffset;
-    bool _finished;
+    int64_t _totalPcmDuration;
+    pthread_mutex_t _positionMutex;
+    NSTimeInterval _outputLatency;
+    CFTimeInterval _drainDeadline;
 }
-
+- (bool)fillAvailablePCM;
+- (void)updatePosition;
+- (void)servicePlayback;
+- (bool)setupGraph;
 @end
+
+static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags, const AudioTimeStamp *__unused inTimeStamp, UInt32 __unused inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData)
+{
+    TGPCMBuffer *pcmBuffer = (TGPCMBuffer *)inRefCon;
+    if (ioData == NULL || ioData->mNumberBuffers != 1 || ioData->mBuffers[0].mData == NULL)
+        return kAudioUnitErr_InvalidParameter;
+    AudioBuffer *buffer = &ioData->mBuffers[0];
+    uint32_t frames = buffer->mDataByteSize / (2 * sizeof(int16_t));
+    if (frames > inNumberFrames)
+        frames = inNumberFrames;
+    uint32_t readFrames = TGPCMBufferRead(pcmBuffer, (int16_t *)buffer->mData, frames);
+    size_t readBytes = (size_t)readFrames * 2 * sizeof(int16_t);
+    size_t requiredBytes = (size_t)frames * 2 * sizeof(int16_t);
+    if (readBytes < requiredBytes)
+        memset((uint8_t *)buffer->mData + readBytes, 0, requiredBytes - readBytes);
+    buffer->mNumberChannels = 2;
+    buffer->mDataByteSize = frames * 2 * sizeof(int16_t);
+    if (readFrames == 0 && ioActionFlags != NULL)
+        *ioActionFlags |= kAudioUnitRenderAction_OutputIsSilence;
+    else if (ioActionFlags != NULL)
+        *ioActionFlags &= ~kAudioUnitRenderAction_OutputIsSilence;
+    return noErr;
+}
 
 @implementation TGOpusAudioPlayerAU
 
 + (bool)canPlayFile:(NSString *)path
 {
     int error = OPUS_OK;
-    OggOpusFile *file = op_test_file([path UTF8String], &error);
-    if (file != NULL)
-    {
-        error = op_test_open(file);
-        op_free(file);
-        
-        return error == OPUS_OK;
-    }
-    return false;
+    OggOpusFile *file = op_test_file([path fileSystemRepresentation], &error);
+    if (file == NULL)
+        return false;
+    error = op_test_open(file);
+    op_free(file);
+    return error == OPUS_OK;
 }
 
 - (instancetype)initWithPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession
@@ -77,23 +90,10 @@ static volatile OSSpinLock audioPositionLock = OS_SPINLOCK_INIT;
     self = [super initWithMusic:music controlAudioSession:controlAudioSession];
     if (self != nil)
     {
-        _filePath = path;
+        _filePath = [path copy];
         _rate = 1.0f;
-        
-        static intptr_t nextPlayerId = 1;
-        _playerId = nextPlayerId++;
-        
         _isPaused = true;
-        
-        [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
-        {
-            _fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileSize] integerValue];
-            if (_fileSize == 0)
-            {
-                TGLog(@"[TGOpusAudioPlayer#%p invalid file]", self);
-                [self cleanupAndReportError];
-            }
-        }];
+        pthread_mutex_init(&_positionMutex, NULL);
     }
     return self;
 }
@@ -101,191 +101,241 @@ static volatile OSSpinLock audioPositionLock = OS_SPINLOCK_INIT;
 - (void)dealloc
 {
     [self cleanup];
+    pthread_mutex_destroy(&_positionMutex);
+}
+
+- (void)cancelDecodeTimer
+{
+    @synchronized (_timerReference)
+    {
+        _timerReference.value = nil;
+    }
+    _timerReference = nil;
+    if (_decodeTimer != NULL)
+    {
+        dispatch_source_cancel(_decodeTimer);
+#if !OS_OBJECT_USE_OBJC
+        dispatch_release(_decodeTimer);
+#endif
+        _decodeTimer = NULL;
+    }
+}
+
+- (void)cleanup
+{
+    [self cancelDecodeTimer];
+    AUGraph graph = _graph;
+    OggOpusFile *opusFile = _opusFile;
+    TGPCMBuffer *pcmBuffer = _pcmBuffer;
+    _graph = NULL;
+    _opusFile = NULL;
+    _pcmBuffer = NULL;
+    _timePitchAudioUnit = NULL;
+    _converterAudioUnit = NULL;
+    _outputAudioUnit = NULL;
+    _isPaused = true;
+    _drainDeadline = 0.0;
+    [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
+    {
+        if (graph != NULL)
+        {
+            AUGraphStop(graph);
+            AUGraphUninitialize(graph);
+            AUGraphClose(graph);
+            DisposeAUGraph(graph);
+        }
+        if (opusFile != NULL)
+            op_free(opusFile);
+        TGPCMBufferDestroy(pcmBuffer);
+    }];
+    [self _endAudioSessionFinal];
 }
 
 - (void)cleanupAndReportError
 {
     [self cleanup];
+    [self _notifyPaused];
 }
 
-- (void)cleanup
+- (bool)perform:(OSStatus)status error:(NSString *)operation
 {
-    CFTypeRef activePlayer = NULL;
-    TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-    
-    auto activePlayerIt = activeAudioPlayers.find(_playerId);
-    if (activePlayerIt != activeAudioPlayers.end())
-    {
-        activePlayer = activePlayerIt->second;
-        activeAudioPlayers.erase(activePlayerIt);
-    }
-    
-    for (int i = 0; i < TGOpusAudioPlayerBufferCount; i++)
-    {
-        if (_filledAudioBuffers[i] != NULL)
-        {
-            TGAudioBufferDispose(_filledAudioBuffers[i]);
-            _filledAudioBuffers[i] = NULL;
-        }
-    }
-    _filledAudioBufferCount = 0;
-    _filledAudioBufferPosition = 0;
-    
-    TG_SYNCHRONIZED_END(filledBuffersLock);
-    if (activePlayer != NULL)
-        CFRelease(activePlayer);
-    
-    OggOpusFile *opusFile = _opusFile;
-    _opusFile = NULL;
-    
-    AUGraph audioGraph = _graph;
-    _graph = NULL;
-    _timePitchAudioUnit = NULL;
-    _audioGraphInitialized = false;
-    
-    intptr_t objectId = (intptr_t)self;
-    
-    [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
-    {
-        if (audioGraph != NULL)
-        {
-            OSStatus status = noErr;
-            
-            status = AUGraphStop(audioGraph);
-            if (status != noErr)
-                TGLog(@"[TGOpusAudioPlayer#%x AUGraphStop failed: %d]", objectId, (int)status);
-            
-            status = AUGraphUninitialize(audioGraph);
-            if (status != noErr)
-                TGLog(@"[TGOpusAudioPlayer#%x AUGraphUninitialize failed: %d]", objectId, (int)status);
-            
-            status = AUGraphClose(audioGraph);
-            if (status != noErr)
-                TGLog(@"[TGOpusAudioPlayer#%x AUGraphClose failed: %d]", objectId, (int)status);
-            
-            status = DisposeAUGraph(audioGraph);
-            if (status != noErr)
-                TGLog(@"[TGOpusAudioPlayer#%x DisposeAUGraph failed: %d]", objectId, (int)status);
-        }
-        
-        if (opusFile != NULL)
-            op_free(opusFile);
-    }];
-    
-    [self _endAudioSessionFinal];
+    if (status == noErr)
+        return true;
+    TGLog(@"[TGOpusAudioPlayer#%p %@ failed: %d]", self, operation, (int)status);
+    [self cleanupAndReportError];
+    return false;
 }
 
-static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRenderActionFlags *ioActionFlags, __unused const AudioTimeStamp *inTimeStamp, __unused UInt32 inBusNumber, __unused UInt32 inNumberFrames, AudioBufferList *ioData)
+- (bool)setupGraph
 {
-    intptr_t playerId = (intptr_t)inRefCon;
-    
-    TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-    
-    TGOpusAudioPlayerAU *self = nil;
-    auto it = activeAudioPlayers.find(playerId);
-    if (it != activeAudioPlayers.end())
-        self = (__bridge TGOpusAudioPlayerAU *)it->second;
-    
-    if (self != nil)
+    if (![self perform:NewAUGraph(&_graph) error:@"NewAUGraph"])
+        return false;
+    AUNode converterNode, timePitchNode, outputNode;
+    AudioComponentDescription converterDescription = {};
+    converterDescription.componentType = kAudioUnitType_FormatConverter;
+    converterDescription.componentSubType = kAudioUnitSubType_AUConverter;
+    converterDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
+    AudioComponentDescription timePitchDescription = converterDescription;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+    timePitchDescription.componentSubType = kAudioUnitSubType_AUiPodTime;
+#else
+    timePitchDescription.componentSubType = iosMajorVersion() >= 5 ? kAudioUnitSubType_AUiPodTimeOther : kAudioUnitSubType_AUiPodTime;
+#endif
+    AudioComponentDescription outputDescription = {};
+    outputDescription.componentType = kAudioUnitType_Output;
+    outputDescription.componentSubType = kAudioUnitSubType_RemoteIO;
+    outputDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
+    if (![self perform:AUGraphAddNode(_graph, &converterDescription, &converterNode) error:@"converter node"] ||
+        ![self perform:AUGraphAddNode(_graph, &timePitchDescription, &timePitchNode) error:@"time pitch node"] ||
+        ![self perform:AUGraphAddNode(_graph, &outputDescription, &outputNode) error:@"output node"] ||
+        ![self perform:AUGraphOpen(_graph) error:@"AUGraphOpen"])
+        return false;
+    AudioComponentInstance converterUnit, outputUnit;
+    if (![self perform:AUGraphNodeInfo(_graph, converterNode, NULL, &converterUnit) error:@"converter info"] ||
+        ![self perform:AUGraphNodeInfo(_graph, timePitchNode, NULL, &_timePitchAudioUnit) error:@"time pitch info"] ||
+        ![self perform:AUGraphNodeInfo(_graph, outputNode, NULL, &outputUnit) error:@"output info"])
+        return false;
+    _converterAudioUnit = converterUnit;
+    _outputAudioUnit = outputUnit;
+    AudioStreamBasicDescription inputFormat = {};
+    inputFormat.mSampleRate = TGOpusAudioPlayerSampleRate;
+    inputFormat.mFormatID = kAudioFormatLinearPCM;
+    inputFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    inputFormat.mFramesPerPacket = 1;
+    inputFormat.mChannelsPerFrame = 2;
+    inputFormat.mBitsPerChannel = 16;
+    inputFormat.mBytesPerFrame = 2 * sizeof(int16_t);
+    inputFormat.mBytesPerPacket = inputFormat.mBytesPerFrame;
+    AudioStreamBasicDescription processingFormat = {};
+    UInt32 formatSize = sizeof(processingFormat);
+    if (![self perform:AudioUnitGetProperty(_timePitchAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &processingFormat, &formatSize) error:@"time pitch format"])
+        return false;
+    processingFormat.mSampleRate = TGOpusAudioPlayerSampleRate;
+    if (![self perform:AudioUnitSetProperty(converterUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &inputFormat, sizeof(inputFormat)) error:@"PCM input format"] ||
+        ![self perform:AudioUnitSetProperty(converterUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &processingFormat, sizeof(processingFormat)) error:@"converter output format"] ||
+        ![self perform:AudioUnitSetProperty(_timePitchAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &processingFormat, sizeof(processingFormat)) error:@"time pitch input format"] ||
+        ![self perform:AudioUnitSetProperty(_timePitchAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &processingFormat, sizeof(processingFormat)) error:@"time pitch output format"] ||
+        ![self perform:AudioUnitSetProperty(outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &processingFormat, sizeof(processingFormat)) error:@"hardware input format"])
+        return false;
+    UInt32 maximumFrames = 4096;
+    AudioComponentInstance units[] = {converterUnit, _timePitchAudioUnit, outputUnit};
+    for (NSUInteger i = 0; i < sizeof(units) / sizeof(units[0]); i++)
     {
-        TGAudioBuffer **freedAudioBuffers = NULL;
-        int freedAudioBufferCount = 0;
-        
-        for (int i = 0; i < (int)ioData->mNumberBuffers; i++)
+        if (![self perform:AudioUnitSetProperty(units[i], kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maximumFrames, sizeof(maximumFrames)) error:@"maximum frames"])
+            return false;
+    }
+    AURenderCallbackStruct callback = {};
+    callback.inputProc = TGOpusAudioPlayerCallback;
+    callback.inputProcRefCon = _pcmBuffer;
+    if (![self perform:AUGraphSetNodeInputCallback(_graph, converterNode, 0, &callback) error:@"PCM callback"] ||
+        ![self perform:AUGraphConnectNodeInput(_graph, converterNode, 0, timePitchNode, 0) error:@"converter connection"] ||
+        ![self perform:AUGraphConnectNodeInput(_graph, timePitchNode, 0, outputNode, 0) error:@"output connection"] ||
+        ![self perform:AudioUnitSetParameter(_timePitchAudioUnit, kTimePitchParam_Rate, kAudioUnitScope_Global, 0, (Float32)_rate, 0) error:@"playback rate"] ||
+        ![self perform:AUGraphInitialize(_graph) error:@"AUGraphInitialize"])
+        return false;
+    Float32 hardwareLatency = 0.0f, bufferDuration = 0.0f;
+    UInt32 size = sizeof(hardwareLatency);
+    AudioSessionGetProperty(kAudioSessionProperty_CurrentHardwareOutputLatency, &size, &hardwareLatency);
+    size = sizeof(bufferDuration);
+    AudioSessionGetProperty(kAudioSessionProperty_CurrentHardwareIOBufferDuration, &size, &bufferDuration);
+    Float64 pitchLatency = 0.0;
+    size = sizeof(pitchLatency);
+    AudioUnitGetProperty(_timePitchAudioUnit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &pitchLatency, &size);
+    _outputLatency = MAX(0.1, hardwareLatency + 2.0 * bufferDuration + pitchLatency);
+    return true;
+}
+
+- (bool)fillAvailablePCM
+{
+    opus_int16 samples[TGOpusAudioPlayerDecodeFrames * 2];
+    int holes = 0;
+    while (!_finished && TGPCMBufferWritable(_pcmBuffer) >= TGOpusAudioPlayerDecodeFrames)
+    {
+        int frames = op_read_stereo(_opusFile, samples, TGOpusAudioPlayerDecodeFrames * 2);
+        if (frames == OP_HOLE && holes++ < 16)
+            continue;
+        if (frames < 0)
         {
-            AudioBuffer *buffer = &ioData->mBuffers[i];
-            
-            buffer->mNumberChannels = 1;
-            
-            int requiredBytes = buffer->mDataByteSize;
-            int writtenBytes = 0;
-            
-            while (self->_filledAudioBufferCount > 0 && writtenBytes < requiredBytes)
+            TGLog(@"[TGOpusAudioPlayer#%p decode failed: %d]", self, frames);
+            [self cleanupAndReportError];
+            return false;
+        }
+        if (frames == 0)
+        {
+            _finished = true;
+            break;
+        }
+        holes = 0;
+        TGPCMBufferWrite(_pcmBuffer, samples, (uint32_t)frames);
+    }
+    return true;
+}
+
+- (void)updatePosition
+{
+    if (_pcmBuffer == NULL)
+        return;
+    uint32_t readOffset = TGPCMBufferLoad(&_pcmBuffer->readOffset);
+    _renderedPcmOffset += (uint32_t)(readOffset - _lastReadOffset);
+    _lastReadOffset = readOffset;
+    pthread_mutex_lock(&_positionMutex);
+    _currentPcmOffset = _renderedPcmOffset;
+    pthread_mutex_unlock(&_positionMutex);
+}
+
+- (void)servicePlayback
+{
+    if (_isPaused || _opusFile == NULL || _pcmBuffer == NULL)
+        return;
+    @autoreleasepool
+    {
+        if (![self fillAvailablePCM])
+            return;
+        [self updatePosition];
+        if (_finished && TGPCMBufferReadable(_pcmBuffer) == 0)
+        {
+            CFTimeInterval now = CACurrentMediaTime();
+            if (_drainDeadline == 0.0)
+                _drainDeadline = now + _outputLatency;
+            else if (now >= _drainDeadline)
             {
-                OSSpinLockLock(&audioPositionLock);
-                self->_currentPcmOffset = self->_filledAudioBuffers[0]->pcmOffset + self->_filledAudioBufferPosition / 2;
-                OSSpinLockUnlock(&audioPositionLock);
-                
-                int takenBytes = MIN((int)self->_filledAudioBuffers[0]->size - self->_filledAudioBufferPosition, requiredBytes - writtenBytes);
-                
-                if (takenBytes != 0)
-                {
-                    memcpy(((uint8_t *)buffer->mData) + writtenBytes, self->_filledAudioBuffers[0]->data + self->_filledAudioBufferPosition, takenBytes);
-                    writtenBytes += takenBytes;
-                }
-                
-                if (self->_filledAudioBufferPosition + takenBytes >= (int)self->_filledAudioBuffers[0]->size)
-                {
-                    if (freedAudioBuffers == NULL)
-                        freedAudioBuffers = (TGAudioBuffer **)malloc(sizeof(TGAudioBuffer *) * TGOpusAudioPlayerBufferCount);
-                    freedAudioBuffers[freedAudioBufferCount] = self->_filledAudioBuffers[0];
-                    freedAudioBufferCount++;
-                    
-                    for (int i = 0; i < TGOpusAudioPlayerBufferCount - 1; i++)
-                    {
-                        self->_filledAudioBuffers[i] = self->_filledAudioBuffers[i + 1];
-                    }
-                    self->_filledAudioBuffers[TGOpusAudioPlayerBufferCount - 1] = NULL;
-                    
-                    self->_filledAudioBufferCount--;
-                    self->_filledAudioBufferPosition = 0;
-                }
-                else
-                    self->_filledAudioBufferPosition += takenBytes;
+                [self pause:nil];
+                [self _notifyFinished];
             }
-            
-            if (writtenBytes < requiredBytes)
-                memset(((uint8_t *)buffer->mData) + writtenBytes, 0, requiredBytes - writtenBytes);
-        }
-        
-        if (freedAudioBufferCount != 0)
-        {
-            [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
-            {
-                for (int i = 0; i < freedAudioBufferCount; i++)
-                {
-                    [self fillBuffer:freedAudioBuffers[i]];
-                }
-                
-                free(freedAudioBuffers);
-            }];
         }
     }
-    else
-    {
-        for (int i = 0; i < (int)ioData->mNumberBuffers; i++)
-        {
-            AudioBuffer *buffer = &ioData->mBuffers[i];
-            buffer->mNumberChannels = 1;
-            memset(buffer->mData, 0, buffer->mDataByteSize);
-        }
-    }
-    
-    TG_SYNCHRONIZED_END(filledBuffersLock);
-    
-    return noErr;
 }
 
-- (void)setRate:(CGFloat)rate {
+- (void)startDecodeTimer
+{
+    [self cancelDecodeTimer];
+    TGOpusAudioPlayerReference *reference = [[TGOpusAudioPlayerReference alloc] init];
+    reference.value = self;
+    _timerReference = reference;
+    _decodeTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, [TGAudioPlayer _playerQueue].nativeQueue);
+    dispatch_source_set_timer(_decodeTimer, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC), 20 * NSEC_PER_MSEC, 2 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(_decodeTimer, ^
+    {
+        TGOpusAudioPlayerAU *player = nil;
+        @synchronized (reference)
+        {
+            player = reference.value;
+        }
+        [player servicePlayback];
+    });
+    dispatch_resume(_decodeTimer);
+}
+
+- (void)setRate:(CGFloat)rate
+{
+    if (!isfinite(rate) || rate <= 0.0f)
+        return;
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
         _rate = rate;
-        
         if (_timePitchAudioUnit != NULL)
-            AudioUnitSetParameter(_timePitchAudioUnit, kTimePitchParam_Rate, kAudioUnitScope_Global, 0, (Float32)_rate, 0);
+            [self perform:AudioUnitSetParameter(_timePitchAudioUnit, kTimePitchParam_Rate, kAudioUnitScope_Global, 0, (Float32)rate, 0) error:@"playback rate"];
     }];
-}
-
-- (bool)perform:(OSStatus)status error:(NSString *)error
-{
-    if (status == noErr) {
-        return true;
-    }
-    else {
-        TGLog(@"[TGOpusAudioPlayer#%x %@ failed: %d]", self, error, (int)status);
-        [self cleanupAndReportError];
-        return false;
-    }
 }
 
 - (void)playFromPosition:(NSTimeInterval)position
@@ -294,349 +344,84 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
     {
         if (!_isPaused)
             return;
-        
-        if (_graph == NULL)
+        [self _beginAudioSession];
+        if (_opusFile == NULL)
         {
-            [self _beginAudioSession];
-            
-            _isPaused = false;
-            
-            int openError = OPUS_OK;
-            _opusFile = op_open_file([_filePath UTF8String], &openError);
-            if (_opusFile == NULL || openError != OPUS_OK)
+            int error = OPUS_OK;
+            _opusFile = op_open_file([_filePath fileSystemRepresentation], &error);
+            if (_opusFile == NULL)
             {
-                TGLog(@"[TGOpusAudioPlayer#%p op_open_file failed: %d]", self, openError);
+                TGLog(@"[TGOpusAudioPlayer#%p open failed: %d]", self, error);
                 [self cleanupAndReportError];
                 return;
             }
-            
             _isSeekable = op_seekable(_opusFile);
-            _totalPcmDuration = op_pcm_total(_opusFile, -1);
-            
-            if (![self perform: NewAUGraph(&_graph) error:@"NewAUGraph"])
-                return;
-            
-            AUNode converterNode;
-            AudioComponentDescription converterDescription;
-            converterDescription.componentType = kAudioUnitType_FormatConverter;
-            converterDescription.componentSubType = kAudioUnitSubType_AUConverter;
-            converterDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
-            if (![self perform: AUGraphAddNode(_graph, &converterDescription, &converterNode) error:@"AUGraphAddNode converter"])
-                return;
-            
-            AUNode timePitchNode;
-            AudioComponentDescription timePitchDescription;
-            timePitchDescription.componentType = kAudioUnitType_FormatConverter;
-            timePitchDescription.componentSubType = kAudioUnitSubType_AUiPodTimeOther;
-            timePitchDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
-            if (![self perform: AUGraphAddNode(_graph, &timePitchDescription, &timePitchNode) error:@"AUGraphAddNode timePitch"])
-                return;
-            
-            AUNode outputNode;
-            AudioComponentDescription desc;
-            desc.componentType = kAudioUnitType_Output;
-            desc.componentSubType = kAudioUnitSubType_RemoteIO;
-            desc.componentFlags = 0;
-            desc.componentFlagsMask = 0;
-            desc.componentManufacturer = kAudioUnitManufacturer_Apple;
-            if (![self perform: AUGraphAddNode(_graph, &desc, &outputNode) error:@"AUGraphAddNode output"])
-                return;
-
-            if (![self perform: AUGraphOpen(_graph) error:@"AUGraphOpen"])
-                return;
-            
-            if (![self perform: AUGraphConnectNodeInput(_graph, converterNode, 0, timePitchNode, 0) error:@"AUGraphConnectNodeInput converter"])
-                return;
-            
-            if (![self perform: AUGraphConnectNodeInput(_graph, timePitchNode, 0, outputNode, 0) error:@"AUGraphConnectNodeInput timePitch"])
-                return;
-            
-            AudioComponentInstance converterAudioUnit;
-            if (![self perform: AUGraphNodeInfo(_graph, converterNode, &converterDescription, &converterAudioUnit) error:@"AUGraphNodeInfo converter"])
-                return;
-            
-            AudioComponentInstance timePitchAudioUnit;
-            if (![self perform: AUGraphNodeInfo(_graph, timePitchNode, &timePitchDescription, &timePitchAudioUnit) error:@"AUGraphNodeInfo timePitch"])
-                return;
-
-            AudioUnitSetParameter(timePitchAudioUnit, kTimePitchParam_Rate, kAudioUnitScope_Global, 0, (Float32)_rate, 0);
-            
-            _timePitchAudioUnit = timePitchAudioUnit;
-            
-            AudioComponentInstance outputAudioUnit;
-            if (![self perform: AUGraphNodeInfo(_graph, outputNode, &desc, &outputAudioUnit) error:@"AUGraphNodeInfo output"])
-                return;
-            
-            AudioStreamBasicDescription outputAudioFormat;
-            outputAudioFormat.mSampleRate = TGOpusAudioPlayerSampleRate;
-            outputAudioFormat.mFormatID = kAudioFormatLinearPCM;
-            outputAudioFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
-            outputAudioFormat.mFramesPerPacket = 1;
-            outputAudioFormat.mChannelsPerFrame = 1;
-            outputAudioFormat.mBitsPerChannel = 16;
-            outputAudioFormat.mBytesPerPacket = 2;
-            outputAudioFormat.mBytesPerFrame = 2;
-            
-            AudioUnitSetProperty(converterAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &outputAudioFormat, sizeof(outputAudioFormat));
-            
-            AudioStreamBasicDescription streamFormat;
-            AudioUnitSetProperty(converterAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &streamFormat, sizeof(streamFormat));
-            AudioUnitSetProperty(timePitchAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &streamFormat, sizeof(streamFormat));
-            AudioUnitSetProperty(converterAudioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &streamFormat, sizeof(streamFormat));
-            
-            AURenderCallbackStruct callbackStruct;
-            callbackStruct.inputProc = &TGOpusAudioPlayerCallback;
-            callbackStruct.inputProcRefCon = (void *)_playerId;
-            
-            if (![self perform: AUGraphSetNodeInputCallback(_graph, converterNode, 0, &callbackStruct) error:@"AUGraphSetNodeInputCallback"])
-                return;
-            
-            static const UInt32 one = 1;
-            if (![self perform: AudioUnitSetProperty(outputAudioUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, kOutputBus, &one, sizeof(one)) error:@"AudioUnitSetProperty EnableIO"])
-                return;
-            
-            if (![self perform: AUGraphInitialize(_graph) error:@"AUGraphInitialize"])
-                return;
-            
-            TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-            activeAudioPlayers[_playerId] = (__bridge_retained CFTypeRef)self;
-            TG_SYNCHRONIZED_END(filledBuffersLock);
-            
-            NSUInteger bufferByteSize = [self bufferByteSize];
-            for (int i = 0; i < TGOpusAudioPlayerBufferCount; i++)
+            pthread_mutex_lock(&_positionMutex);
+            _totalPcmDuration = MAX((int64_t)0, op_pcm_total(_opusFile, -1));
+            pthread_mutex_unlock(&_positionMutex);
+            _pcmBuffer = TGPCMBufferCreate(32768, 2);
+            if (_pcmBuffer == NULL)
             {
-                _filledAudioBuffers[i] = TGAudioBufferWithCapacity(bufferByteSize);
-            }
-            _filledAudioBufferCount = TGOpusAudioPlayerBufferCount;
-            _filledAudioBufferPosition = 0;
-            
-            _finished = false;
-            
-            if (_isSeekable) {
-                if (position >= 0.0) {
-                    op_pcm_seek(_opusFile, (ogg_int64_t)(position * TGOpusAudioPlayerSampleRate));
-                } else if (_currentPcmOffset > 0) {
-                    op_pcm_seek(_opusFile, _currentPcmOffset);
-                }
-            }
-            
-            if (![self perform: AUGraphStart(_graph) error:@"AUGraphStart"])
+                [self cleanupAndReportError];
                 return;
-            
-            _audioGraphInitialized = true;
+            }
+            if (![self setupGraph])
+                return;
         }
-        else if (!_audioGraphInitialized) {
-            [self _beginAudioSession];
-            
-            if (_isSeekable && position >= 0.0)
-            {
-                int result = op_pcm_seek(_opusFile, (ogg_int64_t)(position * TGOpusAudioPlayerSampleRate));
-                if (result != OPUS_OK)
-                    TGLog(@"[TGOpusAudioPlayer#%p op_pcm_seek failed: %d]", self, result);
-                
-                ogg_int64_t pcmPosition = op_pcm_tell(_opusFile);
-                _currentPcmOffset = pcmPosition;
-                
-                _isPaused = false;
-            }
-            else
-                _isPaused = false;
-            
-            _finished = false;
-            
-            TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-            for (int i = 0; i < _filledAudioBufferCount; i++)
-            {
-                _filledAudioBuffers[i]->size = 0;
-            }
-            self->_filledAudioBufferPosition = 0;
-            TG_SYNCHRONIZED_END(filledBuffersLock);
-            
-            TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-            if (activeAudioPlayers.find(_playerId) == activeAudioPlayers.end())
-                activeAudioPlayers[_playerId] = (__bridge_retained CFTypeRef)self;
-            TG_SYNCHRONIZED_END(filledBuffersLock);
-            AUGraphStart(_graph);
-            _audioGraphInitialized = true;
-        }
-        else
+        if (![self perform:AUGraphInitialize(_graph) error:@"resume initialization"])
+            return;
+        if (_isSeekable)
         {
-            [self _beginAudioSession];
-            
-            if (_isSeekable && position >= 0.0)
+            pthread_mutex_lock(&_positionMutex);
+            int64_t target = position >= 0.0 && isfinite(position) ? (int64_t)(MIN(position, _totalPcmDuration / (double)TGOpusAudioPlayerSampleRate) * TGOpusAudioPlayerSampleRate) : _currentPcmOffset;
+            if (position < 0.0 && _finished && TGPCMBufferReadable(_pcmBuffer) == 0)
+                target = 0;
+            pthread_mutex_unlock(&_positionMutex);
+            int result = op_pcm_seek(_opusFile, target);
+            if (result != OPUS_OK)
             {
-                int result = op_pcm_seek(_opusFile, (ogg_int64_t)(position * TGOpusAudioPlayerSampleRate));
-                if (result != OPUS_OK)
-                    TGLog(@"[TGOpusAudioPlayer#%p op_pcm_seek failed: %d]", self, result);
-                
-                ogg_int64_t pcmPosition = op_pcm_tell(_opusFile);
-                _currentPcmOffset = pcmPosition;
-            
-                _isPaused = false;
+                [self cleanupAndReportError];
+                return;
             }
-            else
-                _isPaused = false;
-            
+            TGPCMBufferReset(_pcmBuffer);
+            AudioComponentInstance units[] = {_converterAudioUnit, _timePitchAudioUnit, _outputAudioUnit};
+            for (NSUInteger i = 0; i < sizeof(units) / sizeof(units[0]); i++)
+            {
+                if (![self perform:AudioUnitReset(units[i], kAudioUnitScope_Global, 0) error:@"seek reset"])
+                    return;
+            }
+            _bufferStartPcmOffset = MAX((ogg_int64_t)0, op_pcm_tell(_opusFile));
+            _renderedPcmOffset = _bufferStartPcmOffset;
+            _lastReadOffset = 0;
             _finished = false;
-            
-            TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-            for (int i = 0; i < _filledAudioBufferCount; i++)
-            {
-                _filledAudioBuffers[i]->size = 0;
-            }
-            self->_filledAudioBufferPosition = 0;
-            TG_SYNCHRONIZED_END(filledBuffersLock);
         }
+        if (![self fillAvailablePCM])
+            return;
+        _drainDeadline = 0.0;
+        [self updatePosition];
+        _isPaused = false;
+        [self startDecodeTimer];
+        [self perform:AUGraphStart(_graph) error:@"AUGraphStart"];
     }];
-}
-
-- (void)fillBuffer:(TGAudioBuffer *)audioBuffer
-{
-    if (_opusFile != NULL)
-    {
-        audioBuffer->pcmOffset = MAX(0, op_pcm_tell(_opusFile));
-        
-        if (!_isPaused)
-        {
-            if (_finished)
-            {
-                bool notifyFinished = false;
-                TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-                if (_filledAudioBufferCount == 0)
-                    notifyFinished = true;
-                TG_SYNCHRONIZED_END(filledBuffersLock);
-                
-                if (notifyFinished)
-                {
-                    if (_audioGraphInitialized)
-                    {
-                        AUGraphStop(_graph);
-                        _audioGraphInitialized = false;
-                    }
-                    CFTypeRef activePlayer = NULL;
-                    TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-                    auto activePlayerIt = activeAudioPlayers.find(_playerId);
-                    if (activePlayerIt != activeAudioPlayers.end())
-                    {
-                        activePlayer = activePlayerIt->second;
-                        activeAudioPlayers.erase(activePlayerIt);
-                    }
-                    TG_SYNCHRONIZED_END(filledBuffersLock);
-                    if (activePlayer != NULL)
-                        CFRelease(activePlayer);
-                    _isPaused = true;
-                    [self _endAudioSession];
-                    [self _notifyFinished];
-                }
-                
-                return;
-            }
-            else
-            {
-                int availableOutputBytes = (int)audioBuffer->capacity;
-                int writtenOutputBytes = 0;
-                
-                bool endOfFileReached = false;
-                
-                bool bufferPcmOffsetSet = false;
-                
-                while (writtenOutputBytes < availableOutputBytes)
-                {
-                    if (!bufferPcmOffsetSet)
-                    {
-                        bufferPcmOffsetSet = true;
-                        audioBuffer->pcmOffset = MAX(0, op_pcm_tell(_opusFile));
-                    }
-                    
-                    int readSamples = op_read(_opusFile, (opus_int16 *)(audioBuffer->data + writtenOutputBytes), (availableOutputBytes - writtenOutputBytes) / 2, NULL);
-                    
-                    if (readSamples > 0)
-                        writtenOutputBytes += readSamples * 2;
-                    else
-                    {
-                        if (readSamples < 0)
-                            TGLog(@"[TGOpusAudioPlayer#%p op_read failed: %d]", self, readSamples);
-                        
-                        endOfFileReached = true;
-                        
-                        break;
-                    }
-                }
-                
-                audioBuffer->size = writtenOutputBytes;
-                
-                if (endOfFileReached)
-                    _finished = true;
-            }
-        }
-        else
-        {
-            memset(audioBuffer->data, 0, audioBuffer->capacity);
-            audioBuffer->size = audioBuffer->capacity;
-            audioBuffer->pcmOffset = _currentPcmOffset;
-        }
-    }
-    else
-    {
-        memset(audioBuffer->data, 0, audioBuffer->capacity);
-        audioBuffer->size = audioBuffer->capacity;
-        audioBuffer->pcmOffset = _totalPcmDuration;
-    }
-    
-    TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-    _filledAudioBufferCount++;
-    _filledAudioBuffers[_filledAudioBufferCount - 1] = audioBuffer;
-    TG_SYNCHRONIZED_END(filledBuffersLock);
-}
-
-- (NSUInteger)bufferByteSize
-{
-    static const NSUInteger maxBufferSize = 0x50000;
-    static const NSUInteger minBufferSize = 0x4000;
-    
-    Float64 seconds = 0.4;
-    
-    Float64 numPacketsForTime = TGOpusAudioPlayerSampleRate * seconds;
-    NSUInteger result = (NSUInteger)(numPacketsForTime * 2);
-    
-    return MAX(minBufferSize, MIN(maxBufferSize, result));
 }
 
 - (void)pause:(void (^)())completion
 {
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
-        _isPaused = true;
-        
-        TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-        for (int i = 0; i < _filledAudioBufferCount; i++)
+        if (_graph != NULL)
         {
-            if (_filledAudioBuffers[i]->size != 0)
-                memset(_filledAudioBuffers[i]->data, 0, _filledAudioBuffers[i]->size);
-            _filledAudioBuffers[i]->pcmOffset = _currentPcmOffset;
-        }
-        TG_SYNCHRONIZED_END(filledBuffersLock);
-        
-        if (_audioGraphInitialized) {
             AUGraphStop(_graph);
-            _audioGraphInitialized = false;
+            OSStatus status = AUGraphUninitialize(_graph);
+            if (status != noErr)
+                TGLog(@"[TGOpusAudioPlayer#%p pause uninitialize failed: %d]", self, (int)status);
         }
-        CFTypeRef activePlayer = NULL;
-        TG_SYNCHRONIZED_BEGIN(filledBuffersLock);
-        auto activePlayerIt = activeAudioPlayers.find(_playerId);
-        if (activePlayerIt != activeAudioPlayers.end())
-        {
-            activePlayer = activePlayerIt->second;
-            activeAudioPlayers.erase(activePlayerIt);
-        }
-        TG_SYNCHRONIZED_END(filledBuffersLock);
-        if (activePlayer != NULL)
-            CFRelease(activePlayer);
+        [self updatePosition];
+        _isPaused = true;
+        [self cancelDecodeTimer];
         [self _endAudioSession];
-        
-        if (completion) {
+        if (completion != nil)
             completion();
-        }
     }];
 }
 
@@ -650,26 +435,20 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
 
 - (NSTimeInterval)currentPositionSync:(bool)sync
 {
-    __block NSTimeInterval result = 0.0;
-    
-    dispatch_block_t block = ^
-    {
-        OSSpinLockLock(&audioPositionLock);
-        result = _currentPcmOffset / (NSTimeInterval)TGOpusAudioPlayerSampleRate;
-        OSSpinLockUnlock(&audioPositionLock);
-    };
-    
     if (sync)
-        [[TGAudioPlayer _playerQueue] dispatchOnQueue:block synchronous:true];
-    else
-        block();
-    
-    return result;
+        [[TGAudioPlayer _playerQueue] dispatchOnQueue:^{ [self updatePosition]; } synchronous:true];
+    pthread_mutex_lock(&_positionMutex);
+    NSTimeInterval position = _currentPcmOffset / (NSTimeInterval)TGOpusAudioPlayerSampleRate;
+    pthread_mutex_unlock(&_positionMutex);
+    return position;
 }
 
 - (NSTimeInterval)duration
 {
-    return _totalPcmDuration / (NSTimeInterval)TGOpusAudioPlayerSampleRate;
+    pthread_mutex_lock(&_positionMutex);
+    NSTimeInterval duration = _totalPcmDuration / (NSTimeInterval)TGOpusAudioPlayerSampleRate;
+    pthread_mutex_unlock(&_positionMutex);
+    return duration;
 }
 
 @end

@@ -18,6 +18,8 @@
 @class TLSendMessageAction;
 @class TLPrivacyKey;
 @class TLMessage;
+@class TLCodexPollValue;
+@class TLCodexPollResultsValue;
 @class TLPeer;
 @class TLDialogPeer;
 @class TLContactLink;
@@ -559,12 +561,32 @@
 
 @end
 
+@interface TLUpdate$updateMessagePollCodex : TLUpdate
+
+@property (nonatomic, retain) TLPeer *peer;
+@property (nonatomic) int32_t msg_id;
+@property (nonatomic) int64_t poll_id;
+@property (nonatomic, retain) TLCodexPollValue *poll;
+@property (nonatomic, retain) TLCodexPollResultsValue *results;
+
+@end
+
 @interface TLUpdate$updateMessageReactionsCodex : TLUpdate
 
 @property (nonatomic, retain) TLPeer *peer;
 @property (nonatomic) int32_t msg_id;
 @property (nonatomic, retain) NSString *reactionSummary;
 @property (nonatomic, retain) NSString *chosenReaction;
+
+@end
+
+@interface TLUpdate$updateNewAuthorization : TLUpdate
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int64_t n_hash;
+@property (nonatomic) int32_t date;
+@property (nonatomic, retain) NSString *device;
+@property (nonatomic, retain) NSString *location;
 
 @end
 

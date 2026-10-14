@@ -41,21 +41,6 @@
 
 @end
 
-@implementation TGSharedMediaImageProgress
-
-- (instancetype)initWithHasProgress:(bool)hasProgress value:(CGFloat)value
-{
-    self = [super init];
-    if (self != nil)
-    {
-        _hasProgress = hasProgress;
-        _value = value;
-    }
-    return self;
-}
-
-@end
-
 @implementation TGSharedMediaSignals
 
 + (TGSharedMediaSignals *)instance
@@ -338,7 +323,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                         lowQuality = false;
                         cacheResult = true;
                         
-                        //[data writeToFile:lowQualityImagePath atomically:true];
                         
                         UIImage *image = [[UIImage alloc] initWithData:data];
                         if (image == nil)
@@ -410,7 +394,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                 {
                     lowQuality = false;
                     [[TGSharedMediaUtils sharedMediaTemporaryPersistentCache] setValue:data forKey:[highQualityImageUrl dataUsingEncoding:NSUTF8StringEncoding]];
-                    //[data writeToFile:lowQualityImagePath atomically:true];
                     
                     UIImage *image = [[UIImage alloc] initWithData:data];
                     if (image == nil)
@@ -426,7 +409,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                     nextSignal = [nextSignal then:[[TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:originInfo identifier:0 reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(NSData *data)
                     {
                         lowQuality = false;
-                        //[data writeToFile:lowQualityImagePath atomically:true];
                         
                         UIImage *image = [[UIImage alloc] initWithData:data];
                         if (image == nil)
@@ -438,7 +420,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                     nextSignal = [nextSignal then:[[TGRemoteHttpLocationSignal dataForHttpLocation:highQualityImageUrl] mapToSignal:^SSignal *(NSData *data)
                     {
                         lowQuality = false;
-                        //[data writeToFile:lowQualityImagePath atomically:true];
                         
                         UIImage *image = [[UIImage alloc] initWithData:data];
                         if (image == nil)
@@ -473,7 +454,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                 {
                     lowQuality = false;
                     [[TGSharedMediaUtils sharedMediaTemporaryPersistentCache] setValue:data forKey:[highQualityImageUrl dataUsingEncoding:NSUTF8StringEncoding]];
-                    //[data writeToFile:lowQualityImagePath atomically:true];
                     
                     UIImage *image = [[UIImage alloc] initWithData:data];
                     if (image == nil)
@@ -489,7 +469,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                     nextSignal = [nextSignal then:[[TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:originInfo identifier:0 reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(NSData *data)
                     {
                         lowQuality = false;
-                        //[data writeToFile:lowQualityImagePath atomically:true];
                         
                         UIImage *image = [[UIImage alloc] initWithData:data];
                         if (image == nil)
@@ -525,7 +504,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                     {
                         lowQuality = false;
                         [[TGSharedMediaUtils sharedMediaTemporaryPersistentCache] setValue:data forKey:[highQualityImageUrl dataUsingEncoding:NSUTF8StringEncoding]];
-                        //[data writeToFile:lowQualityImagePath atomically:true];
                         
                         UIImage *image = [[UIImage alloc] initWithData:data];
                         if (image == nil)
@@ -564,7 +542,6 @@ localCachedImageSignalGenerator:(SSignal *(^)(CGSize, CGSize, bool))localCachedI
                         nextSignal = [nextSignal then:[[TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:originInfo identifier:0 reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(NSData *data)
                         {
                             lowQuality = false;
-                            //[data writeToFile:lowQualityImagePath atomically:true];
                             
                             UIImage *image = [[UIImage alloc] initWithData:data];
                             if (image == nil)

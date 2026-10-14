@@ -59,6 +59,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         }
         
         sendMessage.flags = flags;
+        CFAbsoluteTime sendStart = CFAbsoluteTimeGetCurrent();
         
         return [[SSignal single:message] then:[[[[[TGTelegramNetworking instance] requestSignal:sendMessage] mapToSignal:^SSignal *(TLUpdates *updates)
         {
@@ -117,8 +118,9 @@ NSString *const TGChannelGroupKey = @"channelGroup";
             }
             else
                 return [SSignal fail:nil];
-        }] take:1] catch:^SSignal *(__unused id error)
+        }] take:1] catch:^SSignal *(id error)
         {
+            TGLog(@"SEND signal.fail peer=%lld random=%lld ms=%.1f error=%@", peerId, message.randomId, (CFAbsoluteTimeGetCurrent() - sendStart) * 1000.0, error);
             TGMessage *updatedMessage = [message copy];
             updatedMessage.deliveryState = TGMessageDeliveryStateFailed;
             return [SSignal single:updatedMessage];
@@ -613,9 +615,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         forwardMessages.from_peer = [TGTelegraphInstance createInputPeerForConversation:fromPeerId accessHash:fromPeerAccessHash];
         if (TGPeerIdIsChannel(peerId)) {
             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
-            if (conversation.isChannelGroup) {
-                
-            } else {
+            if (!conversation.isChannelGroup) {
                 forwardMessages.flags |= 16;
             }
         }

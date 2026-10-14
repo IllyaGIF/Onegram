@@ -3,6 +3,93 @@
 #import "TGModernTextView.h"
 
 #import "TGReusableLabel.h"
+#import "../OnegramPlatform/OGMemoryCache.h"
+
+@interface TGModernTextLayoutKey : NSObject <NSCopying>
+{
+@public
+    NSString *_text;
+    NSArray *_additionalAttributes;
+    NSArray *_textCheckingResults;
+    CTFontRef _font;
+    UIColor *_textColor;
+    UIColor *_linkColor;
+    CGFloat _width;
+    int _flags;
+    NSTextAlignment _alignment;
+    CGFloat _additionalTrailingWidth;
+    NSUInteger _maxNumberOfLines;
+    NSUInteger _numberOfLinesToInset;
+    CGFloat _linesInset;
+    CGFloat _additionalLineSpacing;
+    NSString *_ellipsisString;
+    bool _underlineAllLinks;
+}
+@end
+
+@implementation TGModernTextLayoutKey
+
+- (void)dealloc
+{
+    if (_font != NULL)
+        CFRelease(_font);
+}
+
+- (id)copyWithZone:(NSZone *)__unused zone
+{
+    return self;
+}
+
+- (NSUInteger)hash
+{
+    return _text.hash ^ ((NSUInteger)lroundf((float)_width * 4.0f) << 8) ^ ((NSUInteger)_flags << 20) ^ (_textCheckingResults.count << 26);
+}
+
+static bool TGModernTextLayoutObjectsEqual(id lhs, id rhs)
+{
+    return lhs == rhs || [lhs isEqual:rhs];
+}
+
+- (BOOL)isEqual:(id)object
+{
+    if (object == self)
+        return YES;
+    if (![object isKindOfClass:[TGModernTextLayoutKey class]])
+        return NO;
+    TGModernTextLayoutKey *other = object;
+    if (_width != other->_width || _flags != other->_flags || _alignment != other->_alignment || _additionalTrailingWidth != other->_additionalTrailingWidth || _maxNumberOfLines != other->_maxNumberOfLines || _numberOfLinesToInset != other->_numberOfLinesToInset || _linesInset != other->_linesInset || _additionalLineSpacing != other->_additionalLineSpacing || _underlineAllLinks != other->_underlineAllLinks)
+        return NO;
+    if (!(_font == other->_font || (_font != NULL && other->_font != NULL && CFEqual(_font, other->_font))))
+        return NO;
+    if (![_text isEqualToString:other->_text])
+        return NO;
+    return TGModernTextLayoutObjectsEqual(_textColor, other->_textColor) && TGModernTextLayoutObjectsEqual(_linkColor, other->_linkColor) && TGModernTextLayoutObjectsEqual(_ellipsisString, other->_ellipsisString) && TGModernTextLayoutObjectsEqual(_textCheckingResults, other->_textCheckingResults) && TGModernTextLayoutObjectsEqual(_additionalAttributes, other->_additionalAttributes);
+}
+
+@end
+
+@interface TGModernTextLayoutResult : NSObject
+{
+@public
+    TGReusableLabelLayoutData *_layoutData;
+    bool _isRTL;
+    bool _containsEmptyNewline;
+}
+@end
+
+@implementation TGModernTextLayoutResult
+@end
+
+static OGMemoryCache *TGModernTextLayoutCache(void)
+{
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:3 * 1024 * 1024];
+    });
+    return cache;
+}
 
 @implementation TGModernTextViewLinesInset
 
@@ -75,8 +162,28 @@
     
     if (_layoutData != nil)
     {
-        [TGReusableLabel drawRichTextInRect:self.bounds precalculatedLayout:_layoutData linesRange:NSMakeRange(0, 0) shadowColor:nil shadowOffset:CGSizeZero];
+        [TGReusableLabel drawRichTextInRect:self.bounds precalculatedLayout:_layoutData linesRange:NSMakeRange(0, 0) shadowColor:_shadowColor shadowOffset:_shadowOffset];
     }
+}
+
+static void TGModernTextViewModelDrawOperation(__unused CGContextRef context, TGModernDrawingOperation *operation)
+{
+    [TGReusableLabel drawRichTextInRect:operation.rect precalculatedLayout:operation.object linesRange:NSMakeRange(0, 0) shadowColor:operation.color shadowOffset:operation.size];
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernTextViewModel class]])
+        return false;
+    if (![self recordBaseDrawing:recording])
+        return false;
+    if (_layoutData != nil)
+    {
+        if (_layoutData.hasCustomDrawing)
+            return false;
+        [recording addOperationWithFunction:&TGModernTextViewModelDrawOperation rect:self.bounds object:_layoutData secondaryObject:nil color:_shadowColor size:_shadowOffset value:0.0f flags:0];
+    }
+    return true;
 }
 
 - (bool)layoutNeedsUpdatingForContainerSize:(CGSize)containerSize
@@ -128,7 +235,43 @@
 {
     if (_layoutData == nil || ABS(containerSize.width - _cachedLayoutContainerWidth) > FLT_EPSILON || _cachedLayoutFlags != _layoutFlags || ABS(_additionalTrailingWidth - _cachedAdditionalTrailingWidth) > FLT_EPSILON)
     {
-        _layoutData = [TGReusableLabel calculateLayout:_text additionalAttributes:_additionalAttributes textCheckingResults:_textCheckingResults font:_font textColor:_textColor linkColor:_linkColor frame:CGRectZero orMaxWidth:(float)containerSize.width flags:_layoutFlags textAlignment:(NSTextAlignment)_alignment outIsRTL:&_isRTL additionalTrailingWidth:_additionalTrailingWidth maxNumberOfLines:_maxNumberOfLines numberOfLinesToInset:_linesInset.numberOfLinesToInset linesInset:_linesInset.inset containsEmptyNewline:&_containsEmptyNewline additionalLineSpacing:_additionalLineSpacing ellipsisString:_ellipsisString underlineAllLinks:_underlineAllLinks];
+        TGModernTextLayoutKey *key = [[TGModernTextLayoutKey alloc] init];
+        key->_text = [_text copy];
+        key->_additionalAttributes = [_additionalAttributes copy];
+        key->_textCheckingResults = [_textCheckingResults copy];
+        key->_font = _font != NULL ? (CTFontRef)CFRetain(_font) : NULL;
+        key->_textColor = _textColor;
+        key->_linkColor = _linkColor;
+        key->_width = (CGFloat)(float)containerSize.width;
+        key->_flags = _layoutFlags;
+        key->_alignment = (NSTextAlignment)_alignment;
+        key->_additionalTrailingWidth = _additionalTrailingWidth;
+        key->_maxNumberOfLines = _maxNumberOfLines;
+        key->_numberOfLinesToInset = _linesInset.numberOfLinesToInset;
+        key->_linesInset = _linesInset.inset;
+        key->_additionalLineSpacing = _additionalLineSpacing;
+        key->_ellipsisString = [_ellipsisString copy];
+        key->_underlineAllLinks = _underlineAllLinks;
+        OGMemoryCache *cache = TGModernTextLayoutCache();
+        TGModernTextLayoutResult *cached = [cache objectForKey:key];
+        if (cached != nil)
+        {
+            _layoutData = cached->_layoutData;
+            _isRTL = cached->_isRTL;
+            _containsEmptyNewline = cached->_containsEmptyNewline;
+        }
+        else
+        {
+            _layoutData = [TGReusableLabel calculateLayout:_text additionalAttributes:_additionalAttributes textCheckingResults:_textCheckingResults font:_font textColor:_textColor linkColor:_linkColor frame:CGRectZero orMaxWidth:(float)containerSize.width flags:_layoutFlags textAlignment:(NSTextAlignment)_alignment outIsRTL:&_isRTL additionalTrailingWidth:_additionalTrailingWidth maxNumberOfLines:_maxNumberOfLines numberOfLinesToInset:_linesInset.numberOfLinesToInset linesInset:_linesInset.inset containsEmptyNewline:&_containsEmptyNewline additionalLineSpacing:_additionalLineSpacing ellipsisString:_ellipsisString underlineAllLinks:_underlineAllLinks];
+            if (_layoutData != nil)
+            {
+                TGModernTextLayoutResult *result = [[TGModernTextLayoutResult alloc] init];
+                result->_layoutData = _layoutData;
+                result->_isRTL = _isRTL;
+                result->_containsEmptyNewline = _containsEmptyNewline;
+                [cache setObject:result forKey:key cost:512 + _text.length * 8];
+            }
+        }
         _cachedLayoutContainerWidth = containerSize.width;
         _cachedLayoutFlags = _layoutFlags;
         _cachedAdditionalTrailingWidth = _additionalTrailingWidth;

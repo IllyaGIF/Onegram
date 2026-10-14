@@ -84,9 +84,6 @@
     __weak TGMenuSheetController *weakController = controller;
     if (iosMajorVersion() <= 6)
     {
-        // PSUICollectionViewFlowLayout can produce an NSNotFound section while
-        // the menu is being presented on iOS 6. Plain menu rows are lighter
-        // and avoid that UIKit crash entirely.
         if (title.length != 0)
             [itemViews addObject:[[TGMenuSheetTitleItemView alloc] initWithTitle:title subtitle:nil]];
         for (TGOpenInAppItem *appItem in appItems)

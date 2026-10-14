@@ -1,4 +1,5 @@
 #import "TGGalleryVideoPreviewDataSource.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -247,7 +248,6 @@
 {
     if (isCancelled && isCancelled())
     {
-        TGLog(@"[TGPhotoMediaPreviewImageDataSource cancelled while loading %@]", uri);
         return nil;
     }
     
@@ -304,17 +304,7 @@
         
         if ([[NSFileManager defaultManager] fileExistsAtPath:videoPath isDirectory:NULL])
         {
-            AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:videoPath] options:nil];
-            
-            AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-            imageGenerator.maximumSize = CGSizeMake(800, 800);
-            imageGenerator.appliesPreferredTrackTransform = true;
-            
-            NSError *imageError = nil;
-            CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(0, asset.duration.timescale) actualTime:NULL error:&imageError];
-            image = [[UIImage alloc] initWithCGImage:imageRef];
-            if (imageRef != NULL)
-                CGImageRelease(imageRef);
+            image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:videoPath], 0.0, CGSizeMake(800.0f, 800.0f));
         }
         else
         {

@@ -1,6 +1,8 @@
 #import "TGLiveLocationManager.h"
 
 #import <CoreLocation/CoreLocation.h>
+#import "OGPlatformLocation.h"
+#import "OGPlatformUIKit.h"
 
 #import "TGAppDelegate.h"
 #import "TGDatabase.h"
@@ -39,7 +41,7 @@
     SPipe *_sessionRemovalPipe;
     
     NSInteger _backgroundToken;
-    UIBackgroundTaskIdentifier _currentBackgroundTask;
+    OGPlatformBackgroundTaskIdentifier _currentBackgroundTask;
     NSMutableSet *_infrequentUpdateAnticipants;
     
     TGObserverProxy *_didBecomeActiveObserver;
@@ -66,7 +68,7 @@
         
         _frequentUpdateSubscribers = [[NSMutableSet alloc] init];
         
-        _currentBackgroundTask = UIBackgroundTaskInvalid;
+        _currentBackgroundTask = OGPlatformBackgroundTaskInvalid;
         _infrequentUpdateAnticipants = [[NSMutableSet alloc] init];
         _previousInfrequentSinkTime = 0;
         
@@ -140,22 +142,20 @@
         {
             _locationManager = [[CLLocationManager alloc] init];
             if (iosMajorVersion() >= 9)
-                _locationManager.allowsBackgroundLocationUpdates = true;
+                OGPlatformSetLocationAllowsBackgroundUpdates(_locationManager, true);
             _locationManager.delegate = self;
             _locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters;
             _locationManager.distanceFilter = 20;
-            _locationManager.activityType = CLActivityTypeOther;
-            _locationManager.pausesLocationUpdatesAutomatically = false;
+            OGPlatformSetLocationActivityTypeOther(_locationManager);
+            OGPlatformSetLocationPausesAutomatically(_locationManager, false);
             
             if (iosMajorVersion() >= 8)
-                [_locationManager requestAlwaysAuthorization];
+                OGPlatformRequestAlwaysLocationAuthorization(_locationManager);
             
-            TGLog(@"LiveLocationManager: created location manager with accuracy %lf, distance filter %f", _locationManager.desiredAccuracy, _locationManager.distanceFilter);
         }
         
-        TGLog(@"LiveLocationManager: start location manager, single request %d", singleRequest);
         if (iosMajorVersion() >= 9 && singleRequest)
-            [_locationManager requestLocation];
+            OGPlatformRequestSingleLocation(_locationManager);
         else
             [_locationManager startUpdatingLocation];
     });
@@ -167,7 +167,6 @@
 
 - (void)stopLocationUpdates
 {
-    TGLog(@"LiveLocationManager: stop location manager");
     _locationManagerActive = false;
     TGDispatchOnMainThread(^
     {
@@ -194,7 +193,6 @@
     
     if (_inhibitFrequentUpdates || !hasActiveFrequentSubscribers)
     {
-        TGLog(@"LiveLocationManager: no more active live location subscribers, stopping location updates");
         [self stopLocationUpdates];
     }
 }
@@ -308,7 +306,6 @@
                 if ([rpcError isEqualToString:@"MESSAGE_NOT_MODIFIED"])
                 {
                     [self performedLocationUpdateForPeerId:session.peerId];
-                    TGLog(@"LiveLocationManager: MESSAGE_NOT_MODIFIED for peerId: %lld", session.peerId);
                     error = nil;
                 }
                 
@@ -344,14 +341,12 @@
     
     [context.disposable setDisposable:[finalSignal startWithNext:^(__unused id next)
     {
-        TGLog(@"LiveLocationManager: successfully sent new location for peerId: %lld", session.peerId);
         
         [self performedLocationUpdateForPeerId:session.peerId];
     } error:^(__unused id error)
     {
         TGLog(@"LiveLocationManager: error %@ for peerId: %lld", error, session.peerId);
     } completed:^{
-        TGLog(@"LiveLocationManager: completed for peerId: %lld", session.peerId);
     }]];
     
     _sessions[@(session.peerId)] = context;
@@ -366,7 +361,6 @@
         if (!session)
             return;
  
-        TGLog(@"LiveLocationManager: stop with peerId: %lld", peerId);
         [session.disposable setDisposable:[[TGLiveLocationSignals stopLiveLocationWithPeerId:session.session.peerId messageId:session.session.messageId] startWithNext:^(__unused id next)
         {
             
@@ -376,7 +370,6 @@
 
 - (id<SDisposable>)subscribeForFrequentLocationUpdatesWithPeerId:(int64_t)peerId
 {
-    TGLog(@"LiveLocationManager: subscribed for frequent location updates with peerId %lld", peerId);
     [_queue dispatch:^
     {
         [_frequentUpdateSubscribers addObject:@(peerId)];
@@ -387,12 +380,10 @@
     {
         [_queue dispatch:^
         {
-            TGLog(@"LiveLocationManager: unsubscribed from frequent location updates with peerId %lld", peerId);
             [_frequentUpdateSubscribers removeObject:@(peerId)];
             if (_frequentUpdateSubscribers.count == 0)
             {
                 _updatingFrequentLocation = false;
-                TGLog(@"LiveLocationManager: no more frequent location subscribers");
             }
             
             TGDispatchAfter(10.0, (dispatch_queue_t)[_queue _dispatch_queueRaw], ^
@@ -405,13 +396,11 @@
 
 - (void)performInfrequentLocationUpdate:(void (^)(bool))willPerform
 {
-    TGLog(@"LiveLocationManager: infrequent location request received");
     
     [_queue dispatch:^
     {
         if (_sessions.count == 0)
         {
-            TGLog(@"LiveLocationManager: no live location sessions, ignoring infrequent location update");
             willPerform(false);
             return;
         }
@@ -429,13 +418,11 @@
                 
                 if (!TGAppDelegateInstance.inBackground && _locationManagerActive)
                 {
-                    TGLog(@"LiveLocationManager: maybe has active location manager, asking for update");
                     _locationUpdatePipe.sink(@true);
                 }
                 
-                _currentBackgroundTask = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:nil];
+                _currentBackgroundTask = OGPlatformBeginBackgroundTask([UIApplication sharedApplication], nil);
                 
-                TGLog(@"LiveLocationManager: performing exclusive infrequent update, taskid: %d", _currentBackgroundTask);
                 _performingInfrequentUpdate = true;
                 [self startLocationUpdates:true];
                 
@@ -455,23 +442,14 @@
                     [self finishInfrequentLocationUpdate:true];
                 });
             }
-            else
-            {
-                TGLog(@"LiveLocationManager: already performing infrequent location update");
-            }
         }
         else
         {
             int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
             if (_previousInfrequentSinkTime == 0 || abs(currentTime - _previousInfrequentSinkTime) > 30)
             {
-                TGLog(@"LiveLocationManager: has frequent location subscriber, asking to share for infrequent update");
                 _locationUpdatePipe.sink(@true);
                 _previousInfrequentSinkTime = currentTime;
-            }
-            else
-            {
-                TGLog(@"LiveLocationManager: too soon for asking of frequent-infrequent update, must be push mash");
             }
         }
         
@@ -492,13 +470,12 @@
 
     [self maybeStopLocationUpdates];
     
-    UIBackgroundTaskIdentifier identifier = _currentBackgroundTask;
+    OGPlatformBackgroundTaskIdentifier identifier = _currentBackgroundTask;
     [self suspendNetworkIfNeeded:^
     {
-        [[UIApplication sharedApplication] endBackgroundTask:identifier];
-        TGLog(@"[LiveLocationManager]: ended taskid: %d", identifier);
+        OGPlatformEndBackgroundTask([UIApplication sharedApplication], identifier);
         if (_currentBackgroundTask == identifier)
-            _currentBackgroundTask = UIBackgroundTaskInvalid;
+            _currentBackgroundTask = OGPlatformBackgroundTaskInvalid;
     }];
 }
 
@@ -509,7 +486,6 @@
         if ([_infrequentUpdateAnticipants containsObject:@(peerId)])
         {
             [_infrequentUpdateAnticipants removeObject:@(peerId)];
-            TGLog(@"LiveLocationManager: performed location update for anticipant with peerId %lld", peerId);
             
             if (_infrequentUpdateAnticipants.count == 0)
                 [self finishInfrequentLocationUpdate:false];
@@ -564,15 +540,27 @@
 
 #pragma mark -
 
-- (void)locationManager:(CLLocationManager *)__unused manager didUpdateLocations:(NSArray *)locations
+- (void)applyLocation:(CLLocation *)location
 {
-    TGLog(@"LiveLocationManager: location manager updated location");
-    _locationPipe.sink(locations.firstObject);
+    if (location == nil)
+        return;
+
+    _locationPipe.sink(location);
     
     [_queue dispatch:^
     {
         [self maybeStopLocationUpdates];
     }];
+}
+
+- (void)locationManager:(CLLocationManager *)__unused manager didUpdateLocations:(NSArray *)locations
+{
+    [self applyLocation:locations.firstObject];
+}
+
+- (void)locationManager:(CLLocationManager *)__unused manager didUpdateToLocation:(CLLocation *)newLocation fromLocation:(CLLocation *)__unused oldLocation
+{
+    [self applyLocation:newLocation];
 }
 
 - (void)locationManager:(CLLocationManager *)__unused manager didFailWithError:(NSError *)error
@@ -582,12 +570,10 @@
 
 - (void)locationManagerDidPauseLocationUpdates:(CLLocationManager *)__unused manager
 {
-    TGLog(@"LiveLocationManager: location manager did pause updates");
 }
 
 - (void)reset
 {
-    TGLog(@"LiveLocationManager: reset live location sessions");
     
     [_queue dispatch:^
     {
@@ -617,4 +603,3 @@
 }
 
 @end
-

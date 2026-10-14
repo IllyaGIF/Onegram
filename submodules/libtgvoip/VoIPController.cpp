@@ -2351,7 +2351,11 @@ void VoIPController::AddIPv6Relays(){
 	LOGI("VOIP ipv6Relays.disabled");
 	return;
 	if(!myIPv6.IsEmpty() && !didAddIPv6Relays){
+#if defined(ONEGRAM_ARMV6)
+		std::map<string, vector<std::tr1::shared_ptr<Endpoint> > > endpointsByAddress;
+#else
 		std::tr1::unordered_map<string, vector<std::tr1::shared_ptr<Endpoint>>> endpointsByAddress;
+#endif
 		MutexGuard m(endpointsMutex);
 		for(std::tr1::shared_ptr<Endpoint>& e:endpoints){
 			if((e->type==Endpoint::TYPE_UDP_RELAY || e->type==Endpoint::TYPE_TCP_RELAY) && !e->v6address.IsEmpty() && !e->address.IsEmpty()){
@@ -2359,7 +2363,11 @@ void VoIPController::AddIPv6Relays(){
 			}
 		}
 		int globalId=callID[15];
+#if defined(ONEGRAM_ARMV6)
+		for(std::map<string, vector<std::tr1::shared_ptr<Endpoint> > >::iterator addr=endpointsByAddress.begin();addr!=endpointsByAddress.end();++addr){
+#else
 		for(std::tr1::unordered_map<string, vector<std::tr1::shared_ptr<Endpoint>>>::iterator addr=endpointsByAddress.begin();addr!=endpointsByAddress.end();++addr){
+#endif
 			std::tr1::shared_ptr<Endpoint> best;
 			int bestDiff=256;
 			for(std::tr1::shared_ptr<Endpoint>& e:addr->second){

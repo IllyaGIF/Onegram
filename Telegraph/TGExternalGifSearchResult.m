@@ -16,14 +16,15 @@
 }
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
-    return [self initWithUrl:[aDecoder decodeObjectForKey:@"url"] originalUrl:[aDecoder decodeObjectForKey:@"originalUrl"] thumbnailUrl:[aDecoder decodeObjectForKey:@"thumbnailUrl"] size:[aDecoder decodeCGSizeForKey:@"size"]];
+    return [self initWithUrl:[aDecoder decodeObjectForKey:@"url"] originalUrl:[aDecoder decodeObjectForKey:@"originalUrl"] thumbnailUrl:[aDecoder decodeObjectForKey:@"thumbnailUrl"] size:CGSizeMake((CGFloat)[aDecoder decodeDoubleForKey:@"sizeWidth"], (CGFloat)[aDecoder decodeDoubleForKey:@"sizeHeight"])];
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder {
     [aCoder encodeObject:_url forKey:@"url"];
     [aCoder encodeObject:_originalUrl forKey:@"originalUrl"];
     [aCoder encodeObject:_thumbnailUrl forKey:@"thumbnailUrl"];
-    [aCoder encodeCGSize:_size forKey:@"size"];
+    [aCoder encodeDouble:_size.width forKey:@"sizeWidth"];
+    [aCoder encodeDouble:_size.height forKey:@"sizeHeight"];
 }
 
 - (BOOL)isEqual:(id)object

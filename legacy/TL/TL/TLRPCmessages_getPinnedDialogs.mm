@@ -20,30 +20,26 @@
 
 - (int)layerVersion
 {
-    return 61;
+    return 225;
 }
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"constructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"constructorName is not implemented for base type");
     return 0;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
 {
-    TGLog(@"TLbuildFromMetaObject is not implemented for base type");
     return nil;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 
@@ -54,12 +50,12 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xe254d64e;
+    return (int32_t)0xd6b94df2;
 }
 
 - (int32_t)TLconstructorName
 {
-    return (int32_t)0x32cd5d83;
+    return -1;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
@@ -72,6 +68,10 @@
 {
 }
 
+- (void)TLserialize:(NSOutputStream *)os
+{
+    [os writeInt32:self.folder_id];
+}
 
 @end
 

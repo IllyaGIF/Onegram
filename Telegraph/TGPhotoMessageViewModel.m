@@ -96,7 +96,6 @@
         {
             self.isSecret = true;
             
-            //[self enableInstantPreview];
         }
         
         if (self.isSecret)

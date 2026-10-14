@@ -114,7 +114,7 @@
     [UIView setAnimationsEnabled:false];
     self.view = [[TGCallView alloc] init];
     self.view.safeAreaInset = [TGViewController safeAreaInsetForOrientation:UIInterfaceOrientationPortrait];
-    self.view.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(self.view.layer, TGScreenScaling());
     
     __weak TGCallController *weakSelf = self;
     self.view.minimizeRequested = ^
@@ -471,6 +471,10 @@
 
 + (void)requestMicrophoneAccess:(void (^)(bool granted))resultBlock
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    if (resultBlock != nil)
+        resultBlock(true);
+#else
     if (iosMajorVersion() < 7)
     {
         if (resultBlock != nil)
@@ -501,6 +505,7 @@
                 resultBlock(granted);
         });
     }];
+#endif
 }
 
 - (void)updateProximityListener
@@ -642,7 +647,7 @@
     self.overlayWindow.hidden = false;
     self.view.userInteractionEnabled = true;
     self.view.transform = CGAffineTransformMakeScale(1.1f, 1.1f);
-    self.view.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(self.view.layer, true);
     
     [self.view onResume];
     
@@ -656,7 +661,7 @@
     } completion:^(__unused BOOL finished)
     {
         _appearing = false;
-        self.view.layer.shouldRasterize = false;
+        TGSetLayerShouldRasterize(self.view.layer, false);
         
         if (self.onTransitionIn != nil)
             self.onTransitionIn();
@@ -741,7 +746,7 @@
 {
     [self setProximityListenerEnabled:false];
     
-    self.view.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(self.view.layer, true);
     [self setNeedsStatusBarAppearanceUpdate];
     if (fast)
     {

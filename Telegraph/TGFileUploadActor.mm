@@ -18,10 +18,11 @@
 #import <CommonCrypto/CommonCrypto.h>
 
 #import "../submodules/MtProtoKit/MTProtoKit/MTEncryption.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import <vector>
 
-#define PHOTO_PART_SIZE 8 * 1024
+#define PHOTO_PART_SIZE 32 * 1024
 #define VIDEO_PART_SIZE 64 * 1024
 
 struct FilePart
@@ -63,6 +64,10 @@ struct FilePart
     
     id _workerToken;
     TGNetworkWorkerGuard *_worker;
+    
+    dispatch_queue_t _transferQueue;
+    bool _transferCancelled;
+    bool _transferFinished;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -93,6 +98,7 @@ struct FilePart
         _actionHandle = [[ASHandle alloc] initWithDelegate:self];
         
         _cancelTokenList = [[NSMutableArray alloc] init];
+        _transferQueue = OGRuntimeTransferQueue();
         
         CC_MD5_Init(&_md5);
     }
@@ -108,7 +114,7 @@ struct FilePart
     
     if (_workerToken != nil)
     {
-        [[TGTelegramNetworking instance] cancelDownloadWorkerRequestByToken:_workerToken];
+        [[TGTelegramNetworking instance] cancelUploadWorkerRequestByToken:_workerToken];
         _workerToken = nil;
     }
     
@@ -209,22 +215,12 @@ struct FilePart
             
             _partCount = (int)_partsToUpload.size();
             
-            TGLog(@"Uploading %d kbytes (%d parts)", length / 1024, _partCount);
             
             _is = [[NSInputStream alloc] initWithData:data];
             [_is open];
             
 #if TGUseModernNetworking
-            TGNetworkMediaTypeTag mediaTypeTag = (TGNetworkMediaTypeTag)[options[@"mediaTypeTag"] intValue];
-            __weak TGFileUploadActor *weakSelf = self;
-            _workerToken = [[TGTelegramNetworking instance] requestDownloadWorkerForDatacenterId:[[TGTelegramNetworking instance] masterDatacenterId] type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
-            {
-                [ActionStageInstance() dispatchOnStageQueue:^
-                {
-                    __strong TGFileUploadActor *strongSelf = weakSelf;
-                    [strongSelf beginWithWorker:worker];
-                }];
-            }];
+            [self requestUploadWorkerWithType:(TGNetworkMediaTypeTag)[options[@"mediaTypeTag"] intValue]];
 #else
             [self beginWithWorker:nil];
 #endif
@@ -296,7 +292,6 @@ struct FilePart
             if (options[@"inbandUploadLimit"] != nil && bytesToUpload <= [options[@"inbandUploadLimit"] unsignedIntegerValue])
                 _uploadInband = true;
             
-            TGLog(@"Uploading %d (%d) bytes (%d parts by %d kb%s)", length, (int)(bytesToUpload), _partCount, partSize, _uploadInband ? ", inband" : "");
             
             if (_is.streamStatus != NSStreamStatusOpen)
                 [ActionStageInstance() nodeRetrieveFailed:self.path];
@@ -306,15 +301,7 @@ struct FilePart
                 if (_uploadInband)
                     [self beginWithWorker:nil];
                 else
-                {
-                    TGNetworkMediaTypeTag mediaTypeTag = (TGNetworkMediaTypeTag)([options[@"mediaTypeTag"] intValue]);
-                    __weak TGFileUploadActor *weakSelf = self;
-                    _workerToken = [[TGTelegramNetworking instance] requestDownloadWorkerForDatacenterId:[[TGTelegramNetworking instance] masterDatacenterId] type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
-                    {
-                        __strong TGFileUploadActor *strongSelf = weakSelf;
-                        [strongSelf beginWithWorker:worker];
-                    }];
-                }
+                    [self requestUploadWorkerWithType:(TGNetworkMediaTypeTag)([options[@"mediaTypeTag"] intValue])];
 #else
                 [self beginWithWorker:nil];
 #endif
@@ -327,20 +314,55 @@ struct FilePart
     }
 }
 
+- (void)finishTransfer
+{
+    if (_transferFinished)
+        return;
+    
+    _transferFinished = true;
+    
+    if (_worker != nil)
+    {
+        [_worker releaseWorker];
+        _worker = nil;
+    }
+}
+
+- (void)requestUploadWorkerWithType:(TGNetworkMediaTypeTag)mediaTypeTag
+{
+    __weak TGFileUploadActor *weakSelf = self;
+    _workerToken = [[TGTelegramNetworking instance] requestUploadWorkerForDatacenterId:[[TGTelegramNetworking instance] masterDatacenterId] type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
+    {
+        __strong TGFileUploadActor *strongSelf = weakSelf;
+        [strongSelf beginWithWorker:worker];
+    }];
+}
+
 - (void)beginWithWorker:(TGNetworkWorkerGuard *)worker
 {
-    _worker = worker;
-    
-    [self sendAnyPart];
+    dispatch_async(_transferQueue, ^
+    {
+        if (_transferCancelled || _transferFinished)
+        {
+            [worker releaseWorker];
+            return;
+        }
+        
+        _worker = worker;
+        
+        [self sendAnyPart];
+    });
 }
 
 - (void)sendAnyPart
 {
-    if (self.cancelled)
+    if (_transferCancelled || _transferFinished)
         return;
     
     if (_partsToUpload.empty())
     {
+        [self finishTransfer];
+        
         if (_secure)
         {
             NSString *hash = nil;
@@ -516,16 +538,17 @@ struct FilePart
                     int partId = it->index;
                     
                     __weak TGFileUploadActor *weakSelf = self;
+                    dispatch_queue_t transferQueue = _transferQueue;
                     [request setCompleted:^(__unused id result, __unused NSTimeInterval, id error)
                     {
-                        [ActionStageInstance() dispatchOnStageQueue:^
+                        dispatch_async(transferQueue, ^
                         {
                             __strong TGFileUploadActor *strongSelf = weakSelf;
                             if (error == nil)
                                 [strongSelf filePartUploadSuccess:partId];
                             else
                                 [strongSelf filePartUploadFailed:partId];
-                        }];
+                        });
                     }];
                     
                     token = request.internalId;
@@ -568,30 +591,34 @@ struct FilePart
 
 - (void)filePartUploadFailed:(int)__unused partId
 {
+    if (_transferCancelled || _transferFinished)
+        return;
+    
+    [self finishTransfer];
     [ActionStageInstance() nodeRetrieveFailed:self.path];
 }
 
 - (void)cancel
 {
-    for (id token in _cancelTokenList)
-    {
-        [TGTelegraphInstance cancelRequestByToken:token];
-        [_worker.strongWorker cancelRequestById:token];
-    }
-    
-    _cancelTokenList = nil;
-    
     if (_workerToken != nil)
     {
-        [[TGTelegramNetworking instance] cancelDownloadWorkerRequestByToken:_workerToken];
+        [[TGTelegramNetworking instance] cancelUploadWorkerRequestByToken:_workerToken];
         _workerToken = nil;
     }
     
-    if (_worker != nil)
+    dispatch_async(_transferQueue, ^
     {
-        [_worker releaseWorker];
-        _worker = nil;
-    }
+        _transferCancelled = true;
+        
+        for (id token in _cancelTokenList)
+        {
+            [TGTelegraphInstance cancelRequestByToken:token];
+            [_worker.strongWorker cancelRequestById:token];
+        }
+        [_cancelTokenList removeAllObjects];
+        
+        [self finishTransfer];
+    });
     
     [super cancel];
 }
@@ -619,7 +646,6 @@ struct FilePart
                 {
                     TLInputEncryptedFile$inputEncryptedFileUploaded *inputEncryptedFile = [[TLInputEncryptedFile$inputEncryptedFileUploaded alloc] init];
                     inputEncryptedFile.parts = [result[@"partCount"] intValue];
-                    //inputEncryptedFile.md5_checksum = result[@"md5"] == nil ? @"" : result[@"md5"];
                     inputEncryptedFile.n_id = [result[@"fileId"] longLongValue];
                     inputEncryptedFile.key_fingerprint = [result[@"aesKeyFingerprint"] intValue];
                     

@@ -16,8 +16,13 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
 @property (nonatomic, copy) void(^progressBlock)(CGFloat progress);
 @property (nonatomic, copy) void(^completionBlock)(bool succeed);
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
 @property (nonatomic, readonly) NSFileCoordinator *fileCoordinator;
 @property (nonatomic, readonly) NSMetadataQuery *metadataQuery;
+#else
+@property (nonatomic, readonly) id fileCoordinator;
+@property (nonatomic, readonly) id metadataQuery;
+#endif
 
 @property (nonatomic, strong) NSURL *url;
 @property (nonatomic, strong) NSURL *path;
@@ -49,6 +54,33 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
 
 - (void)start
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+    NSString *sourcePath = self.url.path;
+    NSString *targetPath = self.path.path;
+    if (sourcePath.length == 0 || targetPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:sourcePath])
+    {
+        if (self.completionBlock != nil)
+            self.completionBlock(false);
+        return;
+    }
+    [[NSFileManager defaultManager] createDirectoryAtPath:[targetPath stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:nil];
+    NSError *copyError = nil;
+    bool succeed = [sourcePath isEqualToString:targetPath];
+    if (!succeed)
+    {
+        [[NSFileManager defaultManager] removeItemAtPath:targetPath error:nil];
+        succeed = [[NSFileManager defaultManager] copyItemAtPath:sourcePath toPath:targetPath error:&copyError];
+    }
+    if (succeed)
+    {
+        self.downloaded = true;
+        if (self.progressBlock != nil)
+            self.progressBlock(1.0f);
+    }
+    if (self.completionBlock != nil)
+        self.completionBlock(succeed);
+    return;
+#else
     NSError *error;
     bool isRemoteFile = false;
     bool isCurrent = true;
@@ -100,10 +132,9 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
         
         [[NSFileManager defaultManager] createDirectoryAtPath:[self.path.path stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:nil];
         
-        TGLog(@"Cloud INFO: actual cloud file is available at %@", url);
         
         NSError *fileCopyError;
-        if (![[NSFileManager defaultManager] copyItemAtURL:url toURL:self.path error:&fileCopyError])
+        if (![[NSFileManager defaultManager] copyItemAtPath:url.path toPath:self.path.path error:&fileCopyError])
         {
             TGLog(@"Cloud ERROR: failed to copy security scoped resource from %@ to %@ with error: %@", url, self.path, fileCopyError);
             if (self.completionBlock != nil)
@@ -121,12 +152,10 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
     
     if (!isRemoteFile || isCurrent)
     {
-        TGLog(@"Cloud INFO: file is not from iCloud or is current");
         downloadCompletionBlock(self.url);
     }
     else
     {
-        TGLog(@"Cloud INFO: starting coordinated access to file");
         
         __weak TGICloudFileDownloadRequest *weakSelf = self;
         _fileCoordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
@@ -158,7 +187,6 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
                 return;
             }
             
-            TGLog(@"Cloud INFO: cloud file download completed for %@", fileAccessIntent.URL);
             downloadCompletionBlock(fileAccessIntent.URL);
         }];
 #else
@@ -178,7 +206,6 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
                 }
             }
             
-            TGLog(@"Cloud INFO: cloud file download completed for %@", newURL);
             downloadCompletionBlock(newURL);
         }];
         if (error != nil)
@@ -216,10 +243,12 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
             });
         }
     }
+#endif
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)__unused object change:(NSDictionary *)change context:(void *)__unused context
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     if ([keyPath isEqualToString:@"results"])
     {
         NSUInteger changeKind = [[change objectForKey:NSKeyValueChangeKindKey] unsignedIntegerValue];
@@ -238,13 +267,16 @@ const NSTimeInterval TGICloudFileDownloadProgressTimerInterval = 1.0f;
             }
         }
     }
+#endif
 }
 
 - (void)cancel
 {
     self.cancelled = true;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     [self.metadataQuery stopQuery];
     [self.fileCoordinator cancel];
+#endif
     [self dispose];
 }
 

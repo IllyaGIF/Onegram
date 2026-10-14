@@ -139,7 +139,7 @@
     {
         [self clearLinkSelection];
         
-        CGPoint offset = CGPointZero;// CGPointMake(_contentModel.frame.origin.x - _backgroundModel.frame.origin.x, _contentModel.frame.origin.y - _backgroundModel.frame.origin.y);
+        CGPoint offset = CGPointZero;
         
         NSArray *regionData = nil;
         NSString *link = [_textModel linkAtPoint:CGPointMake(point.x - _textModel.frame.origin.x - offset.x, point.y - _textModel.frame.origin.y - offset.y) regionData:&regionData];

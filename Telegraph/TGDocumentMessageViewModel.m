@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGDocumentMessageViewModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -389,6 +390,9 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 {   
     [super updateMediaAvailability:mediaIsAvailable viewStorage:viewStorage delayDisplay:delayDisplay];
     
+    if (mediaIsAvailable && !_mediaIsAvailable && OGPlatformMediaDownloadsRequireUserAction())
+        [_imageModel reloadImage:false];
+
     _mediaIsAvailable = mediaIsAvailable;
     
     [self updateImageOverlay:false];

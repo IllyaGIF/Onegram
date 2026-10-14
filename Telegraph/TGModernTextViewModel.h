@@ -8,7 +8,11 @@
 
 #import "TGModernViewModel.h"
 
+#if __has_include(<CoreText/CoreText.h>)
 #import <CoreText/CoreText.h>
+#else
+#import "OGPlatformText.h"
+#endif
 
 @interface TGModernTextViewLinesInset : NSObject
 
@@ -25,6 +29,8 @@
 @property (nonatomic) CTFontRef font;
 @property (nonatomic, strong) UIColor *textColor;
 @property (nonatomic, strong) UIColor *linkColor;
+@property (nonatomic, strong) UIColor *shadowColor;
+@property (nonatomic) CGSize shadowOffset;
 @property (nonatomic) bool underlineAllLinks;
 @property (nonatomic) NSUInteger maxNumberOfLines;
 @property (nonatomic, strong) NSArray *textCheckingResults;

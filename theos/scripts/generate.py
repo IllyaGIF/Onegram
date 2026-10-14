@@ -52,7 +52,28 @@ def effective_sources(target):
     patterns = shlex.split(target['settings'].get('EXCLUDED_SOURCE_FILE_NAMES', ''))
     sources = [e for e in entries(target, 'PBXSourcesBuildPhase') if e['path'] and
                not any(fnmatch.fnmatch(Path(e['path']).name, p) for p in patterns)]
-    if os.environ.get('ONEGRAM_ARCH') == 'arm64' and target['name'] == 'libtgvoip':
+    if os.environ.get('ONEGRAM_ARCH') == 'armv6' and target['name'] == 'LegacyComponents':
+        unavailable_armv6_sources = {
+            'TGVideoCameraPipeline.m',
+            'TGVideoCameraGLRenderer.m',
+            'TGVideoCameraGLView.m',
+            'TGVideoCameraMovieRecorder.m',
+            'TGVideoMessageCaptureController.m',
+            'TGModernGalleryVideoView.m',
+            'TGPhotoQualityController.m',
+            'AVAsset+CBExtension.m'
+        }
+        sources = [e for e in sources if Path(e['path']).name not in unavailable_armv6_sources]
+    if os.environ.get('ONEGRAM_ARCH') == 'armv6' and target['name'] == 'Telegraph':
+        unavailable_armv6_sources = {
+            'TGVTPlayer.m',
+            'TGVTPlayerView.m',
+            'TGAcceleratedVideoView.m'
+        }
+        sources = [e for e in sources if Path(e['path']).name not in unavailable_armv6_sources]
+    if target['name'] == 'Telegraph' and not sdk_framework_available('GLKit'):
+        sources = [e for e in sources if 'thirdparty/RMIntro/' not in e['path']]
+    if os.environ.get('ONEGRAM_ARCH') in ('armv6', 'arm64') and target['name'] == 'libtgvoip':
         replacements = {'spl_sqrt_floor_arm.S':'spl_sqrt_floor.c',
                         'complex_bit_reverse_arm.S':'complex_bit_reverse.c',
                         'filter_ar_fast_q12_armv7.S':'filter_ar_fast_q12.c'}
@@ -61,7 +82,22 @@ def effective_sources(target):
                 replacement=str(Path(entry['path']).with_name(replacements[Path(entry['path']).name]))
                 assert any(e['path']==replacement for e in sources), replacement
         sources=[e for e in sources if Path(e['path']).name not in replacements]
+        if os.environ.get('ONEGRAM_ARCH') == 'armv6':
+            neon_sources = {
+                'cross_correlation_neon.c',
+                'downsample_fast_neon.c',
+                'min_max_operations_neon.c',
+                'aec_core_neon.cc',
+                'aecm_core_neon.cc',
+                'nsx_core_neon.c',
+                'ooura_fft_neon.cc'
+            }
+            sources=[e for e in sources if Path(e['path']).name not in neon_sources]
     return sources
+
+def sdk_framework_available(name):
+    sdk = Path(os.environ.get('THEOS', str(Path.home()/'theos'))) / ('sdks/iPhoneOS' + os.environ.get('ONEGRAM_SDK_VERSION', '6.1') + '.sdk')
+    return (sdk / 'System/Library/Frameworks' / (name + '.framework')).is_dir()
 
 def shell_flags(flags):
     return ' '.join(shlex.quote(x).replace('$', '$$').replace('#', r'\#') for x in flags)
@@ -126,6 +162,13 @@ def generate(configuration):
         flags = tokens('OTHER_CFLAGS') + tokens('WARNING_CFLAGS')
         if os.environ.get('ONEGRAM_ARCH') == 'arm64':
             flags += ['-DOS_OBJECT_USE_OBJC=0','-I'+str(OUT/'dependency-sources/openssl-OpenSSL_1_0_2h/include')]
+        elif os.environ.get('ONEGRAM_ARCH') == 'armv6':
+            flags += ['-DONEGRAM_ARMV6=1','-DONEGRAM_IOS3_APPLICATION_BUILD=1','-DTARGET_OS_IOS=1','-DTARGET_OS_OSX=0','-I'+str(ROOT/'theos/compat/ios3'),'-I'+str(ROOT/'theos/compat/ios3/libdispatch'),
+                      '-I'+str(ROOT/'OnegramPlatform'),
+                      '-I'+str(OUT/'dependency-sources/openssl-OpenSSL_1_0_2h/include'),
+                      '-I'+str(OUT/'dependency-sources/libdispatch-libdispatch-187.10'),
+                      '-I'+str(OUT/'dependency-sources/libclosure-libclosure-38'),
+                      '-include',str(ROOT/'theos/compat/ios3/OnegramIOS3Compatibility.h')]
         flags += ['-D'+d for d in tokens('GCC_PREPROCESSOR_DEFINITIONS')]
         flags += ['-I'+p for p in paths('HEADER_SEARCH_PATHS')]
         flags += ['-iquote'+p for p in paths('USER_HEADER_SEARCH_PATHS')]
@@ -136,9 +179,13 @@ def generate(configuration):
         if t['settings'].get('GCC_THUMB_SUPPORT') == 'NO' and os.environ.get('ONEGRAM_ARCH','armv7') == 'armv7': flags += ['-marm']
         if t['settings'].get('GCC_GENERATE_DEBUGGING_SYMBOLS') == 'NO': flags += ['-g0']
         if t['settings'].get('GCC_PREFIX_HEADER'):
-            prefix = expand(t['settings']['GCC_PREFIX_HEADER'], settings)
-            if not prefix.startswith('/'): prefix = str(Path(project_dir)/prefix)
-            flags += ['-include',prefix]
+            include_prefix = True
+            if os.environ.get('ONEGRAM_ARCH') == 'armv6' and t['name'] not in ('LegacyComponents', 'Telegraph'):
+                include_prefix = False
+            if include_prefix:
+                prefix = expand(t['settings']['GCC_PREFIX_HEADER'], settings)
+                if not prefix.startswith('/'): prefix = str(Path(project_dir)/prefix)
+                flags += ['-include',prefix]
         for e,rel in resolved:
             ext = Path(rel).suffix
             local = []
@@ -166,8 +213,12 @@ def generate(configuration):
                 del links[index-1:index+1]
         if t['settings'].get('DEAD_CODE_STRIPPING') == 'YES' or (name == 'Telegram' and configuration == 'Release Hockeyapp' and 'DEAD_CODE_STRIPPING' not in t['settings']):
             links.insert(0, '-Wl,-dead_strip')
-        if os.environ.get('ONEGRAM_ARCH') == 'arm64':
+        if os.environ.get('ONEGRAM_ARCH','armv7') == 'armv7':
+            links=[p.replace(str(ROOT/'thirdparty/PSTCollectionView/lib/libPSTCollectionView.a'),str(OUT/'products/libPSTCollectionView.a')) for p in links]
+        if os.environ.get('ONEGRAM_ARCH') in ('armv6', 'arm64'):
             links=[p.replace(str(ROOT/'thirdparty/TgVoipWebrtcIOS6/openssl-ios5/lib'),str(OUT/'products')).replace(str(ROOT/'thirdparty/PSTCollectionView/lib/libPSTCollectionView.a'),str(OUT/'products/libPSTCollectionView.a')) for p in links]
+        if os.environ.get('ONEGRAM_ARCH') == 'armv6':
+            links=[p.replace(str(ROOT/'Telegraph/thirdparty/opus/lib/libopus.a'),str(OUT/'products/libopus.a')).replace(str(ROOT/'thirdparty/WebP.framework/WebP'),str(OUT/'products/libWebP.a')) for p in links]
         if os.environ.get('ONEGRAM_ARCH') == 'arm64' and name == 'Telegram':
             links += ['-weak_framework', 'WebKit', '-weak_framework', 'PushKit']
         links += ['-L'+p for p in paths('LIBRARY_SEARCH_PATHS')]
@@ -179,8 +230,11 @@ def generate(configuration):
             path = expand(e['path'],settings)
             is_weak = 'Weak' in e['settings'].get('ATTRIBUTES',[])
             if path.endswith('.framework'):
-                (weak if is_weak else frameworks).append(Path(path).stem)
-                links += ['-weak_framework' if is_weak else '-framework', Path(path).stem]
+                framework_name = Path(path).stem
+                if os.environ.get('ONEGRAM_ARCH') == 'armv6' and path.startswith('@SDKROOT@') and framework_name.casefold() not in sdk_frameworks:
+                    continue
+                (weak if is_weak else frameworks).append(framework_name)
+                links += ['-weak_framework' if is_weak else '-framework', framework_name]
                 if not path.startswith('@SDKROOT@'):
                     parent = str(Path(path).parent)
                     if not parent.startswith('/'): parent = str(ROOT/parent)
@@ -257,7 +311,7 @@ def generate(configuration):
         write(OUT/'headers'/(name+'.json'),json.dumps({'mappings':header_map},indent=2,sort_keys=True)+'\n')
     write(OUT/'headers/namespaces.json',json.dumps({'mappings':namespace_map},indent=2,sort_keys=True)+'\n')
     if sys.platform == 'darwin':
-        hmaptool=Path('/usr/local/opt/llvm/bin/hmaptool')
+        hmaptool=Path(os.environ.get('HMAPTOOL','/usr/local/opt/llvm/bin/hmaptool'))
     else:
         hmaptool=Path(os.environ.get('THEOS',str(Path.home()/'theos')))/'toolchain/linux/iphone/bin/hmaptool'
     for path in sorted((OUT/'headers').glob('*.json')):

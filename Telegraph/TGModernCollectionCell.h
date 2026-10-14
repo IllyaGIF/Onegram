@@ -26,6 +26,7 @@
 {
     @public
     bool _needsRelativeBoundsUpdateNotifications;
+    bool _relativeBoundsUpdatePending;
 }
 
 @property (nonatomic, weak) id boundItem;

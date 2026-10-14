@@ -2,6 +2,7 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageUtils.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 @implementation TGDefaultPresentationPallete
 
@@ -277,7 +278,7 @@
 
 - (UIColor *)dialogEditGroupColor
 {
-    return UIColorRGB(0x48cf5d); //UIColorRGB(0x595ad3); //self.accentColor;
+    return UIColorRGB(0x48cf5d);
 }
 
 - (UIColor *)dialogEditReadColor
@@ -312,6 +313,8 @@
 
 - (UIColor *)chatIncomingTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].messageTextColor;
     return [UIColor blackColor];
 }
 
@@ -332,6 +335,8 @@
 
 - (UIColor *)chatIncomingDateColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].timeColor;
     return UIColorRGBA(0x525252, 0.6f);
 }
 
@@ -387,6 +392,8 @@
 
 - (UIColor *)chatOutgoingTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].messageTextColor;
     return [UIColor blackColor];
 }
 
@@ -408,7 +415,7 @@
 - (UIColor *)chatOutgoingDateColor
 {
     if ([TGPresentation brandedIOS6Style])
-        return UIColorRGBA(0x666666, 0.9f);
+        return [TGPresentation brandedIOS6ConversationAppearance].timeColor;
     return UIColorRGBA(0x008c09, 0.8f);
 }
 
@@ -479,7 +486,7 @@
 
 - (UIColor *)chatSystemBackgroundColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatSystemTextColor
@@ -489,36 +496,36 @@
 
 - (UIColor *)chatActionBackgroundColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatActionIconColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatActionBorderColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatReplyButtonBackgroundColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatReplyButtonHighlightedBackgroundColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatReplyButtonBorderColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 - (UIColor *)chatReplyButtonHighlightedBorderColor
 {
-    return nil; // fallbacks to legacy graphics
+    return nil;
 }
 
 - (UIColor *)chatReplyButtonIconColor
@@ -549,7 +556,7 @@
 - (UIColor *)chatChecksColor
 {
     if ([TGPresentation brandedIOS6Style])
-        return UIColorRGB(0x6c6c6c);
+        return [TGPresentation brandedIOS6ConversationAppearance].timeColor;
     return UIColorRGB(0x23ca0a);
 }
 
@@ -570,11 +577,15 @@
 
 - (UIColor *)chatInputTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputFieldTextColor;
     return [UIColor blackColor];
 }
 
 - (UIColor *)chatInputPlaceholderColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputFieldPlaceholderColor;
     return UIColorRGB(0xbebec0);
 }
 

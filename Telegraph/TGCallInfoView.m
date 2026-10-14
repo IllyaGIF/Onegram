@@ -1,4 +1,5 @@
 #import "TGCallInfoView.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -269,8 +270,6 @@ static NSString *TGCallInfoLocalizedStatus(NSString *key, NSString *fallback)
         _needsFontUpdate = true;
         [self setNeedsLayout];
 
-        if (displayName.length != 0)
-            TGLog(@"CALL ui.name peer=%d name=%@ legacyLabel=%d", peer.uid, displayName, _legacyMode ? 1 : 0);
     }
 }
 
@@ -566,8 +565,8 @@ static NSString *TGCallInfoLocalizedStatus(NSString *key, NSString *fallback)
         _needsFontUpdate = false;
     }
     
-    CGFloat nameHeight = ceil(_nameLabel.font.lineHeight + 2.0f);
-    CGFloat statusHeight = ceil(_statusLabel.font.lineHeight + 2.0f);
+    CGFloat nameHeight = ceil(OGPlatformFontLineHeight(_nameLabel.font) + 2.0f);
+    CGFloat statusHeight = ceil(OGPlatformFontLineHeight(_statusLabel.font) + 2.0f);
     
     if (nameHeight < 1.0f)
         nameHeight = 36.0f;

@@ -30,7 +30,7 @@ def main():
         return match[1]
 
     arch = os.environ.get("ONEGRAM_ARCH", "armv7")
-    minimum = "7.0" if arch == "arm64" else "4.3"
+    minimum = {"armv6": "3.1.3", "armv7": "4.3", "arm64": "7.0"}[arch]
 
     substitutions = {
         "ROOT": str(core),
@@ -64,6 +64,15 @@ def main():
                 ),
             )
             for f in flags
+        ]
+    elif arch == "armv6":
+        flags += [
+            "-DONEGRAM_ARMV6=1",
+            "-D__AVAILABILITY_INTERNAL__IPHONE_4_0=",
+            "-D__AVAILABILITY_INTERNAL__IPHONE_4_3=",
+            "-D__AVAILABILITY_INTERNAL__IPHONE_5_0=",
+            "-I" + str(OUT / "dependency-sources/libdispatch-libdispatch-187.10"),
+            "-I" + str(OUT / "dependency-sources/libclosure-libclosure-38"),
         ]
 
     sources = [

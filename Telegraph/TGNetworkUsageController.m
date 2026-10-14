@@ -1,4 +1,5 @@
 #import "TGNetworkUsageController.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -117,14 +118,14 @@ static SSignal *statsSignal(MTNetworkUsageCalculationInfo *baseInfo) {
         
         _segmentedControl = [[UISegmentedControl alloc] initWithItems:@[TGLocalized(@"NetworkUsageSettings.Cellular"), TGLocalized(@"NetworkUsageSettings.Wifi")]];
         
-        [_segmentedControl setBackgroundImage:self.presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setBackgroundImage:self.presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setBackgroundImage:self.presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setBackgroundImage:self.presentation.images.segmentedControlHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setDividerImage:self.presentation.images.segmentedControlDividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, self.presentation.images.segmentedControlBackgroundImage, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, self.presentation.images.segmentedControlSelectedImage, UIControlStateSelected, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, self.presentation.images.segmentedControlSelectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, self.presentation.images.segmentedControlHighlightedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlDividerImage(_segmentedControl, self.presentation.images.segmentedControlDividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
         
-        [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:self.presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
-        [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:self.presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+        OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:self.presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateNormal);
+        OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:self.presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateSelected);
         
         [_segmentedControl setSelectedSegmentIndex:0];
         [_segmentedControl addTarget:self action:@selector(segmentedControlChanged) forControlEvents:UIControlEventValueChanged];

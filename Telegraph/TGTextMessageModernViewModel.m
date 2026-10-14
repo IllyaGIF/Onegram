@@ -25,6 +25,7 @@
 #import "TGWebpageFooterModel.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 @interface TGTextMessageModernViewModel () <UIGestureRecognizerDelegate, TGDoubleTapGestureRecognizerDelegate>
 {
@@ -48,6 +49,20 @@
 
 static CTFontRef textFontForSize(CGFloat size)
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        static CTFontRef brandedFont = NULL;
+        static int brandedSize = 0;
+        if (brandedFont == NULL || (int)size != brandedSize)
+        {
+            if (brandedFont != NULL)
+                CFRelease(brandedFont);
+            brandedFont = TGIos6CreateCTFontFromUIFont([[TGPresentation brandedIOS6ConversationAppearance].messageFont fontWithSize:size]);
+            brandedSize = (int)size;
+        }
+        return brandedFont;
+    }
+
     static CTFontRef font = NULL;
     static int cachedSize = 0;
     
@@ -140,19 +155,18 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
         }
         
         CTFontRef font = textFontForSize(TGGetMessageViewModelLayoutConstants()->textFontSize);
-        /*NSUInteger length = 0;
-         if (_text.length < 20 && [TGStringUtils stringContainsEmojiOnly:_text length:&length]) {
-         if (length <= 6) {
-         font = emojiFontForSize(TGGetMessageViewModelLayoutConstants()->textFontSize);
-         _emojiOnly = true;
-         }
-         }*/
         
         _textModel = [[TGModernTextViewModel alloc] initWithText:_text font:font];
         _textModel.underlineAllLinks = _incomingAppearance ? _context.presentation.pallete.underlineAllIncomingLinks : _context.presentation.pallete.underlineAllOutgoingLinks;
         _textModel.textCheckingResults = _isGame ? nil : textCheckingResults;
         _textModel.textColor = _incomingAppearance ? _context.presentation.pallete.chatIncomingTextColor : _context.presentation.pallete.chatOutgoingTextColor;
         _textModel.linkColor = _incomingAppearance ? _context.presentation.pallete.chatIncomingLinkColor : _context.presentation.pallete.chatOutgoingLinkColor;
+        if ([TGPresentation brandedIOS6Style])
+        {
+            OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+            _textModel.shadowColor = appearance.messageShadowColor;
+            _textModel.shadowOffset = appearance.messageShadowOffset;
+        }
         if (message.isBroadcast)
             _textModel.additionalTrailingWidth += 10.0f;
         [_contentModel addSubmodel:_textModel];
@@ -886,8 +900,6 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
                  
                  for (UIView *partView in linkHighlightedViews)
                  {
-                     //partView.frame = CGRectOffset(partView.frame, _textModel.frame.origin.x + [_contentModel boundView].frame.origin.x, _textModel.frame.origin.y + 1 + [_contentModel boundView].frame.origin.y);
-                     //[[_contentModel boundView].superview insertSubview:partView belowSubview:[_contentModel boundView]];
                      
                      partView.frame = CGRectOffset(partView.frame, _textModel.frame.origin.x, _textModel.frame.origin.y + 1);
                      partView.layer.zPosition = -1.0f;
@@ -949,8 +961,8 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
     }
     
     size.width = MAX(size.width, infoWidth - 5.0f);
-    if ([TGPresentation brandedIOS6Style] && !_isGame && !_isInvoice && !(_text.length == 0 && _webPage != nil))
-        size.height += 15.0f;
+    if ([TGPresentation brandedIOS6Style] && ![self brandedReactionsShareTimeRow] && !_isGame && !_isInvoice && !(_text.length == 0 && _webPage != nil))
+        size.height += [TGPresentation brandedIOS6ConversationAppearance].bubbleTimeRowHeight;
     
     if (_isGame || _isInvoice || (_text.length == 0 && _webPage != nil)) {
         size.height = 0.0f;

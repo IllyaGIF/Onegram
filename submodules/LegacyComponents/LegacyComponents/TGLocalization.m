@@ -2,6 +2,72 @@
 
 #import "TGPluralization.h"
 
+#import <pthread.h>
+
+static pthread_mutex_t fallbackDictsMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static NSArray *startupFallbackKeys() {
+    static NSArray *keys = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        keys = @[
+            @"Contacts.TabTitle",
+            @"DialogList.TabTitle",
+            @"Settings.TabTitle",
+            @"Calls.TabTitle",
+            @"DialogList.Title",
+            @"DialogList.SearchLabel",
+            @"Common.Back",
+            @"Common.Edit",
+            @"Common.Done",
+            @"Common.OK",
+            @"DialogList.PinLimitError"
+        ];
+    });
+    return keys;
+}
+
+static bool isStartupFallbackKey(NSString *key) {
+    return [startupFallbackKeys() containsObject:key];
+}
+
+static NSDictionary *startupFallbackDict(NSString *code) {
+    if (code == nil) {
+        code = @"en";
+    }
+    static NSMutableDictionary *dicts = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dicts = [[NSMutableDictionary alloc] init];
+    });
+    pthread_mutex_lock(&fallbackDictsMutex);
+    NSDictionary *dict = dicts[code];
+    if (dict == nil) {
+        NSString *directory = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.lproj", code]];
+        NSString *path = [directory stringByAppendingPathComponent:@"OnegramStartup.txt"];
+        NSData *data = [NSData dataWithContentsOfFile:path];
+        NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
+        if (data.length != 0) {
+            NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+                NSRange separator = [line rangeOfString:@"\t"];
+                if (separator.location == NSNotFound) {
+                    continue;
+                }
+                NSString *key = [line substringToIndex:separator.location];
+                NSString *value = [line substringFromIndex:separator.location + separator.length];
+                if (key.length != 0) {
+                    result[key] = value;
+                }
+            }
+        }
+        dict = result;
+        dicts[code] = dict;
+    }
+    pthread_mutex_unlock(&fallbackDictsMutex);
+    return dict;
+}
+
 static NSDictionary *fallbackDict(NSString *code) {
     if (code == nil) {
         code = @"en";
@@ -11,6 +77,7 @@ static NSDictionary *fallbackDict(NSString *code) {
     dispatch_once(&onceToken, ^{
         dicts = [[NSMutableDictionary alloc] init];
     });
+    pthread_mutex_lock(&fallbackDictsMutex);
     NSDictionary *dict = dicts[code];
     if (dict == nil) {
         NSBundle *bundle = [NSBundle bundleWithPath:[[NSBundle mainBundle] pathForResource:code ofType:@"lproj"]];
@@ -21,11 +88,22 @@ static NSDictionary *fallbackDict(NSString *code) {
         }
         dicts[code] = dict;
     }
+    pthread_mutex_unlock(&fallbackDictsMutex);
     return dict;
 }
 
 static NSString *fallbackString(NSString *key, NSString *code) {
-    NSString *value = fallbackDict(code)[key];
+    NSString *value = nil;
+    if (isStartupFallbackKey(key)) {
+        value = startupFallbackDict(code)[key];
+        if (value == nil) {
+            value = startupFallbackDict(@"en")[key];
+        }
+        if (value != nil) {
+            return value;
+        }
+    }
+    value = fallbackDict(code)[key];
     if (value == nil) {
         value = fallbackDict(@"en")[key];
     }
@@ -37,41 +115,66 @@ static NSString *fallbackString(NSString *key, NSString *code) {
     }
 }
 
+static NSString *TGLocalizationBrandTitle(void) {
+    static NSString *title = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSString *appTitle = [[[NSBundle mainBundle] localizedInfoDictionary] objectForKey:@"CFBundleDisplayName"];
+        if (appTitle == nil) {
+            appTitle = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"];
+        }
+        if (appTitle != nil && ![appTitle isEqualToString:@"Telegram"]) {
+            title = appTitle;
+        }
+    });
+    return title;
+}
+
+static NSString *TGLocalizationBrandedValue(NSString *value, NSString *brandTitle) {
+    if (brandTitle == nil || ![value isKindOfClass:[NSString class]] || [value rangeOfString:@"Telegram"].location == NSNotFound) {
+        return value;
+    }
+    return [value stringByReplacingOccurrencesOfString:@"Telegram" withString:brandTitle];
+}
+
+static NSDictionary *TGLocalizationBrandedDictionary(NSDictionary *dict, NSString *brandTitle) {
+    if (brandTitle == nil || dict.count == 0) {
+        return dict;
+    }
+    NSMutableDictionary *result = nil;
+    for (NSString *key in dict.keyEnumerator) {
+        NSString *value = dict[key];
+        NSString *branded = TGLocalizationBrandedValue(value, brandTitle);
+        if (branded != value) {
+            if (result == nil) {
+                result = [[NSMutableDictionary alloc] initWithDictionary:dict];
+            }
+            result[key] = branded;
+        }
+    }
+    return result != nil ? result : dict;
+}
+
 @interface TGLocalization () {
     NSDictionary *_dict;
+    NSString *_brandTitle;
+    NSMutableDictionary *_brandedValues;
+    pthread_mutex_t _brandedValuesLock;
 }
 
 @end
 
 @implementation TGLocalization
-    
-- (instancetype)initWithVersion:(int32_t)version code:(NSString *)code dict:(NSDictionary *)dict isActive:(bool)isActive {
+
+- (instancetype)initWithVersion:(int32_t)version code:(NSString *)code sourceDict:(NSDictionary *)dict brandTitle:(NSString *)brandTitle isActive:(bool)isActive {
     self = [super init];
     if (self != nil) {
         _version = version;
         _code = code;
-        NSString *appTitle = [[[NSBundle mainBundle] localizedInfoDictionary] objectForKey:@"CFBundleDisplayName"];
-        if (appTitle == nil) {
-            appTitle = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"];
-        }
-        if (appTitle == nil) {
-            appTitle = @"Telegram";
-        }
-        NSString *originalTitle = @"Telegram";
-        if (![appTitle isEqualToString:originalTitle]) {
-            NSMutableDictionary *updatedDict = [[NSMutableDictionary alloc] initWithDictionary:dict];
-            for (NSString *key in dict.keyEnumerator) {
-                NSString *value = dict[key];
-                if ([value rangeOfString:originalTitle].location != NSNotFound) {
-                    value = [value stringByReplacingOccurrencesOfString:originalTitle withString:appTitle];
-                    updatedDict[key] = value;
-                }
-            }
-            _dict = updatedDict;
-        } else {
-            _dict = dict;
-        }
+        _dict = dict ?: @{};
+        _brandTitle = brandTitle;
         _isActive = isActive;
+        pthread_mutex_init(&_brandedValuesLock, NULL);
         
         NSString *rawCode = code;
         NSRange range = [rawCode rangeOfString:@"_"];
@@ -85,12 +188,28 @@ static NSString *fallbackString(NSString *key, NSString *code) {
         rawCode = [rawCode lowercaseString];
         unsigned int lc = 0;
         const char *s = rawCode.UTF8String;
-        for (; *s; s++) { lc = (lc << 8) + *s; }
+        for (; s != NULL && *s; s++) { lc = (lc << 8) + *s; }
         _languageCodeHash = lc;
     }
     return self;
 }
+
+- (void)dealloc {
+    pthread_mutex_destroy(&_brandedValuesLock);
+}
     
+- (instancetype)initWithVersion:(int32_t)version code:(NSString *)code dict:(NSDictionary *)dict isActive:(bool)isActive {
+    return [self initWithVersion:version code:code sourceDict:dict brandTitle:TGLocalizationBrandTitle() isActive:isActive];
+}
+    
+- (instancetype)initWithVersion:(int32_t)version code:(NSString *)code preparedDict:(NSDictionary *)dict isActive:(bool)isActive {
+    return [self initWithVersion:version code:code sourceDict:dict brandTitle:nil isActive:isActive];
+}
+
+- (NSDictionary *)dictionaryRepresentation {
+    return TGLocalizationBrandedDictionary(_dict, _brandTitle) ?: @{};
+}
+
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
     return [self initWithVersion:[aDecoder decodeInt32ForKey:@"version"] code:[aDecoder decodeObjectForKey:@"code"] dict:[aDecoder decodeObjectForKey:@"dict"] isActive:[aDecoder decodeBoolForKey:@"isActive"]];
 }
@@ -103,14 +222,14 @@ static NSString *fallbackString(NSString *key, NSString *code) {
 }
     
 - (TGLocalization *)mergedWith:(NSDictionary *)other version:(int32_t)version {
-    NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:_dict];
-    [dict addEntriesFromDictionary:other];
+    NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:[self dictionaryRepresentation]];
+    [dict addEntriesFromDictionary:TGLocalizationBrandedDictionary(other, TGLocalizationBrandTitle())];
     
-    return [[TGLocalization alloc] initWithVersion:version code:_code dict:dict isActive:_isActive];
+    return [[TGLocalization alloc] initWithVersion:version code:_code preparedDict:dict isActive:_isActive];
 }
     
 - (TGLocalization *)withUpdatedIsActive:(bool)isActive {
-    return [[TGLocalization alloc] initWithVersion:_version code:_code dict:_dict isActive:isActive];
+    return [[TGLocalization alloc] initWithVersion:_version code:_code sourceDict:_dict brandTitle:_brandTitle isActive:isActive];
 }
 
 - (NSLocale *)locale
@@ -125,6 +244,13 @@ static NSString *fallbackString(NSString *key, NSString *code) {
     return [[NSLocale alloc] initWithLocaleIdentifier:identifier];
 }
     
+- (void)preloadFallback {
+    fallbackDict(_code);
+    if (![_code isEqualToString:@"en"]) {
+        fallbackDict(@"en");
+    }
+}
+
 - (NSString *)get:(NSString *)key {
     if (key == nil) {
         return nil;
@@ -132,7 +258,23 @@ static NSString *fallbackString(NSString *key, NSString *code) {
     NSString *value = _dict[key];
 
     if (value != nil && value.length != 0) {
-        return value;
+        if (_brandTitle == nil || [value rangeOfString:@"Telegram"].location == NSNotFound) {
+            return value;
+        }
+        pthread_mutex_lock(&_brandedValuesLock);
+        NSString *branded = _brandedValues[key];
+        pthread_mutex_unlock(&_brandedValuesLock);
+        if (branded != nil) {
+            return branded;
+        }
+        branded = TGLocalizationBrandedValue(value, _brandTitle);
+        pthread_mutex_lock(&_brandedValuesLock);
+        if (_brandedValues == nil) {
+            _brandedValues = [[NSMutableDictionary alloc] init];
+        }
+        _brandedValues[key] = branded;
+        pthread_mutex_unlock(&_brandedValuesLock);
+        return branded;
     } else {
         return fallbackString(key, _code);
     }

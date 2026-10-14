@@ -127,62 +127,6 @@
     if (true)
         return;
     
-    /*if (!change.hasIncrementalChanges)
-    {
-        [collectionView reloadData];
-        if (completion != nil)
-            completion(false);
-        return;
-    }
-    
-    NSMutableArray *removedIndexPaths = [[NSMutableArray alloc] init];
-    [change.removedIndexes enumerateIndexesUsingBlock:^(NSUInteger index, __unused BOOL *stop)
-    {
-        [removedIndexPaths addObject:[NSIndexPath indexPathForRow:index inSection:0]];
-    }];
-    
-    NSMutableArray *insertedIndexPaths = [[NSMutableArray alloc] init];
-    [change.insertedIndexes enumerateIndexesUsingBlock:^(NSUInteger index, __unused BOOL *stop)
-    {
-        [insertedIndexPaths addObject:[NSIndexPath indexPathForRow:index inSection:0]];
-    }];
-    
-    NSMutableArray *updatedIndexPaths = [[NSMutableArray alloc] init];
-    [change.updatedIndexes enumerateIndexesUsingBlock:^(NSUInteger index, __unused BOOL *stop)
-    {
-        [updatedIndexPaths addObject:[NSIndexPath indexPathForRow:index inSection:0]];
-    }];
-    
-    [collectionView performBatchUpdates:^
-    {
-        [collectionView deleteItemsAtIndexPaths:removedIndexPaths];
-        [collectionView insertItemsAtIndexPaths:insertedIndexPaths];
-    } completion:^(__unused BOOL finished)
-    {
-        if (updatedIndexPaths.count > 0 || change.hasMoves)
-        {
-            [collectionView performBatchUpdates:^
-            {
-                [collectionView reloadItemsAtIndexPaths:updatedIndexPaths];
-                
-                [change enumerateMovesWithBlock:^(NSUInteger fromIndex, NSUInteger toIndex)
-                {
-                    NSIndexPath *fromIndexPath = [NSIndexPath indexPathForRow:fromIndex inSection:0];
-                    NSIndexPath *toIndexPath = [NSIndexPath indexPathForRow:toIndex inSection:0];
-                    
-                    [collectionView moveItemAtIndexPath:fromIndexPath toIndexPath:toIndexPath];
-                }];
-            } completion:^(__unused BOOL finished)
-            {
-                if (completion != nil)
-                    completion(true);
-            }];
-        }
-        else if (completion != nil)
-        {
-            completion(true);
-        }
-    }];*/
 }
 
 @end

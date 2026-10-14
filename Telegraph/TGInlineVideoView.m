@@ -1,13 +1,15 @@
 #import "TGInlineVideoView.h"
 
+#define USE_VT false
+
+#if USE_VT
 #import "TGVTPlayer.h"
 #import "TGVTPlayerView.h"
+#endif
 
 #import "TGAcceleratedVideoView.h"
 #import "TGVTAcceleratedVideoView.h"
 #import "TGGLVideoView.h"
-
-#define USE_VT false
 
 @interface TGInlineVideoView () {
 #if USE_VT
@@ -18,6 +20,7 @@
 #endif
     
     SMetaDisposable *_pathDisposable;
+    NSUInteger _pathGeneration;
     
 }
 
@@ -56,6 +59,11 @@
         _insets = UIEdgeInsetsMake(-2.0f, -2.0f, -2.0f, -2.0f);
     }
     return self;
+}
+
+- (void)dealloc
+{
+    [_pathDisposable dispose];
 }
 
 - (void)setVideoSize:(CGSize)videoSize {
@@ -137,6 +145,9 @@ typedef enum {
 }
 
 - (void)willBecomeRecycled {
+    [_pathDisposable setDisposable:nil];
+    _pathGeneration++;
+    _videoPath = nil;
 #if USE_VT
     [_player stop];
     [_player _setOutput:nil];
@@ -150,6 +161,8 @@ typedef enum {
 }
 
 - (void)setVideoPathSignal:(SSignal *)signal {
+    [_pathDisposable setDisposable:nil];
+    NSUInteger generation = ++_pathGeneration;
     __weak TGInlineVideoView *weakSelf = self;
     
     if (signal == nil) {
@@ -157,7 +170,7 @@ typedef enum {
     } else {
         [_pathDisposable setDisposable:[[signal deliverOn:[SQueue mainQueue]] startWithNext:^(NSString *path) {
             __strong TGInlineVideoView *strongSelf = weakSelf;
-            if (strongSelf != nil) {
+            if (strongSelf != nil && strongSelf->_pathGeneration == generation) {
                 [strongSelf playVideoFromPath:path];
             }
         }]];
@@ -165,22 +178,9 @@ typedef enum {
 }
 
 - (void)playVideoFromPath:(NSString *)path {
-//#if USE_VT
-//    [_player stop];
-//    [_player _setOutput:nil];
-//    _player = nil;
-//    
-//    if (path != nil) {
-//        _player = [[TGVTPlayer alloc] initWithUrl:[NSURL fileURLWithPath:path]];
-//        [_player _setOutput:_playerView];
-//        [_player play];
-//    }
-//#else
     [_videoView setPath:path];
-    if (path != nil)
-        _videoPath = path;
+    _videoPath = [path copy];
     
-//#endif
 
 }
 

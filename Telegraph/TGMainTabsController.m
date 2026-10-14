@@ -1,148 +1,84 @@
 #import "TGMainTabsController.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import <QuartzCore/QuartzCore.h>
 
-#import <objc/runtime.h>
-
 #import "TGAppDelegate.h"
+#import "TGCommon.h"
 #import "TGDebugController.h"
 
 #import "TGPresentation.h"
 
-static UIImage *TGMainTabsBrandedIOS6Image(NSString *name)
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGTabBarAppearance.h"
+#import "../OnegramUI/Core/OGSurfaceStyle.h"
+#import "../OnegramUI/Core/OGSurfaceRenderer.h"
+#import "../OnegramUI/Core/OGAssets.h"
+
+static NSString *const TGMainTabsContactsIconName = @"tabbar-contacts";
+static NSString *const TGMainTabsCallsIconName = @"tabbar-calls";
+static NSString *const TGMainTabsChatsIconName = @"tabbar-chats";
+static NSString *const TGMainTabsSettingsIconName = @"tabbar-settings";
+
+static UIImage *TGMainTabsBrandedIOS6Icon(NSString *name, UIImage *fallbackTemplate, bool selected)
 {
-    return [TGPresentation brandedIOS6ResourceImage:name];
-}
-
-static UIImage *TGMainTabsBrandedIOS6ImageAtSize(NSString *name, CGSize size)
-{
-    NSString *resourceName = [name stringByAppendingString:@"@3x"];
-    NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ios6style"];
-    if (path.length == 0)
-        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
-
-    if (path.length == 0)
-    {
-        resourceName = [name stringByAppendingString:@"@2x"];
-        path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png" inDirectory:@"ios6style"];
-        if (path.length == 0)
-            path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
-    }
-
-    if (path.length == 0)
-        return TGMainTabsBrandedIOS6Image(name);
-
-    UIImage *image = [UIImage imageWithContentsOfFile:path];
-    if (image == nil || image.CGImage == NULL || size.width <= 0.0f || size.height <= 0.0f)
-        return image;
-
-    CGFloat pixelWidth = (CGFloat)CGImageGetWidth(image.CGImage);
-    CGFloat pixelHeight = (CGFloat)CGImageGetHeight(image.CGImage);
-    CGFloat scale = MIN(pixelWidth / size.width, pixelHeight / size.height);
-    if (scale <= 0.0f)
-        return image;
-
-    return [UIImage imageWithCGImage:image.CGImage scale:scale orientation:image.imageOrientation];
-}
-
-static UIImage *TGMainTabsBrandedIOS6TabIconSource(NSString *name)
-{
-    if (![TGPresentation brandedIOS6Style])
-        return TGMainTabsBrandedIOS6Image(name);
-    if ([name isEqualToString:@"telephone-fill"])
-        return TGMainTabsBrandedIOS6ImageAtSize(name, CGSizeMake(24.0f, 24.0f));
-    if ([name isEqualToString:@"chat-square-text-fill"])
-        return TGMainTabsBrandedIOS6ImageAtSize(name, CGSizeMake(25.0f, 25.0f));
-    if ([name isEqualToString:@"gear-wide"])
-        return TGMainTabsBrandedIOS6ImageAtSize(name, CGSizeMake(24.0f, 24.0f));
-    return TGMainTabsBrandedIOS6Image(name);
-}
-
-static UIImage *TGMainTabsBrandedIOS6GradientIcon(UIImage *image, bool selected)
-{
-    if (image == nil)
+    OGTheme *theme = [OGTheme brandedTheme];
+    UIImage *iconTemplate = [theme.assets imageNamed:name inDirectory:@"ios6style"];
+    if (iconTemplate == nil)
+        iconTemplate = fallbackTemplate;
+    if (iconTemplate == nil)
         return nil;
 
-    UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGRect rect = CGRectMake(0.0f, 0.0f, image.size.width, image.size.height);
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-
-    if (selected)
-    {
-        CGFloat components[] = {
-            1.0f, 1.0f, 1.0f, 1.0f,
-            39.0f / 255.0f, 138.0f / 255.0f, 242.0f / 255.0f, 1.0f,
-            62.0f / 255.0f, 201.0f / 255.0f, 251.0f / 255.0f, 1.0f
-        };
-        CGFloat locations[] = {0.0f, 0.5f, 1.0f};
-        CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 3);
-        CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, image.size.height), 0);
-        CGGradientRelease(gradient);
-    }
-    else
-    {
-        CGFloat components[] = {
-            1.0f, 1.0f, 1.0f, 1.0f,
-            163.0f / 255.0f, 163.0f / 255.0f, 163.0f / 255.0f, 1.0f
-        };
-        CGFloat locations[] = {0.0f, 1.0f};
-        CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
-        CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, image.size.height), 0);
-        CGGradientRelease(gradient);
-    }
-
-    CGColorSpaceRelease(colorSpace);
-    [image drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return result;
+    OGTabBarAppearance *appearance = theme.tabBarAppearance;
+    NSArray *colors = selected ? appearance.selectedIconGradientColors : appearance.iconGradientColors;
+    NSArray *locations = selected ? appearance.selectedIconGradientLocations : appearance.iconGradientLocations;
+    NSArray *shadows = selected ? appearance.selectedIconShadows : appearance.iconShadows;
+    return [theme.surfaceRenderer iconImageWithTemplate:iconTemplate gradientColors:colors locations:locations shadows:shadows outsets:[appearance iconOutsets]];
 }
 
-static UIImage *TGMainTabsBrandedIOS6BackgroundImage(void)
+static void TGMainTabsApplyTabLabelStyle(UILabel *label, TGPresentation *presentation)
 {
-    static UIImage *image = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
+    if ([TGPresentation brandedIOS6Style])
     {
-        UIImage *resourceImage = TGMainTabsBrandedIOS6Image(@"navigation_bg");
-        if (resourceImage != nil)
+        OGTabBarAppearance *appearance = [OGTheme brandedTheme].tabBarAppearance;
+        label.textColor = appearance.titleColor;
+        label.highlightedTextColor = appearance.titleColor;
+        if (OGPlatformLayerSupportsShadow(label.layer))
         {
-            image = resourceImage;
-            return;
+            label.shadowColor = [UIColor clearColor];
+            label.shadowOffset = CGSizeZero;
+            OGPlatformSetLayerShadow(label.layer, appearance.titleShadowColor, 1.0f, appearance.titleShadowRadius, appearance.titleShadowOffset);
         }
+        else
+        {
+            label.shadowColor = appearance.titleShadowColor;
+            label.shadowOffset = appearance.titleShadowOffset;
+        }
+        return;
+    }
 
-        CGSize size = CGSizeMake(2.0f, 49.0f);
-        UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-        CGContextRef context = UIGraphicsGetCurrentContext();
-        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    OGPlatformSetLayerShadow(label.layer, nil, 0.0f, 0.0f, CGSizeZero);
 
-        CGFloat baseComponents[] = {
-            63.0f / 255.0f, 121.0f / 255.0f, 169.0f / 255.0f, 1.0f,
-            40.0f / 255.0f, 83.0f / 255.0f, 118.0f / 255.0f, 1.0f,
-            35.0f / 255.0f, 72.0f / 255.0f, 103.0f / 255.0f, 1.0f
-        };
-        CGFloat baseLocations[] = {0.0f, 0.58f, 1.0f};
-        CGGradientRef baseGradient = CGGradientCreateWithColorComponents(colorSpace, baseComponents, baseLocations, 3);
-        CGContextDrawLinearGradient(context, baseGradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, size.height), 0);
-        CGGradientRelease(baseGradient);
+    label.textColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.tabTextColor : UIColorRGB(0xc7c9cb)) : presentation.pallete.tabTextColor;
+    label.highlightedTextColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.tabActiveIconColor : UIColorRGB(0xffffff)) : presentation.pallete.tabActiveIconColor;
+    label.shadowColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? UIColorRGBA(0x000000, presentation.pallete.isDark ? 0.85f : 0.2f) : UIColorRGBA(0x000000, 0.85f)) : [UIColor clearColor];
+    label.shadowOffset = [TGPresentation classicIOS6Style] ? CGSizeMake(0.0f, -1.0f) : CGSizeZero;
+}
 
-        CGFloat glossComponents[] = {
-            1.0f, 1.0f, 1.0f, 0.34f,
-            1.0f, 1.0f, 1.0f, 0.0f
-        };
-        CGFloat glossLocations[] = {0.0f, 0.72f};
-        CGGradientRef glossGradient = CGGradientCreateWithColorComponents(colorSpace, glossComponents, glossLocations, 2);
-        CGContextDrawLinearGradient(context, glossGradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, 23.0f), 0);
-        CGGradientRelease(glossGradient);
-
-        CGColorSpaceRelease(colorSpace);
-        image = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-    });
-    return image;
+static UIFont *TGMainTabsTabLabelFont(bool landscape)
+{
+    if (landscape)
+        return [TGPresentation classicIOS6Style] ? TGBoldSystemFontOfSize(12.0f) : TGSystemFontOfSize(12.0f);
+    if ([TGPresentation brandedIOS6Style])
+        return [OGTheme brandedTheme].tabBarAppearance.titleFont;
+    if ([TGPresentation classicIOS6Style])
+        return TGBoldSystemFontOfSize(TGIsPad() ? 11.0f : 10.0f);
+    return TGMediumSystemFontOfSize(TGIsPad() ? 11.0f : 10.0f);
 }
 
 static UIImage *TGMainTabsClassicIOS6Image(NSString *name)
@@ -261,11 +197,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     if ([TGPresentation brandedIOS6Style])
     {
         _backgroundView.image = [TGPresentation brandedIOS6BadgeImage];
-        _backgroundView.layer.shadowColor = [UIColor blackColor].CGColor;
-        _backgroundView.layer.shadowOpacity = 0.80f;
-        _backgroundView.layer.shadowRadius = 1.5f;
-        _backgroundView.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
-        UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:11.0f];
+        OGPlatformApplyViewShadow(_backgroundView, [UIColor blackColor], 0.80f, 1.5f, CGSizeMake(0.0f, 2.0f));
+        UIFont *badgeFont = TGBoldSystemFontOfSize(11.0f);
         _label.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(11.0f);
         _label.textColor = [UIColor whiteColor];
         _label.shadowColor = [UIColor clearColor];
@@ -276,7 +209,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         UIImage *badgeImage = TGMainTabsClassicIOS6ResizableImageWithHorizontalCap(@"TabBarBadge", 10.0f);
         UIColor *badgeColor = presentation.pallete.isDark ? TGMainTabsClassicSelectedColor(presentation) : presentation.pallete.tabBadgeColor;
         _backgroundView.image = [TGPresentation classicIOS6ThemedImage:badgeImage tintColor:badgeColor alpha:presentation.pallete.isDark ? 0.95f : 0.5f];
-        _backgroundView.layer.shadowOpacity = 0.0f;
+        OGPlatformApplyViewShadow(_backgroundView, nil, 0.0f, 0.0f, CGSizeZero);
         _label.font = TGBoldSystemFontOfSize(12.0f);
         _label.textColor = presentation.pallete.isDark ? [UIColor whiteColor] : (presentation.pallete.tabBadgeTextColor ?: [UIColor whiteColor]);
         _label.shadowColor = [TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? UIColorRGBA(0x000000, presentation.pallete.isDark ? 0.7f : 0.25f) : UIColorRGBA(0x000000, 0.85f);
@@ -285,7 +218,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     else
     {
         _backgroundView.image = presentation.images.tabBarBadgeImage;
-        _backgroundView.layer.shadowOpacity = 0.0f;
+        OGPlatformApplyViewShadow(_backgroundView, nil, 0.0f, 0.0f, CGSizeZero);
         _label.font = TGSystemFontOfSize(13.0f);
         _label.textColor = presentation.pallete.tabBadgeTextColor;
         _label.shadowColor = [UIColor clearColor];
@@ -370,8 +303,11 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 @property (nonatomic, readonly) UIImageView *imageView;
 @property (nonatomic, assign, getter=isSelected) bool selected;
 @property (nonatomic, assign) bool landscape;
+@property (nonatomic, assign) CGFloat contentCenterX;
+@property (nonatomic, strong) OGTabBarLayout *brandedLayout;
 
 - (void)setClassicSelectedImage:(UIImage *)image;
+- (void)setTitle:(NSString *)title;
 
 @end
 
@@ -382,27 +318,37 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     self = [super init];
     if (self != nil)
     {
+        CFAbsoluteTime detailStart = CFAbsoluteTimeGetCurrent();
         _presentation = presentation;
-        
         self.accessibilityTraits = UIAccessibilityTraitButton;
         self.accessibilityLabel = title;
-        
+
+        detailStart = CFAbsoluteTimeGetCurrent();
         _imageView = [[UIImageView alloc] initWithImage:image];
         [self addSubview:_imageView];
-        
+
+        detailStart = CFAbsoluteTimeGetCurrent();
         _label = [[UILabel alloc] init];
+        detailStart = CFAbsoluteTimeGetCurrent();
         _label.backgroundColor = [UIColor clearColor];
-        _label.textColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : ([TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.tabTextColor : UIColorRGB(0xc7c9cb)) : presentation.pallete.tabTextColor);
-        _label.highlightedTextColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : ([TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.tabActiveIconColor : UIColorRGB(0xffffff)) : presentation.pallete.tabActiveIconColor);
-        _label.shadowColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? UIColorRGBA(0x000000, presentation.pallete.isDark ? 0.85f : 0.2f) : UIColorRGBA(0x000000, 0.85f)) : [UIColor clearColor];
-        _label.shadowOffset = [TGPresentation classicIOS6Style] ? CGSizeMake(0.0f, -1.0f) : CGSizeZero;
-        _label.font = [TGPresentation classicIOS6Style] ? TGBoldSystemFontOfSize(TGIsPad() ? 11.0f : 10.0f) : [TGTabBarButton labelFont];
+        TGMainTabsApplyTabLabelStyle(_label, presentation);
+        detailStart = CFAbsoluteTimeGetCurrent();
+        _label.font = TGMainTabsTabLabelFont(false);
+        detailStart = CFAbsoluteTimeGetCurrent();
         _label.text = title;
         _label.textAlignment = NSTextAlignmentLeft;
         [_label sizeToFit];
         [self addSubview:_label];
     }
     return self;
+}
+
+- (void)setTitle:(NSString *)title
+{
+    self.accessibilityLabel = title;
+    _label.text = title;
+    [_label sizeToFit];
+    [self setNeedsLayout];
 }
 
 - (void)setImage:(UIImage *)image presentation:(TGPresentation *)presentation
@@ -419,10 +365,9 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     else
         _imageView.highlightedImage = nil;
     
-    _label.textColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : ([TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.tabTextColor : UIColorRGB(0xc7c9cb)) : presentation.pallete.tabTextColor);
-    _label.highlightedTextColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : ([TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.tabActiveIconColor : UIColorRGB(0xffffff)) : presentation.pallete.tabActiveIconColor);
-    _label.shadowColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? UIColorRGBA(0x000000, presentation.pallete.isDark ? 0.85f : 0.2f) : UIColorRGBA(0x000000, 0.85f)) : [UIColor clearColor];
-    _label.shadowOffset = [TGPresentation classicIOS6Style] ? CGSizeMake(0.0f, -1.0f) : CGSizeZero;
+    TGMainTabsApplyTabLabelStyle(_label, presentation);
+    _label.font = TGMainTabsTabLabelFont(_landscape);
+    [_label sizeToFit];
     [self setNeedsLayout];
 }
 
@@ -435,7 +380,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         UIImage *selectionImage = TGMainTabsClassicIOS6ResizableImage(@"TabBarSelected");
         selectionImage = [TGPresentation classicIOS6ThemedImage:selectionImage tintColor:([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? _presentation.pallete.selectionColor : nil) alpha:0.75f];
         _classicSelectionLayer.contents = (id)selectionImage.CGImage;
-        _classicSelectionLayer.contentsScale = selectionImage.scale;
+        OGPlatformSetLayerContentsScale(_classicSelectionLayer, selectionImage.scale);
         _classicSelectionLayer.contentsGravity = kCAGravityResize;
         [self.layer insertSublayer:_classicSelectionLayer atIndex:0];
     }
@@ -453,10 +398,53 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     _label.highlighted = selected;
 }
 
+- (void)setContentCenterX:(CGFloat)contentCenterX
+{
+    if (ABS(_contentCenterX - contentCenterX) > FLT_EPSILON)
+    {
+        _contentCenterX = contentCenterX;
+        [self setNeedsLayout];
+    }
+}
+
+- (void)setBrandedLayout:(OGTabBarLayout *)brandedLayout
+{
+    if (_brandedLayout != brandedLayout)
+    {
+        _brandedLayout = brandedLayout;
+        [self setNeedsLayout];
+    }
+}
+
+- (void)layoutBrandedPortrait
+{
+    OGTabBarAppearance *appearance = [OGTheme brandedTheme].tabBarAppearance;
+    OGTabBarLayout *layout = _brandedLayout != nil ? _brandedLayout : [appearance layoutForItemCount:0];
+    UIEdgeInsets outsets = [appearance iconOutsets];
+    _imageView.transform = CGAffineTransformIdentity;
+    CGSize imageSize = _imageView.image.size;
+    CGFloat glyphWidth = imageSize.width - outsets.left - outsets.right;
+    _imageView.frame = CGRectMake(CGRound(_contentCenterX - glyphWidth / 2.0f) - outsets.left, layout.iconTopInset - outsets.top, imageSize.width, imageSize.height);
+
+    if (_label.font != appearance.titleFont)
+    {
+        _label.font = appearance.titleFont;
+        [_label sizeToFit];
+    }
+    CGFloat labelWidth = MIN(CGCeil(_label.frame.size.width), self.frame.size.width);
+    _label.frame = CGRectMake(CGRound(_contentCenterX - labelWidth / 2.0f), self.frame.size.height - layout.titleBottomInset - layout.titleHeight, labelWidth, layout.titleHeight);
+}
+
 - (void)layoutSubviews
 {
     if (_classicSelectionLayer != nil)
         _classicSelectionLayer.frame = self.bounds;
+
+    if ([TGPresentation brandedIOS6Style] && !_landscape)
+    {
+        [self layoutBrandedPortrait];
+        return;
+    }
 
     CGFloat imageVerticalOffset = [self iconVerticalOffset];
     if ([TGPresentation brandedIOS6Style])
@@ -468,7 +456,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     
     if (_landscape)
     {
-        _label.font = [TGPresentation classicIOS6Style] ? TGBoldSystemFontOfSize(12.0f) : [TGTabBarButton landscapeLabelFont];
+        _label.font = TGMainTabsTabLabelFont(true);
         if (CGAffineTransformIsIdentity(_imageView.transform))
         {
             [UIView animateWithDuration:0.2 animations:^
@@ -485,7 +473,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     }
     else
     {
-        _label.font = [TGPresentation classicIOS6Style] ? TGBoldSystemFontOfSize(TGIsPad() ? 11.0f : 10.0f) : [TGTabBarButton labelFont];
+        _label.font = TGMainTabsTabLabelFont(false);
         if (!CGAffineTransformIsIdentity(_imageView.transform))
         {
             [UIView animateWithDuration:0.2 animations:^
@@ -537,31 +525,6 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     return offset;
 }
 
-+ (UIFont *)labelFont
-{
-    static UIFont *font = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        if (!TGIsPad())
-            font = TGMediumSystemFontOfSize(10);
-        else
-            font = TGMediumSystemFontOfSize(11);
-    });
-    return font;
-}
-
-+ (UIFont *)landscapeLabelFont
-{
-    static UIFont *font = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        font = TGSystemFontOfSize(12);
-    });
-    return font;
-}
-
 @end
 
 
@@ -573,6 +536,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     int _callsCount;
     int _messagesCount;
     UIImageView *_classicIOS6BackgroundView;
+    NSString *_brandedBackgroundKey;
 }
 
 @property (nonatomic, weak) id<TGTabBarDelegate> tabDelegate;
@@ -586,6 +550,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 @property (nonatomic, strong) TGTabBarButton *chatsButton;
 @property (nonatomic, strong) TGTabBarButton *settingsButton;
 @property (nonatomic, assign) bool callsHidden;
+@property (nonatomic, assign) bool contactsHidden;
 
 @property (nonatomic, strong) TGTabBarBadge *callsBadge;
 @property (nonatomic, strong) TGTabBarBadge *messagesBadge;
@@ -601,11 +566,26 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 @implementation TGTabBar
 
+- (void)startupLocalizationUpdated:(NSNotification *)notification
+{
+    (void)notification;
+    [_contactsButton setTitle:TGStartupLocalized(@"Contacts.TabTitle")];
+    [_callsButton setTitle:TGStartupLocalized(@"Calls.TabTitle")];
+    [_chatsButton setTitle:TGStartupLocalized(@"DialogList.TabTitle")];
+    [_settingsButton setTitle:TGStartupLocalized(@"Settings.TabTitle")];
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGStartupLocalizationUpdatedNotification object:nil];
+}
+
 - (instancetype)initWithFrame:(CGRect)frame presentation:(TGPresentation *)presentation
 {
     self = [super initWithFrame:frame];
     if (self != nil)
     {
+        CFAbsoluteTime phaseStart = CFAbsoluteTimeGetCurrent();
         self.multipleTouchEnabled = false;
         self.exclusiveTouch = true;
         
@@ -615,15 +595,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         if ([TGPresentation classicIOS6Style])
         {
             _backgroundView.backgroundColor = [UIColor clearColor];
-            UIImage *backgroundImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6BackgroundImage() : TGMainTabsClassicIOS6ResizableImage(@"TabBarBackground");
-            if (![TGPresentation brandedIOS6Style])
-                backgroundImage = [TGPresentation classicIOS6ThemedImage:backgroundImage tintColor:presentation.pallete.barBackgroundColor alpha:0.85f];
+            UIImage *backgroundImage = [TGPresentation brandedIOS6Style] ? nil : [TGPresentation classicIOS6ThemedImage:TGMainTabsClassicIOS6ResizableImage(@"TabBarBackground") tintColor:presentation.pallete.barBackgroundColor alpha:0.85f];
             _classicIOS6BackgroundView = [[UIImageView alloc] initWithImage:backgroundImage];
-            if ([TGPresentation brandedIOS6Style])
-            {
-                _classicIOS6BackgroundView.contentMode = UIViewContentModeScaleAspectFill;
-                _classicIOS6BackgroundView.clipsToBounds = true;
-            }
             [_backgroundView addSubview:_classicIOS6BackgroundView];
         }
         else
@@ -633,40 +606,45 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         
         _stripeView = [[UIView alloc] init];
         _stripeView.backgroundColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.barSeparatorColor : UIColorRGB(0xa4a8ac)) : presentation.pallete.barSeparatorColor;
+        _stripeView.hidden = [TGPresentation brandedIOS6Style];
         [self addSubview:_stripeView];
         
         _tabButtons = [[NSMutableArray alloc] init];
+        phaseStart = CFAbsoluteTimeGetCurrent();
         
-        UIImage *contactsSource = TGMainTabsBrandedIOS6TabIconSource(@"person-lines-fill");
-        UIImage *callsSource = TGMainTabsBrandedIOS6TabIconSource(@"telephone-fill");
-        UIImage *chatsSource = TGMainTabsBrandedIOS6TabIconSource(@"chat-square-text-fill");
-        UIImage *settingsSource = TGMainTabsBrandedIOS6TabIconSource(@"gear-wide");
-        if (contactsSource == nil)
-            contactsSource = presentation.images.tabBarContactsIcon;
-        if (callsSource == nil)
-            callsSource = presentation.images.tabBarCallsIcon;
-        if (chatsSource == nil)
-            chatsSource = presentation.images.tabBarChatsIcon;
-        if (settingsSource == nil)
-            settingsSource = presentation.images.tabBarSettingsIcon;
+        UIImage *contactsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsContactsIconName, presentation.images.tabBarContactsIcon, false) : presentation.images.tabBarContactsIcon;
+        UIImage *callsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsCallsIconName, presentation.images.tabBarCallsIcon, false) : presentation.images.tabBarCallsIcon;
+        UIImage *chatsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsChatsIconName, presentation.images.tabBarChatsIcon, false) : presentation.images.tabBarChatsIcon;
+        UIImage *settingsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsSettingsIconName, presentation.images.tabBarSettingsIcon, false) : presentation.images.tabBarSettingsIcon;
+        phaseStart = CFAbsoluteTimeGetCurrent();
 
-        UIImage *contactsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(contactsSource, false) : presentation.images.tabBarContactsIcon;
-        UIImage *callsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(callsSource, false) : presentation.images.tabBarCallsIcon;
-        UIImage *chatsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(chatsSource, false) : presentation.images.tabBarChatsIcon;
-        UIImage *settingsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(settingsSource, false) : presentation.images.tabBarSettingsIcon;
+        CFAbsoluteTime buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        bool constrainedStartupLocalization = OGPlatformUsesConstrainedBackgroundExecution();
+        NSString *contactsTitle = constrainedStartupLocalization ? TGStartupLocalized(@"Contacts.TabTitle") : TGLocalized(@"Contacts.TabTitle");
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        NSString *chatsTitle = constrainedStartupLocalization ? TGStartupLocalized(@"DialogList.TabTitle") : TGLocalized(@"DialogList.TabTitle");
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        NSString *settingsTitle = constrainedStartupLocalization ? TGStartupLocalized(@"Settings.TabTitle") : TGLocalized(@"Settings.TabTitle");
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        NSString *callsTitle = constrainedStartupLocalization ? TGStartupLocalized(@"Calls.TabTitle") : TGLocalized(@"Calls.TabTitle");
 
-        _contactsButton = [[TGTabBarButton alloc] initWithImage:contactsImage title:TGLocalized(@"Contacts.TabTitle") presentation:presentation];
-        _chatsButton = [[TGTabBarButton alloc] initWithImage:chatsImage title:TGLocalized(@"DialogList.TabTitle") presentation:presentation];
-        _settingsButton = [[TGTabBarButton alloc] initWithImage:settingsImage title:TGLocalized(@"Settings.TabTitle") presentation:presentation];
-        _callsButton = [[TGTabBarButton alloc] initWithImage:callsImage title:TGLocalized(@"Calls.TabTitle") presentation:presentation];
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        _contactsButton = [[TGTabBarButton alloc] initWithImage:contactsImage title:contactsTitle presentation:presentation];
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        _chatsButton = [[TGTabBarButton alloc] initWithImage:chatsImage title:chatsTitle presentation:presentation];
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        _settingsButton = [[TGTabBarButton alloc] initWithImage:settingsImage title:settingsTitle presentation:presentation];
+        buttonPhaseStart = CFAbsoluteTimeGetCurrent();
+        _callsButton = [[TGTabBarButton alloc] initWithImage:callsImage title:callsTitle presentation:presentation];
+        phaseStart = CFAbsoluteTimeGetCurrent();
         if ([TGPresentation classicIOS6Style])
         {
             if ([TGPresentation brandedIOS6Style])
             {
-                [_contactsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(contactsSource, true)];
-                [_callsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(callsSource, true)];
-                [_chatsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(chatsSource, true)];
-                [_settingsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(settingsSource, true)];
+                [_contactsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsContactsIconName, presentation.images.tabBarContactsIcon, true)];
+                [_callsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsCallsIconName, presentation.images.tabBarCallsIcon, true)];
+                [_chatsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsChatsIconName, presentation.images.tabBarChatsIcon, true)];
+                [_settingsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsSettingsIconName, presentation.images.tabBarSettingsIcon, true)];
             }
             else
             {
@@ -675,6 +653,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
                 [_settingsButton setClassicSelectedImage:[TGPresentation classicIOS6ThemedImage:TGMainTabsClassicIOS6Image(@"TabIconSettings_Highlighted") tintColor:TGMainTabsClassicSelectedColor(presentation) alpha:0.6f]];
             }
         }
+        phaseStart = CFAbsoluteTimeGetCurrent();
         _callsHidden = true;
         _callsButton.hidden = true;
         _callsButton.alpha = 0.0f;
@@ -697,6 +676,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         longPressGestureRecognizer.allowableMovement = 10.0f;
         longPressGestureRecognizer.delegate = self;
         [_chatsButton addGestureRecognizer:longPressGestureRecognizer];
+        if (OGPlatformUsesConstrainedBackgroundExecution())
+            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(startupLocalizationUpdated:) name:TGStartupLocalizationUpdatedNotification object:nil];
     }
     return self;
 }
@@ -720,18 +701,17 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
             _callsHidden = true;
         _callsButton.alpha = _callsHidden ? 0.0f : 1.0f;
         _callsButton.hidden = _callsHidden;
+        _brandedBackgroundKey = nil;
         if ([TGPresentation brandedIOS6Style])
         {
-            _classicIOS6BackgroundView.image = TGMainTabsBrandedIOS6BackgroundImage();
-            _classicIOS6BackgroundView.contentMode = UIViewContentModeScaleAspectFill;
-            _classicIOS6BackgroundView.clipsToBounds = true;
-            _stripeView.backgroundColor = UIColorRGB(0x173b59);
+            _classicIOS6BackgroundView.image = nil;
+            _stripeView.hidden = true;
+            [self setNeedsLayout];
         }
         else
         {
             _classicIOS6BackgroundView.image = [TGPresentation classicIOS6ThemedImage:TGMainTabsClassicIOS6ResizableImage(@"TabBarBackground") tintColor:presentation.pallete.barBackgroundColor alpha:0.85f];
-            _classicIOS6BackgroundView.contentMode = UIViewContentModeScaleToFill;
-            _classicIOS6BackgroundView.clipsToBounds = false;
+            _stripeView.hidden = false;
             _stripeView.backgroundColor = [TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.barSeparatorColor : UIColorRGB(0xa4a8ac);
         }
     }
@@ -739,33 +719,21 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     {
         _classicIOS6BackgroundView.hidden = true;
         _backgroundView.backgroundColor = presentation.pallete.barBackgroundColor;
+        _stripeView.hidden = false;
         _stripeView.backgroundColor = presentation.pallete.barSeparatorColor;
     }
 
-    UIImage *contactsSource = TGMainTabsBrandedIOS6TabIconSource(@"person-lines-fill");
-    UIImage *callsSource = TGMainTabsBrandedIOS6TabIconSource(@"telephone-fill");
-    UIImage *chatsSource = TGMainTabsBrandedIOS6TabIconSource(@"chat-square-text-fill");
-    UIImage *settingsSource = TGMainTabsBrandedIOS6TabIconSource(@"gear-wide");
-    if (contactsSource == nil)
-        contactsSource = presentation.images.tabBarContactsIcon;
-    if (callsSource == nil)
-        callsSource = presentation.images.tabBarCallsIcon;
-    if (chatsSource == nil)
-        chatsSource = presentation.images.tabBarChatsIcon;
-    if (settingsSource == nil)
-        settingsSource = presentation.images.tabBarSettingsIcon;
-
-    UIImage *contactsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(contactsSource, false) : presentation.images.tabBarContactsIcon;
-    UIImage *callsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(callsSource, false) : presentation.images.tabBarCallsIcon;
-    UIImage *chatsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(chatsSource, false) : presentation.images.tabBarChatsIcon;
-    UIImage *settingsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6GradientIcon(settingsSource, false) : presentation.images.tabBarSettingsIcon;
+    UIImage *contactsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsContactsIconName, presentation.images.tabBarContactsIcon, false) : presentation.images.tabBarContactsIcon;
+    UIImage *callsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsCallsIconName, presentation.images.tabBarCallsIcon, false) : presentation.images.tabBarCallsIcon;
+    UIImage *chatsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsChatsIconName, presentation.images.tabBarChatsIcon, false) : presentation.images.tabBarChatsIcon;
+    UIImage *settingsImage = [TGPresentation brandedIOS6Style] ? TGMainTabsBrandedIOS6Icon(TGMainTabsSettingsIconName, presentation.images.tabBarSettingsIcon, false) : presentation.images.tabBarSettingsIcon;
 
     if ([TGPresentation brandedIOS6Style])
     {
-        [_contactsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(contactsSource, true)];
-        [_callsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(callsSource, true)];
-        [_chatsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(chatsSource, true)];
-        [_settingsButton setClassicSelectedImage:TGMainTabsBrandedIOS6GradientIcon(settingsSource, true)];
+        [_contactsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsContactsIconName, presentation.images.tabBarContactsIcon, true)];
+        [_callsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsCallsIconName, presentation.images.tabBarCallsIcon, true)];
+        [_chatsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsChatsIconName, presentation.images.tabBarChatsIcon, true)];
+        [_settingsButton setClassicSelectedImage:TGMainTabsBrandedIOS6Icon(TGMainTabsSettingsIconName, presentation.images.tabBarSettingsIcon, true)];
     }
     else
     {
@@ -794,41 +762,75 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     return CGFloor(width / 21.5f);
 }
 
-- (void)setCallsTabHidden:(bool)hidden animated:(bool)animated
+- (bool)isTabButtonHidden:(TGTabBarButton *)button
 {
-    if (_callsHidden == hidden)
-        return;
-    
+    if (button == _callsButton)
+        return _callsHidden;
+    if (button == _contactsButton)
+        return _contactsHidden;
+    return false;
+}
+
+- (NSArray *)visibleTabButtons
+{
+    NSMutableArray *buttons = [[NSMutableArray alloc] initWithCapacity:_tabButtons.count];
+    for (TGTabBarButton *button in _tabButtons)
+    {
+        if (![self isTabButtonHidden:button])
+            [buttons addObject:button];
+    }
+    return buttons;
+}
+
+- (void)updateVisibilityOfTabButton:(TGTabBarButton *)button animated:(bool)animated
+{
+    bool hidden = [self isTabButtonHidden:button];
     if (animated)
     {
-        _callsButton.hidden = false;
+        button.hidden = false;
         if (!hidden)
-            _callsButton.alpha = 0.0f;
+            button.alpha = 0.0f;
         
         [UIView animateWithDuration:0.2 animations:^
         {
-            _callsButton.alpha = hidden ? 0.0f : 1.0f;
+            button.alpha = hidden ? 0.0f : 1.0f;
         }];
         
         [UIView animateWithDuration:0.3 delay:0.0 options:7 << 16 | UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionLayoutSubviews animations:^
         {
-            _callsHidden = hidden;
             [self layoutButtons];
         } completion:^(__unused BOOL finished)
         {
             _skipNextLayout = false;
-            _callsButton.hidden = hidden;
+            button.hidden = [self isTabButtonHidden:button];
         }];
         
         _skipNextLayout = true;
     }
     else
     {
-        _callsHidden = hidden;
-        _callsButton.alpha = hidden ? 0.0f : 1.0f;
-        _callsButton.hidden = hidden;
+        button.alpha = hidden ? 0.0f : 1.0f;
+        button.hidden = hidden;
         [self setNeedsLayout];
     }
+}
+
+- (void)setCallsTabHidden:(bool)hidden animated:(bool)animated
+{
+    if (_callsHidden == hidden)
+        return;
+    
+    _callsHidden = hidden;
+    [self updateVisibilityOfTabButton:_callsButton animated:animated];
+}
+
+- (void)setContactsTabHidden:(bool)hidden animated:(bool)animated
+{
+    if (_contactsHidden == hidden)
+        return;
+    
+    _contactsHidden = hidden;
+    [self updateVisibilityOfTabButton:_contactsButton animated:animated];
 }
 
 - (void)setSelectedIndex:(int)selectedIndex
@@ -841,6 +843,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     }];
     
     [self updateArrow];
+    [self updateBrandedBackground];
 }
 
 - (void)handleTap:(UITapGestureRecognizer *)gestureRecognizer
@@ -920,10 +923,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 {
     if ([TGPresentation brandedIOS6Style])
     {
-        UIImage *source = TGMainTabsBrandedIOS6TabIconSource(@"chat-square-text-fill");
-        if (source == nil)
-            source = self.presentation.images.tabBarChatsIcon;
-        [_chatsButton setImage:TGMainTabsBrandedIOS6GradientIcon(source, false) presentation:self.presentation];
+        [_chatsButton setImage:TGMainTabsBrandedIOS6Icon(TGMainTabsChatsIconName, self.presentation.images.tabBarChatsIcon, false) presentation:self.presentation];
         return;
     }
 
@@ -951,23 +951,33 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     CGSize viewSize = self.frame.size;
     
     CGFloat width = viewSize.width - self.safeAreaInset.left - self.safeAreaInset.right;
+    CGFloat height = [TGTabBar tabBarHeight:_landscape];
     
-    NSUInteger buttonsCount = _callsHidden ? 3 : 4;
+    NSArray *visibleButtons = [self visibleTabButtons];
+    NSUInteger buttonsCount = MAX((NSUInteger)1, visibleButtons.count);
     CGFloat buttonWidth = CGFloor(width / (CGFloat)buttonsCount);
+    bool brandedPortrait = [TGPresentation brandedIOS6Style] && !self.landscape;
+    OGTabBarLayout *brandedLayout = brandedPortrait ? [[OGTheme brandedTheme].tabBarAppearance layoutForItemCount:buttonsCount] : nil;
     
+    __block NSUInteger slot = 0;
     [_tabButtons enumerateObjectsUsingBlock:^(TGTabBarButton *button, NSUInteger index, __unused BOOL *stop)
     {
-        NSInteger realIndex = index;
-        if (buttonsCount == 3 && index > 1)
-            index--;
+        NSUInteger buttonSlot = MIN(slot, buttonsCount - 1);
+        if (![self isTabButtonHidden:button])
+            slot++;
+        
+        CGFloat x = self.safeAreaInset.left + buttonSlot * buttonWidth;
+        CGFloat maxX = buttonSlot + 1 == buttonsCount ? self.safeAreaInset.left + width : x + buttonWidth;
         
         button.landscape = self.landscape;
-        button.frame = CGRectMake(self.safeAreaInset.left + index * buttonWidth, 0, buttonWidth, [TGTabBar tabBarHeight:_landscape]);
+        button.brandedLayout = brandedLayout;
+        button.frame = CGRectMake(x, 0, maxX - x, height);
+        button.contentCenterX = CGFloor((maxX - x) / 2.0f);
         
         TGTabBarBadge *badge = nil;
-        if (realIndex == 1)
+        if (index == 1)
             badge = _callsBadge;
-        else if (realIndex == 2)
+        else if (index == 2)
             badge = _messagesBadge;
         
         if (badge != nil)
@@ -982,12 +992,44 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
             {
                 badge.transform = CGAffineTransformIdentity;
                 CGRect badgeFrame = badge.frame;
-                badgeFrame.origin.x = button.frame.size.width / 2.0f + 6.0f + (_callsHidden ? 0 : TGRetinaPixel);
+                badgeFrame.origin.x = button.contentCenterX + 6.0f + (_callsHidden ? 0 : TGRetinaPixel);
                 badgeFrame.origin.y = 2 - button.frame.origin.y;
                 badge.frame = badgeFrame;
             }
         }
     }];
+    
+    [self updateBrandedBackground];
+}
+
+- (void)updateBrandedBackground
+{
+    if (![TGPresentation brandedIOS6Style] || _classicIOS6BackgroundView == nil)
+        return;
+    
+    CGSize viewSize = self.bounds.size;
+    if (viewSize.width < 1.0f || viewSize.height < 1.0f)
+        return;
+    
+    NSArray *visibleButtons = [self visibleTabButtons];
+    TGTabBarButton *selectedButton = _selectedIndex >= 0 && _selectedIndex < (int)_tabButtons.count ? _tabButtons[_selectedIndex] : nil;
+    NSUInteger selectedSegment = selectedButton == nil ? NSNotFound : [visibleButtons indexOfObject:selectedButton];
+    
+    NSMutableArray *segmentFrames = [[NSMutableArray alloc] initWithCapacity:visibleButtons.count];
+    NSMutableString *key = [[NSMutableString alloc] initWithFormat:@"%.1f,%.1f,%d", viewSize.width, viewSize.height, selectedSegment == NSNotFound ? -1 : (int)selectedSegment];
+    [visibleButtons enumerateObjectsUsingBlock:^(TGTabBarButton *button, NSUInteger index, __unused BOOL *stop)
+    {
+        CGFloat minX = index == 0 ? 0.0f : CGRectGetMinX(button.frame);
+        CGFloat maxX = index + 1 == visibleButtons.count ? viewSize.width : CGRectGetMaxX(button.frame);
+        [segmentFrames addObject:[NSValue valueWithCGRect:CGRectMake(minX, 0.0f, maxX - minX, viewSize.height)]];
+        [key appendFormat:@"|%.1f,%.1f", minX, maxX];
+    }];
+    
+    if ([_brandedBackgroundKey isEqualToString:key])
+        return;
+    
+    _brandedBackgroundKey = key;
+    _classicIOS6BackgroundView.image = [TGPresentation brandedIOS6TabBarBackgroundImageForSize:viewSize segmentFrames:segmentFrames selectedIndex:selectedSegment == NSNotFound ? -1 : (NSInteger)selectedSegment];
 }
 
 - (void)layoutSubviews
@@ -1017,41 +1059,12 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 #pragma mark -
 
-@interface TGTabsContainerSubview : UIView
-
-@end
-
-@implementation TGTabsContainerSubview
-
-- (void)layoutSubviews
-{
-    static void (*nativeImpl)(id, SEL) = NULL;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        nativeImpl = (void (*)(id, SEL))freedomNativeImpl([self class], _cmd);
-    });
-    
-    if (nativeImpl != NULL)
-        nativeImpl(self, _cmd);
-    
-    CGSize screenSize = [TGViewController screenSizeForInterfaceOrientation:self.frame.size.width > 320.0f + FLT_EPSILON ? UIInterfaceOrientationLandscapeLeft : UIInterfaceOrientationPortrait];
-    
-    for (UIView *subview in self.subviews)
-    {
-        subview.frame = CGRectMake(0.0f, 0.0f, self.frame.size.width, screenSize.height);
-    }
-}
-
-@end
-
-#pragma mark -
-
 @interface TGMainTabsController () <UITabBarControllerDelegate, TGTabBarDelegate>
 {
     int _missedCallsCount;
     int _unreadCount;
     bool _callsHidden;
+    bool _contactsHidden;
     NSTimeInterval _lastSameIndexTapTime;
     int _tapsInSuccession;
     
@@ -1062,11 +1075,16 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     
     id<SDisposable> _presentationDisposable;
     TGPresentation *_presentation;
+    bool _startupSingleControllerMode;
+    NSUInteger _startupLogicalIndex;
+    NSArray *(^_startupPrepareControllers)(void);
 }
 
 @property (nonatomic, strong) TGTabBar *customTabBar;
 
 - (void)layoutCustomTabBar;
+- (void)layoutSelectedContentUnderTabBar;
+- (void)_updateNavigationItemOverride:(NSUInteger)selectedIndex;
 
 @end
 
@@ -1079,25 +1097,58 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     if (self)
     {
         self.delegate = self;
+        _callsHidden = true;
         
         if ([self respondsToSelector:@selector(setAutomaticallyAdjustsScrollViewInsets:)])
             [self setAutomaticallyAdjustsScrollViewInsets:false];
         
         self.navigationItem.backBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:nil style:UIBarButtonItemStylePlain target:nil action:nil];
-        self.navigationItem.backBarButtonItem.possibleTitles = [NSSet setWithObject:TGLocalized(@"Common.Back")];
+        self.navigationItem.backBarButtonItem.possibleTitles = [NSSet setWithObject:(OGPlatformUsesConstrainedBackgroundExecution() ? TGStartupLocalized(@"Common.Back") : TGLocalized(@"Common.Back"))];
     }
     return self;
 }
 
-- (void)loadView
+- (void)setStartupViewController:(UIViewController *)viewController logicalIndex:(NSUInteger)logicalIndex prepareControllers:(NSArray *(^)(void))prepareControllers
 {
-    [super loadView];
+    if (viewController == nil)
+        return;
 
-    if (iosMajorVersion() <= 6 && [NSStringFromClass([self.view.subviews.firstObject class]) isEqualToString:TGEncodeText(@"VJUsbotjujpoWjfx", -1)])
-    {
-        Class subclass = freedomMakeClass([self.view.subviews.firstObject class], [TGTabsContainerSubview class]);
-        object_setClass(self.view.subviews.firstObject, subclass);
-    }
+    _startupSingleControllerMode = true;
+    _startupLogicalIndex = logicalIndex;
+    _startupPrepareControllers = [prepareControllers copy];
+    CFAbsoluteTime phaseStart = CFAbsoluteTimeGetCurrent();
+    [super setViewControllers:@[viewController] animated:false];
+    phaseStart = CFAbsoluteTimeGetCurrent();
+    [self _updateNavigationItemOverride:0];
+    if (_customTabBar != nil)
+        [_customTabBar setSelectedIndex:(int)logicalIndex];
+}
+
+- (bool)prepareStartupControllersForLogicalIndex:(NSUInteger)logicalIndex
+{
+    if (!_startupSingleControllerMode)
+        return true;
+    if (logicalIndex == _startupLogicalIndex)
+        return true;
+
+    NSArray *controllers = _startupPrepareControllers == nil ? nil : _startupPrepareControllers();
+    if (controllers.count <= logicalIndex || controllers.count <= _startupLogicalIndex)
+        return false;
+
+    NSUInteger startupLogicalIndex = _startupLogicalIndex;
+    _startupSingleControllerMode = false;
+    _startupPrepareControllers = nil;
+    [super setViewControllers:controllers animated:false];
+    [super setSelectedIndex:startupLogicalIndex];
+    [self _updateNavigationItemOverride:startupLogicalIndex];
+    [_customTabBar setSelectedIndex:(int)startupLogicalIndex];
+    [self layoutSelectedContentUnderTabBar];
+    return true;
+}
+
+- (NSUInteger)logicalSelectedIndex
+{
+    return _startupSingleControllerMode ? _startupLogicalIndex : [super selectedIndex];
 }
 
 - (void)viewDidLoad
@@ -1119,6 +1170,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     _customTabBar.safeAreaInset = safeAreaInset;
     _customTabBar.landscape = landscape;
     _customTabBar.tabDelegate = self;
+    [_customTabBar setCallsTabHidden:_callsHidden animated:false];
+    [_customTabBar setContactsTabHidden:_contactsHidden animated:false];
     [self.view insertSubview:_customTabBar aboveSubview:self.tabBar];
     
     self.tabBar.hidden = true;
@@ -1159,6 +1212,44 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 {
     [super viewWillLayoutSubviews];
     [self layoutCustomTabBar];
+}
+
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+    [self layoutSelectedContentUnderTabBar];
+}
+
+- (void)layoutSelectedContentUnderTabBar
+{
+    if (iosMajorVersion() >= 7 || ![self isViewLoaded])
+        return;
+
+    UIViewController *selectedViewController = self.selectedViewController;
+    if (selectedViewController == nil || ![selectedViewController isViewLoaded])
+        return;
+
+    UIView *contentView = selectedViewController.view;
+    NSMutableArray *containers = [[NSMutableArray alloc] init];
+    for (UIView *view = contentView.superview; view != nil && view != self.view; view = view.superview)
+        [containers insertObject:view atIndex:0];
+    if (containers.count == 0 || ((UIView *)containers[0]).superview != self.view)
+        return;
+
+    UIView *rootContainer = containers[0];
+    CGRect rootFrame = rootContainer.frame;
+    rootFrame.size.height = MAX(0.0f, self.view.bounds.size.height - rootFrame.origin.y);
+    if (!CGRectEqualToRect(rootContainer.frame, rootFrame))
+        rootContainer.frame = rootFrame;
+
+    for (UIView *container in containers)
+    {
+        container.clipsToBounds = false;
+        if (container != rootContainer && !CGRectEqualToRect(container.frame, container.superview.bounds))
+            container.frame = container.superview.bounds;
+    }
+    if (!CGRectEqualToRect(contentView.frame, contentView.superview.bounds))
+        contentView.frame = contentView.superview.bounds;
 }
 
 - (void)setIgnoreKeyboardFrameChange:(bool)ignoreKeyboardFrameChange restoringFocus:(bool)restoringFocus
@@ -1215,6 +1306,14 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         return UIBarStyleDefault;
 }
 
+- (TGNavigationBarBackgroundVariant)navigationBarBackgroundVariant
+{
+    UIViewController *selectedViewController = self.selectedViewController;
+    if ([selectedViewController conformsToProtocol:@protocol(TGViewControllerNavigationBarAppearance)] && [selectedViewController respondsToSelector:@selector(navigationBarBackgroundVariant)])
+        return [(id<TGViewControllerNavigationBarAppearance>)selectedViewController navigationBarBackgroundVariant];
+    return TGNavigationBarBackgroundVariantDefault;
+}
+
 - (bool)navigationBarShouldBeHidden
 {
     if (self.selectedViewController == nil)
@@ -1229,14 +1328,21 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 {
     [self.view layoutIfNeeded];
     [self layoutCustomTabBar];
-    if (!_initialized && self.viewControllers.count > 2)
+    if (!_initialized)
     {
         _initialized = true;
-        [self setSelectedIndex:2];
+        if (_startupSingleControllerMode)
+        {
+            [self _updateNavigationItemOverride:0];
+            [_customTabBar setSelectedIndex:(int)_startupLogicalIndex];
+        }
+        else if (self.viewControllers.count > 2)
+            [self setSelectedIndex:2];
     }
     if (self.debugReady != nil)
         self.debugReady();
     [super viewWillAppear:animated];
+    [self layoutSelectedContentUnderTabBar];
 }
 
 - (BOOL)tabBarController:(UITabBarController *)__unused tabBarController shouldSelectViewController:(UIViewController *)viewController
@@ -1249,7 +1355,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 - (void)tabBarLongPressedItem:(int)index
 {
-    if ((int)self.selectedIndex == index)
+    int selectedLogicalIndex = _startupSingleControllerMode ? (int)_startupLogicalIndex : (int)self.selectedIndex;
+    if (selectedLogicalIndex == index)
     {
         if ([self.selectedViewController respondsToSelector:@selector(scrollToTop)])
             [self.selectedViewController performSelector:@selector(scrollToTop)];
@@ -1258,10 +1365,25 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 - (void)tabBarSelectedItem:(int)index
 {
-    if ((int)self.selectedIndex != index)
+    int selectedLogicalIndex = _startupSingleControllerMode ? (int)_startupLogicalIndex : (int)self.selectedIndex;
+    if (selectedLogicalIndex != index)
     {
+        OGRuntimeCompleteStartupPhase(@"tab");
+        if (![self prepareStartupControllersForLogicalIndex:(NSUInteger)index])
+            return;
+
+        bool constrained = OGPlatformUsesConstrainedBackgroundExecution();
+        if (constrained)
+            OGRuntimeBeginInteraction();
         [self tabBarController:self shouldSelectViewController:[self.viewControllers objectAtIndex:index]];
         [self setSelectedIndex:index];
+        if (constrained)
+        {
+            OGPlatformDispatchAfterCurrentMainRunLoop(^
+            {
+                OGRuntimeEndInteraction();
+            });
+        }
     }
     else
     {
@@ -1292,18 +1414,40 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 - (void)setSelectedIndex:(NSUInteger)selectedIndex
 {
+    if (_startupSingleControllerMode)
+    {
+        if (selectedIndex == _startupLogicalIndex)
+        {
+            [self _updateNavigationItemOverride:0];
+            [_customTabBar setSelectedIndex:(int)_startupLogicalIndex];
+            return;
+        }
+        if (![self prepareStartupControllersForLogicalIndex:selectedIndex])
+            return;
+    }
+
     [super setSelectedIndex:selectedIndex];
-    
     [self _updateNavigationItemOverride:selectedIndex];
-    
     [_customTabBar setSelectedIndex:(int)selectedIndex];
+    [self layoutSelectedContentUnderTabBar];
 }
 
 - (void)setViewControllers:(NSArray *)viewControllers animated:(BOOL)animated
 {
+    NSUInteger logicalSelectedIndex = [self logicalSelectedIndex];
+    if (_startupSingleControllerMode && viewControllers.count > 1)
+    {
+        return;
+    }
+
     [super setViewControllers:viewControllers animated:animated];
-    
-    [self _updateNavigationItemOverride:self.selectedIndex];
+
+    if (logicalSelectedIndex < viewControllers.count)
+        [super setSelectedIndex:logicalSelectedIndex];
+
+    [self _updateNavigationItemOverride:logicalSelectedIndex];
+    [_customTabBar setSelectedIndex:(int)logicalSelectedIndex];
+    [self layoutSelectedContentUnderTabBar];
 }
 
 - (void)_updateNavigationItemOverride:(NSUInteger)selectedIndex
@@ -1321,6 +1465,9 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
                 [(TGViewController *)viewController setTargetNavigationItem:nil titleController:nil];
         }
     }
+
+    if ([self.navigationController isKindOfClass:[TGNavigationController class]] && self.navigationController.topViewController == self)
+        [(TGNavigationController *)self.navigationController updateNavigationBarBackgroundForController:self];
 }
 
 - (void)setTitle:(NSString *)title
@@ -1343,7 +1490,9 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
             TGMainTabsConfigureClassicIOS4TitleLabel(titleLabel, title, _presentation);
     }
     
-    NSString *backTitle = title == nil || ![title isEqualToString:TGLocalized(@"DialogList.Title")] ? TGLocalized(@"Common.Back") : title;
+    bool constrainedStartup = OGPlatformUsesConstrainedBackgroundExecution();
+    NSString *dialogListTitle = constrainedStartup ? TGStartupLocalized(@"DialogList.Title") : TGLocalized(@"DialogList.Title");
+    NSString *backTitle = title == nil || ![title isEqualToString:dialogListTitle] ? (constrainedStartup ? TGStartupLocalized(@"Common.Back") : TGLocalized(@"Common.Back")) : title;
     
     if (!TGStringCompare(self.navigationItem.backBarButtonItem.title, backTitle))
         self.navigationItem.backBarButtonItem.title = backTitle;
@@ -1355,6 +1504,14 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         hidden = true;
     _callsHidden = hidden;
     [_customTabBar setCallsTabHidden:hidden animated:animated];
+}
+
+- (void)setContactsHidden:(bool)hidden animated:(bool)animated
+{
+    _contactsHidden = hidden;
+    [_customTabBar setContactsTabHidden:hidden animated:animated];
+    if (hidden && [self logicalSelectedIndex] == 0)
+        [self setSelectedIndex:2];
 }
 
 - (void)setMissedCallsCount:(int)callsCount
@@ -1398,6 +1555,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     
     [_customTabBar setSelectedIndex:(int)self.selectedIndex];
     [_customTabBar setCallsTabHidden:_callsHidden animated:false];
+    [_customTabBar setContactsTabHidden:_contactsHidden animated:false];
     [_customTabBar setMissedCallsCount:_missedCallsCount];
     [_customTabBar setUnreadCount:_unreadCount];
     

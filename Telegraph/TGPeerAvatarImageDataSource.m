@@ -44,50 +44,6 @@ static ASQueue *taskManagementQueue()
     return queue;
 }
 
-static void TGPeerAvatarTrace(NSString *reason, NSDictionary *args)
-{
-    static CFAbsoluteTime lastLogTime = 0.0;
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (now - lastLogTime < 30.0)
-        return;
-    lastLogTime = now;
-    
-    NSString *legacyUrl = args[@"legacy-cache-url"];
-    NSString *thumbnailUrl = args[@"legacy-thumbnail-cache-url"];
-    while (false) TGLog(@"AVATAR viewer reason=%@ hasFull=%d fullLen=%d hasThumb=%d thumbLen=%d imageId=%@",
-          reason,
-          [legacyUrl respondsToSelector:@selector(length)] && legacyUrl.length != 0 ? 1 : 0,
-          [legacyUrl respondsToSelector:@selector(length)] ? (int)legacyUrl.length : 0,
-          [thumbnailUrl respondsToSelector:@selector(length)] && thumbnailUrl.length != 0 ? 1 : 0,
-          [thumbnailUrl respondsToSelector:@selector(length)] ? (int)thumbnailUrl.length : 0,
-          args[@"imageId"] ?: @"");
-}
-
-static void TGPeerAvatarFetchLog(NSString *stage, NSString *url, TGMediaOriginInfo *originInfo, bool success)
-{
-    static NSMutableDictionary *lastLogs = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        lastLogs = [[NSMutableDictionary alloc] init];
-    });
-    
-    NSString *key = [[NSString alloc] initWithFormat:@"%@:%@", stage ?: @"", url ?: @""];
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    NSNumber *last = lastLogs[key];
-    if (last != nil && now - [last doubleValue] < 10.0)
-        return;
-    lastLogs[key] = @(now);
-    
-    NSString *kind = @"other";
-    if ([url hasPrefix:@"peerphoto:"])
-        kind = @"peerphoto";
-    else if ([url hasPrefix:@"photo:"])
-        kind = @"photo";
-    
-    while (false) TGLog(@"AVATAR fetch %@ kind=%@ origin=%d success=%d len=%d", stage, kind, originInfo != nil ? 1 : 0, success ? 1 : 0, [url respondsToSelector:@selector(length)] ? (int)url.length : 0);
-}
-
 static NSString *TGPeerAvatarTrimmedLegacyUrl(NSString *url)
 {
     NSString *trimmedUrl = url;
@@ -231,7 +187,6 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
                     TGDataResource *settledResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
                     if (settledResult != nil)
                     {
-                        TGPeerAvatarTrace(stage, args);
                         [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                     }
                     else if (fallback != nil)
@@ -246,10 +201,8 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
                 if ([thumbnailUrl respondsToSelector:@selector(characterAtIndex:)] && thumbnailUrl.length != 0)
                 {
                     NSDictionary *thumbnailOptions = originInfo == nil ? nil : @{@"originInfo": originInfo};
-                    TGPeerAvatarFetchLog(@"thumb_start", thumbnailUrl, originInfo, false);
                     [previewTask executeWithTargetFilePath:nil uri:thumbnailUrl options:thumbnailOptions progress:nil completion:^(bool thumbnailSuccess)
                     {
-                        TGPeerAvatarFetchLog(@"thumb_done", thumbnailUrl, originInfo, thumbnailSuccess);
                         TGDataResource *thumbnailResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
                         if (thumbnailResult != nil)
                         {
@@ -262,7 +215,6 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
                         {
                             completeFromSettledCacheOrFallback(@"thumb_late_cache", ^
                             {
-                                TGPeerAvatarTrace(@"fetch_failed", args);
                                 completeWithUnavailable();
                             });
                         }
@@ -270,7 +222,6 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
                 }
                 else
                 {
-                    TGPeerAvatarTrace(@"missing_thumb", args);
                     completeWithUnavailable();
                 }
             };
@@ -280,14 +231,12 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
                 if (progress)
                     progress(0.0);
                 NSDictionary *fullOptions = originInfo == nil ? nil : @{@"originInfo": originInfo};
-                TGPeerAvatarFetchLog(@"full_start", legacyUrl, originInfo, false);
                 [previewTask executeWithTargetFilePath:nil uri:legacyUrl options:fullOptions progress:^(float value)
                 {
                     if (progress)
                         progress(value);
                 } completion:^(bool success)
                 {
-                    TGPeerAvatarFetchLog(@"full_done", legacyUrl, originInfo, success);
                     TGDataResource *fullResult = [TGPeerAvatarImageDataSource _performLoad:uri isCancelled:nil];
                     if (fullResult != nil)
                     {
@@ -455,14 +404,12 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
     
     if (![args[@"width"] respondsToSelector:@selector(intValue)] || ![args[@"height"] respondsToSelector:@selector(intValue)])
     {
-        TGPeerAvatarTrace(@"bad_size", args);
         return nil;
     }
     
     CGSize size = CGSizeMake([args[@"width"] intValue], [args[@"height"] intValue]);
     if (size.width < FLT_EPSILON || size.height < FLT_EPSILON)
     {
-        TGPeerAvatarTrace(@"zero_size", args);
         return nil;
     }
     
@@ -523,7 +470,6 @@ static NSString *TGPeerAvatarModernImagePath(NSString *photoDirectoryPath, CGSiz
         }
     }
     
-    TGPeerAvatarTrace(@"cache_miss", args);
     return nil;
 }
 

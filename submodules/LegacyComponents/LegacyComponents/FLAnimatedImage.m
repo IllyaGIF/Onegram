@@ -8,9 +8,14 @@
 
 
 #import "FLAnimatedImage.h"
+#if !defined(ONEGRAM_ARMV6)
 #import <ImageIO/ImageIO.h>
 #import <MobileCoreServices/MobileCoreServices.h>
+#endif
 #import <CoreGraphics/CoreGraphics.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 
 // From vm_param.h, define for iOS 8.0 or higher to build on device.
@@ -19,6 +24,33 @@
 #endif
 
 #define MEGABYTE (1024 * 1024)
+
+static void FLAnimatedImageEnumerateRanges(NSIndexSet *indexSet, NSRange enumerationRange, void (^block)(NSRange range, BOOL *stop))
+{
+    if (indexSet == nil || block == nil || enumerationRange.length == 0)
+        return;
+
+    NSUInteger rangeEnd = enumerationRange.location + enumerationRange.length;
+    NSUInteger index = [indexSet firstIndex];
+    while (index != NSNotFound && index < enumerationRange.location)
+        index = [indexSet indexGreaterThanIndex:index];
+
+    BOOL stop = NO;
+    while (index != NSNotFound && index < rangeEnd && !stop)
+    {
+        NSUInteger rangeStart = index;
+        NSUInteger rangeLast = index;
+        NSUInteger next = [indexSet indexGreaterThanIndex:index];
+        while (next != NSNotFound && next < rangeEnd && next == rangeLast + 1)
+        {
+            rangeLast = next;
+            next = [indexSet indexGreaterThanIndex:next];
+        }
+
+        block(NSMakeRange(rangeStart, rangeLast - rangeStart + 1), &stop);
+        index = next;
+    }
+}
 
 
 // An animated image's data size (dimensions * frameCount) category; its value is the max allowed memory (in MB).
@@ -38,10 +70,549 @@ typedef NS_ENUM(NSUInteger, FLAnimatedImageFrameCacheSize) {
 };
 
 
+#if defined(ONEGRAM_ARMV6)
+
+typedef struct
+{
+    const uint8_t *bytes;
+    NSUInteger length;
+    NSUInteger offset;
+} OnegramGIFCursor;
+
+@interface OnegramGIFFrame : NSObject
+{
+@public
+    NSUInteger _left;
+    NSUInteger _top;
+    NSUInteger _width;
+    NSUInteger _height;
+    NSUInteger _disposal;
+    NSTimeInterval _delay;
+    NSInteger _transparentIndex;
+    bool _interlaced;
+    uint8_t _minimumCodeSize;
+    NSData *_palette;
+    NSData *_compressedData;
+}
+@end
+
+@implementation OnegramGIFFrame
+@end
+
+static bool OnegramGIFReadByte(OnegramGIFCursor *cursor, uint8_t *value)
+{
+    if (cursor->offset >= cursor->length)
+        return false;
+    *value = cursor->bytes[cursor->offset++];
+    return true;
+}
+
+static bool OnegramGIFReadUInt16(OnegramGIFCursor *cursor, NSUInteger *value)
+{
+    if (cursor->offset + 2 > cursor->length)
+        return false;
+    *value = (NSUInteger)cursor->bytes[cursor->offset] | ((NSUInteger)cursor->bytes[cursor->offset + 1] << 8);
+    cursor->offset += 2;
+    return true;
+}
+
+static NSData *OnegramGIFReadBytes(OnegramGIFCursor *cursor, NSUInteger length)
+{
+    if (cursor->offset + length > cursor->length)
+        return nil;
+    NSData *result = [NSData dataWithBytes:cursor->bytes + cursor->offset length:length];
+    cursor->offset += length;
+    return result;
+}
+
+static NSData *OnegramGIFReadSubBlocks(OnegramGIFCursor *cursor)
+{
+    NSMutableData *result = [[NSMutableData alloc] init];
+    while (true)
+    {
+        uint8_t length = 0;
+        if (!OnegramGIFReadByte(cursor, &length))
+            return nil;
+        if (length == 0)
+            break;
+        if (cursor->offset + length > cursor->length)
+            return nil;
+        [result appendBytes:cursor->bytes + cursor->offset length:length];
+        cursor->offset += length;
+    }
+    return result;
+}
+
+static NSInteger OnegramGIFReadCode(const uint8_t *bytes, NSUInteger length, NSUInteger *bitOffset, NSUInteger codeSize)
+{
+    if (*bitOffset + codeSize > length * 8)
+        return -1;
+    NSUInteger value = 0;
+    for (NSUInteger bit = 0; bit < codeSize; bit++)
+    {
+        NSUInteger position = *bitOffset + bit;
+        value |= (NSUInteger)((bytes[position >> 3] >> (position & 7)) & 1) << bit;
+    }
+    *bitOffset += codeSize;
+    return (NSInteger)value;
+}
+
+static NSData *OnegramGIFDecodeLZW(NSData *data, NSUInteger minimumCodeSize, NSUInteger pixelCount)
+{
+    if (minimumCodeSize > 11 || pixelCount == 0)
+        return nil;
+
+    const uint8_t *bytes = data.bytes;
+    NSUInteger length = data.length;
+    uint16_t prefix[4096];
+    uint8_t suffix[4096];
+    uint8_t stack[4096];
+    uint8_t *output = malloc(pixelCount);
+    if (output == NULL)
+        return nil;
+
+    NSUInteger clearCode = (NSUInteger)1 << minimumCodeSize;
+    NSUInteger endCode = clearCode + 1;
+    NSUInteger nextCode = endCode + 1;
+    NSUInteger codeSize = minimumCodeSize + 1;
+    NSUInteger bitOffset = 0;
+    NSUInteger outputOffset = 0;
+    NSInteger previousCode = -1;
+    uint8_t firstValue = 0;
+
+    for (NSUInteger i = 0; i < clearCode; i++)
+    {
+        prefix[i] = 0;
+        suffix[i] = (uint8_t)i;
+    }
+
+    while (outputOffset < pixelCount)
+    {
+        NSInteger readCode = OnegramGIFReadCode(bytes, length, &bitOffset, codeSize);
+        if (readCode < 0)
+            break;
+        NSUInteger code = (NSUInteger)readCode;
+
+        if (code == clearCode)
+        {
+            nextCode = endCode + 1;
+            codeSize = minimumCodeSize + 1;
+            previousCode = -1;
+            continue;
+        }
+        if (code == endCode)
+            break;
+        if (code >= 4096)
+            break;
+
+        if (previousCode < 0)
+        {
+            if (code >= clearCode)
+                break;
+            firstValue = suffix[code];
+            output[outputOffset++] = firstValue;
+            previousCode = (NSInteger)code;
+            continue;
+        }
+
+        NSUInteger inputCode = code;
+        NSUInteger stackCount = 0;
+        if (code >= nextCode)
+        {
+            if (code != nextCode || stackCount >= 4096)
+                break;
+            stack[stackCount++] = firstValue;
+            code = (NSUInteger)previousCode;
+        }
+
+        while (code >= clearCode)
+        {
+            if (code >= nextCode || stackCount >= 4096)
+            {
+                free(output);
+                return nil;
+            }
+            stack[stackCount++] = suffix[code];
+            code = prefix[code];
+        }
+
+        firstValue = suffix[code];
+        if (stackCount >= 4096)
+        {
+            free(output);
+            return nil;
+        }
+        stack[stackCount++] = firstValue;
+
+        while (stackCount != 0 && outputOffset < pixelCount)
+            output[outputOffset++] = stack[--stackCount];
+
+        if (nextCode < 4096)
+        {
+            prefix[nextCode] = (uint16_t)previousCode;
+            suffix[nextCode] = firstValue;
+            nextCode++;
+            if (nextCode == ((NSUInteger)1 << codeSize) && codeSize < 12)
+                codeSize++;
+        }
+
+        previousCode = (NSInteger)inputCode;
+    }
+
+    if (outputOffset != pixelCount)
+    {
+        free(output);
+        return nil;
+    }
+
+    return [NSData dataWithBytesNoCopy:output length:pixelCount freeWhenDone:YES];
+}
+
+static void OnegramGIFReleaseImageData(void *info, const void *data, size_t size)
+{
+    (void)info;
+    (void)size;
+    free((void *)data);
+}
+
+@interface OnegramGIFSource : NSObject
+{
+    NSUInteger _width;
+    NSUInteger _height;
+    NSUInteger _loopCount;
+    NSData *_globalPalette;
+    NSArray *_frames;
+    NSMutableData *_canvas;
+    NSData *_restoreCanvas;
+    NSInteger _renderedIndex;
+    OnegramGIFFrame *_renderedFrame;
+}
+
+@property (nonatomic, readonly) NSUInteger frameCount;
+@property (nonatomic, readonly) NSUInteger loopCount;
+
+- (instancetype)initWithData:(NSData *)data;
+- (NSTimeInterval)delayAtIndex:(NSUInteger)index;
+- (UIImage *)imageAtIndex:(NSUInteger)index;
+
+@end
+
+@implementation OnegramGIFSource
+
+- (instancetype)initWithData:(NSData *)data
+{
+    self = [super init];
+    if (self == nil || data.length < 13)
+        return nil;
+
+    OnegramGIFCursor cursor = { data.bytes, data.length, 0 };
+    NSData *signature = OnegramGIFReadBytes(&cursor, 6);
+    if (signature == nil)
+        return nil;
+    const uint8_t *signatureBytes = signature.bytes;
+    if (memcmp(signatureBytes, "GIF87a", 6) != 0 && memcmp(signatureBytes, "GIF89a", 6) != 0)
+        return nil;
+
+    if (!OnegramGIFReadUInt16(&cursor, &_width) || !OnegramGIFReadUInt16(&cursor, &_height) || _width == 0 || _height == 0)
+        return nil;
+
+    uint8_t packed = 0;
+    uint8_t background = 0;
+    uint8_t aspect = 0;
+    if (!OnegramGIFReadByte(&cursor, &packed) || !OnegramGIFReadByte(&cursor, &background) || !OnegramGIFReadByte(&cursor, &aspect))
+        return nil;
+    (void)background;
+    (void)aspect;
+
+    if ((packed & 0x80) != 0)
+    {
+        NSUInteger paletteSize = (NSUInteger)1 << ((packed & 0x07) + 1);
+        _globalPalette = OnegramGIFReadBytes(&cursor, paletteSize * 3);
+        if (_globalPalette == nil)
+            return nil;
+    }
+
+    NSMutableArray *frames = [[NSMutableArray alloc] init];
+    NSUInteger disposal = 0;
+    NSTimeInterval delay = 0.0;
+    NSInteger transparentIndex = -1;
+
+    while (cursor.offset < cursor.length)
+    {
+        uint8_t marker = 0;
+        if (!OnegramGIFReadByte(&cursor, &marker))
+            return nil;
+
+        if (marker == 0x3b)
+            break;
+
+        if (marker == 0x21)
+        {
+            uint8_t label = 0;
+            if (!OnegramGIFReadByte(&cursor, &label))
+                return nil;
+
+            if (label == 0xf9)
+            {
+                uint8_t blockSize = 0;
+                uint8_t gcePacked = 0;
+                uint8_t transparent = 0;
+                NSUInteger delayValue = 0;
+                if (!OnegramGIFReadByte(&cursor, &blockSize) || blockSize != 4 || !OnegramGIFReadByte(&cursor, &gcePacked) || !OnegramGIFReadUInt16(&cursor, &delayValue) || !OnegramGIFReadByte(&cursor, &transparent))
+                    return nil;
+                uint8_t terminator = 0;
+                if (!OnegramGIFReadByte(&cursor, &terminator) || terminator != 0)
+                    return nil;
+                disposal = (gcePacked >> 2) & 0x07;
+                delay = (NSTimeInterval)delayValue / 100.0;
+                transparentIndex = (gcePacked & 0x01) != 0 ? transparent : -1;
+            }
+            else if (label == 0xff)
+            {
+                uint8_t applicationLength = 0;
+                if (!OnegramGIFReadByte(&cursor, &applicationLength))
+                    return nil;
+                NSData *application = OnegramGIFReadBytes(&cursor, applicationLength);
+                if (application == nil)
+                    return nil;
+                NSData *blocks = OnegramGIFReadSubBlocks(&cursor);
+                if (blocks == nil)
+                    return nil;
+                if (application.length == 11 && blocks.length >= 3)
+                {
+                    const uint8_t *applicationBytes = application.bytes;
+                    const uint8_t *blockBytes = blocks.bytes;
+                    if ((memcmp(applicationBytes, "NETSCAPE2.0", 11) == 0 || memcmp(applicationBytes, "ANIMEXTS1.0", 11) == 0) && blockBytes[0] == 1)
+                        _loopCount = (NSUInteger)blockBytes[1] | ((NSUInteger)blockBytes[2] << 8);
+                }
+            }
+            else
+            {
+                if (OnegramGIFReadSubBlocks(&cursor) == nil)
+                    return nil;
+            }
+            continue;
+        }
+
+        if (marker != 0x2c)
+            return nil;
+
+        OnegramGIFFrame *frame = [[OnegramGIFFrame alloc] init];
+        if (!OnegramGIFReadUInt16(&cursor, &frame->_left) || !OnegramGIFReadUInt16(&cursor, &frame->_top) || !OnegramGIFReadUInt16(&cursor, &frame->_width) || !OnegramGIFReadUInt16(&cursor, &frame->_height) || frame->_width == 0 || frame->_height == 0)
+            return nil;
+
+        uint8_t imagePacked = 0;
+        if (!OnegramGIFReadByte(&cursor, &imagePacked))
+            return nil;
+        frame->_interlaced = (imagePacked & 0x40) != 0;
+        if ((imagePacked & 0x80) != 0)
+        {
+            NSUInteger paletteSize = (NSUInteger)1 << ((imagePacked & 0x07) + 1);
+            frame->_palette = OnegramGIFReadBytes(&cursor, paletteSize * 3);
+            if (frame->_palette == nil)
+                return nil;
+        }
+
+        if (!OnegramGIFReadByte(&cursor, &frame->_minimumCodeSize))
+            return nil;
+        frame->_compressedData = OnegramGIFReadSubBlocks(&cursor);
+        if (frame->_compressedData == nil)
+            return nil;
+        frame->_disposal = disposal;
+        frame->_delay = delay;
+        frame->_transparentIndex = transparentIndex;
+        [frames addObject:frame];
+
+        disposal = 0;
+        delay = 0.0;
+        transparentIndex = -1;
+    }
+
+    if (frames.count == 0)
+        return nil;
+
+    _frames = [frames copy];
+    _canvas = [[NSMutableData alloc] initWithLength:_width * _height * 4];
+    _renderedIndex = -1;
+    return self;
+}
+
+- (NSUInteger)frameCount
+{
+    return _frames.count;
+}
+
+- (NSUInteger)loopCount
+{
+    return _loopCount;
+}
+
+- (NSTimeInterval)delayAtIndex:(NSUInteger)index
+{
+    if (index >= _frames.count)
+        return 0.0;
+    return ((OnegramGIFFrame *)[_frames objectAtIndex:index])->_delay;
+}
+
+- (void)resetRendering
+{
+    memset(_canvas.mutableBytes, 0, _canvas.length);
+    _restoreCanvas = nil;
+    _renderedFrame = nil;
+    _renderedIndex = -1;
+}
+
+- (void)clearFrameRect:(OnegramGIFFrame *)frame
+{
+    uint8_t *canvas = _canvas.mutableBytes;
+    NSUInteger startX = MIN(frame->_left, _width);
+    NSUInteger startY = MIN(frame->_top, _height);
+    NSUInteger endX = MIN(frame->_left + frame->_width, _width);
+    NSUInteger endY = MIN(frame->_top + frame->_height, _height);
+    for (NSUInteger y = startY; y < endY; y++)
+        memset(canvas + (y * _width + startX) * 4, 0, (endX - startX) * 4);
+}
+
+- (bool)drawFrame:(OnegramGIFFrame *)frame
+{
+    NSData *decoded = OnegramGIFDecodeLZW(frame->_compressedData, frame->_minimumCodeSize, frame->_width * frame->_height);
+    if (decoded == nil)
+        return false;
+
+    NSData *palette = frame->_palette != nil ? frame->_palette : _globalPalette;
+    if (palette.length < 3)
+        return false;
+
+    if (frame->_disposal == 3)
+        _restoreCanvas = [_canvas copy];
+    else
+        _restoreCanvas = nil;
+
+    const uint8_t *indices = decoded.bytes;
+    const uint8_t *colors = palette.bytes;
+    NSUInteger colorCount = palette.length / 3;
+    uint8_t *canvas = _canvas.mutableBytes;
+    NSUInteger sourceOffset = 0;
+
+    if (frame->_interlaced)
+    {
+        const NSUInteger starts[4] = { 0, 4, 2, 1 };
+        const NSUInteger steps[4] = { 8, 8, 4, 2 };
+        for (NSUInteger pass = 0; pass < 4; pass++)
+        {
+            for (NSUInteger row = starts[pass]; row < frame->_height; row += steps[pass])
+            {
+                for (NSUInteger column = 0; column < frame->_width; column++, sourceOffset++)
+                {
+                    uint8_t colorIndex = indices[sourceOffset];
+                    if ((NSInteger)colorIndex == frame->_transparentIndex || colorIndex >= colorCount)
+                        continue;
+                    NSUInteger x = frame->_left + column;
+                    NSUInteger y = frame->_top + row;
+                    if (x >= _width || y >= _height)
+                        continue;
+                    uint8_t *pixel = canvas + (y * _width + x) * 4;
+                    pixel[0] = colors[colorIndex * 3];
+                    pixel[1] = colors[colorIndex * 3 + 1];
+                    pixel[2] = colors[colorIndex * 3 + 2];
+                    pixel[3] = 255;
+                }
+            }
+        }
+    }
+    else
+    {
+        for (NSUInteger row = 0; row < frame->_height; row++)
+        {
+            for (NSUInteger column = 0; column < frame->_width; column++, sourceOffset++)
+            {
+                uint8_t colorIndex = indices[sourceOffset];
+                if ((NSInteger)colorIndex == frame->_transparentIndex || colorIndex >= colorCount)
+                    continue;
+                NSUInteger x = frame->_left + column;
+                NSUInteger y = frame->_top + row;
+                if (x >= _width || y >= _height)
+                    continue;
+                uint8_t *pixel = canvas + (y * _width + x) * 4;
+                pixel[0] = colors[colorIndex * 3];
+                pixel[1] = colors[colorIndex * 3 + 1];
+                pixel[2] = colors[colorIndex * 3 + 2];
+                pixel[3] = 255;
+            }
+        }
+    }
+
+    return true;
+}
+
+- (UIImage *)currentImage
+{
+    size_t length = _canvas.length;
+    void *copy = malloc(length);
+    if (copy == NULL)
+        return nil;
+    memcpy(copy, _canvas.bytes, length);
+
+    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, copy, length, OnegramGIFReleaseImageData);
+    if (provider == NULL)
+    {
+        free(copy);
+        return nil;
+    }
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGImageRef imageRef = CGImageCreate(_width, _height, 8, 32, _width * 4, colorSpace, kCGBitmapByteOrderDefault | kCGImageAlphaPremultipliedLast, provider, NULL, false, kCGRenderingIntentDefault);
+    CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+    if (imageRef == NULL)
+        return nil;
+    UIImage *image = [UIImage imageWithCGImage:imageRef];
+    CGImageRelease(imageRef);
+    return image;
+}
+
+- (UIImage *)imageAtIndex:(NSUInteger)index
+{
+    if (index >= _frames.count)
+        return nil;
+
+    @synchronized(self)
+    {
+        if ((NSInteger)index < _renderedIndex)
+            [self resetRendering];
+
+        while (_renderedIndex < (NSInteger)index)
+        {
+            if (_renderedFrame != nil)
+            {
+                if (_renderedFrame->_disposal == 2)
+                    [self clearFrameRect:_renderedFrame];
+                else if (_renderedFrame->_disposal == 3 && _restoreCanvas != nil)
+                    [_canvas replaceBytesInRange:NSMakeRange(0, _canvas.length) withBytes:_restoreCanvas.bytes];
+            }
+
+            OnegramGIFFrame *frame = [_frames objectAtIndex:(NSUInteger)(_renderedIndex + 1)];
+            if (![self drawFrame:frame])
+                return nil;
+            _renderedFrame = frame;
+            _renderedIndex++;
+        }
+
+        return [self currentImage];
+    }
+}
+
+@end
+
+#endif
+
 @interface FLAnimatedImage ()
 {
     // Use old school ivar instead of property for retained non-object types (CF type, dispatch "object") to avoid ARC confusion: http://stackoverflow.com/questions/9684972/strong-property-with-attribute-nsobject-for-a-cf-type-doesnt-retain/9690656#9690656
+#if defined(ONEGRAM_ARMV6)
+    OnegramGIFSource *_imageSource;
+#else
     CGImageSourceRef _imageSource;
+#endif
     // Note: Only if the deployment target is iOS 6.0 or higher, dispatch objects are declared as "true objects" and participate in ARC, etc.; See <os/object.h> or https://github.com/AFNetworking/AFNetworking/pull/517 for details.
     dispatch_queue_t _serialQueue;
 }
@@ -147,171 +718,125 @@ typedef NS_ENUM(NSUInteger, FLAnimatedImageFrameCacheSize) {
 
 - (instancetype)initWithAnimatedGIFData:(NSData *)data imageDrawingBlock:(UIImage *(^)(UIImage *))imageDrawingBlock
 {
-    // Early return if no data supplied!
     BOOL hasData = ([data length] > 0);
     if (!hasData) {
         NSLog(@"Error: No animated GIF data supplied.");
         return nil;
     }
-    
+
     self = [super init];
     if (self) {
         self.imageDrawingBlock = imageDrawingBlock;
-        // Do one-time initializations of `readonly` properties directly to ivar to prevent implicit actions and avoid need for private `readwrite` property overrides.
-        
-        // Keep a strong reference to `data` and expose it read-only publicly.
-        // However, we will use the `_imageSource` as handler to the image data throughout our life cycle.
         _data = data;
-        
-        // Initialize internal data structures
-        // We'll fill in the initial `NSNull` values below, when we loop through all frames.
         _cachedFrames = [[NSMutableArray alloc] init];
         _cachedFrameIndexes = [[NSMutableIndexSet alloc] init];
         _requestedFrameIndexes = [[NSMutableIndexSet alloc] init];
-        
-        // Note: We could leverage `CGImageSourceCreateWithURL` too to add a second initializer `-initWithAnimatedGIFContentsOfURL:`.
+
+#if defined(ONEGRAM_ARMV6)
+        _imageSource = [[OnegramGIFSource alloc] initWithData:data];
+        if (_imageSource == nil) {
+            NSLog(@"Error: Failed to decode animated GIF data %@", data);
+            return nil;
+        }
+        _loopCount = _imageSource.loopCount;
+        size_t imageCount = _imageSource.frameCount;
+#else
         _imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
-        // Early return on failure!
         if (!_imageSource) {
             NSLog(@"Error: Failed to `CGImageSourceCreateWithData` for animated GIF data %@", data);
             return nil;
         }
-        
-        // Early return if not GIF!
+
         CFStringRef imageSourceContainerType = CGImageSourceGetType(_imageSource);
         BOOL isGIFData = UTTypeConformsTo(imageSourceContainerType, kUTTypeGIF);
         if (!isGIFData) {
             NSLog(@"Error: Supplied data is of type %@ and doesn't seem to be GIF data %@", imageSourceContainerType, data);
             return nil;
         }
-        
-        // Get `LoopCount`
-        // Note: 0 means repeating the animation indefinitely.
-        // Image properties example:
-        // {
-        //     FileSize = 314446;
-        //     "{GIF}" = {
-        //         HasGlobalColorMap = 1;
-        //         LoopCount = 0;
-        //     };
-        // }
+
         NSDictionary *imageProperties = (__bridge_transfer NSDictionary *)CGImageSourceCopyProperties(_imageSource, NULL);
         _loopCount = [[[imageProperties objectForKey:(id)kCGImagePropertyGIFDictionary] objectForKey:(id)kCGImagePropertyGIFLoopCount] unsignedIntegerValue];
-        
-        // Iterate through frame images
         size_t imageCount = CGImageSourceGetCount(_imageSource);
+#endif
+
         NSMutableArray *delayTimesMutable = [NSMutableArray arrayWithCapacity:imageCount];
         for (size_t i = 0; i < imageCount; i++) {
+#if defined(ONEGRAM_ARMV6)
+            UIImage *frameImage = [_imageSource imageAtIndex:i];
+            CGImageRef frameImageRef = frameImage.CGImage;
+#else
             CGImageRef frameImageRef = CGImageSourceCreateImageAtIndex(_imageSource, i, NULL);
-            if (frameImageRef) {
-                UIImage *frameImage = [UIImage imageWithCGImage:frameImageRef];
-                // Check for valid `frameImage` before parsing its properties as frames can be corrupted (and `frameImage` even `nil` when `frameImageRef` was valid).
-                if (frameImage) {
-                    // Set poster image
-                    if (!self.posterImage) {
-                        if (_imageDrawingBlock)
-                            _posterImage = _imageDrawingBlock(frameImage);
-                        else
-                            _posterImage = frameImage;
-                        // Set its size to proxy our size.
-                        _size = _posterImage.size;
-                        // Remember index of poster image so we never purge it; also add it to the cache.
-                        _posterImageFrameIndex = i;
-                        self.cachedFrames[self.posterImageFrameIndex] = self.posterImage;
-                        [self.cachedFrameIndexes addIndex:self.posterImageFrameIndex];
-                    } else {
-                        // Placeholder indicates that we don't have a cached frame.
-                        // We use an array instead of a dictionary for slightly faster access.
-                        self.cachedFrames[i] = [NSNull null];
-                    }
-                    
-                    // Get `DelayTime`
-                    // Note: It's not in (1/100) of a second like still falsly described in the documentation as per iOS 7 but in seconds stored as `kCFNumberFloat32Type`.
-                    // Frame properties example:
-                    // {
-                    //     ColorModel = RGB;
-                    //     Depth = 8;
-                    //     PixelHeight = 960;
-                    //     PixelWidth = 640;
-                    //     "{GIF}" = {
-                    //         DelayTime = "0.4";
-                    //         UnclampedDelayTime = "0.4";
-                    //     };
-                    // }
-                    
-                    NSDictionary *frameProperties = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(_imageSource, i, NULL);
-                    NSDictionary *framePropertiesGIF = [frameProperties objectForKey:(id)kCGImagePropertyGIFDictionary];
-                    
-                    // Try to use the unclamped delay time; fall back to the normal delay time.
-                    NSNumber *delayTime = [framePropertiesGIF objectForKey:(id)kCGImagePropertyGIFUnclampedDelayTime];
-                    if (!delayTime) {
-                        delayTime = [framePropertiesGIF objectForKey:(id)kCGImagePropertyGIFDelayTime];
-                    }
-                    // If we don't get a delay time from the properties, fall back to `kDelayTimeIntervalDefault` or carry over the preceding frame's value.
-                    const NSTimeInterval kDelayTimeIntervalDefault = 0.1;
-                    if (!delayTime) {
-                        if (i == 0) {
-                            NSLog(@"Verbose: Falling back to default delay time for first frame %@ because none found in GIF properties %@", frameImage, frameProperties);
-                            delayTime = @(kDelayTimeIntervalDefault);
-                        } else {
-                            NSLog(@"Verbose: Falling back to preceding delay time for frame %zu %@ because none found in GIF properties %@", i, frameImage, frameProperties);
-                            delayTime = delayTimesMutable[i - 1];
-                        }
-                    }
-                    // Support frame delays as low as `kDelayTimeIntervalMinimum`, with anything below being rounded up to `kDelayTimeIntervalDefault` for legacy compatibility.
-                    // This is how the fastest browsers do it as per 2012: http://nullsleep.tumblr.com/post/16524517190/animated-gif-minimum-frame-delay-browser-compatibility
-                    const NSTimeInterval kDelayTimeIntervalMinimum = 0.02;
-                    // To support the minimum even when rounding errors occur, use an epsilon when comparing. We downcast to float because that's what we get for delayTime from ImageIO.
-                    if ([delayTime floatValue] < ((float)kDelayTimeIntervalMinimum - FLT_EPSILON)) {
-                        NSLog(@"Verbose: Rounding frame %zu's `delayTime` from %f up to default %f (minimum supported: %f).", i, [delayTime floatValue], kDelayTimeIntervalDefault, kDelayTimeIntervalMinimum);
-                        delayTime = @(kDelayTimeIntervalDefault);
-                    }
-                    delayTimesMutable[i] = delayTime;
+            UIImage *frameImage = frameImageRef != NULL ? [UIImage imageWithCGImage:frameImageRef] : nil;
+#endif
+            if (frameImageRef && frameImage) {
+                if (!self.posterImage) {
+                    if (_imageDrawingBlock)
+                        _posterImage = _imageDrawingBlock(frameImage);
+                    else
+                        _posterImage = frameImage;
+                    _size = _posterImage.size;
+                    _posterImageFrameIndex = i;
+                    self.cachedFrames[self.posterImageFrameIndex] = self.posterImage;
+                    [self.cachedFrameIndexes addIndex:self.posterImageFrameIndex];
                 } else {
-                    NSLog(@"Verbose: Dropping frame %zu because valid `CGImageRef` %@ did result in `nil`-`UIImage`.", i, frameImageRef);
+                    self.cachedFrames[i] = [NSNull null];
                 }
+
+#if defined(ONEGRAM_ARMV6)
+                NSNumber *delayTime = @([_imageSource delayAtIndex:i]);
+#else
+                NSDictionary *frameProperties = (__bridge_transfer NSDictionary *)CGImageSourceCopyPropertiesAtIndex(_imageSource, i, NULL);
+                NSDictionary *framePropertiesGIF = [frameProperties objectForKey:(id)kCGImagePropertyGIFDictionary];
+                NSNumber *delayTime = [framePropertiesGIF objectForKey:(id)kCGImagePropertyGIFUnclampedDelayTime];
+                if (!delayTime)
+                    delayTime = [framePropertiesGIF objectForKey:(id)kCGImagePropertyGIFDelayTime];
+#endif
+                const NSTimeInterval kDelayTimeIntervalDefault = 0.1;
+                if (!delayTime || [delayTime doubleValue] <= 0.0) {
+                    if (i == 0)
+                        delayTime = @(kDelayTimeIntervalDefault);
+                    else
+                        delayTime = delayTimesMutable[i - 1];
+                }
+                const NSTimeInterval kDelayTimeIntervalMinimum = 0.02;
+                if ([delayTime floatValue] < ((float)kDelayTimeIntervalMinimum - FLT_EPSILON))
+                    delayTime = @(kDelayTimeIntervalDefault);
+                delayTimesMutable[i] = delayTime;
+#ifndef ONEGRAM_ARMV6
                 CFRelease(frameImageRef);
+#endif
             } else {
-                NSLog(@"Verbose: Dropping frame %zu because failed to `CGImageSourceCreateImageAtIndex` with image source %@", i, _imageSource);
+#ifndef ONEGRAM_ARMV6
+                if (frameImageRef != NULL)
+                    CFRelease(frameImageRef);
+#endif
+                NSLog(@"Verbose: Dropping frame %zu because it could not be decoded.", i);
             }
         }
         _delayTimes = [delayTimesMutable copy];
         _frameCount = [_delayTimes count];
-        
+
         if (self.frameCount == 0) {
-            NSLog(@"Error: Failed to create any valid frames for GIF with properties %@", imageProperties);
+            NSLog(@"Error: Failed to create any valid frames for GIF.");
             return nil;
         } else if (self.frameCount == 1) {
-            // Warn when we only have a single frame but return a valid GIF.
-            NSLog(@"Verbose: Created valid GIF but with only a single frame. Image properties: %@", imageProperties);
-        } else {
-            // We have multiple frames, rock on!
+            NSLog(@"Verbose: Created valid GIF but with only a single frame.");
         }
-        
-        // Calculate the optimal frame cache size: try choosing a larger buffer window depending on the predicted image size.
-        // It's only dependent on the image size & number of frames and never changes.
+
         CGFloat animatedImageDataSize = CGImageGetBytesPerRow(self.posterImage.CGImage) * self.size.height * self.frameCount / MEGABYTE;
         if (animatedImageDataSize <= FLAnimatedImageDataSizeCategoryAll) {
             _frameCacheSizeOptimal = self.frameCount;
         } else if (animatedImageDataSize <= FLAnimatedImageDataSizeCategoryDefault) {
-            // This value doesn't depend on device memory much because if we're not keeping all frames in memory we will always be decoding 1 frame up ahead per 1 frame that gets played and at this point we might as well just keep a small buffer just large enough to keep from running out of frames.
             _frameCacheSizeOptimal = FLAnimatedImageFrameCacheSizeDefault;
         } else {
-            // The predicted size exceeds the limits to build up a cache and we go into low memory mode from the beginning.
             _frameCacheSizeOptimal = FLAnimatedImageFrameCacheSizeLowMemory;
         }
-        // In any case, cap the optimal cache size at the frame count.
         _frameCacheSizeOptimal = MIN(_frameCacheSizeOptimal, self.frameCount);
-        
-        // Convenience/minor performance optimization; keep an index set handy with the full range to return in `-frameIndexesToCache`.
         _allFramesIndexSet = [[NSIndexSet alloc] initWithIndexesInRange:NSMakeRange(0, self.frameCount)];
-        
-        // System Memory Warnings Notification Handler
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didReceiveMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
     }
     return self;
 }
-
 
 - (void)dealloc
 {
@@ -321,9 +846,11 @@ typedef NS_ENUM(NSUInteger, FLAnimatedImageFrameCacheSize) {
         [NSObject cancelPreviousPerformRequestsWithTarget:_weakProxy];
     }
     
+#if !defined(ONEGRAM_ARMV6)
     if (_imageSource) {
         CFRelease(_imageSource);
     }
+#endif
     
     // Needed for deployment target iOS 5.0
 #if ((__IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_6_0) || (!defined(__IPHONE_6_0)))
@@ -424,10 +951,10 @@ typedef NS_ENUM(NSUInteger, FLAnimatedImageFrameCacheSize) {
         // Guard against crashing on 0-length ranges with an 'NSRangeException' "last range index (-1) beyond bounds" (Apple's error message is bogus here).
         // This is only needed on iOS 5, iPad only, running on device and only for the range {0,0} but regardless of whether the index set is mutable or immutable or what the indexes in the set are (can even be empty).
         if (firstRange.length > 0) {
-            [frameIndexesToAddToCache enumerateRangesInRange:firstRange options:0 usingBlock:frameRangeBlock];
+            FLAnimatedImageEnumerateRanges(frameIndexesToAddToCache, firstRange, frameRangeBlock);
         }
         if (secondRange.length > 0) {
-            [frameIndexesToAddToCache enumerateRangesInRange:secondRange options:0 usingBlock:frameRangeBlock];
+            FLAnimatedImageEnumerateRanges(frameIndexesToAddToCache, secondRange, frameRangeBlock);
         }
     });
 }
@@ -462,18 +989,18 @@ typedef NS_ENUM(NSUInteger, FLAnimatedImageFrameCacheSize) {
 
 - (UIImage *)predrawnImageAtIndex:(NSUInteger)index
 {
-    // It's very important to use the cached `_imageSource` since the random access to a frame with `CGImageSourceCreateImageAtIndex` turns from an O(1) into an O(n) operation when re-initializing the image source every time.
+#if defined(ONEGRAM_ARMV6)
+    UIImage *image = [_imageSource imageAtIndex:index];
+#else
     CGImageRef imageRef = CGImageSourceCreateImageAtIndex(_imageSource, index, NULL);
     UIImage *image = [UIImage imageWithCGImage:imageRef];
     CFRelease(imageRef);
+#endif
     
     if (_imageDrawingBlock)
         image = _imageDrawingBlock(image);
     else
-    {
-        // Loading in the image object is only half the work, the displaying image view would still have to synchronosly wait and decode the image, so we go ahead and do that here on the background thread.
         image = [[self class] predrawnImageFromImage:image];
-    }
     
     return image;
 }
@@ -522,14 +1049,14 @@ typedef NS_ENUM(NSUInteger, FLAnimatedImageFrameCacheSize) {
     if ([self.cachedFrameIndexes count] > self.frameCacheSizeCurrent) {
         NSMutableIndexSet *indexesToPurge = [self.cachedFrameIndexes mutableCopy];
         [indexesToPurge removeIndexes:[self frameIndexesToCache]];
-        [indexesToPurge enumerateRangesUsingBlock:^(NSRange range, __unused BOOL *stop) {
+        FLAnimatedImageEnumerateRanges(indexesToPurge, NSMakeRange(0, self.frameCount), ^(NSRange range, __unused BOOL *stop) {
             // Iterate through contiguous indexes; can be faster than `enumerateIndexesInRange:options:usingBlock:`.
             for (NSUInteger i = range.location; i < NSMaxRange(range); i++) {
                 [self.cachedFrameIndexes removeIndex:i];
                 self.cachedFrames[i] = [NSNull null];
                 // Note: Don't `CGImageSourceRemoveCacheAtIndex` on the image source for frames that we don't want cached any longer to maintain O(1) time access.
             }
-        }];
+        });
     }
 }
 

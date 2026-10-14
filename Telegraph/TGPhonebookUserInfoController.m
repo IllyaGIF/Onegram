@@ -3,7 +3,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
-#import <MessageUI/MessageUI.h>
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "TGDatabase.h"
 #import "TGTelegraph.h"
@@ -18,7 +18,7 @@
 
 #import "TGContactsController.h"
 
-@interface TGPhonebookUserInfoController () <MFMessageComposeViewControllerDelegate>
+@interface TGPhonebookUserInfoController ()
 {
     TGPhonebookContact *_phonebookInfo;
     TGUserInfoButtonCollectionItem *_inviteItem;
@@ -109,35 +109,34 @@
 
 - (void)_inviteWithPhoneNumber:(NSString *)phoneNumber
 {
-    if ([MFMessageComposeViewController canSendText])
+    if (OGPlatformCanSendTextMessage())
     {
-        MFMessageComposeViewController *messageComposer = [[MFMessageComposeViewController alloc] init];
+        NSArray *recipients = [[NSArray alloc] initWithObjects:phoneNumber, nil];
+        NSString *body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), [TGContactsController downloadLink]];
+        id messageComposer = OGPlatformCreateTextMessageComposer(self, recipients, body);
         
         if (messageComposer != nil)
         {
-            messageComposer.recipients = [[NSArray alloc] initWithObjects:phoneNumber, nil];
-            messageComposer.messageComposeDelegate = self;
-            
-            NSString *body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), [TGContactsController downloadLink]];
-            messageComposer.body = body;
-            
             [self presentViewController:messageComposer animated:true completion:nil];
-            
             [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleBlackOpaque];
+        }
+        else
+        {
+            OGPlatformOpenTextMessage(recipients);
         }
     }
 }
 
-- (void)messageComposeViewController:(MFMessageComposeViewController *)__unused controller didFinishWithResult:(MessageComposeResult)result
+- (void)messageComposeViewController:(id)controller didFinishWithResult:(NSInteger)result
 {
     [self dismissViewControllerAnimated:true completion:nil];
     
-    if (result == MessageComposeResultSent)
+    if (result == OGPlatformMessageComposeResultSent)
     {
         @try
         {
             static int inviteAction = 0;
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:controller.body, @"text", controller.recipients, @"phones", nil] watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:OGPlatformTextMessageComposerBody(controller), @"text", OGPlatformTextMessageComposerRecipients(controller), @"phones", nil] watcher:TGTelegraphInstance];
         }
         @catch (NSException *exception)
         {

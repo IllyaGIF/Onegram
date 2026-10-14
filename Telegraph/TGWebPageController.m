@@ -143,8 +143,13 @@ NSString *const TGSandboxedWebViewProtocolHandledKey = @"TGSandboxedWebViewProto
 
 - (void)connection:(NSURLConnection *)__unused connection didReceiveResponse:(NSURLResponse *)response
 {
+    NSURLResponse *sbResponse = nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     NSDictionary *headers = @{ @"X-WebKit-CSP": @"script-src none", @"Content-type": @"text/html" };
-    NSHTTPURLResponse *sbResponse = [[NSHTTPURLResponse alloc] initWithURL:response.URL statusCode:200 HTTPVersion:@"1.1" headerFields:headers];
+    sbResponse = [[NSHTTPURLResponse alloc] initWithURL:response.URL statusCode:200 HTTPVersion:@"1.1" headerFields:headers];
+#else
+    sbResponse = [[NSURLResponse alloc] initWithURL:response.URL MIMEType:@"text/html" expectedContentLength:response.expectedContentLength textEncodingName:@"utf-8"];
+#endif
     
     [self.client URLProtocol:self didReceiveResponse:sbResponse cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     

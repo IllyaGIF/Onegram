@@ -5,7 +5,9 @@
 #import "TGImageUtils.h"
 #import "TGMediaAsset.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <AVFoundation/AVFoundation.h>
+#endif
 #import <MobileCoreServices/MobileCoreServices.h>
 #import <CommonCrypto/CommonDigest.h>
 
@@ -15,6 +17,8 @@
 
 #import "TGNavigationBar.h"
 #import "TGImagePickerController.h"
+#import "../../../OnegramPlatform/OGPlatformMedia.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface UINavigationBar (Border)
 
@@ -129,7 +133,7 @@
                 navigationBar.barTintColor = pallete.backgroundColor;
 #endif
                 navigationBar.tintColor = pallete.tintColor;
-                navigationBar.titleTextAttributes = @{ NSForegroundColorAttributeName: pallete.titleColor };
+                OGPlatformApplyNavigationBarTitleStyle(navigationBar, pallete.titleColor, [UIColor clearColor], CGSizeZero, nil);
                 navigationBar.bottomBorderColor = pallete.separatorColor;
             }
         }
@@ -177,12 +181,13 @@
 - (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info
 {
     NSString *mediaType = [info objectForKey:UIImagePickerControllerMediaType];
-    NSURL *referenceUrl = [info objectForKey:UIImagePickerControllerReferenceURL];
+    NSURL *referenceUrl = nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    referenceUrl = [info objectForKey:UIImagePickerControllerReferenceURL];
+#endif
     
     if ([mediaType isEqualToString:(__bridge NSString *)kUTTypeImage])
     {
-        //if (picker.sourceType == UIImagePickerControllerSourceTypeCamera)
-        //    defaultFlashMode = picker.cameraFlashMode;
         
      
         if (_avatarMode)
@@ -214,6 +219,18 @@
         {
             if (_isInDocumentMode)
             {
+#if defined(ONEGRAM_ARMV6)
+                UIImage *documentImage = [info objectForKey:UIImagePickerControllerOriginalImage];
+                NSData *documentData = documentImage == nil ? nil : UIImageJPEGRepresentation(documentImage, 0.95f);
+                if (documentData != nil)
+                {
+                    int64_t randomId = 0;
+                    arc4random_buf(&randomId, sizeof(randomId));
+                    NSString *tempFileName = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%" PRIx64 ".jpg", randomId]];
+                    if ([documentData writeToFile:tempFileName atomically:true])
+                        [delegate legacyCameraControllerCompletedWithDocument:[NSURL fileURLWithPath:tempFileName] fileName:@"image.jpg" mimeType:@"image/jpeg"];
+                }
+#else
                 NSURL *referenceUrl = info[UIImagePickerControllerReferenceURL];
                 if (referenceUrl != nil)
                 {
@@ -261,6 +278,7 @@
                         [libraryToken class];
                     }];
                 }
+#endif
             }
             else
             {
@@ -291,6 +309,24 @@
         {
             if (_isInDocumentMode)
             {
+#if defined(ONEGRAM_ARMV6)
+                NSURL *mediaUrl = [info objectForKey:UIImagePickerControllerMediaURL];
+                if (mediaUrl != nil)
+                {
+                    int64_t randomId = 0;
+                    arc4random_buf(&randomId, sizeof(randomId));
+                    NSString *extension = mediaUrl.pathExtension.length == 0 ? @"mov" : mediaUrl.pathExtension;
+                    NSString *tempFileName = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%" PRIx64 ".%@", randomId, extension]];
+                    NSError *copyError = nil;
+                    [[NSFileManager defaultManager] removeItemAtPath:tempFileName error:nil];
+                    if ([[NSFileManager defaultManager] copyItemAtPath:[mediaUrl path] toPath:tempFileName error:&copyError])
+                    {
+                        NSString *fileName = mediaUrl.lastPathComponent.length == 0 ? [@"video." stringByAppendingString:extension] : mediaUrl.lastPathComponent;
+                        NSString *mimeType = [[extension lowercaseString] isEqualToString:@"mp4"] ? @"video/mp4" : @"video/quicktime";
+                        [delegate legacyCameraControllerCompletedWithDocument:[NSURL fileURLWithPath:tempFileName] fileName:fileName mimeType:mimeType];
+                    }
+                }
+#else
                 NSURL *referenceUrl = info[UIImagePickerControllerReferenceURL];
                 if (referenceUrl != nil)
                 {
@@ -338,6 +374,7 @@
                          [libraryToken class];
                      }];
                 }
+#endif
             }
             else
             {
@@ -350,7 +387,6 @@
                 if (_storeCapturedAssets && [referenceUrl absoluteString].length != 0)
                 {
                     assetHash = [[NSString alloc] initWithFormat:@"%@", [referenceUrl absoluteString]];
-                    TGLegacyLog(@"Video hash: %@", assetHash);
                 }
                 
                 bool deleteFile = true;
@@ -370,7 +406,11 @@
                 
                 int64_t fileId = 0;
                 arc4random_buf(&fileId, sizeof(fileId));
+#if defined(ONEGRAM_ARMV6)
+                NSString *videoMp4FilePath = [tmpPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%" PRId64 ".mov", fileId]];
+#else
                 NSString *videoMp4FilePath = [tmpPath stringByAppendingPathComponent:[NSString stringWithFormat:@"%" PRId64 ".mp4", fileId]];
+#endif
                 
                 [ActionStageInstance() dispatchOnStageQueue:^
                 {
@@ -388,6 +428,33 @@
                     }
                     else
                     {
+#if defined(ONEGRAM_ARMV6)
+                        NSError *copyError = nil;
+                        [fileManager removeItemAtPath:videoMp4FilePath error:nil];
+                        BOOL success = mediaUrl != nil && [mediaUrl isFileURL] && [fileManager copyItemAtPath:[mediaUrl path] toPath:videoMp4FilePath error:&copyError];
+                        if (deleteFile && mediaUrl != nil)
+                            [fileManager removeItemAtURL:mediaUrl error:nil];
+
+                        NSTimeInterval duration = 0.0;
+                        CGSize naturalSize = CGSizeZero;
+                        NSURL *outputURL = [NSURL fileURLWithPath:videoMp4FilePath];
+                        BOOL metadataAvailable = success && OGPlatformReadVideoMetadataAtURL(outputURL, &duration, &naturalSize);
+                        UIImage *previewImage = success ? OGPlatformVideoThumbnailAtURL(outputURL, 0.0, CGSizeMake(800.0f, 800.0f)) : nil;
+                        NSDictionary *finalFileAttributes = success ? [fileManager attributesOfItemAtPath:videoMp4FilePath error:nil] : nil;
+                        int32_t fileSize = (int32_t)[[finalFileAttributes objectForKey:NSFileSize] intValue];
+
+                        TGDispatchOnMainThread(^
+                        {
+                            [_progressWindow dismiss:true];
+                            _progressWindow = nil;
+
+                            id<TGLegacyCameraControllerDelegate> delegate = _completionDelegate;
+                            if (success && metadataAvailable && fileSize > 0)
+                                [delegate legacyCameraControllerCapturedVideoWithTempFilePath:videoMp4FilePath fileSize:fileSize previewImage:previewImage duration:duration dimensions:naturalSize assetUrl:assetHash];
+                            else
+                                [delegate legacyCameraControllerCompletedWithNoResult];
+                        });
+#else
                         AVAsset *avAsset = [[AVURLAsset alloc] initWithURL:mediaUrl options:nil];
                         
                         AVAssetExportSession *exportSession = [[AVAssetExportSession alloc] initWithAsset:avAsset presetName:AVAssetExportPresetPassthrough];
@@ -408,11 +475,9 @@
                                     break;
                                 case AVAssetExportSessionStatusCancelled:
                                     endProcessing = true;
-                                    NSLog(@"Export canceled");
                                     break;
                                 case AVAssetExportSessionStatusCompleted:
                                 {
-                                    TGLegacyLog(@"Export mp4 completed");
                                     endProcessing = true;
                                     success = true;
                                     
@@ -475,6 +540,7 @@
                                 }
                             }
                         }];
+#endif
                     }
                 }];
             }

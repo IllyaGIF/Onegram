@@ -2,11 +2,14 @@
 
 #import "LegacyComponentsInternal.h"
 #import "TGImageUtils.h"
+#import "FLAnimatedImage.h"
 
 #import <UIKit/UIKit.h>
+#if !defined(ONEGRAM_ARMV6)
 #import <ImageIO/ImageIO.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MobileCoreServices/MobileCoreServices.h>
+#endif
 
 const int32_t TGGifConverterFPS = 600;
 const CGFloat TGGifConverterMaximumSide = 720.0f;
@@ -15,6 +18,58 @@ const CGFloat TGGifConverterMaximumSide = 720.0f;
 
 + (SSignal *)convertGifToMp4:(NSData *)data
 {
+#if defined(ONEGRAM_ARMV6)
+    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        __block bool cancelled = false;
+        [[SQueue concurrentDefaultQueue] dispatch:^
+        {
+            FLAnimatedImage *animatedImage = [[FLAnimatedImage alloc] initWithAnimatedGIFData:data imageDrawingBlock:nil];
+            if (cancelled)
+                return;
+            if (animatedImage == nil || animatedImage.frameCount < 2 || animatedImage.size.width <= 0.0f || animatedImage.size.height <= 0.0f || animatedImage.size.width > 1600.0f || animatedImage.size.height > 1600.0f)
+            {
+                [subscriber putError:nil];
+                return;
+            }
+            NSTimeInterval duration = 0.0;
+            for (NSNumber *delay in animatedImage.delayTimes)
+                duration += [delay doubleValue];
+            CFUUIDRef uuid = CFUUIDCreate(kCFAllocatorDefault);
+            NSString *uuidString = (__bridge_transfer NSString *)CFUUIDCreateString(kCFAllocatorDefault, uuid);
+            CFRelease(uuid);
+            NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:[uuidString stringByAppendingPathExtension:@"gif"]];
+            if (![data writeToFile:path atomically:true])
+            {
+                [subscriber putError:nil];
+                return;
+            }
+            CGSize previewSize = TGFitSizeF(animatedImage.size, CGSizeMake(TGGifConverterMaximumSide, TGGifConverterMaximumSide));
+            UIImage *previewImage = animatedImage.posterImage;
+            if (previewImage != nil && !CGSizeEqualToSize(previewImage.size, previewSize))
+                previewImage = TGScaleImageToPixelSize(previewImage, previewSize);
+            if (cancelled)
+            {
+                [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+                return;
+            }
+            NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
+            [dict setObject:path forKey:@"path"];
+            [dict setObject:[NSValue valueWithCGSize:animatedImage.size] forKey:@"dimensions"];
+            [dict setObject:@(duration) forKey:@"duration"];
+            [dict setObject:@"animation.gif" forKey:@"fileName"];
+            [dict setObject:@"image/gif" forKey:@"mimeType"];
+            if (previewImage != nil)
+                [dict setObject:previewImage forKey:@"previewImage"];
+            [subscriber putNext:dict];
+            [subscriber putCompletion];
+        }];
+        return [[SBlockDisposable alloc] initWithBlock:^
+        {
+            cancelled = true;
+        }];
+    }];
+#else
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
         __block bool cancelled = false;
@@ -124,8 +179,8 @@ const CGFloat TGGifConverterMaximumSide = 720.0f;
                 (NSString *)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32ARGB),
                 (NSString *)kCVPixelBufferWidthKey : @(sourceWidth),
                 (NSString *)kCVPixelBufferHeightKey : @(sourceHeight),
-                (NSString *)kCVPixelBufferCGImageCompatibilityKey : @YES,
-                (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey : @YES
+                (NSString *)kCVPixelBufferCGImageCompatibilityKey : @(YES),
+                (NSString *)kCVPixelBufferCGBitmapContextCompatibilityKey : @(YES)
             };
             
             AVAssetWriterInputPixelBufferAdaptor *adaptor = [AVAssetWriterInputPixelBufferAdaptor assetWriterInputPixelBufferAdaptorWithAssetWriterInput:videoWriterInput sourcePixelBufferAttributes:attributes];
@@ -194,7 +249,6 @@ const CGFloat TGGifConverterMaximumSide = 720.0f;
                     }
                     else
                     {
-                        //was no image returned -> end of file?
                         [videoWriterInput markAsFinished];
                         
                         void (^finishCompletion)(void) = ^
@@ -237,8 +291,10 @@ const CGFloat TGGifConverterMaximumSide = 720.0f;
             [assetWriterRef swap:nil];
         }];
     }];
+#endif
 };
 
+#if !defined(ONEGRAM_ARMV6)
 + (CVPixelBufferRef)newBufferFrom:(CGImageRef)frame withPixelBufferPool:(CVPixelBufferPoolRef)pixelBufferPool andAttributes:(NSDictionary *)attributes
 {
     NSParameterAssert(frame);
@@ -275,5 +331,6 @@ const CGFloat TGGifConverterMaximumSide = 720.0f;
     
     return pxBuffer;
 }
+#endif
 
 @end

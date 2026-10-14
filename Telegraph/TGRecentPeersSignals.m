@@ -32,7 +32,6 @@
     return [SSignal defer:^SSignal *{
         NSTimeInterval cacheInvalidationTimeout = 24 * 60 * 60;
 #if TARGET_IPHONE_SIMULATOR
-        //cacheInvalidationTimeout = 10.0;
 #endif
         
         return [TGTelegraphInstance.genericTasksSignalManager multicastedSignalForKey:@"updateRecentPeers" producer:^SSignal *{

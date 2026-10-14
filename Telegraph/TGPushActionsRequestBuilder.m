@@ -32,6 +32,11 @@ static NSString *devicePushToken = nil;
     bool apnsEnabled = TGIOS6APNsNotificationsEnabled();
     if ([action isEqualToString:@"subscribe"] && !apnsEnabled)
     {
+        TGDispatchOnMainThread(^
+        {
+            [TGAppDelegateInstance ios6RegisterLocalNotificationSettings];
+        });
+        
         NSString *tokenToRemove = devicePushToken;
         devicePushToken = nil;
 
@@ -50,7 +55,6 @@ static NSString *devicePushToken = nil;
 
     if (devicePushToken == nil)
     {
-        TGLog(@"PUSH subscription waitingForToken path=%@", self.path);
         TGDispatchOnMainThread(^
         {
             [TGAppDelegateInstance requestDeviceToken:self];
@@ -63,14 +67,12 @@ static NSString *devicePushToken = nil;
     
     if ([action isEqualToString:@"subscribe"])
     {
-        TGLog(@"PUSH subscription start action=subscribe tokenLength=%d", (int)devicePushToken.length);
         self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:true deviceToken:devicePushToken requestBuilder:self];
     }
     else if ([action isEqualToString:@"unsubscribe"])
     {
         NSString *tokenToRemove = devicePushToken;
         devicePushToken = nil;
-        TGLog(@"PUSH subscription start action=unsubscribe tokenLength=%d", (int)tokenToRemove.length);
         self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:false deviceToken:tokenToRemove requestBuilder:self];
     }
     else
@@ -83,20 +85,17 @@ static NSString *devicePushToken = nil;
 {
     if (deviceToken != nil)
     {
-        TGLog(@"PUSH token deliveredToSubscription length=%d", (int)deviceToken.length);
         devicePushToken = deviceToken;
         [self execute:nil];
     }
     else
     {
-        TGLog(@"PUSH token unavailable");
         [self pushSubscriptionUpdateFailed];
     }
 }
 
 - (void)pushSubscriptionUpdateSuccess
 {
-    TGLog(@"PUSH subscription success path=%@", self.path);
     [ActionStageInstance() actionCompleted:self.path result:nil];
 }
 

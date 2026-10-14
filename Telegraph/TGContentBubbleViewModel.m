@@ -28,13 +28,13 @@
 #import "TGReplyHeaderLocationModel.h"
 #import "TGReplyHeaderStickerModel.h"
 #import "TGReplyHeaderActionModel.h"
+#import "TGPollMediaAttachment.h"
 
 #import "TGArticleWebpageFooterModel.h"
 
 #import "TGMessageViewsViewModel.h"
 #import "TGModernButtonViewModel.h"
 #import "TGModernButtonView.h"
-
 
 
 #import "TGMessageReplyButtonsModel.h"
@@ -46,36 +46,20 @@
 #import "TGRoundVideoWebpageFooterModel.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+
+static const CGFloat TGContentBubbleBrandedChecksWidth = 16.0f;
+static const CGFloat TGContentBubbleBrandedChecksSpacing = 3.0f;
 #import "TGPresentationAssets.h"
+#import "TGMessageReactionsLayout.h"
 
 bool debugShowMessageIds = false;
-
-static void TGBrandedIOS6UpdateDeliveryPlate(TGModernImageViewModel *model, NSString *timeText, bool incomingAppearance, int deliveryState, bool read)
-{
-    if (model == nil)
-        return;
-
-    bool hidden = !incomingAppearance && deliveryState != TGMessageDeliveryStateDelivered;
-    model.hidden = hidden;
-    if (hidden)
-        return;
-
-    UIImage *image = [TGPresentationAssets brandedIOS6DeliveryTagImage:timeText incoming:incomingAppearance read:read];
-    model.image = image;
-    CGRect frame = model.frame;
-    frame.size = image.size;
-    model.frame = frame;
-    UIImageView *view = (UIImageView *)[model boundView];
-    if (view != nil)
-        view.image = image;
-}
 
 static NSString *TGIOS6ReactionSummaryFromMessage(TGMessage *message)
 {
     id value = message.contentProperties[@"ios6ReactionSummary"];
     if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
         return ((TGMessageReactionSummaryContentProperty *)value).summary;
-    // Compatibility with messages created in memory by the short-lived broken build.
     if ([value isKindOfClass:[NSString class]])
         return value;
     return nil;
@@ -209,13 +193,18 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
 
 @end
 
+static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
+
 @implementation TGContentBubbleViewModel
 
 - (bool)discussionCommentsFooterIntegratedInBubble
 {
-    // Telegram iOS treats the comments row as a footer attachment of the
-    // message bubble, not as an independent rounded control below it.
     return true;
+}
+
+- (bool)brandedReactionsShareTimeRow
+{
+    return [TGPresentation brandedIOS6Style] && _ios6ReactionButtonModels.count != 0;
 }
 
 - (void)_ios6RebuildReactionButtons:(TGModernViewStorage *)viewStorage
@@ -416,9 +405,10 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             }
         }
         
-        if (_incomingAppearance && ((_savedMessage && hasForwardPostId) || isChannel || _context.isBot || isBot || _context.isPublicGroup || hasGameAction || hasPayAction) && !_context.isAdminLog && !_inhibitShare) {
+        if (_incomingAppearance && ((_savedMessage && hasForwardPostId) || isChannel || _context.isBot || isBot || _context.isPublicGroup || hasGameAction || hasPayAction) && !_context.isAdminLog && !_inhibitShare)
             [_backgroundModel setPartialMode:false];
-            
+        
+        if (_incomingAppearance && ((_savedMessage && hasForwardPostId) || isChannel || _context.isBot || isBot || _context.isPublicGroup || hasGameAction || hasPayAction) && !_context.isAdminLog && !_inhibitShare && (_savedMessage || ![TGPresentation brandedIOS6Style])) {
             _actionButtonModel = [[TGModernButtonViewModel alloc] init];
             _actionButtonModel.image = _savedMessage ? context.presentation.images.chatActionGoToImage : context.presentation.images.chatActionShareImage;
             _actionButtonModel.modernHighlight = true;
@@ -439,24 +429,12 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         }
         
         _dateModel = [[TGModernDateViewModel alloc] initWithText:dateText textColor:_incomingAppearance ? context.presentation.pallete.chatIncomingDateColor : context.presentation.pallete.chatOutgoingDateColor daytimeVariant:daytimeVariant];
-        bool brandedIOS6ExternalDate = false;
-        if (brandedIOS6ExternalDate)
-        {
-            _dateModel.hidden = true;
-            _deliveryPlateModel = [[TGModernImageViewModel alloc] initWithImage:[TGPresentationAssets brandedIOS6DeliveryTagImage:dateText incoming:_incomingAppearance read:_read]];
-            _deliveryPlateModel.hidden = !_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered;
-            [_deliveryPlateModel sizeToFit];
-            [self addSubmodel:_deliveryPlateModel];
-        }
-        else
-        {
-            [_contentModel addSubmodel:_dateModel];
-        }
+        [_contentModel addSubmodel:_dateModel];
 
         if (_reactionSummary.length != 0)
             [self _ios6RebuildReactionButtons:nil];
         
-        if (!_ignoreEditing && message.isEdited && !(context.isBot || ([_authorPeer isKindOfClass:[TGUser class]] && ((TGUser *)_authorPeer).kind != TGUserKindGeneric))) {/* && (_authorPeer == nil || (![_authorPeer isKindOfClass:[TGConversation class]]) || ((TGConversation *)_authorPeer).isChannel || ((TGConversation *)_authorPeer).isChannelGroup)) {*/
+        if (!_ignoreEditing && message.isEdited && !(context.isBot || ([_authorPeer isKindOfClass:[TGUser class]] && ((TGUser *)_authorPeer).kind != TGUserKindGeneric))) {
             static CTFontRef dateFont = NULL;
             static dispatch_once_t onceToken;
             dispatch_once(&onceToken, ^
@@ -474,7 +452,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         
         if (!_incoming && !(_incomingAppearance && _context.isSavedMessages))
         {            
-            if (!_inhibitChecks && _deliveryPlateModel == nil)
+            if (!_inhibitChecks)
             {
                 UIImage *deliveredIcon = _context.presentation.images.chatDeliveredIcon;
                 UIImage *readIcon = _context.presentation.images.chatReadIcon;
@@ -502,24 +480,14 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             else if (_deliveryState == TGMessageDeliveryStateDelivered && !_inhibitChecks)
             {
                 if (!_incomingAppearance)
-                {
-                    if (_deliveryPlateModel != nil)
-                        [self addSubmodel:_checkFirstModel];
-                    else
-                        [_contentModel addSubmodel:_checkFirstModel];
-                }
-                _checkFirstEmbeddedInContent = _deliveryPlateModel == nil;
+                    [_contentModel addSubmodel:_checkFirstModel];
+                _checkFirstEmbeddedInContent = true;
                 
                 if (_read || ([TGPresentation brandedIOS6Style] && _context.isSavedMessages))
                 {
                     if (!_incomingAppearance)
-                    {
-                        if (_deliveryPlateModel != nil)
-                            [self addSubmodel:_checkSecondModel];
-                        else
-                            [_contentModel addSubmodel:_checkSecondModel];
-                    }
-                    _checkSecondEmbeddedInContent = _deliveryPlateModel == nil;
+                        [_contentModel addSubmodel:_checkSecondModel];
+                    _checkSecondEmbeddedInContent = true;
                 }
                 else
                 {
@@ -571,6 +539,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
 }
 
 - (void)dealloc {
+    TGModernViewModelRelinquishGestureRecognizer(_boundDoubleTapRecognizer, &TGContentBubbleViewModelDoubleTapRecognizerPoolKey, self, @selector(messageDoubleTapGesture:));
     [_callbackButtonInProgressDisposable dispose];
 }
 
@@ -624,7 +593,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         NSMutableArray *additionalAttributes = [[NSMutableArray alloc] init];
         NSMutableArray *textCheckingResults = [[NSMutableArray alloc] init];
 
-        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (NSString *)kCTFontAttributeName, nil];
+        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (__bridge NSString *)kCTFontAttributeName, nil];
         
         NSString *text = [[NSString alloc] initWithFormat:TGLocalized(@"Message.ForwardedMessage"), authorName];
         if (_viaUser != nil && _viaUser.userName.length != 0) {
@@ -657,7 +626,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         
         [_contentModel addSubmodel:_forwardedHeaderModel];
         
-        if (_incomingAppearance && [forwardPeer isKindOfClass:[TGConversation class]]) {
+        if (_incomingAppearance && [forwardPeer isKindOfClass:[TGConversation class]] && ![TGPresentation brandedIOS6Style]) {
             TGConversation *conversation = forwardPeer;
             if (conversation.isChannel && !conversation.isChannelGroup) {
                 if (_actionButtonModel == nil) {
@@ -720,6 +689,10 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         else if ([attachment isKindOfClass:[TGContactMediaAttachment class]])
         {
             return [[TGReplyHeaderContactModel alloc] initWithPeer:peer incoming:incoming system:system presentation:presentation];
+        }
+        else if ([attachment isKindOfClass:[TGPollMediaAttachment class]])
+        {
+            return [[TGReplyHeaderTextModel alloc] initWithPeer:peer text:[(TGPollMediaAttachment *)attachment previewText] incoming:incoming system:system presentation:presentation];
         }
         else if ([attachment isKindOfClass:[TGAudioMediaAttachment class]])
         {
@@ -928,12 +901,6 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     _read = ![_context isMessageUnread:_message];
     
     if (_read != previousRead) {
-        if (_deliveryPlateModel != nil)
-        {
-            int daytimeVariant = 0;
-            NSString *dateText = [TGDateUtils stringForShortTime:(int)_message.date daytimeVariant:&daytimeVariant];
-            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
-        }
         if (_read) {
             _checkSecondModel.alpha = 1.0f;
             
@@ -966,12 +933,10 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         if (!debugShowMessageIds)
         {
             [_dateModel setText:dateText daytimeVariant:daytimeVariant];
-            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
         }
 
         if (_reactionSummary.length == 0)
         {
-            // Remove a label left by builds that rendered the reaction twice.
             if (_reactionLabelModel != nil)
             {
                 [_contentModel removeSubmodel:_reactionLabelModel viewStorage:viewStorage];
@@ -1099,13 +1064,6 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         
         bool previousRead = _read;
         _read = !messageUnread;
-
-        if (_deliveryPlateModel != nil)
-        {
-            int daytimeVariant = 0;
-            NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
-            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
-        }
         
         if (_date != (int32_t)message.date && !debugShowMessageIds)
         {
@@ -1114,7 +1072,6 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             int daytimeVariant = 0;
             NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
             [_dateModel setText:dateText daytimeVariant:daytimeVariant];
-            TGBrandedIOS6UpdateDeliveryPlate(_deliveryPlateModel, dateText, _incomingAppearance, _deliveryState, _read);
         }
         
         if (_deliveryState == TGMessageDeliveryStateDelivered)
@@ -1397,6 +1354,12 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     }
 }
 
+- (void)prepareForAsynchronousContentDrawing
+{
+    if ([_contentModel boundView] == nil)
+        [self _maybeRestructureStateModels:nil];
+}
+
 - (void)_maybeRestructureStateModels:(TGModernViewStorage *)viewStorage
 {
     if (!_incoming && !_inhibitChecks && [_contentModel boundView] == nil && !_incomingAppearance)
@@ -1464,13 +1427,10 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     _webPageFooterModel.boundToContainer = true;
     [_webPageFooterModel bindSpecialViewsToContainer:_contentModel.boundView viewStorage:viewStorage atItemPosition:CGPointMake(_webPageFooterModel.frame.origin.x, _webPageFooterModel.frame.origin.y)];
     
-    _boundDoubleTapRecognizer = [[TGDoubleTapGestureRecognizer alloc] initWithTarget:self action:@selector(messageDoubleTapGesture:)];
+    _boundDoubleTapRecognizer = TGModernViewModelAcquireGestureRecognizer([_backgroundModel boundView], &TGContentBubbleViewModelDoubleTapRecognizerPoolKey, [TGDoubleTapGestureRecognizer class], self, @selector(messageDoubleTapGesture:));
     _boundDoubleTapRecognizer.cancelsTouchesInView = true;
     _boundDoubleTapRecognizer.delegate = self;
     _boundDoubleTapRecognizer.avoidControls = true;
-    
-    UIView *backgroundView = [_backgroundModel boundView];
-    [backgroundView addGestureRecognizer:_boundDoubleTapRecognizer];
     
     if (_unsentButtonModel != nil)
     {
@@ -1506,9 +1466,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
 
 - (void)unbindView:(TGModernViewStorage *)viewStorage
 {
-    UIView *backgroundView = [_backgroundModel boundView];
-    [backgroundView removeGestureRecognizer:_boundDoubleTapRecognizer];
-    _boundDoubleTapRecognizer.delegate = nil;
+    TGModernViewModelRelinquishGestureRecognizer(_boundDoubleTapRecognizer, &TGContentBubbleViewModelDoubleTapRecognizerPoolKey, self, @selector(messageDoubleTapGesture:));
     _boundDoubleTapRecognizer = nil;
     
     if (_unsentButtonModel != nil)
@@ -1642,8 +1600,6 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     
     CGFloat contentHorizontalInset = [TGPresentation brandedIOS6Style] && [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone ? 52.0f : 80.0f;
     CGSize contentContainerSize = CGSizeMake(MIN(420.0f, containerSize.width - contentHorizontalInset - (_hasAvatar ? 38.0f : 0.0f)), containerSize.height);
-    if (_deliveryPlateModel != nil && !_deliveryPlateModel.hidden)
-        contentContainerSize.width = MAX(80.0f, contentContainerSize.width - _deliveryPlateModel.image.size.width - 5.0f);
     if (_actionButtonModel != nil && !_actionButtonModel.hidden) {
         contentContainerSize.width -= 20.0f;
     }
@@ -1662,7 +1618,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     }
     
     CGFloat infoWidth = 0.0f;
-    if (!_incoming && _deliveryPlateModel == nil) {
+    if (!_incoming) {
         if (_messageViews == nil) {
             infoWidth += 20.0f;
         } else {
@@ -1672,8 +1628,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             }
         }
     }
-    if (_deliveryPlateModel == nil)
-        infoWidth += _dateModel.frame.size.width + 10.0f;
+    infoWidth += _dateModel.frame.size.width + 10.0f;
     if (_editedLabelModel != nil) {
         infoWidth += _editedLabelModel.frame.size.width + 4.0f;
     }
@@ -1686,6 +1641,11 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         infoWidth += _messageViewsModel.frame.size.width + 6.0f;
     }
     
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    OGConversationAppearance *brandedAppearance = brandedIOS6Style ? [TGPresentation brandedIOS6ConversationAppearance] : nil;
+    bool brandedReactions = [self brandedReactionsShareTimeRow];
+    CGFloat layoutInfoWidth = brandedReactions ? 0.0f : infoWidth;
+    
     CGFloat maxHeaderWidth = contentContainerSize.width;
     bool alreadyMeasuredWebPage = false;
     bool webpageOnly = false;
@@ -1693,7 +1653,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     if ([_webPageFooterModel fitContentToWebpage])
     {
         alreadyMeasuredWebPage = true;
-        [_webPageFooterModel layoutForContainerSize:CGSizeMake(contentContainerSize.width, contentContainerSize.height) contentSize:CGSizeZero infoWidth:infoWidth needsContentUpdate:&updateContents bottomInset:&alreadyMeasuredWebpageHasBottomInset];
+        [_webPageFooterModel layoutForContainerSize:CGSizeMake(contentContainerSize.width, contentContainerSize.height) contentSize:CGSizeZero infoWidth:layoutInfoWidth needsContentUpdate:&updateContents bottomInset:&alreadyMeasuredWebpageHasBottomInset];
         maxHeaderWidth = _webPageFooterModel.frame.size.width;
     }
     webpageOnly = alreadyMeasuredWebPage || _hasInvoice;
@@ -1776,7 +1736,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
             if (alreadyMeasuredWebPage) {
                 webpageHasBottomInset = alreadyMeasuredWebpageHasBottomInset;
             } else {
-                [_webPageFooterModel layoutForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) contentSize:CGSizeZero infoWidth:infoWidth needsContentUpdate:&updateContents bottomInset:&webpageHasBottomInset];
+                [_webPageFooterModel layoutForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) contentSize:CGSizeZero infoWidth:layoutInfoWidth needsContentUpdate:&updateContents bottomInset:&webpageHasBottomInset];
             }
             
             CGSize fittedContentSize = [self contentSizeForContainerSize:CGSizeMake(_webPageFooterModel.frame.size.width, contentContainerSize.height) needsContentsUpdate:&updateContents infoWidth:0.0f];
@@ -1787,7 +1747,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         {
             contentSize = [self contentSizeForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) needsContentsUpdate:&updateContents infoWidth:0.0f];
             
-            [_webPageFooterModel layoutForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) contentSize:contentSize infoWidth:infoWidth needsContentUpdate:&updateContents bottomInset:&webpageHasBottomInset];
+            [_webPageFooterModel layoutForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) contentSize:contentSize infoWidth:layoutInfoWidth needsContentUpdate:&updateContents bottomInset:&webpageHasBottomInset];
         }
         
         webPageSize = _webPageFooterModel.frame.size;
@@ -1802,7 +1762,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     }
     else
     {
-        contentSize = [self contentSizeForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) needsContentsUpdate:&updateContents infoWidth:infoWidth];
+        contentSize = [self contentSizeForContainerSize:CGSizeMake(contentContainerWidth, contentContainerSize.height) needsContentsUpdate:&updateContents infoWidth:layoutInfoWidth];
     }
     
     CGFloat replyButtonsMinimumWidth = 0.0f;
@@ -1819,31 +1779,56 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     if (!_incomingAppearance && _deliveryState == TGMessageDeliveryStateFailed)
         unsentOffset = 29.0f;
     
-    CGFloat reactionExtraHeight = _ios6ReactionButtonModels.count != 0 ? 25.0f : 0.0f;
-    // A long reaction row must never make the text column narrower/taller.
-    // The capsule is clipped to the already calculated bubble width below.
-    CGFloat backgroundWidth = MAX(60.0f, MAX(MAX(headerSize.width, contentSize.width) + 25.0f, infoWidth + 20.0f));
+    bool classicIOS6Style = [TGPresentation classicIOS6Style];
+    UIEdgeInsets brandedBubbleInsets = brandedIOS6Style ? [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance] : UIEdgeInsetsZero;
+    UIEdgeInsets brandedBubblePadding = brandedAppearance.bubbleContentPadding;
+    CGFloat contentLeftInset = brandedIOS6Style ? (brandedBubbleInsets.left + brandedBubblePadding.left - 1.0f) : (_incomingAppearance ? 14.0f : 8.0f);
+    CGFloat contentTrailingInset = brandedIOS6Style ? (brandedBubbleInsets.right + brandedAppearance.bubbleTimeTrailingInset) : (classicIOS6Style && !_incomingAppearance ? 4.0f : 0.0f);
+    
+    CGFloat reactionRowWidth = 0.0f;
+    CGFloat reactionRowHeight = 0.0f;
+    TGMessageReactionsLayout *reactionsLayout = nil;
+    if (brandedReactions)
+    {
+        CGFloat reactionsTrailingWidth = infoWidth;
+        CGFloat probeBubbleWidth = 1000.0f;
+        CGFloat probeCountRight = 0.0f;
+        if ([self brandedCommentsCountRight:&probeCountRight bubbleFrame:CGRectMake(0.0f, 0.0f, probeBubbleWidth, 0.0f)])
+            reactionsTrailingWidth += MAX(0.0f, probeBubbleWidth - probeCountRight - contentTrailingInset);
+        NSMutableArray *reactionSizes = [[NSMutableArray alloc] init];
+        for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
+            [reactionSizes addObject:[NSValue valueWithCGSize:button.image.size]];
+        reactionsLayout = [TGMessageReactionsLayout layoutWithItemSizes:reactionSizes maximumWidth:contentContainerWidth trailingWidth:reactionsTrailingWidth trailingHeight:_dateModel.frame.size.height itemSpacing:brandedAppearance.reactionsSpacing lineSpacing:brandedAppearance.reactionsSpacing trailingSpacing:brandedAppearance.reactionsTimeSpacing];
+    }
+    else
+    {
+        for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
+        {
+            if (reactionRowWidth > FLT_EPSILON)
+                reactionRowWidth += 3.0f;
+            reactionRowWidth += button.image.size.width;
+            reactionRowHeight = MAX(reactionRowHeight, button.image.size.height);
+        }
+    }
+    CGFloat reactionsBlockHeight = reactionsLayout != nil ? (brandedAppearance.reactionsTopSpacing + reactionsLayout.size.height) : 0.0f;
+    CGFloat backgroundHorizontalChrome = brandedIOS6Style ? (contentLeftInset + 1.0f + contentTrailingInset) : 25.0f;
+    CGFloat backgroundWidth = MAX(60.0f, MAX(MAX(headerSize.width, contentSize.width) + backgroundHorizontalChrome, infoWidth + 20.0f));
     CGFloat maximumAvailableWidth = containerSize.width - layoutConstants->leftInset - layoutConstants->rightInset - avatarOffset - unsentOffset;
     CGFloat commentsFooterHeight = [self discussionCommentsFooterHeight];
-    bool classicIOS6Style = [TGPresentation classicIOS6Style];
-    CGFloat classicOutgoingTailInset = classicIOS6Style && !_incomingAppearance ? 4.0f : 0.0f;
     if (commentsFooterHeight > FLT_EPSILON)
     {
-        // The attached footer belongs to this exact bubble.  Make very short
-        // posts wide enough for the comment label, but never exceed the same
-        // horizontal limits as the original message layout.
         backgroundWidth = MAX(backgroundWidth, MIN(maximumAvailableWidth, [self discussionCommentsFooterMinimumWidth]));
     }
-    // bubbleMine has a long, non-content tail on the right.  Widen the
-    // background to the left and reserve that same width inside so the whole
-    // content/date/check block moves together without changing its layout.
-    backgroundWidth += classicOutgoingTailInset;
-    CGRect backgroundFrame = CGRectMake(_incomingAppearance ? (avatarOffset + layoutConstants->leftInset) : (containerSize.width - backgroundWidth - layoutConstants->rightInset - unsentOffset), topSpacing, backgroundWidth, MAX(((_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 44.0f : (webpageOnly ? 0.0 : 30.0f)), headerSize.height + contentSize.height + layoutConstants->textBubblePaddingTop + layoutConstants->textBubblePaddingBottom));
-    if (classicIOS6Style)
+    if (reactionRowWidth > FLT_EPSILON)
+        backgroundWidth = MAX(backgroundWidth, MIN(maximumAvailableWidth, reactionRowWidth + (_incomingAppearance ? 14.0f : 8.0f) + 12.0f));
+    if (reactionsLayout != nil)
+        backgroundWidth = MAX(backgroundWidth, MIN(maximumAvailableWidth, reactionsLayout.size.width + backgroundHorizontalChrome));
+    if (!brandedIOS6Style)
+        backgroundWidth += contentTrailingInset;
+    CGFloat backgroundVerticalPadding = brandedIOS6Style ? (brandedBubbleInsets.top + brandedBubblePadding.top + brandedBubblePadding.bottom + brandedBubbleInsets.bottom) : (layoutConstants->textBubblePaddingTop + layoutConstants->textBubblePaddingBottom);
+    CGRect backgroundFrame = CGRectMake(_incomingAppearance ? (avatarOffset + layoutConstants->leftInset) : (containerSize.width - backgroundWidth - layoutConstants->rightInset - unsentOffset), topSpacing, backgroundWidth, MAX(((_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 44.0f : (webpageOnly ? 0.0 : 30.0f)), headerSize.height + contentSize.height + backgroundVerticalPadding));
+    if (classicIOS6Style && !brandedIOS6Style)
     {
-        // The content/date container consumes two pixels of the nominal
-        // bottom padding.  Add seven pixels so the visible bottom inset is
-        // ten pixels: twice the five-pixel top inset requested for Skeuo.
         backgroundFrame.size.height += 7.0f;
     }
     if (_incomingAppearance && _editing)
@@ -1860,27 +1845,29 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     {
         backgroundFrame.size.height += webPageSize.height;
     }
+    CGFloat reactionRowY = CGRectGetMaxY(backgroundFrame) - 3.0f;
+    if (reactionRowHeight > FLT_EPSILON)
+        backgroundFrame.size.height += reactionRowHeight + 4.0f;
+    backgroundFrame.size.height += reactionsBlockHeight;
     if (commentsFooterHeight > FLT_EPSILON)
     {
-        // Reserve the footer inside the background itself.  The content model
-        // deliberately keeps its old height, so text/date/checkmarks remain
-        // above the separator while the bubble continues around the footer.
         backgroundFrame.size.height += commentsFooterHeight;
     }
 
     CGSize previousContentModelSize = _contentModel.frame.size;
-    CGFloat contentLeftInset = _incomingAppearance ? 14.0f : 8.0f;
-    CGFloat contentWidth = MAX(32.0f, backgroundFrame.size.width - contentLeftInset - classicOutgoingTailInset);
+    CGFloat contentWidth = MAX(32.0f, backgroundFrame.size.width - contentLeftInset - contentTrailingInset);
+    CGFloat contentTop = brandedIOS6Style ? (topSpacing + brandedBubbleInsets.top + brandedBubblePadding.top - layoutConstants->textBubbleTextOffsetTop) : (topSpacing + 2.0f);
+    CGFloat contentBottomPadding = brandedIOS6Style ? layoutConstants->textBubbleTextOffsetTop : 5.0f;
     if (_inhibitContentAnimation)
     {
         [UIView performWithoutAnimation:^
         {
-             _contentModel.frame = CGRectMake(backgroundFrame.origin.x + contentLeftInset, topSpacing + 2.0f, contentWidth, MAX(headerSize.height + contentSize.height + 5, (_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 30.0f : (webpageOnly ? 0.0 : 14.0f)) + webPageSize.height);
+             _contentModel.frame = CGRectMake(backgroundFrame.origin.x + contentLeftInset, contentTop, contentWidth, MAX(headerSize.height + contentSize.height + contentBottomPadding, (_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 30.0f : (webpageOnly ? 0.0 : 14.0f)) + webPageSize.height + reactionsBlockHeight);
         }];
     }
     else
     {
-        _contentModel.frame = CGRectMake(backgroundFrame.origin.x + contentLeftInset, topSpacing + 2.0f, contentWidth, MAX(headerSize.height + contentSize.height + 5, (_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 30.0f : (webpageOnly ? 0.0 : 14.0f)) + webPageSize.height);
+        _contentModel.frame = CGRectMake(backgroundFrame.origin.x + contentLeftInset, contentTop, contentWidth, MAX(headerSize.height + contentSize.height + contentBottomPadding, (_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 30.0f : (webpageOnly ? 0.0 : 14.0f)) + webPageSize.height + reactionsBlockHeight);
     }
     if (!CGSizeEqualToSize(_contentModel.frame.size, previousContentModelSize)) {
         updateContents = true;
@@ -1896,7 +1883,7 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     {
         [_webPageFooterModel updateSpecialViewsPositions:CGPointMake(_itemPosition.x + _webPageFooterModel.frame.origin.x, _itemPosition.y + headerSize.height + contentSize.height)];
         
-        [_webPageFooterModel layoutForContainerSize:contentContainerSize contentSize:contentSize infoWidth:infoWidth needsContentUpdate:&updateContents bottomInset:NULL];
+        [_webPageFooterModel layoutForContainerSize:contentContainerSize contentSize:contentSize infoWidth:layoutInfoWidth needsContentUpdate:&updateContents bottomInset:NULL];
         
         _webPageFooterModel.frame = CGRectMake(0.0f, headerSize.height + contentSize.height, _webPageFooterModel.frame.size.width, _webPageFooterModel.frame.size.height);
     }
@@ -1939,25 +1926,53 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
     
     [self layoutContentForHeaderHeight:headerSize.height containerSize:_contentModel.frame.size];
     
-    CGFloat dateRightInset = _incomingAppearance ? (10.0f + TGScreenPixel) : 28.0f;
+    CGFloat dateRightInset = brandedIOS6Style ? (_incomingAppearance ? 0.0f : TGContentBubbleBrandedChecksWidth + TGContentBubbleBrandedChecksSpacing) : (_incomingAppearance ? (10.0f + TGScreenPixel) : 28.0f);
     CGFloat dateX = _contentModel.frame.size.width - dateRightInset - _dateModel.frame.size.width;
-    if ([TGPresentation brandedIOS6Style] && _incomingAppearance)
-        dateX = 1.0f;
-    _dateModel.frame = CGRectMake(dateX, _contentModel.frame.size.height - 18.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f), _dateModel.frame.size.width, _dateModel.frame.size.height);
-
-    if (_ios6ReactionButtonModels.count != 0)
+    CGFloat dateY = brandedIOS6Style ? (_contentModel.frame.size.height - brandedAppearance.bubbleTimeRowHeight) : (_contentModel.frame.size.height - 18.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f));
+    CGFloat reactionsTop = 0.0f;
+    if (reactionsLayout != nil)
     {
-        CGFloat totalWidth = 0.0f;
+        reactionsTop = _contentModel.frame.size.height - contentBottomPadding - reactionsLayout.size.height;
+        dateY = reactionsTop + reactionsLayout.size.height - _dateModel.frame.size.height;
+    }
+    CGFloat brandedFooterTop = 0.0f;
+    if (brandedIOS6Style && [self brandedCommentsFooterTop:&brandedFooterTop bubbleFrame:backgroundFrame])
+    {
+        CGFloat dateBottom = _contentModel.frame.origin.y + dateY + _dateModel.frame.size.height;
+        backgroundFrame.size.height -= brandedFooterTop - brandedAppearance.commentsTimeBottomSpacing - dateBottom;
+        _backgroundModel.frame = backgroundFrame;
+        if (_actionButtonModel != nil)
+            _actionButtonModel.frame = CGRectOffset(_actionButtonModel.bounds, CGRectGetMaxX(backgroundFrame) + 7.0f, CGRectGetMaxY(backgroundFrame) - 29.0f - 1.0f);
+    }
+    CGFloat dateShiftX = 0.0f;
+    CGFloat brandedCountRight = 0.0f;
+    if (brandedIOS6Style && [self brandedCommentsCountRight:&brandedCountRight bubbleFrame:backgroundFrame])
+    {
+        CGFloat alignedDateX = CGFloor(brandedCountRight - _contentModel.frame.origin.x - dateRightInset - _dateModel.frame.size.width);
+        dateShiftX = alignedDateX - dateX;
+        dateX = alignedDateX;
+    }
+    _dateModel.frame = CGRectMake(dateX, dateY, _dateModel.frame.size.width, _dateModel.frame.size.height);
+
+    if (reactionsLayout != nil)
+    {
+        NSUInteger reactionIndex = 0;
         for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
-            totalWidth += button.image.size.width;
-        totalWidth += MAX(0, (NSInteger)_ios6ReactionButtonModels.count - 1) * 3.0f;
-        CGFloat x = _incomingAppearance ? backgroundFrame.origin.x + 8.0f : MAX(8.0f, CGRectGetMaxX(backgroundFrame) - 8.0f - totalWidth);
-        CGFloat maximumX = containerSize.width - 8.0f;
+        {
+            button.hidden = false;
+            button.frame = CGRectOffset([reactionsLayout frameForItemAtIndex:reactionIndex], _contentModel.frame.origin.x, _contentModel.frame.origin.y + reactionsTop);
+            reactionIndex++;
+        }
+    }
+    else if (_ios6ReactionButtonModels.count != 0)
+    {
+        CGFloat x = backgroundFrame.origin.x + contentLeftInset;
+        CGFloat maximumX = CGRectGetMaxX(backgroundFrame) - contentTrailingInset - 6.0f;
         for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
         {
             CGSize buttonSize = button.image.size;
             button.hidden = x + buttonSize.width > maximumX;
-            button.frame = CGRectMake(x, CGRectGetMaxY(backgroundFrame) + 2.0f, buttonSize.width, buttonSize.height);
+            button.frame = CGRectMake(x, reactionRowY, buttonSize.width, buttonSize.height);
             x += buttonSize.width + 3.0f;
         }
     }
@@ -1997,24 +2012,20 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         if (_authorSignature.length != 0) {
             minX = _authorSignatureModel.frame.origin.x;
         }
-        _messageViewsModel.frame = CGRectMake(minX - _messageViewsModel.frame.size.width - 6.0f + _contentModel.frame.origin.x, _dateModel.frame.origin.y + _contentModel.frame.origin.y + 2.0f + TGScreenPixel, _messageViewsModel.frame.size.width, _messageViewsModel.frame.size.height);
+        CGFloat viewsY = brandedIOS6Style ? (CGRectGetMaxY(_dateModel.frame) - _messageViewsModel.frame.size.height) : (_dateModel.frame.origin.y + 2.0f + TGScreenPixel);
+        _messageViewsModel.frame = CGRectMake(minX - _messageViewsModel.frame.size.width - 6.0f + _contentModel.frame.origin.x, viewsY + _contentModel.frame.origin.y, _messageViewsModel.frame.size.width, _messageViewsModel.frame.size.height);
     }
     
     CGPoint stateOffset = _contentModel.frame.origin;
-    if (_deliveryPlateModel != nil)
-    {
-        CGSize deliveryPlateSize = _deliveryPlateModel.image.size;
-        _deliveryPlateModel.frame = [TGPresentationAssets brandedIOS6DeliveryTagFrameForMessageFrame:backgroundFrame tagSize:deliveryPlateSize incoming:_incomingAppearance];
-    }
-    else
-    {
-        if (_checkFirstModel != nil)
-            _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 24, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 14 + TGScreenPixel, 12, 11);
-        
-        if (_checkSecondModel != nil)
-            _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 20, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 14 + TGScreenPixel, 12, 11);
-    }
+    CGFloat checksY = brandedIOS6Style ? CGFloor(CGRectGetMidY(_dateModel.frame) - 5.5f) : (_contentModel.frame.size.height - 14 + TGScreenPixel);
+    CGFloat firstCheckRightInset = brandedIOS6Style ? TGContentBubbleBrandedChecksWidth : 24.0f;
+    CGFloat secondCheckRightInset = brandedIOS6Style ? 12.0f : 20.0f;
+    if (_checkFirstModel != nil)
+        _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - firstCheckRightInset + dateShiftX, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + checksY, 12, 11);
     
+    if (_checkSecondModel != nil)
+        _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - secondCheckRightInset + dateShiftX, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + checksY, 12, 11);
+
     if (_unsentButtonModel != nil)
     {
         _unsentButtonModel.frame = CGRectMake(containerSize.width - _unsentButtonModel.frame.size.width - 9, backgroundFrame.size.height + topSpacing + bottomSpacing - _unsentButtonModel.frame.size.height - ((_collapseFlags & TGModernConversationItemCollapseBottom) ? 5 : 6), _unsentButtonModel.frame.size.width, _unsentButtonModel.frame.size.height);
@@ -2027,12 +2038,12 @@ static UIImage *TGIOS6ReactionButtonImage(NSString *emoji, NSInteger count, bool
         
         [_replyButtonsModel layoutForContainerSize:CGSizeMake(MIN(MAX([_replyButtonsModel minimumWidth], backgroundFrame.size.width + backgroundExtension), containerSize.width - 44.0f), containerSize.height)];
         
-        _replyButtonsModel.frame = CGRectMake((_incomingAppearance ? backgroundFrame.origin.x : (CGRectGetMaxX(backgroundFrame) - _replyButtonsModel.frame.size.width)) + (_backgroundModel == nil ? (_incomingAppearance ? -5.0f : 5.0f) : 0.0f), CGRectGetMaxY(backgroundFrame) + reactionExtraHeight, _replyButtonsModel.frame.size.width, _replyButtonsModel.frame.size.height);
+        _replyButtonsModel.frame = CGRectMake((_incomingAppearance ? backgroundFrame.origin.x : (CGRectGetMaxX(backgroundFrame) - _replyButtonsModel.frame.size.width)) + (_backgroundModel == nil ? (_incomingAppearance ? -5.0f : 5.0f) : 0.0f), CGRectGetMaxY(backgroundFrame), _replyButtonsModel.frame.size.width, _replyButtonsModel.frame.size.height);
         replyButtonsHeight = _replyButtonsModel.frame.size.height;
         self.avatarOffset = replyButtonsHeight;
     }
     
-    self.frame = CGRectMake(0, 0, containerSize.width, backgroundFrame.size.height + topSpacing + bottomSpacing + reactionExtraHeight + replyButtonsHeight);
+    self.frame = CGRectMake(0, 0, containerSize.width, backgroundFrame.size.height + topSpacing + bottomSpacing + replyButtonsHeight);
     
     bool tiledMode = _contentModel.frame.size.height > TGModernFlatteningViewModelTilingLimit;
     [_contentModel setTiledMode:tiledMode];

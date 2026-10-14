@@ -1,19 +1,64 @@
 #import "TGEmbedVideoPlayerView.h"
 #import "TGEmbedPlayerState.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#import <MediaPlayer/MediaPlayer.h>
+#else
 #import <AVFoundation/AVFoundation.h>
-
 #import "TGModernGalleryVideoView.h"
+#endif
 
 #import "TGTimerTarget.h"
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+static NSTimeInterval TGEmbedLegacyMoviePlayerTime(MPMoviePlayerController *player, NSString *selectorName, NSTimeInterval fallback)
+{
+    SEL selector = NSSelectorFromString(selectorName);
+    if (![player respondsToSelector:selector])
+        return fallback;
+    NSTimeInterval (*implementation)(id, SEL) = (NSTimeInterval (*)(id, SEL))[player methodForSelector:selector];
+    if (implementation == NULL)
+        return fallback;
+    return implementation(player, selector);
+}
+
+static void TGEmbedLegacyMoviePlayerSetTime(MPMoviePlayerController *player, NSTimeInterval position)
+{
+    SEL selector = NSSelectorFromString(@"setCurrentPlaybackTime:");
+    if (![player respondsToSelector:selector])
+        return;
+    void (*implementation)(id, SEL, NSTimeInterval) = (void (*)(id, SEL, NSTimeInterval))[player methodForSelector:selector];
+    if (implementation != NULL)
+        implementation(player, selector, position);
+}
+
+static void TGEmbedLegacyMoviePlayerPause(MPMoviePlayerController *player)
+{
+    SEL selector = NSSelectorFromString(@"pause");
+    if ([player respondsToSelector:selector])
+    {
+        void (*implementation)(id, SEL) = (void (*)(id, SEL))[player methodForSelector:selector];
+        if (implementation != NULL)
+        {
+            implementation(player, selector);
+            return;
+        }
+    }
+    [player stop];
+}
+#endif
 
 @interface TGEmbedVideoPlayerView ()
 {
     NSString *_url;
     bool _started;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    MPMoviePlayerController *_player;
+#else
     AVPlayer *_player;
     TGModernGalleryVideoView *_videoView;
+#endif
     UIImageView *_watermarkView;
 
     NSInteger _playbackTicks;
@@ -35,13 +80,22 @@
 
 - (void)dealloc
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+    [_player stop];
+#else
     [_player.currentItem removeObserver:self forKeyPath:@"status"];
     [_player.currentItem removeObserver:self forKeyPath:@"loadedTimeRanges"];
+#endif
 }
 
 - (void)playVideo
 {
     [_player play];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (self.state.position > DBL_EPSILON)
+        TGEmbedLegacyMoviePlayerSetTime(_player, self.state.position);
+#endif
 
     TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:true duration:self.state.duration position:self.state.position downloadProgress:self.state.downloadProgress buffering:self.state.buffering];
     [self updateState:state];
@@ -50,15 +104,25 @@
 - (void)pauseVideo:(bool)manually
 {
     [super pauseVideo:manually];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSTimeInterval position = TGEmbedLegacyMoviePlayerTime(_player, @"currentPlaybackTime", self.state.position);
+    TGEmbedLegacyMoviePlayerPause(_player);
+#else
     [_player pause];
+    NSTimeInterval position = self.state.position;
+#endif
 
-    TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:false duration:self.state.duration position:self.state.position downloadProgress:self.state.downloadProgress buffering:self.state.buffering];
+    TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:false duration:self.state.duration position:position downloadProgress:self.state.downloadProgress buffering:self.state.buffering];
     [self updateState:state];
 }
 
 - (void)seekToPosition:(NSTimeInterval)position
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    TGEmbedLegacyMoviePlayerSetTime(_player, position);
+#else
     [_player.currentItem seekToTime:CMTimeMake((int64_t)(position * 1000.0), 1000.0)];
+#endif
 
     TGEmbedPlayerState *newState = [TGEmbedPlayerState stateWithPlaying:self.state.isPlaying duration:self.state.duration position:position downloadProgress:self.state.downloadProgress buffering:self.state.buffering];
     [self updateState:newState];
@@ -86,6 +150,7 @@
     [self setDimmed:false animated:true shouldDelay:false];
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)__unused object change:(NSDictionary *)__unused change context:(void *)__unused context {
     bool playing = self.state.playing;
     NSTimeInterval position = self.state.position;
@@ -119,9 +184,29 @@
     TGEmbedPlayerState *newState = [TGEmbedPlayerState stateWithPlaying:playing duration:duration position:position downloadProgress:downloadProgress buffering:buffering];
     [self updateState:newState];
 }
+#endif
 
 - (void)_setupCustomPlayerWithURL:(NSURL *)url
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (_player != nil)
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+
+    _player = [[MPMoviePlayerController alloc] initWithContentURL:url];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_legacyPlayerDidFinish:) name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+    [_player play];
+
+    NSTimeInterval duration = TGEmbedLegacyMoviePlayerTime(_player, @"duration", self.state.duration);
+    if (!_started)
+    {
+        _started = true;
+        [self setDimmed:true animated:false];
+        [self _didBeginPlayback];
+    }
+
+    TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:true duration:duration position:0.0 downloadProgress:self.state.downloadProgress buffering:false];
+    [self updateState:state];
+#else
     AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
     AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
     _player = player;
@@ -163,12 +248,24 @@
     }];
 
     [player play];
+#endif
 }
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (void)_legacyPlayerDidFinish:(NSNotification *)notification
+{
+    NSTimeInterval duration = TGEmbedLegacyMoviePlayerTime(_player, @"duration", self.state.duration);
+    TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:false duration:duration position:duration downloadProgress:self.state.downloadProgress buffering:false];
+    [self updateState:state];
+}
+#endif
 
 - (UIView *)_webView
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (_videoView != nil)
         return _videoView;
+#endif
 
     return [super _webView];
 }

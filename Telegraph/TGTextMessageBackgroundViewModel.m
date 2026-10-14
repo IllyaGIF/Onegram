@@ -37,7 +37,7 @@
     if (!_imageIsValid)
     {
         _imageIsValid = true;
-        self.image = [self currentImage]; //_type == TGTextMessageBackgroundIncoming ? (_partialMode ? incomingPartialImage() : incomingImage()) : (_partialMode ? outgoingPartialImage() : outgoingImage());
+        self.image = [self currentImage];
     }
     
     [super bindViewToContainer:container viewStorage:viewStorage];
@@ -96,11 +96,13 @@
 
 - (UIImage *)currentImage
 {
+    if (_voiceMessage && [TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6BubbleImageOutgoing:_type == TGTextMessageBackgroundOutgoing highlighted:_highlighted voice:true];
     UIImage *newImage = nil;
     if (_type == TGTextMessageBackgroundIncoming)
     {
         if (_partialMode)
-            newImage = _highlighted ? _context.presentation.images.chatBubbleIncomingPartialHighlightedImage : _context.presentation.images.chatBubbleIncomingPartialImage; // incomingPartialImageHighlighted() : incomingPartialImage();
+            newImage = _highlighted ? _context.presentation.images.chatBubbleIncomingPartialHighlightedImage : _context.presentation.images.chatBubbleIncomingPartialImage;
         else
             newImage = _highlighted ? _context.presentation.images.chatBubbleIncomingFullHighlightedImage : _context.presentation.images.chatBubbleIncomingFullImage;
     }
@@ -113,6 +115,21 @@
     }
     
     return newImage;
+}
+
+- (void)setVoiceMessage:(bool)voiceMessage
+{
+    if (_voiceMessage != voiceMessage)
+    {
+        _voiceMessage = voiceMessage;
+        _imageIsValid = false;
+        if (self.boundView != nil)
+        {
+            self.image = [self currentImage];
+            _imageIsValid = true;
+            ((UIImageView *)self.boundView).image = self.image;
+        }
+    }
 }
 
 - (void)setHighlightedIfBound

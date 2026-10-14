@@ -57,8 +57,6 @@
 {
     [_channelsDisposable dispose];
     
-    //[_actionHandle reset];
-    //[ActionStageInstance() removeWatcher:self];
     
     _tokenFieldView.delegate = nil;
 }
@@ -202,7 +200,7 @@
             NSArray *testParts = [cache objectForKey:testString];
             if (testParts == nil)
             {
-                CFStringTransform((CFMutableStringRef)testString, NULL, kCFStringTransformStripCombiningMarks, false);
+                CFStringTransform((__bridge CFMutableStringRef)testString, NULL, kCFStringTransformStripCombiningMarks, false);
                 
                 testParts = [[testString lowercaseString] componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
                 if (testParts != nil)
@@ -219,7 +217,7 @@
     NSMutableArray *result = [[NSMutableArray alloc] init];
     
     NSMutableString *mutableQuery = [[NSMutableString alloc] initWithString:query];
-    CFStringTransform((CFMutableStringRef)mutableQuery, NULL, kCFStringTransformStripCombiningMarks, false);
+    CFStringTransform((__bridge CFMutableStringRef)mutableQuery, NULL, kCFStringTransformStripCombiningMarks, false);
     
     NSArray *queryParts = [query componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     
@@ -399,35 +397,9 @@
         {
             if (!byClearingTextField)
             {
-//                [UIView animateWithDuration:0.1 animations:^
-//                 {
-//                     _searchTableView.alpha = 0.0f;
-//                 } completion:^(BOOL finished)
-//                 {
-//                     if (finished)
-//                     {
-//                         [UIView animateWithDuration:0.1 animations:^
-//                          {
-//                              _searchTableViewBackground.alpha = 0.0f;
-//                          } completion:^(BOOL finished)
-//                          {
-//                              if (finished)
-//                              {
-//                                  [_searchTableView removeFromSuperview];
-//                                  [_searchTableViewBackground removeFromSuperview];
-//                                  _localSearchResults = nil;
-//                                  [_searchTableView reloadData];
-//                              }
-//                          }];
-//                     }
-//                 }];
             }
             else
             {
-//                _searchTableView.alpha = 0.0f;
-//                _searchTableViewBackground.alpha = 0.0f;
-//                [_searchTableView removeFromSuperview];
-//                [_searchTableViewBackground removeFromSuperview];
             }
             
             _tokenFieldView.scrollView.scrollEnabled = true;
@@ -435,19 +407,9 @@
         }
         else
         {
-//            if (_searchTableView.superview == nil)
-//                [self.view insertSubview:_searchTableView aboveSubview:_tableView];
-//            if (_searchTableViewBackground.superview == nil)
-//                [self.view insertSubview:_searchTableViewBackground belowSubview:_searchTableView];
-//
-//            _searchTableView.frame = _tableView.frame;
-//            _searchTableViewBackground.frame = _tableView.frame;
-//
-//            _searchTableView.alpha = 1.0f;
-//            _searchTableViewBackground.alpha = 1.0f;
             
             _tokenFieldView.scrollView.scrollEnabled = false;
-            tokenFieldFrame.origin.y = [self tokenFieldOffset];// + 44 - tokenFieldFrame.size.height;
+            tokenFieldFrame.origin.y = [self tokenFieldOffset];
         }
         
         if (!CGRectEqualToRect(tokenFieldFrame, _tokenFieldView.frame))
@@ -561,47 +523,8 @@
                 _selectedChannels.erase(it);
         }
     }
-    
-    
-    
-//    if (updateView)
-//    {
-//        Class contactCellClass = [TGContactCell class];
-//
-//        std::map<int, bool> *pUpdateViewItems = &updateViewItems;
-//
-//        void (^updateBlock)(id, NSUInteger, BOOL *) = ^(UITableViewCell *cell, __unused NSUInteger idx, __unused BOOL *stop)
-//        {
-//            if ([cell isKindOfClass:contactCellClass])
-//            {
-//                TGContactCell *contactCell = (TGContactCell *)cell;
-//                std::map<int, bool>::iterator it = pUpdateViewItems->find(contactCell.itemId);
-//                if (it != updateViewItems.end())
-//                {
-//                    std::map<int, TGUser *>::iterator itemIt = _selectedUsers.find(contactCell.itemId);
-//                    if (itemIt == _selectedUsers.end())
-//                        [contactCell updateFlags:false];
-//                    else
-//                        [contactCell updateFlags:true];
-//                }
-//            }
-//        };
-//
-//        [[_tableView visibleCells] enumerateObjectsUsingBlock:updateBlock];
-//
-//        if (updateSearchTable)
-//        {
-//            if ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose)
-//                [[_searchTableView visibleCells] enumerateObjectsUsingBlock:updateBlock];
-//            else
-//            {
-//                if (_searchMixin.isActive)
-//                    [_searchMixin.searchResultsTableView.visibleCells enumerateObjectsUsingBlock:updateBlock];
-//            }
-//        }
-//    }
 
-    
+
     [self updateTokenField];
     [self updateTableFrame:true collapseSearch:false];
 }

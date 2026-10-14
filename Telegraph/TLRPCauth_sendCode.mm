@@ -4,7 +4,6 @@
 
 #import "TLMetaClassStore.h"
 
-//auth.sendCode flags:# allow_flashcall:flags.0?true phone_number:string current_number:flags.0?Bool api_id:int api_hash:string lang_code:string = auth.SentCode;
 
 @implementation TLRPCauth_sendCode
 

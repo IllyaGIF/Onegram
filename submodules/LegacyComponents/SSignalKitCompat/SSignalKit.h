@@ -12,13 +12,10 @@
 #import <Foundation/Foundation.h>
 #endif
 
-//! Project version number for SSignalKit.
 FOUNDATION_EXPORT double SSignalKitVersionNumber;
 
-//! Project version string for SSignalKit.
 FOUNDATION_EXPORT const unsigned char SSignalKitVersionString[];
 
-// In this header, you should import all the public headers of your framework using statements like #import <SSignalKit/PublicHeader.h>
 
 #import "SAtomic.h"
 #import "SBag.h"

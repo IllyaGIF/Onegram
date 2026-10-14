@@ -159,19 +159,16 @@
 -(void)tableView:(UITableView *)__unused tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)__unused indexPath
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
-    // Remove seperator inset
     if ([cell respondsToSelector:@selector(setSeparatorInset:)]) {
         [cell setSeparatorInset:UIEdgeInsetsMake(0.0f, _hasUsers ? 51.0f : 6.0f, 0.0f, 0.0f)];
     }
 #endif
     
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-    // Prevent the cell from inheriting the Table View's margin settings
     if ([cell respondsToSelector:@selector(setPreservesSuperviewLayoutMargins:)]) {
         [cell setPreservesSuperviewLayoutMargins:NO];
     }
     
-    // Explictly set your cell's layout margins
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
     if ([cell respondsToSelector:@selector(setLayoutMargins:)]) {
 #endif

@@ -160,7 +160,6 @@ static bool _syncedStickers = false;
 }
 
 + (SSignal *)_remoteRecentStickers:(int32_t)hash {
-    while (false) TGLog(@"MEDIA stickers disabled: skip getRecentMaskStickers hash=%d", hash);
     return [SSignal single:@[]];
     
     TLRPCmessages_getRecentStickers$messages_getRecentStickers *getRecentStickers = [[TLRPCmessages_getRecentStickers$messages_getRecentStickers alloc] init];

@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//draftMessage flags:# no_webpage:flags.1?true reply_to_msg_id:flags.0?int message:string entities:flags.3?Vector<MessageEntity> date:int = DraftMessage;
 
 @implementation TLDraftMessage$draftMessage
 

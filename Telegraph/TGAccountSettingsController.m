@@ -1,4 +1,5 @@
 #import "TGAccountSettingsController.h"
+#import "TGOnegramCoreController.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -14,6 +15,7 @@
 #import "TGNotificationSettingsController.h"
 #import "TGChatSettingsController.h"
 #import "TGPrivacySettingsController.h"
+#import "TGAuthSessionsController.h"
 
 #import "TGAccountInfoCollectionItem.h"
 #import "TGHeaderCollectionItem.h"
@@ -35,6 +37,8 @@
 
 #import "TGDatabase.h"
 #import "TGTelegraph.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import "TGAppDelegate.h"
 #import "TGInterfaceManager.h"
@@ -72,6 +76,9 @@
 
 #import "TGAppearanceController.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
 #import "../legacy/TelegraphKit/TGCommon.h"
 #import "TGProxySetupController.h"
 #import "TGPassportRequestController.h"
@@ -87,12 +94,123 @@
 #import "TGLegacyComponentsContext.h"
 #import <QuartzCore/QuartzCore.h>
 
+@interface TGIOS6LogFileCell : UITableViewCell <UIGestureRecognizerDelegate>
+{
+    UIButton *_deleteButton;
+    CGFloat _swipeOffset;
+    CGFloat _initialSwipeOffset;
+}
+@property (nonatomic, copy) void (^deleteRequested)(void);
+- (void)closeSwipeAnimated:(bool)animated;
+- (bool)swipeIsOpen;
+@end
+
+@implementation TGIOS6LogFileCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)identifier
+{
+    self = [super initWithStyle:style reuseIdentifier:identifier];
+    if (self != nil) {
+        self.clipsToBounds = true;
+        _deleteButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        _deleteButton.backgroundColor = TGPresentation.current.pallete.dialogEditDeleteColor;
+        _deleteButton.titleLabel.font = TGMediumSystemFontOfSize(15.0f);
+        [_deleteButton setTitle:TGLocalized(@"Common.Delete") forState:UIControlStateNormal];
+        [_deleteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [_deleteButton addTarget:self action:@selector(deletePressed) forControlEvents:UIControlEventTouchUpInside];
+        [self insertSubview:_deleteButton belowSubview:self.contentView];
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swipeRecognized:)];
+        pan.delegate = self;
+        [self addGestureRecognizer:pan];
+    }
+    return self;
+}
+
+- (CGFloat)deleteButtonWidth
+{
+    return MAX(80.0f, MIN(self.bounds.size.width * 0.45f, [_deleteButton.titleLabel.text sizeWithFont:_deleteButton.titleLabel.font].width + 24.0f));
+}
+
+- (void)layoutSubviews
+{
+    self.contentView.transform = CGAffineTransformIdentity;
+    [super layoutSubviews];
+    _deleteButton.frame = CGRectMake(0.0f, 0.0f, MAX([self deleteButtonWidth], _swipeOffset), self.bounds.size.height);
+    self.contentView.transform = CGAffineTransformMakeTranslation(_swipeOffset, 0.0f);
+    _deleteButton.hidden = _swipeOffset <= 0.0f;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
+{
+    CGPoint velocity = [(UIPanGestureRecognizer *)recognizer velocityInView:self];
+    return _deleteRequested != nil && fabs(velocity.x) > fabs(velocity.y) && (velocity.x > 0.0f || _swipeOffset > 0.0f);
+}
+
+- (void)setSwipeOffset:(CGFloat)offset animated:(bool)animated
+{
+    _swipeOffset = MAX(0.0f, MIN(self.bounds.size.width, offset));
+    if (animated)
+        [UIView animateWithDuration:0.2 animations:^{ [self layoutSubviews]; }];
+    else
+        [self layoutSubviews];
+}
+
+- (void)swipeRecognized:(UIPanGestureRecognizer *)pan
+{
+    if (pan.state == UIGestureRecognizerStateBegan)
+        _initialSwipeOffset = _swipeOffset;
+    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+        [self setSwipeOffset:_initialSwipeOffset + [pan translationInView:self].x animated:false];
+    } else if (pan.state == UIGestureRecognizerStateEnded) {
+        CGFloat velocity = [pan velocityInView:self].x;
+        if (_swipeOffset >= self.bounds.size.width * 0.65f || (velocity > 950.0f && _swipeOffset > [self deleteButtonWidth])) {
+            [self deletePressed];
+        } else {
+            bool reveal = velocity >= 0.0f && (_swipeOffset > 20.0f || velocity > 120.0f);
+            [self setSwipeOffset:reveal ? [self deleteButtonWidth] : 0.0f animated:true];
+        }
+    } else if (pan.state == UIGestureRecognizerStateCancelled || pan.state == UIGestureRecognizerStateFailed) {
+        [self setSwipeOffset:_initialSwipeOffset animated:true];
+    }
+}
+
+- (void)deletePressed
+{
+    if (_deleteRequested != nil)
+        _deleteRequested();
+}
+
+- (void)closeSwipeAnimated:(bool)animated
+{
+    [self setSwipeOffset:0.0f animated:animated];
+}
+
+- (bool)swipeIsOpen
+{
+    return _swipeOffset > 0.0f;
+}
+
+- (void)prepareForReuse
+{
+    [super prepareForReuse];
+    _deleteRequested = nil;
+    [self closeSwipeAnimated:false];
+}
+
+- (void)setSelected:(BOOL)selected animated:(BOOL)animated
+{
+    [super setSelected:selected && _swipeOffset == 0.0f animated:animated];
+}
+
+@end
+
 @interface TGIOS6LogsController : TGViewController <UITableViewDelegate, UITableViewDataSource>
 {
     UITableView *_tableView;
     UIView *_bottomBar;
     UIView *_bottomSeparator;
     TGModernButton *_saveButton;
+    UIBarButtonItem *_deleteAllItem;
     NSArray *_logFiles;
 }
 @end
@@ -141,20 +259,26 @@
     [self.view addSubview:_tableView];
 
     _bottomBar = [[UIView alloc] initWithFrame:CGRectZero];
+    _bottomBar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
     _bottomBar.backgroundColor = pallete.barBackgroundColor;
     [self.view addSubview:_bottomBar];
 
     _bottomSeparator = [[UIView alloc] initWithFrame:CGRectZero];
+    _bottomSeparator.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     _bottomSeparator.backgroundColor = pallete.barSeparatorColor;
     [_bottomBar addSubview:_bottomSeparator];
 
     _saveButton = [[TGModernButton alloc] initWithFrame:CGRectZero];
+    _saveButton.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     _saveButton.modernHighlight = true;
     _saveButton.titleLabel.font = TGSystemFontOfSize(15.0f);
     [_saveButton setTitle:@"Сохранить последние 500 строк" forState:UIControlStateNormal];
     [_saveButton setTitleColor:pallete.accentColor forState:UIControlStateNormal];
     [_saveButton addTarget:self action:@selector(saveLiveLogPressed) forControlEvents:UIControlEventTouchUpInside];
     [_bottomBar addSubview:_saveButton];
+
+    _deleteAllItem = [TGPresentation navigationBarButtonItemWithTitle:@"Удалить все" style:UIBarButtonItemStylePlain target:self action:@selector(deleteAllPressed)];
+    [self setRightBarButtonItem:_deleteAllItem animated:false];
 
     if (![self _updateControllerInset:false])
         [self controllerInsetUpdated:UIEdgeInsetsZero];
@@ -163,22 +287,33 @@
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+    [self layoutLogsViews];
     [self reloadLogFiles];
 }
 
 - (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
 {
     [super controllerInsetUpdated:previousInset];
-    [self.view setNeedsLayout];
+    [self layoutLogsViews];
 }
 
 - (void)viewWillLayoutSubviews
 {
+    [super viewWillLayoutSubviews];
+    [self layoutLogsViews];
+}
+
+- (void)layoutLogsViews
+{
+    if (![self isViewLoaded])
+        return;
+
     CGFloat width = self.view.bounds.size.width;
     CGFloat height = self.view.bounds.size.height;
     UIEdgeInsets inset = self.controllerInset;
-    CGFloat bottomBarHeight = 48.0f;
+    CGFloat bottomBarHeight = TGLogAvailable() ? 48.0f : 0.0f;
     CGFloat bottomY = MAX(inset.top, height - inset.bottom - bottomBarHeight);
+    _bottomBar.hidden = !TGLogAvailable();
 
     _tableView.frame = CGRectMake(0.0f, inset.top, width, MAX(0.0f, bottomY - inset.top));
     _bottomBar.frame = CGRectMake(0.0f, bottomY, width, bottomBarHeight + inset.bottom);
@@ -188,8 +323,80 @@
 
 - (void)reloadLogFiles
 {
-    _logFiles = TGGetArchivedLogFilePaths();
+    NSMutableArray *allPaths = [[NSMutableArray alloc] init];
+    NSMutableSet *knownPaths = [[NSMutableSet alloc] init];
+    NSMutableArray *availablePaths = [[TGGetArchivedLogFilePaths() arrayByAddingObjectsFromArray:TGGetLogFilePaths(60)] mutableCopy];
+    NSString *documentsPath = [TGAppDelegate documentsPath];
+    for (NSString *name in @[@"ios6_diagnostic_breadcrumbs.log", @"ios6_last_crash.txt"])
+    {
+        NSString *path = [documentsPath stringByAppendingPathComponent:name];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path])
+            [availablePaths addObject:path];
+    }
+    for (NSString *path in availablePaths)
+    {
+        if (![knownPaths containsObject:path])
+        {
+            [knownPaths addObject:path];
+            [allPaths addObject:path];
+        }
+    }
+    _logFiles = [allPaths sortedArrayUsingComparator:^NSComparisonResult(NSString *path1, NSString *path2)
+    {
+        NSDate *date1 = [[[NSFileManager defaultManager] attributesOfItemAtPath:path1 error:nil] objectForKey:NSFileModificationDate];
+        NSDate *date2 = [[[NSFileManager defaultManager] attributesOfItemAtPath:path2 error:nil] objectForKey:NSFileModificationDate];
+        if (date1 == nil && date2 == nil)
+            return [path2 compare:path1];
+        if (date1 == nil)
+            return NSOrderedDescending;
+        if (date2 == nil)
+            return NSOrderedAscending;
+        return [date2 compare:date1];
+    }];
+    [self updateDeleteAllItem];
     [_tableView reloadData];
+}
+
+- (void)updateDeleteAllItem
+{
+    bool enabled = _logFiles.count != 0;
+    _deleteAllItem.enabled = enabled;
+    if ([_deleteAllItem.customView isKindOfClass:[UIControl class]])
+        ((UIControl *)_deleteAllItem.customView).enabled = enabled;
+}
+
+- (void)deleteAllPressed
+{
+    if (_logFiles.count == 0)
+        return;
+
+    TGCustomActionSheet *actionSheet = [[TGCustomActionSheet alloc] initWithTitle:nil actions:@[
+        [[TGActionSheetAction alloc] initWithTitle:@"Удалить все логи" action:@"deleteAll" type:TGActionSheetActionTypeDestructive],
+        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel],
+    ] actionBlock:^(id target, NSString *action)
+    {
+        if ([action isEqualToString:@"deleteAll"])
+            [(TGIOS6LogsController *)target deleteAllLogs];
+    } target:self];
+    [actionSheet showInView:self.view];
+}
+
+- (void)deleteAllLogs
+{
+    NSError *firstError = nil;
+    for (NSString *path in _logFiles)
+    {
+        NSError *error = nil;
+        if (!TGDeleteLogFile(path, &error) && firstError == nil)
+            firstError = error;
+    }
+    [self reloadLogFiles];
+
+    if (firstError != nil)
+    {
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:self.title message:firstError.localizedDescription delegate:nil cancelButtonTitle:TGLocalized(@"Common.OK") otherButtonTitles:nil];
+        [alert show];
+    }
 }
 
 - (NSString *)displaySizeForPath:(NSString *)path
@@ -223,19 +430,22 @@
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     static NSString *identifier = @"TGIOS6LogFileCell";
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    TGIOS6LogFileCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
     if (cell == nil)
-        cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
+        cell = [[TGIOS6LogFileCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
 
     TGPresentationPallete *pallete = TGPresentation.current.pallete;
     cell.backgroundColor = pallete.collectionMenuBackgroundColor;
+    cell.contentView.backgroundColor = pallete.collectionMenuBackgroundColor;
+    [cell closeSwipeAnimated:false];
+    cell.deleteRequested = nil;
     cell.textLabel.textColor = pallete.textColor;
     cell.detailTextLabel.textColor = pallete.secondaryTextColor;
 
     if (_logFiles.count == 0)
     {
-        cell.textLabel.text = @"Логов пока нет";
-        cell.detailTextLabel.text = @"Crash-логи появятся здесь автоматически";
+        cell.textLabel.text = TGLogAvailable() ? @"Логов пока нет" : @"Подробные логи выключены";
+        cell.detailTextLabel.text = TGLogAvailable() ? @"Crash-логи появятся здесь автоматически" : @"В Release-сборке пишутся только crash-логи";
         cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
@@ -244,8 +454,12 @@
         NSString *path = _logFiles[(NSUInteger)indexPath.row];
         cell.textLabel.text = [path lastPathComponent];
         cell.detailTextLabel.text = [NSString stringWithFormat:@"%@ • %@", [self displayDateForPath:path], [self displaySizeForPath:path]];
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.accessoryType = UITableViewCellAccessoryNone;
         cell.selectionStyle = UITableViewCellSelectionStyleBlue;
+        __weak TGIOS6LogsController *weakSelf = self;
+        cell.deleteRequested = ^{
+            [weakSelf deleteLogAtPath:path];
+        };
     }
 
     return cell;
@@ -254,24 +468,31 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:true];
+    TGIOS6LogFileCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+    if ([cell swipeIsOpen]) {
+        [cell closeSwipeAnimated:true];
+        return;
+    }
     if (_logFiles.count == 0 || (NSUInteger)indexPath.row >= _logFiles.count)
         return;
 
     [self shareFileAtPath:_logFiles[(NSUInteger)indexPath.row]];
 }
 
-- (BOOL)tableView:(UITableView *)__unused tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
+- (BOOL)tableView:(UITableView *)__unused tableView canEditRowAtIndexPath:(NSIndexPath *)__unused indexPath
 {
-    return _logFiles.count != 0 && (NSUInteger)indexPath.row < _logFiles.count;
+    return false;
 }
 
-- (void)tableView:(UITableView *)__unused tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath
+- (void)deleteLogAtPath:(NSString *)path
 {
-    if (editingStyle != UITableViewCellEditingStyleDelete || _logFiles.count == 0 || (NSUInteger)indexPath.row >= _logFiles.count)
+    if (![_logFiles containsObject:path])
         return;
-
-    NSString *path = _logFiles[(NSUInteger)indexPath.row];
-    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    NSError *error = nil;
+    if (!TGDeleteLogFile(path, &error)) {
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:self.title message:error.localizedDescription delegate:nil cancelButtonTitle:TGLocalized(@"Common.OK") otherButtonTitles:nil];
+        [alert show];
+    }
     [self reloadLogFiles];
 }
 
@@ -307,69 +528,6 @@
 
 @end
 
-@interface TGOnegramProxyController : TGCollectionMenuController
-{
-    TGSwitchCollectionItem *_enabledItem;
-    TGVariantCollectionItem *_transportItem;
-    TGVariantCollectionItem *_fallbackItem;
-    TGVariantCollectionItem *_endpointItem;
-}
-@end
-
-@implementation TGOnegramProxyController
-
-- (id)init
-{
-    self = [super init];
-    if (self != nil)
-    {
-        [self setTitleText:TGLocalized(@"OnegramProxy.Title")];
-
-        bool enabled = [[TGTelegramNetworking instance] onegramWebSocketProxyEnabled];
-        _enabledItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Enabled") isOn:enabled];
-        _enabledItem.toggled = ^(bool value, TGSwitchCollectionItem *__unused item)
-        {
-            [[TGTelegramNetworking instance] setOnegramWebSocketProxyEnabled:value];
-        };
-
-        _transportItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Transport") variant:@"WebSocket" action:NULL];
-        _transportItem.hideArrow = true;
-        _transportItem.selectable = false;
-        _transportItem.highlightable = false;
-
-        _fallbackItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Fallback") variant:@"TCP" action:NULL];
-        _fallbackItem.hideArrow = true;
-        _fallbackItem.selectable = false;
-        _fallbackItem.highlightable = false;
-
-        _endpointItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Endpoint") variant:@"kws*.web.telegram.org" action:NULL];
-        _endpointItem.hideArrow = true;
-        _endpointItem.selectable = false;
-        _endpointItem.highlightable = false;
-
-        TGCollectionMenuSection *mainSection = [[TGCollectionMenuSection alloc] initWithItems:@[
-            _enabledItem,
-            _transportItem,
-            _fallbackItem,
-            _endpointItem,
-            [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"OnegramProxy.Footer")]
-        ]];
-        UIEdgeInsets topSectionInsets = mainSection.insets;
-        topSectionInsets.top = 32.0f;
-        mainSection.insets = topSectionInsets;
-        [self.menuSections addSection:mainSection];
-    }
-    return self;
-}
-
-- (void)viewWillAppear:(BOOL)animated
-{
-    [super viewWillAppear:animated];
-    [_enabledItem setIsOn:[[TGTelegramNetworking instance] onegramWebSocketProxyEnabled] animated:false];
-}
-
-@end
-
 @interface TGAccountSettingsController () <UIAlertViewDelegate>
 {
     int32_t _uid;
@@ -377,7 +535,7 @@
     bool _editing;
     
     TGCollectionMenuSection *_logsSection;
-    TGCollectionMenuSection *_onegramProxySection;
+    TGCollectionMenuSection *_onegramCoreSection;
     TGCollectionMenuSection *_headerSection;
     TGCollectionMenuSection *_settingsSection;
     TGCollectionMenuSection *_shortcutSection;
@@ -392,7 +550,7 @@
     TGButtonCollectionItem *_setUsernameItem;
     
     TGDisclosureActionCollectionItem *_logsItem;
-    TGDisclosureActionCollectionItem *_onegramProxyItem;
+    TGDisclosureActionCollectionItem *_onegramCoreItem;
     TGDisclosureActionCollectionItem *_profileMusicItem;
     TGDocumentMediaAttachment *_profileMusicDocument;
     NSArray *_profileMusicDocuments;
@@ -405,6 +563,7 @@
     TGDisclosureActionCollectionItem *_notificationsItem;
     TGDisclosureActionCollectionItem *_privacySettingsItem;
     TGDisclosureActionCollectionItem *_chatSettingsItem;
+    TGDisclosureActionCollectionItem *_devicesItem;
     TGDisclosureActionCollectionItem *_callSettingsItem;
     TGDisclosureActionCollectionItem *_savedMessagesItem;
     TGDisclosureActionCollectionItem *_stickerSettingsItem;
@@ -420,6 +579,7 @@
     id<SDisposable> _updatedFeaturedStickerPacksDisposable;
     
     TGMediaAvatarMenuMixin *_avatarMixin;
+    bool _initialContentPrepared;
 }
 
 @property (nonatomic, strong) TGProgressWindow *progressWindow;
@@ -432,9 +592,21 @@ static const CGFloat TGAccountSettingsBrandedDetailsTextScale = 1.2f;
 
 - (UIColor *)collectionMenuBackgroundColor
 {
-    if ([TGPresentation brandedIOS6Style])
+    if ([TGPresentation brandedIOS6Style] && [OGTheme brandedTheme].settingsAppearance.screenBackgroundSurfaceStyle == nil)
         return UIColorRGB(0xdbe2ed);
     return [super collectionMenuBackgroundColor];
+}
+
+- (UIBarButtonItem *)editBarButtonItem
+{
+    return [TGPresentation navigationBarButtonItemWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editButtonPressed)];
+}
+
+- (void)setPresentation:(TGPresentation *)presentation
+{
+    [super setPresentation:presentation];
+    if ([self isViewLoaded])
+        [self setRightBarButtonItem:[self editBarButtonItem] animated:false];
 }
 
 static NSString *TGAccountGroqApiKeyDefaultsKey(void)
@@ -447,180 +619,188 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 {
     self = [super init];
     if (self)
-    {
-        _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
-        
-        [ActionStageInstance() watchForPaths:@[
-            @"/tg/userdatachanges",
-            @"/tg/userpresencechanges",
-            @"/tg/calls/enabled"
-        ] watcher:self];
-        
         _uid = uid;
-        
-        _profileDataItem = [[TGAccountInfoCollectionItem alloc] init];
-        _profileDataItem.brandedDetailsTextScale = TGAccountSettingsBrandedDetailsTextScale;
-        _profileDataItem.hasDisclosureIndicator = ![TGPresentation brandedIOS6Style];
-        _profileDataItem.selectable = true;
-        _profileDataItem.highlightable = true;
-        _profileDataItem.action = @selector(editButtonPressed);
-        _profileDataItem.interfaceHandle = _actionHandle;
-        
-        _headerSection = [[TGCollectionMenuSection alloc] initWithItems:@[
-            _profileDataItem
-        ]];
-        [self.menuSections addSection:_headerSection];
+    return self;
+}
 
-        _profileMusicItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"" action:@selector(profileMusicPressed)];
-        _profileMusicItem.hideArrow = true;
-        _profileMusicItem.brandedProfileMusic = true;
-        _profileMusicItem.deselectAutomatically = true;
-        
-        _logsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Логи" action:@selector(logsPressed)];
-        _logsItem.deselectAutomatically = true;
+- (void)prepareInitialContentIfNeeded
+{
+    if (_initialContentPrepared)
+        return;
+    if (_uid == 0 && TGTelegraphInstance.clientUserId != 0)
+        _uid = TGTelegraphInstance.clientUserId;
+    _initialContentPrepared = true;
+    _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
 
-        _onegramProxyItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProxy.Title") action:@selector(onegramProxyPressed)];
-        _onegramProxyItem.deselectAutomatically = true;
-        
-        _proxyItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Proxy") action:@selector(proxyPressed)];
-        _proxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_proxyItem]];
+    [ActionStageInstance() watchForPaths:@[
+        @"/tg/userdatachanges",
+        @"/tg/userpresencechanges",
+        @"/tg/calls/enabled"
+    ] watcher:self];
+
+
+    _profileDataItem = [[TGAccountInfoCollectionItem alloc] init];
+    _profileDataItem.brandedDetailsTextScale = TGAccountSettingsBrandedDetailsTextScale;
+    _profileDataItem.hasDisclosureIndicator = ![TGPresentation brandedIOS6Style];
+    _profileDataItem.selectable = true;
+    _profileDataItem.highlightable = true;
+    _profileDataItem.action = @selector(editButtonPressed);
+    _profileDataItem.interfaceHandle = _actionHandle;
+
+    _headerSection = [[TGCollectionMenuSection alloc] initWithItems:@[
+        _profileDataItem
+    ]];
+    [self.menuSections addSection:_headerSection];
+
+    _profileMusicItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"" action:@selector(profileMusicPressed)];
+    _profileMusicItem.hideArrow = true;
+    _profileMusicItem.brandedProfileMusic = true;
+    _profileMusicItem.deselectAutomatically = true;
+
+    _logsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Логи" action:@selector(logsPressed)];
+    _logsItem.deselectAutomatically = true;
+
+    _onegramCoreItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.Title") action:@selector(onegramCorePressed)];
+    _onegramCoreItem.deselectAutomatically = true;
+
+    _proxyItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Proxy") action:@selector(proxyPressed)];
+    _proxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_proxyItem]];
+
+    if ([TGPresentation brandedIOS6Style])
+    {
+        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem, _proxyItem, _onegramCoreItem]];
+        _logsSection.insets = UIEdgeInsetsMake(0.0f, 4.0f, 15.0f, 5.0f);
+        [self.menuSections addSection:_logsSection];
+    }
+    else
+    {
+        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem]];
+        [self.menuSections addSection:_logsSection];
+        _onegramCoreSection = [[TGCollectionMenuSection alloc] initWithItems:@[_onegramCoreItem]];
+        [self.menuSections addSection:_onegramCoreSection];
+    }
+
+    _wallpapersItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Appearance") action:@selector(wallpapersPressed)];
+    _languageItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.AppLanguage") variant:TGLocalized(@"Localization.LanguageName") action:@selector(languagePressed)];
+
+    NSMutableArray *settingsItems = [[NSMutableArray alloc] init];
+    [settingsItems addObject:(_notificationsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.NotificationsAndSounds") action:@selector(notificationsAndSoundsPressed)])];
+    [settingsItems addObject:(_privacySettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.PrivacySettings") action:@selector(privacySettingsPressed)])];
+    [settingsItems addObject:(_chatSettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.ChatSettings") action:@selector(chatSettingsPressed)])];
+    [settingsItems addObject:(_devicesItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Devices") action:@selector(devicesPressed)])];
+    [settingsItems addObject:_wallpapersItem];
+    [settingsItems addObject:_languageItem];
+
+    NSMutableArray *shortcutItems = [[NSMutableArray alloc] init];
+    [shortcutItems addObject:(_savedMessagesItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.SavedMessages") action:@selector(savedMessagesPressed)])];
+    [shortcutItems addObject:(_stickerSettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.Stickers") action:@selector(stickerSettingsPressed)])];
+    [shortcutItems addObject:(_clearChatListCacheItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Clear Chat Cache" action:@selector(clearChatListCachePressed)])];
+
+    _shortcutSection = [[TGCollectionMenuSection alloc] initWithItems:shortcutItems];
+    if ([TGPresentation brandedIOS6Style])
+        _shortcutSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 15.0f, 6.0f);
+    [self.menuSections addSection:_shortcutSection];
+
+    _settingsSection = [[TGCollectionMenuSection alloc] initWithItems:settingsItems];
+    if ([TGPresentation brandedIOS6Style])
+        _settingsSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 16.0f, 6.0f);
+    [self.menuSections addSection:_settingsSection];
+
+    [TGDatabaseInstance() customProperty:@"phoneCallsEnabled" completion:^(NSData *value)
+    {
+        TGDispatchOnMainThread(^
+        {
+            int32_t phoneCallsEnabled = false;
+            if (value.length == 4) {
+                [value getBytes:&phoneCallsEnabled];
+            }
+            [self updatePhoneCallsEnabled:phoneCallsEnabled];
+        });
+    }];
+
+    _passportItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Passport") action:@selector(passportPressed)];
+    _otherSection =  [[TGCollectionMenuSection alloc] initWithItems:@[]];
+    _otherSection.insets = UIEdgeInsetsZero;
+    [self.menuSections addSection:_otherSection];
+
+    if ([TGPresentation brandedIOS6Style])
+        _headerSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 15.0f, 0.0f);
+
+    SSignal *blockedModeSignal = [[TGDatabaseInstance() customPropertySignal:@"blockedMode"] map:^NSNumber *(NSData *data)
+    {
+        int32_t value = 0;
+        [data getBytes:&value];
+
+        return @(value);
+    }];
+
+    ASHandle *controllerHandle = _actionHandle;
+    _proxyListDisposable = [[SMetaDisposable alloc] init];
+    _proxyStatusDisposable = [[SMetaDisposable alloc] init];
+    [_proxyListDisposable setDisposable:[[[SSignal combineSignals:@[[TGProxySignals listSignal], blockedModeSignal] withInitialStates:@[ @[], @false ]] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *next)
+    {
+        TGAccountSettingsController *strongSelf = (TGAccountSettingsController *)controllerHandle.delegate;
+        if (strongSelf == nil)
+            return;
+
+        NSArray *list = next.firstObject;
+        bool alwaysShowProxy = [next.lastObject boolValue];
 
         if ([TGPresentation brandedIOS6Style])
         {
-            _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem, _proxyItem, _onegramProxyItem]];
-            _logsSection.insets = UIEdgeInsetsMake(0.0f, 4.0f, 15.0f, 5.0f);
-            [self.menuSections addSection:_logsSection];
+            [strongSelf setupProxyStatus];
+            return;
+        }
+
+        [strongSelf.menuSections beginRecordingChanges];
+        if (list.count == 0 && !alwaysShowProxy)
+        {
+            NSUInteger sectionIndex = [strongSelf.menuSections.sections indexOfObject:strongSelf->_proxySection];
+            if (sectionIndex != NSNotFound)
+                [strongSelf.menuSections deleteSection:sectionIndex];
+
+            [strongSelf->_proxyStatusDisposable setDisposable:nil];
         }
         else
         {
-            _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem]];
-            [self.menuSections addSection:_logsSection];
-            _onegramProxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_onegramProxyItem]];
-            [self.menuSections addSection:_onegramProxySection];
-        }
-        
-        _wallpapersItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Appearance") action:@selector(wallpapersPressed)];
-        _languageItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.AppLanguage") variant:TGLocalized(@"Localization.LanguageName") action:@selector(languagePressed)];
-        
-        NSMutableArray *settingsItems = [[NSMutableArray alloc] init];
-        [settingsItems addObject:(_notificationsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.NotificationsAndSounds") action:@selector(notificationsAndSoundsPressed)])];
-        [settingsItems addObject:(_privacySettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.PrivacySettings") action:@selector(privacySettingsPressed)])];
-        [settingsItems addObject:(_chatSettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.ChatSettings") action:@selector(chatSettingsPressed)])];
-        [settingsItems addObject:_wallpapersItem];
-        [settingsItems addObject:_languageItem];
-        
-        NSMutableArray *shortcutItems = [[NSMutableArray alloc] init];
-        [shortcutItems addObject:(_savedMessagesItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.SavedMessages") action:@selector(savedMessagesPressed)])];
-        [shortcutItems addObject:(_stickerSettingsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.Stickers") action:@selector(stickerSettingsPressed)])];
-        [shortcutItems addObject:(_clearChatListCacheItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Clear Chat Cache" action:@selector(clearChatListCachePressed)])];
-        
-        _shortcutSection = [[TGCollectionMenuSection alloc] initWithItems:shortcutItems];
-        if ([TGPresentation brandedIOS6Style])
-            _shortcutSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 15.0f, 6.0f);
-        [self.menuSections addSection:_shortcutSection];
-        
-        _settingsSection = [[TGCollectionMenuSection alloc] initWithItems:settingsItems];
-        if ([TGPresentation brandedIOS6Style])
-            _settingsSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 16.0f, 6.0f);
-        [self.menuSections addSection:_settingsSection];
-        
-        [TGDatabaseInstance() customProperty:@"phoneCallsEnabled" completion:^(NSData *value)
-        {
-            TGDispatchOnMainThread(^
+            NSUInteger sectionIndex = [strongSelf.menuSections.sections indexOfObject:strongSelf->_proxySection];
+            if (sectionIndex == NSNotFound)
             {
-                int32_t phoneCallsEnabled = false;
-                if (value.length == 4) {
-                    [value getBytes:&phoneCallsEnabled];
-                }
-                [self updatePhoneCallsEnabled:phoneCallsEnabled];
-            });
-        }];
-        
-        _passportItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Passport") action:@selector(passportPressed)];
-        _otherSection =  [[TGCollectionMenuSection alloc] initWithItems:@[]];
-        _otherSection.insets = UIEdgeInsetsZero;
-        [self.menuSections addSection:_otherSection];
+                [strongSelf.menuSections insertSection:strongSelf->_proxySection atIndex:2];
 
-        if ([TGPresentation brandedIOS6Style])
-            _headerSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 15.0f, 0.0f);
-        
-        SSignal *blockedModeSignal = [[TGDatabaseInstance() customPropertySignal:@"blockedMode"] map:^NSNumber *(NSData *data)
-        {
-            int32_t value = 0;
-            [data getBytes:&value];
-            
-            return @(value);
-        }];
-        
-        ASHandle *controllerHandle = _actionHandle;
-        _proxyListDisposable = [[SMetaDisposable alloc] init];
-        _proxyStatusDisposable = [[SMetaDisposable alloc] init];
-        [_proxyListDisposable setDisposable:[[[SSignal combineSignals:@[[TGProxySignals listSignal], blockedModeSignal] withInitialStates:@[ @[], @false ]] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *next)
-        {
-            TGAccountSettingsController *strongSelf = (TGAccountSettingsController *)controllerHandle.delegate;
-            if (strongSelf == nil)
-                return;
-            
-            NSArray *list = next.firstObject;
-            bool alwaysShowProxy = [next.lastObject boolValue];
-
-            if ([TGPresentation brandedIOS6Style])
-            {
                 [strongSelf setupProxyStatus];
-                return;
             }
-            
-            [strongSelf.menuSections beginRecordingChanges];
-            if (list.count == 0 && !alwaysShowProxy)
-            {
-                NSUInteger sectionIndex = [strongSelf.menuSections.sections indexOfObject:strongSelf->_proxySection];
-                if (sectionIndex != NSNotFound)
-                    [strongSelf.menuSections deleteSection:sectionIndex];
-                
-                [strongSelf->_proxyStatusDisposable setDisposable:nil];
-            }
-            else
-            {
-                NSUInteger sectionIndex = [strongSelf.menuSections.sections indexOfObject:strongSelf->_proxySection];
-                if (sectionIndex == NSNotFound)
-                {
-                    [strongSelf.menuSections insertSection:strongSelf->_proxySection atIndex:2];
-                    
-                    [strongSelf setupProxyStatus];
-                }
-            }
-            [strongSelf.menuSections commitRecordedChanges:strongSelf.collectionView];
-        }]];
-        
-        _developerChannelItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Канал разраба" action:@selector(developerChannelPressed)];
-        _developerChannelItem.deselectAutomatically = true;
+        }
+        [strongSelf.menuSections commitRecordedChanges:strongSelf.collectionView];
+    }]];
 
-        NSDictionary *bundleInfo = [[NSBundle mainBundle] infoDictionary];
-        NSString *version = [bundleInfo objectForKey:@"CFBundleShortVersionString"];
-        NSString *build = [bundleInfo objectForKey:@"CFBundleVersion"];
-        NSString *versionText = [TGPresentation brandedIOS6Style] ? [NSString stringWithFormat:@"Onegram %@v concept by FEKLA DAVICHI", version ?: @""] : [NSString stringWithFormat:@"Onegram %@v build %@", version ?: @"", build ?: @""];
-        _versionItem = [[TGVersionCollectionItem alloc] initWithVersion:versionText];
-        
-        TGCollectionMenuSection *infoSection = [[TGCollectionMenuSection alloc] initWithItems:@[
-            _developerChannelItem,
-            _versionItem
-        ]];
-        if ([TGPresentation brandedIOS6Style])
-            infoSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 165.0f, 6.0f);
-        [self.menuSections addSection:infoSection];
-   
+    _developerChannelItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"Канал разраба" action:@selector(developerChannelPressed)];
+    _developerChannelItem.deselectAutomatically = true;
+
+    NSDictionary *bundleInfo = [[NSBundle mainBundle] infoDictionary];
+    NSString *version = [bundleInfo objectForKey:@"CFBundleShortVersionString"];
+    NSString *build = [bundleInfo objectForKey:@"CFBundleVersion"];
+    NSString *versionText = [TGPresentation brandedIOS6Style] ? [NSString stringWithFormat:@"Onegram %@v concept by FEKLA DAVICHI", version ?: @""] : [NSString stringWithFormat:@"Onegram %@v build %@", version ?: @"", build ?: @""];
+    _versionItem = [[TGVersionCollectionItem alloc] initWithVersion:versionText];
+
+    TGCollectionMenuSection *infoSection = [[TGCollectionMenuSection alloc] initWithItems:@[
+        _developerChannelItem,
+        _versionItem
+    ]];
+    if ([TGPresentation brandedIOS6Style])
+        infoSection.insets = UIEdgeInsetsMake(0.0f, 3.0f, 165.0f, 6.0f);
+    [self.menuSections addSection:infoSection];
+
 #ifdef INTERNAL_RELEASE
-        //TGCollectionMenuSection *debugSection = [[TGCollectionMenuSection alloc] initWithItems:@[[[TGButtonCollectionItem alloc] initWithTitle:@"Debug Settings" action:@selector(mySettingsPressed)]]];
-        //[self.menuSections addSection:debugSection];
 #endif
-        
-        [ActionStageInstance() watchForPath:@"/tg/loggedOut" watcher:self];
-        
-        UIMenuItem *copyPhoneItem = [[UIMenuItem alloc] initWithTitle:TGLocalized(@"Settings.CopyPhoneNumber") action:@selector(copyPhoneNumber:)];
-        UIMenuItem *copyUsernameItem = [[UIMenuItem alloc] initWithTitle:TGLocalized(@"Settings.CopyUsername") action:@selector(copyUsername:)];
-        [[UIMenuController sharedMenuController] setMenuItems:@[copyPhoneItem, copyUsernameItem]];
-    }
-    return self;
+
+    [ActionStageInstance() watchForPath:@"/tg/loggedOut" watcher:self];
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
+    UIMenuItem *copyPhoneItem = [[UIMenuItem alloc] initWithTitle:TGLocalized(@"Settings.CopyPhoneNumber") action:@selector(copyPhoneNumber:)];
+    UIMenuItem *copyUsernameItem = [[UIMenuItem alloc] initWithTitle:TGLocalized(@"Settings.CopyUsername") action:@selector(copyUsername:)];
+    [[UIMenuController sharedMenuController] setMenuItems:@[copyPhoneItem, copyUsernameItem]];
+#endif
 }
 
 - (void)dealloc
@@ -640,6 +820,9 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 
 - (void)loadView
 {
+    if (_uid == 0 && TGTelegraphInstance.clientUserId != 0)
+        _uid = TGTelegraphInstance.clientUserId;
+    [self prepareInitialContentIfNeeded];
     [super loadView];
 
     if ([TGPresentation brandedIOS6Style])
@@ -652,6 +835,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     _notificationsItem.icon = TGImageNamed(@"SettingsNotificationsIcon.png");
     _privacySettingsItem.icon = TGImageNamed(@"SettingsPrivacyIcon.png");
     _chatSettingsItem.icon = TGImageNamed(@"SettingsDataIcon.png");
+    _devicesItem.icon = TGImageNamed(@"ios6style/SettingsDevicesIcon.png");
     _wallpapersItem.icon = TGImageNamed(@"SettingsWallpaperIcon.png");
     _stickerSettingsItem.icon = TGImageNamed(@"SettingsStickersIcon.png");
     _languageItem.icon = TGImageNamed(@"SettingsLanguageIcon.png");
@@ -666,8 +850,8 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _logsItem.brandedSettingsIconName = @"SettingsFeklaLogs";
         _proxyItem.brandedSettingsStyle = true;
         _proxyItem.brandedSettingsIconName = @"SettingsFeklaProxy";
-        _onegramProxyItem.brandedSettingsStyle = true;
-        _onegramProxyItem.brandedSettingsIconName = @"SettingsFeklaOnegramProxy";
+        _onegramCoreItem.brandedSettingsStyle = true;
+        _onegramCoreItem.brandedSettingsIconName = @"SettingsFeklaOnegramCore";
         _savedMessagesItem.brandedSettingsStyle = true;
         _savedMessagesItem.brandedSettingsIconName = @"SettingsFeklaFavourites";
         _stickerSettingsItem.brandedSettingsStyle = true;
@@ -680,6 +864,8 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _privacySettingsItem.brandedSettingsIconName = @"SettingsFeklaPrivacy";
         _chatSettingsItem.brandedSettingsStyle = true;
         _chatSettingsItem.brandedSettingsIconName = @"SettingsFeklaDataMemory";
+        _devicesItem.brandedSettingsStyle = true;
+        _devicesItem.brandedSettingsIconName = @"SettingsFeklaDevices";
         _wallpapersItem.brandedSettingsStyle = true;
         _wallpapersItem.brandedSettingsIconName = @"SettingsFeklaDecoration";
         _languageItem.brandedSettingsStyle = true;
@@ -690,14 +876,40 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     
     _editing = false;
     
-    TGUser *user = [TGDatabaseInstance() loadUser:_uid];
-    
-    [_profileDataItem setUser:user animated:false];
-    [self updateSubtitleWithPhoneNumber:user.phoneNumber username:user.userName];
-    [self updateSuggestedSetProfilePhoto:user.photoUrlSmall.length == 0 setUsername:user.userName.length == 0];
+    if (OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        ASHandle *settingsHandle = _actionHandle;
+        int32_t settingsUid = _uid;
+        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
+        {
+            TGUser *user = [TGDatabaseInstance() loadUser:settingsUid];
+            TGCachedUserData *cachedUserData = [TGDatabaseInstance() _userCachedDataSync:settingsUid];
+            TGDispatchOnMainThread(^
+            {
+                TGAccountSettingsController *strongSelf = (TGAccountSettingsController *)settingsHandle.delegate;
+                if (strongSelf == nil)
+                    return;
+                [strongSelf->_profileDataItem setUser:user animated:false];
+                [strongSelf updateSubtitleWithPhoneNumber:user.phoneNumber username:user.userName];
+                [strongSelf updateSuggestedSetProfilePhoto:user.photoUrlSmall.length == 0 setUsername:user.userName.length == 0];
+                strongSelf->_profileDataItem.about = cachedUserData.about;
+            });
+        });
+        if (_uid != 0)
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/users/(%d)", _uid] options:@{} flags:0 watcher:self];
+    }
+    else
+    {
+        TGUser *user = [TGDatabaseInstance() loadUser:_uid];
+        [_profileDataItem setUser:user animated:false];
+        [self updateSubtitleWithPhoneNumber:user.phoneNumber username:user.userName];
+        [self updateSuggestedSetProfilePhoto:user.photoUrlSmall.length == 0 setUsername:user.userName.length == 0];
 
-    TGCachedUserData *cachedUserData = [TGDatabaseInstance() _userCachedDataSync:_uid];
-    _profileDataItem.about = cachedUserData.about;
+        TGCachedUserData *cachedUserData = [TGDatabaseInstance() _userCachedDataSync:_uid];
+        _profileDataItem.about = cachedUserData.about;
+        if (_uid != 0 && user == nil)
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/users/(%d)", _uid] options:@{} flags:0 watcher:self];
+    }
 
     ASHandle *profileHandle = _actionHandle;
     _profileAboutDisposable = [[[TGDatabaseInstance() userCachedData:_uid] deliverOn:[SQueue mainQueue]] startWithNext:^(TGCachedUserData *data)
@@ -710,7 +922,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     
     [self setTitleText:TGLocalized(@"Settings.Title")];
     
-    [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editButtonPressed)]];
+    [self setRightBarButtonItem:[self editBarButtonItem]];
     
     ASHandle *controllerHandle = _actionHandle;
     _stickerPacksDisposable = [[[[TGStickersSignals stickerPacks] startOn:[SQueue concurrentDefaultQueue]] deliverOn:[SQueue mainQueue]] startWithNext:^(NSDictionary *dict)
@@ -772,6 +984,43 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+
+    if (_uid == 0 && TGTelegraphInstance.clientUserId != 0)
+        _uid = TGTelegraphInstance.clientUserId;
+    if (OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        ASHandle *settingsHandle = _actionHandle;
+        int32_t settingsUid = _uid;
+        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
+        {
+            TGUser *profileUser = settingsUid == 0 ? nil : [TGDatabaseInstance() loadUser:settingsUid];
+            TGDispatchOnMainThread(^{
+                TGAccountSettingsController *strongSelf = (TGAccountSettingsController *)settingsHandle.delegate;
+                if (strongSelf != nil && profileUser != nil)
+                {
+                    [strongSelf->_profileDataItem setUser:profileUser animated:false];
+                    [strongSelf updateSubtitleWithPhoneNumber:profileUser.phoneNumber username:profileUser.userName];
+                    [strongSelf updateSuggestedSetProfilePhoto:profileUser.photoUrlSmall.length == 0 setUsername:profileUser.userName.length == 0];
+                }
+            });
+        });
+        if (_uid != 0)
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/users/(%d)", _uid] options:@{} flags:0 watcher:self];
+    }
+    else
+    {
+        TGUser *profileUser = _uid == 0 ? nil : [TGDatabaseInstance() loadUser:_uid];
+        if (profileUser != nil)
+        {
+            [_profileDataItem setUser:profileUser animated:false];
+            [self updateSubtitleWithPhoneNumber:profileUser.phoneNumber username:profileUser.userName];
+            [self updateSuggestedSetProfilePhoto:profileUser.photoUrlSmall.length == 0 setUsername:profileUser.userName.length == 0];
+        }
+        else if (_uid != 0)
+        {
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/users/(%d)", _uid] options:@{} flags:0 watcher:self];
+        }
+    }
 
     [self _reloadOwnProfileMusic];
 
@@ -1127,7 +1376,6 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 
 - (void)clearChatListCachePressed
 {
-    TGLog(@"ARCHIVE account settings clear chat list cache");
     [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
@@ -1141,6 +1389,11 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     [self.navigationController pushViewController:[[TGAppearanceController alloc] init] animated:true];
 }
 
+- (void)devicesPressed
+{
+    [self.navigationController pushViewController:[[TGAuthSessionsController alloc] init] animated:true];
+}
+
 - (void)mySettingsPressed
 {
     [self.navigationController pushViewController:[[TGSettingsController alloc] init] animated:true];
@@ -1148,30 +1401,15 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
 
 - (void)groqApiKeyPressed
 {
-    UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Groq API key"
-                                                    message:@"The key is stored only on this device and is sent directly to Groq."
-                                                   delegate:self
-                                          cancelButtonTitle:@"Cancel"
-                                          otherButtonTitles:@"Save", nil];
-    alert.alertViewStyle = UIAlertViewStyleSecureTextInput;
-    UITextField *field = [alert textFieldAtIndex:0];
-    field.placeholder = @"gsk_...";
-    field.text = [[NSUserDefaults standardUserDefaults] stringForKey:TGAccountGroqApiKeyDefaultsKey()];
-    [alert show];
-}
-
-- (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex
-{
-    if (![alertView.title isEqualToString:@"Groq API key"] || buttonIndex != 1)
-        return;
-
-    UITextField *field = [alertView textFieldAtIndex:0];
-    NSString *key = [field.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (key.length != 0)
-        [[NSUserDefaults standardUserDefaults] setObject:key forKey:TGAccountGroqApiKeyDefaultsKey()];
-    else
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:TGAccountGroqApiKeyDefaultsKey()];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    [TGCustomAlertView presentSecureTextInputAlertWithTitle:@"Groq API key" message:@"The key is stored only on this device and is sent directly to Groq." placeholder:@"gsk_..." text:[[NSUserDefaults standardUserDefaults] stringForKey:TGAccountGroqApiKeyDefaultsKey()] cancelButtonTitle:@"Cancel" okButtonTitle:@"Save" completionBlock:^(NSString *enteredKey)
+    {
+        NSString *key = [(enteredKey ?: @"") stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (key.length != 0)
+            [[NSUserDefaults standardUserDefaults] setObject:key forKey:TGAccountGroqApiKeyDefaultsKey()];
+        else
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:TGAccountGroqApiKeyDefaultsKey()];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }];
 }
 
 static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *document)
@@ -1311,11 +1549,7 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
             [items addObject:item];
         TGMusicPlayerPlaylist *playlist = [[TGMusicPlayerPlaylist alloc] initWithVoice:false items:items itemKeyAliases:@{} markItemAsViewed:nil];
         TGMusicPlayer *musicPlayer = TGTelegraphInstance.musicPlayer;
-        if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-            TGLog(@"AUDIO profileMusic.player telegraph=%p player=%p class=%@ responds=%d", TGTelegraphInstance, musicPlayer, NSStringFromClass([musicPlayer class]), [musicPlayer respondsToSelector:@selector(setPlaylist:initialItemKey:metadata:)] ? 1 : 0);
         [musicPlayer setPlaylist:[SSignal single:playlist] initialItemKey:item.key metadata:@{ @"profileMusicPeerId": @(strongSelf->_uid), @"profileSavedMusic": @true }];
-        if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-            TGLog(@"AUDIO profileMusic.setPlaylist.return player=%p", musicPlayer);
     }];
 }
 
@@ -1330,9 +1564,9 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     [self.navigationController pushViewController:controller animated:true];
 }
 
-- (void)onegramProxyPressed
+- (void)onegramCorePressed
 {
-    TGOnegramProxyController *controller = [[TGOnegramProxyController alloc] init];
+    TGOnegramCoreController *controller = [[TGOnegramCoreController alloc] init];
     [self.navigationController pushViewController:controller animated:true];
 }
 
@@ -1387,7 +1621,23 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:@"/tg/changeUserName/"])
+    if ([path isEqualToString:[NSString stringWithFormat:@"/tg/users/(%d)", _uid]])
+    {
+        if (status == ASStatusSuccess)
+        {
+            TGDispatchOnMainThread(^
+            {
+                TGUser *user = [TGDatabaseInstance() loadUser:_uid];
+                if (user != nil)
+                {
+                    [_profileDataItem setUser:user animated:false];
+                    [self updateSubtitleWithPhoneNumber:user.phoneNumber username:user.userName];
+                    [self updateSuggestedSetProfilePhoto:user.photoUrlSmall.length == 0 setUsername:user.userName.length == 0];
+                }
+            });
+        }
+    }
+    else if ([path hasPrefix:@"/tg/changeUserName/"])
     {
         dispatch_async(dispatch_get_main_queue(), ^
         {
@@ -1562,10 +1812,6 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     {
         [self _commitDeleteAvatar];
     }
-//    else if ([action isEqualToString:@"editingNameChanged"])
-//    {
-//        _accountEditingBarButtonItem.enabled = [_profileDataItem editingFirstName].length != 0;
-//    }
 }
 
 - (void)passportPressed
@@ -1587,7 +1833,7 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
 {
     [self setTitleText:TGLocalized(@"Settings.Title")];
     
-    [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editButtonPressed)] animated:false];
+    [self setRightBarButtonItem:[self editBarButtonItem] animated:false];
     
     _savedMessagesItem.title = TGLocalized(@"Settings.SavedMessages");
     _clearChatListCacheItem.title = @"Clear Chat Cache";
@@ -1600,6 +1846,7 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
     _setProfilePhotoItem.title = TGLocalized(@"Settings.SetProfilePhoto");
     _setUsernameItem.title = TGLocalized(@"Settings.SetUsername");
     _wallpapersItem.title = TGLocalized(@"Settings.Appearance");
+    _devicesItem.title = TGLocalized(@"Settings.Devices");
     _developerChannelItem.title = @"Канал разраба";
     _callSettingsItem.title = TGLocalized(@"CallSettings.RecentCalls");
     

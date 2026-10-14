@@ -1,5 +1,7 @@
 #import "TGVCard.h"
 
+int iosMajorVersion(void);
+
 @interface TGVCardValue ()
 {
 @protected
@@ -587,12 +589,14 @@ NSData *TGVCardDataFromPerson(ABRecordRef person)
     if (person == NULL)
         return nil;
 
+#if !ONEGRAM_ARMV6
     if (iosMajorVersion() >= 5)
     {
         NSArray *people = @[ (__bridge id)person ];
         CFDataRef dataRef = ABPersonCreateVCardRepresentationWithPeople((__bridge CFArrayRef)people);
         return dataRef == NULL ? nil : CFBridgingRelease(dataRef);
     }
+#endif
 
     TGVCard *card = [[TGVCard alloc] initWithPerson:person];
     NSString *string = TGVCardSerialize(card, person);
@@ -640,8 +644,10 @@ static ABRecordRef TGVCardCreatePersonFromCard(TGVCard *card)
         [card.addresses writeValueInPerson:person];
     if (card.birthday != nil)
         [card.birthday writeValueInPerson:person];
+#if !ONEGRAM_ARMV6
     if (iosMajorVersion() >= 5 && card.socialProfiles != nil)
         [card.socialProfiles writeValueInPerson:person];
+#endif
     if (card.instantMessengers != nil)
         [card.instantMessengers writeValueInPerson:person];
     return person;
@@ -652,6 +658,7 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
     if (data.length == 0)
         return NULL;
 
+#if !ONEGRAM_ARMV6
     if (iosMajorVersion() >= 5)
     {
         ABAddressBookRef book = ABAddressBookCreate();
@@ -672,6 +679,7 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
             CFRelease(book);
         return person;
     }
+#endif
 
     TGVCard *card = [[TGVCard alloc] initWithData:data];
     if (card == nil)
@@ -724,6 +732,7 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
 
 - (instancetype)initWithData:(NSData *)data
 {
+#if !ONEGRAM_ARMV6
     if (iosMajorVersion() >= 5)
     {
         ABRecordRef person = TGVCardCreatePersonFromData(data);
@@ -733,6 +742,7 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
         CFRelease(person);
         return self;
     }
+#endif
 
     NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (string == nil)
@@ -925,7 +935,9 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
     if (addresses.count > 0)
         _addresses = [[TGVCardValueArray alloc] initWithProperty:kABPersonAddressProperty values:addresses objectType:[NSDictionary class]];
     if (socialProfiles.count > 0)
-        _socialProfiles = [[TGVCardValueArray alloc] initWithProperty:kABPersonSocialProfileProperty values:socialProfiles objectType:[NSDictionary class]];
+    {
+        _socialProfiles = [[TGVCardValueArray alloc] initWithProperty:TGVCardSocialProfileProperty values:socialProfiles objectType:[NSDictionary class]];
+    }
     if (instantMessengers.count > 0)
         _instantMessengers = [[TGVCardValueArray alloc] initWithProperty:kABPersonInstantMessageProperty values:instantMessengers objectType:[NSDictionary class]];
 
@@ -1008,8 +1020,10 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
         _urls = getMultiStringValueProperty(kABPersonURLProperty);
         _addresses = getMultiDictionaryValueProperty(kABPersonAddressProperty);
         _birthday = getDateValueProperty(kABPersonBirthdayProperty);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         if (iosMajorVersion() >= 5)
             _socialProfiles = getMultiDictionaryValueProperty(kABPersonSocialProfileProperty);
+#endif
         _instantMessengers = getMultiDictionaryValueProperty(kABPersonInstantMessageProperty);
         
     }
@@ -1133,6 +1147,9 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
 
 - (NSString *)vcardString
 {
+#if ONEGRAM_ARMV6
+    return [TGVCardSerialize(self, NULL) stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
+#else
     if (iosMajorVersion() < 5)
         return [TGVCardSerialize(self, NULL) stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
 
@@ -1141,6 +1158,7 @@ ABRecordRef TGVCardCreatePersonFromData(NSData *data)
     if (person != NULL)
         CFRelease(person);
     return vcard;
+#endif
 }
 
 @end

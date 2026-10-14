@@ -55,6 +55,8 @@
     if (self.specialUserInteraction) {
         UIView *result = nil;
         for (UIView *view in self.subviews) {
+            if (view.hidden)
+                continue;
             if ([view isKindOfClass:[TGModernFlatteningView class]]) {
                 result = [view hitTest:[self convertPoint:point toView:view] withEvent:event];
             } else if (view.tag == 0xbeef) {

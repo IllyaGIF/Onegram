@@ -3,7 +3,6 @@
 #import "TL/TLMetaScheme.h"
 #import "TLMetaClassStore.h"
 
-//messages.sendContextBotResult flags:# broadcast:flags.4?true peer:InputPeer reply_to_msg_id:flags.0?int random_id:long query_id:long id:string = Updates;
 
 @implementation TLRPCmessages_sendInlineBotResult
 

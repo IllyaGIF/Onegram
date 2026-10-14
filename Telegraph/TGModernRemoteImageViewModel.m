@@ -88,6 +88,22 @@
     }
 }
 
+static void TGModernRemoteImageViewModelDrawOperation(__unused CGContextRef context, TGModernDrawingOperation *operation)
+{
+    [(UIImage *)operation.object drawInRect:operation.rect blendMode:kCGBlendModeNormal alpha:1.0f];
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernRemoteImageViewModel class]])
+        return false;
+    if (![self recordBaseDrawing:recording])
+        return false;
+    if (!self.skipDrawInContext && _placeholder != nil)
+        [recording addOperationWithFunction:&TGModernRemoteImageViewModelDrawOperation rect:self.bounds object:_placeholder secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+    return true;
+}
+
 - (void)drawInContext:(CGContextRef)context
 {
     [super drawInContext:context];

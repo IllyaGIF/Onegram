@@ -678,15 +678,15 @@ static void addRoundedRectToPath(CGContextRef context, CGRect rect, CGFloat oval
     {
         colors = @
         [
-            (id)UIColorRGB(0xea2739).CGColor, //red
-            (id)UIColorRGB(0xdb3ad2).CGColor, //pink
-            (id)UIColorRGB(0x3051e3).CGColor, //blue
-            (id)UIColorRGB(0x49c5ed).CGColor, //cyan
-            (id)UIColorRGB(0x80c864).CGColor, //green
-            (id)UIColorRGB(0xfcde65).CGColor, //yellow
-            (id)UIColorRGB(0xfc964d).CGColor, //orange
-            (id)[UIColor blackColor].CGColor, //black
-            (id)[UIColor whiteColor].CGColor  //white
+            (id)UIColorRGB(0xea2739).CGColor,
+            (id)UIColorRGB(0xdb3ad2).CGColor,
+            (id)UIColorRGB(0x3051e3).CGColor,
+            (id)UIColorRGB(0x49c5ed).CGColor,
+            (id)UIColorRGB(0x80c864).CGColor,
+            (id)UIColorRGB(0xfcde65).CGColor,
+            (id)UIColorRGB(0xfc964d).CGColor,
+            (id)[UIColor blackColor].CGColor,
+            (id)[UIColor whiteColor].CGColor
         ];
     });
     return colors;
@@ -700,15 +700,15 @@ static void addRoundedRectToPath(CGContextRef context, CGRect rect, CGFloat oval
     {
         locations = @
         [
-            @0.0f,  //red
-            @0.14f, //pink
-            @0.24f, //blue
-            @0.39f, //cyan
-            @0.49f, //green
-            @0.62f, //yellow
-            @0.73f, //orange
-            @0.85f, //black
-            @1.0f   //white
+            @0.0f,
+            @0.14f,
+            @0.24f,
+            @0.39f,
+            @0.49f,
+            @0.62f,
+            @0.73f,
+            @0.85f,
+            @1.0f
         ];
     });
     return locations;

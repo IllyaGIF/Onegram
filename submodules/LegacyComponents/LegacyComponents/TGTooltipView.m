@@ -170,8 +170,8 @@
     
     self.transform = transform;
     
-    self.layer.rasterizationScale = [[UIScreen mainScreen] scale];
-    self.layer.shouldRasterize = true;
+    TGSetLayerRasterizationScale(self.layer, [[UIScreen mainScreen] scale]);
+    TGSetLayerShouldRasterize(self.layer, true);
     
     self.alpha = 1.0f;
     
@@ -198,7 +198,7 @@
                         {
                             if (finished)
                             {
-                                self.layer.shouldRasterize = false;
+                                TGSetLayerShouldRasterize(self.layer, false);
                             }
                         }];
                     }

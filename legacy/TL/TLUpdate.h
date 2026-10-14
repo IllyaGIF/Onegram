@@ -559,4 +559,14 @@
 
 @end
 
+@interface TLUpdate$updateNewAuthorization : TLUpdate
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int64_t n_hash;
+@property (nonatomic) int32_t date;
+@property (nonatomic, retain) NSString *device;
+@property (nonatomic, retain) NSString *location;
+
+@end
+
 #endif

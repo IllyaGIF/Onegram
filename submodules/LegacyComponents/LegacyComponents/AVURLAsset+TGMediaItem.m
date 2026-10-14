@@ -3,6 +3,7 @@
 
 #import "TGPhotoEditorUtils.h"
 
+#if !defined(ONEGRAM_ARMV6)
 @implementation AVURLAsset (TGMediaItem)
 
 - (bool)isVideo
@@ -40,3 +41,4 @@
 }
 
 @end
+#endif

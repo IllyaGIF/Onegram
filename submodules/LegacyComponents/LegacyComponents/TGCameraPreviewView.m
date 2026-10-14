@@ -107,7 +107,11 @@
 
 - (AVCaptureVideoPreviewLayer *)legacyPreviewLayer
 {
+#if defined(ONEGRAM_ARMV6)
+    return nil;
+#else
     return _wrapperView.previewLayer;
+#endif
 }
 
 - (void)setupWithCamera:(PGCamera *)camera
@@ -129,7 +133,7 @@
     }
     else
     {
-#if !TARGET_IPHONE_SIMULATOR
+#if !defined(ONEGRAM_ARMV6) && !TARGET_IPHONE_SIMULATOR
         [self.legacyPreviewLayer setSession:camera.captureSession];
 #endif
     }
@@ -168,9 +172,11 @@
     }
     else
     {
+#if !defined(ONEGRAM_ARMV6)
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.legacyPreviewLayer setSession:nil];
         });
+#endif
     }
     _wrapperView = nil;
 }
@@ -364,8 +370,6 @@
 {
     _connection = connection;
     
-    //self.orientation = connection.videoOrientation;
-    //self.mirrored = connection.videoMirrored;
     
     [self.displayLayer enqueueSampleBuffer:buffer];
 }
@@ -387,32 +391,58 @@
 
 - (NSString *)videoGravity
 {
+#if defined(ONEGRAM_ARMV6)
+    return self.layer.contentsGravity;
+#else
     return self.previewLayer.videoGravity;
+#endif
 }
 
 - (void)setVideoGravity:(NSString *)videoGravity
 {
+#if defined(ONEGRAM_ARMV6)
+    self.layer.contentsGravity = videoGravity;
+#else
     self.previewLayer.videoGravity = videoGravity;
+#endif
 }
 
 - (AVCaptureConnection *)connection
 {
+#if defined(ONEGRAM_ARMV6)
+    return nil;
+#else
     return self.previewLayer.connection;
+#endif
 }
 
 - (CGPoint)captureDevicePointOfInterestForPoint:(CGPoint)point
 {
+#if defined(ONEGRAM_ARMV6)
+    if (self.bounds.size.width <= 0.0f || self.bounds.size.height <= 0.0f)
+        return CGPointMake(0.5f, 0.5f);
+    return CGPointMake(MAX(0.0f, MIN(1.0f, point.x / self.bounds.size.width)), MAX(0.0f, MIN(1.0f, point.y / self.bounds.size.height)));
+#else
     return [self.previewLayer captureDevicePointOfInterestForPoint:point];
+#endif
 }
 
 - (AVCaptureVideoPreviewLayer *)previewLayer
 {
+#if defined(ONEGRAM_ARMV6)
+    return nil;
+#else
     return (AVCaptureVideoPreviewLayer *)self.layer;
+#endif
 }
 
 + (Class)layerClass
 {
+#if defined(ONEGRAM_ARMV6)
+    return [CALayer class];
+#else
     return [AVCaptureVideoPreviewLayer class];
+#endif
 }
 
 @end

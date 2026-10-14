@@ -1,4 +1,5 @@
 #import "TGPassportIdentityController.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -558,7 +559,7 @@
 
 + (NSString *)localizedStringFromDate:(NSDate *)date
 {
-    return [NSDateFormatter localizedStringFromDate:date dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterNoStyle];
+    return OGPlatformLocalizedStringFromDate(date, NSDateFormatterMediumStyle, NSDateFormatterNoStyle);
 }
 
 - (void)setLanguagesSignal:(SSignal *)languagesSignal

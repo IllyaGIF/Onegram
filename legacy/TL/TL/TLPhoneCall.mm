@@ -34,7 +34,6 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
         {
             if ([item isKindOfClass:phoneConnectionClass])
             {
-                TGLog(@"CALL fullPhoneCall.connections.vector index=%d count=%d", (int)i, (int)array.count);
                 return array;
             }
         }
@@ -48,13 +47,11 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"constructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"constructorName is not implemented for base type");
     return 0;
 }
 
@@ -80,7 +77,6 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
         object.participant_id = participantId;
         object.g_a_hash = gAHash;
         object.protocol = protocol;
-        TGLog(@"CALL baseParsed requested call=%lld", object.n_id);
         return object;
     }
     
@@ -96,7 +92,6 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
         object.participant_id = participantId;
         object.g_b = gB;
         object.protocol = protocol;
-        TGLog(@"CALL baseParsed accepted call=%lld", object.n_id);
         return object;
     }
     
@@ -117,7 +112,6 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
         object.alternative_connections = metaObject->getArray((int32_t)0x39153642);
         object.connections = IOS6PhoneCallConnectionsFromMetaObject(metaObject);
         object.start_date = metaObject->getInt32((int32_t)0x1c46df41);
-        TGLog(@"CALL baseParsed full call=%lld legacyAlt=%d modernConnections=%d", object.n_id, (int)object.alternative_connections.count, (int)object.connections.count);
         return object;
     }
     
@@ -130,7 +124,6 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
         object.n_id = callId;
         object.reason = reason;
         object.duration = duration;
-        TGLog(@"CALL baseParsed discarded call=%lld", object.n_id);
         return object;
     }
     
@@ -143,13 +136,11 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     object.participant_id = participantId;
     object.protocol = protocol;
     object.receive_date = metaObject->getInt32((int32_t)0xeedcab88);
-    TGLog(@"CALL baseParsed waiting call=%lld", object.n_id);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 
@@ -517,7 +508,6 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     object.alternative_connections = metaObject->getArray((int32_t)0x39153642);
     object.connections = IOS6PhoneCallConnectionsFromMetaObject(metaObject);
     object.start_date = metaObject->getInt32((int32_t)0x1c46df41);
-    TGLog(@"CALL fullPhoneCall.parsed call=%lld legacyConn=%@ legacyAlt=%d modernConnections=%d start=%d", object.n_id, object.connection, (int)object.alternative_connections.count, (int)object.connections.count, object.start_date);
     return object;
 }
 

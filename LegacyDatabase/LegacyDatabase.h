@@ -1,20 +1,10 @@
-//
-//  LegacyDatabase.h
-//  LegacyDatabase
-//
-//  Created by Peter on 9/26/16.
-//
-//
 
 #import <UIKit/UIKit.h>
 
-//! Project version number for LegacyDatabase.
 FOUNDATION_EXPORT double LegacyDatabaseVersionNumber;
 
-//! Project version string for LegacyDatabase.
 FOUNDATION_EXPORT const unsigned char LegacyDatabaseVersionString[];
 
-// In this header, you should import all the public headers of your framework using statements like #import <LegacyDatabase/PublicHeader.h>
 
 #import <LegacyDatabase/sqlite3.h>
 #import <LegacyDatabase/sqlite3ext.h>

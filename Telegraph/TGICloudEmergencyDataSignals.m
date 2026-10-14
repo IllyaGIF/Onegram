@@ -55,24 +55,6 @@
 
 @end
 
-@interface TGICloudEmergencyDataInfo : NSObject
-
-@property (nonatomic, strong, readonly) MTBackupDatacenterData *info;
-
-@end
-
-@implementation TGICloudEmergencyDataInfo
-
-- (instancetype)initWithInfo:(MTBackupDatacenterData *)info {
-    self = [super init];
-    if (self != nil) {
-        _info = info;
-    }
-    return self;
-}
-
-@end
-
 @implementation TGICloudEmergencyDataSignals
 
 + (SVariable *)currentInfoByPrefix:(NSString *)prefix {
@@ -139,7 +121,6 @@
                         if ([error.domain isEqualToString:CKErrorDomain] && error.code == 1) {
                             [subscriber putError:@false];
                         } else {
-                            //TGLog(@"[AddressInfo] fetchRecordWithID error: %@", [error description]);
                             [subscriber putError:@true];
                         }
                     } else {
@@ -159,7 +140,6 @@
                 }];
             }
         } @catch(NSException *e) {
-            //TGLog(@"[AddressInfo]", [e description]);
             [subscriber putError:@false];
         }
         
@@ -293,7 +273,6 @@
         return [cleanup then:[[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
             CKRecordID *prefixRecordId = [[CKRecordID alloc] initWithRecordName:[NSString stringWithFormat:@"emergency-datacenter-%@", prefix]];
             NSPredicate *predicate = [NSPredicate predicateWithFormat:@"recordID = %@", prefixRecordId];
-            //NSPredicate *predicate = [NSPredicate predicateWithFormat:@"TRUEPREDICATE"];
             CKSubscription *subscription = [[CKSubscription alloc] initWithRecordType:@"EmergencyDatacenterInfo" predicate:predicate options:CKSubscriptionOptionsFiresOnRecordCreation | CKSubscriptionOptionsFiresOnRecordUpdate];
             CKNotificationInfo *notificationInfo = [CKNotificationInfo new];
             notificationInfo.desiredKeys = @[@"data"];

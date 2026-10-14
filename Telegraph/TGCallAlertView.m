@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "TGCallAlertView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -60,8 +61,8 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
         
         _backgroundView = [[UIView alloc] init];
         _backgroundView.backgroundColor = [UIColor whiteColor];
-        _backgroundView.layer.rasterizationScale = TGScreenScaling();
-        _backgroundView.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(_backgroundView.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(_backgroundView.layer, true);
         _backgroundView.layer.cornerRadius = 12.0f;
         _backgroundView.layer.masksToBounds = true;
         [self addSubview:_backgroundView];
@@ -76,8 +77,6 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
         }
         
         CGFloat inset = 20.0f;
-//        if (_wide && [self alertWidth] < 310)
-//            inset = 16.0f;
         
         if (title.length > 0)
         {
@@ -179,8 +178,6 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
 - (CGFloat)alertWidth
 {
     CGFloat width = TGCallAlertViewWidth;
-//    if (_wide)
-//        width = MIN(320, TGScreenSize().width - 20.0f);
     return width;
 }
 
@@ -190,7 +187,7 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
 
     if (followsKeyboard)
     {
-        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithKeyboardFrameTarget:self targetSelector:@selector(keyboardWillChangeFrame:)];
     }
     else
     {
@@ -202,10 +199,9 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
 {
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [self.superview convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, self.superview);
     
-    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (self.superview.frame.size.height - keyboardFrame.origin.y);
+    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (self.superview.bounds.size.height - keyboardFrame.origin.y);
     keyboardHeight = MAX(keyboardHeight, 0.0f);
     _keyboardOffset = keyboardHeight;
 

@@ -2,6 +2,7 @@
 
 #import <CommonCrypto/CommonDigest.h>
 #import <sys/stat.h>
+#import <fcntl.h>
 
 #import "LegacyComponentsInternal.h"
 
@@ -23,6 +24,7 @@
 @end
 
 
+#if !defined(ONEGRAM_ARMV6)
 @interface TGMediaSampleBufferProcessor : NSObject
 {
     AVAssetReaderOutput *_assetReaderOutput;
@@ -44,6 +46,7 @@
 
 @end
 
+#endif
 
 @interface TGMediaVideoFileWatcher ()
 {
@@ -53,6 +56,7 @@
 @end
 
 
+#if !defined(ONEGRAM_ARMV6)
 @interface TGMediaVideoConversionContext : NSObject
 
 @property (nonatomic, readonly) bool cancelled;
@@ -84,6 +88,7 @@
 
 @end
 
+#endif
 
 @interface TGMediaVideoConversionResult ()
 
@@ -94,6 +99,7 @@
 
 @implementation TGMediaVideoConverter
 
+#if !defined(ONEGRAM_ARMV6)
 + (SSignal *)convertAVAsset:(AVAsset *)avAsset adjustments:(TGMediaVideoEditAdjustments *)adjustments watcher:(TGMediaVideoFileWatcher *)watcher
 {
     return [self convertAVAsset:avAsset adjustments:adjustments watcher:watcher inhibitAudio:false];
@@ -205,6 +211,8 @@
     }];
 }
 
+#endif
+
 + (CGSize)dimensionsFor:(CGSize)dimensions adjustments:(TGMediaVideoEditAdjustments *)adjustments preset:(TGMediaVideoConversionPreset)preset {
     CGRect transformedRect = CGRectMake(0.0f, 0.0f, dimensions.width, dimensions.height);
     
@@ -222,6 +230,7 @@
     return outputDimensions;
 }
 
+#if !defined(ONEGRAM_ARMV6)
 + (AVAssetReaderVideoCompositionOutput *)setupVideoCompositionOutputWithAVAsset:(AVAsset *)avAsset composition:(AVMutableComposition *)composition videoTrack:(AVAssetTrack *)videoTrack preset:(TGMediaVideoConversionPreset)preset adjustments:(TGMediaVideoEditAdjustments *)adjustments timeRange:(CMTimeRange)timeRange outputSettings:(NSDictionary **)outputSettings dimensions:(CGSize *)dimensions conversionContext:(SAtomic *)conversionContext
 {
     CGSize transformedSize = CGRectApplyAffineTransform((CGRect){CGPointZero, videoTrack.naturalSize}, videoTrack.preferredTransform).size;;
@@ -588,6 +597,8 @@
     return hash;
 }
 
+#endif
+
 + (TGMediaVideoConversionPreset)presetFromAdjustments:(TGMediaVideoEditAdjustments *)adjustments
 {
     TGMediaVideoConversionPreset preset = adjustments.preset;
@@ -651,6 +662,7 @@
 @end
 
 
+#if !defined(ONEGRAM_ARMV6)
 static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer, CMTimeRange timeRange)
 {
     CMTime progressTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
@@ -755,6 +767,7 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
 
 @end
 
+#endif
 
 @implementation TGMediaVideoFileWatcher
 
@@ -837,6 +850,7 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
 @end
 
 
+#if !defined(ONEGRAM_ARMV6)
 @implementation TGMediaVideoConversionContext
 
 + (instancetype)contextWithQueue:(SQueue *)queue subscriber:(SSubscriber *)subscriber
@@ -935,6 +949,7 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
 
 @end
 
+#endif
 
 @implementation TGMediaVideoConversionResult
 
@@ -1002,6 +1017,7 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
     return preset != TGMediaVideoConversionPresetAnimation;
 }
 
+#if !defined(ONEGRAM_ARMV6)
 + (NSDictionary *)audioSettingsForPreset:(TGMediaVideoConversionPreset)preset
 {
     NSInteger bitrate = [self _audioBitrateKbpsForPreset:preset];
@@ -1020,7 +1036,9 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
     AVChannelLayoutKey: [NSData dataWithBytes:&acl length:sizeof(acl)]
     };
 }
+#endif
 
+#if !defined(ONEGRAM_ARMV6)
 + (NSDictionary *)videoSettingsForPreset:(TGMediaVideoConversionPreset)preset dimensions:(CGSize)dimensions
 {
     NSDictionary *videoCleanApertureSettings = @
@@ -1037,13 +1055,17 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
     AVVideoPixelAspectRatioVerticalSpacingKey: @3
     };
     
-    NSDictionary *codecSettings = @
+    NSMutableDictionary *codecSettings = [@{
+        AVVideoAverageBitRateKey: @([self _videoBitrateKbpsForPreset:preset] * 1000)
+    } mutableCopy];
+    if (preset == TGMediaVideoConversionPresetVideoMessage)
+        codecSettings[AVVideoProfileLevelKey] = AVVideoProfileLevelH264Baseline30;
+    else
     {
-    AVVideoAverageBitRateKey: @([self _videoBitrateKbpsForPreset:preset] * 1000),
-    AVVideoCleanApertureKey: videoCleanApertureSettings,
-    AVVideoPixelAspectRatioKey: videoAspectRatioSettings
-    };
-    
+        codecSettings[AVVideoCleanApertureKey] = videoCleanApertureSettings;
+        codecSettings[AVVideoPixelAspectRatioKey] = videoAspectRatioSettings;
+    }
+
     return @
     {
     AVVideoCodecKey: AVVideoCodecH264,
@@ -1052,6 +1074,7 @@ static CGFloat progressOfSampleBufferInTimeRange(CMSampleBufferRef sampleBuffer,
     AVVideoHeightKey: @((NSInteger)dimensions.height)
     };
 }
+#endif
 
 + (NSInteger)_videoBitrateKbpsForPreset:(TGMediaVideoConversionPreset)preset
 {

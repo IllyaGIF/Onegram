@@ -125,7 +125,6 @@ static void playSoundCompleted(__unused SystemSoundID ssID, __unused void *clien
     dispatch_block_t block = ^{
         if ([timer isScheduled]) {
             [timer fireAndInvalidate];
-            TGLog(@"vibration completed");
         }
     };
     
@@ -150,16 +149,9 @@ static void playSoundCompleted(__unused SystemSoundID ssID, __unused void *clien
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        /*NSString *path = [NSString stringWithFormat:@"%@/%@", [[NSBundle mainBundle] resourcePath], @"begin_record.caf"];
-        NSURL *filePath = [NSURL fileURLWithPath:path isDirectory:false];
-        AudioServicesCreateSystemSoundID((__bridge CFURLRef)filePath, &soundId);
-        if (soundId != 0) {
-            //AudioServicesAddSystemSoundCompletion(soundId, NULL, kCFRunLoopCommonModes, &playSoundCompleted, NULL);
-        }*/
         AudioServicesAddSystemSoundCompletion(kSystemSoundID_Vibrate, NULL, kCFRunLoopCommonModes, &playSoundCompleted, NULL);
     });
     
-    TGLog(@"[TGAudioRecorder start]");
     
     [[TGAudioRecorder audioRecorderQueue] dispatchOnQueue:^
     {
@@ -169,47 +161,19 @@ static void playSoundCompleted(__unused SystemSoundID ssID, __unused void *clien
             {
                 [_timer invalidate];
                 
-                TGLog(@"[TGAudioRecorder initialized session]");
-                
-                if (!_stopped && completion) {
-                    completion();
-                }
                 
                 bool headphones = [TGMusicPlayer isHeadsetPluggedIn];
                 bool speaker = headphones || speaker1;
-                NSTimeInterval startTime = CACurrentMediaTime();
                 [_modernRecorder _beginAudioSession:speaker];
-                TGLog(@"AudioSession time: %f s", CACurrentMediaTime() - startTime);
                 
-                /*static int nextTimerId = 0;
-                int timerId = nextTimerId++;
-                NSTimeInterval timeout = [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad ? 0.5 : 1.0;
-                __weak TGAudioRecorder *weakSelf = self;
-                _timer = [[TGTimer alloc] initWithTimeout:timeout repeat:false completion:^
-                {
-                    TGLog(@"[TGAudioRecorder record]");
-                    __strong TGAudioRecorder *strongSelf = weakSelf;
-
-                    [strongSelf _commitRecord];
-                } queue:[TGAudioRecorder audioRecorderQueue].nativeQueue];
-                recordTimers()[@(timerId)] = strongSelf->_timer;
-                [strongSelf->_timer start];
                 
-                [strongSelf->_modernRecorder _beginAudioSession:speaker];
-                currentTimerId = timerId;
-                if (!speaker) {
-                    if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad) {
-                        [strongSelf->_timer fireAndInvalidate];
-                    } else {
-                        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
-                    }
-                } else {
-                }
-                
-                [strongSelf->_timer fireAndInvalidate];*/
-                
-                [self _prepareRecord:speaker completion:nil];
-                [self _commitRecord];
+                [self _prepareRecord:speaker completion:^{
+                    if (_stopped)
+                        return;
+                    [self _commitRecord];
+                    if (completion != nil)
+                        completion();
+                }];
             }
             else
             {

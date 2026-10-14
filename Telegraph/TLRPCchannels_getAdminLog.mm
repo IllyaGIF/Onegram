@@ -31,8 +31,6 @@
     return 68;
 }
 
-//channels.getAdminLog#38910619 flags:# channel:InputChannel q:string events_filter:flags.0?ChannelAdminLogEventsFilter user_id:flags.1?InputUser max_id:long min_id:long limit:int = channels.AdminLogResults;
-
 
 - (void)TLserialize:(NSOutputStream *)os
 {

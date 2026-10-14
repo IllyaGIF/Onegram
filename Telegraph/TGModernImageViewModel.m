@@ -62,6 +62,22 @@
         ((TGModernImageView *)self.boundView).accessibilityIgnoresInvertColors = _ignoresInvertColors;
 }
 
+static void TGModernImageViewModelDrawOperation(__unused CGContextRef context, TGModernDrawingOperation *operation)
+{
+    [(UIImage *)operation.object drawInRect:operation.rect blendMode:(CGBlendMode)operation.flags alpha:1.0f];
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernImageViewModel class]])
+        return false;
+    if (![self recordBaseDrawing:recording])
+        return false;
+    if (!self.skipDrawInContext && self.alpha > FLT_EPSILON && !self.hidden && _image != nil)
+        [recording addOperationWithFunction:&TGModernImageViewModelDrawOperation rect:self.bounds object:_image secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:(int)_blendMode];
+    return true;
+}
+
 - (void)drawInContext:(CGContextRef)context
 {
     [super drawInContext:context];

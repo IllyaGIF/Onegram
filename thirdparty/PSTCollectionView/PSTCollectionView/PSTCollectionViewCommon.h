@@ -7,6 +7,9 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#if ONEGRAM_ARMV6
+#import "NSIndexPath+PSTCollectionViewAdditions.h"
+#endif
 
 // Mostly a debug feature, makes classes from UICollection* compatible with PSTCollection*
 // (e.g. adding the "real" UICollectionViewFlowLayout to PSTCollectionView.
@@ -33,6 +36,12 @@
 
 @protocol PSTCollectionViewDelegate <UIScrollViewDelegate>
 @optional
+
+#if ONEGRAM_ARMV6
+- (void)scrollViewDidZoom:(UIScrollView *)scrollView;
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(CGPoint *)targetContentOffset;
+- (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(UIView *)view;
+#endif
 
 // Methods for notification of selection/deselection and highlight/unhighlight events.
 // The sequence of calls leading to selection from a user touch is:

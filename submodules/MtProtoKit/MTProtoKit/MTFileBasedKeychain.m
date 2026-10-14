@@ -59,7 +59,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
         return;
     
     bool written = [data writeToFile:path atomically:true];
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !defined(ONEGRAM_ARMV6)
     if (written)
     {
         __autoreleasing NSError *protectionError = nil;
@@ -142,7 +142,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                                                                                                            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
                                                                                                            (__bridge id)kSecAttrService: @"org.mtproto.MTKeychain",
                                                                                                            (__bridge id)kSecAttrAccount: [[NSString alloc] initWithFormat:@"MTKeychain:%@", name],
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !defined(ONEGRAM_ARMV6)
                                                                                                            (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
 #endif
                                                                                                            (__bridge id)kSecReturnData: (id)kCFBooleanTrue,
@@ -162,6 +162,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                         _aesIv = [data subdataWithRange:NSMakeRange(32, 32)];
                     }
                 }
+#if !defined(ONEGRAM_ARMV6)
                 else
                 {
                     keychainReadQuery[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAlwaysThisDeviceOnly;
@@ -178,6 +179,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                         }
 	                    }
 	                }
+#endif
 	                
                     if (_aesKey == nil || _aesIv == nil)
                     {
@@ -220,7 +222,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
                                                                                 (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
                                                                                 (__bridge id)kSecAttrService: @"org.mtproto.MTKeychain",
                                                                                 (__bridge id)kSecAttrAccount: [[NSString alloc] initWithFormat:@"MTKeychain:%@", name],
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !defined(ONEGRAM_ARMV6)
                                                                                 (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
 #endif
                                                                                 (__bridge id)kSecValueData: newKeyData
@@ -384,7 +386,7 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
             }
             else
             {
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !defined(ONEGRAM_ARMV6)
                 if (&NSURLIsExcludedFromBackupKey != NULL)
                 {
                     __autoreleasing NSError *error = nil;
@@ -467,9 +469,19 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
     NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
     TG_SYNCHRONIZED_BEGIN(_dictByGroup);
     [self _loadKeychainIfNeeded:group];
+#if defined(ONEGRAM_ARMV6)
+    NSDictionary *groupContents = _dictByGroup[group];
+    for (id key in groupContents)
+    {
+        id object = [groupContents objectForKey:key];
+        if (object != nil)
+            result[key] = object;
+    }
+#else
     [_dictByGroup[group] enumerateKeysAndObjectsUsingBlock:^(id   key, id   obj, __unused BOOL * stop) {
         result[key] = obj;
     }];
+#endif
     TG_SYNCHRONIZED_END(_dictByGroup);
     
     return result;

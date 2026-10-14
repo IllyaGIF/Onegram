@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//botInlineMessageMediaGeo flags:# geo:GeoPoint period:int reply_markup:flags.2?ReplyMarkup = BotInlineMessage;
 
 @implementation TLBotInlineMessage$botInlineMessageMediaGeo
 

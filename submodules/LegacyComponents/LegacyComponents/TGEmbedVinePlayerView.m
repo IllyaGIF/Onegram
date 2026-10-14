@@ -3,9 +3,12 @@
 
 #import "LegacyComponentsInternal.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#import <MediaPlayer/MediaPlayer.h>
+#else
 #import <AVFoundation/AVFoundation.h>
-
 #import "TGModernGalleryVideoView.h"
+#endif
 
 #import "TGTimerTarget.h"
 
@@ -16,12 +19,16 @@ NSString *const TGVinePlayerCallbackOnPlayback = @"onPlayback";
     NSString *_videoId;
     bool _started;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    MPMoviePlayerController *_player;
+    NSURL *_legacyPlayerURL;
+#else
     AVPlayer *_player;
     TGModernGalleryVideoView *_videoView;
-    UIImageView *_watermarkView;
-    
     id _playerStartedObserver;
     id _playerEndedObserver;
+#endif
+    UIImageView *_watermarkView;
 }
 @end
 
@@ -73,7 +80,21 @@ NSString *const TGVinePlayerCallbackOnPlayback = @"onPlayback";
 - (void)pauseVideo:(bool)manually
 {
     [super pauseVideo:manually];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    SEL pauseSelector = @selector(pause);
+    if ([_player respondsToSelector:pauseSelector])
+    {
+        void (*implementation)(id, SEL) = (void (*)(id, SEL))[_player methodForSelector:pauseSelector];
+        if (implementation != NULL)
+            implementation(_player, pauseSelector);
+    }
+    else
+    {
+        [_player stop];
+    }
+#else
     [_player pause];
+#endif
     
     TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:false];
     [self updateState:state];
@@ -123,6 +144,24 @@ NSString *const TGVinePlayerCallbackOnPlayback = @"onPlayback";
 
 - (void)_setupCustomPlayerWithURL:(NSURL *)url
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (_player != nil)
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+
+    _legacyPlayerURL = url;
+    _player = [[MPMoviePlayerController alloc] initWithContentURL:url];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_legacyPlayerDidFinish:) name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+    [_player play];
+
+    if (!_started)
+    {
+        _started = true;
+        [self _didBeginPlayback];
+    }
+
+    TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:true];
+    [self updateState:state];
+#else
     AVPlayerItem *item = [AVPlayerItem playerItemWithURL:url];
     AVPlayer *player = [AVPlayer playerWithPlayerItem:item];
     _player = player;
@@ -154,10 +193,32 @@ NSString *const TGVinePlayerCallbackOnPlayback = @"onPlayback";
     }];
     
     [player play];
+#endif
 }
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (void)_legacyPlayerDidFinish:(NSNotification *)notification
+{
+    NSError *error = [[notification userInfo] objectForKey:@"error"];
+    if (error == nil && _legacyPlayerURL != nil)
+        [self _setupCustomPlayerWithURL:_legacyPlayerURL];
+    else
+    {
+        TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:false];
+        [self updateState:state];
+    }
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+    [_player stop];
+}
+#endif
 
 - (void)_setupEndedObserver
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
      __weak TGEmbedVinePlayerView *weakSelf = self;
     _playerEndedObserver = [_player addBoundaryTimeObserverForTimes:@[[NSValue valueWithCMTime:CMTimeSubtract(_player.currentItem.duration, CMTimeMake(10, 100))]] queue:NULL usingBlock:^
     {
@@ -165,13 +226,15 @@ NSString *const TGVinePlayerCallbackOnPlayback = @"onPlayback";
         if (strongSelf != nil)
             [strongSelf->_player seekToTime:CMTimeMake(5, 100)];
     }];
+#endif
 }
 
 - (UIView *)_webView
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (_videoView != nil)
         return _videoView;
-    
+#endif
     return [super _webView];
 }
 

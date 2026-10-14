@@ -257,15 +257,11 @@ static ASQueue *taskManagementQueue()
     {
         UIImage *thumbnailImage = nil;
         
-        //NSNumber *averageColor = [[TGMediaStoreContext instance] mediaImageAverageColor:uri];
-        //bool needsAverageColor = averageColor == nil;
-        //uint32_t averageColorValue = [averageColor intValue];
         
         thumbnailImage = thumbnailSourceImage;
         
         if (thumbnailImage != nil)
         {
-            //[[TGMediaStoreContext instance] setMediaImageAverageColorForKey:uri averageColor:@(averageColorValue)];
             [[TGMediaStoreContext instance] setMediaImageForKey:uri image:thumbnailImage attributes:@{}];
             
             return [[TGDataResource alloc] initWithImage:thumbnailImage decoded:true];

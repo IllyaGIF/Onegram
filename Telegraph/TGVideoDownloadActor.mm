@@ -1,8 +1,6 @@
 #import "TGVideoDownloadActor.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -343,7 +341,6 @@ public:
             [fileManager createDirectoryAtPath:videosPath withIntermediateDirectories:true attributes:nil error:&error];
             if (error != nil)
             {
-                TGLog(@"%@", error);
                 
                 [ActionStageInstance() actionFailed:self.path reason:-1];
                 return;
@@ -547,14 +544,12 @@ public:
     _takenTimeSamples++;
     _averageDownloadSpeed = (_averageDownloadSpeed + downloadSpeed) / 2.0f;
     
-    IOS6_NOOP_LOG(@"Average speed: %f kbytes/s", _averageDownloadSpeed / 1024.0f);
 }
 
 - (void)printParts
 {
     for (std::map<int, TGVideoPartData>::iterator it = _downloadingParts.begin(); it != _downloadingParts.end(); it++)
     {
-        TGLog(@"part %d — %d (%f — %f) data %lu // %d", it->first, it->first + it->second.partLength, ((float)it->first) / ((float)_videoFileLength), ((float)(it->first + it->second.partLength)) / ((float)_videoFileLength), (unsigned long)it->second.downloadedData.length, _videoFileLength);
     }
 }
 
@@ -607,19 +602,11 @@ public:
             {
                 dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
                 {
-                    IOS6_NOOP_LOG(@"Generating video preview");
                     
-                    AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:_storeFilePath] options:nil];
-                    AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-                    imageGenerator.maximumSize = CGSizeMake(800, 800);
-                    imageGenerator.appliesPreferredTrackTransform = true;
-                    NSError *imageError = nil;
-                    CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(0, asset.duration.timescale) actualTime:NULL error:&imageError];
-                    
-                    UIImage *image = [[UIImage alloc] initWithCGImage:imageRef];
+                    UIImage *image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:_storeFilePath], 0.0, CGSizeMake(800.0f, 800.0f));
                     UIImage *thumbnailImage = nil;
                     
-                    if (imageRef != nil)
+                    if (image != nil)
                     {
                         if (_videoAttachment != nil)
                         {
@@ -649,19 +636,16 @@ public:
                         
                         [[TGRemoteImageView sharedCache] cacheImage:nil withData:UIImageJPEGRepresentation(image, 0.87f) url:_thumbnailFilePath availability:TGCacheDisk];
                         
-                        if (imageRef != NULL)
-                            CGImageRelease(imageRef);
                     }
                     
                     NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
                     [result setObject:_storeFilePath forKey:@"filePath"];
-                    if (imageRef != nil)
+                    if (image != nil)
                         [result setObject:_thumbnailFilePath forKey:@"thumbnailPath"];
                     
                     if (image != nil)
                         [ActionStageInstance() dispatchResource:@"/as/media/previewReady" resource:[[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_videoId], @"videoId", image, @"image", nil]];
                     
-                    IOS6_NOOP_LOG(@"Generated video preview");
                     
                     [ActionStageInstance() actionCompleted:self.path result:result];
                 });
@@ -1016,7 +1000,6 @@ public:
     if (partIt != _downloadingParts.end())
     {
         partIt->second.downloadedLength = (int)(progress * packetLength);
-        //TGLog(@"Part %d: %d / %d", offset, progress * packetLength, packetLength);
     }
     
     [self reportProgress:false];
@@ -1041,14 +1024,8 @@ public:
         _lastReportedProgress = readyFileSize;
         
         _progress = MIN(1.0f, MAX(0.001f, ((float)readyFileSize) / ((float)_videoFileLength)));
-        
-        //TGLog(@"Progress: %f (%d / %d)", _progress, readyFileSize, _videoFileLength);
-        
-        /*for (std::map<int, TGVideoPartData>::iterator it = _downloadingParts.begin(); it != _downloadingParts.end(); it++)
-        {
-            TGLog(@"    part %d: %d / %d", it->first, it->second.downloadedLength, it->second.partLength);
-        }*/
-        
+
+
         [ActionStageInstance() dispatchMessageToWatchers:self.path messageType:@"progress" message:[[NSNumber alloc] initWithFloat:_progress]];
     }
 }
@@ -1080,7 +1057,6 @@ public:
         
         int nextWriteOffset = fileSize;
         
-        //TGLog(@"Looking for %d to commit", nextWriteOffset);
         
         std::vector<int> sortedDownloadingParts;
         for (std::map<int, TGVideoPartData>::iterator it = _downloadingParts.begin(); it != _downloadingParts.end(); it++)
@@ -1104,7 +1080,6 @@ public:
                     if (listPartIt->second.downloadedData == nil)
                         break;
                     
-                    //TGLog(@"Commit %d: %d bytes", nextWriteOffset, listPartIt->second.downloadedData.length);
                     
                     hadCommit = true;
                     
@@ -1154,7 +1129,6 @@ public:
                     if ((int)listPartIt->second.downloadedData.length < listPartIt->second.partLength && _downloadedFileSize + (int)listPartIt->second.downloadedData.length < _videoFileLength)
                     {
                         int dataGapLength = listPartIt->second.partLength - (int)listPartIt->second.downloadedData.length;
-                        TGLog(@"Data gap found: %d bytes", dataGapLength);
                         
                         _explicitDownloadParts.push_back(std::pair<int, int>(nextWriteOffset, dataGapLength));
                     }
@@ -1167,7 +1141,6 @@ public:
                 break;
         }
         
-        //[self printParts];
         [self reportProgress:false];
         
         if (!self.cancelled)

@@ -4,40 +4,6 @@
 #import "LegacyComponentsInternal.h"
 #import <QuartzCore/QuartzCore.h>
 
-/*@interface AVPlayerLayer ()
-
-- (id)_sublayersForPIP;
-
-@end
-
-@interface TGModernGalleryVideoViewLayer : AVPlayerLayer {
-    CALayer *_testLayer;
-}
-
-@end
-
-@implementation TGModernGalleryVideoViewLayer
-
-- (id)_sublayersForPIP {
-    NSDictionary *current = [super _sublayersForPIP];
-    NSMutableDictionary *result = [[NSMutableDictionary alloc] initWithDictionary:current];
-    
-    if (_testLayer == nil) {
-        _testLayer = [[CALayer alloc] init];
-        _testLayer.frame = CGRectMake(0.0f, 0.0f, 40.0f, 20.0f);
-        _testLayer.backgroundColor = [UIColor greenColor].CGColor;
-        
-        //[(CALayer *)result[@"videoLayer"] addSublayer:_testLayer];
-    }
-    
-    CALayer *videoLayer = ((CALayer *)result[@"videoLayer"]);
-    CALayer *sublayer = [videoLayer valueForKey:@"_videoLayer"];
-    [sublayer addSublayer:_testLayer];
-    
-    return result;
-}
-
-@end*/
 
 @implementation TGModernGalleryVideoView
 
@@ -84,7 +50,6 @@
 
 + (Class)layerClass
 {
-    //return [TGModernGalleryVideoViewLayer class];
     return [AVPlayerLayer class];
 }
 

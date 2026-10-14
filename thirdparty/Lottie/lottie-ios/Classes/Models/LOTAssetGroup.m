@@ -64,8 +64,15 @@
 
 - (void)setRootDirectory:(NSString *)rootDirectory {
     _rootDirectory = rootDirectory;
+#if ONEGRAM_ARMV6
+    for (NSString *key in _assetMap) {
+        LOTAsset *obj = [_assetMap objectForKey:key];
+        obj.rootDirectory = rootDirectory;
+    }
+#else
     [_assetMap enumerateKeysAndObjectsUsingBlock:^(NSString *  key, LOTAsset *  obj, BOOL *  stop) {
         obj.rootDirectory = rootDirectory;
     }];
+#endif
 }
 @end

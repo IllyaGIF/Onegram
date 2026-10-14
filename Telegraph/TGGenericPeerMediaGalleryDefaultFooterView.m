@@ -32,27 +32,6 @@ static bool TGIOS6GalleryCaptionsEnabled()
     return false;
 }
 
-@interface TGGalleryTextLabelLink : NSObject
-
-@property (nonatomic, readonly) NSRange range;
-@property (nonatomic, strong, readonly) NSString *link;
-@property (nonatomic, strong) UIButton *button;
-
-@end
-
-@implementation TGGalleryTextLabelLink
-
-- (instancetype)initWithRange:(NSRange)range link:(NSString *)link {
-    self = [super init];
-    if (self != nil) {
-        _range = range;
-        _link = link;
-    }
-    return self;
-}
-
-@end
-
 @interface TGGenericPeerMediaGalleryDefaultFooterView ()
 {
     bool _hasAppeared;

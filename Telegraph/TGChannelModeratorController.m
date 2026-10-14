@@ -119,7 +119,6 @@
     _canInviteUsers.toggled = ^(__unused bool value, __unused TGSwitchCollectionItem *item) {
         __strong TGChannelModeratorController *strongSelf = weakSelf;
         if (strongSelf && !value) {
-            //[strongSelf->_canChangeInviteLink setIsOn:false animated:true];
         }
     };
     
@@ -167,7 +166,6 @@
     }
     
     if (conversation.isChannelGroup && (isPreview || sourceMember.isCreator || sourceMember.adminRights.canChangeInviteLink)) {
-        //[rightsItems addObject:_canChangeInviteLink];
     }
     
     if (conversation.isChannelGroup && (isPreview || sourceMember.isCreator || sourceMember.adminRights.canPinMessages)) {

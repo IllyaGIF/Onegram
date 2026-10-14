@@ -25,7 +25,9 @@ const CGFloat TGPhotoPaintEntityMinScale = 0.12f;
     self = [super initWithFrame:frame];
     if (self != nil)
     {
+#if !defined(ONEGRAM_ARMV6)
         self.contentScaleFactor = MIN(2.0f, self.contentScaleFactor);
+#endif
         
         _panGestureRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         _panGestureRecognizer.delegate = self;

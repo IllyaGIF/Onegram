@@ -169,8 +169,6 @@
         NSString *errorText = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
         if ([errorText hasPrefix:@"FLOOD_WAIT"])
             errorText = TGLocalized(@"TwoStepAuth.FloodError");
-        //if ([error intValue] == TGTwoStepRecoveryErrorCodeExpired)
-        //    errorText = TGLocalized(@"TwoStepAuth.RecoveryCodeExpired");
         
         [TGCustomAlertView presentAlertWithTitle:nil message:displayText cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
     } completed:nil];

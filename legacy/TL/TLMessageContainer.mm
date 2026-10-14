@@ -13,25 +13,21 @@
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"TLconstructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"TLconstructorName is not implemented for base type");
     return 0;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
 {
-    TGLog(@"TLbuildFromMetaObject is not implemented for base type");
     return nil;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(NSError *__autoreleasing *)error
@@ -46,7 +42,6 @@
 
 - (void)TLserialize:(NSOutputStream *)__unused os
 {
-    TGLog(@"TLserialize is not implemented for base type");
 }
 
 @end

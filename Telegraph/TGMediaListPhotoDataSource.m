@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGMediaListPhotoDataSource.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -91,6 +92,11 @@ static ASQueue *taskManagementQueue()
         if ([TGMediaListPhotoDataSource _isDataLocallyAvailableForUri:uri])
         {
             [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+        }
+        else if (OGPlatformMediaDownloadsRequireUserAction())
+        {
+            if (completion != nil)
+                completion([TGMediaListPhotoDataSource resultForUnavailableImage]);
         }
         else
         {
@@ -274,7 +280,6 @@ static ASQueue *taskManagementQueue()
 {
     if (isCancelled && isCancelled())
     {
-        TGLog(@"[TGPhotoMediaPreviewImageDataSource cancelled while loading %@]", uri);
         return nil;
     }
     

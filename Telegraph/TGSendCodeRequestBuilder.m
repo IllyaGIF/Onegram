@@ -28,6 +28,30 @@
 
 @implementation TGSendCodeRequestBuilder
 
+- (void)completeActionWithResult:(id)result
+{
+    [ActionStageInstance() dispatchOnStageQueue:^
+    {
+        TGTimer *timer = _timer;
+        _timer = nil;
+        [ActionStageInstance() actionCompleted:self.path result:result];
+        if (timer != nil)
+            [timer invalidate];
+    }];
+}
+
+- (void)failActionWithReason:(int)reason
+{
+    [ActionStageInstance() dispatchOnStageQueue:^
+    {
+        TGTimer *timer = _timer;
+        _timer = nil;
+        [ActionStageInstance() actionFailed:self.path reason:reason];
+        if (timer != nil)
+            [timer invalidate];
+    }];
+}
+
 @synthesize actionHandle = _actionHandle;
 
 @synthesize timer = _timer;
@@ -75,8 +99,6 @@
     {
         if ([[TGTelegramNetworking instance] isConnecting] && ![[TGTelegramNetworking instance] isNetworkAvailable])
         {
-            // Reachability can be stale on old iOS / constrained mobile networks.
-            // Do not reject auth before MTProto even gets a chance to connect.
             TGLog(@"AUTH sendCode reachability unavailable, trying transport anyway");
             [[TGTelegramNetworking instance] resume];
             [[TGTelegramNetworking instance] wakeUpWithCompletion:^{
@@ -102,12 +124,6 @@
 
 - (void)sendCodeRequestSuccess:(TLauth_SentCode$auth_sentCode *)sendCode
 {
-    if (_timer != nil)
-    {
-        [_timer invalidate];
-        _timer = nil;
-    }
-    
     NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
     
     if ([sendCode.type isKindOfClass:[TLauth_SentCodeType$auth_sentCodeTypeApp class]]) {
@@ -130,18 +146,12 @@
         if (tos != nil)
             dict[@"termsOfService"] = tos;
     }
-    [ActionStageInstance() actionCompleted:self.path result:[[SGraphObjectNode alloc] initWithObject:dict]];
+    [self completeActionWithResult:[[SGraphObjectNode alloc] initWithObject:dict]];
 }
 
 - (void)sendCodeRequestFailed:(TGSendCodeError)errorCode
 {
-    if (_timer != nil)
-    {
-        [_timer invalidate];
-        _timer = nil;
-    }
-    
-    [ActionStageInstance() actionFailed:self.path reason:errorCode];
+    [self failActionWithReason:errorCode];
 }
 
 - (void)sendCodeRedirect:(NSInteger)datacenterId
@@ -159,19 +169,18 @@
     } queue:[ActionStageInstance() globalStageDispatchQueue]];
     [_timer start];
     
-    [[TGTelegramNetworking instance] moveToDatacenterId:datacenterId];
-    
-    self.cancelToken = [TGTelegraphInstance doSendConfirmationCode:_phone requestBuilder:self];
+    __weak TGSendCodeRequestBuilder *weakSelf = self;
+    [[TGTelegramNetworking instance] moveToDatacenterId:datacenterId completion:^
+    {
+        __strong TGSendCodeRequestBuilder *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf.cancelToken = [TGTelegraphInstance doSendConfirmationCode:strongSelf->_phone requestBuilder:strongSelf];
+    }];
 }
 
 - (void)sendSmsRequestSuccess:(TLauth_SentCode$auth_sentCode *)sendCode
 {
-    if (_timer != nil)
-    {
-        [_timer invalidate];
-        _timer = nil;
-    }
-    
     NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
     
     if (sendCode != nil) {
@@ -196,21 +205,15 @@
                 dict[@"termsOfService"] = tos;
         }
         
-        [ActionStageInstance() actionCompleted:self.path result:[[SGraphObjectNode alloc] initWithObject:dict]];
+        [self completeActionWithResult:[[SGraphObjectNode alloc] initWithObject:dict]];
     }
     else
-        [ActionStageInstance() actionFailed:self.path reason:TGSendCodeErrorUnknown];
+        [self failActionWithReason:TGSendCodeErrorUnknown];
 }
 
 - (void)sendSmsRequestFailed:(TGSendCodeError)errorCode
 {
-    if (_timer != nil)
-    {
-        [_timer invalidate];
-        _timer = nil;
-    }
-    
-    [ActionStageInstance() actionFailed:self.path reason:errorCode];
+    [self failActionWithReason:errorCode];
 }
 
 - (void)sendSmsRedirect:(NSInteger)datacenterId
@@ -228,31 +231,24 @@
     } queue:[ActionStageInstance() globalStageDispatchQueue]];
     [_timer start];
     
-    [[TGTelegramNetworking instance] moveToDatacenterId:datacenterId];
-    
-    self.cancelToken = [TGTelegraphInstance doSendConfirmationSms:_phone phoneHash:_phoneHash requestBuilder:self];
+    __weak TGSendCodeRequestBuilder *weakSelf = self;
+    [[TGTelegramNetworking instance] moveToDatacenterId:datacenterId completion:^
+    {
+        __strong TGSendCodeRequestBuilder *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf.cancelToken = [TGTelegraphInstance doSendConfirmationSms:strongSelf->_phone phoneHash:strongSelf->_phoneHash requestBuilder:strongSelf];
+    }];
 }
 
 - (void)sendCallRequestSuccess
 {
-    if (_timer != nil)
-    {
-        [_timer invalidate];
-        _timer = nil;
-    }
-    
-    [ActionStageInstance() actionCompleted:self.path result:nil];
+    [self completeActionWithResult:nil];
 }
 
 - (void)sendCallRequestFailed
 {
-    if (_timer != nil)
-    {
-        [_timer invalidate];
-        _timer = nil;
-    }
-    
-    [ActionStageInstance() actionFailed:self.path reason:-1];
+    [self failActionWithReason:-1];
 }
 
 - (void)sendCallRedirect:(NSInteger)datacenterId
@@ -287,9 +283,6 @@
         bool networkAvailable = [[TGTelegramNetworking instance] isNetworkAvailable];
         TGLog(@"AUTH sendCode local timeout=%d available=%d connecting=%d", _networkTimeoutCount, networkAvailable ? 1 : 0, [[TGTelegramNetworking instance] isConnecting] ? 1 : 0);
 
-        // On constrained/slow networks MTProto can still be completing auth.sendCode
-        // after the old 15 second UI timeout. Do not cancel a live request immediately:
-        // wake the transport and give it up to one minute before showing NetworkError.
         if (!_sendingCall && _networkTimeoutCount < 4 && self.cancelToken != nil)
         {
             [[TGTelegramNetworking instance] resume];

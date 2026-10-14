@@ -3,7 +3,6 @@
 #import "TL/TLMetaScheme.h"
 #import "TLMetaClassStore.h"
 
-//messages.sendMedia#b8d1262b flags:# silent:flags.5?true background:flags.6?true clear_draft:flags.7?true peer:InputPeer reply_to_msg_id:flags.0?int media:InputMedia message:string random_id:long reply_markup:flags.2?ReplyMarkup entities:flags.3?Vector<MessageEntity> = Updates;
 
 @implementation TLRPCmessages_sendMedia_manual
 

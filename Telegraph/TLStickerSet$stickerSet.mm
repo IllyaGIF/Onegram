@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//stickerSet#5585a139 flags:# archived:flags.1?true official:flags.2?true masks:flags.3?true installed_date:flags.0?int id:long access_hash:long title:string short_name:string count:int hash:int = StickerSet;
 
 @implementation TLStickerSet$stickerSet
 

@@ -1,4 +1,5 @@
 #import "TGDialogListSearchCell.h"
+#import "OGPlatformText.h"
 
 #import "../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -279,7 +280,7 @@
     
     int avatarWidth = 5 + 40;
     
-    CGSize titleSizeGeneric = CGSizeMake(viewSize.width - avatarWidth - 21 - leftPadding - rightPadding, _titleLabelFirst.font.lineHeight);
+    CGSize titleSizeGeneric = CGSizeMake(viewSize.width - avatarWidth - 21 - leftPadding - rightPadding, OGPlatformFontLineHeight(_titleLabelFirst.font));
     
     if (!_verifiedIcon.hidden) {
         titleSizeGeneric.width -= _verifiedIcon.bounds.size.width + 5.0f;

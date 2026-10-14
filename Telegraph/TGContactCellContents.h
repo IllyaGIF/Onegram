@@ -25,6 +25,8 @@
 @property (nonatomic, strong) NSString *titleSecond;
 
 @property (nonatomic) CGPoint titleOffset;
+@property (nonatomic, strong) UIColor *titleColor;
+@property (nonatomic) CGFloat titleRightInset;
 
 @property (nonatomic) int titleBoldMode;
 

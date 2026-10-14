@@ -5,6 +5,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGIconSwitchView.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGConversationSwitchCollectionItemView ()
 {
@@ -47,14 +48,7 @@
     [super setPresentation:presentation];
     
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
-    if ([_switchView isKindOfClass:[UISwitch class]] && [_switchView respondsToSelector:@selector(setOnTintColor:)])
-    {
-        _switchView.onTintColor = presentation.pallete.collectionMenuSwitchColor;
-        if (presentation.pallete.collectionMenuSwitchColor != nil)
-            _switchView.tintColor = presentation.pallete.collectionMenuAccessoryColor;
-        else
-            _switchView.tintColor = nil;
-    }
+    OGPlatformSetSwitchColors(_switchView, presentation.pallete.collectionMenuSwitchColor, presentation.pallete.collectionMenuSwitchColor != nil ? presentation.pallete.collectionMenuAccessoryColor : nil);
 }
 
 - (void)setFullSeparator:(bool)fullSeparator {

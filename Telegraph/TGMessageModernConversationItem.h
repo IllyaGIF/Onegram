@@ -34,6 +34,7 @@ extern int32_t TGMessageModernConversationItemLocalUserId;
     TGMessageGroupPositionFlags _positionFlags;
     
     bool _mediaAvailabilityStatus;
+    bool _automaticMediaDownloadChecked;
 }
 
 - (instancetype)initWithMessage:(TGMessage *)message context:(TGModernViewContext *)context;
@@ -60,6 +61,8 @@ extern int32_t TGMessageModernConversationItemLocalUserId;
 - (CGRect)effectiveContentFrame;
 - (CGRect)fullContentFrame;
 
+- (TGMessageGroupedLayout *)groupedLayout;
+- (bool)hasValidLayoutForContainerWidth:(CGFloat)containerWidth height:(CGFloat)height;
 - (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y;
 - (CGFloat)groupedMediaOffsetX;
 - (CGFloat)groupedMediaOffsetY;

@@ -18,8 +18,10 @@
 #import "TLObject.h"
 
 #import "TL/TLMetaScheme.h"
+#import "TLMetaSchemeData.h"
 
 #include <tr1/unordered_map>
+#include <map>
 
 #define TL_INT32_CONSTRUCTOR ((int32_t)0xA8509BDA)
 #define TL_INT64_CONSTRUCTOR ((int32_t)0x22076CBA)
@@ -35,6 +37,24 @@
 
 #define TG_USE_UNIVERSAL_VECTOR true
 
+extern volatile int32_t TGTLParserCurrentSignature;
+extern volatile int32_t TGTLParserLastSignature;
+extern volatile int32_t TGTLParserVectorItemSignature;
+extern volatile int32_t TGTLParserVectorItemIndex;
+extern volatile int32_t TGTLParserVectorItemCount;
+
+struct TLMetaSchemeEntries;
+
+struct TLManualObjectParser
+{
+    id<TLObject> parser;
+    const char *parserClassName;
+    
+    TLManualObjectParser() : parser(nil), parserClassName(NULL) {}
+    TLManualObjectParser(id<TLObject> parser_) : parser(parser_), parserClassName(NULL) {}
+    explicit TLManualObjectParser(const char *parserClassName_) : parser(nil), parserClassName(parserClassName_) {}
+};
+
 class TLMetaClassStore
 {
 private:
@@ -46,30 +66,28 @@ private:
     static std::tr1::unordered_map<int32_t, id<TLObject> > objectClassesByConstructorNames;
     static std::tr1::unordered_map<int32_t, id<TLVector> > vectorClassesBySignature;
     
-    static std::tr1::unordered_map<int32_t, id<TLObject> > manualObjectParsers;
-    static std::tr1::unordered_map<int32_t, id<TLObject> > manualObjectSerializers;
+    static std::map<int32_t, TLManualObjectParser> manualObjectParsers;
+    static std::map<int32_t, id<TLObject> > manualObjectSerializers;
     
     static void registerObjectClassForName(int32_t name, id<TLObject> objectClass);
+    static void mergeSchemeEntries(TLMetaSchemeEntries &entries, bool materialize);
+    static void materializeLazyScheme();
     
 public:
+    static void beginObjectClassRegistration();
+    static void completeObjectClassRegistration();
     static void registerObjectClass(id<TLObject> objectClass);
     static void registerVectorClass(id<TLVector> vectorClass);
     static id<TLObject> getObjectClass(int32_t name);
+    static id<TLVector> getVectorClass(int32_t signature);
     
     static void clearScheme();
     static void mergeScheme(TLScheme *scheme);
+    static void mergeSchemeTable(TLMetaSchemeTable const *table);
     
-    static inline std::tr1::shared_ptr<TLMetaConstructor> getConstructorBySignature(int32_t signature)
-    {
-        std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >::iterator it = constructorsBySignature.find(signature);
-        return it != constructorsBySignature.end() ? it->second : std::tr1::shared_ptr<TLMetaConstructor>();
-    }
+    static std::tr1::shared_ptr<TLMetaConstructor> getConstructorBySignature(int32_t signature);
     
-    static inline std::tr1::shared_ptr<TLMetaConstructor> getConstructorByName(int32_t name)
-    {
-        std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >::iterator it = constructorsByName.find(name);
-        return it != constructorsByName.end() ? it->second : std::tr1::shared_ptr<TLMetaConstructor>();
-    }
+    static std::tr1::shared_ptr<TLMetaConstructor> getConstructorByName(int32_t name);
     
     static id constructObject(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, TLSerializationContext *context, __autoreleasing NSError **error);
     static void serializeObject(NSOutputStream *os, id<TLObject> object, bool boxed);

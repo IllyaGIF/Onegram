@@ -21,6 +21,7 @@
 @property (nonatomic, strong) NSString *localThumbnailDataPath;
 @property (nonatomic) CGSize thumbnailSize;
 @property (nonatomic, strong) NSString *assetUrl;
+@property (nonatomic, strong) NSString *videoMimeType;
 
 @property (nonatomic, strong) TGLiveUploadActorData *liveData;
 

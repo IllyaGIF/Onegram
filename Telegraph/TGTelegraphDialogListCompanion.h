@@ -27,10 +27,8 @@ typedef enum {
 
 @property (nonatomic, strong) ASHandle *conversatioSelectedWatcher;
 
-// iOS 6 compatibility layer: dialog filters are evaluated client-side.
-// Make sure the local dialog list is complete instead of depending on how far
-// the user has scrolled in the main chat list.
 - (void)ios6PreloadAllDialogsForFolders;
 - (bool)ios6FolderPreloadActive;
+- (void)ios6MergeCompleteLocalDialogList:(NSArray *)items;
 
 @end

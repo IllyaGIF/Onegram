@@ -15,8 +15,10 @@
 
 #import "TGLoginProfileController.h"
 
-#import <CoreTelephony/CTCarrier.h>
-#import <CoreTelephony/CTTelephonyNetworkInfo.h>
+#import "../OnegramPlatform/OGPlatformTelephony.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGProgressWindow.h"
 
@@ -35,6 +37,34 @@
 #import <MessageUI/MessageUI.h>
 
 #import "TGAccountSignals.h"
+
+static UIImage *TGLoginPhoneImageNamed(NSString *name)
+{
+    UIImage *image = TGImageNamed(name);
+    if (image != nil || iosMajorVersion() > 3)
+        return image;
+
+    NSRange extensionRange = [name rangeOfString:@".png" options:NSBackwardsSearch];
+    if (extensionRange.location == NSNotFound)
+        return nil;
+
+    NSString *retinaName = [[name substringToIndex:extensionRange.location] stringByAppendingString:@"@2x.png"];
+    UIImage *retinaImage = [UIImage imageNamed:retinaName];
+    if (retinaImage == nil)
+    {
+        NSString *path = [[NSBundle mainBundle] pathForResource:[retinaName stringByDeletingPathExtension] ofType:[retinaName pathExtension]];
+        retinaImage = [UIImage imageWithContentsOfFile:path];
+    }
+    if (retinaImage == nil)
+        return nil;
+
+    CGSize size = CGSizeMake(CGFloor(retinaImage.size.width / 2.0f), CGFloor(retinaImage.size.height / 2.0f));
+    UIGraphicsBeginImageContext(size);
+    [retinaImage drawInRect:CGRectMake(0.0f, 0.0f, size.width, size.height)];
+    UIImage *scaledImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return scaledImage;
+}
 
 @interface TGLoginPhoneController () <UITextFieldDelegate, MFMailComposeViewControllerDelegate>
 {
@@ -157,8 +187,8 @@
     _noticeLabel.frame = CGRectMake(CGFloor((screenSize.width - noticeSize.width) / 2.0f), [TGViewController isWidescreen] ? 274.0f : 214.0f, noticeSize.width, noticeSize.height);
     [self.view addSubview:_noticeLabel];
     
-    UIImage *rawCountryImage = TGImageNamed(@"ModernAuthCountryButton.png");
-    UIImage *rawCountryImageHighlighted = TGImageNamed(@"ModernAuthCountryButtonHighlighted.png");
+    UIImage *rawCountryImage = TGLoginPhoneImageNamed(@"ModernAuthCountryButton.png");
+    UIImage *rawCountryImageHighlighted = TGLoginPhoneImageNamed(@"ModernAuthCountryButtonHighlighted.png");
     
     _countryButton = [[UIButton alloc] initWithFrame:CGRectMake(0, 0, screenSize.width, rawCountryImage.size.height)];
     _countryButton.exclusiveTouch = true;
@@ -173,7 +203,7 @@
     _countryButton.frame = CGRectMake(0.0f, [TGViewController isWidescreen] ? 131.0f : 90.0f, screenSize.width, rawCountryImage.size.height);
     [self.view addSubview:_countryButton];
     
-    UIImage *rawInputImage = TGImageNamed(@"ModernAuthPhoneBackground.png");
+    UIImage *rawInputImage = TGLoginPhoneImageNamed(@"ModernAuthPhoneBackground.png");
     _inputBackgroundView = [[UIImageView alloc] initWithImage:[rawInputImage stretchableImageWithLeftCapWidth:(int)(rawInputImage.size.width / 2) topCapHeight:(int)(rawInputImage.size.height / 2)]];
     _inputBackgroundView.frame = CGRectMake(0.0f, _countryButton.frame.origin.y + 57.0f, screenSize.width, rawInputImage.size.height + TGScreenPixel);
     [self.view addSubview:_inputBackgroundView];
@@ -205,19 +235,11 @@
     _phoneField.frame = CGRectMake(96.0f, _inputBackgroundView.frame.origin.y + 1.0f + TGScreenPixel, screenSize.width - 96.0f - 10.0f, 56.0f);
     [self.view addSubview:_phoneField];
     
-    //if (![self _updateControllerInset:false])
         [self updateInterface:self.interfaceOrientation];
     
     NSString *countryId = nil;
     
-    CTTelephonyNetworkInfo *networkInfo = [[CTTelephonyNetworkInfo alloc] init];
-    CTCarrier *carrier = [networkInfo subscriberCellularProvider];
-    if (carrier != nil)
-    {
-        NSString *mcc = [carrier isoCountryCode];
-        if (mcc != nil)
-            countryId = mcc;
-    }
+    countryId = OGPlatformCarrierISOCountryCode();
     if (countryId == nil)
     {
         NSLocale *locale = [NSLocale currentLocale];
@@ -240,7 +262,7 @@
     
     [self updateCountry];
     
-#if !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
+#if !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     if (_presetPhoneNumber.length == 0 || _presetPhoneCountry.length == 0)
     {
         if (iosMajorVersion() >= 7)
@@ -271,8 +293,8 @@
 
 - (void)keyValueStoreChanged:(NSNotification *)__unused notification
 {
-#if !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES)
-    if (iosMajorVersion() >= 7)// && !_editedText)
+#if !defined(ONEGRAM_DISABLE_ICLOUD_ACCOUNT_SERVICES) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+    if (iosMajorVersion() >= 7)
     {
         NSUbiquitousKeyValueStore *store = [NSUbiquitousKeyValueStore defaultStore];
         NSString *phoneNumber = [TGPhoneUtils cleanPhone:[store objectForKey:@"telegram_currentPhoneNumber"]];
@@ -352,6 +374,16 @@
     _didDisappear = true;
 }
 
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+
+    if (!_phoneField.isFirstResponder && !_countryCodeField.isFirstResponder)
+        [_phoneField becomeFirstResponder];
+
+    [self updateInterface:self.interfaceOrientation];
+}
+
 - (void)viewDidLayoutSubviews
 {
     if (!_phoneField.isFirstResponder && !_countryCodeField.isFirstResponder)
@@ -363,6 +395,7 @@
 - (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
 {
     [super controllerInsetUpdated:previousInset];
+    [self updateInterface:self.interfaceOrientation];
 }
 
 - (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
@@ -406,16 +439,11 @@
     CGSize titleSize = _titleLabel.bounds.size;
     CGSize noticeSize = [_noticeLabel sizeThatFits:CGSizeMake(278.0f, CGFLOAT_MAX)];
     
-    CGFloat keyboardHeight = 216.0f;
-    CGFloat longSize = MAX(screenSize.width, screenSize.height);
-    if (TGIsPad()) {
-        if (fabs(longSize - 1024.0f) < FLT_EPSILON)
-            keyboardHeight = (screenSize.width > screenSize.height) ? 370.0f : 300.0f;
-        else
-            keyboardHeight = (screenSize.width > screenSize.height) ? 435.0f : 350.0f;
-    }
-    else if (fabs(longSize - 812.0f) < FLT_EPSILON)
-        keyboardHeight = 291.0f;
+    CGFloat keyboardHeight = self.controllerCleanInset.bottom;
+    if (keyboardHeight < FLT_EPSILON && [TGHacks isKeyboardVisible])
+        keyboardHeight = [TGHacks keyboardHeightForOrientation:orientation];
+    if (keyboardHeight < FLT_EPSILON && iosMajorVersion() <= 3 && (_phoneField.isFirstResponder || _countryCodeField.isFirstResponder))
+        keyboardHeight = UIInterfaceOrientationIsPortrait(orientation) ? 216.0f : 162.0f;
     
     CGFloat topOrigin = 20.0f + 44.0f + 10.0f + titleAdditionalOffset;
     CGFloat bottomOffset = screenSize.height - keyboardHeight - 10.0f;
@@ -431,6 +459,19 @@
     _noticeLabel.frame = CGRectMake(CGFloor((screenSize.width - noticeSize.width) / 2.0f), CGRectGetMaxY(_titleLabel.frame) + 10.0f, noticeSize.width, noticeSize.height);
     
     countryButtonOffset = topOrigin + MAX(titlePlusNoticeHeight, CGFloor((contentHeight - 112.0f) / 2.0f)) + fieldsAdditionalOffset;
+
+    if (!TGIsPad() && keyboardHeight > FLT_EPSILON)
+    {
+        CGFloat maximumCountryButtonOffset = bottomOffset - 115.0f;
+        countryButtonOffset = MIN(countryButtonOffset, maximumCountryButtonOffset);
+
+        CGFloat overlap = CGRectGetMaxY(_noticeLabel.frame) + 10.0f - countryButtonOffset;
+        if (overlap > 0.0f)
+        {
+            _titleLabel.frame = CGRectOffset(_titleLabel.frame, 0.0f, -overlap);
+            _noticeLabel.frame = CGRectOffset(_noticeLabel.frame, 0.0f, -overlap);
+        }
+    }
 
     if (!_termsOfServiceLabel.hidden) {
         CGSize termsOfServiceSize = [_termsOfServiceLabel sizeThatFits:CGSizeMake(278.0f, CGFLOAT_MAX)];
@@ -671,14 +712,10 @@
                 if (caretPosition >= (int)textField.text.length)
                     caretPosition = (int)textField.text.length;
                 
-                UITextPosition *startPosition = [textField positionFromPosition:textField.beginningOfDocument offset:newCaretPosition];
-                UITextPosition *endPosition = [textField positionFromPosition:textField.beginningOfDocument offset:newCaretPosition];
-                UITextRange *selection = [textField textRangeFromPosition:startPosition toPosition:endPosition];
-                textField.selectedTextRange = selection;
+                OGPlatformSetTextFieldSelectionRange(textField, NSMakeRange((NSUInteger)newCaretPosition, 0));
             }
             @catch (NSException *e)
             {
-                TGLog(@"%@", e);
             }
             
             return false;
@@ -790,14 +827,13 @@
         NSString *countryId = [TGLoginCountriesController countryIdByCode:countryCode];
         NSString *localizedCountryName = [TGLoginCountriesController localizedCountryNameByCountryId:countryId];
         _countryId = countryId;
-        if (countryId != nil) {
-            NSString *flag = [self emojiFlagForISOCountryCode:[countryId uppercaseString]];
-            if (flag.length != 0) {
-                localizedCountryName = [flag stringByAppendingFormat:@" %@", localizedCountryName];
-            }
-        }
-        
-        if ([[[UIDevice currentDevice] systemVersion] intValue] <= 5)
+        NSString *flag = nil;
+        if (countryId != nil && OGPlatformSupportsRegionalIndicatorEmoji())
+            flag = [self emojiFlagForISOCountryCode:[countryId uppercaseString]];
+        if (flag.length != 0)
+            localizedCountryName = [flag stringByAppendingFormat:@" %@", localizedCountryName];
+
+        if (flag.length != 0 && OGPlatformMajorVersion() <= 5)
         {
             UIFont *emojiFont = TGEmojiFontOfSize(_countryButton.titleLabel.font.pointSize);
             if (emojiFont != nil)
@@ -861,7 +897,7 @@
             {
                 [UIView setAnimationRepeatCount:3];
                 v.frame = r;
-            } completion:^(__unused BOOL finished)
+            } completion:^(__unused BOOL secondFinished)
             {
                 v.frame = originalFrame;
             }];
@@ -880,7 +916,6 @@
     
     if (_phoneField.text.length == 0 || _countryCodeField.text.length < 2)
     {
-        //CGSize screenSize = [self referenceViewSizeForOrientation:self.interfaceOrientation];
         CGFloat sideInset = 0.0f;
         
         if (TGIsPad())
@@ -889,7 +924,6 @@
         }
         
         [self shakeView:_phoneField originalX:96.0f + sideInset];
-        //[self shakeView:_inputBackgroundView originalX:_baseInputBackgroundViewFrame.origin.x];
         [self shakeView:_countryCodeField originalX:14.0f + sideInset];
         
         if (_countryCodeField.text.length < 2)
@@ -941,11 +975,17 @@
 
 - (void)countryButtonPressed:(id)__unused sender
 {
+    [_phoneField resignFirstResponder];
+    [_countryCodeField resignFirstResponder];
+
     TGLoginCountriesController *countriesController = [[TGLoginCountriesController alloc] init];
     countriesController.watcherHandle = _actionHandle;
     
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithRootController:countriesController];
-    [self presentViewController:navigationController animated:true completion:nil];
+    if (iosMajorVersion() <= 4)
+        [self presentModalViewController:navigationController animated:true];
+    else
+        [self presentViewController:navigationController animated:true completion:nil];
 }
 
 #pragma mark -
@@ -954,7 +994,7 @@
 {
     if ([path isEqualToString:[NSString stringWithFormat:@"/tg/service/auth/sendCode/(%d)", _currentActionIndex]])
     {
-        dispatch_async(dispatch_get_main_queue(), ^
+        OGPlatformDispatchOnMainThread(^
         {
             self.inProgress = false;
             
@@ -1036,9 +1076,8 @@
                                         [composeController setToRecipients:@[@"login@stel.com"]];
                                         [composeController setSubject:[[NSString alloc] initWithFormat:TGLocalized(@"Login.EmailPhoneSubject"), phoneFormatted]];
                                         
-                                        CTCarrier *carrier = [[CTTelephonyNetworkInfo new] subscriberCellularProvider];
-                                        NSString *contryCode = carrier.mobileCountryCode;
-                                        NSString *networkCode = carrier.mobileNetworkCode;
+                                        NSString *contryCode = OGPlatformCarrierMobileCountryCode();
+                                        NSString *networkCode = OGPlatformCarrierMobileNetworkCode();
                                         
                                         [composeController setMessageBody:[[NSString alloc] initWithFormat:TGLocalized(@"Login.EmailPhoneBody"), phoneFormatted, contryCode ?: @"<>", networkCode ?: @"<>"] isHTML:false];
                                         [self presentViewController:composeController animated:true completion:nil];
@@ -1069,7 +1108,10 @@
 {
     if ([action isEqualToString:@"countryCodeSelected"])
     {
-        [self dismissViewControllerAnimated:true completion:nil];
+        if (iosMajorVersion() <= 4)
+            [self dismissModalViewControllerAnimated:true];
+        else
+            [self dismissViewControllerAnimated:true completion:nil];
         
         if ([options objectForKey:@"code"] != nil)
         {

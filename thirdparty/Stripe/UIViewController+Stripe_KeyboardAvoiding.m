@@ -1,3 +1,4 @@
+#import "../../OnegramPlatform/OGPlatformUIKit.h"
 //
 //  UIViewController+Stripe_KeyboardAvoiding.m
 //  Stripe
@@ -62,7 +63,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)keyboardWillChangeFrame:(NSNotification *)notification {
     // As of iOS 8, this all takes place inside the necessary animation block
     // https://twitter.com/SmileyKeith/status/684100833823174656
-    CGRect keyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    CGRect keyboardFrame = OGPlatformKeyboardEndFrame(notification);
     keyboardFrame = [self.view.window convertRect:keyboardFrame fromWindow:nil];
     
     if (self.keyboardFrameBlock || self.managedScrollView) {
@@ -133,9 +134,11 @@ NS_ASSUME_NONNULL_BEGIN
 @implementation UIViewController (Stripe_KeyboardAvoiding)
 
 - (STPKeyboardDetectingViewController *)stp_keyboardDetectingViewController {
-    return [[self.childViewControllers filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(UIViewController *viewController, __unused NSDictionary *bindings) {
-        return [viewController isKindOfClass:[STPKeyboardDetectingViewController class]];
-    }]] firstObject];
+    for (UIViewController *viewController in self.childViewControllers) {
+        if ([viewController isKindOfClass:[STPKeyboardDetectingViewController class]])
+            return (STPKeyboardDetectingViewController *)viewController;
+    }
+    return nil;
 }
 
 - (void)stp_beginObservingKeyboardAndInsettingScrollView:(UIScrollView *)scrollView 

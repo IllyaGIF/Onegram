@@ -3,6 +3,8 @@
 #import "LegacyComponentsInternal.h"
 
 #import "TGProgressSpinnerView.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 #import <QuartzCore/QuartzCore.h>
 
 static bool TGProgressWindowIsLight = true;
@@ -80,6 +82,7 @@ static bool TGProgressWindowIsLight = true;
 
 - (void)show:(bool)animated
 {
+    animated = animated && OGPlatformTransientAnimationsEnabled();
     UIWindow *window = _weakWindow;
     
     window.userInteractionEnabled = true;
@@ -114,6 +117,7 @@ static bool TGProgressWindowIsLight = true;
 
 - (void)dismiss:(bool)animated completion:(void (^)(void))completion
 {
+    animated = animated && OGPlatformTransientAnimationsEnabled();
     TGProgressWindow *window = (TGProgressWindow *)_weakWindow;
     
     window.userInteractionEnabled = false;
@@ -174,6 +178,12 @@ static bool TGProgressWindowIsLight = true;
     TGProgressWindow *window = (TGProgressWindow *)_weakWindow;
     
     window.userInteractionEnabled = false;
+
+    if (!OGPlatformTransientAnimationsEnabled())
+    {
+        [self dismiss:false completion:completion];
+        return;
+    }
     
     void (^dismissBlock)(void) = ^
     {
@@ -224,7 +234,7 @@ static bool TGProgressWindowIsLight = true;
             dismissBlock();
         }];
         
-        TGDispatchAfter(0.15, dispatch_get_main_queue(), ^{
+        OGPlatformDispatchOnMainThreadAfter(0.15, ^{
             [_spinner setSucceed];
         });
     }
@@ -280,7 +290,7 @@ static bool TGProgressWindowIsLight = true;
 
 - (void)showWithDelay:(NSTimeInterval)delay {
     __weak TGProgressWindow *weakSelf = self;
-    TGDispatchAfter(delay, dispatch_get_main_queue(), ^{
+    OGPlatformDispatchOnMainThreadAfter(delay, ^{
         __strong TGProgressWindow *strongSelf = weakSelf;
         if (strongSelf != nil && !strongSelf->_dismissed) {
             [strongSelf show:true];

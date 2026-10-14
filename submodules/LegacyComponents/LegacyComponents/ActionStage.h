@@ -10,7 +10,7 @@ typedef enum {
     ASStatusFailed = -1
 } ASStatus;
 
-#ifdef DEBUG
+#if defined(DEBUG) || defined(ONEGRAM_ARMV6)
 #define dispatchOnStageQueue dispatchOnStageQueueDebug:__FILE__ line:__LINE__ block
 #endif
 
@@ -33,9 +33,8 @@ typedef enum {
 @interface ActionStage : NSObject
 
 - (dispatch_queue_t)globalStageDispatchQueue;
-#ifdef DEBUG
 - (void)dispatchOnStageQueueDebug:(const char *)function line:(int)line block:(dispatch_block_t)block;
-#else
+#if !defined(DEBUG) && !defined(ONEGRAM_ARMV6)
 - (void)dispatchOnStageQueue:(dispatch_block_t)block;
 #endif
 

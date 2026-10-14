@@ -39,20 +39,3 @@
 
 @end
 
-@implementation TGRTLScreenEdgePanGestureRecognizerDelegate
-
-- (BOOL)gestureRecognizer:(id)arg1 shouldReceiveTouch:(id)arg2 {
-    static BOOL (*nativeImpl)(id, SEL, id, id) = NULL;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        nativeImpl = (BOOL (*)(id, SEL, id, id))freedomNativeImpl([[self class] superclass], _cmd);
-    });
-    
-    if (nativeImpl != NULL) {
-        return nativeImpl(self, _cmd, arg1, arg2);
-    }
-    
-    return true;
-}
-
-@end

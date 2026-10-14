@@ -1,5 +1,4 @@
 #import "TGLiveLocationSignals.h"
-#import "IOS6Trace.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 #import "TGDatabase.h"
@@ -71,7 +70,11 @@
 
 + (SSignal *)stopLiveLocationWithPeerId:(int64_t)peerId messageId:(int32_t)messageId
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     return [self updateLiveLocationWithPeerId:peerId messageId:messageId stop:true coordinate:kCLLocationCoordinate2DInvalid];
+#else
+    return [self updateLiveLocationWithPeerId:peerId messageId:messageId stop:true coordinate:(CLLocationCoordinate2D){DBL_MAX, DBL_MAX}];
+#endif
 }
 
 + (SSignal *)recentLocationsForPeerId:(int64_t)peerId limit:(int32_t)limit
@@ -80,11 +83,9 @@
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
         NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6InvalidPeer")];
         if (invalidPeerMarker.length != 0 && conversation.isChannel) {
-            IOS6Trace(@"FULL liveLocations.skipInvalidPeer peer=%lld", peerId);
             return [NSNull null];
         }
         else if (invalidPeerMarker.length != 0) {
-            IOS6Trace(@"FULL liveLocations.ignoreInvalidPeerForBasicChat peer=%lld", peerId);
         }
         return [TGTelegraphInstance createInputPeerForConversation:conversation.conversationId accessHash:conversation.accessHash];
     }] mapToSignal:^SSignal *(TLInputPeer *inputPeer) {
@@ -109,7 +110,6 @@
         }] catch:^SSignal *(id error) {
             NSString *errorDescription = [[error description] uppercaseString];
             if ([errorDescription rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHAT_ID_INVALID"].location != NSNotFound) {
-                IOS6Trace(@"FULL liveLocations.invalidNoGlobalCache peer=%lld error=%@", peerId, error);
                 return [SSignal single:@[]];
             }
             return [SSignal fail:error];
@@ -132,8 +132,6 @@
                 [locationMessages setObject:message forKey:fromUidKey];
         }
     }
-    if (locationMessages.count == 0)
-        NSLog(@"");
     return locationMessages.allValues;
 }
 

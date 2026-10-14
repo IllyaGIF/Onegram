@@ -32,6 +32,7 @@
         _titleFonts = [[NSMutableDictionary alloc] init];
         _selectedSegmentIndex = UISegmentedControlNoSegment;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         if (iosMajorVersion() >= 5)
         {
             _nativeControl = [[UISegmentedControl alloc] initWithItems:_titles];
@@ -41,6 +42,7 @@
             [self addSubview:_nativeControl];
         }
         else
+#endif
         {
             _buttons = [[NSMutableArray alloc] init];
             _dividerViews = [[NSMutableArray alloc] init];
@@ -112,16 +114,20 @@
         [attributes setObject:shadowColor forKey:UITextAttributeTextShadowColor];
     if (font != nil)
         [attributes setObject:font forKey:UITextAttributeFont];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     [_nativeControl setTitleTextAttributes:attributes forState:state];
+#endif
 }
 
 - (void)setBackgroundImage:(UIImage *)backgroundImage forState:(UIControlState)state barMetrics:(UIBarMetrics)barMetrics
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     if (_nativeControl != nil)
     {
         [_nativeControl setBackgroundImage:backgroundImage forState:state barMetrics:barMetrics];
         return;
     }
+#endif
 
     UIImage *image = [self stretchableImage:backgroundImage];
     if (state == UIControlStateNormal)
@@ -136,11 +142,13 @@
 
 - (void)setDividerImage:(UIImage *)dividerImage forLeftSegmentState:(UIControlState)leftState rightSegmentState:(UIControlState)rightState barMetrics:(UIBarMetrics)barMetrics
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     if (_nativeControl != nil)
     {
         [_nativeControl setDividerImage:dividerImage forLeftSegmentState:leftState rightSegmentState:rightState barMetrics:barMetrics];
         return;
     }
+#endif
 
     _dividerImage = dividerImage;
     for (UIImageView *dividerView in _dividerViews)

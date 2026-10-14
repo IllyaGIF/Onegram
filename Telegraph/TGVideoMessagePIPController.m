@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "TGVideoMessagePIPController.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -68,7 +69,7 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
         _messageDisposable = [[SMetaDisposable alloc] init];
         [self subscribe];
         
-        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithKeyboardFrameTarget:self targetSelector:@selector(keyboardWillChangeFrame:)];
     }
     return self;
 }
@@ -537,14 +538,13 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
     
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [self.view convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, self.view);
     
-    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f :  (self.view.frame.size.height - keyboardFrame.origin.y);
+    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f :  (self.view.bounds.size.height - keyboardFrame.origin.y);
     
     keyboardHeight = MAX(keyboardHeight, 0.0f);
     
-    if (keyboardFrame.origin.y + keyboardFrame.size.height < self.view.frame.size.height - FLT_EPSILON)
+    if (keyboardFrame.origin.y + keyboardFrame.size.height < self.view.bounds.size.height - FLT_EPSILON)
         keyboardHeight = 0.0f;
     
     _keyboardHeight = keyboardHeight;
@@ -553,7 +553,7 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
     {
         [UIView animateWithDuration:duration delay:0.0 options:curve animations:^
         {
-            [self layoutViewForSize:self.view.frame.size atCorner:_currentCorner];
+            [self layoutViewForSize:self.view.bounds.size atCorner:_currentCorner];
         } completion:nil];
     }
 }
@@ -571,6 +571,9 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
 
 + (TGModernGalleryVideoView *)videoViewForStatus:(TGMusicPlayerStatus *)status pip:(bool)pip
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    return nil;
+#else
     TGMusicPlayerItem *item = status.item;
     AVPlayer *player = nil;
     if ([status.player isKindOfClass:[TGNativeAudioPlayer class]])
@@ -598,12 +601,13 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
     [[self videoViews] setObject:videoView forKey:key];
     
     return videoView;
+#endif
 }
 
-+ (NSMapTable *)videoViews
++ (id)videoViews
 {
     static dispatch_once_t onceToken;
-    static NSMapTable *views;
+    static id views;
     dispatch_once(&onceToken, ^
     {
         views = TGWeakValueMapTable();
@@ -629,7 +633,7 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
 
 + (bool)viewAcquiredForPIP:(TGModernGalleryVideoView *)videoView
 {
-    for (TGModernGalleryVideoView *view in [self pipVideoViews])
+    for (TGModernGalleryVideoView *view in [[self pipVideoViews] allObjects])
     {
         if (view == videoView)
             return true;
@@ -637,10 +641,10 @@ static TGVideoMessagePIPCorner defaultCorner = TGVideoMessagePIPCornerTopRight;
     return false;
 }
 
-+ (NSHashTable *)pipVideoViews
++ (id)pipVideoViews
 {
     static dispatch_once_t onceToken;
-    static NSHashTable *views;
+    static id views;
     dispatch_once(&onceToken, ^
     {
         views = TGWeakObjectHashTable();

@@ -80,7 +80,6 @@
 
 - (void)setMarkerValue:(CGFloat)value
 {
-    //_sliderView.startValue = value;
 }
 
 - (void)sliderValueChanged:(TGPhotoEditorSliderView *)sender

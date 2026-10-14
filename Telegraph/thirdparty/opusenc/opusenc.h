@@ -52,6 +52,7 @@ typedef struct
 @interface TGOggOpusWriter : NSObject
 
 - (bool)beginWithDataItem:(TGDataItem *)dataItem;
+- (bool)beginWithDataItem:(TGDataItem *)dataItem sampleRate:(int32_t)sampleRate bitrate:(int32_t)bitrate;
 - (bool)writeFrame:(uint8_t *)framePcmBytes frameByteCount:(NSUInteger)frameByteCount;
 - (NSUInteger)encodedBytes;
 - (NSTimeInterval)encodedDuration;

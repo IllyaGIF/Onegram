@@ -7,7 +7,6 @@
 //
 
 #import <Foundation/Foundation.h>
-#import <PassKit/PassKit.h>
 
 #define FAUXPAS_IGNORED_IN_CLASS(...)
 

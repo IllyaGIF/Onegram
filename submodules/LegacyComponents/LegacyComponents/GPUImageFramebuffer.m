@@ -132,6 +132,7 @@ void dataProviderUnlockCallback (void *info, const void *data, size_t size);
         glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
         
         // By default, all framebuffers on iOS 5.0+ devices are backed by texture caches, using one shared cache
+#if !defined(ONEGRAM_ARMV6)
         if ([GPUImageContext supportsFastTextureUpload])
         {
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
@@ -178,6 +179,7 @@ void dataProviderUnlockCallback (void *info, const void *data, size_t size);
 #endif
         }
         else
+#endif
         {
             [self generateTexture];
 
@@ -318,6 +320,7 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
         GLubyte *rawImagePixels;
         
         CGDataProviderRef dataProvider = NULL;
+#if !defined(ONEGRAM_ARMV6)
         if ([GPUImageContext supportsFastTextureUpload])
         {
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
@@ -334,6 +337,7 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
 #endif
         }
         else
+#endif
         {
             [self activateFramebuffer];
             rawImagePixels = (GLubyte *)malloc(totalBytesForImage);
@@ -344,6 +348,7 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
         
         CGColorSpaceRef defaultRGBColorSpace = CGColorSpaceCreateDeviceRGB();
         
+#if !defined(ONEGRAM_ARMV6)
         if ([GPUImageContext supportsFastTextureUpload])
         {
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
@@ -352,6 +357,7 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
 #endif
         }
         else
+#endif
         {
             cgImageFromBytes = CGImageCreate((int)_size.width, (int)_size.height, 8, 32, 4 * (int)_size.width, defaultRGBColorSpace, kCGBitmapByteOrderDefault | kCGImageAlphaPremultipliedLast, dataProvider, NULL, NO, kCGRenderingIntentDefault);
         }
@@ -367,10 +373,9 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
 
 - (void)restoreRenderTarget
 {
-#if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
+#if (TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE) && !defined(ONEGRAM_ARMV6)
     [self unlockAfterReading];
     CFRelease(renderTarget);
-#else
 #endif
 }
 
@@ -379,7 +384,7 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
 
 - (void)lockForReading
 {
-#if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
+#if (TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE) && !defined(ONEGRAM_ARMV6)
     if ([GPUImageContext supportsFastTextureUpload])
     {
         if (readLockCount == 0)
@@ -393,7 +398,7 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
 
 - (void)unlockAfterReading
 {
-#if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
+#if (TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE) && !defined(ONEGRAM_ARMV6)
     if ([GPUImageContext supportsFastTextureUpload])
     {
         NSAssert(readLockCount > 0, @"Unbalanced call to -[GPUImageFramebuffer unlockAfterReading]");
@@ -408,29 +413,28 @@ void dataProviderUnlockCallback (void *info, __unused const void *data, __unused
 
 - (NSUInteger)bytesPerRow
 {
+#if !defined(ONEGRAM_ARMV6)
     if ([GPUImageContext supportsFastTextureUpload])
     {
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
         return CVPixelBufferGetBytesPerRow(renderTarget);
 #else
-        return _size.width * 4; // TODO: do more with this on the non-texture-cache side
+        return _size.width * 4;
 #endif
     }
-    else
-    {
-        return (NSUInteger)_size.width * 4;
-    }
+#endif
+    return (NSUInteger)_size.width * 4;
 }
 
 - (GLubyte *)byteBuffer
 {
-#if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
+#if (TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE) && !defined(ONEGRAM_ARMV6)
     [self lockForReading];
-    GLubyte * bufferBytes = CVPixelBufferGetBaseAddress(renderTarget);
+    GLubyte *bufferBytes = CVPixelBufferGetBaseAddress(renderTarget);
     [self unlockAfterReading];
     return bufferBytes;
 #else
-    return NULL; // TODO: do more with this on the non-texture-cache side
+    return NULL;
 #endif
 }
 

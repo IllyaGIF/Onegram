@@ -1,8 +1,14 @@
 #import "TGStickerPack.h"
 
 #import "LegacyComponents.h"
+#import <libkern/OSAtomic.h>
 
 @implementation TGStickerPack
+{
+    NSData *_documentsData;
+}
+
+@synthesize documents = _documents;
 
 - (instancetype)initWithPackReference:(id<TGStickerPackReference>)packReference title:(NSString *)title stickerAssociations:(NSArray *)stickerAssociations documents:(NSArray *)documents packHash:(int32_t)packHash hidden:(bool)hidden isMask:(bool)isMask isFeatured:(bool)isFeatured installedDate:(int32_t)installedDate
 {
@@ -23,7 +29,53 @@
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder
 {
-    return [self initWithPackReference:[aDecoder decodeObjectForKey:@"packReference"] title:[aDecoder decodeObjectForKey:@"title"] stickerAssociations:[aDecoder decodeObjectForKey:@"stickerAssociations"] documents:[aDecoder decodeObjectForKey:@"documents"] packHash:[aDecoder decodeInt32ForKey:@"packHash"] hidden:[aDecoder decodeInt32ForKey:@"hidden"] isMask:[aDecoder decodeInt32ForKey:@"isMask"] isFeatured:[aDecoder decodeInt32ForKey:@"isFeatured"] installedDate:[aDecoder decodeInt32ForKey:@"installedDate"]];
+    NSData *documentsData = [aDecoder containsValueForKey:@"documentsData"] ? [aDecoder decodeObjectForKey:@"documentsData"] : nil;
+    if (![documentsData isKindOfClass:[NSData class]])
+        documentsData = nil;
+    NSArray *documents = documentsData != nil ? nil : [aDecoder decodeObjectForKey:@"documents"];
+    self = [self initWithPackReference:[aDecoder decodeObjectForKey:@"packReference"] title:[aDecoder decodeObjectForKey:@"title"] stickerAssociations:[aDecoder decodeObjectForKey:@"stickerAssociations"] documents:documents packHash:[aDecoder decodeInt32ForKey:@"packHash"] hidden:[aDecoder decodeInt32ForKey:@"hidden"] isMask:[aDecoder decodeInt32ForKey:@"isMask"] isFeatured:[aDecoder decodeInt32ForKey:@"isFeatured"] installedDate:[aDecoder decodeInt32ForKey:@"installedDate"]];
+    if (self != nil)
+        _documentsData = documentsData;
+    return self;
+}
+
+- (NSArray *)documents
+{
+    if (_documentsData == nil)
+    {
+        OSMemoryBarrier();
+        return _documents;
+    }
+    @synchronized (self)
+    {
+        if (_documentsData != nil)
+        {
+            NSArray *decoded = nil;
+            @try
+            {
+                decoded = [NSKeyedUnarchiver unarchiveObjectWithData:_documentsData];
+            }
+            @catch (__unused NSException *exception)
+            {
+            }
+            _documents = [decoded isKindOfClass:[NSArray class]] ? decoded : @[];
+            OSMemoryBarrier();
+            _documentsData = nil;
+        }
+        return _documents;
+    }
+}
+
+- (NSData *)encodedDocumentsData
+{
+    NSData *documentsData = nil;
+    @synchronized (self)
+    {
+        documentsData = _documentsData;
+    }
+    if (documentsData != nil)
+        return documentsData;
+    return [NSKeyedArchiver archivedDataWithRootObject:self.documents ?: @[]];
 }
 
 - (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder
@@ -36,7 +88,7 @@
     [aCoder encodeObject:_packReference forKey:@"packReference"];
     [aCoder encodeObject:_title forKey:@"title"];
     [aCoder encodeObject:_stickerAssociations forKey:@"stickerAssociations"];
-    [aCoder encodeObject:_documents forKey:@"documents"];
+    [aCoder encodeObject:[self encodedDocumentsData] forKey:@"documentsData"];
     [aCoder encodeInt32:_packHash forKey:@"packHash"];
     [aCoder encodeInt32:_hidden ? 1 : 0 forKey:@"hidden"];
     [aCoder encodeInt32:_isMask ? 1 : 0 forKey:@"isMask"];
@@ -49,7 +101,7 @@
     [coder encodeObject:_packReference forKey:@"r"];
     [coder encodeString:_title forCKey:"t"];
     [coder encodeArray:_stickerAssociations forCKey:"a"];
-    [coder encodeArray:_documents forCKey:"d"];
+    [coder encodeArray:self.documents forCKey:"d"];
     [coder encodeInt32:_packHash forCKey:"ph"];
     [coder encodeInt32:_hidden ? 1 : 0 forCKey:"hi"];
     [coder encodeInt32:_isMask ? 1 : 0 forCKey:"ma"];
@@ -70,7 +122,22 @@
     if (![other->_stickerAssociations isEqual:_stickerAssociations])
         return false;
     
-    if (![other->_documents isEqual:_documents])
+    NSData *otherDocumentsData = nil;
+    @synchronized (other)
+    {
+        otherDocumentsData = other->_documentsData;
+    }
+    NSData *documentsData = nil;
+    @synchronized (self)
+    {
+        documentsData = _documentsData;
+    }
+    if (otherDocumentsData != nil && documentsData != nil)
+    {
+        if (![otherDocumentsData isEqualToData:documentsData])
+            return false;
+    }
+    else if (!TGObjectCompare(other.documents, self.documents))
         return false;
     
     if (other->_packHash != _packHash)

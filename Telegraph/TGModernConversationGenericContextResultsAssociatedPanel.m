@@ -292,7 +292,7 @@
 }
 
 - (bool)fillsAvailableSpace {
-    return true;//iosMajorVersion() >= 9;
+    return true;
 }
 
 - (CGFloat)preferredHeight {
@@ -436,7 +436,6 @@
     _separatorView.frame = CGRectMake(0.0f, self.frame.size.height - separatorHeight, self.frame.size.width, separatorHeight);
     
     UIEdgeInsets previousInset = _tableView.contentInset;
-    //CGPoint contentOffset = _tableView.contentOffset;
     
     _tableView.frame = CGRectMake(0.0f, 0.0f, self.frame.size.width, self.frame.size.height);
     
@@ -456,12 +455,9 @@
             _tableView.contentInset = finalInset;
             [_tableView setContentOffset:CGPointMake(0.0f, -finalInset.top) animated:false];
         } else if (ABS(insetDifference) > FLT_EPSILON) {
-            //if (ABS(insetDifference) <= 36.0f + 0.1) {
             {
                 [self _autoAdjustInsetsForScrollView:_tableView finalInset:finalInset previousInset:previousInset];
                 
-                //contentOffset.y -= insetDifference;
-                //_tableView.contentOffset = contentOffset;
             }
         }
     } else {

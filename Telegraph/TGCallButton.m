@@ -373,7 +373,6 @@ NSString *const TGCallButtonIconRotationKey = @"iconRotation";
         
         if ([key isEqualToString:TGCallButtonIconRotationKey])
         {
-            //CGFloat fromValue = [self.presentationLayer iconRotation];
             
             CGFloat fromValue = 0.0f;
             CGFloat byValue = 0.0f;

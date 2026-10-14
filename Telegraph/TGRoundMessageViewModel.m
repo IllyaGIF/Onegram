@@ -1,4 +1,5 @@
 #import "TGRoundMessageViewModel.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -166,6 +167,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     bool _mediaIsAvailable;
     bool _canDownload;
     bool _activatedMedia;
+    bool _mediaActivationDeferred;
     bool _boundToContainer;
     
     float _progress;
@@ -634,7 +636,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     
     if (!wasAvailable && mediaIsAvailable && _boundToContainer) {
         if ([self.imageModel boundView] != nil && _mediaIsAvailable) {
-            [self activateMediaPlayback];
+            [self _activateMediaPlaybackOrDefer];
         }
     }
     
@@ -678,7 +680,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     _canDownload = _video.videoId != 0;
     
     if ([self.imageModel boundView] != nil) {
-        [self activateMediaPlayback];
+        [self _activateMediaPlaybackOrDefer];
     }
     
     if (_canDownload && wasLocal) {
@@ -1034,6 +1036,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 
 - (void)stopInlineMedia:(int32_t)__unused excludeMid
 {
+    _mediaActivationDeferred = false;
     bool wasActivated = _activatedMedia;
     _activatedMedia = false;
     
@@ -1046,10 +1049,33 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     [self updateImageOverlay:false];
 }
 
+- (void)_activateMediaPlaybackOrDefer
+{
+    if (OGPlatformMediaDownloadsRequireUserAction())
+    {
+        _mediaActivationDeferred = false;
+        [self updateImageOverlay:false];
+        return;
+    }
+    if (_context.inlineMediaActivationDeferred && _boundToContainer && !_activatedMedia)
+        _mediaActivationDeferred = true;
+    else
+        [self activateMediaPlayback];
+}
+
+- (void)activateDeferredInlineMedia
+{
+    if (!_mediaActivationDeferred)
+        return;
+    _mediaActivationDeferred = false;
+    if (!OGPlatformMediaDownloadsRequireUserAction())
+        [self activateMediaPlayback];
+}
+
 - (void)resumeInlineMedia
 {
     if (_mediaIsAvailable && !_activatedMedia) {
-        [self activateMediaPlayback];
+        [self _activateMediaPlaybackOrDefer];
     }
 }
 
@@ -1082,7 +1108,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
                         strongSelf->_playing = false;
                     
                         [imageView setVideoView:nil];
-                        [strongSelf activateMediaPlayback];
+                        [strongSelf _activateMediaPlaybackOrDefer];
                     
                         [strongSelf->_ringModel setStatus:nil];
                     
@@ -1141,7 +1167,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     
     [self updateMediaVisibility];
     
-    [self activateMediaPlayback];
+    [self _activateMediaPlaybackOrDefer];
     
     [_replyHeaderModel bindSpecialViewsToContainer:_contentModel.boundView viewStorage:viewStorage atItemPosition:CGPointMake(_replyHeaderModel.frame.origin.x, _replyHeaderModel.frame.origin.y)];
     
@@ -1213,6 +1239,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 - (void)unbindView:(TGModernViewStorage *)viewStorage
 {
     _boundToContainer = false;
+    _mediaActivationDeferred = false;
     [_callbackButtonInProgressDisposable setDisposable:nil];
     
     _status = nil;
@@ -1390,9 +1417,6 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 {
     if (_mediaIsAvailable)
     {
-        // Some restored messages report availability before the legacy video
-        // cache has been materialized. Treat those exactly like a download
-        // button instead of swallowing the tap on a blank white circle.
         NSString *videoPath = [TGVideoDownloadActor localPathForVideoUrl:[_video.videoInfo urlWithQuality:0 actualQuality:NULL actualSize:NULL]];
         if (videoPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:videoPath])
         {
@@ -1565,7 +1589,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
         NSMutableArray *additionalAttributes = [[NSMutableArray alloc] init];
         NSMutableArray *textCheckingResults = [[NSMutableArray alloc] init];
         
-        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (NSString *)kCTFontAttributeName, nil];
+        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (__bridge NSString *)kCTFontAttributeName, nil];
         
         NSString *text = [[NSString alloc] initWithFormat:TGLocalized(@"Message.ForwardedMessageShort"), authorName];
         
@@ -1680,7 +1704,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
         else
             contentFrame.origin.x = 9.0f + (_editing ? 42.0f : 0.0f);
         
-        contentFrame.origin.y = 0.0f; //floor(CGRectGetMidY(backgroundFrame) - contentFrame.size.height / 2.0f);
+        contentFrame.origin.y = 0.0f;
         
         _contentModel.frame = contentFrame;
         if (_replyHeaderModel != nil)

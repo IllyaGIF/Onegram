@@ -3,7 +3,6 @@
 @class TLChatPhoto;
 @class TLInputChannel;
 
-//chat#D91CDD54 flags:# creator:flags.0?true kicked:flags.1?true left:flags.2?true admins_enabled:flags.3?true admin:flags.4?true deactivated:flags.5?true id:int title:string photo:ChatPhoto participants_count:int date:int version:int migrated_to:flags.6?InputChannel = Chat;
 
 @interface TLChat$chat : TLChat
 

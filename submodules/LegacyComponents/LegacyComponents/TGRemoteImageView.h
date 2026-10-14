@@ -52,6 +52,7 @@ typedef void (^TGImageProgressHandler)(TGRemoteImageView *imageView, float progr
 
 + (void)setSharedCache:(TGCache *)cache;
 + (TGCache *)sharedCache;
++ (void)cacheStrippedPlaceholderImage:(UIImage *)image forUrl:(NSString *)url;
 
 - (UIImage *)currentImage;
 - (UIImage *)currentPlaceholderImage;
@@ -63,6 +64,8 @@ typedef void (^TGImageProgressHandler)(TGRemoteImageView *imageView, float progr
 - (void)loadImage:(NSString *)url filter:(NSString *)filter placeholder:(UIImage *)placeholder forceFade:(bool)forceFade;
 - (void)loadPlaceholder:(UIImage *)placeholder;
 - (void)cancelLoading;
+
++ (NSString *)cacheKeyForUrl:(NSString *)url filter:(NSString *)filter;
 
 + (UIImage *)imageFromCache:(NSString *)url filter:(NSString *)filter cache:(TGCache *)cache;
 + (NSString *)preloadImage:(NSString *)url filter:(NSString *)filter blurIfRemote:(bool)blurIfRemote cache:(TGCache *)cache allowThumbnailCache:(bool)allowThumbnailCache watcher:(id<ASWatcher>)watcher;

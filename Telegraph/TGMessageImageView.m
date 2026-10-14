@@ -736,6 +736,11 @@ static const CGFloat additionalDataTopPadding = 6.0f;
 }
 
 - (void)setVideoPathSignal:(SSignal *)signal {
+    if (signal == nil)
+    {
+        [self hideVideo];
+        return;
+    }
     if (_inlineVideoView == nil) {
         _inlineVideoView = [[TGInlineVideoView alloc] initWithFrame:[self _videoFrame]];
         _inlineVideoView.cornerRadius = _inlineVideoCornerRadius;
@@ -753,6 +758,8 @@ static const CGFloat additionalDataTopPadding = 6.0f;
 
 - (void)hideVideo
 {
+    [_inlineVideoView setVideoPathSignal:nil];
+    [_inlineVideoView willBecomeRecycled];
     [_inlineVideoView removeFromSuperview];
     _inlineVideoView = nil;
 }

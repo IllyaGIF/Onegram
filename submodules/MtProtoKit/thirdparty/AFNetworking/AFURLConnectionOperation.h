@@ -78,6 +78,11 @@ extern NSString * const AFNetworkingOperationDidFinishNotification;
  @warning Attempting to load a `file://` URL in iOS 4 may result in an `NSInvalidArgumentException`, caused by the connection returning `NSURLResponse` rather than `NSHTTPURLResponse`, which is the behavior as of iOS 5.
  */
 @interface AFURLConnectionOperation : NSOperation
+{
+#if defined(ONEGRAM_ARMV6)
+    void (^_onegramCompletionBlock)(void);
+#endif
+}
 
 ///-------------------------------
 /// @name Accessing Run Loop Modes
@@ -87,6 +92,10 @@ extern NSString * const AFNetworkingOperationDidFinishNotification;
  The run loop modes in which the operation will run on the network thread. By default, this is a single-member set containing `NSRunLoopCommonModes`.
  */
 @property (nonatomic, retain) NSSet *runLoopModes;
+
+#if defined(ONEGRAM_ARMV6)
+@property (nonatomic, copy) void (^completionBlock)(void);
+#endif
 
 ///-----------------------------------------
 /// @name Getting URL Connection Information

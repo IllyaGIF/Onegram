@@ -1,5 +1,16 @@
 #import <Foundation/Foundation.h>
+#if __has_include(<AVFoundation/AVFoundation.h>)
 #import <AVFoundation/AVFoundation.h>
+#else
+@class AVAsset;
+typedef NSInteger AVCaptureVideoOrientation;
+#ifndef AVCaptureVideoOrientationPortrait
+#define AVCaptureVideoOrientationPortrait 1
+#define AVCaptureVideoOrientationPortraitUpsideDown 2
+#define AVCaptureVideoOrientationLandscapeRight 3
+#define AVCaptureVideoOrientationLandscapeLeft 4
+#endif
+#endif
 #import <UIKit/UIKit.h>
 
 #ifdef __cplusplus

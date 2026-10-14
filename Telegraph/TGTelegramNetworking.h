@@ -1,3 +1,4 @@
+#import "../OnegramDante/OGOnegramCore.h"
 /*
  * This is the source code of Telegram for iOS v. 1.1
  * It is licensed under GNU GPL v. 2 or later.
@@ -28,11 +29,8 @@ typedef enum {
 
 #define TG_DEFAULT_DATACENTER_ID INT_MAX
 
-#define TGUseModernNetworking true//defined(DEBUG)
+#define TGUseModernNetworking true
 
-// QR login owns the password UI while active. This prevents the global
-// MTProto password-required callback from racing it and installing a second,
-// ordinary TGLoginPasswordController.
 FOUNDATION_EXPORT void TGIOS6SetQRLoginFlowActive(bool active);
 FOUNDATION_EXPORT bool TGIOS6QRLoginFlowActive(void);
 
@@ -99,6 +97,7 @@ typedef enum {
 
 + (void)preload;
 + (TGTelegramNetworking *)instance;
++ (void)prepareInstanceWithCompletion:(dispatch_block_t)completion;
 + (TGTelegramNetworking *)maybeInstance;
 
 - (SMulticastSignalManager *)genericTasksSignalManager;
@@ -120,8 +119,10 @@ typedef enum {
 - (void)start;
 - (void)pause;
 - (void)resume;
+- (void)prepareForUnauthorizedRequests;
 
 - (void)moveToDatacenterId:(NSInteger)datacenterId;
+- (void)moveToDatacenterId:(NSInteger)datacenterId completion:(void (^)(void))completion;
 - (void)restartWithCleanCredentials;
 
 - (void)clearExportedTokens;
@@ -133,10 +134,11 @@ typedef enum {
 - (id)requestDownloadWorkerForDatacenterId:(NSInteger)datacenterId type:(TGNetworkMediaTypeTag)type completion:(void (^)(TGNetworkWorkerGuard *))completion;
 - (id)requestDownloadWorkerForDatacenterId:(NSInteger)datacenterId type:(TGNetworkMediaTypeTag)type isCdn:(bool)isCdn completion:(void (^)(TGNetworkWorkerGuard *))completion;
 - (void)cancelDownloadWorkerRequestByToken:(id)token;
+- (id)requestUploadWorkerForDatacenterId:(NSInteger)datacenterId type:(TGNetworkMediaTypeTag)type completion:(void (^)(TGNetworkWorkerGuard *))completion;
+- (void)cancelUploadWorkerRequestByToken:(id)token;
 
 - (void)addRequest:(MTRequest *)request;
 
-// legacy
 - (void)switchBackends;
 
 - (NSObject *)performRpc:(TLMetaRpc *)rpc completionBlock:(void (^)(id<TLObject> response, int64_t responseTime, MTRpcError *error))completionBlock progressBlock:(void (^)(int length, float progress))progressBlock requiresCompletion:(bool)requiresCompletion requestClass:(int)requestClass;
@@ -173,6 +175,9 @@ typedef enum {
 
 - (SSignal *)socksProxySettings;
 
+- (OGOnegramCoreMode)onegramCoreMode;
+- (void)setOnegramCoreMode:(OGOnegramCoreMode)mode;
+- (void)refreshOnegramCoreSettings;
 - (bool)onegramWebSocketProxyEnabled;
 - (void)setOnegramWebSocketProxyEnabled:(bool)enabled;
 

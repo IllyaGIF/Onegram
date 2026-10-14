@@ -183,7 +183,6 @@
         }
         @catch (NSException *e)
         {
-            TGLog(@"%@", e);
             
             return false;
         }

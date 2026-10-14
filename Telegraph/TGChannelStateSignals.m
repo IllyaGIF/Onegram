@@ -1,6 +1,7 @@
 #import "TGChannelStateSignals.h"
 #import "../OnegramRuntime/OGRuntime.h"
-#import "IOS6Trace.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
 #import "IOS6NotificationProbe.h"
 #import "IOS6FeatureProbe.h"
 
@@ -32,6 +33,16 @@
 
 #import "TLUpdate$updateChannelTooLong.h"
 #import "TLchannelDifferenceTooLong.h"
+#import "TGPollSignals.h"
+
+@interface TGDatabase (OnegramChannelPreparation)
+- (void)onegramPrepareChannelMessagesForInsertion:(NSArray *)messages;
+- (void)onegramAddMessagesToChannelAndDispatchChunked:(int64_t)peerId messages:(NSArray *)messages deletedMessages:(NSArray *)deletedMessages holes:(NSArray *)holes pts:(int32_t)pts skipFeedUpdate:(bool)skipFeedUpdate completion:(dispatch_block_t)completion;
+- (void)onegramAddTrailingHoleToChannelAndDispatch:(int64_t)peerId messages:(NSArray *)messages pts:(int32_t)pts importantUnreadCount:(int32_t)importantUnreadCount unimportantUnreadCount:(int32_t)unimportantUnreadCount unreadMentionsCount:(int32_t)unreadMentionsCount maxReadId:(int32_t)maxReadId topMessageId:(int32_t)topMessageId completion:(dispatch_block_t)completion;
+@end
+
+static const int32_t TGChannelDifferenceBackgroundLimit = 10;
+static const int32_t TGChannelDifferenceOpenedLimit = 100;
 
 static SQueue *OGChannelStateStorageQueue(void)
 {
@@ -39,7 +50,18 @@ static SQueue *OGChannelStateStorageQueue(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [SQueue wrapConcurrentNativeQueue:OGRuntimeQueueForPriority(OGRuntimePriorityStorage)];
+        queue = [SQueue wrapConcurrentNativeQueue:OGRuntimeQueueForPriority(OGRuntimePriorityUserInitiated)];
+    });
+    return queue;
+}
+
+static SQueue *OGChannelStatePreparationQueue(void)
+{
+    static SQueue *queue = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = [SQueue wrapConcurrentNativeQueue:OGRuntimeQueueForPriority(OGRuntimePriorityUserInitiated)];
     });
     return queue;
 }
@@ -48,7 +70,6 @@ static SSignal *OGChannelStateDatabaseSignal(const char *file, int line, id (^bl
 {
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
-        __block id result = nil;
 #ifdef DEBUG_DATABASE_INVOKATIONS
         [TGDatabaseInstance() dispatchOnDatabaseThreadDebug:file line:line block:^
 #else
@@ -57,10 +78,10 @@ static SSignal *OGChannelStateDatabaseSignal(const char *file, int line, id (^bl
         [TGDatabaseInstance() dispatchOnDatabaseThread:^
 #endif
         {
-            result = block();
-        } synchronous:true];
-        [subscriber putNext:result];
-        [subscriber putCompletion];
+            id result = block();
+            [subscriber putNext:result];
+            [subscriber putCompletion];
+        } synchronous:false];
         return nil;
     }] startOn:OGChannelStateStorageQueue()];
 }
@@ -164,9 +185,15 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     
     SAtomic *_keepPollingBag;
     bool _recoveryPending;
+    bool _pollActive;
+    bool _pollAgain;
     id<SDisposable> _inviterId;
     TGManagedChannelStateReference *_ios4LifetimeReference;
 }
+
+- (void)requestPoll;
+- (void)ensurePoll;
+- (void)pollCycleCompleted;
 
 @end
 
@@ -189,11 +216,12 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
         SSignal *pollsSignal = [_pollsPipe.signalProducer() mapToQueue:^SSignal *(__unused id tick) {
             TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
             if (strongSelf != nil) {
-                if ([[UIDevice currentDevice].systemVersion intValue] <= 6 &&
+                SSignal *pollSignal = nil;
+                if (OGPlatformSupportsBackgroundVoipTransport() &&
                     [UIApplication sharedApplication].applicationState != UIApplicationStateActive &&
                     !strongSelf->_recoveryPending)
                 {
-                    return [[SSignal single:@(120.0)] mapToSignal:^SSignal *(NSNumber *nextTimeout) {
+                    pollSignal = [[SSignal single:@(120.0)] mapToSignal:^SSignal *(NSNumber *nextTimeout) {
                         TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
                         if (strongSelf != nil) {
                             STimer *nextTimer = [[STimer alloc] initWithTimeout:[nextTimeout doubleValue] repeat:false completion:^{
@@ -202,7 +230,34 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                     if (strongSelf->_recoveryPending || [[strongSelf->_keepPollingBag with:^id(SBag *bag) {
                                         return @(![bag isEmpty]);
                                     }] boolValue]) {
-                                        strongSelf->_pollsPipe.sink(@true);
+                                        [strongSelf ensurePoll];
+                                    }
+                                }
+                            } queue:[SQueue concurrentDefaultQueue]];
+                            STimer *previousTimer = [strongSelf->_timer swap:nextTimer];
+                            [previousTimer invalidate];
+                            [nextTimer start];
+                        }
+                        return [SSignal complete];
+                    }];
+                } else {
+                    bool channelOpened = [[strongSelf->_keepPollingBag with:^id(SBag *bag) {
+                        return @(![bag isEmpty]);
+                    }] boolValue];
+                    pollSignal = [[TGChannelStateSignals pollOnce:peerId limit:channelOpened ? TGChannelDifferenceOpenedLimit : TGChannelDifferenceBackgroundLimit] mapToSignal:^SSignal *(NSNumber *nextTimeout) {
+                        TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
+                        if (strongSelf != nil) {
+                            NSTimeInterval timeout = [nextTimeout doubleValue];
+                            strongSelf->_recoveryPending = timeout < 0.0;
+                            if (timeout < 0.0)
+                                timeout = -timeout;
+                            STimer *nextTimer = [[STimer alloc] initWithTimeout:timeout repeat:false completion:^{
+                                TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
+                                if (strongSelf != nil) {
+                                    if (strongSelf->_recoveryPending || [[strongSelf->_keepPollingBag with:^id(SBag *bag) {
+                                        return @(![bag isEmpty]);
+                                    }] boolValue]) {
+                                        [strongSelf ensurePoll];
                                     }
                                 }
                             } queue:[SQueue concurrentDefaultQueue]];
@@ -213,29 +268,17 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                         return [SSignal complete];
                     }];
                 }
-                return [[TGChannelStateSignals pollOnce:peerId] mapToSignal:^SSignal *(NSNumber *nextTimeout) {
+                SSignal *trackedPollSignal = [pollSignal onCompletion:^{
                     TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
-                    if (strongSelf != nil) {
-                        NSTimeInterval timeout = [nextTimeout doubleValue];
-                        strongSelf->_recoveryPending = timeout < 0.0;
-                        if (timeout < 0.0)
-                            timeout = -timeout;
-                        STimer *nextTimer = [[STimer alloc] initWithTimeout:timeout repeat:false completion:^{
-                            TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
-                            if (strongSelf != nil) {
-                                if (strongSelf->_recoveryPending || [[strongSelf->_keepPollingBag with:^id(SBag *bag) {
-                                    return @(![bag isEmpty]);
-                                }] boolValue]) {
-                                    strongSelf->_pollsPipe.sink(@true);
-                                }
-                            }
-                        } queue:[SQueue concurrentDefaultQueue]];
-                        STimer *previousTimer = [strongSelf->_timer swap:nextTimer];
-                        [previousTimer invalidate];
-                        [nextTimer start];
-                    }
-                    return [SSignal complete];
+                    if (strongSelf != nil)
+                        [strongSelf pollCycleCompleted];
                 }];
+                trackedPollSignal = [trackedPollSignal onError:^(__unused id error) {
+                    TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
+                    if (strongSelf != nil)
+                        [strongSelf pollCycleCompleted];
+                }];
+                return trackedPollSignal;
             } else {
                 return [SSignal complete];
             }
@@ -248,7 +291,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                     TGManagedChannelState *strongSelf = TGIOS4ResolveManagedChannelState(weakSelf);
                     if (strongSelf != nil) {
                         strongSelf->_recoveryPending = true;
-                        strongSelf->_pollsPipe.sink(@true);
+                        [strongSelf ensurePoll];
                     }
                     
                     return [SSignal complete];
@@ -280,18 +323,12 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     [_inviterId dispose];
 }
 
-+ (SSignal *)_channelDifference:(int64_t)peerId accessHash:(int64_t)accessHash pts:(int32_t)pts {
-    int32_t limit = 10;
-    
-#ifdef DEBUG
-    limit = 2;
-#endif
++ (SSignal *)_channelDifference:(int64_t)peerId accessHash:(int64_t)accessHash pts:(int32_t)pts limit:(int32_t)limit {
 
     int64_t channelId = TGIOS6StateChannelIdFromPeerId(peerId, accessHash);
     if (channelId == 0)
     {
         TGLog(@"AUTH skip state getChannelDifference peer=%lld channel=%lld accessHash=%lld pts=%d", peerId, channelId == 0 ? 0LL : (int64_t)(uint32_t)channelId, accessHash, pts);
-        IOS6Trace(@"FULL state.diff.skip peer=%lld channel=%lld accessHash=%lld pts=%d", peerId, channelId == 0 ? 0LL : (int64_t)(uint32_t)channelId, accessHash, pts);
         if (channelId != 0 && accessHash != 0 && peerId == TGIOS6DebugAutoSeedChannelPeerId)
         {
             NSNumber *key = @(peerId);
@@ -303,7 +340,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             }] boolValue];
             if (shouldSeedTail)
             {
-                TGLog(@"TRACE seed modern channel tail peer=%lld channel=%lld hash=%lld", peerId, (int64_t)(uint32_t)channelId, accessHash);
                 [[[TGChannelManagementSignals preloadedHistoryTailForPeerId:peerId accessHash:accessHash] catch:^SSignal *(id error) {
                     TGLog(@"TRACE seed modern channel tail error peer=%lld channel=%lld hash=%lld error=%@", peerId, (int64_t)(uint32_t)channelId, accessHash, error);
                     return [SSignal complete];
@@ -339,7 +375,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     if (invalidUntil != nil)
     {
         TGLog(@"TRACE state getChannelDifference suppressed invalid peer=%lld channel=%lld hash=%lld until=%.0f", peerId, channelId, accessHash, invalidUntil.doubleValue);
-        IOS6Trace(@"FULL state.diff.suppressed peer=%lld channel=%lld hash=%lld until=%.0f", peerId, channelId, accessHash, invalidUntil.doubleValue);
         TLUpdates_ChannelDifference$empty *empty = [[TLUpdates_ChannelDifference$empty alloc] init];
         empty.pts = MAX(pts, 1);
         empty.flags = 3;
@@ -356,11 +391,22 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     getChannelDifference.pts = MAX(pts, 1);
     getChannelDifference.limit = limit;
     
-    IOS6Trace(@"FULL state.diff.request peer=%lld channel=%lld hash=%lld pts=%d limit=%d", peerId, inputChannel.channel_id, inputChannel.access_hash, getChannelDifference.pts, getChannelDifference.limit);
     
-    return [[[TGTelegramNetworking instance] requestSignal:getChannelDifference] catch:^SSignal *(id error) {
+    SSignal *request = [[TGTelegramNetworking instance] requestSignal:getChannelDifference];
+#if defined(ONEGRAM_DIAGNOSTICS)
+    CFAbsoluteTime requestStart = CFAbsoluteTimeGetCurrent();
+    request = [request onNext:^(id result) {
+        NSUInteger messageCount = 0;
+        NSUInteger updateCount = 0;
+        if ([result isKindOfClass:[TLUpdates_ChannelDifference$channelDifference class]]) {
+            messageCount = ((TLUpdates_ChannelDifference$channelDifference *)result).n_new_messages.count;
+            updateCount = ((TLUpdates_ChannelDifference$channelDifference *)result).other_updates.count;
+        }
+        OGPlatformDiagnosticLog(@"SYNC channel peer=%lld limit=%d pts=%d class=%@ ms=%.0f messages=%u updates=%u", peerId, (int)limit, (int)pts, NSStringFromClass([result class]), (CFAbsoluteTimeGetCurrent() - requestStart) * 1000.0, (unsigned int)messageCount, (unsigned int)updateCount);
+    }];
+#endif
+    return [request catch:^SSignal *(id error) {
         TGLog(@"TRACE state getChannelDifference error peer=%lld channel=%lld hash=%lld error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, error);
-        IOS6Trace(@"FULL state.diff.error peer=%lld channel=%lld hash=%lld error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, error);
         NSString *errorDescription = [[error description] uppercaseString];
         if ([errorDescription rangeOfString:@"CHANNEL_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHANNEL_PRIVATE"].location != NSNotFound)
         {
@@ -369,6 +415,8 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             {
                 TGIOS6InvalidChannelDifferenceUntil()[invalidChannelKey] = @([[NSDate date] timeIntervalSince1970] + retryTimeout);
             }
+            if ([errorDescription rangeOfString:@"CHANNEL_PRIVATE"].location == NSNotFound)
+                [TGUpdateStateRequestBuilder requestDialogReconciliation];
         }
         return [SSignal fail:error];
     }];
@@ -376,10 +424,8 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
 
 - (SSignal *)applyUpdates:(NSArray *)updates {
     int64_t peerId = _peerId;
-    IOS6Trace(@"FULL state.applyUpdates peer=%lld count=%d", peerId, (int)updates.count);
     
     return [[[TGDatabaseInstance() existingChannel:peerId] take:1] mapToSignal:^SSignal *(TGConversation *conversation) {
-        IOS6Trace(@"FULL state.applyUpdates.conversation peer=%lld title=%@ pts=%d access=%lld kind=%d", peerId, conversation.chatTitle, conversation.pts, conversation.accessHash, (int)conversation.kind);
         IOS6NotificationProbe(@"GROUP", @"apply peer=%lld title=%@ count=%d pts=%d", peerId, conversation.chatTitle ?: @"", (int)updates.count, conversation.pts);
         NSMutableArray *ptsUpdates = [[NSMutableArray alloc] init];
         NSMutableSet *skipMessageIds = [[NSMutableSet alloc] init];
@@ -389,11 +435,11 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
         NSNumber *pinnedMessageId = nil;
         __block bool pinnedMessagesChanged = false;
         __block bool failed = false;
+        __block bool ptsGapDetected = false;
         bool hasMessageIdUpdates = false;
         int32_t maxAvailableMessageId = 0;
         
         for (id update in updates) {
-            IOS6Trace(@"FULL state.applyUpdates.item peer=%lld class=%@", peerId, NSStringFromClass([update class]));
             if ([update isKindOfClass:[TLUpdate$updateNewChannelMessage class]]) {
                 [ptsUpdates addObject:update];
             } else if ([update isKindOfClass:[TLUpdate$updateEditChannelMessage class]]) {
@@ -486,7 +532,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
             NSMutableArray *deletedMessageIds = [[NSMutableArray alloc] init];
             
-            while (false) TGLog(@"STATE channel.batch peer=%lld basePts=%d ptsUpdates=%d readIn=%d readOut=%d contents=%d", peerId, updatedPts, (int)ptsUpdates.count, maxReadId, maxReadOutgoingId, (int)readContentsMessageIds.count);
 
             for (id update in ptsUpdates) {
                 if ([update isKindOfClass:[TLUpdate$updateNewChannelMessage class]]) {
@@ -496,25 +541,21 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                     
                     int32_t nextPts = updatedPts + updateNewChannelMessage.pts_count;
                     if (nextPts > updateNewChannelMessage.pts) {
-                        IOS6Trace(@"FULL state.apply.newChannel.skipOld peer=%lld mid=%d pts=%d updatedPts=%d", peerId, message.mid, updateNewChannelMessage.pts, updatedPts);
                         IOS6NotificationProbe(@"GROUP_SKIP", @"reason=old peer=%lld title=%@ mid=%d pts=%d base=%d", peerId, conversation.chatTitle ?: @"", message.mid, updateNewChannelMessage.pts, updatedPts);
                         continue;
                     }
                     else if (nextPts == updateNewChannelMessage.pts) {
                         if (message.mid != 0) {
-                            if ([skipMessageIds containsObject:@(message.mid)]) {
-                                TGLog(@"(Channel State %lld Skipped message %d", (long long)peerId, message.mid);
-                            } else {
+                            if (![skipMessageIds containsObject:@(message.mid)]) {
                                 [addedMessages addObject:message];
                                 [notificationMessageDescriptions addObject:updateNewChannelMessage.message];
                             }
                         }
-                        IOS6Trace(@"FULL state.apply.newChannel.accept peer=%lld mid=%d pts=%d ptsCount=%d added=%d skipped=%d", peerId, message.mid, updateNewChannelMessage.pts, updateNewChannelMessage.pts_count, (int)addedMessages.count, [skipMessageIds containsObject:@(message.mid)] ? 1 : 0);
                         IOS6NotificationProbe(@"GROUP_ACCEPT", @"peer=%lld title=%@ mid=%d pts=%d count=%d queued=%d", peerId, conversation.chatTitle ?: @"", message.mid, updateNewChannelMessage.pts, updateNewChannelMessage.pts_count, (int)notificationMessageDescriptions.count);
                         updatedPts = updateNewChannelMessage.pts;
                     } else {
-                        IOS6Trace(@"FULL state.apply.newChannel.gap peer=%lld mid=%d oldPts=%d newPts=%d ptsCount=%d", peerId, message.mid, updatedPts, updateNewChannelMessage.pts, updateNewChannelMessage.pts_count);
                         IOS6NotificationProbe(@"GROUP_SKIP", @"reason=pts_gap peer=%lld title=%@ mid=%d base=%d pts=%d count=%d", peerId, conversation.chatTitle ?: @"", message.mid, updatedPts, updateNewChannelMessage.pts, updateNewChannelMessage.pts_count);
+                        ptsGapDetected = true;
                         failed = true;
                     }
                 } else if ([update isKindOfClass:[TLUpdate$updateEditChannelMessage class]]) {
@@ -524,20 +565,17 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                     
                     int32_t nextPts = updatedPts + updateEditMessage.pts_count;
                     if (nextPts > updateEditMessage.pts) {
-                        TGLog(@"STATE channel.edit.skipOld peer=%lld mid=%d pts=%d base=%d", peerId, message.mid, updateEditMessage.pts, updatedPts);
                         continue;
                     }
                     else if (nextPts == updateEditMessage.pts) {
                         if (message.mid != 0) {
-                            if ([skipMessageIds containsObject:@(message.mid)]) {
-                                TGLog(@"(Channel State %lld Skipped updated message %d", (long long)peerId, message.mid);
-                            } else {
+                            if (![skipMessageIds containsObject:@(message.mid)]) {
                                 [updatedMessages addObject:message];
                             }
                         }
                         updatedPts = updateEditMessage.pts;
                     } else {
-                        TGLog(@"STATE channel.edit.gap peer=%lld mid=%d base=%d pts=%d ptsCount=%d", peerId, message.mid, updatedPts, updateEditMessage.pts, updateEditMessage.pts_count);
+                        ptsGapDetected = true;
                         failed = true;
                     }
                 } else if ([update isKindOfClass:[TLUpdate$updateDeleteChannelMessages class]]) {
@@ -545,14 +583,12 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                     
                     int32_t nextPts = updatedPts + updateDeleteChannelMessages.pts_count;
                     if (nextPts > updateDeleteChannelMessages.pts) {
-                        TGLog(@"STATE channel.delete.skipOld peer=%lld count=%d pts=%d base=%d", peerId, (int)updateDeleteChannelMessages.messages.count, updateDeleteChannelMessages.pts, updatedPts);
                         continue;
                     } else if (nextPts == updateDeleteChannelMessages.pts) {
                         [deletedMessageIds addObjectsFromArray:updateDeleteChannelMessages.messages];
-                        TGLog(@"STATE channel.delete.accept peer=%lld count=%d pts=%d ptsCount=%d", peerId, (int)updateDeleteChannelMessages.messages.count, updateDeleteChannelMessages.pts, updateDeleteChannelMessages.pts_count);
                         updatedPts = updateDeleteChannelMessages.pts;
                     } else {
-                        TGLog(@"STATE channel.delete.gap peer=%lld count=%d base=%d pts=%d ptsCount=%d", peerId, (int)updateDeleteChannelMessages.messages.count, updatedPts, updateDeleteChannelMessages.pts, updateDeleteChannelMessages.pts_count);
+                        ptsGapDetected = true;
                         failed = true;
                     }
                 } else if ([update isKindOfClass:[TLUpdate$updateChannelWebPage class]]) {
@@ -564,6 +600,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                     } else if (nextPts == updateWebPage.pts) {
                         updatedPts = updateWebPage.pts;
                     } else {
+                        ptsGapDetected = true;
                         failed = true;
                     }
                 } else if ([update isKindOfClass:[TLUpdate$updatePinnedChannelMessagesCodex class]]) {
@@ -575,6 +612,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                         updatedPts = updatePinnedMessages.pts;
                         pinnedMessagesChanged = true;
                     } else {
+                        ptsGapDetected = true;
                         failed = true;
                     }
                 }
@@ -682,8 +720,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                         }
                         
                         if (updatedPts != conversation.pts) {
-                            IOS6Trace(@"FULL state.apply.commit peer=%lld added=%d updated=%d deleted=%d readIn=%d readOut=%d pinned=%@ available=%d failed=%d pts=%d oldPts=%d downloadedReplies=%d",
-                                peerId, (int)addedMessages.count, (int)updatedMessages.count, (int)deletedMessageIds.count, maxReadId, maxReadOutgoingId, pinnedMessageId, maxAvailableMessageId, failed ? 1 : 0, updatedPts, conversation.pts, (int)downloadMessages.count);
                             [TGDatabaseInstance() addMessagesToChannelAndDispatch:peerId messages:addedMessages deletedMessages:deletedMessageIds holes:nil pts:updatedPts skipFeedUpdate:false];
                         }
                         
@@ -717,6 +753,10 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                         }
                         
                         if (failed) {
+                            if (ptsGapDetected)
+                                [self requestPoll];
+                            else
+                                [self ensurePoll];
                             [TGDatabaseInstance() enqueueChannelPoll:peerId];
                             return [SSignal fail:nil];
                         } else {
@@ -746,8 +786,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                 }
                 
                 if (updatedPts != conversation.pts) {
-                    IOS6Trace(@"FULL state.apply.commit peer=%lld added=%d updated=%d deleted=%d readIn=%d readOut=%d pinned=%@ available=%d failed=%d pts=%d oldPts=%d downloadedReplies=0",
-                        peerId, (int)addedMessages.count, (int)updatedMessages.count, (int)deletedMessageIds.count, maxReadId, maxReadOutgoingId, pinnedMessageId, maxAvailableMessageId, failed ? 1 : 0, updatedPts, conversation.pts);
                     [TGDatabaseInstance() addMessagesToChannelAndDispatch:peerId messages:addedMessages deletedMessages:deletedMessageIds holes:nil pts:updatedPts skipFeedUpdate:false];
                 }
                 
@@ -781,6 +819,10 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                 }
                 
                 if (failed) {
+                    if (ptsGapDetected)
+                        [self requestPoll];
+                    else
+                        [self ensurePoll];
                     [TGDatabaseInstance() enqueueChannelPoll:peerId];
                     return [SSignal fail:nil];
                 } else {
@@ -790,6 +832,46 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
         }]];
     }];
 };
+
+- (void)requestPoll {
+    bool start = false;
+    @synchronized(self) {
+        if (_pollActive) {
+            _pollAgain = true;
+        } else {
+            _pollActive = true;
+            start = true;
+        }
+    }
+    if (start)
+        _pollsPipe.sink(@true);
+}
+
+- (void)ensurePoll {
+    bool start = false;
+    @synchronized(self) {
+        if (!_pollActive) {
+            _pollActive = true;
+            start = true;
+        }
+    }
+    if (start)
+        _pollsPipe.sink(@true);
+}
+
+- (void)pollCycleCompleted {
+    bool restart = false;
+    @synchronized(self) {
+        if (_pollAgain) {
+            _pollAgain = false;
+            restart = true;
+        } else {
+            _pollActive = false;
+        }
+    }
+    if (restart)
+        _pollsPipe.sink(@true);
+}
 
 - (void)addUpdates:(NSArray *)updates {
     _updatesPipe.sink(updates);
@@ -802,7 +884,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     if (shouldPoll) {
         STimer *timer = [_timer swap:nil];
         [timer invalidate];
-        _pollsPipe.sink(@true);
+        [self ensurePoll];
     }
 }
 
@@ -820,7 +902,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             }] boolValue];
             
             if (start) {
-                _pollsPipe.sink(@true);
+                [strongSelf ensurePoll];
             }
             
             return [[SBlockDisposable alloc] initWithBlock:^{
@@ -863,6 +945,10 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
         [state resumePolling];
 }
 
++ (void)requestChannelPoll:(int64_t)peerId {
+    [[self channelState:peerId] ensurePoll];
+}
+
 + (TGManagedChannelState *)channelState:(int64_t)peerId {
     return [[self channelStates] with:^id(NSMutableDictionary *dict) {
         TGManagedChannelState *state = dict[@(peerId)];
@@ -884,8 +970,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             if (accessHash == 0 || modernLargeChannel || (conversation != nil && !conversation.isChannelGroup)) {
                 uint8_t one = 1;
                 [TGDatabaseInstance() setConversationCustomProperty:peerId name:murMurHash32(@"inviterStored") value:[NSData dataWithBytes:&one length:1]];
-                IOS6Trace(@"FULL channelInviter.skip peer=%lld channel=%lld access=%lld group=%d modernLarge=%d",
-                          peerId, apiChannelId, accessHash, conversation.isChannelGroup ? 1 : 0, modernLargeChannel ? 1 : 0);
                 return @(true);
             }
             return @(false);
@@ -960,10 +1044,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                         [deletedMessageIds addObjectsFromArray:((TLUpdate$updateDeleteChannelMessages *)update).messages];
                     }
                 }
-            } else if ([result isKindOfClass:[TLUpdates_ChannelDifference$empty class]]) {
-                
-            } else if ([result isKindOfClass:[TLchannelDifferenceTooLong class]]) {
-                
             }
             
             return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
@@ -1015,14 +1095,16 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
 }
 
 + (SSignal *)pollOnce:(int64_t)peerId {
+    return [self pollOnce:peerId limit:TGChannelDifferenceBackgroundLimit];
+}
+
++ (SSignal *)pollOnce:(int64_t)peerId limit:(int32_t)limit {
     return [[[TGDatabaseInstance() existingChannel:peerId] take:1] mapToSignal:^SSignal *(TGConversation *conversation) {
-        IOS6Trace(@"FULL state.poll.start peer=%lld title=%@ access=%lld pts=%d", peerId, conversation.chatTitle, conversation.accessHash, conversation.pts);
         return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
             SMetaDisposable *disposable = [[SMetaDisposable alloc] init];
             
             void (^start)() = recursiveBlock(^(dispatch_block_t recurse) {
                 [TGDatabaseInstance() channelPts:peerId completion:^(int32_t pts) {                    
-                    IOS6Trace(@"FULL state.poll.pts peer=%lld pts=%d", peerId, pts);
                     int64_t accessHash = conversation.accessHash;
                     TGConversation *freshConversation = [TGDatabaseInstance() loadChannels:@[@(peerId)]][@(peerId)];
                     bool hasStrongAccessHash = false;
@@ -1035,17 +1117,14 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                         hasStrongAccessHash = true;
                     int64_t rememberedAccessHash = TGIOS6RememberedMinChannelAccessHash(peerId);
                     if (!hasStrongAccessHash && rememberedAccessHash != 0 && accessHash == 0) {
-                        IOS6Trace(@"FULL state.poll.accessHashRemembered peer=%lld old=%lld remembered=%lld", peerId, accessHash, rememberedAccessHash);
                         accessHash = rememberedAccessHash;
                     }
-                    else if (hasStrongAccessHash && rememberedAccessHash != 0 && rememberedAccessHash != accessHash)
-                        IOS6Trace(@"FULL state.poll.accessHashIgnoredMin peer=%lld strong=%lld min=%lld", peerId, accessHash, rememberedAccessHash);
-                    if (accessHash != conversation.accessHash)
-                        IOS6Trace(@"FULL state.poll.accessHashRefresh peer=%lld old=%lld fresh=%lld", peerId, conversation.accessHash, accessHash);
-                    [disposable setDisposable:[[TGManagedChannelState _channelDifference:peerId accessHash:accessHash pts:pts] startWithNext:^(TLupdates_ChannelDifference *result) {
-                        OGRuntimeDispatch(OGRuntimePriorityUtility, ^
+                    [disposable setDisposable:[[TGManagedChannelState _channelDifference:peerId accessHash:accessHash pts:pts limit:limit] startWithNext:^(TLupdates_ChannelDifference *result) {
+                        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
                         {
-                            IOS6Trace(@"FULL state.poll.diffResult peer=%lld class=%@", peerId, NSStringFromClass([result class]));
+#if defined(ONEGRAM_DIAGNOSTICS)
+                            CFAbsoluteTime processStart = CFAbsoluteTimeGetCurrent();
+#endif
                             NSMutableArray *messages = [[NSMutableArray alloc] init];
                             NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
                             NSMutableArray *deletedMessageIds = [[NSMutableArray alloc] init];
@@ -1057,7 +1136,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                             
                             NSArray *users = nil;
                             void (^addHole)() = nil;
-                            void (^addMessages)() = nil;
+                            void (^addMessages)(dispatch_block_t completion) = nil;
                             void (^loadHoles)() = nil;
                             
                             SSignal *removeMessagesInProgressSignal = [SSignal complete];
@@ -1069,8 +1148,10 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                     restart = true;
                                 if (concreteDifference.flags & (1 << 1))
                                     nextTimeout = concreteDifference.timeout;
-                                addMessages = ^{
+                                addMessages = ^(dispatch_block_t completion) {
                                     [TGDatabaseInstance() updateHistoryPtsForPeerId:peerId pts:concreteDifference.pts];
+                                    if (completion != nil)
+                                        completion();
                                 };
                             } else if ([result isKindOfClass:[TLchannelDifferenceTooLong class]]) {
                                 TLchannelDifferenceTooLong *concreteDifference = (TLchannelDifferenceTooLong *)result;
@@ -1078,7 +1159,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                     restart = true;
                                 if (concreteDifference.flags & (1 << 1))
                                     nextTimeout = concreteDifference.timeout;
-                                IOS6Trace(@"FULL state.poll.tooLong peer=%lld top=%d pts=%d unread=%d mentions=%d messages=%d users=%d chats=%d timeout=%.1f", peerId, concreteDifference.top_message, concreteDifference.pts, concreteDifference.unread_count, concreteDifference.unread_mentions_count, (int)concreteDifference.messages.count, (int)concreteDifference.users.count, (int)concreteDifference.chats.count, nextTimeout);
                                 
                                 for (id messageDesc in concreteDifference.messages) {
                                     TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
@@ -1096,29 +1176,31 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                 }
                                 
                                 users = concreteDifference.users;
-                                
-                                addHole = ^{
+
+                                addMessages = ^(dispatch_block_t completion) {
                                     int32_t minMessageId = INT32_MAX;
                                     int32_t maxMessageId = 0;
                                     for (TGMessage *message in messages) {
                                         minMessageId = MIN(minMessageId, message.mid);
                                         maxMessageId = MAX(maxMessageId, message.mid);
                                     }
-                                    IOS6Trace(@"FULL state.poll.tooLong.addHole peer=%lld messages=%d min=%d max=%d pts=%d top=%d chats=%d", peerId, (int)messages.count, minMessageId == INT32_MAX ? 0 : minMessageId, maxMessageId, concreteDifference.pts, concreteDifference.top_message, (int)conversations.count);
-                                    [TGDatabaseInstance() addTrailingHoleToChannelAndDispatch:peerId messages:messages pts:concreteDifference.pts importantUnreadCount:concreteDifference.unread_count unimportantUnreadCount:0 unreadMentionsCount:concreteDifference.unread_mentions_count maxReadId:concreteDifference.read_inbox_max_id topMessageId:concreteDifference.top_message];
-                                    
-                                    [TGDatabaseInstance() updateHistoryPtsForPeerId:peerId pts:concreteDifference.pts];
+                                    [TGDatabaseInstance() onegramAddTrailingHoleToChannelAndDispatch:peerId messages:messages pts:concreteDifference.pts importantUnreadCount:concreteDifference.unread_count unimportantUnreadCount:0 unreadMentionsCount:concreteDifference.unread_mentions_count maxReadId:concreteDifference.read_inbox_max_id topMessageId:concreteDifference.top_message completion:^{
+                                        [TGDatabaseInstance() updateHistoryPtsForPeerId:peerId pts:concreteDifference.pts];
+                                        if (completion != nil)
+                                            completion();
+                                    }];
                                 };
-                                
+
                                 if (concreteDifference.unread_count != 0) {
                                     loadHoles = ^{
                                         SDisposableSet *metaDisposable = [[SDisposableSet alloc] init];
                                         [TGTelegraphInstance.disposeOnLogout add:metaDisposable];
-                                        id<SDisposable> disposable = [[[TGChannelManagementSignals preloadedHistoryForPeerId:peerId accessHash:conversation.accessHash aroundMessageId:concreteDifference.read_inbox_max_id] mapToSignal:^SSignal *(NSDictionary *dict) {
+                                        id<SDisposable> disposable = [[[[TGChannelManagementSignals preloadedHistoryForPeerId:peerId accessHash:conversation.accessHash aroundMessageId:concreteDifference.read_inbox_max_id] deliverOn:OGChannelStatePreparationQueue()] mapToSignal:^SSignal *(NSDictionary *dict) {
+                                            if (OGPlatformUsesConstrainedBackgroundExecution())
+                                                [TGDatabaseInstance() onegramPrepareChannelMessagesForInsertion:dict[@"messages"]];
                                             return [OGChannelStateDatabaseSignal(__FILE__, __LINE__, ^id {
                                                 NSArray *removedImportantHoles = nil;
                                                 NSArray *removedUnimportantHoles = nil;
-                                                IOS6Trace(@"FULL state.poll.tooLong.preload peer=%lld around=%d messages=%d hole=%@ unimportant=%d", peerId, concreteDifference.read_inbox_max_id, (int)[(NSArray *)dict[@"messages"] count], dict[@"hole"], (int)[(NSArray *)dict[@"unimportantGroups"] count]);
                                                 
                                                 removedImportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
                                                 removedUnimportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
@@ -1174,7 +1256,6 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                 }
                             } else if ([result isKindOfClass:[TLUpdates_ChannelDifference$channelDifference class]]) {
                                 TLUpdates_ChannelDifference$channelDifference *concreteDifference = (TLUpdates_ChannelDifference$channelDifference *)result;
-                                IOS6Trace(@"FULL state.poll.channelDifference peer=%lld pts=%d new=%d other=%d users=%d chats=%d flags=%d", peerId, concreteDifference.pts, (int)concreteDifference.n_new_messages.count, (int)concreteDifference.other_updates.count, (int)concreteDifference.users.count, (int)concreteDifference.chats.count, concreteDifference.flags);
                                 if (!(concreteDifference.flags & (1 << 0)))
                                     restart = true;
                                 if (concreteDifference.flags & (1 << 1))
@@ -1221,6 +1302,14 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                     }
                                 }
                                 
+                                NSMutableArray *pollUpdates = [[NSMutableArray alloc] init];
+                                for (id update in concreteDifference.other_updates) {
+                                    if ([update isKindOfClass:[TLUpdate$updateMessagePollCodex class]])
+                                        [pollUpdates addObject:update];
+                                }
+                                if (pollUpdates.count != 0)
+                                    [updatedMessages addObjectsFromArray:[TGPollSignals messagesByApplyingPollUpdates:pollUpdates baseMessages:updatedMessages]];
+                                
                                 for (id channelDesc in concreteDifference.chats) {
                                     TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:channelDesc];
                                     if (conversation.conversationId != 0) {
@@ -1257,20 +1346,22 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                 
                                 users = concreteDifference.users;
                                 
-                                addMessages = ^{
-                                    [TGDatabaseInstance() addMessagesToChannelAndDispatch:peerId messages:messages deletedMessages:deletedMessageIds holes:nil pts:concreteDifference.pts skipFeedUpdate:false];
+                                addMessages = ^(dispatch_block_t completion) {
+                                    [TGDatabaseInstance() onegramAddMessagesToChannelAndDispatchChunked:peerId messages:messages deletedMessages:deletedMessageIds holes:nil pts:concreteDifference.pts skipFeedUpdate:false completion:^{
+                                        if (updatedMessages.count != 0) {
+                                            NSMutableArray *messageUpdates = [[NSMutableArray alloc] init];
+                                            for (TGMessage *message in updatedMessages) {
+                                                int64_t updatePeerId = message.cid == 0 ? peerId : message.cid;
+                                                if (updatePeerId != peerId)
+                                                    TGLog(@"STATE diff.edit.peerMismatch peer=%lld msgPeer=%lld mid=%d", peerId, message.cid, message.mid);
+                                                [messageUpdates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:updatePeerId messageId:message.mid message:message dispatchEdited:true]];
+                                            }
                                     
-                                    if (updatedMessages.count != 0) {
-                                        NSMutableArray *messageUpdates = [[NSMutableArray alloc] init];
-                                        for (TGMessage *message in updatedMessages) {
-                                            int64_t updatePeerId = message.cid == 0 ? peerId : message.cid;
-                                            if (updatePeerId != peerId)
-                                                TGLog(@"STATE diff.edit.peerMismatch peer=%lld msgPeer=%lld mid=%d", peerId, message.cid, message.mid);
-                                            [messageUpdates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:updatePeerId messageId:message.mid message:message dispatchEdited:true]];
+                                            [TGDatabaseInstance() transactionUpdateMessages:messageUpdates updateConversationDatas:nil];
                                         }
-                                        
-                                        [TGDatabaseInstance() transactionUpdateMessages:messageUpdates updateConversationDatas:nil];
-                                    }
+                                        if (completion != nil)
+                                            completion();
+                                    }];
                                 };
                             }
                             
@@ -1309,32 +1400,35 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                 }
                             }
                             
-                            [disposable setDisposable:[[[removeMessagesInProgressSignal then:[TGDownloadMessagesSignal downloadMessages:downloadMessages]] mapToSignal:^SSignal *(NSArray *updatedMessages) {
-                                return OGChannelStateDatabaseSignal(__FILE__, __LINE__, ^id {
-                                    for (TGMessage *message in updatedMessages) {
-                                        addedMessageIdToMessage[@(message.mid)] = message;
-                                    }
+                            [disposable setDisposable:[[[[removeMessagesInProgressSignal then:[TGDownloadMessagesSignal downloadMessages:downloadMessages]] deliverOn:OGChannelStatePreparationQueue()] mapToSignal:^SSignal *(NSArray *updatedMessages) {
+                                for (TGMessage *message in updatedMessages) {
+                                    addedMessageIdToMessage[@(message.mid)] = message;
+                                }
                                     
-                                    for (TGMessage *message in messages)
+                                for (TGMessage *message in messages)
+                                {
+                                    if (message.mediaAttachments.count != 0)
                                     {
-                                        if (message.mediaAttachments.count != 0)
+                                        for (id attachment in message.mediaAttachments)
                                         {
-                                            for (id attachment in message.mediaAttachments)
+                                            if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]])
                                             {
-                                                if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]])
-                                                {
-                                                    TGReplyMessageMediaAttachment *replyAttachment = attachment;
-                                                    if (replyAttachment.replyMessage == nil && replyAttachment.replyMessageId != 0) {
-                                                        TGMessage *replyMessage = addedMessageIdToMessage[@(replyAttachment.replyMessageId)];
-                                                        if (replyMessage != nil) {
-                                                            replyAttachment.replyMessage = replyMessage;
-                                                        }
+                                                TGReplyMessageMediaAttachment *replyAttachment = attachment;
+                                                if (replyAttachment.replyMessage == nil && replyAttachment.replyMessageId != 0) {
+                                                    TGMessage *replyMessage = addedMessageIdToMessage[@(replyAttachment.replyMessageId)];
+                                                    if (replyMessage != nil) {
+                                                        replyAttachment.replyMessage = replyMessage;
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
                                     
+                                if (OGPlatformUsesConstrainedBackgroundExecution())
+                                    [TGDatabaseInstance() onegramPrepareChannelMessagesForInsertion:messages];
+
+                                return OGChannelStateDatabaseSignal(__FILE__, __LINE__, ^id {
                                     [TGUserDataRequestBuilder executeUserDataUpdate:users];
                                     [TGDatabaseInstance() updateChannels:conversations];
                                     
@@ -1342,23 +1436,33 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                         addHole();
                                     }
                                     
-                                    if (addMessages) {
-                                        addMessages();
-                                    }
-                                    if (pinnedMessagesChangedInDifference)
-                                        [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", peerId] resource:@true];
+                                    dispatch_block_t finish = ^{
+#if defined(ONEGRAM_DIAGNOSTICS)
+                                        OGPlatformDiagnosticLog(@"SYNC channel.apply peer=%lld ms=%.0f messages=%u restart=%d", peerId, (CFAbsoluteTimeGetCurrent() - processStart) * 1000.0, (unsigned int)messages.count, restart ? 1 : 0);
+#endif
+                                        if (pinnedMessagesChangedInDifference)
+                                            [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", peerId] resource:@true];
 
-                                    if (loadHoles) {
-                                        loadHoles();
-                                    }
+                                        if (loadHoles) {
+                                            loadHoles();
+                                        }
                                     
-                                    if (restart) {
-                                        recurse();
-                                    } else {
-                                        [TGDatabaseInstance() confirmPeerPoll:[[TGQueuedPeerPoll alloc] initWithPeerId:peerId feedPosition:nil]];
-                                        [subscriber putNext:@(nextTimeout)];
-                                        [subscriber putCompletion];
-                                    }
+                                        if (restart) {
+                                            if (OGPlatformUsesConstrainedBackgroundExecution())
+                                                OGRuntimeDispatchAfter(OGRuntimePriorityUserInitiated, 0.10, recurse);
+                                            else
+                                                recurse();
+                                        } else {
+                                            [TGDatabaseInstance() confirmPeerPoll:[[TGQueuedPeerPoll alloc] initWithPeerId:peerId feedPosition:nil]];
+                                            [subscriber putNext:@(nextTimeout)];
+                                            [subscriber putCompletion];
+                                        }
+                                    };
+
+                                    if (addMessages != nil)
+                                        addMessages(finish);
+                                    else
+                                        finish();
                                     
                                     return nil;
                                 });

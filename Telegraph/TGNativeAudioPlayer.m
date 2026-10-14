@@ -12,15 +12,19 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGObserverProxy.h"
 
-@interface TGNativeAudioPlayer ()
+@interface TGNativeAudioPlayer () <AVAudioPlayerDelegate>
 {
     CGFloat _rate;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVPlayerItem *_currentItem;
     TGObserverProxy *_didPlayToEndObserver;
-    NSString *_currentPath;
     AVPlayerItem *_queuedItem;
-    NSString *_queuedPath;
     TGObserverProxy *_queuedDidPlayToEndObserver;
+#else
+    AVAudioPlayer *_queuedItem;
+#endif
+    NSString *_currentPath;
+    NSString *_queuedPath;
 }
 
 @end
@@ -39,6 +43,26 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
     return realPath;
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate)
+{
+    SEL enableRateSelector = NSSelectorFromString(@"setEnableRate:");
+    if ([player respondsToSelector:enableRateSelector])
+    {
+        void (*setEnabled)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[player methodForSelector:enableRateSelector];
+        if (setEnabled != NULL)
+            setEnabled(player, enableRateSelector, YES);
+    }
+    SEL rateSelector = NSSelectorFromString(@"setRate:");
+    if ([player respondsToSelector:rateSelector])
+    {
+        void (*setRate)(id, SEL, float) = (void (*)(id, SEL, float))[player methodForSelector:rateSelector];
+        if (setRate != NULL)
+            setRate(player, rateSelector, (float)rate);
+    }
+}
+#endif
+
 @implementation TGNativeAudioPlayer
 
 - (instancetype)initWithPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession
@@ -51,11 +75,17 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
         __autoreleasing NSError *error = nil;
         NSString *realPath = TGNativeAudioPlayerRealPath(path);
         _currentPath = [realPath copy];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         _currentItem = [[AVPlayerItem alloc] initWithURL:[NSURL fileURLWithPath:realPath]];
         if (_currentItem != nil) {
             _player = [[AVQueuePlayer alloc] initWithItems:@[_currentItem]];
             _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:_currentItem];
         }
+#else
+        _player = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:realPath] error:&error];
+        [_player setDelegate:self];
+        [_player prepareToPlay];
+#endif
         
         if (_player == nil || error != nil)
         {
@@ -74,6 +104,7 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
     __block bool replaced = false;
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         if (_queuedItem != nil && [_queuedPath isEqualToString:realPath] && ((AVQueuePlayer *)_player).currentItem == _queuedItem)
         {
             _currentItem = _queuedItem;
@@ -100,6 +131,33 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
             _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:nextItem];
             replaced = true;
         }
+#else
+        if ([_currentPath isEqualToString:realPath])
+        {
+            replaced = true;
+            return;
+        }
+
+        NSError *error = nil;
+        AVAudioPlayer *nextPlayer = nil;
+        if (_queuedItem != nil && [_queuedPath isEqualToString:realPath])
+            nextPlayer = _queuedItem;
+        else
+            nextPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:realPath] error:&error];
+        if (nextPlayer != nil && error == nil)
+        {
+            [_player stop];
+            [_player setDelegate:nil];
+            _player = nextPlayer;
+            [_player setDelegate:self];
+            [_player prepareToPlay];
+            TGNativeAudioPlayerSetLegacyRate(_player, _rate);
+            _currentPath = [realPath copy];
+            _queuedItem = nil;
+            _queuedPath = nil;
+            replaced = true;
+        }
+#endif
     } synchronous:true];
     return replaced;
 }
@@ -119,6 +177,7 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
             return;
         }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         AVQueuePlayer *queuePlayer = (AVQueuePlayer *)_player;
         if (_queuedItem != nil)
         {
@@ -137,6 +196,19 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
             _queuedDidPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:item];
             prepared = true;
         }
+#else
+        NSError *error = nil;
+        AVAudioPlayer *item = [[AVAudioPlayer alloc] initWithContentsOfURL:[NSURL fileURLWithPath:realPath] error:&error];
+        if (item != nil && error == nil)
+        {
+            [item setDelegate:self];
+            [item prepareToPlay];
+            TGNativeAudioPlayerSetLegacyRate(item, _rate);
+            _queuedItem = item;
+            _queuedPath = [realPath copy];
+            prepared = true;
+        }
+#endif
     } synchronous:true];
     return prepared;
 }
@@ -153,7 +225,15 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
 
 - (void)cleanup
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVPlayer *player = _player;
+#else
+    AVAudioPlayer *player = _player;
+    [player setDelegate:nil];
+    [_queuedItem setDelegate:nil];
+    _queuedItem = nil;
+    _queuedPath = nil;
+#endif
     _player = nil;
     
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
@@ -171,15 +251,24 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
         [self _beginAudioSession];
         
         if (position >= 0.0) {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
             CMTime targetTime = CMTimeMakeWithSeconds(position, NSEC_PER_SEC);
             [_currentItem seekToTime:targetTime toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+#else
+            [_player setCurrentTime:MAX(0.0, MIN(position, [_player duration]))];
+#endif
         }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
         if (iosMajorVersion() >= 7)
             _currentItem.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmTimeDomain;
 #endif
         [_player play];
         _player.rate = (float)_rate;
+#else
+        TGNativeAudioPlayerSetLegacyRate(_player, _rate);
+        [_player play];
+#endif
     }];
 }
 
@@ -209,7 +298,12 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
         _rate = rate;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         [_player setRate:(float)rate];
+#else
+        TGNativeAudioPlayerSetLegacyRate(_player, rate);
+        TGNativeAudioPlayerSetLegacyRate(_queuedItem, rate);
+#endif
     }];
 }
 
@@ -219,7 +313,11 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
     
     dispatch_block_t block = ^
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         result = CMTimeGetSeconds(_currentItem.currentTime);
+#else
+        result = [_player currentTime];
+#endif
     };
     
     if (sync)
@@ -232,17 +330,41 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
 
 - (NSTimeInterval)duration
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     return CMTimeGetSeconds(_currentItem.duration);
+#else
+    return [_player duration];
+#endif
 }
 
-- (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)__unused player successfully:(BOOL)__unused flag
+- (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player successfully:(BOOL)__unused flag
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
+    {
+        if (player != _player)
+            return;
+        if (_queuedItem != nil)
+        {
+            [_player setDelegate:nil];
+            _player = _queuedItem;
+            _currentPath = _queuedPath;
+            _queuedItem = nil;
+            _queuedPath = nil;
+            [_player setDelegate:self];
+            TGNativeAudioPlayerSetLegacyRate(_player, _rate);
+            [_player play];
+        }
+        else
+            [self _endAudioSession];
+        [self _notifyFinished];
+    }];
+#endif
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (void)playerItemDidPlayToEndTime:(NSNotification *)__unused notification
 {
-    // AVQueuePlayer starts the prepared item by itself, including while the
-    // process is suspended.  Pausing here would stop that automatic hand-off.
     if (_queuedItem == nil)
     {
         [_player pause];
@@ -251,5 +373,6 @@ static NSString *TGNativeAudioPlayerRealPath(NSString *path)
     
     [self _notifyFinished];
 }
+#endif
 
 @end

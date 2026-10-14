@@ -84,7 +84,6 @@
     }
     
     if (_optionTitle != nil) {
-        //view.optionText = _optionTitle;
     }
     
     [view setCustomLabel:_customLabel];

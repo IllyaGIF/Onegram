@@ -38,6 +38,7 @@
 @property (nonatomic, readonly) UIImage *coverImage;
 @property (nonatomic, readonly) id liveUploadData;
 
++ (instancetype)resultWithFileURL:(NSURL *)fileUrl fileSize:(NSUInteger)fileSize duration:(NSTimeInterval)duration dimensions:(CGSize)dimensions coverImage:(UIImage *)coverImage liveUploadData:(id)liveUploadData;
 - (NSDictionary *)dictionary;
 
 @end

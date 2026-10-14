@@ -96,7 +96,6 @@
 
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
 {
-    //TGLog(@"touches began: %@", touches);
     if (!_ignoreTouches)
         [super touchesBegan:touches withEvent:event];
 }
@@ -109,7 +108,6 @@
 
 - (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event
 {
-    //TGLog(@"touches cancel: %@", touches);
     if (_ignoreTouches)
         _ignoreTouches = false;
     else
@@ -118,7 +116,6 @@
 
 - (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
 {
-    //TGLog(@"touches ended: %@", touches);
     
     if (_ignoreTouches)
         _ignoreTouches = false;

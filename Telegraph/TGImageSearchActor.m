@@ -137,12 +137,10 @@
 
 - (void)httpRequestSuccess:(NSString *)__unused url response:(NSData *)response
 {
-    //TGLog(@"%@", [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding]);
     
     id rootObject = [NSJSONSerialization JSONObjectWithData:response options:0 error:nil];
     if (rootObject == nil || ![rootObject isKindOfClass:[NSDictionary class]])
     {
-        TGLog(@"%@", [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding]);
         [ActionStageInstance() actionFailed:self.path reason:-1];
         return;
     }
@@ -152,7 +150,6 @@
     rootObject = [rootObject objectForKey:@"d"];
     if (rootObject == nil || ![rootObject isKindOfClass:[NSDictionary class]])
     {
-        TGLog(@"%@", [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding]);
         [ActionStageInstance() actionFailed:self.path reason:-1];
         return;
     }
@@ -162,7 +159,6 @@
     NSArray *results = [rootObject objectForKey:@"results"];
     if (![results isKindOfClass:[NSArray class]])
     {
-        TGLog(@"%@", [[NSString alloc] initWithData:response encoding:NSUTF8StringEncoding]);
         [ActionStageInstance() actionFailed:self.path reason:-1];
         return;
     }

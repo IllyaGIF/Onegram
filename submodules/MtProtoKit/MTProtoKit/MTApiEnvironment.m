@@ -9,6 +9,8 @@
 #endif
 
 #include <sys/sysctl.h>
+#include <stdlib.h>
+#include <string.h>
 
 #import <CommonCrypto/CommonDigest.h>
 
@@ -59,7 +61,7 @@
 #define SIMULATOR_NAMESTRING            @"iPhone Simulator"
 #define SIMULATOR_IPHONE_NAMESTRING     @"iPhone Simulator"
 #define SIMULATOR_IPAD_NAMESTRING       @"iPad Simulator"
-#define SIMULATOR_APPLETV_NAMESTRING    @"Apple TV Simulator" // :)
+#define SIMULATOR_APPLETV_NAMESTRING    @"Apple TV Simulator"
 
 typedef enum {
     UIDeviceUnknown,
@@ -123,6 +125,175 @@ typedef enum {
     UIDeviceFamilyUnknown,
     
 } UIDeviceFamily;
+
+
+typedef struct
+{
+    const char *identifier;
+    const char *name;
+} MTOnegramDeviceModelEntry;
+
+static NSString *MTOnegramDeviceModel(void)
+{
+#if TARGET_OS_IPHONE
+#if TARGET_IPHONE_SIMULATOR
+    return @"iPhone Simulator";
+#else
+    static const MTOnegramDeviceModelEntry models[] =
+    {
+        {"iPhone1,1", "iPhone 2G"},
+        {"iPhone1,2", "iPhone 3G"},
+        {"iPhone2,1", "iPhone 3GS"},
+        {"iPhone3,1", "iPhone 4"},
+        {"iPhone3,2", "iPhone 4"},
+        {"iPhone3,3", "iPhone 4"},
+        {"iPhone4,1", "iPhone 4S"},
+        {"iPhone5,1", "iPhone 5"},
+        {"iPhone5,2", "iPhone 5"},
+        {"iPhone5,3", "iPhone 5c"},
+        {"iPhone5,4", "iPhone 5c"},
+        {"iPhone6,1", "iPhone 5s"},
+        {"iPhone6,2", "iPhone 5s"},
+        {"iPhone7,1", "iPhone 6 Plus"},
+        {"iPhone7,2", "iPhone 6"},
+        {"iPhone8,1", "iPhone 6s"},
+        {"iPhone8,2", "iPhone 6s Plus"},
+        {"iPhone8,4", "iPhone SE"},
+        {"iPhone9,1", "iPhone 7"},
+        {"iPhone9,3", "iPhone 7"},
+        {"iPhone9,2", "iPhone 7 Plus"},
+        {"iPhone9,4", "iPhone 7 Plus"},
+        {"iPhone10,1", "iPhone 8"},
+        {"iPhone10,4", "iPhone 8"},
+        {"iPhone10,2", "iPhone 8 Plus"},
+        {"iPhone10,5", "iPhone 8 Plus"},
+        {"iPhone10,3", "iPhone X"},
+        {"iPhone10,6", "iPhone X"},
+        {"iPhone11,2", "iPhone XS"},
+        {"iPhone11,4", "iPhone XS Max"},
+        {"iPhone11,6", "iPhone XS Max"},
+        {"iPhone11,8", "iPhone XR"},
+        {"iPhone12,1", "iPhone 11"},
+        {"iPhone12,3", "iPhone 11 Pro"},
+        {"iPhone12,5", "iPhone 11 Pro Max"},
+        {"iPhone12,8", "iPhone SE (2nd generation)"},
+        {"iPhone13,1", "iPhone 12 mini"},
+        {"iPhone13,2", "iPhone 12"},
+        {"iPhone13,3", "iPhone 12 Pro"},
+        {"iPhone13,4", "iPhone 12 Pro Max"},
+        {"iPhone14,2", "iPhone 13 Pro"},
+        {"iPhone14,3", "iPhone 13 Pro Max"},
+        {"iPhone14,4", "iPhone 13 mini"},
+        {"iPhone14,5", "iPhone 13"},
+        {"iPhone14,6", "iPhone SE (3rd generation)"},
+        {"iPhone14,7", "iPhone 14"},
+        {"iPhone14,8", "iPhone 14 Plus"},
+        {"iPhone15,2", "iPhone 14 Pro"},
+        {"iPhone15,3", "iPhone 14 Pro Max"},
+        {"iPhone15,4", "iPhone 15"},
+        {"iPhone15,5", "iPhone 15 Plus"},
+        {"iPhone16,1", "iPhone 15 Pro"},
+        {"iPhone16,2", "iPhone 15 Pro Max"},
+        {"iPhone17,1", "iPhone 16 Pro"},
+        {"iPhone17,2", "iPhone 16 Pro Max"},
+        {"iPhone17,3", "iPhone 16"},
+        {"iPhone17,4", "iPhone 16 Plus"},
+        {"iPhone17,5", "iPhone 16e"},
+
+        {"iPod1,1", "iPod touch (1st generation)"},
+        {"iPod2,1", "iPod touch (2nd generation)"},
+        {"iPod3,1", "iPod touch (3rd generation)"},
+        {"iPod4,1", "iPod touch (4th generation)"},
+        {"iPod5,1", "iPod touch (5th generation)"},
+        {"iPod7,1", "iPod touch (6th generation)"},
+        {"iPod9,1", "iPod touch (7th generation)"},
+
+        {"iPad1,1", "iPad"},
+        {"iPad2,1", "iPad 2"},
+        {"iPad2,2", "iPad 2"},
+        {"iPad2,3", "iPad 2"},
+        {"iPad2,4", "iPad 2"},
+        {"iPad2,5", "iPad mini"},
+        {"iPad2,6", "iPad mini"},
+        {"iPad2,7", "iPad mini"},
+        {"iPad3,1", "iPad (3rd generation)"},
+        {"iPad3,2", "iPad (3rd generation)"},
+        {"iPad3,3", "iPad (3rd generation)"},
+        {"iPad3,4", "iPad (4th generation)"},
+        {"iPad3,5", "iPad (4th generation)"},
+        {"iPad3,6", "iPad (4th generation)"},
+        {"iPad4,1", "iPad Air"},
+        {"iPad4,2", "iPad Air"},
+        {"iPad4,3", "iPad Air"},
+        {"iPad4,4", "iPad mini 2"},
+        {"iPad4,5", "iPad mini 2"},
+        {"iPad4,6", "iPad mini 2"},
+        {"iPad4,7", "iPad mini 3"},
+        {"iPad4,8", "iPad mini 3"},
+        {"iPad4,9", "iPad mini 3"},
+        {"iPad5,1", "iPad mini 4"},
+        {"iPad5,2", "iPad mini 4"},
+        {"iPad5,3", "iPad Air 2"},
+        {"iPad5,4", "iPad Air 2"},
+        {"iPad6,3", "iPad Pro 9.7-inch"},
+        {"iPad6,4", "iPad Pro 9.7-inch"},
+        {"iPad6,7", "iPad Pro 12.9-inch"},
+        {"iPad6,8", "iPad Pro 12.9-inch"}
+    };
+
+    size_t size = 0;
+
+    if (sysctlbyname("hw.machine", NULL, &size, NULL, 0) != 0 || size == 0)
+        return @"iPhone";
+
+    char *machine = (char *)malloc(size);
+
+    if (machine == NULL)
+        return @"iPhone";
+
+    if (sysctlbyname("hw.machine", machine, &size, NULL, 0) != 0)
+    {
+        free(machine);
+        return @"iPhone";
+    }
+
+    NSUInteger count = sizeof(models) / sizeof(models[0]);
+
+    for (NSUInteger i = 0; i < count; i++)
+    {
+        if (strcmp(machine, models[i].identifier) == 0)
+        {
+            NSString *name = [NSString stringWithUTF8String:models[i].name];
+            free(machine);
+            return name;
+        }
+    }
+
+    NSString *identifier = [NSString stringWithUTF8String:machine];
+    free(machine);
+
+    if (identifier == nil || [identifier length] == 0)
+        return @"iPhone";
+
+    return identifier;
+#endif
+#else
+    return @"Mac";
+#endif
+}
+
+static NSString *MTOnegramAppVersion(void)
+{
+    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+
+    if (version == nil || [version length] == 0)
+        version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"];
+
+    if (version == nil || [version length] == 0)
+        version = @"1.0";
+
+    return version;
+}
 
 @implementation MTSocksProxySettings
 
@@ -206,9 +377,9 @@ typedef enum {
     self = [super init];
     if (self != nil)
     {
-        _deviceModel = @"iPhone15,3";
+        _deviceModel = MTOnegramDeviceModel();
 #if TARGET_OS_IPHONE
-        _systemVersion = @"18.5";
+        _systemVersion = [[UIDevice currentDevice] systemVersion];
 #else
         NSProcessInfo *pInfo = [NSProcessInfo processInfo];
         _systemVersion = [[[pInfo operatingSystemVersionString] componentsSeparatedByString:@" "] objectAtIndex:1];
@@ -228,7 +399,7 @@ NSString *suffix = @"";
         suffix = @" STABLE";
 #endif
 #endif
-        NSString *versionString = [[NSString alloc] initWithFormat:@"11.14.0 (29642)%@", suffix];
+        NSString *versionString = [[NSString alloc] initWithFormat:@"%@%@", MTOnegramAppVersion(), suffix];
         _appVersion = versionString;
         
         _systemLangCode = [[NSLocale preferredLanguages] objectAtIndex:0];
@@ -344,10 +515,8 @@ NSString *suffix = @"";
 #if TARGET_OS_IPHONE
     NSString *platform = [self platform];
     
-    // The ever mysterious iFPGA
     if ([platform isEqualToString:@"iFPGA"])        return UIDeviceIFPGA;
     
-    // iPhone
     if ([platform isEqualToString:@"iPhone1,1"])    return UIDevice1GiPhone;
     if ([platform isEqualToString:@"iPhone1,2"])    return UIDevice3GiPhone;
     if ([platform hasPrefix:@"iPhone2"])            return UIDevice3GSiPhone;
@@ -374,7 +543,6 @@ NSString *suffix = @"";
     
     if ([platform isEqualToString:@"iPhone8,4"])    return UIDeviceSEPhone;
     
-    // iPod
     if ([platform hasPrefix:@"iPod1"])              return UIDevice1GiPod;
     if ([platform hasPrefix:@"iPod2"])              return UIDevice2GiPod;
     if ([platform hasPrefix:@"iPod3"])              return UIDevice3GiPod;
@@ -382,7 +550,6 @@ NSString *suffix = @"";
     if ([platform hasPrefix:@"iPod5"])              return UIDevice5GiPod;
     if ([platform hasPrefix:@"iPod7"])              return UIDevice6GiPod;
     
-    // iPad
     if ([platform hasPrefix:@"iPad1"])              return UIDevice1GiPad;
     if ([platform hasPrefix:@"iPad2"])              return UIDevice2GiPad;
     if ([platform hasPrefix:@"iPad3"])              return UIDevice3GiPad;
@@ -390,7 +557,6 @@ NSString *suffix = @"";
     if ([platform hasPrefix:@"iPad5"])              return UIDevice5GiPad;
     if ([platform hasPrefix:@"iPad6"])              return UIDevice6GiPad;
     
-    // Apple TV
     if ([platform hasPrefix:@"AppleTV2"])           return UIDeviceAppleTV2;
     if ([platform hasPrefix:@"AppleTV3"])           return UIDeviceAppleTV3;
     
@@ -399,7 +565,6 @@ NSString *suffix = @"";
     if ([platform hasPrefix:@"iPad"])               return UIDeviceUnknowniPad;
     if ([platform hasPrefix:@"AppleTV"])            return UIDeviceUnknownAppleTV;
     
-    // Simulator thanks Jordan Breeding
     if ([platform hasSuffix:@"86"] || [platform isEqual:@"x86_64"])
     {
         return UIDeviceSimulatoriPhone;
@@ -446,6 +611,7 @@ NSString *suffix = @"";
     result.datacenterAddressOverrides = self.datacenterAddressOverrides;
     result->_socksProxySettings = self.socksProxySettings;
     result->_onegramWebSocketEnabled = self.onegramWebSocketEnabled;
+    result->_preferHttpTransport = self.preferHttpTransport;
     result->_networkSettings = self.networkSettings;
     
     [result _updateApiInitializationHash];
@@ -465,6 +631,7 @@ NSString *suffix = @"";
     result->_langPackCode = self.langPackCode;
     result->_socksProxySettings = self.socksProxySettings;
     result->_onegramWebSocketEnabled = self.onegramWebSocketEnabled;
+    result->_preferHttpTransport = self.preferHttpTransport;
     result->_networkSettings = self.networkSettings;
     
     result.disableUpdates = self.disableUpdates;
@@ -488,6 +655,7 @@ NSString *suffix = @"";
     result->_langPackCode = self.langPackCode;
     result->_socksProxySettings = socksProxySettings;
     result->_onegramWebSocketEnabled = self.onegramWebSocketEnabled;
+    result->_preferHttpTransport = self.preferHttpTransport;
     result->_networkSettings = self.networkSettings;
     
     result.disableUpdates = self.disableUpdates;
@@ -511,6 +679,7 @@ NSString *suffix = @"";
     result->_langPackCode = self.langPackCode;
     result->_socksProxySettings = self.socksProxySettings;
     result->_onegramWebSocketEnabled = onegramWebSocketEnabled;
+    result->_preferHttpTransport = self.preferHttpTransport;
     result->_networkSettings = self.networkSettings;
     
     result.disableUpdates = self.disableUpdates;
@@ -534,6 +703,7 @@ NSString *suffix = @"";
     result->_langPackCode = self.langPackCode;
     result->_socksProxySettings = self.socksProxySettings;
     result->_onegramWebSocketEnabled = self.onegramWebSocketEnabled;
+    result->_preferHttpTransport = self.preferHttpTransport;
     result->_networkSettings = networkSettings;
     
     result.disableUpdates = self.disableUpdates;
@@ -542,6 +712,30 @@ NSString *suffix = @"";
     
     [result _updateApiInitializationHash];
     
+    return result;
+}
+
+- (MTApiEnvironment *)withUpdatedPreferHttpTransport:(bool)preferHttpTransport {
+    MTApiEnvironment *result = [[MTApiEnvironment alloc] init];
+
+    result.apiId = self.apiId;
+    result.appVersion = self.appVersion;
+    result.layer = self.layer;
+
+    result.langPack = self.langPack;
+
+    result->_langPackCode = self.langPackCode;
+    result->_socksProxySettings = self.socksProxySettings;
+    result->_onegramWebSocketEnabled = self.onegramWebSocketEnabled;
+    result->_preferHttpTransport = preferHttpTransport;
+    result->_networkSettings = self.networkSettings;
+
+    result.disableUpdates = self.disableUpdates;
+    result.tcpPayloadPrefix = self.tcpPayloadPrefix;
+    result.datacenterAddressOverrides = self.datacenterAddressOverrides;
+
+    [result _updateApiInitializationHash];
+
     return result;
 }
 

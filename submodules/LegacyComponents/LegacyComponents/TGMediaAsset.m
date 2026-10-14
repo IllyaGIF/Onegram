@@ -203,8 +203,10 @@ UIImage *TGMediaAssetLegacyAspectRatioThumbnailImage(ALAsset *asset)
 {
     if (self.backingAsset != nil)
         return self.backingAsset.creationDate;
+#if !defined(ONEGRAM_ARMV6)
     else if (self.backingLegacyAsset != nil)
         return [self.backingLegacyAsset valueForProperty:ALAssetPropertyDate];
+#endif
     
     return nil;
 }
@@ -257,12 +259,16 @@ UIImage *TGMediaAssetLegacyAspectRatioThumbnailImage(ALAsset *asset)
         }
         else if (self.backingLegacyAsset != nil)
         {
+#if defined(ONEGRAM_ARMV6)
+            _cachedType = @(TGMediaAssetAnyType);
+#else
             if ([[self.backingLegacyAsset valueForProperty:ALAssetPropertyType] isEqualToString:ALAssetTypeVideo])
                 _cachedType = @(TGMediaAssetVideoType);
             else if ([self _isGif])
                 _cachedType = @(TGMediaAssetGifType);
             else
                 _cachedType = @(TGMediaAssetPhotoType);
+#endif
         }
     }
     
@@ -283,8 +289,10 @@ UIImage *TGMediaAssetLegacyAspectRatioThumbnailImage(ALAsset *asset)
 {
     if (self.backingAsset != nil)
         return self.backingAsset.duration;
+#if !defined(ONEGRAM_ARMV6)
     else if (self.backingLegacyAsset != nil)
         return [[self.backingLegacyAsset valueForProperty:ALAssetPropertyDuration] doubleValue];
+#endif
     
     return 0;
 }
@@ -296,12 +304,17 @@ UIImage *TGMediaAssetLegacyAspectRatioThumbnailImage(ALAsset *asset)
     
     if (_cachedDuration == nil)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        _cachedDuration = @(self.videoDuration);
+        return [SSignal single:_cachedDuration];
+#else
         return [[TGMediaAssetImageSignals avAssetForVideoAsset:self] map:^id(AVAsset *asset)
         {
             NSTimeInterval duration = CMTimeGetSeconds(asset.duration);
             _cachedDuration = @(duration);
             return _cachedDuration;
         }];
+#endif
     }
     
     return [SSignal single:_cachedDuration];

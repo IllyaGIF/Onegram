@@ -12,6 +12,7 @@
 @property (nonatomic, readonly) NSTimeInterval videoDuration;
 @property (nonatomic, readonly) CGAffineTransform videoTransform;
 @property (nonatomic, readonly) bool isRecording;
+@property (nonatomic, readonly) bool usesNativePreview;
 
 @property (nonatomic, copy) void (^micLevel)(CGFloat);
 
@@ -36,6 +37,7 @@
 @protocol TGVideoCameraPipelineDelegate <NSObject>
 @required
 
+- (bool)capturePipelineDidPrepareToStartRunning:(TGVideoCameraPipeline *)capturePipeline;
 - (void)capturePipelineDidStartRunning:(TGVideoCameraPipeline *)capturePipeline;
 - (void)capturePipeline:(TGVideoCameraPipeline *)capturePipeline didStopRunningWithError:(NSError *)error;
 

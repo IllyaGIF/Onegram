@@ -28,7 +28,7 @@
 
 - (int)layerVersion
 {
-    return 74;
+    return 225;
 }
 
 - (void)TLserialize:(NSOutputStream *)os
@@ -46,7 +46,6 @@
 
     [os writeInt32:self.limit];
     
-    // Modern Telegram layers require hash:long after limit. Zero disables cached diff mode.
     [os writeInt64:self.n_hash];
 }
 

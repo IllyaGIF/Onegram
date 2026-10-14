@@ -1,4 +1,5 @@
 #import "TGDraggableCollectionView.h"
+#import "../../../OnegramPlatform/OGPlatformGraphics.h"
 
 #import "LegacyComponents.h"
 
@@ -132,18 +133,14 @@ typedef enum
 - (UIView *)_prepareDraggedViewForCell:(PSUICollectionViewCell *)cell
 {
     UIView *view = [[UIView alloc] initWithFrame:[self convertRect:cell.frame toView:[self _draggedViewSuperview]]];
-    view.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(view.layer, TGScreenScaling());
     
     _outsideSnapshotView = [cell snapshotViewAfterScreenUpdates:false];
     [view addSubview:_outsideSnapshotView];
     
     _insideSnapshotView = [cell snapshotViewAfterScreenUpdates:false];
     
-    _outsideSnapshotView.layer.shadowOffset = CGSizeZero;
-    _outsideSnapshotView.layer.shadowColor = [UIColor blackColor].CGColor;
-    _outsideSnapshotView.layer.shadowRadius = 3.0f;
-    _outsideSnapshotView.layer.shadowOpacity = 0.87f;
-    _outsideSnapshotView.layer.shadowPath = [UIBezierPath bezierPathWithRect:view.bounds].CGPath;
+    OGPlatformApplyViewShadow(_outsideSnapshotView, [UIColor blackColor], 0.87f, 3.0f, CGSizeZero);
     
     return view;
 }
@@ -153,7 +150,7 @@ typedef enum
     [self addSubview:_insideSnapshotView];
     _insideSnapshotView.center = [self convertPoint:_draggedView.center fromView:[self _draggedViewSuperview]];
     
-    _draggedView.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(_draggedView.layer, true);
     _draggedView.alpha = 0.0f;
     
     [UIView animateWithDuration:duration delay:0.0f options:UIViewAnimationOptionBeginFromCurrentState animations:^

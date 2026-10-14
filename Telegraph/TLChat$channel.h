@@ -10,6 +10,7 @@
 @property (nonatomic) int32_t flags;
 @property (nonatomic) int32_t flags2;
 @property (nonatomic) int32_t name_color_id;
+@property (nonatomic) int64_t linked_community_id;
 
 @property (nonatomic, readonly) bool creator;
 @property (nonatomic, readonly) bool left;

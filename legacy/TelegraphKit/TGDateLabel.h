@@ -25,6 +25,8 @@
 
 @property (nonatomic) bool isDisabled;
 
++ (CGSize)measureDateText:(NSString *)text dateFont:(UIFont *)dateFont textFont:(UIFont *)textFont amWidth:(CGFloat)amWidth pmWidth:(CGFloat)pmWidth;
+
 - (CGSize)measureTextSize;
 
 @end

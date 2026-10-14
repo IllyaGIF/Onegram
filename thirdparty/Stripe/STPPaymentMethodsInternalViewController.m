@@ -59,10 +59,14 @@ static NSInteger STPPaymentMethodAddCardSection = 1;
     self.automaticallyAdjustsScrollViewInsets = NO;
     
     UITableView *tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     tableView.allowsMultipleSelectionDuringEditing = NO;
+#endif
     tableView.dataSource = self;
     tableView.delegate = self;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     [tableView registerClass:[STPPaymentMethodTableViewCell class] forCellReuseIdentifier:STPPaymentMethodCellReuseIdentifier];
+#endif
     tableView.sectionHeaderHeight = 30;
     tableView.separatorStyle = UITableViewCellSeparatorStyleNone; // use fake separator views
     if (iosMajorVersion() >= 7)
@@ -125,7 +129,13 @@ static NSInteger STPPaymentMethodAddCardSection = 1;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     STPPaymentMethodTableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:STPPaymentMethodCellReuseIdentifier forIndexPath:indexPath];
+#else
+    STPPaymentMethodTableViewCell *cell = (STPPaymentMethodTableViewCell *)[tableView dequeueReusableCellWithIdentifier:STPPaymentMethodCellReuseIdentifier];
+    if (cell == nil)
+        cell = [[STPPaymentMethodTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:STPPaymentMethodCellReuseIdentifier];
+#endif
     if (indexPath.section == STPPaymentMethodCardListSection) {
         id<STPPaymentMethod> paymentMethod = [self.paymentMethods stp_boundSafeObjectAtIndex:indexPath.row];
         [cell configureWithPaymentMethod:paymentMethod theme:self.theme];
@@ -144,11 +154,13 @@ static NSInteger STPPaymentMethodAddCardSection = 1;
         [self.delegate internalViewControllerDidSelectPaymentMethod:paymentMethod];
     } else if (indexPath.section == STPPaymentMethodAddCardSection) {
         STPPaymentConfiguration *config = [self.configuration copy];
-        NSArray *cardPaymentMethods = [self.paymentMethods filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id<STPPaymentMethod> paymentMethod, __unused NSDictionary * bindings) {
-            return [paymentMethod isKindOfClass:[STPCard class]];
-        }]];
+        NSUInteger cardPaymentMethodCount = 0;
+        for (id<STPPaymentMethod> paymentMethod in self.paymentMethods) {
+            if ([paymentMethod isKindOfClass:[STPCard class]])
+                cardPaymentMethodCount++;
+        }
         // Disable SMS autofill if we already have a card on file
-        config.smsAutofillDisabled = (config.smsAutofillDisabled || cardPaymentMethods.count > 0);
+        config.smsAutofillDisabled = (config.smsAutofillDisabled || cardPaymentMethodCount > 0);
         
         STPAddCardViewController *paymentCardViewController = [[STPAddCardViewController alloc] initWithConfiguration:config theme:self.theme];
         paymentCardViewController.delegate = self;

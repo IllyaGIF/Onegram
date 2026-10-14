@@ -9,6 +9,7 @@
 #import "TGPhotoEditorUtils.h"
 
 #import "TGMediaAssetsLibrary.h"
+#import "../../../OnegramPlatform/OGPlatformMedia.h"
 
 const CGSize TGMediaAssetImageLegacySizeLimit = { 2048, 2048 };
 
@@ -29,10 +30,14 @@ static Class TGMediaAssetImageSignalsClass = nil;
 {
     @autoreleasepool
     {
+#if defined(ONEGRAM_ARMV6)
+        TGMediaAssetImageSignalsClass = [TGMediaAssetLegacyImageSignals class];
+#else
         if ([TGMediaAssetsLibrary usesPhotoFramework])
             TGMediaAssetImageSignalsClass = [TGMediaAssetModernImageSignals class];
         else
             TGMediaAssetImageSignalsClass = [TGMediaAssetLegacyImageSignals class];
+#endif
     }
 }
 
@@ -102,6 +107,123 @@ static Class TGMediaAssetImageSignalsClass = nil;
     return queue;
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
++ (SSignal *)videoThumbnailsForAsset:(TGMediaAsset *)asset size:(CGSize)size timestamps:(NSArray *)timestamps
+{
+    if (asset == nil || timestamps.count == 0)
+        return [SSignal fail:nil];
+
+    return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        NSMutableArray *images = [[NSMutableArray alloc] initWithCapacity:timestamps.count];
+        UIImage *fallbackImage = nil;
+        CGImageRef fallbackImageRef = asset.backingLegacyAsset.thumbnail;
+        if (fallbackImageRef != NULL)
+            fallbackImage = [UIImage imageWithCGImage:fallbackImageRef];
+
+        for (id value in timestamps)
+        {
+            NSTimeInterval seconds = [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : 0.0;
+            UIImage *image = OGPlatformVideoThumbnailAtURL(asset.url, seconds, size);
+            if (image == nil)
+                image = fallbackImage;
+            if (image == nil)
+            {
+                [subscriber putError:nil];
+                return nil;
+            }
+            [images addObject:image];
+        }
+
+        [subscriber putNext:images];
+        [subscriber putCompletion];
+        return nil;
+    }] startOn:[self _thumbnailQueue]];
+}
+
+static NSURL *TGMediaAssetLegacyURLFromAVAsset(id avAsset)
+{
+    if (avAsset == nil)
+        return nil;
+    SEL selector = NSSelectorFromString(@"URL");
+    if (![avAsset respondsToSelector:selector])
+        return nil;
+    id (*function)(id, SEL) = (id (*)(id, SEL))[avAsset methodForSelector:selector];
+    return function != NULL ? function(avAsset, selector) : nil;
+}
+
++ (SSignal *)videoThumbnailsForAVAsset:(AVAsset *)avAsset size:(CGSize)size timestamps:(NSArray *)timestamps
+{
+    NSURL *url = TGMediaAssetLegacyURLFromAVAsset(avAsset);
+    if (url == nil || timestamps.count == 0)
+        return [SSignal fail:nil];
+
+    return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        NSMutableArray *images = [[NSMutableArray alloc] initWithCapacity:timestamps.count];
+        for (id value in timestamps)
+        {
+            NSTimeInterval seconds = [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : 0.0;
+            UIImage *image = OGPlatformVideoThumbnailAtURL(url, seconds, size);
+            if (image == nil)
+            {
+                [subscriber putError:nil];
+                return nil;
+            }
+            [images addObject:image];
+        }
+        [subscriber putNext:images];
+        [subscriber putCompletion];
+        return nil;
+    }] startOn:[self _thumbnailQueue]];
+}
+
++ (SSignal *)videoThumbnailForAsset:(TGMediaAsset *)asset size:(CGSize)size timestamp:(CMTime)timestamp
+{
+    if (asset == nil)
+        return [SSignal fail:nil];
+
+    return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        UIImage *image = OGPlatformVideoThumbnailAtURL(asset.url, CMTimeGetSeconds(timestamp), size);
+        if (image == nil)
+        {
+            CGImageRef fallbackImageRef = asset.backingLegacyAsset.thumbnail;
+            if (fallbackImageRef != NULL)
+                image = [UIImage imageWithCGImage:fallbackImageRef];
+        }
+        if (image == nil)
+            [subscriber putError:nil];
+        else
+        {
+            [subscriber putNext:image];
+            [subscriber putCompletion];
+        }
+        return nil;
+    }] startOn:[self _thumbnailQueue]];
+}
+
++ (SSignal *)videoThumbnailForAVAsset:(AVAsset *)avAsset size:(CGSize)size timestamp:(CMTime)timestamp
+{
+    NSURL *url = TGMediaAssetLegacyURLFromAVAsset(avAsset);
+    if (url == nil)
+        return [SSignal fail:nil];
+
+    return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        UIImage *image = OGPlatformVideoThumbnailAtURL(url, CMTimeGetSeconds(timestamp), size);
+        if (image == nil)
+            [subscriber putError:nil];
+        else
+        {
+            [subscriber putNext:image];
+            [subscriber putCompletion];
+        }
+        return nil;
+    }] startOn:[self _thumbnailQueue]];
+}
+
+#else
 + (SSignal *)videoThumbnailsForAsset:(TGMediaAsset *)asset size:(CGSize)size timestamps:(NSArray *)timestamps
 {
     return [[self avAssetForVideoAsset:asset] mapToSignal:^SSignal *(AVAsset *avAsset)
@@ -185,6 +307,8 @@ static Class TGMediaAssetImageSignalsClass = nil;
     return [signal startOn:[self _thumbnailQueue]];
 }
 
+#endif
+
 + (SSignal *)saveUncompressedVideoForAsset:(TGMediaAsset *)asset toPath:(NSString *)path
 {
     return [self saveUncompressedVideoForAsset:asset toPath:path allowNetworkAccess:false];
@@ -219,6 +343,13 @@ static Class TGMediaAssetImageSignalsClass = nil;
     return [TGMediaAssetImageSignalsClass avAssetForVideoAsset:asset allowNetworkAccess:allowNetworkAccess];
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
++ (UIImageOrientation)videoOrientationOfAVAsset:(AVAsset *)__unused avAsset
+{
+    return UIImageOrientationUp;
+}
+
+#else
 + (UIImageOrientation)videoOrientationOfAVAsset:(AVAsset *)avAsset
 {
     NSArray *videoTracks = [avAsset tracksWithMediaType:AVMediaTypeVideo];
@@ -251,6 +382,8 @@ static Class TGMediaAssetImageSignalsClass = nil;
     
     return orientation;
 }
+
+#endif
 
 + (bool)usesPhotoFramework
 {

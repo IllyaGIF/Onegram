@@ -1,4 +1,10 @@
 #import "TGUserInfoCollectionItemView.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
+#import "../OnegramUI/Profile/OGProfileHeader.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -23,26 +29,6 @@ extern void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^completion
 
 static const int32_t TGMarkedUserId = 314366525;
 
-static UIImage *TGBrandedIOS6LightMetalImage(void)
-{
-    static UIImage *result = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        UIImage *image = [TGPresentation brandedIOS6ResourceImage:@"metal1"];
-        if (image != nil)
-        {
-            UIGraphicsBeginImageContextWithOptions(image.size, true, image.scale);
-            [[UIColor whiteColor] setFill];
-            UIRectFill(CGRectMake(0.0f, 0.0f, image.size.width, image.size.height));
-            [image drawInRect:CGRectMake(0.0f, 0.0f, image.size.width, image.size.height) blendMode:kCGBlendModeNormal alpha:0.46f];
-            result = UIGraphicsGetImageFromCurrentImageContext();
-            UIGraphicsEndImageContext();
-        }
-    });
-    return result;
-}
-
 @interface TGLetteredAvatarView (TGModernGalleryTransition) <TGModernGalleryTransitionView>
 
 @end
@@ -64,6 +50,8 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
     UILabel *_phoneLabel;
     UILabel *_usernameLabel;
     UIImageView *_brandedBackgroundView;
+    UIImageView *_brandedAvatarOverlayView;
+    UIImageView *_brandedStatusBackgroundView;
     UIImageView *_brandedAvatarReflectionView;
     UIImage *_brandedReflectedAvatarImage;
     UILabel *_aboutTitleLabel;
@@ -107,7 +95,6 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
     UILabel *_profileMusicIconLabel;
     UILabel *_profileMusicTextLabel;
     UIImageView *_profileMusicArrowView;
-    UIView *_profileMusicSeparatorView;
     CGFloat _brandedDetailsTextScale;
 }
 
@@ -135,6 +122,10 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
         _nameLabel.numberOfLines = 1;
         [self addSubview:_nameLabel];
         
+        _brandedStatusBackgroundView = [[UIImageView alloc] init];
+        _brandedStatusBackgroundView.hidden = true;
+        [self addSubview:_brandedStatusBackgroundView];
+
         _statusLabel = [[UILabel alloc] init];
         _statusLabel.backgroundColor = [UIColor clearColor];
         _statusLabel.font = TGSystemFontOfSize(15.0f);
@@ -155,8 +146,7 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
         _firstNameField.alpha = 0.0f;
         _firstNameField.hidden = true;
         _firstNameField.autocorrectionType = UITextAutocorrectionTypeNo;
-        if ([_firstNameField respondsToSelector:@selector(setSpellCheckingType:)])
-            _firstNameField.spellCheckingType = UITextSpellCheckingTypeNo;
+        OGPlatformDisableSpellChecking(_firstNameField);
         [self addSubview:_firstNameField];
         
         _lastNameField = [[TGTextField alloc] init];
@@ -174,8 +164,7 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
         _lastNameField.alpha = 0.0f;
         _lastNameField.hidden = true;
         _lastNameField.autocorrectionType = UITextAutocorrectionTypeNo;
-        if ([_lastNameField respondsToSelector:@selector(setSpellCheckingType:)])
-            _lastNameField.spellCheckingType = UITextSpellCheckingTypeNo;
+        OGPlatformDisableSpellChecking(_lastNameField);
         [self addSubview:_lastNameField];
         
         _editingFirstNameSeparator = [[UIView alloc] init];
@@ -188,7 +177,6 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
         _editingLastNameSeparator.backgroundColor = TGSeparatorColor();
         _editingLastNameSeparator.hidden = true;
         _editingLastNameSeparator.alpha = 0.0f;
-        //[self addSubview:_editingLastNameSeparator];
         
         _callButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 44.0f, 44.0f)];
         _callButton.adjustsImageWhenHighlighted = false;
@@ -197,36 +185,34 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
         [_callButton addTarget:self action:@selector(callButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_callButton];
 
-        _brandedBackgroundView = [[UIImageView alloc] initWithImage:[TGPresentation brandedIOS6ResourceImage:@"metal1"]];
-        _brandedBackgroundView.contentMode = UIViewContentModeScaleToFill;
-        _brandedBackgroundView.clipsToBounds = true;
-        _brandedBackgroundView.layer.cornerRadius = 10.0f;
+        OGTheme *brandedTheme = [OGTheme brandedTheme];
+        OGProfileAppearance *profileAppearance = brandedTheme.profileAppearance;
+
+        _brandedBackgroundView = [[UIImageView alloc] init];
         _brandedBackgroundView.hidden = true;
         [self.contentView insertSubview:_brandedBackgroundView atIndex:0];
 
+        _brandedAvatarOverlayView = [[UIImageView alloc] init];
+        _brandedAvatarOverlayView.hidden = true;
+        [self insertSubview:_brandedAvatarOverlayView aboveSubview:_avatarView];
+
         _brandedAvatarReflectionView = [[UIImageView alloc] init];
-        _brandedAvatarReflectionView.contentMode = UIViewContentModeScaleAspectFill;
-        _brandedAvatarReflectionView.clipsToBounds = true;
-        _brandedAvatarReflectionView.layer.cornerRadius = 10.0f;
+        [OGProfileHeader applyLegacyReflectionStyleWithTheme:brandedTheme imageView:_brandedAvatarReflectionView];
         _brandedAvatarReflectionView.hidden = true;
-        CAGradientLayer *reflectionMask = [CAGradientLayer layer];
-        reflectionMask.colors = @[(id)UIColorRGBA(0xffffff, 0.0f).CGColor, (id)UIColorRGBA(0xffffff, 0.82f).CGColor];
-        reflectionMask.locations = @[@0.0f, @1.0f];
-        _brandedAvatarReflectionView.layer.mask = reflectionMask;
         [self.contentView insertSubview:_brandedAvatarReflectionView aboveSubview:_brandedBackgroundView];
 
         _aboutTitleLabel = [[UILabel alloc] init];
         _aboutTitleLabel.backgroundColor = [UIColor clearColor];
         _aboutTitleLabel.text = [TGLocalized(@"Channel.Edit.AboutItem") stringByAppendingString:@":"];
-        _aboutTitleLabel.font = TGSystemFontOfSize(12.0f);
-        _aboutTitleLabel.textColor = UIColorRGB(0x5a5a5a);
+        _aboutTitleLabel.font = TGSystemFontOfSize(profileAppearance.aboutTitleFontSize);
+        _aboutTitleLabel.textColor = profileAppearance.aboutTitleColor;
         _aboutTitleLabel.hidden = true;
         [self addSubview:_aboutTitleLabel];
 
         _aboutLabel = [[UILabel alloc] init];
         _aboutLabel.backgroundColor = [UIColor clearColor];
-        _aboutLabel.font = TGSystemFontOfSize(10.0f);
-        _aboutLabel.textColor = UIColorRGB(0x696969);
+        _aboutLabel.font = TGSystemFontOfSize(profileAppearance.aboutFontSize);
+        _aboutLabel.textColor = profileAppearance.aboutColor;
         _aboutLabel.numberOfLines = 2;
         _aboutLabel.lineBreakMode = NSLineBreakByTruncatingTail;
         _aboutLabel.hidden = true;
@@ -246,91 +232,69 @@ static UIImage *TGBrandedIOS6LightMetalImage(void)
 - (void)setPresentation:(TGPresentation *)presentation
 {
     [super setPresentation:presentation];
-    
+
     bool classicIOS6Style = [TGPresentation classicIOS6Style];
     bool classicDarkStyle = classicIOS6Style && presentation.pallete.isDark;
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
-    [_avatarView setSingleFontSize:brandedIOS6Style ? 34.0f : 28.0f doubleFontSize:brandedIOS6Style ? 34.0f : 28.0f useBoldFont:false];
+    OGTheme *brandedTheme = [OGTheme brandedTheme];
+    OGProfileAppearance *profileAppearance = brandedTheme.profileAppearance;
+
+    CGFloat avatarPlaceholderFontSize = brandedIOS6Style ? profileAppearance.avatarPlaceholderFontSize : 28.0f;
+    [_avatarView setSingleFontSize:avatarPlaceholderFontSize doubleFontSize:avatarPlaceholderFontSize useBoldFont:false];
     _brandedBackgroundView.hidden = !brandedIOS6Style;
+    _brandedAvatarOverlayView.hidden = !brandedIOS6Style;
+    _brandedStatusBackgroundView.hidden = !brandedIOS6Style;
     _brandedAvatarReflectionView.hidden = !brandedIOS6Style;
-    _brandedAvatarReflectionView.alpha = brandedIOS6Style ? 0.45f : 1.0f;
-    _brandedBackgroundView.image = brandedIOS6Style ? TGBrandedIOS6LightMetalImage() : nil;
-    _brandedBackgroundView.alpha = 1.0f;
-    _brandedBackgroundView.layer.borderWidth = brandedIOS6Style ? TGScreenPixel : 0.0f;
-    _brandedBackgroundView.layer.borderColor = brandedIOS6Style ? UIColorRGB(0x9d9d9d).CGColor : nil;
+    if (brandedIOS6Style)
+    {
+        [OGProfileHeader applyLegacyAvatarStyleWithTheme:brandedTheme view:_avatarView];
+        [OGProfileHeader applyLegacyReflectionStyleWithTheme:brandedTheme imageView:_brandedAvatarReflectionView];
+    }
     self.backgroundView.hidden = brandedIOS6Style;
     self.selectedBackgroundView.hidden = brandedIOS6Style;
     _aboutTitleLabel.hidden = !brandedIOS6Style || _about.length == 0;
     _aboutLabel.hidden = !brandedIOS6Style || _about.length == 0;
     _callButton.hidden = !_showCall || brandedIOS6Style;
-    _nameLabel.font = brandedIOS6Style ? TGBoldSystemFontOfSize(18.0f) : TGMediumSystemFontOfSize(20.0f);
-    _statusLabel.font = TGSystemFontOfSize(brandedIOS6Style ? 11.0f : 15.0f);
-    _nameLabel.textColor = classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor;
-    _phoneLabel.textColor = classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
-    _usernameLabel.textColor = classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
+    _nameLabel.font = brandedIOS6Style ? [OGProfileHeader legacyNameFontWithTheme:brandedTheme size:profileAppearance.nameMaximumFontSize] : TGMediumSystemFontOfSize(20.0f);
+    _nameLabel.shadowColor = brandedIOS6Style ? profileAppearance.nameShadowColor : nil;
+    _nameLabel.shadowOffset = brandedIOS6Style ? profileAppearance.nameShadowOffset : CGSizeZero;
+    _statusLabel.font = TGSystemFontOfSize(brandedIOS6Style ? profileAppearance.statusFontSize : 15.0f);
+    _nameLabel.textColor = brandedIOS6Style ? profileAppearance.nameColor : (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
+    _phoneLabel.textColor = brandedIOS6Style ? profileAppearance.phoneColor : (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
+    _usernameLabel.textColor = brandedIOS6Style ? profileAppearance.usernameColor : (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
     _verifiedIcon.image = presentation.images.profileVerifiedIcon;
     _premiumIcon.image = [TGPresentationAssets premiumBadgeIcon:16.0f];
-    UIImage *disclosureImage = classicIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
+    UIImage *disclosureImage = nil;
+    if (brandedIOS6Style)
+        disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:brandedTheme];
+    else if (classicIOS6Style)
+        disclosureImage = [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"];
+    else
+        disclosureImage = presentation.images.collectionMenuDisclosureIcon;
     if (classicDarkStyle)
         disclosureImage = [TGPresentation classicIOS6ThemedImage:disclosureImage tintColor:presentation.pallete.collectionMenuAccessoryColor alpha:0.82f];
     _disclosureIndicator.image = disclosureImage;
-    
+
     _firstNameField.textColor = presentation.pallete.collectionMenuTextColor;
     _firstNameField.placeholderColor = presentation.pallete.collectionMenuPlaceholderColor;
     _lastNameField.textColor = presentation.pallete.collectionMenuTextColor;
     _lastNameField.placeholderColor = presentation.pallete.collectionMenuPlaceholderColor;
-    
+
     _firstNameField.keyboardAppearance = presentation.pallete.isDark ? UIKeyboardAppearanceAlert : UIKeyboardAppearanceDefault;
     _lastNameField.keyboardAppearance = presentation.pallete.isDark ? UIKeyboardAppearanceAlert : UIKeyboardAppearanceDefault;
-    
+
     _editingFirstNameSeparator.backgroundColor = presentation.pallete.collectionMenuSeparatorColor;
     _editingLastNameSeparator.backgroundColor = presentation.pallete.collectionMenuSeparatorColor;
-    
+
     [_callButton setImage:presentation.images.profileCallIcon forState:UIControlStateNormal];
 
     _profileMusicButton.backgroundColor = brandedIOS6Style ? [UIColor clearColor] : [presentation.pallete.accentColor colorWithAlphaComponent:presentation.pallete.isDark ? 0.18f : 0.10f];
-    _profileMusicIconLabel.textColor = presentation.pallete.accentColor;
-    _profileMusicTextLabel.textColor = presentation.pallete.collectionMenuTextColor;
-    _profileMusicArrowView.image = disclosureImage;
-    _profileMusicSeparatorView.backgroundColor = brandedIOS6Style ? UIColorRGBA(0x6f6f6f, 0.28f) : [UIColor clearColor];
-    _profileMusicSeparatorView.hidden = !brandedIOS6Style;
-}
-
-static UIImage *TGBrandedIOS6ProfilePlayImage(void)
-{
-    static UIImage *image = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        CGSize size = CGSizeMake(19.0f, 19.0f);
-        UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-        CGContextRef context = UIGraphicsGetCurrentContext();
-        CGRect circleRect = CGRectMake(0.5f, 0.5f, 18.0f, 18.0f);
-        CGContextSaveGState(context);
-        CGContextAddEllipseInRect(context, circleRect);
-        CGContextClip(context);
-        CGFloat locations[] = {0.0f, 1.0f};
-        CGFloat components[] = {0.50f, 0.50f, 0.50f, 1.0f, 0.20f, 0.20f, 0.20f, 1.0f};
-        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-        CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
-        CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, 19.0f), 0);
-        CGGradientRelease(gradient);
-        CGColorSpaceRelease(colorSpace);
-        CGContextRestoreGState(context);
-        CGContextSetStrokeColorWithColor(context, UIColorRGBA(0x000000, 0.55f).CGColor);
-        CGContextSetLineWidth(context, 1.0f);
-        CGContextStrokeEllipseInRect(context, circleRect);
-        CGContextBeginPath(context);
-        CGContextMoveToPoint(context, 7.0f, 5.5f);
-        CGContextAddLineToPoint(context, 13.5f, 9.5f);
-        CGContextAddLineToPoint(context, 7.0f, 13.5f);
-        CGContextClosePath(context);
-        CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
-        CGContextFillPath(context);
-        image = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-    });
-    return image;
+    _profileMusicIconLabel.textColor = brandedIOS6Style ? profileAppearance.musicIconColor : presentation.pallete.accentColor;
+    _profileMusicTextLabel.textColor = brandedIOS6Style ? profileAppearance.musicTextColor : presentation.pallete.collectionMenuTextColor;
+    _profileMusicTextLabel.shadowColor = brandedIOS6Style ? profileAppearance.musicTextShadowColor : nil;
+    _profileMusicTextLabel.shadowOffset = brandedIOS6Style ? profileAppearance.musicTextShadowOffset : CGSizeZero;
+    _profileMusicArrowView.image = brandedIOS6Style ? [OGProfileHeader legacyMusicPlayImageWithTheme:brandedTheme outsets:NULL] : disclosureImage;
+    [self setNeedsLayout];
 }
 
 static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
@@ -384,7 +348,6 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         _profileMusicIconLabel = nil;
         _profileMusicTextLabel = nil;
         _profileMusicArrowView = nil;
-        _profileMusicSeparatorView = nil;
         [self setNeedsLayout];
         return;
     }
@@ -398,10 +361,6 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         _profileMusicButton.clipsToBounds = true;
         [_profileMusicButton addTarget:self action:@selector(profileMusicPressed) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_profileMusicButton];
-
-        _profileMusicSeparatorView = [[UIView alloc] initWithFrame:CGRectZero];
-        _profileMusicSeparatorView.userInteractionEnabled = false;
-        [_profileMusicButton addSubview:_profileMusicSeparatorView];
 
         _profileMusicIconLabel = [[UILabel alloc] initWithFrame:CGRectZero];
         _profileMusicIconLabel.backgroundColor = [UIColor clearColor];
@@ -432,19 +391,19 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
 
     _profileMusicTextLabel.text = TGIOS6ProfileMusicTitle(_profileMusicDocument);
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    OGTheme *brandedTheme = [OGTheme brandedTheme];
+    OGProfileAppearance *profileAppearance = brandedTheme.profileAppearance;
     _profileMusicButton.backgroundColor = brandedIOS6Style ? [UIColor clearColor] : [self.presentation.pallete.accentColor colorWithAlphaComponent:self.presentation.pallete.isDark ? 0.18f : 0.10f];
     _profileMusicButton.layer.cornerRadius = brandedIOS6Style ? 0.0f : 8.0f;
     _profileMusicButton.layer.borderWidth = 0.0f;
     _profileMusicButton.layer.borderColor = nil;
     _profileMusicButton.layer.mask = nil;
-    _profileMusicSeparatorView.backgroundColor = brandedIOS6Style ? UIColorRGBA(0x6f6f6f, 0.28f) : [UIColor clearColor];
-    _profileMusicSeparatorView.hidden = !brandedIOS6Style;
-    _profileMusicIconLabel.textColor = brandedIOS6Style ? UIColorRGB(0x7c7c7c) : self.presentation.pallete.accentColor;
-    _profileMusicTextLabel.textColor = self.presentation.pallete.collectionMenuTextColor;
-    _profileMusicTextLabel.font = brandedIOS6Style ? TGSystemFontOfSize(16.2f) : TGMediumSystemFontOfSize(14.0f);
-    if (brandedIOS6Style)
-        _profileMusicTextLabel.textColor = [UIColor blackColor];
-    _profileMusicArrowView.image = brandedIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : self.presentation.images.collectionMenuDisclosureIcon;
+    _profileMusicIconLabel.textColor = brandedIOS6Style ? profileAppearance.musicIconColor : self.presentation.pallete.accentColor;
+    _profileMusicTextLabel.textColor = brandedIOS6Style ? profileAppearance.musicTextColor : self.presentation.pallete.collectionMenuTextColor;
+    _profileMusicTextLabel.shadowColor = brandedIOS6Style ? profileAppearance.musicTextShadowColor : nil;
+    _profileMusicTextLabel.shadowOffset = brandedIOS6Style ? profileAppearance.musicTextShadowOffset : CGSizeZero;
+    _profileMusicTextLabel.font = brandedIOS6Style ? TGSystemFontOfSize(profileAppearance.musicFontSize) : TGMediumSystemFontOfSize(14.0f);
+    _profileMusicArrowView.image = brandedIOS6Style ? [OGProfileHeader legacyMusicPlayImageWithTheme:brandedTheme outsets:NULL] : self.presentation.images.collectionMenuDisclosureIcon;
     [self setNeedsLayout];
 }
 
@@ -466,6 +425,7 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     if (animated)
     {
         _avatarView.alpha = hidden ? 0.0f : 1.0f;
+        _brandedAvatarOverlayView.alpha = hidden ? 0.0f : 1.0f;
         [UIView animateWithDuration:0.2 animations:^
         {
             _avatarOverlay.alpha = hidden ? 0.0f : 1.0f;;
@@ -476,6 +436,7 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     {
         CGFloat alpha = hidden ? 0.0f : 1.0f;
         _avatarView.alpha = alpha;
+        _brandedAvatarOverlayView.alpha = alpha;
         _avatarOverlay.alpha = alpha;
         _avatarIconView.alpha = alpha;
     }
@@ -701,7 +662,7 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     {
         _statusLabel.text = status;
         if ([TGPresentation brandedIOS6Style])
-            _statusLabel.textColor = active ? UIColorRGB(0x9b9b9b) : UIColorRGB(0xafafaf);
+            _statusLabel.textColor = [OGTheme brandedTheme].profileAppearance.statusTextColor;
         else
             _statusLabel.textColor = active ? self.presentation.pallete.accentColor : self.presentation.pallete.collectionMenuVariantColor;
         [self setNeedsLayout];
@@ -710,7 +671,8 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
 
 - (void)setAvatarUri:(NSString *)avatarUri animated:(bool)animated synchronous:(bool)synchronous
 {
-    CGFloat avatarDiameter = [TGPresentation brandedIOS6Style] ? 68.0f : 64.0f;
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    CGFloat avatarDiameter = brandedIOS6Style ? [OGTheme brandedTheme].profileAppearance.avatarSize : 64.0f;
     UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:avatarDiameter];
 
     UIImage *currentPlaceholder = [_avatarView currentImage];
@@ -728,7 +690,8 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     {
         _avatarView.fadeTransitionDuration = animated ? 0.3 : 0.1;
         _avatarView.contentHints = synchronous ? TGRemoteImageContentHintLoadFromDiskSynchronously : 0;
-        [_avatarView loadImage:avatarUri filter:[TGPresentation brandedIOS6Style] ? @"scale:68x68" : @"circle:64x64" placeholder:currentPlaceholder forceFade:animated];
+        NSString *filter = brandedIOS6Style ? [NSString stringWithFormat:@"scale:%.0fx%.0f", avatarDiameter, avatarDiameter] : @"circle:64x64";
+        [_avatarView loadImage:avatarUri filter:filter placeholder:currentPlaceholder forceFade:animated];
     }
 }
 
@@ -868,29 +831,28 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     CGRect bounds = self.bounds;
     if ([TGPresentation brandedIOS6Style] && !_editing)
     {
+        OGTheme *theme = [OGTheme brandedTheme];
+        OGProfileAppearance *appearance = theme.profileAppearance;
         bool hasAbout = _about.length > 0;
         bool hasMusic = _profileMusicButton != nil;
         bool hasPhone = _phoneLabel.text.length > 0;
         bool hasUsername = _usernameLabel.text.length > 0;
-        CGFloat cardTop = 14.0f;
-        CGFloat cardInnerHeight = hasAbout ? 122.0f : 74.0f;
+        CGFloat cardTop = appearance.cardTop;
+        CGFloat cardInnerHeight = hasAbout ? appearance.cardInnerHeightWithAbout : appearance.cardInnerHeight;
         CGFloat musicY = cardTop + cardInnerHeight;
-        CGFloat cardHeight = cardInnerHeight + (hasMusic ? 39.0f : 0.0f);
-        CGFloat cardX = 13.0f + self.safeAreaInset.left;
-        CGFloat cardWidth = bounds.size.width - 27.0f - self.safeAreaInset.left - self.safeAreaInset.right;
-        CGFloat cardInset = 9.0f;
+        CGFloat cardHeight = cardInnerHeight + (hasMusic ? appearance.musicHeight : 0.0f);
+        CGFloat cardX = appearance.cardLeft + self.safeAreaInset.left;
+        CGFloat cardWidth = bounds.size.width - appearance.cardLeft - appearance.cardRight - self.safeAreaInset.left - self.safeAreaInset.right;
 
-        _brandedBackgroundView.frame = CGRectMake(cardX, cardTop, cardWidth, cardHeight);
-        _brandedBackgroundView.layer.shadowColor = [UIColor blackColor].CGColor;
-        _brandedBackgroundView.layer.shadowOpacity = 0.12f;
-        _brandedBackgroundView.layer.shadowRadius = 1.5f;
-        _brandedBackgroundView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        UIEdgeInsets cardOutsets = UIEdgeInsetsZero;
+        _brandedBackgroundView.image = [OGProfileHeader legacyCardImageWithTheme:theme size:CGSizeMake(cardWidth, cardHeight) hasMusic:hasMusic outsets:&cardOutsets];
+        _brandedBackgroundView.frame = CGRectMake(cardX - cardOutsets.left, cardTop - cardOutsets.top, cardWidth + cardOutsets.left + cardOutsets.right, cardHeight + cardOutsets.top + cardOutsets.bottom);
 
-        _avatarView.frame = CGRectMake(cardX + cardInset, cardTop + 6.0f, 68.0f, 68.0f);
-        _avatarView.clipsToBounds = true;
-        _avatarView.layer.cornerRadius = 10.0f;
-        _avatarView.layer.borderWidth = TGScreenPixel;
-        _avatarView.layer.borderColor = UIColorRGB(0x9b9b9b).CGColor;
+        _avatarView.frame = CGRectMake(cardX + appearance.avatarInset, cardTop + appearance.avatarTop, appearance.avatarSize, appearance.avatarSize);
+        UIEdgeInsets avatarOutsets = UIEdgeInsetsZero;
+        _brandedAvatarOverlayView.hidden = false;
+        _brandedAvatarOverlayView.image = [OGProfileHeader legacyAvatarOverlayImageWithTheme:theme size:_avatarView.frame.size outsets:&avatarOutsets];
+        _brandedAvatarOverlayView.frame = CGRectMake(CGRectGetMinX(_avatarView.frame) - avatarOutsets.left, CGRectGetMinY(_avatarView.frame) - avatarOutsets.top, _avatarView.frame.size.width + avatarOutsets.left + avatarOutsets.right, _avatarView.frame.size.height + avatarOutsets.top + avatarOutsets.bottom);
 
         UIImage *currentAvatarImage = [_avatarView currentImage];
         if (currentAvatarImage != _brandedReflectedAvatarImage)
@@ -898,51 +860,61 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
             _brandedReflectedAvatarImage = currentAvatarImage;
             _brandedAvatarReflectionView.image = currentAvatarImage;
         }
-        CGFloat reflectionY = cardTop + 74.0f;
-        CGFloat reflectionHeight = MAX(0.0f, musicY - reflectionY);
-        _brandedAvatarReflectionView.hidden = currentAvatarImage == nil || reflectionHeight < 1.0f;
-        _brandedAvatarReflectionView.frame = CGRectMake(CGRectGetMinX(_avatarView.frame), reflectionY, 68.0f, reflectionHeight);
+        CGFloat reflectionY = cardTop + appearance.reflectionTop;
+        CGFloat reflectionFadeHeight = appearance.reflectionMaskLength * appearance.avatarSize;
+        _brandedAvatarReflectionView.hidden = currentAvatarImage == nil || musicY - reflectionY < reflectionFadeHeight;
+        _brandedAvatarReflectionView.transform = CGAffineTransformIdentity;
+        _brandedAvatarReflectionView.frame = CGRectMake(CGRectGetMinX(_avatarView.frame), reflectionY, appearance.avatarSize, appearance.avatarSize);
         _brandedAvatarReflectionView.transform = CGAffineTransformMakeScale(1.0f, -1.0f);
         CAGradientLayer *reflectionMask = (CAGradientLayer *)_brandedAvatarReflectionView.layer.mask;
         reflectionMask.frame = _brandedAvatarReflectionView.bounds;
 
-        CGFloat textX = CGRectGetMaxX(_avatarView.frame) + 8.0f;
-        CGFloat textRight = CGRectGetMaxX(_brandedBackgroundView.frame) - 13.0f;
+        CGFloat textX = CGRectGetMaxX(_avatarView.frame) + appearance.textGap;
+        CGFloat textRight = cardX + cardWidth - appearance.textRightInset;
         CGFloat statusWidth = 0.0f;
         CGFloat statusX = 0.0f;
         if (_statusLabel.text.length > 0)
         {
-            CGSize statusSize = [_statusLabel.text sizeWithFont:TGSystemFontOfSize(8.0f) constrainedToSize:CGSizeMake(90.0f, 13.0f)];
-            statusWidth = MIN(90.0f, MAX(33.0f, ceilf(statusSize.width) + 8.0f));
-            statusX = textRight - statusWidth;
+            CGSize statusSize = [_statusLabel.text sizeWithFont:TGSystemFontOfSize(appearance.statusFontSize) constrainedToSize:CGSizeMake(appearance.statusMaximumWidth, appearance.statusHeight)];
+            statusWidth = MIN(appearance.statusMaximumWidth, MAX(appearance.statusMinimumWidth, ceilf(statusSize.width) + appearance.statusHorizontalPadding));
+            statusX = cardX + cardWidth - appearance.statusRightInset - statusWidth;
         }
-        CGFloat textRightForName = statusWidth > FLT_EPSILON ? statusX - 8.0f : textRight;
+        CGFloat textRightForName = statusWidth > FLT_EPSILON ? statusX - appearance.statusNameGap : textRight;
         CGFloat textWidth = MAX(0.0f, textRightForName - textX);
-        CGFloat nameFontSize = 20.0f;
-        _nameLabel.font = TGBoldSystemFontOfSize(nameFontSize);
-        CGSize fullNameSize = [_nameLabel sizeThatFits:CGSizeMake(CGFLOAT_MAX, 29.0f)];
-        while (fullNameSize.width > textWidth && nameFontSize > 17.0f)
+        CGFloat nameFontSize = appearance.nameMaximumFontSize;
+        _nameLabel.font = [OGProfileHeader legacyNameFontWithTheme:theme size:nameFontSize];
+        CGSize fullNameSize = [_nameLabel sizeThatFits:CGSizeMake(CGFLOAT_MAX, appearance.nameMeasureHeight)];
+        while (fullNameSize.width > textWidth && nameFontSize > appearance.nameMinimumFontSize)
         {
             nameFontSize -= 1.0f;
-            _nameLabel.font = TGBoldSystemFontOfSize(nameFontSize);
-            fullNameSize = [_nameLabel sizeThatFits:CGSizeMake(CGFLOAT_MAX, 29.0f)];
+            _nameLabel.font = [OGProfileHeader legacyNameFontWithTheme:theme size:nameFontSize];
+            fullNameSize = [_nameLabel sizeThatFits:CGSizeMake(CGFLOAT_MAX, appearance.nameMeasureHeight)];
         }
-        CGFloat nameWidth = MIN(textWidth, ceilf(fullNameSize.width));
-        _nameLabel.frame = CGRectMake(textX, cardTop + 4.0f, MAX(textWidth, nameWidth), 24.0f);
+        _nameLabel.textColor = appearance.nameColor;
+        _nameLabel.shadowColor = appearance.nameShadowColor;
+        _nameLabel.shadowOffset = appearance.nameShadowOffset;
+        _nameLabel.frame = CGRectMake(textX, cardTop + appearance.nameTop, textWidth, appearance.nameFrameHeight);
 
         if (_statusLabel.text.length > 0)
         {
-            statusX = MIN(statusX, textX + nameWidth + 4.0f);
-            _statusLabel.font = TGSystemFontOfSize(8.0f);
+            CGRect statusFrame = CGRectMake(statusX, cardTop + appearance.statusTop, statusWidth, appearance.statusHeight);
+            UIEdgeInsets statusOutsets = UIEdgeInsetsZero;
+            _brandedStatusBackgroundView.hidden = false;
+            _brandedStatusBackgroundView.image = [OGProfileHeader legacyStatusBackgroundImageWithTheme:theme size:statusFrame.size outsets:&statusOutsets];
+            _brandedStatusBackgroundView.frame = CGRectMake(statusFrame.origin.x - statusOutsets.left, statusFrame.origin.y - statusOutsets.top, statusFrame.size.width + statusOutsets.left + statusOutsets.right, statusFrame.size.height + statusOutsets.top + statusOutsets.bottom);
+            _statusLabel.font = TGSystemFontOfSize(appearance.statusFontSize);
             _statusLabel.textAlignment = NSTextAlignmentCenter;
-            _statusLabel.textColor = [UIColor whiteColor];
-            _statusLabel.backgroundColor = UIColorRGB(0x555555);
-            _statusLabel.layer.cornerRadius = 6.5f;
-            _statusLabel.clipsToBounds = true;
-            _statusLabel.frame = CGRectMake(statusX, cardTop + 12.0f, statusWidth, 13.0f);
+            _statusLabel.textColor = appearance.statusTextColor;
+            _statusLabel.shadowColor = appearance.statusTextShadowColor;
+            _statusLabel.shadowOffset = appearance.statusTextShadowOffset;
+            _statusLabel.backgroundColor = [UIColor clearColor];
+            _statusLabel.layer.cornerRadius = 0.0f;
+            _statusLabel.clipsToBounds = false;
+            _statusLabel.frame = CGRectMake(statusFrame.origin.x, statusFrame.origin.y + appearance.statusTextTop, statusFrame.size.width, appearance.statusTextHeight);
         }
         else
         {
+            _brandedStatusBackgroundView.hidden = true;
             _statusLabel.backgroundColor = [UIColor clearColor];
             _statusLabel.frame = CGRectZero;
         }
@@ -950,27 +922,29 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         if (_phoneLabel != nil)
         {
             _phoneLabel.hidden = !hasPhone;
-            _phoneLabel.font = TGSystemFontOfSize(10.0f);
-            _phoneLabel.textColor = UIColorRGB(0x5a5a5a);
-            _phoneLabel.frame = hasPhone ? CGRectMake(textX, cardTop + 31.0f, MAX(0.0f, textRight - textX), 14.0f) : CGRectZero;
+            _phoneLabel.font = TGSystemFontOfSize(appearance.phoneFontSize);
+            _phoneLabel.textColor = appearance.phoneColor;
+            _phoneLabel.frame = hasPhone ? CGRectMake(textX, cardTop + appearance.phoneTop, MAX(0.0f, textRight - textX), appearance.secondaryLineHeight) : CGRectZero;
         }
         if (_usernameLabel != nil)
         {
             _usernameLabel.hidden = !hasUsername;
-            _usernameLabel.font = TGSystemFontOfSize(10.0f);
-            _usernameLabel.textColor = UIColorRGB(0x447ca4);
-            CGFloat usernameY = hasPhone ? cardTop + 46.0f : cardTop + 31.0f;
-            _usernameLabel.frame = hasUsername ? CGRectMake(textX, usernameY, MAX(0.0f, textRight - textX), 14.0f) : CGRectZero;
+            _usernameLabel.font = TGSystemFontOfSize(appearance.usernameFontSize);
+            _usernameLabel.textColor = appearance.usernameColor;
+            CGFloat usernameY = cardTop + (hasPhone ? appearance.usernameTopWithPhone : appearance.usernameTop);
+            _usernameLabel.frame = hasUsername ? CGRectMake(textX, usernameY, MAX(0.0f, textRight - textX), appearance.secondaryLineHeight) : CGRectZero;
         }
 
         _aboutTitleLabel.hidden = !hasAbout;
         _aboutLabel.hidden = !hasAbout;
         if (hasAbout)
         {
-            _aboutTitleLabel.font = TGSystemFontOfSize(12.0f);
-            _aboutLabel.font = TGSystemFontOfSize(10.0f);
-            _aboutTitleLabel.frame = CGRectMake(textX, cardTop + 79.0f, MAX(0.0f, textRight - textX), 17.0f);
-            _aboutLabel.frame = CGRectMake(textX, cardTop + 96.0f, MAX(0.0f, textRight - textX), 18.0f);
+            _aboutTitleLabel.font = TGSystemFontOfSize(appearance.aboutTitleFontSize);
+            _aboutTitleLabel.textColor = appearance.aboutTitleColor;
+            _aboutLabel.font = TGSystemFontOfSize(appearance.aboutFontSize);
+            _aboutLabel.textColor = appearance.aboutColor;
+            _aboutTitleLabel.frame = CGRectMake(textX, cardTop + appearance.aboutTitleTop, MAX(0.0f, textRight - textX), appearance.aboutTitleHeight);
+            _aboutLabel.frame = CGRectMake(textX, cardTop + appearance.aboutTop, MAX(0.0f, textRight - textX), appearance.aboutHeight);
         }
 
         _callButton.frame = CGRectMake(bounds.size.width - 57.0f - self.safeAreaInset.right, 29.0f, 44.0f, 44.0f);
@@ -979,27 +953,27 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         {
             CGFloat musicX = cardX;
             CGFloat musicWidth = cardWidth;
-            _profileMusicButton.frame = CGRectMake(musicX, musicY, musicWidth, 39.0f);
+            _profileMusicButton.frame = CGRectMake(musicX, musicY, musicWidth, appearance.musicHeight);
             _profileMusicButton.layer.mask = nil;
-            _profileMusicButton.layer.shadowOpacity = 0.0f;
-            _profileMusicButton.layer.shadowRadius = 0.0f;
-            _profileMusicButton.layer.shadowOffset = CGSizeZero;
-            _profileMusicArrowView.layer.shadowOpacity = 0.0f;
-            _profileMusicArrowView.layer.shadowRadius = 0.0f;
-            _profileMusicArrowView.layer.shadowOffset = CGSizeZero;
-            _profileMusicSeparatorView.hidden = false;
-            _profileMusicSeparatorView.frame = CGRectMake(0.0f, 0.0f, musicWidth, TGScreenPixel);
+            OGPlatformApplyViewShadow(_profileMusicButton, nil, 0.0f, 0.0f, CGSizeZero);
+            OGPlatformApplyViewShadow(_profileMusicArrowView, nil, 0.0f, 0.0f, CGSizeZero);
             _profileMusicIconLabel.hidden = true;
-            _profileMusicArrowView.image = TGBrandedIOS6ProfilePlayImage();
-            _profileMusicArrowView.frame = CGRectMake(musicWidth - 26.0f, 9.0f, 19.0f, 19.0f);
-            _profileMusicTextLabel.font = TGSystemFontOfSize(15.0f);
-            _profileMusicTextLabel.frame = CGRectMake(8.0f, 0.0f, MAX(0.0f, musicWidth - 42.0f), 40.0f);
+            UIEdgeInsets playOutsets = UIEdgeInsetsZero;
+            _profileMusicArrowView.image = [OGProfileHeader legacyMusicPlayImageWithTheme:theme outsets:&playOutsets];
+            _profileMusicArrowView.frame = CGRectMake(musicWidth - appearance.musicArrowRight - appearance.musicArrowSize - playOutsets.left, appearance.musicArrowTop - playOutsets.top, appearance.musicArrowSize + playOutsets.left + playOutsets.right, appearance.musicArrowSize + playOutsets.top + playOutsets.bottom);
+            _profileMusicTextLabel.font = TGSystemFontOfSize(appearance.musicFontSize);
+            _profileMusicTextLabel.textColor = appearance.musicTextColor;
+            _profileMusicTextLabel.shadowColor = appearance.musicTextShadowColor;
+            _profileMusicTextLabel.shadowOffset = appearance.musicTextShadowOffset;
+            _profileMusicTextLabel.frame = CGRectMake(appearance.musicTextLeft, appearance.musicTextTop, MAX(0.0f, musicWidth - appearance.musicTextLeft - appearance.musicTextRight), appearance.musicTextHeight);
         }
 
         _avatarOverlay.frame = _avatarView.frame;
         _avatarIconView.center = CGPointMake(CGRectGetMidX(_avatarView.frame), CGRectGetMidY(_avatarView.frame));
         return;
     }
+    _brandedAvatarOverlayView.hidden = true;
+    _brandedStatusBackgroundView.hidden = true;
     CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
     
     _avatarView.frame = CGRectMake(15.0f + classicInset + _avatarOffset.width + self.safeAreaInset.left, 16.0f + _avatarOffset.height, 66.0f, 66.0f);
@@ -1293,8 +1267,10 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     {
         _phoneLabel = [[UILabel alloc] init];
         _phoneLabel.backgroundColor = [UIColor clearColor];
-        _phoneLabel.font = TGSystemFontOfSize(15.0f);
-        _phoneLabel.textColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0x707070) : self.presentation.pallete.collectionMenuVariantColor;
+        bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+        OGProfileAppearance *appearance = [OGTheme brandedTheme].profileAppearance;
+        _phoneLabel.font = TGSystemFontOfSize(brandedIOS6Style ? appearance.phoneFontSize : 15.0f);
+        _phoneLabel.textColor = brandedIOS6Style ? appearance.phoneColor : self.presentation.pallete.collectionMenuVariantColor;
         [self addSubview:_phoneLabel];
     }
     
@@ -1312,8 +1288,10 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     {
         _usernameLabel = [[UILabel alloc] init];
         _usernameLabel.backgroundColor = [UIColor clearColor];
-        _usernameLabel.font = TGSystemFontOfSize(15.0f);
-        _usernameLabel.textColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0x447ca4) : self.presentation.pallete.collectionMenuVariantColor;
+        bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+        OGProfileAppearance *appearance = [OGTheme brandedTheme].profileAppearance;
+        _usernameLabel.font = TGSystemFontOfSize(brandedIOS6Style ? appearance.usernameFontSize : 15.0f);
+        _usernameLabel.textColor = brandedIOS6Style ? appearance.usernameColor : self.presentation.pallete.collectionMenuVariantColor;
         [self addSubview:_usernameLabel];
     }
     

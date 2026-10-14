@@ -58,9 +58,6 @@ static NSMutableDictionary *registeredRequestBuilders()
 @synthesize cancelToken = _cancelToken;
 @synthesize cancelled = _cancelled;
 
-/*#if TARGET_IPHONE_SIMULATOR
-static int instanceCount = 0;
-#endif*/
 
 - (id)initWithPath:(NSString *)path
 {
@@ -70,22 +67,12 @@ static int instanceCount = 0;
         _cancelTimeout = 0;
         _path = path;
         
-/*#if TARGET_IPHONE_SIMULATOR
-        instanceCount++;
-        
-        TGLegacyLog(@"%d actors (++)", instanceCount);
-#endif*/
     }
     return self;
 }
 
 - (void)dealloc
 {
-/*#if TARGET_IPHONE_SIMULATOR
-    instanceCount--;
-    
-    TGLegacyLog(@"%d actors (--)", instanceCount);
-#endif*/
 }
 
 - (void)prepare:(NSDictionary *)__unused options

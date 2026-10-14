@@ -80,7 +80,6 @@
                 CGBitmapInfo byteOrderInfo = bitmapInfo & kCGBitmapByteOrderMask;
                 if (byteOrderInfo == kCGBitmapByteOrder32Little)
                 {
-                    /* Little endian, for alpha-first we can use this bitmap directly in GL */
                     CGImageAlphaInfo alphaInfo = bitmapInfo & kCGBitmapAlphaInfoMask;
                     if (alphaInfo != kCGImageAlphaPremultipliedFirst && alphaInfo != kCGImageAlphaFirst &&
                         alphaInfo != kCGImageAlphaNoneSkipFirst)
@@ -90,7 +89,6 @@
                 }
                 else if (byteOrderInfo == kCGBitmapByteOrderDefault || byteOrderInfo == kCGBitmapByteOrder32Big)
                 {
-                    /* Big endian, for alpha-last we can use this bitmap directly in GL */
                     CGImageAlphaInfo alphaInfo = bitmapInfo & kCGBitmapAlphaInfoMask;
                     if (alphaInfo != kCGImageAlphaPremultipliedLast && alphaInfo != kCGImageAlphaLast &&
                         alphaInfo != kCGImageAlphaNoneSkipLast)
@@ -98,7 +96,6 @@
                         redrawNeeded = true;
                     } else
                     {
-                        /* Can access directly using GL_RGBA pixel format */
                         format = GL_RGBA;
                     }
                 }

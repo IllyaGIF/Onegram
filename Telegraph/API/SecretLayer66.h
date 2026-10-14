@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 46
- */
 
 @class Secret66_DecryptedMessageAction;
 @class Secret66_DecryptedMessageAction_decryptedMessageActionSetMessageTTL;
@@ -102,9 +99,6 @@
 
 @end
 
-/*
- * Types 46
- */
 
 @interface Secret66_DecryptedMessageAction : NSObject
 
@@ -620,10 +614,6 @@
 
 @end
 
-
-/*
- * Functions 46
- */
 
 @interface Secret66: NSObject
 

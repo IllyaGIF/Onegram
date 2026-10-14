@@ -2,7 +2,9 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <UIKit/UIGestureRecognizerSubclass.h>
+#endif
 
 #import "TGAppDelegate.h"
 
@@ -356,8 +358,6 @@
             }
             else if ([result.type isEqualToString:@"audio"])
             {
-                //TGPreviewAudioItemView *audioItem = [[TGPreviewAudioItemView alloc] initWithBotContextResult:result];
-                //[items addObject:audioItem];
             }
         }
         else if ([result isKindOfClass:[TGBotContextMediaResult class]])
@@ -365,8 +365,6 @@
             TGBotContextMediaResult *concreteResult = (TGBotContextMediaResult *)result;
             if ([result.type isEqualToString:@"audio"])
             {
-                //TGPreviewAudioItemView *audioItem = [[TGPreviewAudioItemView alloc] initWithBotContextResult:result];
-                //[items addObject:audioItem];
             }
             else if (concreteResult.document != nil) {
                 TGDocumentMediaAttachment *document = concreteResult.document;
@@ -759,4 +757,3 @@
 }
 
 @end
-

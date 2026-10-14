@@ -42,9 +42,6 @@
         self.alwaysBounceHorizontal = true;
         self.decelerationRate = UIScrollViewDecelerationRateFast;
         
-        //_editingRecognizer = [[TGEditingScrollViewGestureRecognizer alloc] init];
-        //[self addGestureRecognizer:_editingRecognizer];
-        //[self.panGestureRecognizer requireGestureRecognizerToFail:_editingRecognizer];
         
         self.delegate = self;
     }

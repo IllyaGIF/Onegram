@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 17
- */
 
 @class Secret17_DecryptedMessageAction;
 @class Secret17_DecryptedMessageAction_decryptedMessageActionSetMessageTTL;
@@ -60,9 +57,6 @@
 
 @end
 
-/*
- * Types 17
- */
 
 @interface Secret17_DecryptedMessageAction : NSObject
 
@@ -305,10 +299,6 @@
 
 @end
 
-
-/*
- * Functions 17
- */
 
 @interface Secret17: NSObject
 

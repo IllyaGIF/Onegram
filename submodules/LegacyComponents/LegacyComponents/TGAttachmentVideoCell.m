@@ -143,7 +143,6 @@ NSString *const TGAttachmentVideoCellIdentifier = @"AttachmentVideoCell";
     self.imageView.bounds = CGRectMake(0, 0, fittedOriginalSize.width, fittedOriginalSize.height);
     self.imageView.center = TGPaintAddPoints(TGPaintCenterOfRect(self.bounds), centerOffset);
     
-    //self.imageView.frame = CGRectMake(-cropRect.origin.x * ratio + (self.frame.size.width - fillSize.width) / 2, -cropRect.origin.y * ratio + (self.frame.size.height - fillSize.height) / 2, );
 }
 
 - (void)_layoutImageWithoutAdjustments

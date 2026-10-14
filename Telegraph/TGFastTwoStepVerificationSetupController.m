@@ -97,7 +97,6 @@
         UIEdgeInsets topSectionInsets = _passwordSection.insets;
         topSectionInsets.top = 32.0f;
         _passwordSection.insets = topSectionInsets;
-        //[self.menuSections addSection:passwordSection];
         
         _hintItem = [[TGUsernameCollectionItem alloc] init];
         _hintItem.secureEntry = false;
@@ -134,7 +133,6 @@
             _emailItem,
             [[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"FastTwoStepSetup.EmailHelp")]
         ]];
-        //[self.menuSections addSection:emailSection];
         
         TGCommentCollectionItem *textItem = [[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"TwoStepAuth.ConfirmationText")];
         TGCommentCollectionItem *abortItem = [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"TwoStepAuth.ConfirmationAbort")];
@@ -177,7 +175,6 @@
             abortItem
         ]];
         _emailConfirmationSection.insets = UIEdgeInsetsMake(16.0f, 0.0f, 32.0f, 0.0f);
-        //[self.menuSections addSection:_emailConfirmationSection];
         
         [self setLeftBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Cancel") style:UIBarButtonItemStylePlain target:self action:@selector(cancelPressed)]];
         _doneItem = [[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Done") style:UIBarButtonItemStyleDone target:self action:@selector(donePressed)];

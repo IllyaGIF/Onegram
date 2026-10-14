@@ -337,7 +337,8 @@ typedef enum {
                 
                 uint64_t factP = 0;
                 uint64_t factQ = 0;
-                if (!MTFactorize(pq, &factP, &factQ))
+                bool factorized = MTFactorize(pq, &factP, &factQ);
+                if (!factorized)
                 {
                     [self reset:mtProto];
                     
@@ -370,10 +371,6 @@ typedef enum {
                 __unused int result = SecRandomCopyBytes(kSecRandomDefault, 32, nonceBytes);
                 _newNonce = [[NSData alloc] initWithBytes:nonceBytes length:32];
                 
-                /*
-                 p_q_inner_data_dc#a9f55f95 pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 dc:int = P_Q_inner_data;
-                 p_q_inner_data_temp_dc#56fddf88 pq:string p:string q:string nonce:int128 server_nonce:int128 new_nonce:int256 dc:int expires_in:int = P_Q_inner_data;
-                */
                 
                 if (_tempAuth) {
                     MTBuffer *innerDataBuffer = [[MTBuffer alloc] init];
@@ -727,9 +724,6 @@ typedef enum {
                 }
                 else
                 {
-                    if (MTLogEnabled()) {
-                        MTLog(@"[MTDatacenterAuthMessageService#%p retry DH]", self);
-                    }
                     [self reset:mtProto];
                 }
             }

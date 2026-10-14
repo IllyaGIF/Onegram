@@ -10,7 +10,9 @@
 #endif
 
 #import <QuartzCore/QuartzCore.h>
+#if __has_include(<CoreMedia/CoreMedia.h>)
 #import <CoreMedia/CoreMedia.h>
+#endif
 
 
 typedef struct GPUTextureOptions {

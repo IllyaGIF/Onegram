@@ -37,6 +37,14 @@
     [(TGMessageViewsView *)[self boundView] setCount:_count];    
 }
 
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording {
+    if (![self drawsInContextWithImplementationOfClass:[TGMessageViewsViewModel class]])
+        return false;
+    if (!self.hidden)
+        [TGMessageViewsView recordDrawing:recording frame:self.bounds type:_type count:_count presentation:self.presentation];
+    return true;
+}
+
 - (void)drawInContext:(CGContextRef)context {
     if (!self.hidden) {
         [TGMessageViewsView drawInContext:context frame:self.bounds type:_type count:_count presentation:self.presentation];
@@ -44,16 +52,8 @@
 }
 
 - (void)sizeToFit {
-    static UIFont *font = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        font = TGItalicSystemFontOfSize(11.0f);
-    });
-    CGSize size = [[TGMessageViewsView stringForCount:_count] sizeWithFont:font];
-    size.width = CGCeil(size.width);
-    size.width += ((int)size.width) % 3;
-    size.height = CGCeil(size.height);
-    self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, size.width + 19.0f, size.height);
+    CGSize size = [TGMessageViewsView sizeForCount:_count type:_type presentation:_presentation];
+    self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, size.width, size.height);
 }
 
 @end

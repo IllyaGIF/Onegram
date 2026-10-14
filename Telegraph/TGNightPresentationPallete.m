@@ -1,5 +1,7 @@
 #import "TGNightPresentationPallete.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
 
 @implementation TGNightPresentationPallete
 
@@ -325,6 +327,8 @@
 
 - (UIColor *)chatIncomingTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].messageTextColor;
     return [UIColor whiteColor];
 }
 
@@ -345,6 +349,8 @@
 
 - (UIColor *)chatIncomingDateColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].timeColor;
     return [self chatIncomingSubtextColor];
 }
 
@@ -400,6 +406,8 @@
 
 - (UIColor *)chatOutgoingTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].messageTextColor;
     return [UIColor whiteColor];
 }
 
@@ -420,6 +428,8 @@
 
 - (UIColor *)chatOutgoingDateColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].timeColor;
     return [self chatOutgoingSubtextColor];
 }
 
@@ -560,6 +570,8 @@
 
 - (UIColor *)chatChecksColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].timeColor;
     return [self chatOutgoingDateColor];
 }
 
@@ -595,11 +607,15 @@
 
 - (UIColor *)chatInputTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputFieldTextColor;
     return [UIColor whiteColor];
 }
 
 - (UIColor *)chatInputPlaceholderColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputFieldPlaceholderColor;
     return UIColorRGB(0x7b7b7b);
 }
 
@@ -745,21 +761,29 @@
 
 - (UIColor *)collectionMenuBackgroundColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].collectionBackgroundColor;
     return [self backgroundColor];
 }
 
 - (UIColor *)collectionMenuCellBackgroundColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].groupedFillColor;
     return [self barBackgroundColor];
 }
 
 - (UIColor *)collectionMenuCellSelectionColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].groupedSelectedFillColor;
     return UIColorRGB(0x101010);
 }
 
 - (UIColor *)collectionMenuTextColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].titleColor;
     return [UIColor whiteColor];
 }
 
@@ -775,6 +799,8 @@
 
 - (UIColor *)collectionMenuAccentColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].accentColor;
     return [self accentColor];
 }
 
@@ -795,6 +821,8 @@
 
 - (UIColor *)collectionMenuCommentColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].commentColor;
     return [self secondaryTextColor];
 }
 
@@ -810,11 +838,15 @@
 
 - (UIColor *)collectionMenuSwitchColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].switchColor;
     return [self accentColor];
 }
 
 - (UIColor *)collectionMenuCheckColor
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].accentColor;
     return [self accentColor];
 }
 

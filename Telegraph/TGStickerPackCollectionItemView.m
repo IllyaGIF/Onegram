@@ -1,8 +1,5 @@
 #import "TGStickerPackCollectionItemView.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -214,7 +211,6 @@
             _imageView.hidden = true;
             _altLabel.hidden = false;
             _altLabel.text = alt;
-            IOS6_NOOP_LOG(@"STICKER packCell.altFallback title=%@ doc=%lld mime=%@ alt=%@", title, (long long)documentMedia.documentId, documentMedia.mimeType, alt);
         }
         else
         {

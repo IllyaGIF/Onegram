@@ -9,12 +9,277 @@
 
 #import <Endian.h>
 
+#if !defined(ONEGRAM_ARMV6)
 #import <Accelerate/Accelerate.h>
+#endif
 
 #import <AVFoundation/AVFoundation.h>
 #import "SSignalKitCompat/SSignalKit.h"
 
 const NSInteger PGCameraFrameRate = 30;
+
+#if defined(ONEGRAM_ARMV6)
+
+@implementation PGCameraCaptureSession
+
+- (instancetype)initWithMode:(PGCameraMode)mode position:(PGCameraPosition)position
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _currentMode = mode;
+        _currentFlashMode = PGCameraFlashModeOff;
+        _preferredCameraPosition = position;
+        _currentCameraPosition = position == PGCameraPositionUndefined ? PGCameraPositionRear : position;
+        _focusPoint = CGPointMake(0.5f, 0.5f);
+    }
+    return self;
+}
+
+- (AVCaptureDevice *)videoDevice
+{
+    return nil;
+}
+
+- (AVCaptureStillImageOutput *)imageOutput
+{
+    return nil;
+}
+
+- (AVCaptureVideoDataOutput *)videoOutput
+{
+    return nil;
+}
+
+- (AVCaptureAudioDataOutput *)audioOutput
+{
+    return nil;
+}
+
+- (PGCameraMovieWriter *)movieWriter
+{
+    return nil;
+}
+
+- (bool)alwaysSetFlash
+{
+    return _alwaysSetFlash;
+}
+
+- (void)setAlwaysSetFlash:(bool)value
+{
+    _alwaysSetFlash = value;
+}
+
+- (bool)compressVideo
+{
+    return _compressVideo;
+}
+
+- (void)setCompressVideo:(bool)value
+{
+    _compressVideo = value;
+}
+
+- (void)setOutputSampleBuffer:(void (^)(CMSampleBufferRef, AVCaptureConnection *))block
+{
+    (void)block;
+}
+
+- (void (^)(CMSampleBufferRef, AVCaptureConnection *))outputSampleBuffer
+{
+    return nil;
+}
+
+- (void)setChangingPosition:(void (^)(void))block
+{
+    (void)block;
+}
+
+- (void (^)(void))changingPosition
+{
+    return nil;
+}
+
+- (void)setRequestPreviewIsMirrored:(bool (^)(void))block
+{
+    (void)block;
+}
+
+- (bool (^)(void))requestPreviewIsMirrored
+{
+    return nil;
+}
+
+- (BOOL)isRunning
+{
+    return _running;
+}
+
+- (NSArray *)inputs
+{
+    return [NSArray array];
+}
+
+- (NSArray *)outputs
+{
+    return [NSArray array];
+}
+
+- (void)beginConfiguration
+{
+}
+
+- (void)commitConfiguration
+{
+}
+
+- (void)removeInput:(id)input
+{
+    (void)input;
+}
+
+- (void)removeOutput:(id)output
+{
+    (void)output;
+}
+
+- (void)startRunning
+{
+    _running = true;
+}
+
+- (void)stopRunning
+{
+    _running = false;
+}
+
+- (void)performInitialConfigurationWithCompletion:(void (^)(void))completion
+{
+    if (completion != nil)
+        completion();
+}
+
+- (bool)isResetNeeded
+{
+    return false;
+}
+
+- (void)reset
+{
+    _currentMode = PGCameraModePhoto;
+    _currentFlashMode = PGCameraFlashModeOff;
+    _currentCameraPosition = _preferredCameraPosition == PGCameraPositionUndefined ? PGCameraPositionRear : _preferredCameraPosition;
+    _zoomLevel = 0.0f;
+    _focusPoint = CGPointMake(0.5f, 0.5f);
+}
+
+- (void)resetFlashMode
+{
+    _currentFlashMode = PGCameraFlashModeOff;
+}
+
+- (PGCameraMode)currentMode
+{
+    return _currentMode;
+}
+
+- (void)setCurrentMode:(PGCameraMode)mode
+{
+    _currentMode = mode;
+}
+
+- (PGCameraFlashMode)currentFlashMode
+{
+    return _currentFlashMode;
+}
+
+- (void)setCurrentFlashMode:(PGCameraFlashMode)mode
+{
+    _currentFlashMode = mode;
+}
+
+- (PGCameraPosition)currentCameraPosition
+{
+    return _currentCameraPosition;
+}
+
+- (void)setCurrentCameraPosition:(PGCameraPosition)position
+{
+    _currentCameraPosition = position;
+}
+
+- (PGCameraPosition)preferredCameraPosition
+{
+    return _preferredCameraPosition;
+}
+
+- (bool)isZoomAvailable
+{
+    return false;
+}
+
+- (CGFloat)zoomLevel
+{
+    return _zoomLevel;
+}
+
+- (void)setZoomLevel:(CGFloat)zoomLevel
+{
+    _zoomLevel = MAX(0.0f, MIN(1.0f, zoomLevel));
+}
+
+- (CGPoint)focusPoint
+{
+    return _focusPoint;
+}
+
+- (void)setFocusPoint:(CGPoint)point focusMode:(AVCaptureFocusMode)focusMode exposureMode:(AVCaptureExposureMode)exposureMode monitorSubjectAreaChange:(bool)monitorSubjectAreaChange
+{
+    _focusPoint = point;
+    (void)focusMode;
+    (void)exposureMode;
+    (void)monitorSubjectAreaChange;
+}
+
+- (void)setExposureTargetBias:(CGFloat)bias
+{
+    (void)bias;
+}
+
+- (void)startVideoRecordingWithOrientation:(AVCaptureVideoOrientation)orientation mirrored:(bool)mirrored completion:(void (^)(NSURL *, CGAffineTransform, CGSize, NSTimeInterval, bool))completion
+{
+    (void)orientation;
+    (void)mirrored;
+    if (completion != nil)
+        completion(nil, CGAffineTransformIdentity, CGSizeZero, 0.0, false);
+}
+
+- (void)stopVideoRecording
+{
+}
+
+- (void)captureNextFrameCompletion:(void (^)(UIImage *))completion
+{
+    if (completion != nil)
+        completion(nil);
+}
+
++ (AVCaptureDevice *)_deviceWithCameraPosition:(PGCameraPosition)position
+{
+    (void)position;
+    return nil;
+}
+
++ (bool)_isZoomAvailableForDevice:(AVCaptureDevice *)device
+{
+    (void)device;
+    return false;
+}
+
+@end
+
+#else
 
 @interface PGCameraCaptureSession () <AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate>
 {
@@ -974,3 +1239,5 @@ static UIImageOrientation TGSnapshotOrientationForVideoOrientation(bool mirrored
 }
 
 @end
+
+#endif

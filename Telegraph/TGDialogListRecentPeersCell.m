@@ -59,7 +59,6 @@
         _expandButton.contentEdgeInsets = UIEdgeInsetsMake(5.0, 8.0f, 5.0f, 15.0f);
         [_expandButton sizeToFit];
         [_expandButton addTarget:self action:@selector(expandButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-        //[self addSubview:_expandButton];
         
         _collectionLayout = [[PSUICollectionViewFlowLayout alloc] init];
         _collectionLayout.scrollDirection = UICollectionViewScrollDirectionHorizontal;
@@ -211,71 +210,6 @@
     
     _collectionView.frame = CGRectMake(0.0f, 27.0f, self.frame.size.width, self.frame.size.height - 27.0f);
     
-    /*UIEdgeInsets insets = [TGDialogListRecentPeersCell insets];
-    CGSize itemSize = [TGDialogListRecentPeersCell itemSize];
-    CGFloat horizontalSpacing = [TGDialogListRecentPeersCell verticalSpacing];
-    CGFloat verticalSpacing = [TGDialogListRecentPeersCell verticalSpacing];
-    NSInteger maxRowCount = [TGDialogListRecentPeersCell maxRowCount:true];
-    
-    NSInteger columnCount = (NSInteger)((self.frame.size.width - insets.left - insets.right + horizontalSpacing) / (itemSize.width + horizontalSpacing));
-    if (columnCount == 0) {
-        return;
-    }
-    
-    CGFloat adjustedHorizontalSpacing = CGFloor((self.frame.size.width - insets.left - insets.right - columnCount * itemSize.width) / (columnCount - 1));
-    
-    NSInteger maxPeerIndex = -1;
-    for (NSInteger i = 0; i < (NSInteger)_recentPeers.count; i++) {
-        NSInteger rowIndex = i / columnCount;
-        if (rowIndex >= maxRowCount) {
-            break;
-        }
-        
-        maxPeerIndex = i;
-        
-        CGFloat columnOffset = insets.left + (i % columnCount) * (itemSize.width + adjustedHorizontalSpacing);
-        CGFloat rowOffset = insets.top + 27.0f + (i / columnCount) * (itemSize.height + verticalSpacing);
-        
-        TGShareSheetSharePeersCell *cell = nil;
-        if (i < (NSInteger)_peerViews.count) {
-            cell = _peerViews[i];
-        } else {
-            cell = [[TGShareSheetSharePeersCell alloc] initWithFrame:CGRectMake(columnOffset, rowOffset, itemSize.width, itemSize.height)];
-            [_peerViews addObject:cell];
-            [self addSubview:cell];
-        }
-        if (cell.toggleSelected == nil) {
-            __weak TGDialogListRecentPeersCell *weakSelf = self;
-            cell.toggleSelected = ^(int64_t peerId) {
-                __strong TGDialogListRecentPeersCell *strongSelf = weakSelf;
-                if (strongSelf != nil && strongSelf.peerSelected) {
-                    for (id peer in strongSelf->_recentPeers) {
-                        int64_t currentPeerId = 0;
-                        if ([peer isKindOfClass:[TGUser class]]) {
-                            currentPeerId = ((TGUser *)peer).uid;
-                        } else if ([peer isKindOfClass:[TGConversation class]]) {
-                            currentPeerId = ((TGConversation *)peer).conversationId;
-                        }
-                        if (peerId == currentPeerId) {
-                            strongSelf.peerSelected(peer);
-                            break;
-                        }
-                    }
-                }
-            };
-        }
-        [cell setPeer:_recentPeers[i]];
-        cell.frame = CGRectMake(columnOffset, rowOffset, itemSize.width, itemSize.height);
-    }
-    
-    NSInteger count = (NSInteger)_recentPeers.count;
-    NSInteger rowCount = MIN(maxRowCount, count / columnCount + (count % columnCount == 0 ? 0 : 1));
-    _expandButton.hidden = !self.expanded && rowCount < 2;
-    
-    for (NSInteger i = (NSInteger)_peerViews.count - 1; i > maxPeerIndex; i--) {
-        [_peerViews[i] removeFromSuperview];
-        [_peerViews removeObjectAtIndex:i];
-    }*/
 }
 
 - (void)expandButtonPressed {

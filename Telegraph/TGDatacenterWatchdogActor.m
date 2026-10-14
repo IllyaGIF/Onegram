@@ -61,9 +61,6 @@ static const NSTimeInterval TGDatacenterWatchdogFailoverTimeout = 30.0;
 - (instancetype)initWithPath:(NSString *)path
 {
     self = [super initWithPath:path];
-    if (self != nil)
-    {
-    }
     return self;
 }
 
@@ -193,7 +190,6 @@ static const NSTimeInterval TGDatacenterWatchdogFailoverTimeout = 30.0;
 
 - (void)requestNetworkConfigFromDatacenter:(NSInteger)datacenterId
 {
-    TGLog(@"[TGDatacenterWatchdogActor#%p requesting network config from %d]", self, (int)datacenterId);
     
     MTContext *context = [[TGTelegramNetworking instance] context];
     
@@ -256,14 +252,12 @@ static const NSTimeInterval TGDatacenterWatchdogFailoverTimeout = 30.0;
             
             if (currentAddressSet == nil || ![addressSet isEqual:currentAddressSet])
             {
-                TGLog(@"[TGDatacenterWatchdogActor#%p updating datacenter %d address set to %@]", self, [nDatacenterId intValue], addressSet);
                 [context updateAddressSetForDatacenterWithId:[nDatacenterId integerValue] addressSet:addressSet forceUpdateSchemes:false];
             }
         }];
         
         [ActionStageInstance() dispatchOnStageQueue:^
         {
-            TGLog(@"[TGDatacenterWatchdogActor#%p processed %d datacenter addresses from datacenter %d]", self, (int)config.dc_options.count, (int)datacenterId);
             
             [self _completed];
         }];

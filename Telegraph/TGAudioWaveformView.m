@@ -2,12 +2,69 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSurfaceRenderer.h"
+#import "../OnegramUI/Core/OGSurfaceStyle.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
+
+static CGFloat TGVoiceWaveformSampleHeight(const uint16_t *samples, NSUInteger sampleCount, NSUInteger barIndex, NSUInteger barCount, CGFloat peak)
+{
+    if (samples == NULL || sampleCount == 0 || barCount == 0)
+        return 3.0f;
+
+    CGFloat start = (CGFloat)barIndex * sampleCount / barCount;
+    CGFloat end = (CGFloat)(barIndex + 1) * sampleCount / barCount;
+    CGFloat sum = 0.0f;
+    for (NSUInteger index = (NSUInteger)CGFloor(start); index < sampleCount && index < (NSUInteger)ceil(end); index++)
+    {
+        CGFloat weight = MIN(end, (CGFloat)index + 1.0f) - MAX(start, (CGFloat)index);
+        sum += samples[index] * MAX(0.0f, weight);
+    }
+    CGFloat normalized = MAX(0.0f, MIN(1.0f, sum / (end - start) / MAX(1.0f, peak)));
+    return CGFloor((3.0f + normalized * 8.0f) * 2.0f + 0.5f) / 2.0f;
+}
+
+static const CGFloat TGAudioWaveformBarShadowPadding = 3.0f;
+
+static UIImage *TGAudioWaveformShadowedBarImage(OGTheme *theme, OGSurfaceStyle *style, CGSize barSize)
+{
+    static NSCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 128;
+    });
+
+    CGFloat scale = OGPlatformScreenScale();
+    NSString *key = [[NSString alloc] initWithFormat:@"%@|%.2f|%.2f|%.1f", [style renderIdentity], barSize.width, barSize.height, scale];
+    UIImage *image = [cache objectForKey:key];
+    if (image != nil)
+        return image;
+
+    UIImage *barImage = [theme.surfaceRenderer imageWithStyle:style size:barSize bodyFrame:CGRectMake(0.0f, 0.0f, barSize.width, barSize.height)];
+    if (barImage == nil)
+        return nil;
+
+    CGFloat padding = TGAudioWaveformBarShadowPadding;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(barImage.size.width + padding * 2.0f, barImage.size.height + padding * 2.0f), false, scale);
+    CGContextSetShadowWithColor(UIGraphicsGetCurrentContext(), CGSizeMake(0.0f, 2.0f), 1.0f, UIColorRGBA(0x000000, 0.10f).CGColor);
+    [barImage drawAtPoint:CGPointMake(padding, padding)];
+    image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    if (image != nil)
+        [cache setObject:image forKey:key];
+    return image;
+}
 
 @interface TGAudioWaveformContentView : UIView
 
 @property (nonatomic, strong) UIColor *color;
 @property (nonatomic, strong) TGAudioWaveform *waveform;
 @property (nonatomic) CGFloat peakHeight;
+@property (nonatomic) BOOL foreground;
 
 @end
 
@@ -48,65 +105,48 @@
         CGFloat heights[numSamples];
         memset(heights, 0, sizeof(CGFloat) * numSamples);
 
-        if (_waveform == nil) {
-            for (int i = 0; i < numSamples; i++)
-                heights[i] = 3.0f;
-        } else {
-            uint16_t *samples = (uint16_t *)_waveform.samples.bytes;
-            int maxReadSamples = (int)_waveform.samples.length / 2;
-            uint16_t maxSample = 1;
-            for (int i = 0; i < maxReadSamples; i++) {
-                if (maxSample < samples[i])
-                    maxSample = samples[i];
-            }
-            CGFloat peaks[numSamples];
-            memset(peaks, 0, sizeof(CGFloat) * numSamples);
-            for (int i = 0; i < maxReadSamples; i++) {
-                int index = MIN(numSamples - 1, i * numSamples / MAX(1, maxReadSamples));
-                if (peaks[index] < samples[i])
-                    peaks[index] = samples[i];
-            }
-            for (int i = 0; i < numSamples; i++) {
-                CGFloat normalized = MIN(1.0f, peaks[i] / (CGFloat)maxSample);
-                heights[i] = 3.0f + CGRound(normalized * 8.0f);
-            }
-        }
+        const uint16_t *samples = (const uint16_t *)_waveform.samples.bytes;
+        NSUInteger sampleCount = _waveform.samples.length / sizeof(uint16_t);
+        for (int i = 0; i < numSamples; i++)
+            heights[i] = TGVoiceWaveformSampleHeight(samples, sampleCount, (NSUInteger)i, (NSUInteger)numSamples, _waveform.peak);
 
-        UIColor *topColor = _color != nil ? _color : UIColorRGB(0xa3a3a3);
-        CGContextSaveGState(context);
-        CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 2.0f), 1.0f, UIColorRGBA(0x000000, 0.10f).CGColor);
-        CGContextSetFillColorWithColor(context, topColor.CGColor);
+        OGTheme *theme = [OGTheme brandedTheme];
+        OGConversationAppearance *appearance = theme.conversationAppearance;
+        OGSurfaceStyle *barStyle = _foreground ? appearance.voiceWaveformPlayedBarSurfaceStyle : appearance.voiceWaveformBarSurfaceStyle;
         for (int i = 0; i < numSamples; i++) {
             CGFloat x = i * (sampleWidth + distance);
             CGFloat h = MIN(baseline, heights[i]);
             CGFloat y = baseline - h;
-            CGFloat radius = sampleWidth / 2.0f;
-            CGContextFillRect(context, CGRectMake(x, y + radius, sampleWidth, MAX(0.0f, h - sampleWidth)));
-            CGContextFillEllipseInRect(context, CGRectMake(x, y, sampleWidth, sampleWidth));
-            CGContextFillEllipseInRect(context, CGRectMake(x, baseline - sampleWidth, sampleWidth, sampleWidth));
+            UIImage *barImage = TGAudioWaveformShadowedBarImage(theme, barStyle, CGSizeMake(sampleWidth, h));
+            [barImage drawAtPoint:CGPointMake(x - TGAudioWaveformBarShadowPadding, y - TGAudioWaveformBarShadowPadding)];
         }
-        CGContextRestoreGState(context);
 
+        OGSurfaceStyle *reflectionStyle = appearance.voiceWaveformPlayedBarSurfaceStyle;
         CGContextSaveGState(context);
-        CGContextBeginPath(context);
+        CGContextBeginTransparencyLayer(context, NULL);
+        CGContextSaveGState(context);
+        CGContextTranslateCTM(context, 0.0f, baseline * 2.0f);
+        CGContextScaleCTM(context, 1.0f, -1.0f);
         for (int i = 0; i < numSamples; i++) {
             CGFloat x = i * (sampleWidth + distance);
-            CGFloat h = MIN(11.0f, heights[i]);
-            CGFloat radius = sampleWidth / 2.0f;
-            CGContextAddRect(context, CGRectMake(x, baseline, sampleWidth, MAX(0.0f, h - radius)));
-            CGContextAddEllipseInRect(context, CGRectMake(x, baseline + MAX(0.0f, h - sampleWidth), sampleWidth, sampleWidth));
+            CGFloat h = MIN(baseline, heights[i]);
+            CGSize barSize = CGSizeMake(sampleWidth, h);
+            UIImage *barImage = [theme.surfaceRenderer imageWithStyle:reflectionStyle size:barSize bodyFrame:CGRectMake(0.0f, 0.0f, barSize.width, barSize.height)];
+            [barImage drawAtPoint:CGPointMake(x, baseline - h)];
         }
-        CGContextClip(context);
+        CGContextRestoreGState(context);
+        CGContextSetBlendMode(context, kCGBlendModeDestinationIn);
         CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
         CGFloat components[] = {
-            0.443f, 0.443f, 0.443f, 1.0f,
-            0.443f, 0.443f, 0.443f, 0.0f
+            1.0f, 1.0f, 1.0f, 1.0f,
+            1.0f, 1.0f, 1.0f, 0.0f
         };
         CGFloat locations[] = {0.0f, 0.8278f};
         CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
         CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, baseline), CGPointMake(0.0f, MIN(size.height, baseline + 13.0f)), 0);
         CGGradientRelease(gradient);
         CGColorSpaceRelease(colorSpace);
+        CGContextEndTransparencyLayer(context);
         CGContextRestoreGState(context);
         return;
     }
@@ -131,14 +171,11 @@
         
         uint16_t maxSample = 0;
         for (int i = 0; i < maxReadSamples; i++) {
-            //averageSample += ABS(samples[i]);
             if (maxSample < samples[i]) {
                 maxSample = samples[i];
             }
         }
-        //averageSample /= maxReadSamples;
         
-        //CGFloat scale = averageSample * 1.9f;
         CGFloat scale = maxSample;
         if (scale < 1.0f) {
             scale = 1.0f;
@@ -205,6 +242,7 @@
     if (self != nil) {
         _backgroundView = [[TGAudioWaveformContentView alloc] initWithFrame:self.bounds];
         _foregroundView = [[TGAudioWaveformContentView alloc] initWithFrame:self.bounds];
+        _foregroundView.foreground = YES;
         _foregroundClippingView = [[UIView alloc] initWithFrame:self.bounds];
         _foregroundClippingView.clipsToBounds = true;
         [self addSubview:_backgroundView];

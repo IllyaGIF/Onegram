@@ -156,7 +156,6 @@ static CTFontRef textFontForSize(CGFloat size)
 
 - (void)updateImageOverlay:(bool)animated
 {
-    //_iconModel.viewUserInteractionDisabled = (_incoming && _mediaIsAvailable) || !_progressVisible;
     
     if (_progressVisible || _deliveryState == TGMessageDeliveryStatePending)
     {
@@ -305,7 +304,6 @@ static CTFontRef textFontForSize(CGFloat size)
         textSize = _textModel.frame.size;
         textSize.height += 8.0f;
     } else {
-        //textSize.width = MAX(textSize.width, MIN(containerSize.width, infoWidth + sizeWidth + previewSize.width + 16.0f));
     }
     
     CGSize size = CGSizeMake(MIN(containerSize.width + 28.0f, MAX(textSize.width, 57.0f + 10.0f + MAX(_titleModel.frame.size.width, _performerModel.frame.size.width) + 20.0f)), 59.0f + textSize.height);
@@ -567,40 +565,6 @@ static CTFontRef textFontForSize(CGFloat size)
     return nil;
 }
 
-//- (void)messageDoubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer
-//{
-//    if (recognizer.state != UIGestureRecognizerStateBegan)
-//    {
-//        if (recognizer.state == UIGestureRecognizerStateRecognized)
-//        {
-//            CGPoint point = [recognizer locationInView:[_contentModel boundView]];
-//
-//            if (recognizer.longTapped)
-//                [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
-//            else if (recognizer.doubleTapped)
-//                [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
-//            else if (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)) {
-//                if (_viaUser != nil && [_forwardedHeaderModel linkAtPoint:CGPointMake(point.x - _forwardedHeaderModel.frame.origin.x, point.y - _forwardedHeaderModel.frame.origin.y) regionData:NULL]) {
-//                    [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
-//                } else {
-//                    if (TGPeerIdIsChannel(_forwardedPeerId)) {
-//                        [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
-//                    } else {
-//                        [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
-//                    }
-//                }
-//            }
-//            else if (_viaUserModel != nil && CGRectContainsPoint(_viaUserModel.frame, point)) {
-//                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
-//            }
-//            else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
-//                [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
-//            else if (_textModel.frame.size.height <= FLT_EPSILON || point.y < CGRectGetMinY(_textModel.frame)) {
-//                [self activateMedia];
-//            }
-//        }
-//    }
-//}
 
 - (void)messageDoubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer
 {

@@ -9,6 +9,7 @@
 #import "TGCustomAlertView.h"
 
 #import "TGProxyItem.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGProxyDetailsController ()
 {
@@ -321,16 +322,14 @@
     if (TGShareItemsViaLegacyPasteboard(@[url]))
         return;
 
-    UIActivityViewController *activityViewController = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
-    [self presentViewController:activityViewController animated:true completion:nil];
+    UIView *sourceView = nil;
+    CGRect sourceRect = CGRectZero;
     if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
     {
-        UIView *sourceView = [_shareItem boundView];
-        activityViewController.popoverPresentationController.sourceView = sourceView;
-        activityViewController.popoverPresentationController.sourceRect = sourceView.bounds;
+        sourceView = [_shareItem boundView];
+        sourceRect = sourceView.bounds;
     }
-    //[[UIPasteboard generalPasteboard] setString:result];
-    //[TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Username.LinkCopied") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+    OGPlatformPresentActivityItems(self, @[url], sourceView, sourceRect, nil, UIPopoverArrowDirectionAny, nil);
 }
 
 - (void)socksPressed

@@ -1,4 +1,5 @@
 #import "ActionStage.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "SSignalKitCompat/SSignalKit.h"
 
@@ -12,17 +13,14 @@
 
 static const char *graphQueueSpecific = "com.telegraph.graphdispatchqueue";
 
-#define IOS6_ACTIONSTAGE_PERF_LOG(...) do { } while (0)
+#undef dispatchOnStageQueue
 
-extern CFAbsoluteTime mainLaunchTimestamp;
+@interface ActionStage ()
 
-static double ActionStageStartupTime()
-{
-    if (mainLaunchTimestamp <= 0.0)
-        return 0.0;
-    
-    return CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp;
-}
+- (void)dispatchOnStageQueue:(dispatch_block_t)block;
+
+@end
+
 
 static dispatch_queue_t mainGraphQueue = nil;
 static dispatch_queue_t globalGraphQueue = nil;
@@ -113,62 +111,44 @@ ActionStage *ActionStageInstance()
     return dispatch_get_specific(graphQueueSpecific) != NULL;
 }
 
-#ifdef DEBUG
 - (void)dispatchOnStageQueueDebug:(const char *)function line:(int)line block:(dispatch_block_t)block
-#else
-- (void)dispatchOnStageQueue:(dispatch_block_t)block
-#endif
 {
-    bool isGraphQueue = dispatch_get_specific(graphQueueSpecific) != NULL;
-    
-    if (isGraphQueue)
+    if (dispatch_get_specific(graphQueueSpecific) != NULL)
     {
-#ifdef DEBUG
-        CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
-#endif
         
         block();
         
-#ifdef DEBUG
-        double execMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0;
-        
-        if (execMs >= 50.0)
-        {
-            IOS6_ACTIONSTAGE_PERF_LOG(@"STAGEEXEC t=%.3f INLINE caller=%s:%d exec=%.1fms",
-                  ActionStageStartupTime(),
-                  function,
-                  line,
-                  execMs);
-        }
-#endif
     }
     else
     {
-#ifdef DEBUG
-        CFAbsoluteTime queuedAt = CFAbsoluteTimeGetCurrent();
         
         dispatch_async([self globalStageDispatchQueue], ^
                        {
-                           CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-                           double waitMs = (startedAt - queuedAt) * 1000.0;
-                           
-                           block();
-                           
-                           double execMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0;
-                           
-                           if (waitMs >= 100.0 || execMs >= 50.0)
+                           @autoreleasepool
                            {
-                               IOS6_ACTIONSTAGE_PERF_LOG(@"STAGEEXEC t=%.3f NORMAL caller=%s:%d wait=%.1fms exec=%.1fms",
-                                     ActionStageStartupTime(),
-                                     function,
-                                     line,
-                                     waitMs,
-                                     execMs);
+                               
+                               block();
+                               
                            }
                        });
-#else
-        dispatch_async([self globalStageDispatchQueue], block);
-#endif
+    }
+}
+
+- (void)dispatchOnStageQueue:(dispatch_block_t)block
+{
+    if (dispatch_get_specific(graphQueueSpecific) != NULL)
+    {
+        block();
+    }
+    else
+    {
+        dispatch_async([self globalStageDispatchQueue], ^
+                       {
+                           @autoreleasepool
+                           {
+                               block();
+                           }
+                       });
     }
 }
 
@@ -185,12 +165,6 @@ ActionStage *ActionStageInstance()
 #ifdef DEBUG
         double execMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0;
         
-        if (execMs >= 50.0)
-        {
-            IOS6_ACTIONSTAGE_PERF_LOG(@"STAGEEXEC t=%.3f HIGH INLINE exec=%.1fms",
-                  ActionStageStartupTime(),
-                  execMs);
-        }
 #endif
     }
     else
@@ -203,23 +177,25 @@ ActionStage *ActionStageInstance()
         
         dispatch_async(highPriorityGraphQueue, ^
                        {
-                           CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
-                           double waitMs = (startedAt - queuedAt) * 1000.0;
-                           
-                           block();
-                           
-                           double execMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0;
-                           
-                           if (waitMs >= 100.0 || execMs >= 50.0)
+                           @autoreleasepool
                            {
-                               IOS6_ACTIONSTAGE_PERF_LOG(@"STAGEEXEC t=%.3f HIGH wait=%.1fms exec=%.1fms",
-                                     ActionStageStartupTime(),
-                                     waitMs,
-                                     execMs);
+                               CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
+                               double waitMs = (startedAt - queuedAt) * 1000.0;
+
+                               block();
+
+                               double execMs = (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0;
+
                            }
                        });
 #else
-        dispatch_async(highPriorityGraphQueue, block);
+        dispatch_async(highPriorityGraphQueue, ^
+                       {
+                           @autoreleasepool
+                           {
+                               block();
+                           }
+                       });
 #endif
     }
 }
@@ -228,20 +204,11 @@ ActionStage *ActionStageInstance()
 {
     [self dispatchOnStageQueue:^
      {
-         TGLegacyLog(@"%d live node watchers", _liveNodeWatchers.count);
          [_liveNodeWatchers enumerateKeysAndObjectsUsingBlock:^(NSString *path, NSArray *watchers, __unused BOOL *stop)
           {
-              TGLegacyLog(@"    %@", path);
-              for (ASHandle *handle in watchers)
-              {
-                  if ([handle hasDelegate])
-                      TGLegacyLog(@"        %@", handle);
-              }
           }];
-         TGLegacyLog(@"%d requests", _activeRequests.count);
          [_activeRequests enumerateKeysAndObjectsUsingBlock:^(NSString *path, __unused id obj, BOOL *stop)
           {
-              TGLegacyLog(@"        %@", path);
           }];
      }];
 }
@@ -371,7 +338,6 @@ ActionStage *ActionStageInstance()
             requestInfo = [cancelRequestInfo objectForKey:@"requestInfo"];
             [activeRequests setObject:requestInfo forKey:path];
             [cancelTimers removeObjectForKey:path];
-            TGLegacyLog(@"Resuming request to \"%@\"", path);
         }
         
         if (requestInfo == nil)
@@ -401,14 +367,6 @@ ActionStage *ActionStageInstance()
                 
                 double prepareMs = (CFAbsoluteTimeGetCurrent() - prepareStart) * 1000.0;
                 
-                if (prepareMs >= 20.0)
-                {
-                    IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORPREP t=%.3f path=%@ class=%@ ms=%.1f",
-                          ActionStageStartupTime(),
-                          path,
-                          NSStringFromClass([requestBuilder class]),
-                          prepareMs);
-                }
                 
                 bool executeNow = true;
                 
@@ -435,7 +393,6 @@ ActionStage *ActionStageInstance()
                                     [requestQueue removeLastObject];
                                     [requestQueue insertObject:requestBuilder atIndex:1];
                                     
-                                    TGLegacyLog(@"(Inserted actor with high priority (next in queue)");
                                 }
                             }
                         }
@@ -450,14 +407,6 @@ ActionStage *ActionStageInstance()
                     
                     double executeMs = (CFAbsoluteTimeGetCurrent() - executeStart) * 1000.0;
                     
-                    if (executeMs >= 20.0)
-                    {
-                        IOS6_ACTIONSTAGE_PERF_LOG(@"ACTOREXEC t=%.3f path=%@ class=%@ ms=%.1f",
-                              ActionStageStartupTime(),
-                              path,
-                              NSStringFromClass([requestBuilder class]),
-                              executeMs);
-                    }
                 }
                 else
                 {
@@ -488,14 +437,6 @@ ActionStage *ActionStageInstance()
                 
                 double joinedMs = (CFAbsoluteTimeGetCurrent() - joinedStart) * 1000.0;
                 
-                if (joinedMs >= 20.0)
-                {
-                    IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORJOIN t=%.3f path=%@ class=%@ waiting=0 ms=%.1f",
-                          ActionStageStartupTime(),
-                          path,
-                          NSStringFromClass([actor class]),
-                          joinedMs);
-                }
             }
             else
             {
@@ -509,14 +450,6 @@ ActionStage *ActionStageInstance()
                     
                     double joinedMs = (CFAbsoluteTimeGetCurrent() - joinedStart) * 1000.0;
                     
-                    if (joinedMs >= 20.0)
-                    {
-                        IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORJOIN t=%.3f path=%@ class=%@ waiting=0 ms=%.1f",
-                              ActionStageStartupTime(),
-                              path,
-                              NSStringFromClass([actor class]),
-                              joinedMs);
-                    }
                 }
                 else
                 {
@@ -528,15 +461,6 @@ ActionStage *ActionStageInstance()
                     
                     double joinedMs = (CFAbsoluteTimeGetCurrent() - joinedStart) * 1000.0;
                     
-                    if (joinedMs >= 20.0)
-                    {
-                        IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORJOIN t=%.3f path=%@ class=%@ waiting=%d ms=%.1f",
-                              ActionStageStartupTime(),
-                              path,
-                              NSStringFromClass([actor class]),
-                              waitingInActorQueue ? 1 : 0,
-                              joinedMs);
-                    }
                     
                     if (flags & TGActorRequestChangePriority)
                         [self changeActorPriority:path];
@@ -546,13 +470,6 @@ ActionStage *ActionStageInstance()
         
         double actorRequestMs = (CFAbsoluteTimeGetCurrent() - actorRequestStart) * 1000.0;
         
-        if (actorRequestMs >= 20.0)
-        {
-            IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORREQ t=%.3f path=%@ total=%.1fms",
-                  ActionStageStartupTime(),
-                  path,
-                  actorRequestMs);
-        }
     };
     
     if (inCurrentQueue)
@@ -584,7 +501,6 @@ ActionStage *ActionStageInstance()
                          [requestQueue removeObjectAtIndex:index];
                          [requestQueue insertObject:actor atIndex:1];
                          
-                         TGLegacyLog(@"Changed actor %@ priority (next in %@)", path, actor.requestQueueName);
                      }
                  }
              }
@@ -924,14 +840,6 @@ ActionStage *ActionStageInstance()
                         
                         double executeMs = (CFAbsoluteTimeGetCurrent() - executeStart) * 1000.0;
                         
-                        if (executeMs >= 20.0)
-                        {
-                            IOS6_ACTIONSTAGE_PERF_LOG(@"ACTOREXEC t=%.3f QUEUED path=%@ class=%@ ms=%.1f",
-                                  ActionStageStartupTime(),
-                                  nextRequest.path,
-                                  NSStringFromClass([nextRequest class]),
-                                  executeMs);
-                        }
                     }
                 }
                 else
@@ -1049,13 +957,6 @@ ActionStage *ActionStageInstance()
          
          double removeMs = (CFAbsoluteTimeGetCurrent() - removeStart) * 1000.0;
          
-         if (removeMs >= 20.0)
-         {
-             IOS6_ACTIONSTAGE_PERF_LOG(@"WATCHERREMOVE t=%.3f count=%d ms=%.1f",
-                   ActionStageStartupTime(),
-                   (int)removeWatchers.size(),
-                   removeMs);
-         }
      }];
 }
 
@@ -1113,10 +1014,6 @@ ActionStage *ActionStageInstance()
          _removeWatcherFromPathRequests.clear();
          OSSpinLockUnlock(&removeWatcherFromPathRequestsLock);
          
-         if (removeWatchersFromPath.size() > 1)
-         {
-             TGLegacyLog(@"Cancelled %ld requests at once", removeWatchersFromPath.size());
-         }
          
          for (std::vector<std::pair<ASHandle *, NSString *> >::iterator it = removeWatchersFromPath.begin(); it != removeWatchersFromPath.end(); it++)
          {
@@ -1158,13 +1055,6 @@ ActionStage *ActionStageInstance()
          
          double removeMs = (CFAbsoluteTimeGetCurrent() - removeStart) * 1000.0;
          
-         if (removeMs >= 20.0)
-         {
-             IOS6_ACTIONSTAGE_PERF_LOG(@"WATCHERREMOVEPATH t=%.3f count=%d ms=%.1f",
-                   ActionStageStartupTime(),
-                   (int)removeWatchersFromPath.size(),
-                   removeMs);
-         }
      }];
 }
 
@@ -1195,11 +1085,7 @@ ActionStage *ActionStageInstance()
          {
              for (ASHandle *handle in watchers)
              {
-                 CFAbsoluteTime callbackStart = CFAbsoluteTimeGetCurrent();
                  [handle notifyResourceDispatched:path resource:resource arguments:arguments];
-                 double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
-                 if (callbackMs >= 20.0)
-                     IOS6_ACTIONSTAGE_PERF_LOG(@"RESOURCECALLBACK t=%.3f path=%@ ms=%.1f", ActionStageStartupTime(), path, callbackMs);
              }
          }
          
@@ -1211,24 +1097,13 @@ ActionStage *ActionStageInstance()
              {
                  for (ASHandle *handle in watchers)
                  {
-                     CFAbsoluteTime callbackStart = CFAbsoluteTimeGetCurrent();
                      [handle notifyResourceDispatched:path resource:resource arguments:arguments];
-                     double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
-                     if (callbackMs >= 20.0)
-                         IOS6_ACTIONSTAGE_PERF_LOG(@"RESOURCECALLBACK t=%.3f path=%@ generic=%@ ms=%.1f", ActionStageStartupTime(), path, genericPath, callbackMs);
                  }
              }
          }
          
          double resourceMs = (CFAbsoluteTimeGetCurrent() - resourceStart) * 1000.0;
          
-         if (resourceMs >= 20.0)
-         {
-             IOS6_ACTIONSTAGE_PERF_LOG(@"RESOURCEDONE t=%.3f path=%@ total=%.1fms",
-                   ActionStageStartupTime(),
-                   path,
-                   resourceMs);
-         }
      }];
 }
 
@@ -1249,11 +1124,7 @@ ActionStage *ActionStageInstance()
              
              for (ASHandle *handle in actionWatchers)
              {
-                 CFAbsoluteTime callbackStart = CFAbsoluteTimeGetCurrent();
                  [handle notifyActorCompleted:ASStatusSuccess path:action result:result];
-                 double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
-                 if (callbackMs >= 20.0)
-                     IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORCALLBACK t=%.3f path=%@ ms=%.1f", ActionStageStartupTime(), action, callbackMs);
              }
              
              [actionWatchers removeAllObjects];
@@ -1271,13 +1142,6 @@ ActionStage *ActionStageInstance()
          
          double completedMs = (CFAbsoluteTimeGetCurrent() - completedStart) * 1000.0;
          
-         if (completedMs >= 20.0)
-         {
-             IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORDONE t=%.3f path=%@ total=%.1fms",
-                   ActionStageStartupTime(),
-                   action,
-                   completedMs);
-         }
      }];
 }
 
@@ -1301,14 +1165,6 @@ ActionStage *ActionStageInstance()
                  
                  double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
                  
-                 if (callbackMs >= 20.0)
-                 {
-                     IOS6_ACTIONSTAGE_PERF_LOG(@"MESSAGECALLBACK t=%.3f path=%@ type=%@ ms=%.1f",
-                           ActionStageStartupTime(),
-                           path,
-                           messageType,
-                           callbackMs);
-                 }
              }
          }
          
@@ -1327,29 +1183,12 @@ ActionStage *ActionStageInstance()
                      
                      double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
                      
-                     if (callbackMs >= 20.0)
-                     {
-                         IOS6_ACTIONSTAGE_PERF_LOG(@"MESSAGECALLBACK t=%.3f path=%@ generic=%@ type=%@ ms=%.1f",
-                               ActionStageStartupTime(),
-                               path,
-                               genericPath,
-                               messageType,
-                               callbackMs);
-                     }
                  }
              }
          }
          
          double messageMs = (CFAbsoluteTimeGetCurrent() - messageStart) * 1000.0;
          
-         if (messageMs >= 20.0)
-         {
-             IOS6_ACTIONSTAGE_PERF_LOG(@"MESSAGEDONE t=%.3f path=%@ type=%@ total=%.1fms",
-                   ActionStageStartupTime(),
-                   path,
-                   messageType,
-                   messageMs);
-         }
      }];
 }
 
@@ -1370,11 +1209,7 @@ ActionStage *ActionStageInstance()
              
              for (ASHandle *handle in actionWatchers)
              {
-                 CFAbsoluteTime callbackStart = CFAbsoluteTimeGetCurrent();
                  [handle notifyActorCompleted:reason path:action result:nil];
-                 double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
-                 if (callbackMs >= 20.0)
-                     IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORFAILCALLBACK t=%.3f path=%@ reason=%d ms=%.1f", ActionStageStartupTime(), action, reason, callbackMs);
              }
              
              [actionWatchers removeAllObjects];
@@ -1392,14 +1227,6 @@ ActionStage *ActionStageInstance()
          
          double failedMs = (CFAbsoluteTimeGetCurrent() - failedStart) * 1000.0;
          
-         if (failedMs >= 20.0)
-         {
-             IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORFAIL t=%.3f path=%@ reason=%d total=%.1fms",
-                   ActionStageStartupTime(),
-                   action,
-                   reason,
-                   failedMs);
-         }
      }];
 }
 
@@ -1423,11 +1250,7 @@ ActionStage *ActionStageInstance()
              
              for (ASHandle *handle in watchers)
              {
-                 CFAbsoluteTime callbackStart = CFAbsoluteTimeGetCurrent();
                  [handle notifyActorProgress:path progress:progress];
-                 double callbackMs = (CFAbsoluteTimeGetCurrent() - callbackStart) * 1000.0;
-                 if (callbackMs >= 20.0)
-                     IOS6_ACTIONSTAGE_PERF_LOG(@"PROGRESSCALLBACK t=%.3f path=%@ ms=%.1f", ActionStageStartupTime(), path, callbackMs);
              }
          }
      }];
@@ -1464,7 +1287,6 @@ ActionStage *ActionStageInstance()
         }
         else
         {
-            TGLegacyLog(@"Will cancel request to \"%@\" in %f s", path, cancelTimeout);
             
             NSDictionary *cancelDict = [NSDictionary dictionaryWithObjectsAndKeys:
                                         path, @"path",
@@ -1523,14 +1345,6 @@ ActionStage *ActionStageInstance()
              
              double cancelMs = (CFAbsoluteTimeGetCurrent() - cancelStart) * 1000.0;
              
-             if (cancelMs >= 20.0)
-             {
-                 IOS6_ACTIONSTAGE_PERF_LOG(@"ACTORCANCEL t=%.3f path=%@ class=%@ ms=%.1f",
-                       ActionStageStartupTime(),
-                       path,
-                       NSStringFromClass([requestBuilder class]),
-                       cancelMs);
-             }
              if (requestBuilder.requestQueueName != nil)
              {
                  [self removeRequestFromQueueAndProceedIfFirst:requestBuilder.requestQueueName

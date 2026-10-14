@@ -9,25 +9,21 @@
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"constructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"constructorName is not implemented for base type");
     return 0;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
 {
-    TGLog(@"TLbuildFromMetaObject is not implemented for base type");
     return nil;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 
@@ -81,7 +77,6 @@
     object.ipv6 = metaObject->getString((int32_t)0x555f25db);
     object.port = metaObject->getInt32((int32_t)0x81ce65c9);
     object.peer_tag = metaObject->getBytes((int32_t)0x49f791e4);
-    TGLog(@"CALL parse phoneConnection flags=%d id=%lld ip=%@ ipv6=%@ port=%d peerTagLen=%d", object.flags, object.n_id, object.ip, object.ipv6, object.port, (int)object.peer_tag.length);
     return object;
 }
 
@@ -145,7 +140,6 @@
     object.port = metaObject->getInt32((int32_t)0x81ce65c9);
     object.username = metaObject->getString((int32_t)0xd814e8b);
     object.password = metaObject->getString((int32_t)0x8e49a0e8);
-    TGLog(@"CALL parse phoneConnectionWebrtc flags=%d id=%lld ip=%@ ipv6=%@ port=%d user=%@ passLen=%d", object.flags, object.n_id, object.ip, object.ipv6, object.port, object.username, (int)object.password.length);
     return object;
 }
 

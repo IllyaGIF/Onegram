@@ -9,7 +9,6 @@
 @class TLInputMedia;
 @class TLInputGeoPoint;
 
-//messages.editMessage flags:# no_webpage:flags.1?true stop_geo_live:flags.12?true peer:InputPeer id:int message:flags.11?string reply_markup:flags.2?ReplyMarkup entities:flags.3?Vector<MessageEntity> geo_point:flags.13?InputGeoPoint = Updates;
 
 @interface TLRPCmessages_editMessage : TLMetaRpc
 

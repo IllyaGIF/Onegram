@@ -34,6 +34,7 @@
 
 #import "STKHTTPDataSource.h"
 #import "STKLocalFileDataSource.h"
+#import <CFNetwork/CFNetwork.h>
 
 @interface STKHTTPDataSource()
 {

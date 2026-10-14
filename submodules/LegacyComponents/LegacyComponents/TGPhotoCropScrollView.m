@@ -461,7 +461,6 @@ typedef struct {
 - (void)handlePan:(UIPanGestureRecognizer *)gestureRecognizer
 {
     CGPoint translation = [gestureRecognizer translationInView:_wrapperView];
-    //CGPoint velocity = [gestureRecognizer velocityInView:self];
     
     switch (gestureRecognizer.state)
     {

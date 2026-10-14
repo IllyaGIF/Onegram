@@ -1,4 +1,5 @@
 #import "TGFeedConversationInputPanel.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGFont.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageUtils.h"
@@ -64,14 +65,14 @@
     self.backgroundColor = presentation.pallete.barBackgroundColor;
     _stripeLayer.backgroundColor = presentation.pallete.barSeparatorColor.CGColor;
     
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setDividerImage:presentation.images.segmentedControlDividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlBackgroundImage, UIControlStateNormal, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlHighlightedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlDividerImage(_segmentedControl, presentation.images.segmentedControlDividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
     
-    [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
-    [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+    OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateNormal);
+    OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateSelected);
 }
 
 - (void)adjustForSize:(CGSize)size keyboardHeight:(CGFloat)keyboardHeight duration:(NSTimeInterval)duration animationCurve:(int)animationCurve contentAreaHeight:(CGFloat)contentAreaHeight safeAreaInset:(UIEdgeInsets)safeAreaInset

@@ -404,9 +404,6 @@
     controller.didFinishEditing = ^(id<TGMediaEditAdjustments> adjustments, UIImage *resultImage, UIImage *thumbnailImage, bool hasChanges)
     {
         __strong TGMediaPickerGalleryModel *strongSelf = weakSelf;
-        if (strongSelf == nil) {
-            TGLegacyLog(@"controller.didFinishEditing strongSelf == nil");
-        }
         
 #ifdef DEBUG
         if (adjustments != nil && hasChanges && !isVideo)

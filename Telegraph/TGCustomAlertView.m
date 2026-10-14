@@ -30,6 +30,24 @@
     return [self presentAlertWithTitle:title anyMessage:nil customView:customView cancelButtonTitle:cancelButtonTitle okButtonTitle:okButtonTitle destructive:false completionBlock:completionBlock disableKeyboardWorkaround:disableKeyboardWorkaround];
 }
 
++ (instancetype)presentSecureTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *))completionBlock
+{
+    UITextField *textField = [[UITextField alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 230.0f, 36.0f)];
+    textField.borderStyle = UITextBorderStyleRoundedRect;
+    textField.secureTextEntry = true;
+    textField.placeholder = placeholder;
+    textField.text = text;
+
+    TGCustomAlertView *alertView = [self presentAlertWithTitle:title anyMessage:message customView:textField cancelButtonTitle:cancelButtonTitle okButtonTitle:okButtonTitle destructive:false completionBlock:^(bool okButtonPressed)
+    {
+        if (okButtonPressed && completionBlock != nil)
+            completionBlock(textField.text);
+    } disableKeyboardWorkaround:true];
+    alertView.followsKeyboard = true;
+    [textField becomeFirstResponder];
+    return alertView;
+}
+
 + (instancetype)presentAlertWithTitle:(NSString *)title anyMessage:(id)message customView:(UIView *)customView cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle destructive:(bool)destructive completionBlock:(void (^)(bool))completionBlock disableKeyboardWorkaround:(bool)disableKeyboardWorkaround
 {
     NSString *finalTitle = title;

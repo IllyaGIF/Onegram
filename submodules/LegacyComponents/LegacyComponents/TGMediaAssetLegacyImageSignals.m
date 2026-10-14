@@ -3,9 +3,75 @@
 #import "LegacyComponentsInternal.h"
 
 #import <AssetsLibrary/AssetsLibrary.h>
+#if !defined(ONEGRAM_ARMV6)
 #import <ImageIO/ImageIO.h>
+#endif
 
 #import "TGMediaAsset.h"
+#import "TGImageUtils.h"
+
+#if defined(ONEGRAM_ARMV6)
+static UIImageOrientation TGMediaAssetLegacyImageOrientation(ALAssetOrientation orientation)
+{
+    switch (orientation)
+    {
+        case ALAssetOrientationDown:
+            return UIImageOrientationDown;
+        case ALAssetOrientationLeft:
+            return UIImageOrientationLeft;
+        case ALAssetOrientationRight:
+            return UIImageOrientationRight;
+        case ALAssetOrientationUpMirrored:
+            return UIImageOrientationUpMirrored;
+        case ALAssetOrientationDownMirrored:
+            return UIImageOrientationDownMirrored;
+        case ALAssetOrientationLeftMirrored:
+            return UIImageOrientationLeftMirrored;
+        case ALAssetOrientationRightMirrored:
+            return UIImageOrientationRightMirrored;
+        case ALAssetOrientationUp:
+        default:
+            return UIImageOrientationUp;
+    }
+}
+
+static UIImage *TGMediaAssetLegacyImageForRepresentation(ALAssetRepresentation *representation, TGMediaAssetImageType imageType, CGSize maximumSize)
+{
+    if (representation == nil)
+        return nil;
+
+    if (imageType == TGMediaAssetImageTypeScreen)
+    {
+        CGImageRef imageRef = representation.fullScreenImage;
+        if (imageRef != NULL)
+        {
+            UIImage *image = [UIImage imageWithCGImage:imageRef];
+            if (maximumSize.width > 0.0f && maximumSize.height > 0.0f)
+            {
+                CGSize targetSize = TGFitSize(image.size, maximumSize);
+                if (targetSize.width < image.size.width || targetSize.height < image.size.height)
+                    image = TGScaleImageToPixelSize(image, targetSize);
+            }
+            return image;
+        }
+    }
+
+    CGImageRef imageRef = representation.fullResolutionImage;
+    if (imageRef == NULL)
+        imageRef = representation.fullScreenImage;
+    if (imageRef == NULL)
+        return nil;
+
+    UIImage *image = [UIImage imageWithCGImage:imageRef scale:1.0f orientation:TGMediaAssetLegacyImageOrientation(representation.orientation)];
+    if (maximumSize.width > 0.0f && maximumSize.height > 0.0f)
+    {
+        CGSize targetSize = TGFitSize(image.size, maximumSize);
+        if (targetSize.width < image.size.width || targetSize.height < image.size.height)
+            image = TGScaleImageToPixelSize(image, targetSize);
+    }
+    return image;
+}
+#endif
 
 @implementation TGMediaAssetLegacyImageSignals
 
@@ -39,6 +105,23 @@
             if (imageType == TGMediaAssetImageTypeFullSize)
                 size = TGMediaAssetImageLegacySizeLimit;
             
+#if defined(ONEGRAM_ARMV6)
+            return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+            {
+                ALAssetRepresentation *representation = asset.backingLegacyAsset.defaultRepresentation;
+                UIImage *image = TGMediaAssetLegacyImageForRepresentation(representation, imageType, size);
+                if (image != nil)
+                {
+                    [subscriber putNext:image];
+                    [subscriber putCompletion];
+                }
+                else
+                {
+                    [subscriber putError:nil];
+                }
+                return nil;
+            }] startOn:[self _processingQueue]];
+#else
             return [[[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
             {
                 ALAssetRepresentation *representation = asset.backingLegacyAsset.defaultRepresentation;
@@ -90,6 +173,7 @@
             {
                 return [self _editedImageWithCGImage:(__bridge CGImageRef)(result[@"imageRef"]) representation:result[@"representation"]];
             }] startOn:[self _processingQueue]];
+#endif
         }
             break;
             
@@ -139,9 +223,14 @@
     }] startOn:[self _processingQueue]];
 }
 
-+ (SSignal *)imageMetadataWithAsset:(TGMediaAsset *)asset
++ (SSignal *)imageMetadataForAsset:(TGMediaAsset *)asset
 {
     return [SSignal single:asset.backingLegacyAsset.defaultRepresentation.metadata];
+}
+
++ (SSignal *)imageMetadataWithAsset:(TGMediaAsset *)asset
+{
+    return [self imageMetadataForAsset:asset];
 }
 
 + (SSignal *)fileAttributesForAsset:(TGMediaAsset *)asset
@@ -213,12 +302,26 @@
 
 + (SSignal *)playerItemForVideoAsset:(TGMediaAsset *)asset
 {
-    return [SSignal single:[AVPlayerItem playerItemWithURL:asset.url]];
+    Class playerItemClass = NSClassFromString(@"AVPlayerItem");
+    SEL selector = NSSelectorFromString(@"playerItemWithURL:");
+    if (playerItemClass == Nil || ![playerItemClass respondsToSelector:selector])
+        return [SSignal fail:nil];
+
+    id (*implementation)(id, SEL, NSURL *) = (id (*)(id, SEL, NSURL *))[playerItemClass methodForSelector:selector];
+    id playerItem = implementation(playerItemClass, selector, asset.url);
+    return playerItem == nil ? [SSignal fail:nil] : [SSignal single:playerItem];
 }
 
 + (SSignal *)avAssetForVideoAsset:(TGMediaAsset *)asset allowNetworkAccess:(bool)__unused allowNetworkAccess
 {
-    return [SSignal single:[[AVURLAsset alloc] initWithURL:asset.url options:nil]];
+    Class assetClass = NSClassFromString(@"AVURLAsset");
+    SEL selector = NSSelectorFromString(@"URLAssetWithURL:options:");
+    if (assetClass == Nil || ![assetClass respondsToSelector:selector])
+        return [SSignal fail:nil];
+
+    id (*implementation)(id, SEL, NSURL *, NSDictionary *) = (id (*)(id, SEL, NSURL *, NSDictionary *))[assetClass methodForSelector:selector];
+    id avAsset = implementation(assetClass, selector, asset.url, nil);
+    return avAsset == nil ? [SSignal fail:nil] : [SSignal single:avAsset];
 }
 
 + (bool)usesPhotoFramework
@@ -226,6 +329,7 @@
     return false;
 }
 
+#if !defined(ONEGRAM_ARMV6)
 + (SSignal *)_editedImageWithCGImage:(CGImageRef)cgImage representation:(ALAssetRepresentation *)representation
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
@@ -316,6 +420,7 @@
         return nil;
     }];
 }
+#endif
 
 + (SQueue *)_processingQueue
 {

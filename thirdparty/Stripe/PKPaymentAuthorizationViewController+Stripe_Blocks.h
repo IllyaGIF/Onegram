@@ -6,8 +6,8 @@
 //  Copyright © 2016 Stripe, Inc. All rights reserved.
 //
 
-#import <PassKit/PassKit.h>
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import <PassKit/PassKit.h>
 #import "STPAPIClient.h"
 #import "STPPaymentContext.h"
 
@@ -27,5 +27,6 @@ typedef void (^STPPaymentCompletionBlock)(STPPaymentStatus status, NSError *erro
 
 @end
 
-void linkPKPaymentAuthorizationViewControllerBlocksCategory(void);
 #endif
+
+void linkPKPaymentAuthorizationViewControllerBlocksCategory(void);

@@ -59,6 +59,7 @@
 - (CGRect)collectionViewContentRect;
 
 @property (readonly) BOOL layoutIsPrepared;
+@property (nonatomic, readonly) NSUInteger invalidationCount;
 
 /*
  - (void)_setLayoutAttributes:(id)arg1 atGlobalItemIndex:(int)arg2;

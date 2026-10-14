@@ -78,7 +78,6 @@ static CGFloat preloadInset = 64.0f;
         _button.titleLabel.font = TGMediumSystemFontOfSize(13.0f);
         _button.contentEdgeInsets = UIEdgeInsetsMake(5.0f, 10.0f, 5.0f, 10.0f);
         [_button sizeToFit];
-        //[self.contentView addSubview:_button];
         
         [_button addTarget:self action:@selector(buttonPressed) forControlEvents:UIControlEventTouchUpInside];
         

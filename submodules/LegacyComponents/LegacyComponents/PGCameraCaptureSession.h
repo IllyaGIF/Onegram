@@ -4,7 +4,22 @@
 
 @class PGCameraMovieWriter;
 
+#if defined(ONEGRAM_ARMV6)
+@interface PGCameraCaptureSession : NSObject
+{
+    PGCameraMode _currentMode;
+    PGCameraFlashMode _currentFlashMode;
+    PGCameraPosition _preferredCameraPosition;
+    PGCameraPosition _currentCameraPosition;
+    CGFloat _zoomLevel;
+    CGPoint _focusPoint;
+    bool _running;
+    bool _alwaysSetFlash;
+    bool _compressVideo;
+}
+#else
 @interface PGCameraCaptureSession : AVCaptureSession
+#endif
 
 @property (nonatomic, readonly) AVCaptureDevice *videoDevice;
 @property (nonatomic, readonly) AVCaptureStillImageOutput *imageOutput;
@@ -32,6 +47,18 @@
 @property (nonatomic, assign) bool compressVideo;
 
 - (instancetype)initWithMode:(PGCameraMode)mode position:(PGCameraPosition)position;
+
+#if defined(ONEGRAM_ARMV6)
+@property (nonatomic, readonly, getter=isRunning) BOOL running;
+@property (nonatomic, readonly) NSArray *inputs;
+@property (nonatomic, readonly) NSArray *outputs;
+- (void)beginConfiguration;
+- (void)commitConfiguration;
+- (void)removeInput:(id)input;
+- (void)removeOutput:(id)output;
+- (void)startRunning;
+- (void)stopRunning;
+#endif
 
 - (void)performInitialConfigurationWithCompletion:(void (^)(void))completion;
 

@@ -1,4 +1,5 @@
 #import "TGSharedFileSignals.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -291,17 +292,7 @@
                     videoPath = [videoPath stringByAppendingPathExtension:@"mov"];
                 }
                 
-                AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:videoPath] options:nil];
-                
-                AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-                imageGenerator.maximumSize = CGSizeMake(800, 800);
-                imageGenerator.appliesPreferredTrackTransform = true;
-                NSError *imageError = nil;
-                CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(0, asset.duration.timescale) actualTime:NULL error:&imageError];
-                UIImage *image = [[UIImage alloc] initWithCGImage:imageRef];
-                if (imageRef != NULL) {
-                    CGImageRelease(imageRef);
-                }
+                UIImage *image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:videoPath], 0.0, CGSizeMake(800.0f, 800.0f));
                 
                 if (image != nil) {
                     [subscriber putNext:image];
@@ -409,6 +400,8 @@
         return [self localImageForLowQualityFileThumbnail:documentAttachment];
     }] catch:^SSignal *(__unused id error)
     {
+        if (OGPlatformMediaDownloadsRequireUserAction())
+            return [SSignal fail:nil];
         NSInteger datacenterId = 0;
         TLInputFileLocation *location = [TGSharedMediaSignals inputFileLocationForImageUrl:thumbnailUrl datacenterId:&datacenterId originInfo:documentAttachment.originInfo];
         if (location == nil)
@@ -479,7 +472,7 @@
             }];
             
             return [[SBlockDisposable alloc] initWithBlock:^{
-                [helper description]; // keep reference
+                [helper description];
             }];
         }], progressPipe.signalProducer()]];
     }];
@@ -500,7 +493,7 @@
             }];
             
             return [[SBlockDisposable alloc] initWithBlock:^{
-                [helper description]; // keep reference
+                [helper description];
             }];
         }], progressPipe.signalProducer()]];
     }];
@@ -521,7 +514,7 @@
             }];
             
             return [[SBlockDisposable alloc] initWithBlock:^{
-                [helper description]; // keep reference
+                [helper description];
             }];
         }], progressPipe.signalProducer()]];
     }];

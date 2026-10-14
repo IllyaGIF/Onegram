@@ -19,6 +19,8 @@
 #import "TGProxyWindow.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 @interface TGRootController ()
 {
@@ -26,6 +28,10 @@
     
     TGNavigationController *_masterNavigationController;
     TGNavigationController *_detailNavigationController;
+
+    TGContactsController *_contactsController;
+    TGAccountSettingsController *_accountSettingsController;
+    TGRecentCallsController *_callsController;
     
     UIUserInterfaceSizeClass _currentSizeClass;
     
@@ -40,11 +46,60 @@
 
 @implementation TGRootController
 
+- (void)ensureSecondaryControllers
+{
+    if (_contactsController == nil)
+    {
+        _contactsController = [[TGContactsController alloc] initWithContactsMode:TGContactsModeMainContacts | TGContactsModeRegistered | TGContactsModePhonebook | TGContactsModeSortByLastSeen];
+        _contactsController.presentation = _presentation;
+    }
+
+    if (_accountSettingsController == nil)
+        _accountSettingsController = [[TGAccountSettingsController alloc] initWithUid:0];
+
+    if (_callsController == nil)
+    {
+        _callsController = [[TGRecentCallsController alloc] init];
+        _callsController.presentation = _presentation;
+        __weak TGRootController *weakSelf = self;
+        _callsController.missedCountChanged = ^(NSInteger count)
+        {
+            __strong TGRootController *strongSelf = weakSelf;
+            if (strongSelf != nil)
+                [strongSelf->_mainTabsController setMissedCallsCount:(int)count];
+        };
+    }
+}
+
+- (TGContactsController *)contactsController
+{
+    [self ensureSecondaryControllers];
+    return _contactsController;
+}
+
+- (TGRecentCallsController *)callsController
+{
+    [self ensureSecondaryControllers];
+    return _callsController;
+}
+
+- (TGAccountSettingsController *)accountSettingsController
+{
+    [self ensureSecondaryControllers];
+    return _accountSettingsController;
+}
+
+- (void)setAccountSettingsController:(TGAccountSettingsController *)accountSettingsController
+{
+    _accountSettingsController = accountSettingsController;
+}
+
 - (instancetype)init
 {
     self = [super init];
     if (self != nil)
     {
+        CFAbsoluteTime rootInitPhase = CFAbsoluteTimeGetCurrent();
         [self setNavigationBarHidden:true animated:false];
         self.automaticallyManageScrollViewInsets = false;
         
@@ -57,27 +112,43 @@
         }];
         
         TGTelegraphDialogListCompanion *dialogListCompanion = [[TGTelegraphDialogListCompanion alloc] init];
+        rootInitPhase = CFAbsoluteTimeGetCurrent();
         _dialogListController = [[TGDialogListController alloc] initWithCompanion:dialogListCompanion];
         _dialogListController.presentation = _presentation;
-        
-        _contactsController = [[TGContactsController alloc] initWithContactsMode:TGContactsModeMainContacts | TGContactsModeRegistered | TGContactsModePhonebook | TGContactsModeSortByLastSeen];
-        _contactsController.presentation = _presentation;
-        
-        _accountSettingsController = [[TGAccountSettingsController alloc] initWithUid:0];
-        
-        _callsController = [[TGRecentCallsController alloc] init];
-        _callsController.presentation = _presentation;
-        _callsController.missedCountChanged = ^(NSInteger count)
-        {
-            __strong TGRootController *strongSelf = weakSelf;
-            if (strongSelf != nil)
-                [strongSelf->_mainTabsController setMissedCallsCount:(int)count];
-        };
+        rootInitPhase = CFAbsoluteTimeGetCurrent();
         
         _mainTabsController = [[TGMainTabsController alloc] initWithPresentation:_presentation];
-        [_mainTabsController setViewControllers:[NSArray arrayWithObjects:_contactsController, _callsController, _dialogListController, _accountSettingsController, nil]];
-        [_mainTabsController setSelectedIndex:2];
+        if (iosMajorVersion() <= 6)
+        {
+            [_mainTabsController setStartupViewController:_dialogListController logicalIndex:2 prepareControllers:^NSArray *
+            {
+                __strong TGRootController *strongSelf = weakSelf;
+                if (strongSelf == nil)
+                    return nil;
+                [strongSelf ensureSecondaryControllers];
+                return @[strongSelf.contactsController, strongSelf.callsController, strongSelf.dialogListController, strongSelf.accountSettingsController];
+            }];
+            if (iosMajorVersion() >= 4)
+            {
+                OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityUtility, ^
+                {
+                    dispatch_async(dispatch_get_main_queue(), ^
+                    {
+                        __strong TGRootController *strongSelf = weakSelf;
+                        if (strongSelf != nil)
+                            [strongSelf ensureSecondaryControllers];
+                    });
+                });
+            }
+        }
+        else
+        {
+            [self ensureSecondaryControllers];
+            [_mainTabsController setViewControllers:@[_contactsController, _callsController, _dialogListController, _accountSettingsController]];
+            [_mainTabsController setSelectedIndex:2];
+        }
         [_mainTabsController setCallsHidden:!TGAppDelegateInstance.showCallsTab animated:false];
+        rootInitPhase = CFAbsoluteTimeGetCurrent();
         _mainTabsController.onControllerInsetUpdated = ^(CGFloat inset)
         {
             __strong TGRootController *strongSelf = weakSelf;
@@ -353,7 +424,6 @@
         [_sizeClassVariable set:[SSignal single:@(_currentSizeClass)]];
     }
     
-    //[self setNeedsStatusBarAppearanceUpdate];
 }
 
 - (void)updateSizeClass {

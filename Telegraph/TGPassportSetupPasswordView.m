@@ -92,7 +92,7 @@
     textSize.width = CGCeil(textSize.width);
     textSize.height = CGCeil(textSize.height);
     
-    CGFloat offset = 64.0f;// [TGViewController isWidescreen] ? 40.0f : 38.0f;
+    CGFloat offset = 64.0f;
 
     CGFloat iconTitleSpacing = [TGViewController isWidescreen] ? -12.0f : -26.0f;
     

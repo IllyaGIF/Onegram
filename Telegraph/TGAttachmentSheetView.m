@@ -9,7 +9,11 @@
 #import "TGVerticalSwipeDismissGestureRecognizer.h"
 #import "TGAttachmentSheetScrollView.h"
 
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+
+#if !defined(ONEGRAM_ARMV6)
 #import <Accelerate/Accelerate.h>
+#endif
 
 static CGFloat blurStaticOffset = 10.0f;
 static CGFloat blurDynamicOffset = 5.0f;
@@ -156,57 +160,74 @@ static CGFloat blurDynamicOffset = 5.0f;
     if (blur < 0.f || blur > 1.f) {
         blur = 0.5f;
     }
-    
+
     int boxSize = (int)(blur * 100);
     boxSize = boxSize - (boxSize % 2) + 1;
-    
-    vImage_Buffer inBuffer, outBuffer;
-    
+
     CGFloat scale = 1.0f;
     const struct { int width, height; } targetContextSize = { (int)(size.width * scale), (int)(size.height * scale) };
-    
+
     size_t targetBytesPerRow = ((4 * (int)targetContextSize.width) + 15) & (~15);
     void *targetMemory = malloc((int)(targetBytesPerRow * targetContextSize.height));
+    if (targetMemory == NULL)
+        return @[];
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host;
-    
+
     CGContextRef targetContext = CGBitmapContextCreate(targetMemory, (int)targetContextSize.width, (int)targetContextSize.height, 8, targetBytesPerRow, colorSpace, bitmapInfo);
     CGColorSpaceRelease(colorSpace);
-    
+    if (targetContext == NULL)
+    {
+        free(targetMemory);
+        return @[];
+    }
+
     UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
     [layer renderInContext:targetContext];
     UIGraphicsPopContext();
-    
-    inBuffer.data = targetMemory;
-    inBuffer.width = targetContextSize.width;
-    inBuffer.height = targetContextSize.height;
-    inBuffer.rowBytes = targetBytesPerRow;
-    
+
     void *pixelBuffer = malloc(targetBytesPerRow * targetContextSize.height);
-    
-    outBuffer.data = pixelBuffer;
-    outBuffer.width = targetContextSize.width;
-    outBuffer.height = targetContextSize.height;
-    outBuffer.rowBytes = targetBytesPerRow;
-    
+    if (pixelBuffer == NULL)
+    {
+        CGContextRelease(targetContext);
+        free(targetMemory);
+        return @[];
+    }
+
     TG_TIMESTAMP_DEFINE(convolve)
-    vImageBoxConvolve_ARGB8888(&inBuffer, &outBuffer, NULL, 0, 0, boxSize, 1.0f, NULL, kvImageEdgeExtend);
+#if defined(ONEGRAM_ARMV6)
+    OGPlatformARGB8888Buffer inBuffer = { targetMemory, (size_t)targetContextSize.width, (size_t)targetContextSize.height, targetBytesPerRow };
+    OGPlatformARGB8888Buffer outBuffer = { pixelBuffer, (size_t)targetContextSize.width, (size_t)targetContextSize.height, targetBytesPerRow };
+    OGPlatformBoxConvolveARGB8888(&inBuffer, &outBuffer, (size_t)boxSize, 1);
+#else
+    vImage_Buffer inBuffer = { targetMemory, (vImagePixelCount)targetContextSize.height, (vImagePixelCount)targetContextSize.width, targetBytesPerRow };
+    vImage_Buffer outBuffer = { pixelBuffer, (vImagePixelCount)targetContextSize.height, (vImagePixelCount)targetContextSize.width, targetBytesPerRow };
+    vImageBoxConvolve_ARGB8888(&inBuffer, &outBuffer, NULL, 0, 0, boxSize, 1, NULL, kvImageEdgeExtend);
+#endif
     TG_TIMESTAMP_MEASURE(convolve)
-    
+
     memcpy(targetMemory, pixelBuffer, targetBytesPerRow * targetContextSize.height);
     free(pixelBuffer);
-    
+
     CGImageRef bitmapImage = CGBitmapContextCreateImage(targetContext);
-    UIImage *image0 = [[UIImage alloc] initWithCGImage:bitmapImage scale:scale orientation:UIImageOrientationUp];
-    CGImageRelease(bitmapImage);
-    
+    UIImage *image0 = nil;
+    if (bitmapImage != NULL)
+    {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+        image0 = [[UIImage alloc] initWithCGImage:bitmapImage scale:scale orientation:UIImageOrientationUp];
+#else
+        image0 = [[UIImage alloc] initWithCGImage:bitmapImage];
+#endif
+        CGImageRelease(bitmapImage);
+    }
+
     CGContextRelease(targetContext);
     free(targetMemory);
-    
-    return @[image0];
+
+    return image0 == nil ? @[] : @[image0];
 }
 
 - (NSArray *)containerLayerSnapshots
@@ -267,7 +288,6 @@ static CGFloat blurDynamicOffset = 5.0f;
     
     if (iosMajorVersion() >= 7)
     {
-        //[self beginBlur];
         [UIView animateWithDuration:0.12 delay:0.0 options:(7 << 16) | UIViewAnimationOptionAllowUserInteraction animations:^
         {
             _containerView.frame = CGRectMake(0.0f, self.frame.size.height - _containerView.frame.size.height + _overscrollHeight, self.frame.size.width, _containerView.frame.size.height);
@@ -275,7 +295,6 @@ static CGFloat blurDynamicOffset = 5.0f;
         } completion:^(__unused BOOL finished)
         {
             [self dispatchDidAppear];
-            //[self endBlur];
         }];
     }
     else
@@ -318,7 +337,6 @@ static CGFloat blurDynamicOffset = 5.0f;
     CGFloat unboundedOpacity = 0.0f;
     if (delta > FLT_EPSILON)
     {
-        //unboundedOpacity = (CGFloat)log10(delta) / 3.0f;
         unboundedOpacity = delta / 40.0f;
     }
 

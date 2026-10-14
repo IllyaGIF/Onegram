@@ -11,12 +11,20 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernGalleryZoomableItemView.h"
 
 @class TGImageView;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@class MPMoviePlayerController;
+#else
 @class AVPlayer;
+#endif
 
 @interface TGModernGalleryVideoItemView : TGModernGalleryItemView
 
 @property (nonatomic, strong) TGImageView *imageView;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@property (nonatomic, strong) MPMoviePlayerController *player;
+#else
 @property (nonatomic, strong) AVPlayer *player;
+#endif
 @property (nonatomic) CGSize videoDimensions;
 
 - (bool)shouldLoopVideo:(NSUInteger)currentLoopCount;

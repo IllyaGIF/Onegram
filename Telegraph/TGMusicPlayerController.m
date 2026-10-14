@@ -1,4 +1,5 @@
 #import "TGMusicPlayerController.h"
+#import <objc/runtime.h>
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "TGLegacyComponentsContext.h"
@@ -16,10 +17,14 @@
 
 #import "TGAudioMediaAttachment+Telegraph.h"
 
+static char TGMusicPlayerLegacyOverlayKey;
+
 @interface TGMusicPlayerController () <UIGestureRecognizerDelegate>
 {
     TGMusicPlayerFullView *_view;
     SMetaDisposable *_statusDisposable;
+    __unsafe_unretained UIViewController *_legacyPresentationHost;
+    bool _usesNativeContainment;
 }
 @end
 
@@ -72,10 +77,59 @@
     [_view layoutSubviews];
 }
 
+- (void)presentFromController:(UIViewController *)controller
+{
+    [controller.view endEditing:true];
+    bool supportsContainment = iosMajorVersion() >= 5
+        && [controller respondsToSelector:@selector(addChildViewController:)]
+        && [self respondsToSelector:@selector(willMoveToParentViewController:)]
+        && [self respondsToSelector:@selector(didMoveToParentViewController:)]
+        && [self respondsToSelector:@selector(removeFromParentViewController)];
+    if (supportsContainment)
+    {
+        _usesNativeContainment = true;
+        [controller addChildViewController:self];
+        self.view.frame = controller.view.bounds;
+        self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [controller.view addSubview:self.view];
+        [self didMoveToParentViewController:controller];
+    }
+    else
+    {
+        TGMusicPlayerController *previous = objc_getAssociatedObject(controller, &TGMusicPlayerLegacyOverlayKey);
+        [previous dismiss];
+        _legacyPresentationHost = controller;
+        _usesNativeContainment = false;
+        objc_setAssociatedObject(controller, &TGMusicPlayerLegacyOverlayKey, self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        self.view.frame = controller.view.bounds;
+        self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self viewWillAppear:false];
+        [controller.view addSubview:self.view];
+        [self viewDidAppear:false];
+    }
+}
+
 - (void)dismiss
 {
-    [self removeFromParentViewController];
-    [self.view removeFromSuperview];
+    if (_legacyPresentationHost != nil)
+    {
+        __attribute__((objc_precise_lifetime)) TGMusicPlayerController *keepAlive = self;
+        UIViewController *host = _legacyPresentationHost;
+        _legacyPresentationHost = nil;
+        [keepAlive viewWillDisappear:false];
+        [keepAlive.view removeFromSuperview];
+        [keepAlive viewDidDisappear:false];
+        objc_setAssociatedObject(host, &TGMusicPlayerLegacyOverlayKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    else if (_usesNativeContainment)
+    {
+        _usesNativeContainment = false;
+        [self willMoveToParentViewController:nil];
+        [self.view removeFromSuperview];
+        [self removeFromParentViewController];
+    }
+    else
+        [self.view removeFromSuperview];
 }
 
 - (void)dismissAnimated:(bool)animated
@@ -89,9 +143,28 @@
 - (void)sharePressed
 {
     __weak TGMusicPlayerController *weakSelf = self;
-    [_statusDisposable setDisposable:[[[[TGTelegraphInstance.musicPlayer playingStatus] take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(TGMusicPlayerStatus *status) {
+    [TGMusicPlayerController presentActionsInController:self statusDisposable:_statusDisposable sourceView:_view sourceRect:^CGRect
+    {
         __strong TGMusicPlayerController *strongSelf = weakSelf;
         if (strongSelf == nil)
+            return CGRectZero;
+        return [strongSelf->_view.actionsButton convertRect:strongSelf->_view.actionsButton.bounds toView:strongSelf->_view];
+    } dismiss:^
+    {
+        __strong TGMusicPlayerController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf->_view dismissAnimated:true completion:nil];
+    }];
+}
+
++ (void)presentActionsInController:(TGViewController *)controller statusDisposable:(SMetaDisposable *)statusDisposable sourceView:(UIView *)sourceView sourceRect:(CGRect (^)(void))sourceRect dismiss:(void (^)(void))dismiss
+{
+    __weak TGViewController *weakController = controller;
+    __weak UIView *weakSourceView = sourceView;
+    [statusDisposable setDisposable:[[[[TGTelegraphInstance.musicPlayer playingStatus] take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(TGMusicPlayerStatus *status) {
+        __strong TGViewController *strongController = weakController;
+        __strong UIView *strongSourceView = weakSourceView;
+        if (strongController == nil || strongSourceView == nil)
             return;
         
         NSString *path = nil;
@@ -128,13 +201,8 @@
             shareAction = nil;
         
         SSignal *externalSignal = status.downloadedStatus.downloaded ? [SSignal single:[NSURL fileURLWithPath:path]] : nil;
-    
-        CGRect (^sourceRect)(void) = ^CGRect
-        {
-            return [strongSelf->_view.actionsButton convertRect:strongSelf->_view.actionsButton.bounds toView:strongSelf->_view];
-        };
         
-        [TGShareMenu presentInParentController:self menuController:nil buttonTitle:status.item.conversationId != 0 ? TGLocalized(@"SharedMedia.ViewInChat") : nil buttonAction:^
+        [TGShareMenu presentInParentController:strongController menuController:nil buttonTitle:status.item.conversationId != 0 ? TGLocalized(@"SharedMedia.ViewInChat") : nil buttonAction:^
         {
             if (![status.item.key isKindOfClass:[NSNumber class]])
                 return;
@@ -142,10 +210,9 @@
             int32_t messageId = [(NSNumber *)status.item.key intValue];
             [[TGInterfaceManager instance] navigateToConversationWithId:status.item.conversationId conversation:nil performActions:nil atMessage:@{ @"mid": @(messageId), @"useExisting": @true } clearStack:true openKeyboard:false canOpenKeyboardWhileInTransition:false animated:true];
             
-            __strong TGMusicPlayerController *strongSelf = weakSelf;
-            if (strongSelf != nil)
-                [strongSelf->_view dismissAnimated:true completion:nil];
-        } shareAction:shareAction externalShareItemSignal:externalSignal sourceView:strongSelf->_view sourceRect:sourceRect barButtonItem:nil];
+            if (dismiss != nil)
+                dismiss();
+        } shareAction:shareAction externalShareItemSignal:externalSignal sourceView:strongSourceView sourceRect:sourceRect barButtonItem:nil];
     }]];
 }
 

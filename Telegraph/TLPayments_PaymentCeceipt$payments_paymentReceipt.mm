@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//payments.paymentReceipt flags:# date:int bot_id:int invoice:Invoice provider_id:int info:flags.0?PaymentRequestedInfo shipping_option:flags.1?ShippingOption currency:string total_amount:int credentials_title:string users:Vector<User> = payments.PaymentReceipt;
 
 @implementation TLPayments_PaymentCeceipt$payments_paymentReceipt
 

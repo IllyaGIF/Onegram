@@ -1,6 +1,7 @@
 #import "TGModernButton.h"
 
 #import "LegacyComponentsInternal.h"
+#import "OGPlatformUIKit.h"
 
 #import <objc/runtime.h>
 
@@ -146,8 +147,10 @@
 - (void)setHighlighted:(BOOL)highlighted
 {
     [super setHighlighted:highlighted];
+
+    bool animateHighlight = _animateHighlight && OGPlatformControlAnimationsEnabled();
     
-    if (_highlitedChanged && (highlighted || !_animateHighlight))
+    if (_highlitedChanged && (highlighted || !animateHighlight))
         _highlitedChanged(highlighted);
     
     if (_modernHighlight)
@@ -158,7 +161,7 @@
             
             if (ABS(alpha - _highlightImageView.alpha) > FLT_EPSILON)
             {
-                if (_animateHighlight)
+                if (animateHighlight)
                 {
                     [UIView animateWithDuration:0.2 animations:^
                     {
@@ -179,7 +182,7 @@
             
             if (ABS(alpha - _highlightBackgroundView.alpha) > FLT_EPSILON)
             {
-                if (_animateHighlight)
+                if (animateHighlight)
                 {
                     [UIView animateWithDuration:0.2 animations:^
                     {
@@ -200,7 +203,7 @@
             
             if (ABS(alpha - self.alpha) > FLT_EPSILON)
             {
-                if (_animateHighlight)
+                if (animateHighlight)
                 {
                     [UIView animateWithDuration:0.2 animations:^
                     {
@@ -218,7 +221,7 @@
     }
     else
     {
-        [self _setHighligtedAnimated:highlighted animated:_animateHighlight && !highlighted];
+        [self _setHighligtedAnimated:highlighted animated:animateHighlight && !highlighted];
     }
 }
 
@@ -226,9 +229,6 @@
 {
     _titleColor = color;
 
-    // TGModernButton is a custom UIButton. On iOS 7+ changing tintColor does
-    // not reliably recolor its title, leaving UIKit's default white title on
-    // light menu sheets. Always set the actual control-state title color.
     [self setTitleColor:color forState:UIControlStateNormal];
 
     if (iosMajorVersion() >= 7)

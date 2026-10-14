@@ -78,7 +78,7 @@
 
 @interface TGIOS6GetForumTopicsRpc : TLMetaRpc
 @property (nonatomic) int32_t flags;
-@property (nonatomic, strong) TLInputChannel *channel;
+@property (nonatomic, strong) TLInputPeer *peer;
 @property (nonatomic, strong) NSString *query;
 @property (nonatomic) int32_t offsetDate;
 @property (nonatomic) int32_t offsetId;
@@ -87,7 +87,7 @@
 @end
 
 @implementation TGIOS6GetForumTopicsRpc
-- (int32_t)TLconstructorSignature { return (int32_t)0x0de560d1; }
+- (int32_t)TLconstructorSignature { return (int32_t)0x3ba47bff; }
 - (int32_t)TLconstructorName { return -1; }
 - (Class)responseClass { return [TLmessages_Messages class]; }
 - (int)impliedResponseSignature { return 0; }
@@ -97,7 +97,7 @@
 - (void)TLserialize:(NSOutputStream *)os
 {
     [os writeInt32:self.flags];
-    TLMetaClassStore::serializeObject(os, self.channel, true);
+    TLMetaClassStore::serializeObject(os, self.peer, true);
     if (self.flags & (1 << 0))
         [os writeString:self.query == nil ? @"" : self.query];
     [os writeInt32:self.offsetDate];
@@ -430,8 +430,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
     rpc.readMaxId = readMaxId;
 
     _ios6TopicRequestedReadMaxId = readMaxId;
-    NSLog(@"FORUM thread.read.request peer=%lld topic=%d max=%d reason=%@",
-          _ios6TopicConversation.conversationId, _ios6TopicId, readMaxId, reason);
 
     [_ios6TopicReadDisposable dispose];
     int generation = ++_ios6TopicReadGeneration;
@@ -445,8 +443,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
                 return;
 
             strongSelf->_ios6TopicLastReadMaxId = MAX(strongSelf->_ios6TopicLastReadMaxId, readMaxId);
-            NSLog(@"FORUM thread.read.ok peer=%lld topic=%d max=%d",
-                  strongSelf->_ios6TopicConversation.conversationId, strongSelf->_ios6TopicId, readMaxId);
         }
         error:^(id error)
         {
@@ -480,9 +476,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
     [controller setEnableAboveHistoryRequests:false];
     [controller setLoadingMessages:true];
 
-    NSLog(@"FORUM thread.native.init peer=%lld topic=%d top=%d title=%@",
-          _ios6TopicConversation.conversationId, _ios6TopicId,
-          _ios6TopicTopMessageId, _ios6TopicTitle);
 
     [self _ios6ReadDiscussionUpTo:_ios6TopicTopMessageId reason:@"open"];
     [self _ios6LoadRepliesWithOffsetId:0 initial:true];
@@ -755,8 +748,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
             NSArray *filtered = [self _ios6FilterMessages:object];
             if (filtered.count == 0)
                 return;
-            NSLog(@"FORUM thread.live peer=%lld topic=%d in=%d out=%d",
-                  _conversationId, _ios6TopicId, (int)[(NSArray *)object count], (int)filtered.count);
             [super actionStageResourceDispatched:path
                                         resource:[[SGraphObjectNode alloc] initWithObject:filtered]
                                        arguments:arguments];
@@ -773,8 +764,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
             NSArray *filtered = [added isKindOfClass:[NSArray class]] ? [self _ios6FilterMessages:added] : @[];
             if (filtered.count != 0)
             {
-                NSLog(@"FORUM thread.live.channel peer=%lld topic=%d in=%d out=%d",
-                      _conversationId, _ios6TopicId, (int)added.count, (int)filtered.count);
                 [super actionStageResourceDispatched:messagesPath
                                             resource:[[SGraphObjectNode alloc] initWithObject:filtered]
                                            arguments:@{ @"treatIncomingAsUnread": @true }];
@@ -853,7 +842,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
 - (void)controllerWantsToSendTextMessage:(NSString *)text entities:(NSArray *)entities asReplyToMessageId:(int32_t)replyMessageId withAttachedMessages:(NSArray *)withAttachedMessages completeGroups:(NSSet *)completeGroups disableLinkPreviews:(bool)disableLinkPreviews botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
 {
     int32_t effectiveReply = [self _ios6EffectiveReplyMessageId:replyMessageId];
-    NSLog(@"FORUM thread.send.text peer=%lld topic=%d reply=%d effective=%d", _conversationId, _ios6TopicId, replyMessageId, effectiveReply);
     NSSet *effectiveCompleteGroups = effectiveReply != 0 ? nil : completeGroups;
     [super controllerWantsToSendTextMessage:text entities:entities asReplyToMessageId:effectiveReply withAttachedMessages:withAttachedMessages completeGroups:effectiveCompleteGroups disableLinkPreviews:disableLinkPreviews botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
 }
@@ -1213,7 +1201,7 @@ static UIImage *TGIOS6ForumDefaultTopicIcon(int32_t rgb)
     [uri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:thumbnailUri]];
     [uri appendString:@"&width=80&height=80&highQuality=0"];
 
-    [_topicIconView loadUri:uri withOptions:@{ TGImageViewOptionKeepCurrentImageAsPlaceholder: @YES }];
+    [_topicIconView loadUri:uri withOptions:@{ TGImageViewOptionKeepCurrentImageAsPlaceholder: @(YES) }];
 }
 
 @end
@@ -1773,15 +1761,10 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     if ((_conversation.flags & TGConversationFlagForumKnown) == 0 ||
         (_conversation.flags & TGConversationFlagIsForum) == 0)
     {
-        NSLog(@"FORUM topics.skipNonForum peer=%lld known=%d forum=%d flags=0x%llx",
-              _conversation.conversationId,
-              (_conversation.flags & TGConversationFlagForumKnown) != 0 ? 1 : 0,
-              (_conversation.flags & TGConversationFlagIsForum) != 0 ? 1 : 0,
-              _conversation.flags);
         [[TGInterfaceManager instance]
             navigateToConversationWithId:_conversation.conversationId
             conversation:_conversation
-            performActions:@{ @"ios6SkipForumTopics": @YES }
+            performActions:@{ @"ios6SkipForumTopics": @(YES) }
             animated:false];
         return;
     }
@@ -1795,22 +1778,19 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     }
 
     TLInputPeer$inputPeerChannel *peerChannel = (TLInputPeer$inputPeerChannel *)peer;
-    TLInputChannel$inputChannel *channel = [[TLInputChannel$inputChannel alloc] init];
-    channel.channel_id = peerChannel.channel_id;
-    channel.access_hash = peerChannel.access_hash;
 
     TGIOS6GetForumTopicsRpc *rpc = [[TGIOS6GetForumTopicsRpc alloc] init];
     rpc.flags = 0;
-    rpc.channel = channel;
+    rpc.peer = peer;
     rpc.offsetDate = 0;
     rpc.offsetId = 0;
     rpc.offsetTopic = 0;
     rpc.limit = 100;
 
-    NSLog(@"FORUM topics.request peer=%lld channel=%lld hash=%lld", _conversation.conversationId, channel.channel_id, channel.access_hash);
 
     TGIOS6ForumTopicsControllerReference *reference = _ios4LifetimeReference;
-    _requestDisposable = [[[[TGTelegramNetworking instance] requestSignal:rpc] deliverOn:[SQueue mainQueue]] startWithNext:^(id result) {
+    _requestDisposable = [[[TGTelegramNetworking instance] requestSignal:rpc] startWithNext:^(id result) {
+        TGDispatchOnMainThread(^{
         TGIOS6ForumTopicsController *strongSelf = TGIOS6ResolveForumTopicsController(reference);
         if (strongSelf == nil || strongSelf->_ios4TopicsRequestGeneration != requestGeneration)
             return;
@@ -1879,7 +1859,9 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
         [strongSelf->_tableView reloadData];
         [strongSelf->_tableView layoutIfNeeded];
         [strongSelf _loadCustomEmojiIconsForTopics:visibleTopics];
+        });
     } error:^(id error) {
+        TGDispatchOnMainThread(^{
         TGIOS6ForumTopicsController *strongSelf = TGIOS6ResolveForumTopicsController(reference);
         if (strongSelf == nil || strongSelf->_ios4TopicsRequestGeneration != requestGeneration)
             return;
@@ -1892,12 +1874,13 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
             [[TGInterfaceManager instance]
                 navigateToConversationWithId:strongSelf->_conversation.conversationId
                 conversation:strongSelf->_conversation
-                performActions:@{ @"ios6SkipForumTopics": @YES }
+                performActions:@{ @"ios6SkipForumTopics": @(YES) }
                 animated:false];
             return;
         }
 
         strongSelf->_placeholderLabel.text = @"Не удалось загрузить топики";
+        });
     } completed:nil];
 }
 
@@ -2137,19 +2120,15 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         return;
     }
 
-    NSLog(@"FORUM topic.openNative peer=%lld topic=%d top=%d title=%@",
-          _conversation.conversationId, topicId, topMessageId, topicTitle);
 
     NSMutableDictionary *actions = _pendingActions != nil ? [_pendingActions mutableCopy] : [[NSMutableDictionary alloc] init];
     [actions removeObjectForKey:@"ios6ForceForumTopicPicker"];
-    actions[@"ios6SkipForumTopics"] = @YES;
+    actions[@"ios6SkipForumTopics"] = @(YES);
     actions[@"ios6ForumTopicId"] = @(topicId);
     actions[@"ios6ForumTopicTopMessageId"] = @(topMessageId);
     actions[@"ios6ForumTopicTitle"] = topicTitle != nil ? topicTitle : @"";
     NSDictionary *atMessage = nil;
 
-    if (_pendingActions != nil)
-        NSLog(@"FORUM forward.topicSelected peer=%lld topic=%d actions=%@", _conversation.conversationId, topicId, [actions allKeys]);
 
     TGNavigationController *navigationController = nil;
     if ([self.navigationController isKindOfClass:[TGNavigationController class]])
@@ -2207,22 +2186,13 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     self = [super init];
     if (self != nil)
     {
+        CFAbsoluteTime phaseStartedAt = CFAbsoluteTimeGetCurrent();
         _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:false];
+        phaseStartedAt = CFAbsoluteTimeGetCurrent();
         _conversationControllerPipe = [[SPipe alloc] init];
+        phaseStartedAt = CFAbsoluteTimeGetCurrent();
         _callControllerPipe = [[SPipe alloc] init];
         
-//        TGDispatchAfter(3.0, dispatch_get_main_queue(), ^{
-//            TGModernConversationController *conversationController = [[TGModernConversationController alloc] init];
-//            conversationController.presentation = TGPresentation.current;
-//            
-//            TGFeedConversationCompanion *companion = [[TGFeedConversationCompanion alloc] init];
-//            conversationController.companion = companion;
-//            
-//            [conversationController.companion bindController:conversationController];
-//            
-//            //conversationController.shouldIgnoreAppearAnimationOnce = !animated;
-//            _feedContr = conversationController;
-//        });
     }
     return self;
 }
@@ -2256,8 +2226,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     rpc.peer = peer;
     rpc.messageId = messageId;
 
-    NSLog(@"COMMENTS open.request source=%lld mid=%d expectedGroup=%lld",
-          conversation.conversationId, messageId, discussionChannelId);
 
     __weak TGInterfaceManager *weakSelf = self;
     [[[[TGTelegramNetworking instance] requestSignal:rpc] deliverOn:[SQueue mainQueue]]
@@ -2330,17 +2298,15 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         if (maxId <= 0)
             maxId = rootMessageId;
 
-        NSLog(@"COMMENTS open.resolved source=%lld post=%d group=%lld root=%d max=%d",
-              conversation.conversationId, messageId, discussionConversation.conversationId, rootMessageId, maxId);
 
         NSDictionary *actions = @{
-            @"ios6SkipForumTopics": @YES,
-            @"ios6ForumResolved": @YES,
+            @"ios6SkipForumTopics": @(YES),
+            @"ios6ForumResolved": @(YES),
             @"ios6ForumResolvedIsForum": @((discussionConversation.flags & TGConversationFlagIsForum) != 0),
             @"ios6ForumTopicId": @(rootMessageId),
             @"ios6ForumTopicTopMessageId": @(maxId),
             @"ios6ForumTopicTitle": @"Комментарии",
-            @"ios6DiscussionThread": @YES,
+            @"ios6DiscussionThread": @(YES),
             @"ios6DiscussionRootMessage": rootMessage
         };
 
@@ -2419,10 +2385,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     NSString *requestedForumTopicTitle = [performActions[@"ios6ForumTopicTitle"] isKindOfClass:[NSString class]] ? performActions[@"ios6ForumTopicTitle"] : nil;
     bool forceForumTopicPicker = [performActions[@"ios6ForceForumTopicPicker"] boolValue];
 
-    NSLog(@"NAV enter peer=%lld channel=%d actions=%@ atMessage=%d openKeyboard=%d",
-          conversationId, TGPeerIdIsChannel(conversationId) ? 1 : 0,
-          performActions != nil ? [performActions allKeys] : @[],
-          atMessage != nil ? 1 : 0, openKeyboard ? 1 : 0);
 
     if (selectChat)
         [TGAppDelegateInstance.rootController.dialogListController selectConversationWithId:conversationId];
@@ -2492,10 +2454,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
             else
                 conversation = databaseConversation;
 
-            NSLog(@"NAV channel.loaded peer=%lld db=%d provided=%d override=%d flags=0x%llx",
-                  conversationId, databaseConversation != nil ? 1 : 0,
-                  providedConversation != nil ? 1 : 0, forumResolvedOverride ? 1 : 0,
-                  conversation != nil ? conversation.flags : 0);
 
             if (conversation != nil) {
                 if (conversation.hasExplicitContent) {
@@ -2531,10 +2489,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                 bool hasExplicitConversationAction = atMessage != nil || openKeyboard ||
                     (performActions.count > internalActionCount);
 
-                NSLog(@"NAV channel.route peer=%lld known=%d forum=%d skip=%d explicit=%d forceTopic=%d flags=0x%llx",
-                      conversationId, forumKnown ? 1 : 0, cachedForum ? 1 : 0,
-                      skipForumTopics ? 1 : 0, hasExplicitConversationAction ? 1 : 0, forceForumTopicPicker ? 1 : 0,
-                      conversation.flags);
 
                 if (!skipForumTopics && conversation.isChannelGroup && !forumKnown && (!hasExplicitConversationAction || forceForumTopicPicker))
                 {
@@ -2549,7 +2503,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                         TGIOS6GetChannelsRpc *request = [[TGIOS6GetChannelsRpc alloc] init];
                         request.channels = @[inputChannel];
 
-                        NSLog(@"FORUM nav.resolveForum peer=%lld channel=%lld hash=%lld", conversationId, inputChannel.channel_id, inputChannel.access_hash);
 
                         __weak TGInterfaceManager *weakSelf = self;
                         [[[[TGTelegramNetworking instance] requestSignal:request] deliverOn:[SQueue mainQueue]] startWithNext:^(TLmessages_Chats *result)
@@ -2568,10 +2521,9 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                                 [TGDatabaseInstance() updateChannels:@[freshConversation]];
 
                                 bool freshForum = (freshConversation.flags & TGConversationFlagIsForum) != 0;
-                                NSLog(@"FORUM nav.resolved peer=%lld forum=%d flags=0x%llx", conversationId, freshForum ? 1 : 0, freshConversation.flags);
 
                                 NSMutableDictionary *resolvedActions = performActions != nil ? [performActions mutableCopy] : [[NSMutableDictionary alloc] init];
-                                resolvedActions[@"ios6ForumResolved"] = @YES;
+                                resolvedActions[@"ios6ForumResolved"] = @(YES);
                                 resolvedActions[@"ios6ForumResolvedIsForum"] = @(freshForum);
 
                                 [strongSelf navigateToConversationWithId:conversationId
@@ -2588,8 +2540,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                             }
 
                             NSMutableDictionary *fallbackActions = performActions != nil ? [performActions mutableCopy] : [[NSMutableDictionary alloc] init];
-                            fallbackActions[@"ios6SkipForumTopics"] = @YES;
-                            NSLog(@"FORUM nav.resolveEmpty peer=%lld -> normal chat", conversationId);
+                            fallbackActions[@"ios6SkipForumTopics"] = @(YES);
                             [strongSelf navigateToConversationWithId:conversationId
                                                         conversation:conversation
                                                      performActions:fallbackActions
@@ -2607,7 +2558,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                                 return;
 
                             NSMutableDictionary *fallbackActions = performActions != nil ? [performActions mutableCopy] : [[NSMutableDictionary alloc] init];
-                            fallbackActions[@"ios6SkipForumTopics"] = @YES;
+                            fallbackActions[@"ios6SkipForumTopics"] = @(YES);
                             NSLog(@"FORUM nav.resolveError peer=%lld -> normal chat", conversationId);
                             [strongSelf navigateToConversationWithId:conversationId
                                                         conversation:conversation
@@ -2626,7 +2577,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
 
                 if (!skipForumTopics && conversation.isChannelGroup && forumKnown && cachedForum && (!hasExplicitConversationAction || forceForumTopicPicker))
                 {
-                    NSLog(@"FORUM nav.openTopics peer=%lld forumKnown=%d cachedForum=%d force=%d flags=0x%llx", conversationId, forumKnown ? 1 : 0, cachedForum ? 1 : 0, forceForumTopicPicker ? 1 : 0, conversation.flags);
                     NSDictionary *pendingActions = forceForumTopicPicker ? performActions : nil;
                     TGIOS6ForumTopicsController *topicsController = [[TGIOS6ForumTopicsController alloc] initWithConversation:conversation pendingActions:pendingActions];
                     if (navigationController != nil)
@@ -2641,8 +2591,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                 TGChannelConversationCompanion *companion = nil;
                 if (requestedForumTopicId != 0)
                 {
-                    NSLog(@"FORUM thread.native.open peer=%lld topic=%d top=%d title=%@",
-                          conversationId, requestedForumTopicId, requestedForumTopicTopMessageId, requestedForumTopicTitle);
                     companion = [[TGIOS6ForumTopicConversationCompanion alloc]
                         initWithConversation:conversation
                         userActivities:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId]
@@ -2655,7 +2603,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                 }
                 else
                 {
-                    NSLog(@"NAV channel.openNormal peer=%lld title=%@", conversationId, conversation.chatTitle);
                     companion = [[TGChannelConversationCompanion alloc] initWithConversation:conversation userActivities:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId]];
                     if (atMessage != nil)
                         [companion setPreferredInitialMessagePositioning:[atMessage[@"mid"] intValue] peerId:[atMessage[@"peerId"] longLongValue] groupedSingle:[atMessage[@"groupedSingle"] boolValue] pipLocation:atMessage[@"pipLocation"]];
@@ -2667,7 +2614,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         }
         else if (conversationId <= INT_MIN)
         {
-            NSLog(@"NAV secret.open peer=%lld", conversationId);
             int64_t encryptedConversationId = [TGDatabaseInstance() encryptedConversationIdForPeerId:conversationId];
             int64_t accessHash = [TGDatabaseInstance() encryptedConversationAccessHash:conversationId];
             int32_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:conversationId];
@@ -2681,7 +2627,6 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         }
         else if (conversationId < 0)
         {
-            NSLog(@"NAV group.open peer=%lld", conversationId);
             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
             if (conversation == nil) {
                 conversation = [[TGConversation alloc] initWithConversationId:conversationId unreadCount:0 serviceUnreadCount:0];
@@ -2879,7 +2824,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
 
 - (TGModernConversationController *)configuredFeedControllerWithId:(int32_t)feedId preview:(bool)preview
 {
-    int conversationUnreadCount = 0; //[TGDatabaseInstance() unreadCountForConversation:conversationId];
+    int conversationUnreadCount = 0;
     int globalUnreadCount = [TGDatabaseInstance() cachedUnreadCount];
     
     TGModernConversationController *conversationController = [[TGModernConversationController alloc] init];

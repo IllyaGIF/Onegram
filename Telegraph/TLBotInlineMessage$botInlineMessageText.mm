@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//botInlineMessageText flags:# message:string no_webpage:flags.0?true entities:flags.1?Vector<MessageEntity> reply_markup:flags.2?ReplyMarkup = BotInlineMessage;
 
 @implementation TLBotInlineMessage$botInlineMessageText
 

@@ -12,9 +12,9 @@
         return nil;
 #endif
     
-    NSError *error;
-    NSNumber *fileSizeValue;
-    [url getResourceValue:&fileSizeValue forKey:NSURLFileSizeKey error:&error];
+    NSError *error = nil;
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:url.path error:&error];
+    NSNumber *fileSizeValue = [attributes objectForKey:NSFileSize];
     if (error != nil || fileSizeValue == nil)
         return nil;
     
@@ -43,7 +43,9 @@
 @interface TGICloudItemRequest ()
 {
     NSURL *_url;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     NSMetadataQuery *_query;
+#endif
 }
 
 @property (nonatomic, copy) void (^completionBlock)(TGICloudItem *);
@@ -55,6 +57,13 @@
 + (instancetype)requestICloudItemWithUrl:(NSURL *)url completion:(void (^)(TGICloudItem *))completion
 {
     TGICloudItemRequest *request = [[TGICloudItemRequest alloc] init];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+    request->_completed = true;
+    TGICloudItem *item = [TGICloudItem iCloudItemWithUrl:url];
+    if (completion != nil)
+        completion(item);
+    return request;
+#else
     
     NSError *error;
     NSDictionary *fileAttributes = nil;
@@ -93,7 +102,6 @@
     request->_url = url;
     request->_completionBlock = completion;
 
-    //NSString *fileName = [url.absoluteString.lastPathComponent stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
     
     request->_query = [[NSMetadataQuery alloc] init];
     #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
@@ -101,7 +109,6 @@
 #else
     [request->_query setSearchScopes:@[ NSMetadataQueryUbiquitousDocumentsScope ]];
 #endif
-    //[request->_query setPredicate:[NSPredicate predicateWithFormat:@"%K == %@", NSMetadataItemFSNameKey, fileName]];
     [request->_query setPredicate:[NSPredicate predicateWithFormat:@"%K.lastPathComponent = %@", NSMetadataItemURLKey, url.lastPathComponent]];
     [request->_query setValueListAttributes:@[ NSMetadataItemFSSizeKey ]];
     
@@ -112,15 +119,19 @@
     [request->_query startQuery];
     
     return request;
+#endif
 }
 
 - (void)metadataQueryDidUpdate:(NSNotification *)__unused notification
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     NSLog(@"a");
+#endif
 }
 
 - (void)metadataQueryDidFinishGathering:(NSNotification *)__unused notification
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     [_query disableUpdates];
     
     NSMetadataItem *metadataItem = _query.results.firstObject;
@@ -156,6 +167,7 @@
     
     if (self.completionBlock != nil)
         self.completionBlock(item);
+#endif
 }
 
 - (void)dealloc

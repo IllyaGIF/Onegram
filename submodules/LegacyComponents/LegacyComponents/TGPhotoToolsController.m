@@ -564,7 +564,7 @@ const CGFloat TGPhotoEditorToolsLandscapePanelSize = TGPhotoEditorToolsPanelSize
         _portraitToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
         _portraitToolControlView.clipsToBounds = true;
         _portraitToolControlView.interactionEnded = _interactionEnded;
-        _portraitToolControlView.layer.rasterizationScale = TGScreenScaling();
+        TGSetLayerRasterizationScale(_portraitToolControlView.layer, TGScreenScaling());
         _portraitToolControlView.isLandscape = false;
         
         if ([_portraitToolControlView respondsToSelector:@selector(setHistogramSignal:)])
@@ -587,7 +587,7 @@ const CGFloat TGPhotoEditorToolsLandscapePanelSize = TGPhotoEditorToolsPanelSize
         _landscapeToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
         _landscapeToolControlView.clipsToBounds = true;
         _landscapeToolControlView.interactionEnded = _interactionEnded;
-        _landscapeToolControlView.layer.rasterizationScale = TGScreenScaling();
+        TGSetLayerRasterizationScale(_landscapeToolControlView.layer, TGScreenScaling());
         _landscapeToolControlView.isLandscape = true;
         _landscapeToolControlView.toolbarLandscapeSize = self.toolbarLandscapeSize;
         

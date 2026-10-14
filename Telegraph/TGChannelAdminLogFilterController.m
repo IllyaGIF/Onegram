@@ -147,22 +147,6 @@ static bool filterIsFull(TGChannelEventFilter filter) {
 
 - (void)donePressed {
     if (_completion) {
-        /*typedef struct {
-            bool join;
-            bool leave;
-            bool invite;
-            bool ban;
-            bool unban;
-            bool kick;
-            bool unkick;
-            bool promote;
-            bool demote;
-            bool info;
-            bool settings;
-            bool pinned;
-            bool edit;
-            bool del;
-        } TGChannelEventFilter;*/
         
         TGChannelEventFilter filter;
         filter.join = _newMembersItem.isChecked;
@@ -223,8 +207,6 @@ static bool filterIsFull(TGChannelEventFilter filter) {
     _memberDatas = memberDatas;
     
     self.collectionView.hidden = false;
-    //[_activityIndicator removeFromSuperview];
-    //_activityIndicator = nil;
     
     while (_usersSection.items.count > (NSUInteger)(2)) {
         [_usersSection deleteItemAtIndex:2];
@@ -240,7 +222,6 @@ static bool filterIsFull(TGChannelEventFilter filter) {
             userItem.requiresFullSeparator = true;
         }
         
-        //userItem.interfaceHandle = _actionHandle;
         
         userItem.selectable = true;
         userItem.deselectAutomatically = true;

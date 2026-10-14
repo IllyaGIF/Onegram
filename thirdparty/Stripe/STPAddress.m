@@ -38,23 +38,23 @@
         if (addressValues != NULL) {
             if (ABMultiValueGetCount(addressValues) > 0) {
                 CFDictionaryRef dict = ABMultiValueCopyValueAtIndex(addressValues, 0);
-                NSString *street = CFDictionaryGetValue(dict, kABPersonAddressStreetKey);
+                NSString *street = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressStreetKey);
                 if (street) {
                     _line1 = street;
                 }
-                NSString *city = CFDictionaryGetValue(dict, kABPersonAddressCityKey);
+                NSString *city = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressCityKey);
                 if (city) {
                     _city = city;
                 }
-                NSString *state = CFDictionaryGetValue(dict, kABPersonAddressStateKey);
+                NSString *state = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressStateKey);
                 if (state) {
                     _state = state;
                 }
-                NSString *zip = CFDictionaryGetValue(dict, kABPersonAddressZIPKey);
+                NSString *zip = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressZIPKey);
                 if (zip) {
                     _postalCode = zip;
                 }
-                NSString *country = CFDictionaryGetValue(dict, kABPersonAddressCountryCodeKey);
+                NSString *country = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressCountryCodeKey);
                 if (country) {
                     _country = country;
                 }
@@ -93,6 +93,7 @@
 
 + (PKAddressField)applePayAddressFieldsFromBillingAddressFields:(STPBillingAddressFields)billingAddressFields {
     FAUXPAS_IGNORED_IN_METHOD(APIAvailability);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
     switch (billingAddressFields) {
         case STPBillingAddressFieldsNone:
             return PKAddressFieldNone;
@@ -100,7 +101,9 @@
         case STPBillingAddressFieldsFull:
             return PKAddressFieldPostalAddress;
     }
+#else
+    return 0;
+#endif
 }
 
 @end
-

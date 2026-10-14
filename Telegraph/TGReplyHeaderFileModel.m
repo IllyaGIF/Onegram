@@ -64,19 +64,5 @@
     return self;
 }
 
-/*- (void)bindSpecialViewsToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage atItemPosition:(CGPoint)itemPosition
-{
-    [super bindSpecialViewsToContainer:container viewStorage:viewStorage atItemPosition:itemPosition];
-    
-    _imageModel.parentOffset = itemPosition;
-    [_imageModel bindViewToContainer:container viewStorage:viewStorage];
-}
-
-- (void)layoutForContainerSize:(CGSize)containerSize
-{
-    [super layoutForContainerSize:containerSize];
-    
-    _imageModel.frame = CGRectMake(8.0f, 7.0f, 35.0f, 35.0f);
-}*/
 
 @end

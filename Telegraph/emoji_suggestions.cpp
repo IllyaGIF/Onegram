@@ -26,7 +26,7 @@ Copyright (c) 2014-2017 John Preston, https://desktop.telegram.org
 #ifndef Expects
 #include <cassert>
 #define Expects(condition) assert(condition)
-#endif // Expects
+#endif
 
 namespace Ui {
 namespace Emoji {
@@ -61,7 +61,7 @@ private:
 
 };
 
-} // namespace
+}
 
 checksum countChecksum(const void *data, std::size_t size) {
 	static Crc32Initializer InitTable;
@@ -74,7 +74,7 @@ checksum countChecksum(const void *data, std::size_t size) {
 	return (result ^ 0xFFFFFFFFU);
 }
 
-} // namespace internal
+}
 
 namespace {
 
@@ -201,9 +201,6 @@ Completer::UsedWordGuard::~UsedWordGuard() {
 Completer::Completer(utf16string query) : _initialQuery(query), _query(NormalizeQuery(query)) {
 }
 
-// Remove all non-letters-or-numbers.
-// Leave '-' and '+' only if they're followed by a number or
-// at the end of the query (so it is possibly followed by a number).
 std::vector<utf16char> Completer::NormalizeQuery(utf16string query) {
 	auto result = std::vector<utf16char>();
 	result.reserve(query.size());
@@ -418,7 +415,7 @@ string_span Completer::findWordsStartingWith(utf16char ch) {
 	return _currentItemWords.subspan(begin - _currentItemWords.begin(), end - begin);
 }
 
-} // namespace
+}
 
 std::vector<Suggestion> GetSuggestions(utf16string query) {
 	return Completer(query).resolve();
@@ -428,5 +425,5 @@ int GetSuggestionMaxLength() {
 	return internal::kReplacementMaxLength;
 }
 
-} // namespace Emoji
-} // namespace Ui
+}
+}

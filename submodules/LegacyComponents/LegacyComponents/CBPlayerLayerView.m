@@ -7,14 +7,21 @@
 //
 
 #import "CBPlayerLayerView.h"
+#import <QuartzCore/QuartzCore.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <AVFoundation/AVFoundation.h>
+#endif
 
 @implementation CBPlayerLayerView
 
 + (Class)layerClass
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    return [CALayer class];
+#else
 	return [AVPlayerLayer class];
+#endif
 }
 
 @end

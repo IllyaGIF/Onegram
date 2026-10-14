@@ -181,10 +181,6 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
         {
             TGLog(@"FLAC open failed path=%@", _filePath);
         }
-        else
-        {
-            TGLog(@"FLAC open rate=%u channels=%u bits=%u frames=%llu", _decoder->sampleRate, _decoder->channels, _decoder->bitsPerSample, _decoder->totalFrames);
-        }
     }
     return self;
 }
@@ -260,7 +256,6 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
         buffer->mAudioDataByteSize = 0;
         if (_decoder->needMoreData && (_decoder->totalFrames == 0 || _decoder->decodedFramePosition < _decoder->totalFrames))
         {
-            TGLog(@"FLAC buffer underrun waiting for download frame=%llu/%llu", _decoder->decodedFramePosition, _decoder->totalFrames);
             return false;
         }
         _finished = true;
@@ -299,7 +294,6 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
             TGFlacAudioPlayer *player = TGFlacAudioPlayerResolveQueueReference(reference);
             if (player != nil)
             {
-                TGLog(@"FLAC finished path=%@", player->_filePath);
                 [player _cleanupQueueOnly];
                 [player _endAudioSession];
                 [player _notifyFinished];
@@ -488,8 +482,6 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
             [self _endAudioSession];
             TGLog(@"FLAC AudioQueueStart failed status=%d", (int)status);
         }
-        else
-            TGLog(@"FLAC play position=%.3f", position);
 
         [self _notifyFinishedIfNeeded];
     }];
@@ -524,8 +516,6 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
 
 - (void)setRate:(CGFloat)rate
 {
-    if (fabs(rate - 1.0f) > 0.01f)
-        TGLog(@"FLAC playback rate %.2f requested; using 1.0 on legacy AudioQueue", rate);
 }
 
 - (bool)replaceWithPath:(NSString *)__unused path
@@ -583,24 +573,18 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
     if (path == nil)
         return nil;
 
-    TGLog(@"AUDIO factory.begin path=%@", path);
     bool opus = [TGOpusAudioPlayerAU canPlayFile:path];
-    TGLog(@"AUDIO factory.opus result=%d", opus ? 1 : 0);
     if (opus)
     {
-        TGLog(@"AUDIO factory=opus path=%@", path);
         return [[TGOpusAudioPlayerAU alloc] initWithPath:path music:music controlAudioSession:controlAudioSession];
     }
 
     bool flac = [TGFlacAudioPlayer canPlayFile:path];
-    TGLog(@"AUDIO factory.flac result=%d", flac ? 1 : 0);
     if (flac)
     {
-        TGLog(@"AUDIO factory=flac path=%@", path);
         return [[TGFlacAudioPlayer alloc] initWithPath:path music:music controlAudioSession:controlAudioSession];
     }
 
-    TGLog(@"AUDIO factory=native path=%@", path);
     return [[TGNativeAudioPlayer alloc] initWithPath:path music:music controlAudioSession:controlAudioSession];
 }
 
@@ -827,18 +811,32 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
 
 + (bool)isHeadsetPluggedIn
 {
-    if (iosMajorVersion() < 6)
-        return false;
-    
-    AVAudioSessionRouteDescription *route = [[AVAudioSession sharedInstance] currentRoute];
-    
-    for (AVAudioSessionPortDescription *desc in [route outputs])
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    if ([session respondsToSelector:@selector(currentRoute)])
     {
-        if ([[desc portType] isEqualToString:AVAudioSessionPortHeadphones])
-            return true;
+        AVAudioSessionRouteDescription *route = [session currentRoute];
+        for (AVAudioSessionPortDescription *desc in [route outputs])
+        {
+            if ([[desc portType] isEqualToString:AVAudioSessionPortHeadphones])
+                return true;
+        }
+        return false;
     }
-    
+#endif
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < 60000
+    CFStringRef route = NULL;
+    UInt32 routeSize = sizeof(route);
+    if (AudioSessionGetProperty(kAudioSessionProperty_AudioRoute, &routeSize, &route) != noErr || route == NULL)
+        return false;
+    bool pluggedIn = CFStringFind(route, CFSTR("Headphone"), 0).location != kCFNotFound ||
+        CFStringFind(route, CFSTR("Headset"), 0).location != kCFNotFound ||
+        CFStringFind(route, CFSTR("Bluetooth"), 0).location != kCFNotFound;
+    CFRelease(route);
+    return pluggedIn;
+#else
     return false;
+#endif
 }
 
 @end

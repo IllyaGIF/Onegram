@@ -107,7 +107,6 @@
         {
             self.isSecret = true;
             
-            //[self enableInstantPreview];
         }
         
         int minutes = video.duration / 60;

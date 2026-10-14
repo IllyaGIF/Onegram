@@ -1,9 +1,7 @@
 #import <UIKit/UIKit.h>
 
-//! Project version number for LegacyComponents.
 FOUNDATION_EXPORT double LegacyComponentsVersionNumber;
 
-//! Project version string for LegacyComponents.
 FOUNDATION_EXPORT const unsigned char LegacyComponentsVersionString[];
 
 

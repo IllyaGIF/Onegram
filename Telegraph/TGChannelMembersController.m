@@ -1575,7 +1575,7 @@
         frame.size.height = 44 + headerInset;
         
         if (!_searchMixin.isActive) {
-            frame.origin.y = -frame.size.height; //self.controllerInset.top - 64.0f;
+            frame.origin.y = -frame.size.height;
         } else {
             frame.origin.y = 0.0f;
             if (self.navigationController.modalPresentationStyle == UIModalPresentationFormSheet) {

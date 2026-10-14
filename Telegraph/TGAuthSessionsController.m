@@ -18,19 +18,28 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGProgressWindow.h"
 #import "TGCustomActionSheet.h"
 
-#import "TGAuthSessionsEmptyView.h"
+#import "TGCustomAlertView.h"
+#import "TGTelegramNetworking.h"
+#import "TGAccessChecker.h"
+#import "../OnegramPlatform/OGPlatformQRCode.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "TGSegmentedTitleView.h"
 
 #import "TGPresentation.h"
 
-@interface TGAuthSessionsController () <ASWatcher>
+@interface TGAuthSessionsController () <ASWatcher, UIImagePickerControllerDelegate, UINavigationControllerDelegate>
 {
     bool _viewingAppSessions;
     NSArray *_authSessions;
     NSArray *_appSessions;
     TGActivityIndicatorView *_activityIndicatorView;
-    TGAuthSessionsEmptyView *_emptyView;
+    bool _sessionOperationInProgress;
+    bool _sessionListLoading;
+    bool _sessionListFailed;
+    bool _confirmationVisible;
+    TGProgressWindow *_sessionProgressWindow;
+    UIImagePickerController *_qrPicker;
     
     TGSegmentedTitleView *_segmentedTitleView;
     
@@ -41,6 +50,17 @@
     
     bool _editing;
     bool _editButtonHidden;
+    bool _updateScheduled;
+    bool _updatePendingChanged;
+    bool _appearanceTransition;
+    bool _builtStateValid;
+    NSArray *_builtAuthSessions;
+    NSArray *_builtAppSessions;
+    bool _builtViewingAppSessions;
+    bool _builtEditing;
+    bool _builtSessionListFailed;
+    bool _builtSessionOperationInProgress;
+    TGPresentation *_builtPresentation;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -62,6 +82,7 @@
         _appSessionListDisposable = [[SMetaDisposable alloc] init];
         
         _activityIndicatorView = [[TGActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
         
         [self updateSessionList];
     }
@@ -70,6 +91,9 @@
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    _qrPicker.delegate = nil;
+    [_sessionProgressWindow dismiss:false];
     [_authSessionListDisposable dispose];
     [_removeSessionDisposable dispose];
     
@@ -88,19 +112,70 @@
 
 - (void)updateSessionList
 {
+    if (_sessionOperationInProgress || _sessionListLoading)
+        return;
+    _sessionListLoading = true;
+    _sessionListFailed = false;
     __weak TGAuthSessionsController *weakSelf = self;
     [_authSessionListDisposable setDisposable:[[[TGAuthSessionListSignals authSessionList] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *authSessions)
     {
         __strong TGAuthSessionsController *strongSelf = weakSelf;
         if (strongSelf != nil)
         {
+            strongSelf->_sessionListLoading = false;
             [strongSelf->_activityIndicatorView removeFromSuperview];
             strongSelf->_activityIndicatorView = nil;
             [strongSelf setAuthSessions:authSessions];
             
             [strongSelf updateAppSessionsList];
         }
-    }]];
+    } error:^(id error)
+    {
+        __strong TGAuthSessionsController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+        {
+            strongSelf->_sessionListLoading = false;
+            strongSelf->_sessionListFailed = true;
+            [strongSelf->_activityIndicatorView removeFromSuperview];
+            strongSelf->_activityIndicatorView = nil;
+            [strongSelf _update:false];
+            [strongSelf showSessionError:error];
+        }
+    } completed:nil]];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    _appearanceTransition = animated;
+    [super viewWillAppear:animated];
+    [self updateSessionList];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    _appearanceTransition = false;
+    [self flushPendingUpdate];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    _appearanceTransition = animated;
+    [super viewWillDisappear:animated];
+}
+
+- (void)viewDidDisappear:(BOOL)animated
+{
+    [super viewDidDisappear:animated];
+    _appearanceTransition = false;
+    [self flushPendingUpdate];
+}
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+    (void)notification;
+    if ([self isViewLoaded] && self.view.window != nil && _qrPicker == nil)
+        [self updateSessionList];
 }
 
 - (void)updateAppSessionsList
@@ -120,12 +195,7 @@
 {
     [super loadView];
     
-    self.collectionView.alpha = 0.0f;
-    
-    _emptyView = [[TGAuthSessionsEmptyView alloc] initWithFrame:self.view.bounds];
-    _emptyView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view insertSubview:_emptyView belowSubview:self.collectionView];
-    _emptyView.hidden = _authSessions.count == 0 || _authSessions.count > 1;
+    self.collectionView.alpha = 1.0f;
     
     if (_activityIndicatorView != nil)
     {
@@ -137,7 +207,8 @@
     }
     
     NSArray *items = @[TGLocalized(@"AuthSessions.Sessions"), TGLocalized(@"AuthSessions.LoggedIn")];
-    _segmentedTitleView = [[TGSegmentedTitleView alloc] initWithTitle:TGLocalized(@"AuthSessions.Title") segments:items];
+    _segmentedTitleView = [[TGSegmentedTitleView alloc] initWithTitle:TGLocalized(@"Settings.Devices") segments:items];
+    [_segmentedTitleView setSegmentedControlHidden:_appSessions.count == 0 animated:false];
     [_segmentedTitleView setPresentation:self.presentation];
     __weak TGAuthSessionsController *weakSelf = self;
     _segmentedTitleView.segmentChanged = ^(NSInteger selectedIndex)
@@ -147,6 +218,7 @@
             [strongSelf setAppSessionsSelected:selectedIndex == 1];
     };
     [self setTitleView:_segmentedTitleView];
+    [self _updateNow:false];
 }
 
 - (void)setAuthSessions:(NSArray *)authSessions
@@ -181,10 +253,54 @@
 
 - (void)_update:(bool)changed
 {
+    _updatePendingChanged = _updatePendingChanged || changed;
+    if (_updateScheduled)
+        return;
+    _updateScheduled = true;
+    __weak TGAuthSessionsController *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGAuthSessionsController *strongSelf = weakSelf;
+        [strongSelf flushPendingUpdate];
+    });
+}
+
+- (void)flushPendingUpdate
+{
+    if (!_updateScheduled || _appearanceTransition)
+        return;
+    _updateScheduled = false;
+    bool changed = _updatePendingChanged;
+    _updatePendingChanged = false;
+    if (!changed && [self builtStateMatches])
+        return;
+    [self _updateNow:changed];
+}
+
+- (bool)builtStateMatches
+{
+    if (!_builtStateValid || _builtAuthSessions != _authSessions || _builtViewingAppSessions != _viewingAppSessions || _builtEditing != _editing || _builtSessionListFailed != _sessionListFailed || _builtSessionOperationInProgress != _sessionOperationInProgress || _builtPresentation != self.presentation)
+        return false;
+    if (_viewingAppSessions ? _builtAppSessions != _appSessions : (_builtAppSessions.count != 0) != (_appSessions.count != 0))
+        return false;
+    return self.collectionView.alpha > 1.0f - FLT_EPSILON;
+}
+
+- (void)_updateNow:(bool)changed
+{
+    _builtStateValid = true;
+    _builtAuthSessions = _authSessions;
+    _builtAppSessions = _appSessions;
+    _builtViewingAppSessions = _viewingAppSessions;
+    _builtEditing = _editing;
+    _builtSessionListFailed = _sessionListFailed;
+    _builtSessionOperationInProgress = _sessionOperationInProgress;
+    _builtPresentation = self.presentation;
     if (changed)
     {
-        UIView *snapshotView = [self.collectionView snapshotViewAfterScreenUpdates:false];
-        [self.view insertSubview:snapshotView aboveSubview:self.collectionView];
+        UIView *snapshotView = [self.collectionView respondsToSelector:@selector(snapshotViewAfterScreenUpdates:)] ? [self.collectionView snapshotViewAfterScreenUpdates:false] : nil;
+        if (snapshotView != nil)
+            [self.view insertSubview:snapshotView aboveSubview:self.collectionView];
         
         [UIView animateWithDuration:0.2 animations:^
         {
@@ -281,33 +397,34 @@
         NSMutableArray *array = [[NSMutableArray alloc] init];
         for (TGAuthSession *session in _authSessions)
         {
-            if (session.sessionHash == 0)
+            if (session.sessionHash == 0 || (session.flags & 1) != 0)
                 currentSession = session;
             else
                 [array addObject:session];
         }
         [array sortUsingComparator:^NSComparisonResult(TGAuthSession *session1, TGAuthSession *session2)
          {
+             if (session1.dateActive == session2.dateActive)
+                 return session1.sessionHash == session2.sessionHash ? NSOrderedSame : (session1.sessionHash < session2.sessionHash ? NSOrderedAscending : NSOrderedDescending);
              return session1.dateActive > session2.dateActive ? NSOrderedAscending : NSOrderedDescending;
          }];
         otherSessions = array;
         
-        if (currentSession != nil)
+        TGButtonCollectionItem *resetItem = [[TGButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Devices.EndOtherSessions") action:@selector(resetSessionsPressed)];
+        resetItem.alignment = NSTextAlignmentCenter;
+        resetItem.enabled = otherSessions.count != 0 && !_sessionOperationInProgress;
+        resetItem.deselectAutomatically = true;
+
+        if (currentSession != nil || _authSessions == nil)
         {
             NSMutableArray *items = [[NSMutableArray alloc] init];
             
-            [items addObject:[[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"AuthSessions.CurrentSession")]];
-            [items addObject:[[TGAuthSessionItem alloc] initWithAuthSession:currentSession removeRequested:nil]];
-            
-            if (otherSessions.count != 0)
-            {
-                TGButtonCollectionItem *resetItem = [[TGButtonCollectionItem alloc] initWithTitle:TGLocalized(@"AuthSessions.TerminateOtherSessions") action:@selector(resetSessionsPressed)];
-                resetItem.titleColor = self.presentation.pallete.collectionMenuDestructiveColor;
-                resetItem.deselectAutomatically = true;
-                [items addObject:resetItem];
-                
-                [items addObject:[[TGCommentCollectionItem alloc] initWithFormattedText:TGLocalized(@"AuthSessions.TerminateOtherSessionsHelp")]];
-            }
+            [items addObject:[[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Devices.ThisDevice")]];
+            if (currentSession != nil)
+                [items addObject:[[TGAuthSessionItem alloc] initWithAuthSession:currentSession removeRequested:nil]];
+            else
+                [items addObject:[[TGCommentCollectionItem alloc] initWithText:TGLocalized(_sessionListFailed ? @"Devices.LoadFailed" : @"Devices.Loading")]];
+            [items addObject:resetItem];
             
             TGCollectionMenuSection *section = [[TGCollectionMenuSection alloc] initWithItems:items];
             UIEdgeInsets topSectionInsets = section.insets;
@@ -315,11 +432,27 @@
             section.insets = topSectionInsets;
             [self.menuSections addSection:section];
         }
+        else
+        {
+            [self.menuSections addSection:[[TGCollectionMenuSection alloc] initWithItems:@[resetItem]]];
+        }
+
+        TGButtonCollectionItem *scanItem = [[TGButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Devices.ScanQR") action:@selector(scanQRCodePressed)];
+        scanItem.alignment = NSTextAlignmentCenter;
+        scanItem.deselectAutomatically = true;
+        scanItem.enabled = !_sessionOperationInProgress;
+        [self.menuSections addSection:[[TGCollectionMenuSection alloc] initWithItems:@[scanItem]]];
+        if (_sessionListFailed)
+        {
+            TGButtonCollectionItem *retryItem = [[TGButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Devices.Retry") action:@selector(updateSessionList)];
+            retryItem.deselectAutomatically = true;
+            [self.menuSections addSection:[[TGCollectionMenuSection alloc] initWithItems:@[retryItem]]];
+        }
         
         if (otherSessions.count != 0)
         {
             NSMutableArray *items = [[NSMutableArray alloc] init];
-            [items addObject:[[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"AuthSessions.OtherSessions")]];
+            [items addObject:[[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Devices.ActiveSessions")]];
             
             for (TGAuthSession *authSession in otherSessions)
             {
@@ -342,6 +475,10 @@
         }
         else
         {
+            [self.menuSections addSection:[[TGCollectionMenuSection alloc] initWithItems:@[
+                [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Devices.ActiveSessions")],
+                [[TGCommentCollectionItem alloc] initWithText:TGLocalized(_authSessions == nil ? (_sessionListFailed ? @"Devices.LoadFailed" : @"Devices.Loading") : @"Devices.NoOtherSessions")]
+            ]]];
             if (_editing)
             {
                 _editing = false;
@@ -364,7 +501,7 @@
         if (width > TGScreenSize().width - 44.0f && !_editing)
         {
             [self setRightBarButtonItem:nil];
-            _editButtonHidden = true;
+            editButtonHidden = true;
         }
     }
     _editButtonHidden = editButtonHidden;
@@ -383,6 +520,7 @@
 - (void)didEnterEditingMode:(bool)animated
 {
     [super didEnterEditingMode:animated];
+    _editing = true;
     
     if (_editButtonHidden)
         return;
@@ -393,6 +531,7 @@
 - (void)didLeaveEditingMode:(bool)animated
 {
     [super didLeaveEditingMode:animated];
+    _editing = false;
     
     if (_editButtonHidden)
         return;
@@ -402,33 +541,166 @@
 
 - (void)resetSessionsPressed
 {
+    bool hasOtherSessions = false;
+    for (TGAuthSession *session in _authSessions)
+        hasOtherSessions |= session.sessionHash != 0 && (session.flags & 1) == 0;
+    if (hasOtherSessions)
+        [self confirmRemovalOfSession:nil];
+}
+
+- (void)confirmRemovalOfSession:(TGAuthSession *)session
+{
+    if (_sessionOperationInProgress || _confirmationVisible)
+        return;
+    _confirmationVisible = true;
+    NSString *message = session == nil ? TGLocalized(@"Devices.EndAllConfirmation") : [NSString stringWithFormat:TGLocalized(@"Devices.EndConfirmation"), session.deviceModel, session.appName];
     __weak TGAuthSessionsController *weakSelf = self;
-    
-    TGCustomActionSheet *actionSheet = [[TGCustomActionSheet alloc] initWithTitle:nil actions:@[
-        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"AuthSessions.TerminateOtherSessions") action:@"remove" type:TGActionSheetActionTypeDestructive],
-        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]
-    ] actionBlock:^(__unused id target, NSString *action)
+    [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Settings.Devices") message:message cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:TGLocalized(@"AuthSessions.TerminateSession") destructive:true completionBlock:^(bool confirmed)
     {
-        if ([action isEqualToString:@"remove"])
+        __strong TGAuthSessionsController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf->_confirmationVisible = false;
+        if (confirmed)
+            [strongSelf performSessionOperation:session == nil ? [TGAuthSessionListSignals removeAllOtherSessions] : [TGAuthSessionListSignals removeSession:session]];
+    } disableKeyboardWorkaround:false];
+}
+
+- (void)showSessionError:(id)error
+{
+    NSString *type = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
+    NSString *key = @"Devices.RequestFailed";
+    if ([type isEqualToString:@"FRESH_RESET_AUTHORISATION_FORBIDDEN"])
+        key = @"Devices.FreshSession";
+    else if ([type hasPrefix:@"AUTH_TOKEN_"])
+        key = @"Devices.QRExpired";
+    else if ([type hasPrefix:@"FLOOD_WAIT"])
+        key = @"Devices.FloodWait";
+    [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Settings.Devices") message:TGLocalized(key) cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+}
+
+- (void)finishSessionOperation
+{
+    _sessionOperationInProgress = false;
+    [_sessionProgressWindow dismiss:true];
+    _sessionProgressWindow = nil;
+    [self _update:false];
+}
+
+- (void)performSessionOperation:(SSignal *)signal
+{
+    if (_sessionOperationInProgress)
+        return;
+    [_authSessionListDisposable setDisposable:nil];
+    _sessionListLoading = false;
+    _sessionOperationInProgress = true;
+    _sessionProgressWindow = [[TGProgressWindow alloc] init];
+    [_sessionProgressWindow show:true];
+    [self _update:false];
+    __weak TGAuthSessionsController *weakSelf = self;
+    [_removeSessionDisposable setDisposable:[[signal deliverOn:[SQueue mainQueue]] startWithNext:^(id result)
+    {
+        __strong TGAuthSessionsController *strongSelf = weakSelf;
+        if (strongSelf != nil && [result isKindOfClass:[NSArray class]])
         {
-            TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
-            [progressWindow show:true];
-            
-            [_removeSessionDisposable setDisposable:[[[[TGAuthSessionListSignals removeAllOtherSessions] deliverOn:[SQueue mainQueue]] onDispose:^
-            {
-                TGDispatchOnMainThread(^
-                {
-                    [progressWindow dismiss:true];
-                });
-            }] startWithNext:^(NSArray *authSessions)
+            strongSelf->_sessionListFailed = false;
+            [strongSelf setAuthSessions:result];
+        }
+    } error:^(id error)
+    {
+        __strong TGAuthSessionsController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+        {
+            strongSelf->_sessionListFailed = true;
+            [strongSelf finishSessionOperation];
+            [strongSelf showSessionError:error];
+        }
+    } completed:^
+    {
+        __strong TGAuthSessionsController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+        {
+            [strongSelf finishSessionOperation];
+            [strongSelf updateSessionList];
+        }
+    }]];
+}
+
+- (void)scanQRCodePressed
+{
+    if (_sessionOperationInProgress || _qrPicker != nil || _confirmationVisible)
+        return;
+    if (![UIImagePickerController isSourceTypeAvailable:UIImagePickerControllerSourceTypeCamera])
+    {
+        [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Devices.ScanQR") message:TGLocalized(@"Devices.CameraUnavailable") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+        return;
+    }
+    if (![[[TGAccessChecker alloc] init] checkCameraAuthorizationStatusForIntent:TGCameraAccessIntentDefault alertDismissCompletion:nil])
+        return;
+    _qrPicker = [[UIImagePickerController alloc] init];
+    _qrPicker.sourceType = UIImagePickerControllerSourceTypeCamera;
+    _qrPicker.delegate = self;
+    _qrPicker.allowsEditing = false;
+    UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(12, 16, 296, 64)];
+    hint.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    hint.text = TGLocalized(@"Devices.QRPhotoHint");
+    hint.numberOfLines = 0;
+    hint.textAlignment = NSTextAlignmentCenter;
+    hint.font = TGSystemFontOfSize(16.0f);
+    hint.textColor = [UIColor whiteColor];
+    hint.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.55f];
+    hint.userInteractionEnabled = false;
+    _qrPicker.cameraOverlayView = hint;
+    [self presentModalViewController:_qrPicker animated:true];
+}
+
+- (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker
+{
+    picker.delegate = nil;
+    [self dismissModalViewControllerAnimated:true];
+    _qrPicker = nil;
+}
+
+- (void)imagePickerController:(UIImagePickerController *)picker didFinishPickingMediaWithInfo:(NSDictionary *)info
+{
+    UIImage *image = [info objectForKey:UIImagePickerControllerOriginalImage];
+    picker.delegate = nil;
+    [self dismissModalViewControllerAnimated:false];
+    _qrPicker = nil;
+    _sessionOperationInProgress = true;
+    _sessionProgressWindow = [[TGProgressWindow alloc] init];
+    [_sessionProgressWindow show:true];
+    __weak TGAuthSessionsController *weakSelf = self;
+    dispatch_async(OGPlatformBackgroundQueue(), ^
+    {
+        @autoreleasepool
+        {
+            NSString *code = OGPlatformReadQRCode(image);
+            NSData *token = [TGAuthSessionListSignals loginTokenFromQRCode:code];
+            OGPlatformDispatchOnMainThread(^
             {
                 __strong TGAuthSessionsController *strongSelf = weakSelf;
-                if (strongSelf != nil)
-                    [strongSelf setAuthSessions:authSessions];
-            }]];
+                if (strongSelf == nil)
+                    return;
+                [strongSelf finishSessionOperation];
+                if (token == nil)
+                {
+                    [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Devices.ScanQR") message:TGLocalized(@"Devices.QRNotFound") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                    return;
+                }
+                strongSelf->_confirmationVisible = true;
+                [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Devices.LinkDevice") message:TGLocalized(@"Devices.LinkConfirmation") cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:TGLocalized(@"Devices.LinkDevice") completionBlock:^(bool confirmed)
+                {
+                    __strong TGAuthSessionsController *controller = weakSelf;
+                    if (controller == nil)
+                        return;
+                    controller->_confirmationVisible = false;
+                    if (confirmed)
+                        [controller performSessionOperation:[TGAuthSessionListSignals acceptLoginToken:token]];
+                }];
+            });
         }
-    } target:self];
-    [actionSheet showInView:self.view];
+    });
 }
 
 - (void)resetAppSessionsPressed
@@ -464,33 +736,9 @@
 
 - (void)removeSession:(TGAuthSession *)authSession
 {
-    __weak TGAuthSessionsController *weakSelf = self;
-    
-    TGCustomActionSheet *actionSheet = [[TGCustomActionSheet alloc] initWithTitle:nil actions:@[
-        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"AuthSessions.TerminateSession") action:@"remove" type:TGActionSheetActionTypeDestructive],
-        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]
-    ] actionBlock:^(__unused id target, NSString *action)
-    {
-        if ([action isEqualToString:@"remove"])
-        {
-            TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
-            [progressWindow show:true];
-            
-            [_removeSessionDisposable setDisposable:[[[[TGAuthSessionListSignals removeSession:authSession] deliverOn:[SQueue mainQueue]] onDispose:^
-            {
-                TGDispatchOnMainThread(^
-                {
-                    [progressWindow dismiss:true];
-                });
-            }] startWithNext:^(NSArray *authSessions)
-            {
-                __strong TGAuthSessionsController *strongSelf = weakSelf;
-                if (strongSelf != nil)
-                    [strongSelf setAuthSessions:authSessions];
-            }]];
-        }
-    } target:self];
-    [actionSheet showInView:self.view];
+    if (authSession.sessionHash == 0 || (authSession.flags & 1) != 0)
+        return;
+    [self confirmRemovalOfSession:authSession];
 }
 
 - (void)removeAppSession:(TGAppSession *)appSession

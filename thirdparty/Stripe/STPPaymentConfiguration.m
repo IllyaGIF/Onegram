@@ -18,7 +18,7 @@
     [STPAnalyticsClient initializeIfNeeded];
 }
 
-+ (instancetype)sharedConfiguration {
++ (STPPaymentConfiguration *)sharedConfiguration {
     static STPPaymentConfiguration *sharedConfiguration;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -60,4 +60,3 @@
 }
 
 @end
-

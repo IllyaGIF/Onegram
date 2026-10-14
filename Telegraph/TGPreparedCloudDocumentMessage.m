@@ -2,6 +2,44 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
+static NSURL *TGCloudDocumentURLFromData(NSData *data)
+{
+    SEL selector = NSSelectorFromString(@"URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:");
+    if ([[NSURL class] respondsToSelector:selector])
+    {
+        BOOL stale = false;
+        id (*function)(id, SEL, NSData *, NSUInteger, NSURL *, BOOL *, NSError **) = (id (*)(id, SEL, NSData *, NSUInteger, NSURL *, BOOL *, NSError **))[[NSURL class] methodForSelector:selector];
+        if (function != NULL)
+        {
+            NSURL *url = function([NSURL class], selector, data, 0, nil, &stale, NULL);
+            if (url != nil)
+                return url;
+        }
+    }
+    NSString *value = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    NSString *prefix = @"onegram-url:";
+    if ([value hasPrefix:prefix])
+        return [NSURL URLWithString:[value substringFromIndex:prefix.length]];
+    return nil;
+}
+
+static NSData *TGCloudDocumentDataFromURL(NSURL *url)
+{
+    SEL selector = NSSelectorFromString(@"bookmarkDataWithOptions:includingResourceValuesForKeys:relativeToURL:error:");
+    if ([url respondsToSelector:selector])
+    {
+        id (*function)(id, SEL, NSUInteger, NSArray *, NSURL *, NSError **) = (id (*)(id, SEL, NSUInteger, NSArray *, NSURL *, NSError **))[url methodForSelector:selector];
+        if (function != NULL)
+        {
+            NSData *data = function(url, selector, 1UL << 10, nil, nil, NULL);
+            if (data != nil)
+                return data;
+        }
+    }
+    NSString *value = [@"onegram-url:" stringByAppendingString:url.absoluteString ?: @""];
+    return [value dataUsingEncoding:NSUTF8StringEncoding];
+}
+
 @implementation TGPreparedCloudDocumentMessage
 
 - (instancetype)initWithDocumentUrl:(NSURL *)documentUrl localDocumentId:(int64_t)localDocumentId mimeType:(NSString *)mimeType size:(int)size thumbnailInfo:(TGImageInfo *)thumbnailInfo attributes:(NSArray *)attributes replyMessage:(TGMessage *)replyMessage replyMarkup:(TGReplyMarkupAttachment *)replyMarkup
@@ -76,16 +114,12 @@
 {
     NSData *bookmarkData = [coder decodeDataCorCKey:[@"bookmarkData" UTF8String]];
     
-    BOOL dataIsStale = false;
-    NSURL *url = [NSURL URLByResolvingBookmarkData:bookmarkData options:0 relativeToURL:nil bookmarkDataIsStale:&dataIsStale error:nil];
-    
-    return [self initWithDocumentUrl:url];
+    return [self initWithDocumentUrl:TGCloudDocumentURLFromData(bookmarkData)];
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder
 {
-    NSData *bookmarkData = [_documentUrl bookmarkDataWithOptions:NSURLBookmarkCreationSuitableForBookmarkFile includingResourceValuesForKeys:nil relativeToURL:nil error:NULL];
-    
+    NSData *bookmarkData = TGCloudDocumentDataFromURL(_documentUrl);
     [coder encodeData:bookmarkData forCKey:[@"bookmarkData" UTF8String]];
 }
 

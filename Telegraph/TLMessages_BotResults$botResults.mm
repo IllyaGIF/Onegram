@@ -2,8 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messages.botResults#947ca848 flags:# gallery:flags.0?true query_id:long next_offset:flags.1?string switch_pm:flags.2?InlineBotSwitchPM results:Vector<BotInlineResult> cache_time:int users:Vector<User> = messages.BotResults;
-
 
 @implementation TLMessages_BotResults$botResults
 
@@ -32,15 +30,11 @@
         }
     }
 
-    // Layer 214 adds switch_webview at flags.3.  The legacy model has no
-    // property for it and the UI does not use it, but its two strings still
-    // have to be consumed.  Otherwise the constructor is mistaken for the
-    // results vector and the rest of the response becomes misaligned.
     if (flags & (1 << 3)) {
         int32_t signature = [is readInt32];
         if (signature == (int32_t)0xb57295d5) {
-            [is readString]; // text
-            [is readString]; // url
+            [is readString];
+            [is readString];
         } else {
             TLMetaClassStore::constructObject(is, signature, environment, nil, error);
             if (error != nil && *error != nil) {

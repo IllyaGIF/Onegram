@@ -4,6 +4,7 @@
 
 #import "MTTimer.h"
 #import "MTQueue.h"
+#import "MTLogging.h"
 
 #import "MTDatacenterAddress.h"
 
@@ -60,10 +61,7 @@ MTInternalIdClass(MTHttpWorker)
 
 - (instancetype)initWithDelegate:(id<MTHttpWorkerDelegate>)delegate address:(MTDatacenterAddress *)address payloadData:(NSData *)payloadData performsLongPolling:(bool)performsLongPolling
 {
-    int32_t randomId = 0;
-    arc4random_buf(&randomId, 4);
-    
-    NSString *urlString = [[NSString alloc] initWithFormat:@"http://%@:%d/api%" PRIx32 "", address.ip, (int)address.port, randomId];
+    NSString *urlString = [[NSString alloc] initWithFormat:@"http://%@:%d/api", address.ip, (int)address.port];
     
     self = [super initWithBaseURL:[[NSURL alloc] initWithString:urlString]];
     if (self != nil)
@@ -108,16 +106,6 @@ MTInternalIdClass(MTHttpWorker)
                 [strongSelf requestUploadProgress];
             }];
             
-            /*if (request.progressBlock != nil)
-            {
-                [httpOperation setDownloadProgressBlock:^(__unused NSInteger bytesRead, NSInteger totalBytesRead, NSInteger totalBytesExpectedToRead)
-                {
-                    if (totalBytesExpectedToRead > 0 && totalBytesRead > 0)
-                    {
-                        request.progressBlock(((float)totalBytesRead) / ((float)totalBytesExpectedToRead));
-                    }
-                }];
-            }*/
             
             [self enqueueHTTPRequestOperation:_operation];
         }];
@@ -202,12 +190,13 @@ MTInternalIdClass(MTHttpWorker)
         id<MTHttpWorkerDelegate> delegate = _delegate;
         
         if (error == nil && response != nil)
-        {   
+        {
             if ([delegate respondsToSelector:@selector(httpWorker:completedWithData:)])
                 [delegate httpWorker:self completedWithData:response];
         }
         else
         {
+            MTLog(@"MTHttpWorker failure domain=%@ code=%d", error.domain, (int)error.code);
             if ([delegate respondsToSelector:@selector(httpWorkerFailed:)])
                 [delegate httpWorkerFailed:self];
         }
@@ -222,6 +211,7 @@ MTInternalIdClass(MTHttpWorker)
 {
     if (!_stopped)
     {
+        MTLog(@"MTHttpWorker timeout");
         [self stop];
         
         id<MTHttpWorkerDelegate> delegate = _delegate;

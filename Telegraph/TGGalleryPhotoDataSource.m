@@ -309,7 +309,6 @@
 {
     if (isCancelled && isCancelled())
     {
-        TGLog(@"[TGGalleryPhotoDataSource cancelled while loading %@]", uri);
         return nil;
     }
     
@@ -357,18 +356,10 @@
         NSString *legacyCacheFilePath = args[@"legacy-file-path"];
         imageSourceImage = [[UIImage alloc] initWithContentsOfFile:legacyCacheFilePath];
         
-        //TODO: remove legacy
-        //if (imageSourceImage != nil)
-        //    [[NSFileManager defaultManager] copyItemAtPath:legacyCacheFilePath toPath:imagePath error:nil];
     }
     
     if (imageSourceImage != nil)
     {
-        /*TG_TIMESTAMP_DEFINE(bpgencode)
-        NSData *bpgData = [imageSourceImage encodeWithBPG];
-        TG_TIMESTAMP_MEASURE(bpgencode)
-        imageSourceImage = [UIImage imageWithBPGData:bpgData];
-        TG_TIMESTAMP_MEASURE(bpgencode)*/
         
         UIGraphicsBeginImageContextWithOptions(imageSourceImage.size, true, imageSourceImage.scale);
         

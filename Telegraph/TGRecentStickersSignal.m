@@ -1,8 +1,5 @@
 #import "TGRecentStickersSignal.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -60,18 +57,11 @@ static NSArray *TGIOS6RecentStaticStickerDocuments(NSArray *documents)
         return @[];
     
     NSMutableArray *result = [[NSMutableArray alloc] init];
-    NSUInteger skipped = 0;
     for (TGDocumentMediaAttachment *document in documents)
     {
-        if (TGIOS6RecentStickerDocumentIsAnimated(document))
-        {
-            skipped++;
-            continue;
-        }
-        [result addObject:document];
+        if (!TGIOS6RecentStickerDocumentIsAnimated(document))
+            [result addObject:document];
     }
-    if (skipped != 0)
-        IOS6_NOOP_LOG(@"STICKER recent.filterAnimated skipped=%d kept=%d", (int)skipped, (int)result.count);
     return result;
 }
 
@@ -215,16 +205,13 @@ static bool _syncedStickers = false;
 }
 
 + (SSignal *)_remoteRecentStickers:(int32_t)hash {
-    IOS6_NOOP_LOG(@"STICKER recent.remote start hash=%d", hash);
     
     TLRPCmessages_getRecentStickers$messages_getRecentStickers *getRecentStickers = [[TLRPCmessages_getRecentStickers$messages_getRecentStickers alloc] init];
     getRecentStickers.n_hash = hash;
     
     return [[[TGTelegramNetworking instance] requestSignal:getRecentStickers] mapToSignal:^SSignal *(id result) {
-        IOS6_NOOP_LOG(@"STICKER recent.remote result=%@", NSStringFromClass([result class]));
         if ([result isKindOfClass:[TLmessages_RecentStickers$messages_recentStickers class]]) {
             TLmessages_RecentStickers$messages_recentStickers *recentStickers = result;
-            IOS6_NOOP_LOG(@"STICKER recent.remote stickers=%d dates=%d hash=%d", (int)recentStickers.stickers.count, (int)recentStickers.dates.count, recentStickers.n_hash);
             
             NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
             NSMutableArray *array = [[NSMutableArray alloc] init];

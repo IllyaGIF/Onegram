@@ -63,7 +63,21 @@
         _accessHash = [aDecoder decodeInt64ForKey:@"accessHash"];
         _localVideoId = [aDecoder decodeInt64ForKey:@"localVideoId"];
         _duration = [aDecoder decodeInt32ForKey:@"duration"];
-        _dimensions = [aDecoder decodeCGSizeForKey:@"dimensions"];
+        CGFloat width = (CGFloat)[aDecoder decodeDoubleForKey:@"dimensionsWidth"];
+        CGFloat height = (CGFloat)[aDecoder decodeDoubleForKey:@"dimensionsHeight"];
+        if (width == 0.0f && height == 0.0f)
+        {
+            @try
+            {
+                CGSize legacySize = [aDecoder decodeCGSizeForKey:@"dimensions"];
+                width = legacySize.width;
+                height = legacySize.height;
+            }
+            @catch (__unused NSException *exception)
+            {
+            }
+        }
+        _dimensions = CGSizeMake(width, height);
         _videoInfo = [aDecoder decodeObjectForKey:@"videoInfo"];
         _thumbnailInfo = [aDecoder decodeObjectForKey:@"thumbInfo"];
         _caption = [aDecoder decodeObjectForKey:@"caption"];
@@ -83,7 +97,8 @@
     [aCoder encodeInt64:_accessHash forKey:@"accessHash"];
     [aCoder encodeInt64:_localVideoId forKey:@"localVideoId"];
     [aCoder encodeInt32:_duration forKey:@"duration"];
-    [aCoder encodeCGSize:_dimensions forKey:@"dimensions"];
+    [aCoder encodeDouble:_dimensions.width forKey:@"dimensionsWidth"];
+    [aCoder encodeDouble:_dimensions.height forKey:@"dimensionsHeight"];
     [aCoder encodeObject:_videoInfo forKey:@"videoInfo"];
     [aCoder encodeObject:_thumbnailInfo forKey:@"thumbInfo"];
     [aCoder encodeObject:_caption forKey:@"caption"];

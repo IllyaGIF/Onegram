@@ -48,7 +48,7 @@
         [self addSubview:_textLabel];
         
         _separatorView = [[UIView alloc] init];
-        _separatorView.backgroundColor = separatorColor; //[UIColor hexColor:0xcccccc];
+        _separatorView.backgroundColor = separatorColor;
         [self addSubview:_separatorView];
         
         _progressView = [[UIView alloc] init];

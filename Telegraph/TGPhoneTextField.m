@@ -1,6 +1,7 @@
 #import "TGPhoneTextField.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGPhoneTextField () <UITextFieldDelegate>
 
@@ -91,7 +92,6 @@
     
     @try
     {
-        //caretPosition += string.length;
         int caretPosition = (int)range.location + (int)string.length;
         
         [rawText replaceCharactersInRange:range withString:string];
@@ -129,14 +129,10 @@
         if (caretPosition >= (int)textField.text.length)
             caretPosition = (int)textField.text.length;
         
-        UITextPosition *startPosition = [textField positionFromPosition:textField.beginningOfDocument offset:newCaretPosition];
-        UITextPosition *endPosition = [textField positionFromPosition:textField.beginningOfDocument offset:newCaretPosition];
-        UITextRange *selection = [textField textRangeFromPosition:startPosition toPosition:endPosition];
-        textField.selectedTextRange = selection;
+        OGPlatformSetTextFieldSelectionRange(textField, NSMakeRange((NSUInteger)newCaretPosition, 0));
     }
     @catch (NSException *e)
     {
-        TGLog(@"%@", e);
     }
     
     return false;

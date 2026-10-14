@@ -234,7 +234,6 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, bool ani
     {
         contactCell = [[TGContactCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:contactCellIdentifier selectionControls:false editingControls:false];
         
-        //contactCell.actionHandle = _actionHandle;
     }
     contactCell.presentation = _presentation;
     contactCell.contactSelected = false;

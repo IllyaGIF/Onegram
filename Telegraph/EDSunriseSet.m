@@ -315,7 +315,12 @@ static const int kSecondsInHour= 60.0*60.0;
 -(NSDate*)utcTime:(NSDateComponents*)dateComponents withOffset:(NSTimeInterval)interval
 {
     [self.calendar setTimeZone:self.utcTimeZone];
-    return [[self.calendar dateFromComponents:dateComponents] dateByAddingTimeInterval:(NSTimeInterval)(interval)];
+    NSDate *date = [self.calendar dateFromComponents:dateComponents];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
+    return [date dateByAddingTimeInterval:(NSTimeInterval)interval];
+#else
+    return [date addTimeInterval:(NSTimeInterval)interval];
+#endif
 }
 
 -(NSDateComponents*)localTime:(NSDate*)refDate
@@ -442,6 +447,5 @@ static const int kSecondsInHour= 60.0*60.0;
 }
 
 @end
-
 
 

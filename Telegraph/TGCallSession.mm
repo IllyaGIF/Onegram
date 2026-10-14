@@ -20,6 +20,7 @@
 #import "TGCallSignals.h"
 #import "TGCallAudioPlayer.h"
 #import "TGCallKitAdapter.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "VoIPController.h"
 #import "VoIPServerConfig.h"
@@ -118,12 +119,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     if (![serverVersions isKindOfClass:[NSArray class]])
         serverVersions = [NSArray array];
     
-    TGLog(@"CALL webrtc.version.negotiate call=%lld server=%@ local=%@ minLayer=%d maxLayer=%d",
-          state.callId,
-          serverVersions,
-          supportedVersions,
-          state.connection.minLayer,
-          state.connection.maxLayer);
     
     NSString *version = nil;
     for (id candidateObject in serverVersions)
@@ -150,15 +145,9 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     
     if (state.connection.key.length != 256)
     {
-        TGLog(@"CALL webrtc.runtime.badKey call=%lld keyLen=%d",
-              state.callId,
-              (int)state.connection.key.length);
         return false;
     }
     
-    TGLog(@"CALL webrtc.version.selected call=%lld version=%@",
-          state.callId,
-          version);
     
     NSMutableArray *connections = [[NSMutableArray alloc] init];
     for (TGCallWebrtcConnectionDescription *connection in state.connection.webrtcConnections) {
@@ -179,7 +168,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     }
     
     if (connections.count == 0) {
-        TGLog(@"CALL webrtc.runtime.noConnections call=%lld", state.callId);
         return false;
     }
     
@@ -187,7 +175,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     self.queue = queue;
     
     void (^sendSignalingData)(NSData *) = ^(NSData *data) {
-        TGLog(@"CALL webrtc.signaling.emit call=%lld dataLen=%d", state.callId, (int)data.length);
         [[TGCallSignals sendSignalingDataForCallId:state.callId accessHash:state.accessHash data:data] startWithNext:nil error:^(id error) {
             TGLog(@"CALL webrtc.signaling.send.error call=%lld error=%@", state.callId, error);
         } completed:nil];
@@ -197,10 +184,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     if (customParameters.length == 0)
         customParameters = @"{}";
     
-    TGLog(@"CALL webrtc.runtime.customParameters call=%lld stateLen=%d finalLen=%d",
-          state.callId,
-          (int)state.connection.customParameters.length,
-          (int)customParameters.length);
     
     id context = [[contextClass alloc] initWithVersion:version
                                       customParameters:customParameters
@@ -225,7 +208,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
                                            audioDevice:nil
                                       directConnection:nil];
     if (context == nil) {
-        TGLog(@"CALL webrtc.runtime.initNil call=%lld version=%@", state.callId, version);
         return false;
     }
     
@@ -269,8 +251,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
          }];
     }
     
-    TGLog(@"CALL webrtc.runtime.callbacks.active call=%lld", state.callId);
-    TGLog(@"CALL webrtc.runtime.start call=%lld version=%@ connections=%d customParametersLen=%d", state.callId, version, (int)connections.count, (int)customParameters.length);
     _started = true;
     return true;
 }
@@ -280,7 +260,6 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     if (data.length == 0 || self.context == nil)
         return;
     
-    TGLog(@"CALL webrtc.signaling.receive.forward dataLen=%d", (int)data.length);
     if ([self.context respondsToSelector:@selector(addSignalingData:)])
         [self.context addSignalingData:data];
 }
@@ -385,15 +364,6 @@ const NSTimeInterval TGCallPacketTimeout = 10;
 @end
 
 
-@interface TGCallSessionData : NSObject
-
-@property (nonatomic, readonly) TGCallStateData *stateData;
-@property (nonatomic, readonly) TGCallAudioContext *audioContext;
-
-- (instancetype)initWithStateData:(TGCallStateData *)stateData audioContext:(TGCallAudioContext *)audioContext;
-
-@end
-
 
 @interface TGCallSession ()
 {
@@ -441,7 +411,7 @@ const NSTimeInterval TGCallPacketTimeout = 10;
     TGObserverProxy *_applicationWillResignActiveProxy;
     TGObserverProxy *_applicationDidBecomeActiveProxy;
     
-    UILocalNotification *_notification;
+    id _notification;
     NSUInteger _receivedSignalingPackets;
     NSMutableArray *_pendingSignalingData;
     TGCallWebrtcRuntime *_webrtcRuntime;
@@ -528,12 +498,7 @@ const NSTimeInterval TGCallPacketTimeout = 10;
     
     if (runtime != nil)
     {
-        TGLog(@"CALL signaling.session.forward call=%lld access=%lld packet=%d dataLen=%d", _callId, _accessHash, (int)_receivedSignalingPackets, (int)data.length);
         [runtime receiveSignalingData:data];
-    }
-    else
-    {
-        TGLog(@"CALL signaling.session.buffer call=%lld packet=%d dataLen=%d pending=%d", _callId, (int)_receivedSignalingPackets, (int)data.length, pendingCount);
     }
 }
 
@@ -550,7 +515,6 @@ const NSTimeInterval TGCallPacketTimeout = 10;
         [_pendingSignalingData removeAllObjects];
     }
     
-    TGLog(@"CALL signaling.session.flush call=%lld count=%d", _callId, (int)pending.count);
     for (NSData *data in pending)
         [runtime receiveSignalingData:data];
 }
@@ -600,7 +564,6 @@ static void controllerStateCallback(tgvoip::VoIPController *controller, int stat
 
 static void loggingFunction(NSString *string)
 {
-    TGLog(@"%@", string);
 }
 
 - (void)_controllerInit
@@ -826,27 +789,10 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         bool useWebRtc =
         hasWebRtc && hasTgCallsProtocol;
         
-        bool useLegacyLibtgvoip =
-        !useWebRtc && hasLegacyRelay;
         
-        TGLog(@"CALL transmission.protocol call=%lld min=%d max=%d versions=%@",
-              state.callId,
-              state.connection.minLayer,
-              state.connection.maxLayer,
-              state.connection.libraryVersions);
         
-        TGLog(@"CALL transmission.select call=%lld legacy=%d webrtc=%d versions=%@ engine=%@",
-              state.callId,
-              hasLegacyRelay ? 1 : 0,
-              hasWebRtc ? 1 : 0,
-              state.connection.libraryVersions,
-              useWebRtc ? @"webrtc" : (useLegacyLibtgvoip ? @"libtgvoip" : @"none"));
         
-        if (useWebRtc)
-        {
-            TGLog(@"CALL webrtc.skipTone connecting");
-        }
-        else
+        if (!useWebRtc)
         {
             [self playTone:TGCallToneConnecting];
         }
@@ -861,19 +807,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
          {
              if (useWebRtc)
              {
-                 TGLog(@"CALL webrtc.only.prepare call=%lld endpoints=%d customParameters=%@", state.callId, (int)state.connection.webrtcConnections.count, state.connection.customParameters);
-                 for (TGCallWebrtcConnectionDescription *connection in state.connection.webrtcConnections) {
-                     TGLog(@"CALL webrtc.endpoint id=%lld flags=%d turn=%d stun=%d ip=%@ ipv6=%@ port=%d user=%@ passLen=%d",
-                           connection.identifier,
-                           connection.flags,
-                           connection.turn ? 1 : 0,
-                           connection.stun ? 1 : 0,
-                           connection.ipv4,
-                           connection.ipv6,
-                           connection.port,
-                           connection.username,
-                           (int)connection.password.length);
-                 }
                  
                  NSString *logPath = [[self callLogsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%lld-%lld.log", state.callId, state.accessHash]];
                  NSString *statsLogPath = [logPath stringByAppendingString:@".json"];
@@ -895,7 +828,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      [self _flushPendingSignalingData];
                      [_webrtcRuntime setMuted:_muted];
                      [self startNetworkTypeMonitoring];
-                     TGLog(@"CALL webrtc.runtime.active call=%lld legacyControllerSkipped=1", state.callId);
                      if (self.onStartedConnecting != nil)
                          self.onStartedConnecting();
                      return;
@@ -918,23 +850,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                  for (TGCallConnectionDescription *connection in state.connection.alternativeConnections) {
                      if (connection != nil)
                          [connections addObject:connection];
-                 }
-                 TGLog(@"CALL voip.start.prepare call=%lld default=%@ alt=%d total=%d webrtc=%d customParametersLen=%d", state.callId, state.connection.defaultConnection, (int)state.connection.alternativeConnections.count, (int)connections.count, (int)state.connection.webrtcConnections.count, (int)state.connection.customParameters.length);
-                 if (useWebRtc)
-                 {
-                     TGLog(@"CALL webrtc.engine.prepare call=%lld endpoints=%d customParameters=%@", state.callId, (int)state.connection.webrtcConnections.count, state.connection.customParameters);
-                     for (TGCallWebrtcConnectionDescription *connection in state.connection.webrtcConnections) {
-                         TGLog(@"CALL webrtc.endpoint id=%lld flags=%d turn=%d stun=%d ip=%@ ipv6=%@ port=%d user=%@ passLen=%d",
-                               connection.identifier,
-                               connection.flags,
-                               connection.turn ? 1 : 0,
-                               connection.stun ? 1 : 0,
-                               connection.ipv4,
-                               connection.ipv6,
-                               connection.port,
-                               connection.username,
-                               (int)connection.password.length);
-                     }
                  }
                  
                  NSString *logPath = [[self callLogsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%lld-%lld.log", state.callId, state.accessHash]];
@@ -960,7 +875,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                          [self _flushPendingSignalingData];
                          [_webrtcRuntime setMuted:_muted];
                          [self startNetworkTypeMonitoring];
-                         TGLog(@"CALL webrtc.runtime.active call=%lld legacySkipped=1", state.callId);
                          didStartTransmission = true;
                          return nil;
                      }
@@ -977,10 +891,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      
                      if (connection.peerTag.length < 16)
                      {
-                         TGLog(@"CALL voip.endpoint.skip call=%lld id=%lld reason=peerTag peerTagLen=%d",
-                               state.callId,
-                               connection.identifier,
-                               (int)connection.peerTag.length);
                          continue;
                      }
                      
@@ -988,18 +898,9 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      {
                          if (connection.ipv4.length == 0)
                          {
-                             TGLog(@"CALL voip.endpoint.skip call=%lld id=%lld reason=noIPv4 ios5=1",
-                                   state.callId,
-                                   connection.identifier);
                              continue;
                          }
                          
-                         TGLog(@"CALL voip.endpoint.ios5.before call=%lld id=%lld ip=%@ port=%d peerTagLen=%d",
-                               state.callId,
-                               connection.identifier,
-                               connection.ipv4,
-                               connection.port,
-                               (int)connection.peerTag.length);
                          
                          struct in_addr addrIpV4;
                          
@@ -1012,17 +913,11 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                              continue;
                          }
                          
-                         TGLog(@"CALL voip.endpoint.ios5.ipv4.valid call=%lld id=%lld",
-                               state.callId,
-                               connection.identifier);
                          
                          tgvoip::IPv4Address address(
                                                      std::string(connection.ipv4.UTF8String)
                                                      );
                          
-                         TGLog(@"CALL voip.endpoint.ios5.ipv4.created call=%lld id=%lld",
-                               state.callId,
-                               connection.identifier);
                          
                          tgvoip::IPv6Address addressv6;
                          
@@ -1032,9 +927,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                          [connection.peerTag getBytes:peerTag
                                                 range:NSMakeRange(0, 16)];
                          
-                         TGLog(@"CALL voip.endpoint.ios5.push.before call=%lld id=%lld",
-                               state.callId,
-                               connection.identifier);
                          
                          tgvoip::Endpoint endpoint(
                                                    connection.identifier,
@@ -1047,10 +939,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                          
                          endpoints.push_back(endpoint);
                          
-                         TGLog(@"CALL voip.endpoint.ios5.push.after call=%lld id=%lld total=%d",
-                               state.callId,
-                               connection.identifier,
-                               (int)endpoints.size());
                          
                          continue;
                      }
@@ -1058,9 +946,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      if (connection.ipv4.length == 0 &&
                          connection.ipv6.length == 0)
                      {
-                         TGLog(@"CALL voip.endpoint.skip call=%lld id=%lld reason=noAddress",
-                               state.callId,
-                               connection.identifier);
                          continue;
                      }
                      
@@ -1121,15 +1006,9 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                                          );
                  }
                  
-                 TGLog(@"CALL voip.start.endpoints call=%lld count=%d",
-                       state.callId,
-                       (int)endpoints.size());
                  
                  if (endpoints.empty())
                  {
-                     TGLog(@"CALL voip.start.block no endpoints call=%lld connection=%@",
-                           state.callId,
-                           state.connection);
                      
                      [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
                      return nil;
@@ -1181,7 +1060,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      default:
                          break;
                  }
-                 TGLog(@"CALL voip.allowP2P call=%lld peer=%lld mode=%d allow=%d forced=0", state.callId, state.peerId, p2pMode, allowP2P ? 1 : 0);
                  
                  controller.controller->SetConfig(config);
                  
@@ -1190,19 +1068,9 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                  ? state.connection.maxLayer
                  : TGCallLegacyMaxLayer;
                  
-                 TGLog(@"CALL voip.engine.start call=%lld endpoints=%d keyLen=%d outgoing=%d minLayer=%d maxLayer=%d",
-                       state.callId,
-                       (int)endpoints.size(),
-                       (int)state.connection.key.length,
-                       _outgoing ? 1 : 0,
-                       state.connection.minLayer,
-                       connectionMaxLayer);
                  
                  if (state.connection.key.length != 256)
                  {
-                     TGLog(@"CALL voip.engine.badKey call=%lld keyLen=%d",
-                           state.callId,
-                           (int)state.connection.key.length);
                      [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
                      return nil;
                  }
@@ -1226,7 +1094,6 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                  
                  didStartTransmission = true;
                  
-                 TGLog(@"CALL voip.engine.started call=%lld", state.callId);
                  
                  return nil;
              }];
@@ -1568,7 +1435,9 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
 {
     if ([self _isInBackground])
     {
-        UILocalNotification *notification = [[UILocalNotification alloc] init];
+        id notification = OGPlatformCreateLocalNotification();
+        if (notification == nil)
+            return;
         
         TGUser *peer = [TGDatabaseInstance() loadUser:(int)peerId];
         NSString *peerName = peer.displayName;
@@ -1603,16 +1472,15 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         }
         
         if (soundId > 0)
-            notification.soundName = [[NSString alloc] initWithFormat:@"%d.m4a", soundId];
+            OGPlatformSetLocalNotificationSoundName(notification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
         
 #ifdef INTERNAL_RELEASE
         text = [@"[L] " stringByAppendingString:text];
 #endif
-        notification.alertBody = text;
-        notification.userInfo = @{@"cid": @(peerId)};
-        
+        OGPlatformSetLocalNotificationAlertBody(notification, text);
+        OGPlatformSetLocalNotificationUserInfo(notification, @{@"cid": @(peerId)});
         if (text != nil)
-            [[UIApplication sharedApplication] presentLocalNotificationNow:notification];
+            OGPlatformPresentLocalNotificationNow([UIApplication sharedApplication], notification);
         
         _notification = notification;
     }
@@ -1623,7 +1491,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
     if (_notification == nil)
         return;
     
-    [[UIApplication sharedApplication] cancelLocalNotification:_notification];
+    OGPlatformCancelLocalNotification([UIApplication sharedApplication], _notification);
     _notification = nil;
 }
 
@@ -1738,8 +1606,12 @@ static id<SDisposable> audioSession;
 {
     if (iosMajorVersion() < 7)
         return true;
-    
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     return [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusAuthorized;
+#else
+    return true;
+#endif
 }
 
 - (void)toggleMute
@@ -1920,10 +1792,7 @@ static id<SDisposable> audioSession;
         TGUser *resolvedPeer = [TGDatabaseInstance() loadUser:(int32_t)state.peerId];
         if (resolvedPeer != nil)
         {
-            bool logResolved = (_peer == nil || _peer.displayName.length == 0) && resolvedPeer.displayName.length != 0;
             _peer = resolvedPeer;
-            if (logResolved)
-                TGLog(@"CALL session.peer.resolved uid=%d name=%@", resolvedPeer.uid, resolvedPeer.displayName);
         }
     }
     
@@ -2085,10 +1954,7 @@ static id<SDisposable> audioSession;
                     TGUser *resolvedPeer = [TGDatabaseInstance() loadUser:(int32_t)stateData.peerId];
                     if (resolvedPeer != nil)
                     {
-                        bool logResolved = (strongSelf->_peer == nil || strongSelf->_peer.displayName.length == 0) && resolvedPeer.displayName.length != 0;
                         strongSelf->_peer = resolvedPeer;
-                        if (logResolved)
-                            TGLog(@"CALL session.peer.refresh uid=%d name=%@", resolvedPeer.uid, resolvedPeer.displayName);
                     }
                 }
                 NSInteger signalBars = [values[1] integerValue];
@@ -2113,11 +1979,15 @@ static id<SDisposable> audioSession;
                 TGCallState currentState = stateData.state;
                 
                 OSSpinLockLock(&_speakerLock);
-                AVAudioSession *audioSession = [AVAudioSession sharedInstance];
-                
                 NSArray *inputs = nil;
                 NSArray *outputs = nil;
-                
+                NSMutableArray *audioRoutes = [[NSMutableArray alloc] init];
+                TGAudioRoute *activeRoute = nil;
+                bool hasHeadphones = false;
+                bool legacySpeaker = false;
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+                AVAudioSession *audioSession = [AVAudioSession sharedInstance];
                 if (iosMajorVersion() >= 7)
                 {
                     inputs = audioSession.availableInputs;
@@ -2127,13 +1997,7 @@ static id<SDisposable> audioSession;
                 {
                     outputs = audioSession.currentRoute.outputs;
                 }
-                
-                NSMutableArray *audioRoutes = [[NSMutableArray alloc] init];
-                TGAudioRoute *activeRoute = nil;
-                bool hasHeadphones = false;
-                bool legacySpeaker = false;
-                
-                if (iosMajorVersion() < 6)
+                else
                 {
                     CFDictionaryRef routeDescription = NULL;
                     UInt32 routeDescriptionSize = sizeof(routeDescription);
@@ -2159,8 +2023,24 @@ static id<SDisposable> audioSession;
                         CFRelease(routeDescription);
                     }
                 }
-                
+#else
+                CFStringRef routeString = NULL;
+                UInt32 routeStringSize = sizeof(routeString);
+                if (AudioSessionGetProperty(kAudioSessionProperty_AudioRoute, &routeStringSize, &routeString) == noErr && routeString != NULL)
+                {
+                    if (CFStringFind(routeString, CFSTR("Speaker"), 0).location != kCFNotFound)
+                        legacySpeaker = true;
+                    if (CFStringFind(routeString, CFSTR("Headphone"), 0).location != kCFNotFound ||
+                        CFStringFind(routeString, CFSTR("Headset"), 0).location != kCFNotFound ||
+                        CFStringFind(routeString, CFSTR("Bluetooth"), 0).location != kCFNotFound)
+                        hasHeadphones = true;
+                }
+#endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000
+                bool speaker = legacySpeaker;
+#else
                 bool speaker = iosMajorVersion() < 6 ? legacySpeaker : strongSelf->_speaker;
+#endif
                 NSNumber *targetSpeaker = strongSelf->_targetSpeaker;
                 NSNumber *delayedSpeaker = strongSelf->_delayedSpeaker;
                 if (targetSpeaker != nil)
@@ -2171,6 +2051,7 @@ static id<SDisposable> audioSession;
                 {
                     strongSelf->_delayedSpeaker = nil;
                     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
                     if (iosMajorVersion() >= 6)
                     {
                         speaker = false;
@@ -2188,12 +2069,14 @@ static id<SDisposable> audioSession;
                     {
                         speaker = legacySpeaker;
                     }
+#endif
                 }
                 else if (delayedSpeaker != nil)
                 {
                     speaker = delayedSpeaker.boolValue;
                 }
                 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
                 for (AVAudioSessionPortDescription *input in inputs)
                 {
                     if ([input.portType isEqualToString:AVAudioSessionPortBuiltInMic])
@@ -2217,6 +2100,7 @@ static id<SDisposable> audioSession;
                         }
                     }
                 }
+#endif
                 OSSpinLockUnlock(&_speakerLock);
                 
                 TGAudioRoute *builtInRoute = [TGAudioRoute routeForBuiltIn:hasHeadphones];
@@ -2360,17 +2244,3 @@ static id<SDisposable> audioSession;
 @end
 
 
-@implementation TGCallSessionData
-
-- (instancetype)initWithStateData:(TGCallStateData *)stateData audioContext:(TGCallAudioContext *)audioContext
-{
-    self = [super init];
-    if (self != nil)
-    {
-        _stateData = stateData;
-        _audioContext = audioContext;
-    }
-    return self;
-}
-
-@end

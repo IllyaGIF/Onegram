@@ -1,8 +1,5 @@
 #import "TGStickersCollectionCell.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -55,7 +52,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         _altLabel.font = [UIFont systemFontOfSize:32.0f];
         [_wrapperView addSubview:_altLabel];
         
-        _wrapperView.layer.rasterizationScale = TGScreenScaling();
+        TGSetLayerRasterizationScale(_wrapperView.layer, TGScreenScaling());
     }
     return self;
 }
@@ -120,7 +117,6 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         {
             if ((int64_t)[nDocumentId longLongValue] == documentMedia.documentId)
             {
-                //[stickerAssociations addObject:association.key];
                 
                 if (alt.length == 0)
                 {
@@ -132,8 +128,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     }
     _associations = stickerAssociations;
     
-    //NSInteger altIndex = MAX(0, _altTick) % _associations.count;
-    NSString *currentAlt = alt; //_associations[altIndex];
+    NSString *currentAlt = alt;
     if (currentAlt.length != 0 && [currentAlt characterAtIndex:0] == 0x2639)
         currentAlt = @"\u2639\ufe0f";
     
@@ -153,7 +148,6 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     _altLabel.text = !mask ? currentAlt : @"";
     _altLabel.transform = CGAffineTransformIdentity;
     [_altLabel sizeToFit];
-    IOS6_NOOP_LOG(@"STICKER cell.set doc=%lld mime=%@ alt=%@ fallback=%d", (long long)documentMedia.documentId, documentMedia.mimeType, currentAlt, _showAltFallback ? 1 : 0);
 }
 
 - (void)setHighlighted:(bool)highlighted animated:(bool)__unused animated
@@ -177,7 +171,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
 
 - (void)performTransitionIn
 {
-    _wrapperView.layer.shouldRasterize = false;
+    TGSetLayerShouldRasterize(_wrapperView.layer, false);
     
     CGRect targetAltFrame = _altLabel.frame;
     _altLabel.frame = CGRectOffset(_altLabel.frame, 0, 20);
@@ -187,7 +181,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         _altLabel.frame = targetAltFrame;
     } completion:^(__unused BOOL finished)
     {
-        _wrapperView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_wrapperView.layer, true);
     }];
 }
 

@@ -6,7 +6,6 @@
 @class TLReplyMarkup;
 @class TLUpdates;
 
-//messages.sendMedia flags:# peer:InputPeer reply_to_msg_id:flags.0?int media:InputMedia random_id:long reply_markup:flags.2?ReplyMarkup = Updates;
 
 @interface TLRPCmessages_sendMedia_manual : TLMetaRpc
 

@@ -124,13 +124,6 @@
             [_context.companionHandle requestAction:@"openMessageGroup" options:@{@"group": _message.group}];
         }
         
-        /*CGPoint point = [recognizer locationInView:[_contentModel boundView]];
-        NSString *linkCandidate = [_textModel linkAtPoint:CGPointMake(point.x - _textModel.frame.origin.x, point.y - _textModel.frame.origin.y) regionData:NULL];
-        
-        if (recognizer.longTapped || recognizer.doubleTapped)
-            [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid)}];
-        else if (linkCandidate != nil)
-            [_context.companionHandle requestAction:@"openLinkRequested" options:@{@"url": linkCandidate}];*/
     }
 }
 

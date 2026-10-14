@@ -27,4 +27,10 @@
     }
 }
 
+- (void)viewWillLayoutSubviews
+{
+    if (iosMajorVersion() >= 5)
+        [super viewWillLayoutSubviews];
+}
+
 @end

@@ -11,7 +11,6 @@
 
 @interface TGReplyHeaderLocationModel ()
 {
-    //TGSignalImageViewModel *_imageModel;
 }
 
 @end
@@ -23,30 +22,9 @@
     self = [super initWithPeer:peer incoming:incoming text:period > 0 ? TGLocalized(@"Message.LiveLocation") : TGLocalized(@"Message.Location") truncateTextInTheMiddle:false textColor:incoming ? presentation.pallete.chatIncomingSubtextColor : presentation.pallete.chatOutgoingSubtextColor leftInset:0.0f system:system presentation:presentation];
     if (self != nil)
     {
-        /*_imageModel = [[TGSignalImageViewModel alloc] init];
-        [_imageModel setSignalGenerator:^SSignal *
-        {
-            return [TGSharedLocationSignals squareLocationThumbnailForLatitude:latitude longitude:longitude ofSize:CGSizeMake(35.0f, 35.0f) threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool] memoryCache:[TGSharedMediaUtils sharedMediaMemoryImageCache] persistentCache:[TGSharedMediaUtils sharedMediaTemporaryPersistentCache] pixelProcessingBlock:[TGSharedMediaSignals pixelProcessingBlockForRoundCornersOfRadius:[TGReplyHeaderModel thumbnailCornerRadius]]];
-        } identifier:[[NSString alloc] initWithFormat:@"reply-location-%f-%f", latitude, longitude]];
-        _imageModel.skipDrawInContext = true;
-        [self addSubmodel:_imageModel];*/
     }
     return self;
 }
 
-/*- (void)bindSpecialViewsToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage atItemPosition:(CGPoint)itemPosition
-{
-    [super bindSpecialViewsToContainer:container viewStorage:viewStorage atItemPosition:itemPosition];
-    
-    _imageModel.parentOffset = itemPosition;
-    [_imageModel bindViewToContainer:container viewStorage:viewStorage];
-}
-
-- (void)layoutForContainerSize:(CGSize)containerSize
-{
-    [super layoutForContainerSize:containerSize];
-    
-    _imageModel.frame = CGRectMake(8.0f, 7.0f, 35.0f, 35.0f);
-}*/
 
 @end

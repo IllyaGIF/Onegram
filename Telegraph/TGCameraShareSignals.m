@@ -1,4 +1,5 @@
 #import "TGCameraShareSignals.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -264,8 +265,20 @@
             
             NSArray *messages = [self _setupMessages:preparedMessage peerIds:peerIds];
             
+#if defined(ONEGRAM_ARMV6)
+            NSURL *sourceURL = preparedMessage.assetURL;
+            NSTimeInterval sourceDuration = preparedMessage.duration;
+            CGSize sourceDimensions = preparedMessage.dimensions;
+            OGPlatformReadVideoMetadataAtURL(sourceURL, &sourceDuration, &sourceDimensions);
+            NSDictionary *fileAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:[sourceURL path] error:nil];
+            UIImage *coverImage = previewImage == nil ? OGPlatformVideoThumbnailAtURL(sourceURL, 0.0, CGSizeMake(800.0f, 800.0f)) : previewImage;
+            TGMediaVideoConversionResult *legacyResult = [TGMediaVideoConversionResult resultWithFileURL:sourceURL fileSize:[[fileAttributes objectForKey:NSFileSize] unsignedIntegerValue] duration:sourceDuration dimensions:sourceDimensions coverImage:coverImage liveUploadData:nil];
+            SSignal *conversionSignal = [SSignal single:legacyResult];
+#else
             AVURLAsset *avAsset = [[AVURLAsset alloc] initWithURL:preparedMessage.assetURL options:nil];
-            return [[TGMediaVideoConverter convertAVAsset:avAsset adjustments:adjustments watcher:[[TGMediaLiveUploadWatcher alloc] init]] mapToSignal:^SSignal *(id value) {
+            SSignal *conversionSignal = [TGMediaVideoConverter convertAVAsset:avAsset adjustments:adjustments watcher:[[TGMediaLiveUploadWatcher alloc] init]];
+#endif
+            return [conversionSignal mapToSignal:^SSignal *(id value) {
                 if ([value isKindOfClass:[TGMediaVideoConversionResult class]])
                 {
                     TGMediaVideoConversionResult *result = (TGMediaVideoConversionResult *)value;

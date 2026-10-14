@@ -41,6 +41,6 @@ void InitReplacements();
 const std::vector<const Replacement*> *GetReplacements(utf16char first);
 utf16string GetReplacementEmoji(utf16string replacement);
 
-} // namespace internal
-} // namespace Emoji
-} // namespace Ui
+}
+}
+}

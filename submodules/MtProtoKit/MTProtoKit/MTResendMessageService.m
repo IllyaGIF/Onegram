@@ -67,9 +67,6 @@
                 _currentRequestMessageId = ((MTPreparedMessage *)messageInternalIdToPreparedMessage[outgoingMessage.internalId]).messageId;
                 _currentRequestTransactionId = messageInternalIdToTransactionId[outgoingMessage.internalId];
                 
-                if (MTLogEnabled()) {
-                    MTLog(@"[MTResendMessageService#%p request %" PRId64 " for %" PRId64 "]", self, _currentRequestMessageId, _messageId);
-                }
             }
         }];
     }

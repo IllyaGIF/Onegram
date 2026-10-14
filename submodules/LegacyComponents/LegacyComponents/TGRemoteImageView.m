@@ -7,10 +7,26 @@
 #import "SGraphObjectNode.h"
 
 #import "TGImageManager.h"
+#import "LegacyComponentsInternal.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 
 static TGCache *sharedCache = nil;
 
+static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
+{
+    if (url.length == 0)
+        return nil;
+    return [@"onegram-stripped:" stringByAppendingString:url];
+}
+
 @interface TGRemoteImageView ()
+{
+    NSUInteger _loadGeneration;
+    int _peerPhotoRetryCount;
+    NSString *_peerPhotoRetryUrl;
+    UIImage *_peerPhotoRetryPlaceholder;
+}
 
 @property (atomic, strong) NSString *path;
 @property (atomic, strong) NSString *currentCacheUrl;
@@ -20,6 +36,32 @@ static TGCache *sharedCache = nil;
 @end
 
 @implementation TGRemoteImageView
+
++ (NSString *)cacheKeyForUrl:(NSString *)url filter:(NSString *)filter
+{
+    if (url.length == 0)
+        return nil;
+    NSString *normalizedUrl = url;
+    NSArray *components = [url componentsSeparatedByString:@"_"];
+    if (components.count >= 5)
+    {
+        BOOL legacyLocation = YES;
+        for (NSUInteger index = 0; index < 4; index++)
+        {
+            NSString *component = components[index];
+            NSScanner *scanner = [NSScanner scannerWithString:component];
+            long long value = 0;
+            if (![scanner scanLongLong:&value] || !scanner.isAtEnd)
+            {
+                legacyLocation = NO;
+                break;
+            }
+        }
+        if (legacyLocation)
+            normalizedUrl = [[components subarrayWithRange:NSMakeRange(0, 4)] componentsJoinedByString:@"_"];
+    }
+    return filter.length == 0 ? normalizedUrl : [NSString stringWithFormat:@"{filter:%@}%@", filter, normalizedUrl];
+}
 
 + (NSMutableDictionary *)imageProcessors
 {
@@ -91,6 +133,15 @@ static TGCache *sharedCache = nil;
     return sharedCache;
 }
 
++ (void)cacheStrippedPlaceholderImage:(UIImage *)image forUrl:(NSString *)url
+{
+    if (image == nil || url.length == 0)
+        return;
+    NSString *cacheUrl = TGStrippedPlaceholderCacheUrl(url);
+    if (cacheUrl != nil)
+        [sharedCache cacheImage:image withData:nil url:cacheUrl availability:TGCacheMemory];
+}
+
 #pragma mark - Implementation
 
 - (id)initWithFrame:(CGRect)frame
@@ -120,6 +171,9 @@ static TGCache *sharedCache = nil;
 
 - (void)setFadeTransition:(bool)fadeTransition
 {
+    if (!OGPlatformTransientAnimationsEnabled())
+        fadeTransition = false;
+
     if (fadeTransition != _fadeTransition)
     {
         if (fadeTransition && _placeholderView == nil)
@@ -196,7 +250,7 @@ static TGCache *sharedCache = nil;
     UIImage *currentImage = [self currentImage];
     if (currentImage != nil)
     {
-        NSString *key = _currentFilter == nil ? _currentUrl : [[NSString alloc] initWithFormat:@"{filter:%@}%@", _currentFilter, _currentUrl];
+        NSString *key = [TGRemoteImageView cacheKeyForUrl:_currentUrl filter:_currentFilter];
         
         if (key != nil)
             [dict setObject:currentImage forKey:key];
@@ -226,25 +280,62 @@ static TGCache *sharedCache = nil;
 - (void)loadImage:(NSString *)url filter:(NSString *)filter placeholder:(UIImage *)placeholder forceFade:(bool)forceFade
 {
     [self cancelLoading];
+
+    if (!TGStringCompare(url, _peerPhotoRetryUrl))
+    {
+        _peerPhotoRetryCount = 0;
+        _peerPhotoRetryUrl = [url hasPrefix:@"peerphoto:"] ? url : nil;
+    }
+    _peerPhotoRetryPlaceholder = _peerPhotoRetryUrl != nil ? placeholder : nil;
     
     self.currentUrl = url;
     self.currentFilter = filter;
     
     TGCache *cache = _cache != nil ? _cache : [TGRemoteImageView sharedCache];
     
-    NSString *trimmedUrl = url;
-    NSArray *components = [trimmedUrl componentsSeparatedByString:@"_"];
-    if (components.count >= 5)
-        trimmedUrl = [NSString stringWithFormat:@"%@_%@_%@_%@", components[0], components[1], components[2], components[3]];
-    
-    NSString *cacheUrl = filter == nil ? trimmedUrl : [[NSString alloc] initWithFormat:@"{filter:%@}%@", filter, trimmedUrl];
+    NSString *trimmedUrl = [TGRemoteImageView cacheKeyForUrl:url filter:nil];
+    NSString *cacheUrl = [TGRemoteImageView cacheKeyForUrl:url filter:filter];
     self.currentCacheUrl = cacheUrl;
     UIImage *image = [cache cachedImage:cacheUrl availability:TGCacheMemory];
+
+#if defined(ONEGRAM_ARMV6)
+    bool onegramPeerPhoto = [url hasPrefix:@"peerphoto:"];
+    if (image == nil && onegramPeerPhoto)
+        image = [cache cachedThumbnail:cacheUrl];
+
+    if (image == nil && onegramPeerPhoto)
+    {
+        NSString *strippedCacheUrl = TGStrippedPlaceholderCacheUrl(url);
+        UIImage *strippedPlaceholder = strippedCacheUrl == nil ? nil : [cache cachedImage:strippedCacheUrl availability:TGCacheMemory];
+        if (strippedPlaceholder != nil && filter == nil)
+            placeholder = strippedPlaceholder;
+    }
+
+    if (image == nil && filter != nil && !onegramPeerPhoto)
+    {
+        UIImage *sourceImage = [cache cachedImage:trimmedUrl availability:TGCacheMemory];
+        if (sourceImage != nil)
+        {
+            TGImageProcessor processor = [TGRemoteImageView imageProcessorForName:filter];
+            image = processor == nil ? sourceImage : processor(sourceImage);
+            if (image != nil)
+                [cache cacheImage:image withData:nil url:cacheUrl availability:TGCacheMemory];
+        }
+    }
+#endif
     
-    if (image == nil)
+    if (image == nil
+#if defined(ONEGRAM_ARMV6)
+        && !onegramPeerPhoto
+#endif
+        )
         image = [[TGImageManager instance] loadImageSyncWithUri:url canWait:false decode:true acceptPartialData:false asyncTaskId:NULL progress:nil partialCompletion:nil completion:nil];
     
-    if (image == nil && (_contentHints & TGRemoteImageContentHintLoadFromDiskSynchronously))
+    if (image == nil && (_contentHints & TGRemoteImageContentHintLoadFromDiskSynchronously)
+#if defined(ONEGRAM_ARMV6)
+        && !onegramPeerPhoto
+#endif
+        )
     {
         UIImage *managerImage = [[TGImageManager instance] loadImageSyncWithUri:url canWait:true decode:filter == nil acceptPartialData:false asyncTaskId:NULL progress:nil partialCompletion:nil completion:nil];
         if (managerImage == nil)
@@ -270,7 +361,7 @@ static TGCache *sharedCache = nil;
             [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/checkImageStored/(%lu)", (unsigned long)[url hash]] options:[[NSDictionary alloc] initWithObjectsAndKeys:url, @"url", nil] watcher:self];
         }
         
-        if (forceFade)
+        if (forceFade && OGPlatformTransientAnimationsEnabled())
         {
             self.image = image;
             
@@ -337,9 +428,76 @@ static TGCache *sharedCache = nil;
         NSMutableDictionary *options = [[NSMutableDictionary alloc] initWithObjectsAndKeys:[NSNumber numberWithInt:_cancelTimeout], @"cancelTimeout", cache, @"cache", [NSNumber numberWithBool:_useCache], @"useCache", [NSNumber numberWithBool:_allowThumbnailCache], @"allowThumbnailCache", [[NSNumber alloc] initWithInt:_contentHints], @"contentHints", nil];
         if (_userProperties != nil)
             [options setObject:_userProperties forKey:@"userProperties"];
+#if defined(ONEGRAM_ARMV6)
+        NSMutableDictionary *priorityProperties = _userProperties != nil ? [NSMutableDictionary dictionaryWithDictionary:_userProperties] : [NSMutableDictionary dictionary];
+        if (onegramPeerPhoto)
+        {
+            [options setObject:@true forKey:@"allowThumbnailCache"];
+        }
+        if ([priorityProperties objectForKey:@"onegramImagePriority"] == nil)
+            [priorityProperties setObject:@2 forKey:@"onegramImagePriority"];
+        if ([[priorityProperties objectForKey:@"onegramImagePriority"] integerValue] >= 2)
+            [priorityProperties setObject:@true forKey:@"changePriority"];
+        [options setObject:priorityProperties forKey:@"userProperties"];
+#endif
         if (_contentHints & TGRemoteImageContentHintBlurRemote)
             options[@"blurIfRemote"] = @(true);
-        [ActionStageInstance() requestActor:self.path options:options watcher:self];
+        int requestFlags = [[[options objectForKey:@"userProperties"] objectForKey:@"changePriority"] boolValue] ? TGActorRequestChangePriority : 0;
+        if ([cache isRenderedAvatarKey:cacheUrl])
+        {
+            NSString *actorPath = self.path;
+            NSUInteger generation = _loadGeneration;
+            CFAbsoluteTime requestTime = CFAbsoluteTimeGetCurrent();
+            __weak TGRemoteImageView *weakSelf = self;
+            [cache loadRenderedAvatar:cacheUrl completion:^(UIImage *renderedImage)
+            {
+                OGPlatformDispatchOnMainThread(^
+                {
+                    __strong TGRemoteImageView *strongSelf = weakSelf;
+                    if (strongSelf == nil || strongSelf->_loadGeneration != generation || !TGStringCompare(strongSelf.path, actorPath))
+                        return;
+                    if (renderedImage != nil)
+                    {
+                        [strongSelf applyLoadedImage:renderedImage animated:CFAbsoluteTimeGetCurrent() - requestTime > 0.1];
+                        TGImageProgressHandler progressHandler = strongSelf.progressHandler;
+                        if (progressHandler)
+                            progressHandler(strongSelf, 1.0f);
+                        strongSelf.path = nil;
+                    }
+                    else
+                        [ActionStageInstance() requestActor:actorPath options:options flags:requestFlags watcher:strongSelf];
+                });
+            }];
+        }
+        else
+            [ActionStageInstance() requestActor:self.path options:options flags:requestFlags watcher:self];
+    }
+}
+
+- (void)applyLoadedImage:(UIImage *)image animated:(bool)animated
+{
+    self.image = image;
+    
+    if (_placeholderView != nil)
+    {
+        if (!animated || _fadeTransitionDuration < FLT_EPSILON)
+        {
+            [_placeholderView.layer removeAllAnimations];
+            _placeholderView.alpha = 0.0f;
+            _placeholderView.hidden = true;
+        }
+        else
+        {
+            UIView *placeholderView = _placeholderView;
+            [UIView animateWithDuration:_fadeTransitionDuration animations:^
+            {
+                placeholderView.alpha = 0.0f;
+            } completion:^(BOOL finished)
+            {
+                if (finished)
+                    placeholderView.hidden = true;
+            }];
+        }
     }
 }
 
@@ -351,6 +509,7 @@ static TGCache *sharedCache = nil;
 
 - (void)cancelLoading
 {
+    _loadGeneration++;
     if (self.path != nil)
     {
         ASHandle *actionHandle = _actionHandle;
@@ -374,15 +533,35 @@ static TGCache *sharedCache = nil;
     self.currentFilter = nil;
 }
 
+- (void)schedulePeerPhotoRetryForUrl:(NSString *)url filter:(NSString *)filter
+{
+    if (url.length == 0 || !TGStringCompare(url, _peerPhotoRetryUrl) || _peerPhotoRetryCount >= 3)
+        return;
+
+    _peerPhotoRetryCount++;
+    NSUInteger generation = _loadGeneration;
+    UIImage *placeholder = _peerPhotoRetryPlaceholder;
+    __weak TGRemoteImageView *weakSelf = self;
+    OGPlatformDispatchOnMainThreadAfter(4.0 * (double)(1 << (_peerPhotoRetryCount - 1)), ^
+    {
+        TGRemoteImageView *strongSelf = weakSelf;
+        if (strongSelf == nil || strongSelf->_loadGeneration != generation || strongSelf.currentUrl != nil || strongSelf.window == nil)
+            return;
+        [strongSelf loadImage:url filter:filter placeholder:placeholder];
+    });
+}
+
 + (UIImage *)imageFromCache:(NSString *)url filter:(NSString *)filter cache:(TGCache *)cache
 {
     TGCache *usingCache = cache != nil ? cache : [TGRemoteImageView sharedCache];
     
     UIImage *image = nil;
-    if (filter == nil)
-        image = [usingCache cachedImage:url availability:TGCacheMemory];
-    else
-        image = [usingCache cachedImage:[[NSString alloc] initWithFormat:@"{filter:%@}%@", filter, url] availability:TGCacheMemory];
+    NSString *cacheUrl = [TGRemoteImageView cacheKeyForUrl:url filter:filter];
+    image = [usingCache cachedImage:cacheUrl availability:TGCacheMemory];
+#if defined(ONEGRAM_ARMV6)
+    if (image == nil && [url hasPrefix:@"peerphoto:"])
+        image = [usingCache cachedThumbnail:cacheUrl];
+#endif
     
     return image;
 }
@@ -392,10 +571,12 @@ static TGCache *sharedCache = nil;
     TGCache *usingCache = cache != nil ? cache : [TGRemoteImageView sharedCache];
     
     UIImage *image = nil;
-    if (filter == nil)
-        image = [usingCache cachedImage:url availability:TGCacheMemory];
-    else
-        image = [usingCache cachedImage:[[NSString alloc] initWithFormat:@"{filter:%@}%@", filter, url] availability:TGCacheMemory];
+    NSString *cacheUrl = [TGRemoteImageView cacheKeyForUrl:url filter:filter];
+    image = [usingCache cachedImage:cacheUrl availability:TGCacheMemory];
+#if defined(ONEGRAM_ARMV6)
+    if (image == nil && [url hasPrefix:@"peerphoto:"])
+        image = [usingCache cachedThumbnail:cacheUrl];
+#endif
     
     if (image == nil)
     {
@@ -405,7 +586,12 @@ static TGCache *sharedCache = nil;
         else
             path = [NSString stringWithFormat:@"/img/(%@)", url];
         
-        NSDictionary *options = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:0], @"cancelTimeout", usingCache, @"cache", [NSNumber numberWithBool:allowThumbnailCache], @"forceMemoryCache", @(TG_CACHE_INPLACE), @"allowThumbnailCache", @(blurIfRemote), @"blurIfRemote", nil];
+        NSMutableDictionary *options = [NSMutableDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:0], @"cancelTimeout", usingCache, @"cache", [NSNumber numberWithBool:allowThumbnailCache], @"forceMemoryCache", @(TG_CACHE_INPLACE), @"allowThumbnailCache", @(blurIfRemote), @"blurIfRemote", nil];
+#if defined(ONEGRAM_ARMV6)
+        [options setObject:@{ @"onegramImagePriority": @2 } forKey:@"userProperties"];
+        if ([url hasPrefix:@"peerphoto:"])
+            [options setObject:@true forKey:@"allowThumbnailCache"];
+#endif
         [ActionStageInstance() requestActor:path options:options watcher:watcher];
         
         return path;
@@ -418,7 +604,7 @@ static TGCache *sharedCache = nil;
 {
     if ([messageType isEqualToString:@"progress"])
     {
-        dispatch_async(dispatch_get_main_queue(), ^
+        OGPlatformDispatchOnMainThread(^
         {
             if (_progressHandler == nil)
                 return;
@@ -434,7 +620,7 @@ static TGCache *sharedCache = nil;
 
 - (void)actorReportedProgress:(NSString *)path progress:(float)progress
 {
-    dispatch_async(dispatch_get_main_queue(), ^
+    OGPlatformDispatchOnMainThread(^
     {
         if (_progressHandler == nil)
             return;
@@ -449,7 +635,7 @@ static TGCache *sharedCache = nil;
 
 - (void)actorCompleted:(int)resultCode path:(NSString *)path result:(id)result
 {
-    dispatch_async(dispatch_get_main_queue(), ^
+    OGPlatformDispatchOnMainThread(^
     {
         if (self.path != nil && [path isEqualToString:self.path])
         {
@@ -471,35 +657,16 @@ static TGCache *sharedCache = nil;
                     }
 #endif
                     
-                    self.image = image;
-                    
-                    if (_placeholderView != nil)
-                    {
-                        //[_placeholderView.layer removeAllAnimations];
-                        if (_fadeTransitionDuration < FLT_EPSILON)
-                        {
-                            _placeholderView.alpha = 0.0f;
-                            _placeholderView.hidden = true;
-                        }
-                        else
-                        {
-                            UIView *placeholderView = _placeholderView;
-                            [UIView animateWithDuration:_fadeTransitionDuration animations:^
-                            {
-                                placeholderView.alpha = 0.0f;
-                            } completion:^(BOOL finished)
-                            {
-                                if (finished)
-                                    placeholderView.hidden = true;
-                            }];
-                        }
-                    }
+                    [self applyLoadedImage:image animated:true];
                 }
             }
             else
             {
+                NSString *failedUrl = self.currentUrl;
+                NSString *failedFilter = self.currentFilter;
                 self.currentUrl = nil;
                 self.currentFilter = nil;
+                [self schedulePeerPhotoRetryForUrl:failedUrl filter:failedFilter];
             }
             
             if (_progressHandler)
@@ -507,10 +674,6 @@ static TGCache *sharedCache = nil;
             
             self.path = nil;
         }
-        /*else if (self.path != nil && ![path isEqualToString:self.path])
-        {
-            TGLegacyLog(@"Received wrong path: <<<%@>>> vs <<<%@>>>", self.path, path);
-        }*/
     });
 }
 

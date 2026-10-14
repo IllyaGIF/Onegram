@@ -174,8 +174,6 @@ static UIPopoverController *TGPassportLegacyCameraPopoverController = nil;
                 
                 [strongParentController dismissViewControllerAnimated:true completion:nil];
                 
-                //if (strongSelf.didDismiss != nil)
-                //    strongSelf.didDismiss();
             };
             
             [strongParentController presentViewController:controller animated:true completion:nil];
@@ -212,8 +210,6 @@ static UIPopoverController *TGPassportLegacyCameraPopoverController = nil;
                         [strongFormSheetWindow dismissAnimated:true];
                 }
                 
-                //if (strongSelf.didDismiss != nil)
-                //    strongSelf.didDismiss();
             };
         };
     }

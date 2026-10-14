@@ -100,6 +100,8 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 @interface MTProto () <MTContextChangeListener, MTTransportDelegate, MTTimeSyncMessageServiceDelegate, MTResendMessageServiceDelegate>
 {
+    MTQueue *_queue;
+    
     NSMutableArray *_messageServices;
     
     MTDatacenterAuthInfo *_authInfo;
@@ -142,6 +144,11 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (instancetype)initWithContext:(MTContext *)context datacenterId:(NSInteger)datacenterId usageCalculationInfo:(MTNetworkUsageCalculationInfo *)usageCalculationInfo
 {
+    return [self initWithContext:context datacenterId:datacenterId usageCalculationInfo:usageCalculationInfo queue:[MTProto managerQueue]];
+}
+
+- (instancetype)initWithContext:(MTContext *)context datacenterId:(NSInteger)datacenterId usageCalculationInfo:(MTNetworkUsageCalculationInfo *)usageCalculationInfo queue:(MTQueue *)queue
+{
 #ifdef DEBUG
     NSAssert(context != nil, @"context should not be nil");
     NSAssert(context.serialization != nil, @"context serialization should not be nil");
@@ -151,6 +158,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
     self = [super init];
     if (self != nil)
     {
+        _queue = queue != nil ? queue : [MTProto managerQueue];
         _context = context;
         _datacenterId = datacenterId;
         _usageCalculationInfo = usageCalculationInfo;
@@ -175,7 +183,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
     _transport = nil;
     id<MTDisposable> probingDisposable = _probingDisposable;
     
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         [transport stop];
         [probingDisposable dispose];
@@ -183,7 +191,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 }
 
 - (void)setUsageCalculationInfo:(MTNetworkUsageCalculationInfo *)usageCalculationInfo {
-    [[MTProto managerQueue] dispatchOnQueue:^{
+    [_queue dispatchOnQueue:^{
         _usageCalculationInfo = usageCalculationInfo;
         [_transport setUsageCalculationInfo:usageCalculationInfo];
     }];
@@ -191,13 +199,10 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)pause
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ((_mtState & MTProtoStatePaused) == 0)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%p pause]", self);
-            }
             
             _mtState |= MTProtoStatePaused;
             
@@ -209,13 +214,10 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)resume
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (_mtState & MTProtoStatePaused)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%p resume]", self);
-            }
             
             [self setMtState:_mtState & (~MTProtoStatePaused)];
             
@@ -227,7 +229,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)stop
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ((_mtState & MTProtoStateStopped) == 0)
         {
@@ -245,7 +247,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)updateConnectionState
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (_transport != nil)
             [_transport updateConnectionState];
@@ -264,11 +266,8 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)setTransport:(MTTransport *)transport
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p changing transport %@#%p to %@#%p]", self, [_transport class] == nil ? @"" : NSStringFromClass([_transport class]), _transport, [transport class] == nil ? @"" : NSStringFromClass([transport class]), transport);
-        }
         
         [self allTransactionsMayHaveFailed];
         
@@ -310,7 +309,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)resetTransport
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (_mtState & MTProtoStateStopped)
             return;
@@ -381,11 +380,8 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)resetSessionInfo
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p resetting session]", self);
-        }
         
         if (_authInfo.authKeyId != 0 && !self.cdn) {
             [_context scheduleSessionCleanupForAuthKeyId:_authInfo.authKeyId sessionInfo:_sessionInfo];
@@ -408,7 +404,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 }
 
 - (void)finalizeSession {
-    [[MTProto managerQueue] dispatchOnQueue:^{
+    [_queue dispatchOnQueue:^{
         if (_authInfo.authKeyId != 0 && !self.cdn) {
             [_context scheduleSessionCleanupForAuthKeyId:_authInfo.authKeyId sessionInfo:_sessionInfo];
         }
@@ -417,7 +413,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)requestTimeResync
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         bool alreadySyncing = false;
         for (NSInteger i = (NSInteger)_messageServices.count - 1; i >= 0; i--)
@@ -432,9 +428,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
         
         if (!alreadySyncing)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%p begin time sync]", self);
-            }
             
             MTTimeSyncMessageService *timeSyncService = [[MTTimeSyncMessageService alloc] init];
             timeSyncService.delegate = self;
@@ -464,9 +457,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             }
         }
         
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p service tasks state: %d, resend: %s]", self, _mtState, haveResendMessagesPending ? "yes" : "no");
-        }
         
         for (id<MTMessageService> messageService in _messageServices)
         {
@@ -485,7 +475,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
     if ([messageService respondsToSelector:@selector(mtProtoWillAddService:)])
         [messageService mtProtoWillAddService:self];
     
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         bool notifyAboutServiceTask = false;
         
@@ -514,9 +504,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
         
         if (notifyAboutServiceTask)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%p service tasks state: %d, resend: %s]", self, _mtState, true ? "yes" : "no");
-            }
             
             for (id<MTMessageService> messageService in _messageServices)
             {
@@ -536,7 +523,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
     if (messageService == nil)
         return;
     
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ([_messageServices containsObject:messageService])
         {
@@ -566,9 +553,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                 bool performingServiceTasks = _mtState & MTProtoStateAwaitingTimeFixAndSalts;
                 if (!performingServiceTasks)
                 {
-                    if (MTLogEnabled()) {
-                        MTLog(@"[MTProto#%p service tasks state: %d, resend: %s]", self, _mtState, false ? "yes" : "no");
-                    }
                     
                     for (id<MTMessageService> messageService in _messageServices)
                     {
@@ -587,12 +571,12 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (MTQueue *)messageServiceQueue
 {
-    return [MTProto managerQueue];
+    return _queue;
 }
 
 - (void)initiateTimeSync
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ((_mtState & MTProtoStateAwaitingTimeFixAndSalts) == 0)
         {
@@ -605,7 +589,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)completeTimeSync
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ((_mtState & MTProtoStateAwaitingTimeFixAndSalts) != 0)
         {
@@ -652,7 +636,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)resendMessageServiceCompleted:(MTResendMessageService *)resendService
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         resendService.delegate = nil;
         [self removeMessageService:resendService];
@@ -661,13 +645,13 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)requestTransportTransaction
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (!_willRequestTransactionOnNextQueuePass)
         {
             _willRequestTransactionOnNextQueuePass = true;
             
-            dispatch_async([MTProto managerQueue].nativeQueue, ^
+            dispatch_async(_queue.nativeQueue, ^
             {
                 _willRequestTransactionOnNextQueuePass = false;
                 
@@ -685,7 +669,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)requestSecureTransportReset
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ([self isStopped])
             return;
@@ -727,14 +711,11 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportNetworkAvailabilityChanged:(MTTransport *)transport isNetworkAvailable:(bool)isNetworkAvailable
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (transport != _transport)
             return;
         
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p network state: %s]", self, isNetworkAvailable ? "available" : "waiting");
-        }
         
         for (id<MTMessageService> messageService in _messageServices)
         {
@@ -750,14 +731,11 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportConnectionStateChanged:(MTTransport *)transport isConnected:(bool)isConnected proxySettings:(MTSocksProxySettings *)proxySettings
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (transport != _transport)
             return;
         
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p connection state: %s]", self, isConnected ? "connected" : "connecting");
-        }
         
         for (id<MTMessageService> messageService in _messageServices)
         {
@@ -777,14 +755,11 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportConnectionContextUpdateStateChanged:(MTTransport *)transport isUpdatingConnectionContext:(bool)isUpdatingConnectionContext
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (transport != _transport)
             return;
         
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p connection context update state: %s]", self, isUpdatingConnectionContext ? "updating" : "up to date");
-        }
         
         for (id<MTMessageService> messageService in _messageServices)
         {
@@ -800,7 +775,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportConnectionProblemsStatusChanged:(MTTransport *)transport hasConnectionProblems:(bool)hasConnectionProblems isProbablyHttp:(bool)isProbablyHttp
 {
-    [[MTProto managerQueue] dispatchOnQueue:^ {
+    [_queue dispatchOnQueue:^ {
         if (_transport != transport || _transportScheme == nil) {
             return;
         }
@@ -824,10 +799,11 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             if (!_isProbing) {
                 _isProbing = true;
                 __weak MTProto *weakSelf = self;
+                MTQueue *queue = _queue;
                 MTSignal *checkSignal = [[MTConnectionProbing probeProxyWithContext:_context datacenterId:_datacenterId settings:transport.proxySettings] delay:5.0 onQueue:[MTQueue concurrentDefaultQueue]];
                 checkSignal = [[checkSignal then:[[MTSignal complete] delay:20.0 onQueue:[MTQueue concurrentDefaultQueue]]] restart];
                 [_probingDisposable setDisposable:[checkSignal startWithNext:^(NSNumber *next) {
-                    [[MTProto managerQueue] dispatchOnQueue:^{
+                    [queue dispatchOnQueue:^{
                         __strong MTProto *strongSelf = weakSelf;
                         if (strongSelf == nil) {
                             return;
@@ -865,7 +841,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportReadyForTransaction:(MTTransport *)transport transportSpecificTransaction:(MTMessageTransaction *)transportSpecificTransaction forceConfirmations:(bool)forceConfirmations transactionReady:(void (^)(NSArray *))transactionReady
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (_transport != transport)
         {
@@ -996,9 +972,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                         messageSeqNo = outgoingMessage.messageSeqNo;
                     }
                     
-                    if (MTLogEnabled()) {
-                        MTLog(@"[MTProto#%p preparing %@]", self, [self outgoingMessageDescription:outgoingMessage messageId:messageId messageSeqNo:messageSeqNo]);
-                    }
                     
                     if (!monotonityViolated || _useUnauthorizedMode)
                     {
@@ -1040,9 +1013,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                 
                 if (monotonityViolated)
                 {
-                    if (MTLogEnabled()) {
-                        MTLog(@"[MTProto#%p client message id monotonity violated]", self);
-                    }
                     
                     [self resetSessionInfo];
                 }
@@ -1055,10 +1025,23 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                 {
                     if (transactionMessageList.count != 1)
                     {
+#if ONEGRAM_ARMV6
+                        for (NSUInteger i = 0; i < [transactionMessageList count]; i++)
+                        {
+                            for (NSUInteger j = i + 1; j < [transactionMessageList count]; j++)
+                            {
+                                MTPreparedMessage *message1 = [transactionMessageList objectAtIndex:i];
+                                MTPreparedMessage *message2 = [transactionMessageList objectAtIndex:j];
+                                if (message1.messageId > message2.messageId)
+                                    [transactionMessageList exchangeObjectAtIndex:i withObjectAtIndex:j];
+                            }
+                        }
+#else
                         [transactionMessageList sortUsingComparator:^NSComparisonResult(MTPreparedMessage *message1, MTPreparedMessage *message2)
                         {
                             return message1.messageId < message2.messageId ? NSOrderedAscending : NSOrderedDescending;
                         }];
+#endif
                         
                         if (!forceConfirmations)
                         {
@@ -1183,7 +1166,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                         {
                             [transportTransactions addObject:[[MTTransportTransaction alloc] initWithPayload:transactionPayloadList[i] completion:^(bool success, id transactionId)
                             {
-                                [[MTProto managerQueue] dispatchOnQueue:^
+                                [_queue dispatchOnQueue:^
                                 {
                                     if (success)
                                     {
@@ -1227,9 +1210,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                                             }
                                         }
                                         
-                                        if (MTLogEnabled()) {
-                                            MTLog(@"[MTProto#%p transport did not accept transactions with messages (%@)]", self, idsString);
-                                        }
                                     }
                                 }];
                             } needsQuickAck:transactionNeedsQuickAck expectsDataInResponse:transactionExpectsDataInResponse]];
@@ -1283,11 +1263,8 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             
             MTOutputStream *decryptedOs = [[MTOutputStream alloc] init];
             
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%x sending time fix ping (%" PRId64 "/%" PRId32 ")]", self, timeFixMessageId, timeFixSeqNo);
-            }
             
-            [decryptedOs writeInt64:[_authInfo authSaltForMessageId:timeFixMessageId]]; // salt
+            [decryptedOs writeInt64:[_authInfo authSaltForMessageId:timeFixMessageId]];
             [decryptedOs writeInt64:_sessionInfo.sessionId];
             [decryptedOs writeInt64:timeFixMessageId];
             [decryptedOs writeInt32:timeFixSeqNo];
@@ -1341,7 +1318,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                     __weak MTProto *weakSelf = self;
                     transactionReady(@[[[MTTransportTransaction alloc] initWithPayload:transactionData completion:^(bool success, id transactionId)
                     {
-                        [[MTProto managerQueue] dispatchOnQueue:^
+                        [_queue dispatchOnQueue:^
                         {
                             if (success)
                             {
@@ -1384,7 +1361,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             arc4random_buf(&nonce, 8);
             
             MTBuffer *decryptedMessage = [[MTBuffer alloc] init];
-            //bind_auth_key_inner#75a3f765 nonce:long temp_auth_key_id:long perm_auth_key_id:long temp_session_id:long expires_at:int = BindAuthKeyInner;
             [decryptedMessage appendInt32:(int32_t)0x75a3f765];
             [decryptedMessage appendInt64:nonce];
             [decryptedMessage appendInt64:effectiveTempAuthKey.authKeyId];
@@ -1396,7 +1372,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             
             MTBuffer *bindRequestData = [[MTBuffer alloc] init];
             
-            //auth.bindTempAuthKey#cdd42a05 perm_auth_key_id:long nonce:long expires_at:int encrypted_message:bytes = Bool;
             
             [bindRequestData appendInt32:(int32_t)0xcdd42a05];
             [bindRequestData appendInt64:_authInfo.persistentAuthKey.authKeyId];
@@ -1408,9 +1383,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             
             MTOutputStream *decryptedOs = [[MTOutputStream alloc] init];
             
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%llx sending temp key binding message (%" PRId64 "/%" PRId32 ") for %lld (%d)]", self, bindingMessageId, bindingSeqNo, effectiveTempAuthKey.authKeyId, (int)tempAuthKeyType);
-            }
             
             [decryptedOs writeInt64:[_authInfo authSaltForMessageId:bindingMessageId]];
             [decryptedOs writeInt64:_sessionInfo.sessionId];
@@ -1452,7 +1424,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                 {
                     __weak MTProto *weakSelf = self;
                     transactionReady(@[[[MTTransportTransaction alloc] initWithPayload:transactionData completion:^(bool success, id transactionId) {
-                        [[MTProto managerQueue] dispatchOnQueue:^{
+                        [_queue dispatchOnQueue:^{
                             if (success) {
                                 if (transactionId != nil) {
                                     _bindingTempAuthKeyContext = [[MTBindingTempAuthKeyContext alloc] initWithMessageId:bindingMessageId messageSeqNo:bindingSeqNo transactionId:transactionId];
@@ -1494,7 +1466,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
     
     MTOutputStream *containerOs = [[MTOutputStream alloc] init];
     
-    [containerOs writeInt32:0x73f1f8dc]; // msg_container
+    [containerOs writeInt32:0x73f1f8dc];
     [containerOs writeInt32:(int32_t)preparedMessages.count];
     
     int64_t salt = 0;
@@ -1527,9 +1499,6 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
             if (idsString.length != 0)
                 [idsString appendString:@","];
             [idsString appendFormat:@"%lld", [nMessageId longLongValue]];
-        }
-        if (MTLogEnabled()) {
-            MTLog(@"    container (%" PRId64 ") of (%@)", containerMessageId, idsString);
         }
 #endif
     }
@@ -1739,7 +1708,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportTransactionsMayHaveFailed:(MTTransport *)__unused transport transactionIds:(NSArray *)transactionIds
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if ([self isStopped])
             return;
@@ -1804,7 +1773,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportReceivedQuickAck:(MTTransport *)transport quickAckId:(int32_t)quickAckId
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (_transport != transport || [self isStopped])
             return;
@@ -1821,7 +1790,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportDecodeProgressToken:(MTTransport *)transport data:(NSData *)data token:(int64_t)token completion:(void (^)(int64_t token, id progressToken))completion
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (transport != _transport || completion == nil)
             return;
@@ -1906,7 +1875,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)findReqMsgId:(MTInputStream *)is signature:(int32_t)signature reqMsgId:(int64_t *)reqMsgId failed:(bool *)failed
 {
-    if (signature == (int)0x73f1f8dc) //msg_container
+    if (signature == (int)0x73f1f8dc)
     {
         int count = [is readInt32:failed];
         if (*failed)
@@ -1929,7 +1898,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                 return;
         }
     }
-    else if (signature == (int)0xf35c6d01) //rpc_result
+    else if (signature == (int)0xf35c6d01)
     {
         int64_t value = [is readInt64:failed];
         if (*failed)
@@ -1937,7 +1906,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
         
        *reqMsgId = value;
     }
-    else if (signature == (int)0x62d6b459) // msgs_ack
+    else if (signature == (int)0x62d6b459)
     {
         [is readInt32:failed];
         if (*failed)
@@ -1954,7 +1923,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
                 return;
         }
     }
-    else if (signature == (int)0x347773c5) // pong
+    else if (signature == (int)0x347773c5)
     {
         [is readInt64:failed];
         [is readInt64:failed];
@@ -1965,7 +1934,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportUpdatedDataReceiveProgress:(MTTransport *)transport progressToken:(id)progressToken packetLength:(NSInteger)packetLength progress:(float)progress
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (transport != _transport)
             return;
@@ -1980,7 +1949,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
 
 - (void)transportTransactionsSucceeded:(NSArray *)transactionIds
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         [_sessionInfo removeScheduledMessageConfirmationsWithTransactionIds:transactionIds];
     }];
@@ -2006,7 +1975,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 
 - (void)transportHasIncomingData:(MTTransport *)transport data:(NSData *)data transactionId:(id)transactionId requestTransactionAfterProcessing:(bool)requestTransactionAfterProcessing decodeResult:(void (^)(id transactionId, bool success))decodeResult
 {   
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (_transport != transport || [self isStopped])
             return;
@@ -2068,9 +2037,6 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
                     if ([maybeInternalMessage isKindOfClass:[MTRpcError class]]) {
                         MTRpcError *rpcError = maybeInternalMessage;
                         if (rpcError.errorCode == 401 && [rpcError.errorDescription isEqualToString:@"AUTH_KEY_PERM_EMPTY"]) {
-                            if (MTLogEnabled()) {
-                                MTLog(@"[MTProto#%p received AUTH_KEY_PERM_EMPTY]", self);
-                            }
                             [self handleMissingKey:transport.address];
                             [self requestSecureTransportReset];
                             
@@ -2116,7 +2082,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 }
                                   
 - (void)handleMissingKey:(MTDatacenterAddress *)address {
-    NSAssert([[MTProto managerQueue] isCurrentQueue], @"invalid queue");
+    NSAssert([_queue isCurrentQueue], @"invalid queue");
     
     if (_cdn) {
         _authInfo = nil;
@@ -2378,9 +2344,6 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 {
     if ([_sessionInfo messageProcessed:incomingMessage.messageId])
     {
-        if (MTLogEnabled()) {
-            MTLog(@"[MTProto#%p received duplicate message %" PRId64 "]", self, incomingMessage.messageId);
-        }
         [_sessionInfo scheduleMessageConfirmation:incomingMessage.messageId size:incomingMessage.size];
         
         if ([_sessionInfo scheduledMessageConfirmationsExceedSize:MTMaxUnacknowledgedMessageSize orCount:MTMaxUnacknowledgedMessageCount])
@@ -2389,9 +2352,6 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
         return;
     }
     
-    if (MTLogEnabled()) {
-        MTLog(@"[MTProto#%p [%d] received %@]", self, totalSize, [self incomingMessageDescription:incomingMessage]);
-    }
     
     [_sessionInfo setMessageProcessed:incomingMessage.messageId];
     if (!_useUnauthorizedMode && incomingMessage.seqNo % 2 != 0)
@@ -2509,9 +2469,6 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
         {
             int64_t requestMessageId = ((MTMsgDetailedResponseInfoMessage *)detailedInfoMessage).requestMessageId;
             
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%p detailed info %" PRId64 " is for %" PRId64 "", self, incomingMessage.messageId, requestMessageId);
-            }
             
             for (id<MTMessageService> messageService in _messageServices)
             {
@@ -2531,9 +2488,6 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
         if (shouldRequest)
         {
             [self requestMessageWithId:detailedInfoMessage.responseMessageId];
-            if (MTLogEnabled()) {
-                MTLog(@"[MTProto#%p will request message %" PRId64 "", self, detailedInfoMessage.responseMessageId);
-            }
         }
         else
         {
@@ -2631,7 +2585,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 
 - (void)contextDatacenterTransportSchemeUpdated:(MTContext *)context datacenterId:(NSInteger)datacenterId transportScheme:(MTTransportScheme *)transportScheme media:(bool)media
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (context == _context && datacenterId == _datacenterId && media == _media && ![self isStopped] && (_transportScheme == nil || ![_transportScheme isEqualToScheme:transportScheme]))
         {
@@ -2646,7 +2600,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 
 - (void)contextDatacenterAuthInfoUpdated:(MTContext *)context datacenterId:(NSInteger)datacenterId authInfo:(MTDatacenterAuthInfo *)authInfo
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (!_useUnauthorizedMode && context == _context && datacenterId == _datacenterId && authInfo != nil)
         {
@@ -2700,7 +2654,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 }
 
 - (void)checkTempAuthKeyBinding:(MTDatacenterAddress *)address {
-    NSAssert([[MTProto managerQueue] isCurrentQueue], @"invalid queue");
+    NSAssert([_queue isCurrentQueue], @"invalid queue");
     
     MTDatacenterAuthTempKeyType tempAuthKeyType = MTDatacenterAuthTempKeyTypeMain;
     if (address.preferForMedia) {
@@ -2733,7 +2687,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 
 - (void)contextDatacenterAuthTokenUpdated:(MTContext *)context datacenterId:(NSInteger)datacenterId authToken:(id)authToken
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         if (!_useUnauthorizedMode && context == _context && datacenterId == _datacenterId && _requiredAuthToken != nil && [_requiredAuthToken isEqual:authToken])
         {
@@ -2787,7 +2741,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 
 - (void)_messageResendRequestFailed:(int64_t)messageId
 {
-    [[MTProto managerQueue] dispatchOnQueue:^
+    [_queue dispatchOnQueue:^
     {
         for (id<MTMessageService> service in _messageServices)
         {
@@ -2800,7 +2754,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 }
     
 - (void)contextDatacenterPublicKeysUpdated:(MTContext *)context datacenterId:(NSInteger)datacenterId publicKeys:(NSArray *)publicKeys {
-    [[MTProto managerQueue] dispatchOnQueue:^{
+    [_queue dispatchOnQueue:^{
         for (id<MTMessageService> service in _messageServices) {
             if ([service respondsToSelector:@selector(mtProtoPublicKeysUpdated:datacenterId:publicKeys:)]) {
                 [service mtProtoPublicKeysUpdated:self datacenterId:datacenterId publicKeys:publicKeys];
@@ -2810,10 +2764,11 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 }
     
 - (void)contextApiEnvironmentUpdated:(MTContext *)context apiEnvironment:(MTApiEnvironment *)apiEnvironment {
-    [[MTProto managerQueue] dispatchOnQueue:^{
+    [_queue dispatchOnQueue:^{
         NSString *previousLangPackCode = _apiEnvironment.langPackCode;
         MTSocksProxySettings *previousSocksProxySettings = _apiEnvironment.socksProxySettings;
         bool previousOnegramWebSocketEnabled = _apiEnvironment.onegramWebSocketEnabled;
+        bool previousPreferHttpTransport = _apiEnvironment.preferHttpTransport;
         
         _apiEnvironment = apiEnvironment;
         
@@ -2823,6 +2778,9 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
             resetConnection = true;
         }
         if (_apiEnvironment.onegramWebSocketEnabled != previousOnegramWebSocketEnabled) {
+            resetConnection = true;
+        }
+        if (_apiEnvironment.preferHttpTransport != previousPreferHttpTransport) {
             resetConnection = true;
         }
         
@@ -2844,7 +2802,7 @@ static NSString *dumpHexString(NSData *data, int maxLength) {
 }
 
 - (void)bindToPersistentKey:(MTDatacenterAddress *)address {
-    [[MTProto managerQueue] dispatchOnQueue:^{
+    [_queue dispatchOnQueue:^{
         MTDatacenterAuthTempKeyType tempAuthKeyType = MTDatacenterAuthTempKeyTypeMain;
         if (address.preferForMedia) {
             tempAuthKeyType = MTDatacenterAuthTempKeyTypeMedia;

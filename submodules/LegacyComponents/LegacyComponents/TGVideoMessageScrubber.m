@@ -265,7 +265,6 @@ typedef enum
         
         _scrubberHandle = [[UIControl alloc] initWithFrame:CGRectMake(0, -1, 8, 33.0f)];
         _scrubberHandle.hitTestEdgeInsets = UIEdgeInsetsMake(-5, -10, -5, -10);
-        //[_wrapperView addSubview:_scrubberHandle];
         
         static UIImage *handleViewImage = nil;
         static dispatch_once_t onceToken;
@@ -290,11 +289,9 @@ typedef enum
         _pressGestureRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handlePress:)];
         _pressGestureRecognizer.delegate = self;
         _pressGestureRecognizer.minimumPressDuration = 0.1f;
-        //[_scrubberHandle addGestureRecognizer:_pressGestureRecognizer];
         
         _panGestureRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         _panGestureRecognizer.delegate = self;
-        //[_scrubberHandle addGestureRecognizer:_panGestureRecognizer];
     }
     return self;
 }

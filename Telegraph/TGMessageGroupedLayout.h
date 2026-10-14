@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 
 @class TGMessage;
+@class TGMessageDiscussionContentProperty;
 
 typedef enum {
     TGMessageGroupPositionNone = 0,
@@ -23,6 +24,8 @@ typedef enum {
 @property (nonatomic, readonly) int32_t captionMessageId;
 @property (nonatomic, copy, readonly) NSString *reactionSummary;
 @property (nonatomic, copy, readonly) NSString *chosenReaction;
+@property (nonatomic, strong, readonly) TGMessageDiscussionContentProperty *discussion;
+@property (nonatomic, readonly) int32_t discussionMessageId;
 
 - (instancetype)initWithMessages:(NSArray *)messages larger:(bool)larger;
 
@@ -35,5 +38,6 @@ typedef enum {
 - (TGMessageGroupedLayout *)groupedLayoutAfterMessageUpdate:(TGMessage *)message previousMessage:(TGMessage *)previousMessage;
 
 - (void)updateReactionSummary:(NSString *)reactionSummary chosenReaction:(NSString *)chosenReaction messageId:(int32_t)messageId;
+- (void)updateDiscussion:(TGMessageDiscussionContentProperty *)discussion messageId:(int32_t)messageId;
 
 @end

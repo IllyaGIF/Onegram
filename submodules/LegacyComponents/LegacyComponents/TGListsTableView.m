@@ -24,6 +24,12 @@
     self = [super initWithFrame:frame style:style];
     if (self != nil)
     {
+#if defined(ONEGRAM_ARMV6)
+        _whiteFooterView = [[UIView alloc] init];
+        _whiteFooterView.backgroundColor = [UIColor whiteColor];
+        _whiteFooterView.userInteractionEnabled = false;
+        [self insertSubview:_whiteFooterView atIndex:0];
+#else
         if (iosMajorVersion() < 7)
         {
             self.backgroundView = [[UIView alloc] init];
@@ -33,10 +39,10 @@
         {
             _whiteFooterView = [[UIView alloc] init];
             _whiteFooterView.backgroundColor = [UIColor whiteColor];
-            //_whiteFooterView.layer.zPosition = -1.0;
             _whiteFooterView.userInteractionEnabled = false;
             [self insertSubview:_whiteFooterView atIndex:0];
         }
+#endif
     }
     return self;
 }
@@ -45,10 +51,15 @@
 {
     [super setBackgroundColor:backgroundColor];
     
+#if defined(ONEGRAM_ARMV6)
+    if (![backgroundColor isEqual:[UIColor clearColor]])
+        _whiteFooterView.backgroundColor = backgroundColor;
+#else
     if (iosMajorVersion() < 7)
         self.backgroundView.backgroundColor = backgroundColor;
     else if (![backgroundColor isEqual:[UIColor clearColor]])
         _whiteFooterView.backgroundColor = backgroundColor;
+#endif
 }
 
 - (void)layoutSubviews
@@ -59,11 +70,11 @@
     
     if (_whiteFooterView != nil) {
         _whiteFooterView.frame = CGRectMake(0.0f, MAX(0.0f, bounds.origin.y), bounds.size.width, bounds.size.height);
-        /*if (self.subviews.firstObject != _whiteFooterView) {
-            [self insertSubview:_whiteFooterView atIndex:0];
-        }*/
-    } else
+    }
+#if !defined(ONEGRAM_ARMV6)
+    else
         self.backgroundView.frame = CGRectMake(0.0f, MAX(0.0f, bounds.origin.y), bounds.size.width, bounds.size.height);
+#endif
     
     if (_hackHeaderSize)
     {
@@ -95,7 +106,7 @@
 }
 
 - (void)insertSubview:(UIView *)view atIndex:(NSInteger)index {
-    if (index == 0 && view != _whiteFooterView) {
+    if (_whiteFooterView != nil && index == 0 && view != _whiteFooterView) {
         index = 1;
     }
     [super insertSubview:view atIndex:index];
@@ -122,8 +133,13 @@
         
         if ([subview isKindOfClass:indexClass] && backgroundColorPtr >= 0)
         {
+#if defined(ONEGRAM_ARMV6)
+            void *backgroundColorStorage = (void *)(((uint8_t *)(__bridge void *)subview) + backgroundColorPtr);
+            OnegramIOS3StoreStrongIvar(backgroundColorStorage, [UIColor clearColor]);
+#else
             __strong UIColor **backgroundColor = (__strong UIColor **)(void *)(((uint8_t *)(__bridge void *)subview) + backgroundColorPtr);
             *backgroundColor = [UIColor clearColor];
+#endif
         }
     }
 }
@@ -142,9 +158,6 @@
 
 - (void)adjustBehaviour
 {
-    //FreedomBitfield tableFlagsOffset = freedomIvarBitOffset([UITableView class], 0x3fa93ecU, 0xe3ca73b1U);
-    //if (tableFlagsOffset.offset != -1 && tableFlagsOffset.bit != -1)
-    //    freedomSetBitfield((__bridge void *)self, tableFlagsOffset, 1);
 }
 
 - (void)scrollToTop

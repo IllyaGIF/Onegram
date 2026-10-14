@@ -181,6 +181,7 @@
 
 - (void)handleLegacyRemoteControlEvent:(UIEvent *)event
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if ([self isEnabled] || event.type != UIEventTypeRemoteControl)
         return;
 
@@ -210,6 +211,9 @@
         default:
             break;
     }
+#else
+    (void)event;
+#endif
 }
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
@@ -237,10 +241,6 @@
     {
         int32_t clientId = _clientId++;
         
-        if (_currentClients.count == 0)
-        {
-            TGLog(@"(TGRemoteControlsManager requesting remote controls)");
-        }
         
         [_currentClients removeAllObjects];
         [_currentClients addObject:[[TGRemoteControlsClient alloc] initWithId:clientId previous:previous next:next play:play pause:pause position:position]];
@@ -290,7 +290,6 @@
         
         if (_currentClients.count == 0 && previousHadClients)
         {
-            TGLog(@"(TGRemoteControlsManager revoking remote controls)");
             
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
             if ([self isEnabled])

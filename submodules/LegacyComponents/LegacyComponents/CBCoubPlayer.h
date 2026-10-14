@@ -10,7 +10,11 @@
 
 @class CBCoubPlayer;
 @protocol CBCoubAsset;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@class CALayer;
+#else
 @class AVPlayerLayer;
+#endif
 
 typedef enum
 {
@@ -76,7 +80,11 @@ CBCoubPlayerVideoPlayMethod;
 
 
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (instancetype)initWithVideoLayer:(CALayer *)layer;
+#else
 - (instancetype)initWithVideoLayer:(AVPlayerLayer *)layer;
+#endif
 
 - (void)playAsset:(id<CBCoubAsset>)asset;
 - (void)pause;
@@ -86,7 +94,11 @@ CBCoubPlayerVideoPlayMethod;
 // pause video and mute audio
 - (void)pseudoStop;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (BOOL)isVideoLayerPlaying:(CALayer *)layer;
+#else
 - (BOOL)isVideoLayerPlaying:(AVPlayerLayer *)layer;
+#endif
 - (BOOL)coubPlaying:(id<CBCoubAsset>)coub;
 - (BOOL)coubPrepairing:(id<CBCoubAsset>)coub;
 

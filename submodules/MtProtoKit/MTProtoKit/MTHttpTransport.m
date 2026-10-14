@@ -296,7 +296,6 @@
         {
             bool requestTransactionForLongPolling = [self _removeHttpWorker:httpWorker];
             
-            //TGLog(@"[MTHttpTransport#%x MTHttpWorker#%x completed with %d bytes, %d active]", (int)self, (int)httpWorker, (int)data.length, _workers.count);
             
             __weak MTHttpTransport *weakSelf = self;
             [self _processIncomingData:data transactionId:httpWorker.internalId requestTransactionAfterProcessing:requestTransactionForLongPolling decodeResult:^(id transactionId, bool success)
@@ -463,9 +462,6 @@
                     else if (transaction.payload.length != 0)
                     {
                         MTHttpWorker *worker = [[MTHttpWorker alloc] initWithDelegate:self address:_address payloadData:transaction.payload performsLongPolling:performsLongPolling && transactionIndex == 0];
-                        if (MTLogEnabled()) {
-                            MTLog(@"[MTHttpTransport#%p spawn MTHttpWorker#%p(longPolling: %s), %lu active]", (__bridge void *)self, (__bridge void *)worker, worker.performsLongPolling ? "1" : "0", (unsigned long)(_workers.count + 1));
-                        }
                         worker.delegate = self;
                         
                         if (_workers == nil)

@@ -166,7 +166,7 @@
         
         TGMessage *storeMessage = message;
         
-        if (!message.isSilent && !message.outgoing && ([chat isMessageUnread:message] || TGPeerIdIsChannel(message.cid)) && (message.toUid != message.fromUid || TGPeerIdIsChannel(message.cid)))
+        if (!message.isSilent && !message.outgoing && (!TGPeerIdIsChannel(message.cid) || chat.isChannelMember) && ([chat isMessageUnread:message] || TGPeerIdIsChannel(message.cid)) && (message.toUid != message.fromUid || TGPeerIdIsChannel(message.cid)))
         {
             if (message.mid < TGMessageLocalMidBaseline && message.actionInfo == nil)
             {

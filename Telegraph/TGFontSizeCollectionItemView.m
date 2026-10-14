@@ -64,7 +64,10 @@
     _fontMinIconView.image = presentation.images.fontSizeSmallIcon;
     _fontMaxIconView.image = presentation.images.fontSizeLargeIcon;
     _sliderView.trackColor = presentation.pallete.collectionMenuAccentColor;
-    _sliderView.backgroundColor = presentation.pallete.collectionMenuCellBackgroundColor;
+    bool classicIOS6Style = [TGPresentation classicIOS6Style];
+    _sliderView.opaque = !classicIOS6Style;
+    _sliderView.backgroundColor = classicIOS6Style ? [UIColor clearColor] : presentation.pallete.collectionMenuCellBackgroundColor;
+    [_sliderView setNeedsDisplay];
     _sliderView.backColor = presentation.pallete.collectionMenuAccessoryColor;
 }
 

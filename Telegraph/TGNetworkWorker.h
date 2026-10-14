@@ -1,14 +1,9 @@
-//
-//  TGDownloadWorker.h
-//  Telegraph
-//
-//  Created by Peter on 14/02/14.
-//
-//
 
 #import <Foundation/Foundation.h>
 
 @class MTContext;
+@class MTQueue;
+@class ASQueue;
 
 @class TGNetworkWorker;
 @class MTRequestMessageService;
@@ -35,7 +30,7 @@
     
 @property (nonatomic, readonly) bool isCdn;
 
-- (instancetype)initWithContext:(MTContext *)context datacenterId:(NSInteger)datacenterId masterDatacenterId:(NSInteger)masterDatacenterId isCdn:(bool)isCdn;
+- (instancetype)initWithContext:(MTContext *)context datacenterId:(NSInteger)datacenterId masterDatacenterId:(NSInteger)masterDatacenterId isCdn:(bool)isCdn networkQueue:(MTQueue *)networkQueue stateQueue:(ASQueue *)stateQueue;
 
 - (bool)isBusy;
 - (void)setIsBusy:(bool)isBusy;

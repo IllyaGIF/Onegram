@@ -45,6 +45,12 @@
     }
 }
 
+- (void)setDiameter:(CGFloat)diameter
+{
+    _diameter = diameter;
+    [((TGDocumentMessageIconView *)self.boundView) setDiameter:diameter];
+}
+
 - (void)setProgress:(float)progress animated:(bool)animated
 {
     if (ABS(_progress - progress) > FLT_EPSILON)

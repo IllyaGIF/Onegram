@@ -32,9 +32,6 @@ static const CGFloat JNWSpringAnimationMinimumThreshold = 0.0001f;
 	return self;
 }
 
-// Since animations are copied before they are added onto the layer, we
-// take this opportunity to override the copy method and actually
-// calculate the key frames, and move those over to the new animation.
 - (id)copyWithZone:(NSZone *)zone {
 	JNWSpringAnimation *copy = [super copyWithZone:zone];
 	
@@ -134,7 +131,7 @@ static const CGFloat JNWSpringAnimationMinimumThreshold = 0.0001f;
 									 map:^id(CGFloat *values, __unused NSUInteger count) {
 			return [NSValue jnw_valueWithSize:CGSizeMake(values[0], values[1])];
 		}];
-	} else if (fromType == JNWValueTypeRect) { // note that CA will not animate the `frame` property
+	} else if (fromType == JNWValueTypeRect) {
 		CGRect f = [self.fromValue jnw_rectValue];
 		CGRect t = [self.toValue jnw_rectValue];
 		values = [self valuesFromNumbers:@[@(f.origin.x), @(f.origin.y), @(f.size.width), @(f.size.height)]
@@ -197,7 +194,6 @@ static const CGFloat JNWSpringAnimationMinimumThreshold = 0.0001f;
 	
 	NSUInteger count = fromNumbers.count;
 	
-	// This will never happen, but this is peformed in order to shush the analyzer.
 	if (count < 1) {
 		return [NSArray array];
 	}	
@@ -281,7 +277,6 @@ CGFloat JNWAbsolutePosition(CGFloat A, CGFloat t, CGFloat phi, CGFloat b, CGFloa
 	return from + A - JNWRelativePosition(A, t, phi, b, m, k);
 }
 
-// This feels a bit hacky. I'm sure there's a better way to accomplish this.
 CGFloat JNWSpringAnimationThreshold(CGFloat magnitude) {
 	return JNWSpringAnimationMinimumThreshold * magnitude;
 }

@@ -39,6 +39,12 @@ static int sharedLibraryRetainCount = 0;
 
 void sharedAssetsLibraryRetain()
 {
+#if defined(ONEGRAM_ARMV6)
+    dispatchOnAssetsProcessingQueue(^
+    {
+        sharedLibraryRetainCount++;
+    });
+#else
     dispatchOnAssetsProcessingQueue(^
     {
         if (sharedLibraryReleaseTimer != nil)
@@ -49,7 +55,6 @@ void sharedAssetsLibraryRetain()
         
         if (sharedLibrary == nil)
         {
-            TGLegacyLog(@"Preloading shared assets library");
             sharedLibraryRetainCount = 1;
             sharedLibrary = [[ALAssetsLibrary alloc] init];
             
@@ -74,6 +79,7 @@ void sharedAssetsLibraryRetain()
         else
             sharedLibraryRetainCount++;
     });
+#endif
 }
 
 void sharedAssetsLibraryRelease()
@@ -84,7 +90,7 @@ void sharedAssetsLibraryRelease()
         if (sharedLibraryRetainCount <= 0)
         {
             sharedLibraryRetainCount = 0;
-
+#if !defined(ONEGRAM_ARMV6)
             if (sharedLibraryReleaseTimer != nil)
             {
                 [sharedLibraryReleaseTimer invalidate];
@@ -94,11 +100,10 @@ void sharedAssetsLibraryRelease()
             sharedLibraryReleaseTimer = [[STimer alloc] initWithTimeout:4 repeat:false completion:^
             {
                 sharedLibraryReleaseTimer = nil;
-                
-                TGLegacyLog(@"Destroyed shared assets library");
                 sharedLibrary = nil;
             } nativeQueue:assetsProcessingQueue()];
             [sharedLibraryReleaseTimer start];
+#endif
         }
     });
 }
@@ -124,11 +129,18 @@ void sharedAssetsLibraryRelease()
 
 + (id)sharedAssetsLibrary
 {
+#if defined(ONEGRAM_ARMV6)
+    return nil;
+#else
     return sharedLibrary;
+#endif
 }
 
 + (id)preloadLibrary
 {
+#if defined(ONEGRAM_ARMV6)
+    sharedAssetsLibraryRetain();
+#else
     dispatchOnAssetsProcessingQueue(^
     {
         if ([(id)[ALAssetsLibrary class] respondsToSelector:@selector(authorizationStatus)])
@@ -136,16 +148,22 @@ void sharedAssetsLibraryRelease()
             if ([ALAssetsLibrary authorizationStatus] != ALAuthorizationStatusAuthorized)
                 return;
         }
-        
         sharedAssetsLibraryRetain();
     });
-    
+#endif
     TGAssetsLibraryHolder *libraryHolder = [[TGAssetsLibraryHolder alloc] init];
     return libraryHolder;
 }
 
 + (void)loadAssetWithUrl:(NSURL *)url completion:(void (^)(ALAsset *asset))completion
 {
+#if defined(ONEGRAM_ARMV6)
+    dispatchOnAssetsProcessingQueue(^
+    {
+        if (completion)
+            completion(nil);
+    });
+#else
     dispatchOnAssetsProcessingQueue(^
     {
         if (sharedLibrary != nil)
@@ -166,18 +184,29 @@ void sharedAssetsLibraryRelease()
                 completion(nil);
         }
     });
+#endif
 }
 
 + (void)storeImageAsset:(NSData *)data
 {
+#if defined(ONEGRAM_ARMV6)
+    UIImage *image = [[UIImage alloc] initWithData:data];
+    if (image != nil)
+    {
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            UIImageWriteToSavedPhotosAlbum(image, nil, nil, NULL);
+        });
+    }
+#else
     dispatchOnAssetsProcessingQueue(^
     {
         ALAssetsLibrary *library = sharedLibrary;
         if (library == nil)
             library = [[ALAssetsLibrary alloc] init];
-        
         [library writeImageDataToSavedPhotosAlbum:data metadata:nil completionBlock:nil];
     });
+#endif
 }
 
 @end

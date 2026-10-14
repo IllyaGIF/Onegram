@@ -1,4 +1,5 @@
 #import "TGPassportRequestController.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernBarButton.h"
@@ -942,7 +943,7 @@
                                     }
                                     [components addObject:[nameComponents componentsJoinedByString:@" "]];
                                     
-                                    NSString *birthdate = [NSDateFormatter localizedStringFromDate:[[TGPassportIdentityController dateFormatter] dateFromString:detailsData.birthDate] dateStyle:NSDateFormatterShortStyle timeStyle:NSDateFormatterNoStyle];
+                                    NSString *birthdate = OGPlatformLocalizedStringFromDate([[TGPassportIdentityController dateFormatter] dateFromString:detailsData.birthDate], NSDateFormatterShortStyle, NSDateFormatterNoStyle);
                                     if (birthdate != nil)
                                         [components addObject:birthdate];
                                     

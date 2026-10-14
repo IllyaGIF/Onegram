@@ -10,10 +10,42 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernButton.h"
 
 #import "TGMusicPlayerController.h"
+#import "TGBrandedMusicPlayerController.h"
 #import "TGVideoMessagePIPController.h"
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGMusicPlayerAppearance.h"
+#import "../OnegramUI/Core/OGSurfaceStyle.h"
+#import "../OnegramUI/Core/OGSurfaceRenderer.h"
+
+@interface TGMusicPlayerTitleLabel : UILabel
+@property (nonatomic) bool embossedTitle;
+@end
+
+@implementation TGMusicPlayerTitleLabel
+
+- (void)setEmbossedTitle:(bool)embossedTitle
+{
+    if (_embossedTitle != embossedTitle)
+    {
+        _embossedTitle = embossedTitle;
+        [self setNeedsDisplay];
+    }
+}
+
+- (void)drawTextInRect:(CGRect)rect
+{
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSaveGState(context);
+    if (_embossedTitle)
+        CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.5f, [UIColor colorWithWhite:0.0f alpha:0.3f].CGColor);
+    [super drawTextInRect:rect];
+    CGContextRestoreGState(context);
+}
+
+@end
 
 @interface TGMusicPlayerView ()
 {
@@ -22,9 +54,17 @@
     UIView *_minimizedBar;
     UIButton *_minimizedButton;
     UIView *_minimizedBarStripe;
-    UILabel *_titleLabel;
+    TGMusicPlayerTitleLabel *_titleLabel;
     UILabel *_performerLabel;
     UIView *_scrubbingIndicator;
+    UIImageView *_brandedBackgroundView;
+    UIImageView *_brandedDisplayView;
+    UIImageView *_musicGlyphView;
+    UILabel *_remainingTimeLabel;
+    OGMusicPlayerAppearance *_brandedAppearance;
+    UIImageView *_compactChevronView;
+    TGNavigationBarMusicPlayerLayout _playerLayout;
+    void (^_compactHeaderActivated)(void);
     
     TGModernButton *_closeButton;
     TGModernButton *_pauseButton;
@@ -105,7 +145,7 @@
         [_rateButton addTarget:self action:@selector(rateButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         [_minimizedBar addSubview:_rateButton];
         
-        _titleLabel = [[UILabel alloc] init];
+        _titleLabel = [[TGMusicPlayerTitleLabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = _presentation.pallete.navigationTitleColor;
         _titleLabel.font = TGSystemFontOfSize(12.0f);
@@ -120,6 +160,20 @@
         _scrubbingIndicator = [[UIView alloc] init];
         _scrubbingIndicator.backgroundColor = _presentation.pallete.navigationButtonColor;
         [_minimizedBar addSubview:_scrubbingIndicator];
+
+        _brandedBackgroundView = [[UIImageView alloc] init];
+        [_minimizedBar insertSubview:_brandedBackgroundView atIndex:0];
+        _brandedDisplayView = [[UIImageView alloc] init];
+        [_minimizedBar insertSubview:_brandedDisplayView aboveSubview:_brandedBackgroundView];
+        _compactChevronView = [[UIImageView alloc] init];
+        [_minimizedBar addSubview:_compactChevronView];
+        _musicGlyphView = [[UIImageView alloc] init];
+        [_minimizedBar addSubview:_musicGlyphView];
+        _remainingTimeLabel = [[UILabel alloc] init];
+        _remainingTimeLabel.backgroundColor = [UIColor clearColor];
+        _remainingTimeLabel.textAlignment = NSTextAlignmentCenter;
+        [_minimizedBar addSubview:_remainingTimeLabel];
+        [self setPresentation:_presentation];
         
         _playerStatusDisposable = [[TGTelegraphInstance.musicPlayer playingStatus] startWithNext:^(TGMusicPlayerStatus *status)
         {
@@ -154,6 +208,7 @@
 - (void)setPresentation:(TGPresentation *)presentation
 {
     _presentation = presentation;
+    _brandedAppearance = [TGPresentation brandedIOS6Style] ? (_playerLayout == TGNavigationBarMusicPlayerLayoutStandard ? [OGTheme brandedTheme].musicPlayerAppearance : [OGMusicPlayerAppearance conversationAppearanceDark:[OGTheme brandedTheme].dark compact:_playerLayout == TGNavigationBarMusicPlayerLayoutCompactConversation]) : nil;
     
     _minimizedBar.backgroundColor = presentation.pallete.barBackgroundColor;
     _minimizedBarStripe.backgroundColor = presentation.pallete.barSeparatorColor;
@@ -165,6 +220,102 @@
     [_closeButton setImage:presentation.images.pinCloseIcon forState:UIControlStateNormal];
     [_playButton setImage:TGTintedImage(TGImageNamed(@"MusicPlayerMinimizedPlay.png"), _presentation.pallete.navigationButtonColor) forState:UIControlStateNormal];
     [_pauseButton setImage:TGTintedImage(TGImageNamed(@"MusicPlayerMinimizedPause.png"), _presentation.pallete.navigationButtonColor) forState:UIControlStateNormal];
+
+    _playButton.imageEdgeInsets = UIEdgeInsetsZero;
+    _pauseButton.imageEdgeInsets = UIEdgeInsetsZero;
+    _closeButton.imageEdgeInsets = UIEdgeInsetsZero;
+    bool branded = _brandedAppearance != nil;
+    _brandedBackgroundView.hidden = !branded;
+    _brandedDisplayView.hidden = !branded;
+    _musicGlyphView.hidden = !branded;
+    _remainingTimeLabel.hidden = !branded;
+    _minimizedBarStripe.hidden = branded;
+    _scrubbingIndicator.alpha = branded ? 0.0f : 1.0f;
+    _titleLabel.font = branded ? _brandedAppearance.font : TGSystemFontOfSize(12.0f);
+    _performerLabel.hidden = branded;
+    if (branded)
+    {
+        _minimizedBar.backgroundColor = [UIColor clearColor];
+        _titleLabel.textColor = _brandedAppearance.titleColor;
+        _remainingTimeLabel.font = _brandedAppearance.font;
+        _remainingTimeLabel.textColor = _brandedAppearance.timeColor;
+        [_playButton setImage:[_brandedAppearance imageForGlyph:OGMusicPlayerGlyphPlay] forState:UIControlStateNormal];
+        [_pauseButton setImage:[_brandedAppearance imageForGlyph:OGMusicPlayerGlyphPause] forState:UIControlStateNormal];
+        [_closeButton setImage:[_brandedAppearance imageForGlyph:OGMusicPlayerGlyphClose] forState:UIControlStateNormal];
+        _musicGlyphView.image = [_brandedAppearance imageForGlyph:OGMusicPlayerGlyphMusic];
+        _compactChevronView.image = [_brandedAppearance imageForGlyph:OGMusicPlayerGlyphChevron];
+    }
+    _playButton.alpha = branded ? 0.8f : 1.0f;
+    _pauseButton.alpha = branded ? 0.8f : 1.0f;
+    _closeButton.alpha = branded ? 0.8f : 1.0f;
+    bool compact = _playerLayout == TGNavigationBarMusicPlayerLayoutCompactConversation && branded;
+    _titleLabel.embossedTitle = compact;
+    [self updateTrackLabels];
+    [self updateRateButton];
+    [self updatePlayerVisibility];
+    _updateLabelsLayout = true;
+    [self setNeedsLayout];
+}
+
+- (CGFloat)preferredHeight
+{
+    return [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].musicPlayerAppearance.height : 37.0f;
+}
+
+- (void)setCompactHeaderActivated:(void (^)(void))activated
+{
+    _compactHeaderActivated = [activated copy];
+}
+
+- (void)setPlayerLayout:(TGNavigationBarMusicPlayerLayout)layout
+{
+    if (_playerLayout != layout)
+    {
+        _playerLayout = layout;
+        [self setPresentation:_presentation];
+    }
+}
+
+- (void)updatePlayerVisibility
+{
+    bool branded = _brandedAppearance != nil;
+    bool compact = branded && _playerLayout == TGNavigationBarMusicPlayerLayoutCompactConversation;
+    _brandedDisplayView.hidden = !branded || compact;
+    _remainingTimeLabel.hidden = !branded || compact;
+    _musicGlyphView.hidden = !branded || compact || (_playerLayout != TGNavigationBarMusicPlayerLayoutStandard && _currentStatus.item.isVoice);
+    _compactChevronView.hidden = !compact;
+    _playButton.hidden = compact || !_currentStatus.paused;
+    _pauseButton.hidden = compact || _currentStatus.paused;
+    _closeButton.hidden = compact;
+    _rateButton.hidden = compact || !_currentStatus.item.isVoice;
+}
+
+- (void)updateTrackLabels
+{
+    if (_brandedAppearance != nil && _playerLayout != TGNavigationBarMusicPlayerLayoutStandard && _currentStatus.item.isVoice)
+        _titleLabel.text = TGLocalized(@"MusicPlayer.VoiceNote");
+    else if (_brandedAppearance != nil && _performer.length != 0 && _title.length != 0)
+        _titleLabel.text = _currentStatus.item.isVoice ? [NSString stringWithFormat:@"%@ · %@", _title, _performer] : [NSString stringWithFormat:@"%@ - %@", _performer, _title];
+    else
+        _titleLabel.text = _title;
+    _titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    _performerLabel.text = _performer;
+}
+
+- (void)updateRateButton
+{
+    if (_brandedAppearance != nil)
+    {
+        [_rateButton setImage:nil forState:UIControlStateNormal];
+        [_rateButton setTitle:[NSString stringWithFormat:@"%gx", _currentStatus != nil ? _currentStatus.rate : 1.0f] forState:UIControlStateNormal];
+        [_rateButton setTitleColor:_brandedAppearance.timeColor forState:UIControlStateNormal];
+        _rateButton.titleLabel.font = _brandedAppearance.font;
+    }
+    else
+    {
+        [_rateButton setTitle:nil forState:UIControlStateNormal];
+        [_rateButton setImage:_currentStatus.rate > 1.5f ? _presentation.images.musicPlayerRate2xActiveIcon : _presentation.images.musicPlayerRate2xIcon forState:UIControlStateNormal];
+    }
 }
 
 - (void)setFrame:(CGRect)frame
@@ -241,8 +392,7 @@
                 _title = title;
                 _performer = performer;
                 
-                _titleLabel.text = title;
-                _performerLabel.text = performer;
+                [self updateTrackLabels];
                 
                 [self setNeedsLayout];
             }
@@ -273,17 +423,15 @@
         }];
     });
     
-    _playButton.hidden = !status.paused;
-    _pauseButton.hidden = status.paused;
+    [self updatePlayerVisibility];
     _scrubbingIndicator.hidden = status.isVoice;
     
     if (status != nil && fabs(previousStatus.rate - status.rate) > FLT_EPSILON)
     {
-        UIImage *img = status.rate > 1.5f ? _presentation.images.musicPlayerRate2xActiveIcon : _presentation.images.musicPlayerRate2xIcon;
-        [_rateButton setImage:img forState:UIControlStateNormal];
+        [self updateRateButton];
     }
     
-    if (status == nil || status.paused || status.duration < FLT_EPSILON || status.offset < 0.01 || _scrubbingIndicator.hidden)
+    if (status == nil || status.paused || status.duration < FLT_EPSILON || status.offset < 0.01 || (_scrubbingIndicator.hidden && _brandedAppearance == nil))
     {
         [self pop_removeAnimationForKey:@"scrubbingIndicator"];
         
@@ -302,7 +450,7 @@
             animation.fromValue = @(status.offset);
             animation.toValue = @(1.0f);
             animation.beginTime = status.timestamp;
-            animation.duration = (1.0f - status.offset) * status.duration;
+            animation.duration = (1.0f - status.offset) * status.duration / (_brandedAppearance != nil ? MAX(0.1f, status.rate) : 1.0f);
             [self pop_addAnimation:animation forKey:@"scrubbingIndicator"];
         }
     }
@@ -310,6 +458,17 @@
 
 - (void)layoutScrubbingIndicator
 {
+    if (_brandedAppearance != nil)
+    {
+        NSInteger remaining = (NSInteger)ceil(MAX(0.0f, _currentStatus.duration * (1.0f - MIN(1.0f, MAX(0.0f, _playbackOffset)))));
+        NSString *time = [NSString stringWithFormat:@"%ld:%02ld", (long)(remaining / 60), (long)(remaining % 60)];
+        if (![_remainingTimeLabel.text isEqualToString:time])
+        {
+            _remainingTimeLabel.text = time;
+            [self setNeedsLayout];
+        }
+        return;
+    }
     CGFloat indicatorHeight = 2.0f - TGRetinaPixel;
     _scrubbingIndicator.frame = CGRectMake(0.0f, 37.0f - indicatorHeight, TGRetinaFloor(self.frame.size.width *  _playbackOffset), indicatorHeight);
 }
@@ -317,6 +476,48 @@
 - (void)layoutSubviews
 {
     [super layoutSubviews];
+
+    if (_brandedAppearance != nil)
+    {
+        OGMusicPlayerAppearance *appearance = _brandedAppearance;
+        OGTheme *theme = [OGTheme brandedTheme];
+        CGSize size = CGSizeMake(self.bounds.size.width, appearance.height);
+        self.backgroundColor = [UIColor clearColor];
+        _minimizedBar.frame = CGRectMake(0.0f, 0.0f, size.width, size.height);
+        UIEdgeInsets outsets = [appearance.backgroundSurfaceStyle dropShadowOutsets];
+        CGSize backgroundSize = CGSizeMake(size.width, size.height + outsets.bottom);
+        _brandedBackgroundView.frame = CGRectMake(0.0f, 0.0f, backgroundSize.width, backgroundSize.height);
+        _brandedBackgroundView.image = [theme.surfaceRenderer imageWithStyle:appearance.backgroundSurfaceStyle size:backgroundSize bodyFrame:CGRectMake(0.0f, 0.0f, size.width, size.height)];
+        if (_playerLayout == TGNavigationBarMusicPlayerLayoutCompactConversation)
+        {
+            _compactChevronView.frame = CGRectMake(8.0f, 9.0f, 13.0f, 9.0f);
+            _titleLabel.frame = CGRectMake((size.width - 130.0f) / 2.0f, 4.0f, 130.0f, 17.0f);
+            _minimizedButton.frame = _minimizedBar.bounds;
+            return;
+        }
+        CGRect displayFrame = CGRectMake(appearance.displayLeftInset, appearance.displayTopInset, MAX(0.0f, size.width - appearance.displayLeftInset - appearance.displayRightInset), 29.0f);
+        _brandedDisplayView.frame = displayFrame;
+        _brandedDisplayView.image = [theme.surfaceRenderer imageWithStyle:appearance.displaySurfaceStyle size:displayFrame.size bodyFrame:CGRectMake(0.0f, 0.0f, displayFrame.size.width, displayFrame.size.height)];
+        _minimizedButton.frame = displayFrame;
+        _musicGlyphView.frame = CGRectMake(displayFrame.origin.x + 7.0f, appearance.controlTopInset, 16.0f, 16.0f);
+        _playButton.frame = CGRectMake(0.0f, 0.0f, appearance.displayLeftInset, size.height);
+        _pauseButton.frame = _playButton.frame;
+        UIEdgeInsets playInsets = UIEdgeInsetsMake(appearance.controlTopInset * 2.0f + 16.0f - size.height, appearance.controlLeftInset * 2.0f + 16.0f - appearance.displayLeftInset, 0.0f, 0.0f);
+        _playButton.imageEdgeInsets = playInsets;
+        _pauseButton.imageEdgeInsets = playInsets;
+        bool conversation = _playerLayout == TGNavigationBarMusicPlayerLayoutConversation;
+        CGFloat closeWidth = conversation ? 24.0f : 44.0f;
+        _closeButton.frame = CGRectMake(size.width - closeWidth, 0.0f, closeWidth, size.height);
+        _closeButton.imageEdgeInsets = UIEdgeInsetsMake(appearance.closeTopInset * 2.0f + 20.0f - size.height, closeWidth - 20.0f - 2.0f * appearance.closeRightInset, 0.0f, 0.0f);
+        CGFloat timeWidth = MAX(29.0f, ceil([_remainingTimeLabel.text sizeWithFont:appearance.font].width));
+        _remainingTimeLabel.frame = CGRectMake(CGRectGetMaxX(displayFrame) - 6.0f - timeWidth, displayFrame.origin.y + 7.0f, timeWidth, 15.0f);
+        _rateButton.frame = conversation ? CGRectMake(CGRectGetMaxX(displayFrame) + 6.0f, displayFrame.origin.y, MAX(0.0f, _closeButton.frame.origin.x - CGRectGetMaxX(displayFrame) - 6.0f), displayFrame.size.height) : CGRectMake(_remainingTimeLabel.frame.origin.x - 28.0f, displayFrame.origin.y, 24.0f, displayFrame.size.height);
+        CGFloat titleRight = conversation || _rateButton.hidden ? _remainingTimeLabel.frame.origin.x - 6.0f : _rateButton.frame.origin.x - 4.0f;
+        CGFloat titleInset = conversation && _currentStatus.item.isVoice ? 10.0f : 29.0f;
+        _titleLabel.frame = CGRectMake(displayFrame.origin.x + titleInset, displayFrame.origin.y + 7.0f, MAX(0.0f, titleRight - displayFrame.origin.x - titleInset), 15.0f);
+        [self layoutScrubbingIndicator];
+        return;
+    }
     
     self.backgroundColor = _presentation.pallete.barBackgroundColor;
     
@@ -371,7 +572,7 @@
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event
 {
     CGRect closeButtonFrame = CGRectOffset(_closeButton.frame, _minimizedBar.frame.origin.x, _minimizedBar.frame.origin.y);
-    if (CGRectContainsPoint(closeButtonFrame, point))
+    if (!_closeButton.hidden && _closeButton.alpha > FLT_EPSILON && CGRectContainsPoint(closeButtonFrame, point))
     {
         return _closeButton;
     }
@@ -381,6 +582,11 @@
 
 - (void)minimizedButtonPressed
 {
+    if (_playerLayout == TGNavigationBarMusicPlayerLayoutCompactConversation && _compactHeaderActivated != nil)
+    {
+        _compactHeaderActivated();
+        return;
+    }
     if (_currentStatus.item == nil)
         return;
     
@@ -398,17 +604,24 @@
         return;
     }
     
+    UINavigationController *navigationController = _navigationController;
+    if ([TGPresentation brandedIOS6Style] && navigationController != nil)
+    {
+        for (UIViewController *viewController in navigationController.viewControllers)
+        {
+            if ([viewController isKindOfClass:[TGBrandedMusicPlayerController class]])
+                return;
+        }
+        [navigationController pushViewController:[[TGBrandedMusicPlayerController alloc] init] animated:true];
+        return;
+    }
+    
     TGMusicPlayerController *controller = [[TGMusicPlayerController alloc] init];
     controller.presentation = _presentation;
     UIViewController *rootController = _navigationController.parentViewController;
     if (rootController == nil)
         rootController = _navigationController;
-    [rootController.view endEditing:true];
-    
-    [rootController addChildViewController:controller];
-    controller.view.frame = rootController.view.bounds;
-    controller.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [rootController.view addSubview:controller.view];
+    [controller presentFromController:rootController];
 }
 
 @end

@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messages.channelMessages flags:# pts:int count:int messages:Vector<Message> collapsed:flags.0?Vector<MessageGroup> chats:Vector<Chat> users:Vector<User> = messages.Messages
 
 @implementation TLmessages_Messages$modernChannelMessages
 

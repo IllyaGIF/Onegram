@@ -534,8 +534,7 @@
 - (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
 {
     [super controllerInsetUpdated:previousInset];
-    
-    //[self updateInterface:UIInterfaceOrientationPortrait];
+    [self updateInterface:self.interfaceOrientation];
 }
 
 - (void)updateInterface:(UIInterfaceOrientation)orientation
@@ -670,6 +669,35 @@
     
     [_didNotReceiveCodeButton sizeToFit];
     _didNotReceiveCodeButton.frame = CGRectMake(CGCeil((screenSize.width - _didNotReceiveCodeButton.frame.size.width) / 2.0f), didNotReceiveCodeOffset, _didNotReceiveCodeButton.frame.size.width, _didNotReceiveCodeButton.frame.size.height);
+
+    if (!TGIsPad())
+    {
+        CGFloat keyboardHeight = self.controllerCleanInset.bottom;
+        if (keyboardHeight < FLT_EPSILON && [TGHacks isKeyboardVisible])
+            keyboardHeight = [TGHacks keyboardHeightForOrientation:orientation];
+
+        if (keyboardHeight > FLT_EPSILON)
+        {
+            CGFloat visibleBottom = screenSize.height - keyboardHeight - 10.0f;
+            CGFloat shift = MAX(0.0f, CGRectGetMaxY(_codeField.frame) - visibleBottom);
+            CGFloat noticeOverlap = CGRectGetMaxY(_noticeLabel.frame) + 8.0f - CGRectGetMinY(_codeField.frame);
+            if (noticeOverlap > 0.0f)
+            {
+                _titleLabel.frame = CGRectOffset(_titleLabel.frame, 0.0f, -noticeOverlap);
+                _noticeLabel.frame = CGRectOffset(_noticeLabel.frame, 0.0f, -noticeOverlap);
+            }
+
+            if (shift > 0.0f)
+            {
+                if (_otherDeviceView != nil)
+                    _otherDeviceView.frame = CGRectOffset(_otherDeviceView.frame, 0.0f, -shift);
+                _titleLabel.frame = CGRectOffset(_titleLabel.frame, 0.0f, -shift);
+                _noticeLabel.frame = CGRectOffset(_noticeLabel.frame, 0.0f, -shift);
+                _fieldSeparatorView.frame = CGRectOffset(_fieldSeparatorView.frame, 0.0f, -shift);
+                _codeField.frame = CGRectOffset(_codeField.frame, 0.0f, -shift);
+            }
+        }
+    }
 }
 
 - (void)setInProgress:(bool)inProgress
@@ -768,7 +796,7 @@
             {
                 [UIView setAnimationRepeatCount:3];
                 v.frame = r;
-            } completion:^(__unused BOOL finished)
+            } completion:^(__unused BOOL secondFinished)
             {
                 v.frame = originalFrame;
             }];
@@ -816,7 +844,7 @@
 {
     if ([path isEqualToString:@"/tg/activation"])
     {
-        dispatch_async(dispatch_get_main_queue(), ^
+        TGDispatchOnMainThread(^
         {
             self.inProgress = false;
             
@@ -827,7 +855,7 @@
     {
         if (![((SGraphObjectNode *)resource).object boolValue])
         {
-            dispatch_async(dispatch_get_main_queue(), ^
+            TGDispatchOnMainThread(^
             {
                 self.inProgress = false;
                 
@@ -849,7 +877,7 @@
 {
     if ([path isEqualToString:[NSString stringWithFormat:@"/tg/service/auth/signIn/(%d)", _currentActionIndex]])
     {
-        dispatch_async(dispatch_get_main_queue(), ^
+        TGDispatchOnMainThread(^
         {
             if (resultCode == ASStatusSuccess)
             {
@@ -859,7 +887,7 @@
             else if (resultCode == TGSignInResultPasswordRequired)
             {
                 __weak TGLoginCodeController *weakSelf = self;
-                [_twoStepConfigDisposable setDisposable:[[[[TGTwoStepConfigSignal twoStepConfig] deliverOn:[SQueue mainQueue]] onDispose:^
+                [_twoStepConfigDisposable setDisposable:[[[TGTwoStepConfigSignal twoStepConfig] onDispose:^
                 {
                     TGDispatchOnMainThread(^
                     {
@@ -867,14 +895,17 @@
                     });
                 }] startWithNext:^(TGTwoStepConfig *config)
                 {
-                    __strong TGLoginCodeController *strongSelf = weakSelf;
-                    if (strongSelf != nil)
+                    TGDispatchOnMainThread(^
                     {
-                        NSMutableArray *viewControllers = [[NSMutableArray alloc] initWithArray:strongSelf.navigationController.viewControllers];
-                        [viewControllers removeLastObject];
-                        [viewControllers addObject:[[TGLoginPasswordController alloc] initWithConfig:config phoneNumber:strongSelf.phoneNumber phoneCode:strongSelf.phoneCode phoneCodeHash:strongSelf.phoneCodeHash]];
-                        [strongSelf.navigationController setViewControllers:viewControllers animated:true];
-                    }
+                        __strong TGLoginCodeController *strongSelf = weakSelf;
+                        if (strongSelf != nil)
+                        {
+                            NSMutableArray *viewControllers = [[NSMutableArray alloc] initWithArray:strongSelf.navigationController.viewControllers];
+                            [viewControllers removeLastObject];
+                            [viewControllers addObject:[[TGLoginPasswordController alloc] initWithConfig:config phoneNumber:strongSelf.phoneNumber phoneCode:strongSelf.phoneCode phoneCodeHash:strongSelf.phoneCodeHash]];
+                            [strongSelf.navigationController setViewControllers:viewControllers animated:true];
+                        }
+                    });
                 }]];
             }
             else
@@ -930,7 +961,7 @@
     }
     else if ([path hasPrefix:@"/tg/service/auth/sendCode/"])
     {
-        dispatch_async(dispatch_get_main_queue(), ^
+        TGDispatchOnMainThread(^
         {
             [self setInProgress:false];
             

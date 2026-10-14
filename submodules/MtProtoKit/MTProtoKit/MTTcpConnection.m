@@ -8,7 +8,7 @@
 #import "MTNetworkUsageCalculationInfo.h"
 
 #import "GCDAsyncSocket.h"
-#import "MTOnegramProxyTLSRoots.h"
+#import "MTOnegramCoreTLSRoots.h"
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <netinet/tcp.h>
@@ -18,6 +18,7 @@
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
 #import "../../../Telegraph/IOS6NotificationProbe.h"
+#import "../../../OnegramPlatform/OGPlatformVersion.h"
 #endif
 
 #import "MTInternalId.h"
@@ -28,6 +29,7 @@
 
 #import "MTAes.h"
 #import "MTEncryption.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
 
 #if defined(MtProtoKitDynamicFramework)
 #   import <MTProtoKitDynamic/MTSignal.h>
@@ -258,7 +260,7 @@ static bool MTOnegramControlBytesAllowed(const uint8_t *bytes)
 }
 
 struct ctr_state {
-    unsigned char ivec[16];  /* ivec[0..7] is the IV, ivec[8..15] is the big-endian counter */
+    unsigned char ivec[16];
     unsigned int num;
     unsigned char ecount[16];
 };
@@ -901,11 +903,7 @@ struct ctr_state {
                     isHostname = false;
                 }
                 
-                /*if (isHostname) {
-                    resolveSignal = [MTDNS resolveHostname:_socksIp];
-                } else {*/
                     resolveSignal = [MTSignal single:[[MTTcpConnectionData alloc] initWithIp:_socksIp port:_socksPort isSocks:true]];
-                //}
             } else if (_mtpIp != nil) {
                 bool isHostname = true;
                 struct in_addr ip4;
@@ -916,11 +914,7 @@ struct ctr_state {
                     isHostname = false;
                 }
                 
-                /*if (isHostname) {
-                    resolveSignal = [MTDNS resolveHostname:_mtpIp];
-                } else {*/
                     resolveSignal = [MTSignal single:[[MTTcpConnectionData alloc] initWithIp:_mtpIp port:_mtpPort isSocks:false]];
-                //}
             }
             
             MTTcpConnection *connection = self;
@@ -940,19 +934,6 @@ struct ctr_state {
                     }
                     
                     if (MTLogEnabled()) {
-                        if (strongSelf->_socksIp != nil) {
-                            if (strongSelf->_socksUsername.length == 0) {
-                                MTLog(@"[MTTcpConnection#%p connecting to %@:%d via %@:%d]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_socksIp, (int)strongSelf->_socksPort);
-                            } else {
-                                MTLog(@"[MTTcpConnection#%p connecting to %@:%d via %@:%d using %@:%@]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_socksIp, (int)_socksPort, strongSelf->_socksUsername, strongSelf->_socksPassword);
-                            }
-                        } else if (strongSelf->_mtpIp != nil) {
-                            MTLog(@"[MTTcpConnection#%p connecting to %@:%d via mtp://%@:%d:%@]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_mtpIp, (int)strongSelf->_mtpPort, strongSelf->_mtpSecret);
-                        } else if (strongSelf->_address.secret != nil) {
-                            MTLog(@"[MTTcpConnection#%p connecting to %@:%d with secret %@]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port, strongSelf->_address.secret);
-                        } else {
-                            MTLog(@"[MTTcpConnection#%p connecting to %@:%d]", (__bridge void *)self, strongSelf->_address.ip, (int)strongSelf->_address.port);
-                        }
                     }
                     
                     __autoreleasing NSError *error = nil;
@@ -1219,6 +1200,9 @@ struct ctr_state {
 
 - (void)responseTimeout
 {
+#if defined(ONEGRAM_DIAGNOSTICS)
+    OGPlatformDiagnosticLog(@"NETSTATE response timeout connection=%p primary=%d", self, _usageCalculationInfo.primaryConnection ? 1 : 0);
+#endif
     [_responseTimeoutTimer invalidate];
     _responseTimeoutTimer = nil;
     
@@ -1302,7 +1286,7 @@ struct ctr_state {
 
 #if TARGET_OS_IPHONE
     BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && isPrimaryDataConnection)
+    if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection)
     {
         static CFAbsoluteTime lastPrimaryActivitySignalTime = 0.0;
         CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
@@ -1759,9 +1743,6 @@ struct ctr_state {
                     ignorePacket = true;
                 }
             } else if (header == 0 && packetData.length < 16) {
-                if (MTLogEnabled()) {
-                    MTLog(@"[MTTcpConnection#%p received nop packet]", (__bridge void *)self);
-                }
                 ignorePacket = true;
             }
         }
@@ -1806,20 +1787,31 @@ struct ctr_state {
              
 - (void)socket:(GCDAsyncSocket *)__unused socket didConnectToHost:(NSString *)__unused host port:(uint16_t)__unused port
 {
+    [_socket performBlock:^{
+        int socketFd = [_socket socketFD];
+        if (socketFd >= 0) {
+            int noDelay = 1;
+            setsockopt(socketFd, IPPROTO_TCP, TCP_NODELAY, &noDelay, sizeof(noDelay));
+        }
+    }];
 #if TARGET_OS_IPHONE
     BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && isPrimaryDataConnection) {
+    if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection) {
         __block BOOL backgroundingEnabled = NO;
         __block int socketFd = -1;
         __block int keepAliveResult = -2;
         __block int keepAliveError = 0;
         __block int keepAliveIdleResult = -2;
         __block int keepAliveIdleError = 0;
+#if defined(ONEGRAM_ARMV6)
+        BOOL shouldEnableBackgrounding = NO;
+#else
         BOOL shouldEnableBackgrounding = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
+#endif
         [_socket performBlock:^{
             if (shouldEnableBackgrounding)
             {
-                if ([[UIDevice currentDevice].systemVersion intValue] <= 4)
+                if (OGPlatformMajorVersion() <= 4)
                     backgroundingEnabled = [_socket enableBackgroundingOnSocketWithCaveat];
                 else
                     backgroundingEnabled = [_socket enableBackgroundingOnSocket];
@@ -1847,12 +1839,20 @@ struct ctr_state {
     
     if (_onegramWebSocket)
     {
+#if defined(ONEGRAM_ARMV6)
+        NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithObject:_onegramWebSocketDomain forKey:GCDAsyncSocketOpenSSLPeerName];
+#else
         NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithObject:_onegramWebSocketDomain forKey:(NSString *)kCFStreamSSLPeerName];
+#endif
 #if TARGET_OS_IPHONE
-        if ([[UIDevice currentDevice].systemVersion intValue] <= 6)
+        if (OGPlatformMajorVersion() <= 6)
         {
-            NSData *trustedCertificates = [NSData dataWithBytes:MTOnegramProxyTLSRoots length:sizeof(MTOnegramProxyTLSRoots) - 1];
-            [settings setObject:@YES forKey:GCDAsyncSocketUseOpenSSL];
+            NSData *trustedCertificates = [NSData dataWithBytes:MTOnegramCoreTLSRoots length:sizeof(MTOnegramCoreTLSRoots) - 1];
+#if defined(ONEGRAM_ARMV6)
+            [settings setObject:[NSNumber numberWithBool:YES] forKey:GCDAsyncSocketUseOpenSSL];
+#else
+            [settings setObject:@(YES) forKey:GCDAsyncSocketUseOpenSSL];
+#endif
             [settings setObject:trustedCertificates forKey:GCDAsyncSocketOpenSSLTrustedCertificates];
             [settings setObject:@([_context globalTime]) forKey:GCDAsyncSocketOpenSSLVerificationTime];
         }
@@ -1861,9 +1861,7 @@ struct ctr_state {
         return;
     }
 
-    if (_socksIp != nil) {
-        
-    } else {
+    if (_socksIp == nil) {
         if (_connectionOpened)
             _connectionOpened();
         id<MTTcpConnectionDelegate> delegate = _delegate;
@@ -1889,9 +1887,12 @@ struct ctr_state {
 
 - (void)socketDidDisconnect:(GCDAsyncSocket *)__unused socket withError:(NSError *)error
 {
+#if defined(ONEGRAM_DIAGNOSTICS)
+    OGPlatformDiagnosticLog(@"NETSTATE disconnected connection=%p primary=%d closed=%d domain=%@ code=%ld description=%@", self, _usageCalculationInfo.primaryConnection ? 1 : 0, _closed ? 1 : 0, error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
+#endif
 #if TARGET_OS_IPHONE
     BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 6 && isPrimaryDataConnection)
+    if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection)
     {
         IOS6NotificationProbe(@"SOCKET", @"primary_disconnected domain=%@ code=%ld description=%@",
                               error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
@@ -1904,16 +1905,6 @@ struct ctr_state {
         return;
     }
 
-    if (error != nil) {
-        if (MTLogEnabled()) {
-            MTLog(@"[MTTcpConnection#%p disconnected from %@ (%@)]", (__bridge void *)self, _address.ip, error);
-        }
-    }
-    else {
-        if (MTLogEnabled()) {
-            MTLog(@"[MTTcpConnection#%p disconnected from %@]", (__bridge void *)self, _address.ip);
-        }
-    }
     
     [self closeAndNotify];
 }

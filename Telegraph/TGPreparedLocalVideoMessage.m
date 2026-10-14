@@ -12,7 +12,6 @@
 {
 #ifdef DEBUG
     NSAssert(tempVideoPath != nil, @"tempVideoPath should not be nil");
-    NSAssert(previewImage != nil, @"previewImage should not be nil");
 #endif
     
     TGPreparedLocalVideoMessage *message = [[TGPreparedLocalVideoMessage alloc] init];
@@ -33,15 +32,25 @@
     message.duration = duration;
     message.videoSize = videoSize;
     message.size = size;
-    
-    NSData *previewData = UIImageJPEGRepresentation(previewImage, 0.87f);
-    [[TGRemoteImageView sharedCache] cacheImage:nil withData:previewData url:[[NSString alloc] initWithFormat:@"video-thumbnail-local%llx.jpg", localVideoId] availability:TGCacheDisk];
-    
-    UIImage *thumbnailImage = TGScaleImageToPixelSize(previewImage, thumbnailSize);
-    NSData *thumbnailData = UIImageJPEGRepresentation(thumbnailImage, 0.9f);
-    message.localThumbnailDataPath = [self _fileUrlForStoredData:thumbnailData];
-    CGSize networkThumbnailSize = TGFitSize(thumbnailSize, CGSizeMake(90, 90));
-    message.thumbnailSize = networkThumbnailSize;
+    NSString *extension = [[tempVideoPath pathExtension] lowercaseString];
+    message.videoMimeType = [extension isEqualToString:@"mov"] ? @"video/quicktime" : @"video/mp4";
+
+    if (previewImage != nil)
+    {
+        NSData *previewData = UIImageJPEGRepresentation(previewImage, 0.87f);
+        if (previewData != nil)
+            [[TGRemoteImageView sharedCache] cacheImage:nil withData:previewData url:[[NSString alloc] initWithFormat:@"video-thumbnail-local%llx.jpg", localVideoId] availability:TGCacheDisk];
+
+        UIImage *thumbnailImage = TGScaleImageToPixelSize(previewImage, thumbnailSize);
+        NSData *thumbnailData = UIImageJPEGRepresentation(thumbnailImage, 0.9f);
+        if (thumbnailData != nil)
+            message.localThumbnailDataPath = [self _fileUrlForStoredData:thumbnailData];
+        message.thumbnailSize = TGFitSize(thumbnailSize, CGSizeMake(90, 90));
+    }
+    else
+    {
+        message.thumbnailSize = CGSizeZero;
+    }
     
     message.assetUrl = assetUrl;
     
@@ -56,16 +65,13 @@
 
 + (instancetype)messageWithLocalVideoId:(int64_t)localVideoId videoSize:(CGSize)videoSize size:(int32_t)size duration:(NSTimeInterval)duration localThumbnailDataPath:(NSString *)localThumbnailDataPath thumbnailSize:(CGSize)thumbnailSize assetUrl:(NSString *)assetUrl text:(NSString *)text entities:(NSArray *)entities replyMessage:(TGMessage *)replyMessage replyMarkup:(TGReplyMarkupAttachment *)replyMarkup
 {
-#ifdef DEBUG
-    NSAssert(localThumbnailDataPath != nil, @"localThumbnailDataPath should not be nil");
-#endif
-    
     TGPreparedLocalVideoMessage *message = [[TGPreparedLocalVideoMessage alloc] init];
     
     message.localVideoId = localVideoId;
     message.videoSize = videoSize;
     message.size = size;
     message.duration = duration;
+    message.videoMimeType = @"video/mp4";
     message.localThumbnailDataPath = localThumbnailDataPath;
     message.thumbnailSize = thumbnailSize;
     message.assetUrl = assetUrl;
@@ -99,6 +105,7 @@
             TGPreparedLocalVideoMessage *message = [self messageByCopyingDataFromMedia:mediaAttachment replyMessage:replyMessage replyMarkup:replyMarkup];
             message.text = source.text;
             message.entities = source.entities;
+            message.videoMimeType = source.videoMimeType ?: @"video/mp4";
             return message;
         }
     }
@@ -135,9 +142,11 @@
     message.duration = videoAttachment.duration;
     message.videoSize = videoAttachment.dimensions;
     message.size = fileSize;
+    message.videoMimeType = @"video/mp4";
     
     NSData *previewData = [[NSData alloc] initWithContentsOfFile:[[TGRemoteImageView sharedCache] pathForCachedData:[[NSString alloc] initWithFormat:@"video-thumbnail-local%llx.jpg", videoAttachment.localVideoId]]];
-    [[TGRemoteImageView sharedCache] cacheImage:nil withData:previewData url:[[NSString alloc] initWithFormat:@"video-thumbnail-local%llx.jpg", localVideoId] availability:TGCacheDisk];
+    if (previewData != nil)
+        [[TGRemoteImageView sharedCache] cacheImage:nil withData:previewData url:[[NSString alloc] initWithFormat:@"video-thumbnail-local%llx.jpg", localVideoId] availability:TGCacheDisk];
     
     CGSize thumbnailSize = CGSizeZero;
     NSString *thumbnailUrl = [videoAttachment.thumbnailInfo closestImageUrlWithSize:CGSizeMake(90, 90) resultingSize:NULL];
@@ -217,18 +226,24 @@
     videoAttachment.duration = (int)_duration;
     videoAttachment.dimensions = _videoSize;
     
-    TGImageInfo *thumbnailInfo = [[TGImageInfo alloc] init];
-    [thumbnailInfo addImageWithSize:_thumbnailSize url:_localThumbnailDataPath];
-    videoAttachment.thumbnailInfo = thumbnailInfo;
+    if (_localThumbnailDataPath != nil)
+    {
+        TGImageInfo *thumbnailInfo = [[TGImageInfo alloc] init];
+        [thumbnailInfo addImageWithSize:_thumbnailSize url:_localThumbnailDataPath];
+        videoAttachment.thumbnailInfo = thumbnailInfo;
+    }
     
     TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
     [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"local-video:local%llx.mov", _localVideoId] size:_size];
     videoAttachment.videoInfo = videoInfo;
     [attachments addObject:videoAttachment];
     
-    TGLocalMessageMetaMediaAttachment *mediaMeta = [[TGLocalMessageMetaMediaAttachment alloc] init];
-    mediaMeta.imageUrlToDataFile[_localThumbnailDataPath] = _localThumbnailDataPath;
-    [attachments addObject:mediaMeta];
+    if (_localThumbnailDataPath != nil)
+    {
+        TGLocalMessageMetaMediaAttachment *mediaMeta = [[TGLocalMessageMetaMediaAttachment alloc] init];
+        mediaMeta.imageUrlToDataFile[_localThumbnailDataPath] = _localThumbnailDataPath;
+        [attachments addObject:mediaMeta];
+    }
     
     if (self.replyMessage != nil)
     {

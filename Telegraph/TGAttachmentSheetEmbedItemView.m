@@ -1,4 +1,5 @@
 #import "TGAttachmentSheetEmbedItemView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -39,7 +40,7 @@
         CGFloat factor = _embedSize.width / (_embedSize.width + 10.0f);
         _webView.transform = CGAffineTransformMakeScale(factor, factor);
         [self addSubview:_webView];
-        _webView.allowsInlineMediaPlayback = true;
+        OGPlatformConfigureWebViewMediaPlayback(_webView, YES, YES);
         _webView.delegate = self;
         NSURL *url = [NSURL URLWithString:webPage.embedUrl];
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];

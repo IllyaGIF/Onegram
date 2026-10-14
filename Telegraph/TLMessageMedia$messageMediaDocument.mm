@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messageMediaDocument flags:# document:flags.0?Document caption:flags.1?string ttl_seconds:flags.2?int = MessageMedia;
 
 @implementation TLMessageMedia$messageMediaDocument
 

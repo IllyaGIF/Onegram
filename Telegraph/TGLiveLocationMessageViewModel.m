@@ -182,7 +182,6 @@
 
 - (void)bindSpecialViewsToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage atItemPosition:(CGPoint)itemPosition
 {
-    //_boundOffset = itemPosition;
     
     [super bindSpecialViewsToContainer:container viewStorage:viewStorage atItemPosition:itemPosition];
     

@@ -44,7 +44,6 @@ const CGFloat TGCameraModeControlVerticalInteritemSpace = 29.0f;
         
         _dotView = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, 6, 6)];
         _dotView.image = dotImage;
-        //[self addSubview:_dotView];
         
         if (frame.size.width > frame.size.height)
             _kerning = 3.5f;
@@ -65,8 +64,6 @@ const CGFloat TGCameraModeControlVerticalInteritemSpace = 29.0f;
         [
          [self _createButtonForMode:PGCameraModeVideo title:TGLocalized(@"Camera.VideoMode")],
          [self _createButtonForMode:PGCameraModePhoto title:TGLocalized(@"Camera.PhotoMode")],
-        // [self _createButtonForMode:PGCameraModeSquare title:TGLocalized(@"Camera.SquareMode")],
-        // [self _createButtonForMode:PGCameraModeClip title:TGLocalized(@"Camera.MomentMode")]
         ];
         
         for (UIButton *button in _buttons)
@@ -114,7 +111,6 @@ const CGFloat TGCameraModeControlVerticalInteritemSpace = 29.0f;
 
 + (CGFloat)_buttonHorizontalSpacing
 {
-    //return 22;
     return 19;
 }
 

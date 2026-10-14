@@ -1,5 +1,6 @@
 #import "MediaBox.h"
 
+#import <fcntl.h>
 #import <sys/stat.h>
 
 #import "MediaResource.h"
@@ -35,7 +36,6 @@ static int32_t fileSize(NSString *path) {
 - ( instancetype)initWithBasePath:(NSString * )basePath {
     self = [super init];
     if (self != nil) {
-        TGLog(@"MediaBox path %@", basePath);
         _basePath = basePath;
         _statusQueue = [[SQueue alloc] init];
         _concurrentQueue = [SQueue concurrentDefaultQueue];

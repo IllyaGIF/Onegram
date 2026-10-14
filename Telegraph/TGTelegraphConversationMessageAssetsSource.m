@@ -263,10 +263,6 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
 {
     return nil;
     
-    /*static UIColor *color = nil;
-    if (color == nil)
-        color = UIColorRGBA(0xffffff, 0.5f);
-    return color;*/
 }
 
 - (UIColor *)messageLineAttachmentTitleColor
@@ -379,20 +375,6 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
 {
     return nil;
     
-    /*if (_monochromeColor != -1)
-    {
-        static UIColor *color = nil;
-        if (color == nil)
-            color = UIColorRGBA(_monochromeColor, 0.15f);
-        return color;
-    }
-    else
-    {
-        static UIColor *color = nil;
-        if (color == nil)
-            color = UIColorRGBA(0x5e7590, 0.2f);
-        return color;
-    }*/
 }
 
 - (UIImage *)messageVideoIcon
@@ -435,10 +417,6 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
 {
     return nil;
     
-    /*static UIColor *color = nil;
-    if (color == nil)
-        color = UIColorRGBA(0xffffff, 0.5f);
-    return color;*/
 }
 
 - (UIImage *)messageChecked
@@ -467,7 +445,6 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
 
 static UIImage *generateProgressBackground(int baseColor, CGFloat alphaFactor, CGFloat colorFactor)
 {
-    TGLog(@"Generating progress background");
     
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(6, 6), false, 0.0f);
     
@@ -520,7 +497,6 @@ static UIImage *generateProgressBackground(int baseColor, CGFloat alphaFactor, C
 
 static UIImage *generateProgressForeground(int baseColor, float alphaFactor, float colorFactor)
 {
-    TGLog(@"Generating progress foreground");
     
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(8, 6), false, 0.0f);
     
@@ -570,7 +546,6 @@ static UIImage *generateProgressForeground(int baseColor, float alphaFactor, flo
 
 static UIImage *generateInlineCancelButton(int baseColor, CGFloat alphaFactor, CGFloat colorFactor)
 {
-    TGLog(@"Generating inline cancel button variant");
     
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(20, 20), false, 0.0f);
     
@@ -653,7 +628,6 @@ static UIImage *generateInlineCancelButton(int baseColor, CGFloat alphaFactor, C
 
 static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFloat colorFactor)
 {
-    TGLog(@"Generating download button variant");
     
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(29, 29), false, 0.0f);
     
@@ -741,7 +715,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
         else
         {
             image = rawImage;
-            //image = [self messageBackgroundBubbleIncomingSingle];
         }
     }
     return image;
@@ -782,7 +755,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
         else
         {
             image = rawImage;
-            //image = [self messageBackgroundBubbleIncomingSingle];
         }
     }
     return image;
@@ -811,7 +783,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
         else
         {
             image = rawImage;
-            //image = [self messageBackgroundBubbleOutgoingSingle];
         }
     }
     return image;
@@ -823,9 +794,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     if (image == nil)
     {
         UIImage *rawImage = [UIImage imageNamed:@"Msg_Out_Selected.png"];
-        //if ([rawImage respondsToSelector:@selector(resizableImageWithCapInsets:resizingMode:)])
-        //    image = [rawImage resizableImageWithCapInsets:UIEdgeInsetsMake(14, 16, 15, rawImage.size.width - 16) resizingMode:UIImageResizingModeStretch];
-        //else
             image = [rawImage stretchableImageWithLeftCapWidth:15 topCapHeight:15];
     }
     return image;
@@ -855,7 +823,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
         else
         {
             image = rawImage;
-            //image = [self messageBackgroundBubbleOutgoingSingle];
         }
     }
     return image;
@@ -1054,7 +1021,7 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
 
 - (UIColor *)systemMessageBackgroundColor
 {
-    return UIColorRGBA(_monochromeColor, _systemAlpha); //UIColorRGBA(0x000000, MIN(1.0f, 0.3f));
+    return UIColorRGBA(_monochromeColor, _systemAlpha);
 }
 
 - (UIImage *)dateListMessageBackground
@@ -1257,7 +1224,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     if (context == NULL)
     {
         UIGraphicsEndImageContext();
-        TGLog(@"UI systemReplyBackground no graphics context");
         return [UIImage imageNamed:@"MessageTimestampBackground.png"];
     }
     
@@ -1282,8 +1248,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     
     UIColor *color = nil;
     
-    //color = UIColorRGBA(0xffffff, 0.4f);
-    //CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, [color CGColor]);
     
     color = UIColorRGBA(baseColor, backgroundAlpha);
     [color setFill];
@@ -1303,8 +1267,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     
     CGContextSaveGState(context);
     
-    //color = UIColorRGBA(baseColor, shadowAlpha);
-    //CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 1.0f, [color CGColor]);
     
     [color setFill];
     CGContextAddPath(context, path);
@@ -1331,7 +1293,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     if (context == NULL)
     {
         UIGraphicsEndImageContext();
-        TGLog(@"UI systemMessageBackground no graphics context");
         return [UIImage imageNamed:@"MessageTimestampBackground.png"];
     }
     
@@ -1356,8 +1317,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     
     UIColor *color = nil;
     
-    //color = UIColorRGBA(0xffffff, 0.4f);
-    //CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.0f, [color CGColor]);
     
     color = UIColorRGBA(baseColor, backgroundAlpha);
     [color setFill];
@@ -1377,8 +1336,6 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
     
     CGContextSaveGState(context);
     
-    //color = UIColorRGBA(baseColor, shadowAlpha);
-    //CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 1.0f, [color CGColor]);
     
     [color setFill];
     CGContextAddPath(context, path);

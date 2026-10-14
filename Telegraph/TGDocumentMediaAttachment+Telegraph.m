@@ -136,7 +136,6 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
                 bool isVoice = [self.mimeType isEqualToString:@"audio/ogg"] || [self.mimeType isEqualToString:@"audio/opus"] || [self.mimeType isEqualToString:@"application/ogg"];
                 [attributes addObject:[[TGDocumentAttributeAudio alloc] initWithIsVoice:isVoice title:nil performer:nil duration:0 waveform:nil]];
                 self.attributes = attributes;
-                while (false) TGLog(@"MEDIA document audio fallback id=%lld mime=%@ voice=%d", self.documentId, self.mimeType, isVoice ? 1 : 0);
             }
             
             NSData *cachedData = nil;
@@ -144,10 +143,6 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
             if (concreteDocument.thumb != nil)
             {
                 thumbmailInfo = [[TGImageInfo alloc] initWithTelegraphSizesDescription:@[concreteDocument.thumb] cachedData:&cachedData];
-                // Modern PhotoSize objects do not contain a legacy FileLocation.
-                // TGImageInfo can still report itself as non-empty after receiving
-                // an empty URL, so check the actual URL before choosing the legacy
-                // thumbnail path.
                 if (thumbmailInfo.empty || [thumbmailInfo imageUrlForLargestSize:NULL].length == 0)
                 {
                     NSString *modernUrl = TGModernDocumentThumbnailUrl(concreteDocument, concreteDocument.thumb);

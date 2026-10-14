@@ -36,6 +36,9 @@
     }
     
 #if TARGET_IPHONE_SIMULATOR || TARGET_OS_IPHONE
+#if defined(ONEGRAM_ARMV6)
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
+#else
     __weak GPUImageFramebufferCache *weakSelf = self;
     memoryWarningObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:nil usingBlock:^(__unused NSNotification *note)
     {
@@ -43,6 +46,7 @@
         if (strongSelf != nil)
             [strongSelf purgeAllUnassignedFramebuffers];
 	}];
+#endif
 #else
 #endif
 
@@ -61,6 +65,14 @@
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     #endif
 }
+
+
+#if defined(ONEGRAM_ARMV6)
+- (void)onegramMemoryWarning:(NSNotification *)notification
+{
+    [self purgeAllUnassignedFramebuffers];
+}
+#endif
 
 #pragma mark -
 #pragma mark Framebuffer management

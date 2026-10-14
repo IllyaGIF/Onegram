@@ -67,7 +67,6 @@
     {
         _qrLogin = true;
         TGIOS6SetQRLoginFlowActive(true);
-        TGLog(@"QR password controller init");
     }
     return self;
 }
@@ -108,36 +107,35 @@
 
 - (void)donePressed
 {
-    if (_qrLogin)
-        TGLog(@"QR password done pressed length=%d", (int)_currentPassword.length);
 
     __weak TGLoginPasswordController *weakSelf = self;
-    [[[_config.signal take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(TGTwoStepConfig *config)
+    [[_config.signal take:1] startWithNext:^(TGTwoStepConfig *config)
     {
-        __strong TGLoginPasswordController *strongSelf = weakSelf;
-        if (strongSelf != nil)
+        TGDispatchOnMainThread(^
         {
-            if (config == nil)
+            __strong TGLoginPasswordController *strongSelf = weakSelf;
+            if (strongSelf != nil)
             {
-                [strongSelf->_config set:[TGTwoStepConfigSignal twoStepConfig]];
-                [[[TGAlertView alloc] initWithTitle:nil message:TGLocalized(@"Login.UnknownError") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil] show];
-                return;
+                if (config == nil)
+                {
+                    [strongSelf->_config set:[TGTwoStepConfigSignal twoStepConfig]];
+                    [[[TGAlertView alloc] initWithTitle:nil message:TGLocalized(@"Login.UnknownError") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil] show];
+                    return;
+                }
+
+
+                strongSelf->_progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+                [strongSelf->_progressWindow show:true];
+
+                NSString *password = strongSelf->_currentPassword ?: @"";
+
+                NSMutableDictionary *checkOptions = [@{@"password": password, @"twoStepConfig": config} mutableCopy];
+                if (strongSelf->_qrLogin)
+                    checkOptions[@"qrLogin"] = @(YES);
+
+                [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/checkPassword/(%d)", (int)strongSelf->_currentPassword.hash] options:checkOptions flags:0 watcher:self];
             }
-
-            if (strongSelf->_qrLogin)
-                TGLog(@"QR password config received hasPassword=%d srpId=%lld", config.hasPassword ? 1 : 0, config.srpId);
-
-            strongSelf->_progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-            [strongSelf->_progressWindow show:true];
-            
-            NSString *password = strongSelf->_currentPassword ?: @"";
-            
-            NSMutableDictionary *checkOptions = [@{@"password": password, @"twoStepConfig": config} mutableCopy];
-            if (strongSelf->_qrLogin)
-                checkOptions[@"qrLogin"] = @YES;
-
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/checkPassword/(%d)", (int)strongSelf->_currentPassword.hash] options:checkOptions flags:0 watcher:self];
-        }
+        });
     }];
 }
 
@@ -154,6 +152,17 @@
     [_view setFirstReponder];
     
     [super viewDidLayoutSubviews];
+}
+
+- (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
+{
+    [super controllerInsetUpdated:previousInset];
+
+    CGFloat keyboardHeight = self.controllerCleanInset.bottom;
+    if (keyboardHeight < FLT_EPSILON && [TGHacks isKeyboardVisible])
+        keyboardHeight = [TGHacks keyboardHeightForOrientation:self.interfaceOrientation];
+
+    [_view setKeyboardHeight:keyboardHeight];
 }
 
 - (void)loadView
@@ -388,10 +397,6 @@
             {
                 [self _completedDeletion];
             }
-            else
-            {
-                
-            }
         });
     }
 }
@@ -406,7 +411,6 @@
     {
         if (_qrLogin)
         {
-            TGLog(@"QR password accepted user=%d", userId);
             TGIOS6SetQRLoginFlowActive(false);
         }
         [TGTelegraphInstance processAuthorizedWithUserId:userId clientIsActivated:true];

@@ -449,7 +449,6 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
     
     NSInteger displayed = manual ? 0 : [[[NSUserDefaults standardUserDefaults] objectForKey:@"TG_displayedCallEmojiTooltip_v0"] integerValue];
 #if defined(INTERNAL_RELEASE)
-//    displayed = 0;
 #endif
     if (displayed > 2)
         return;
@@ -551,11 +550,11 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
             if (height == 812)
                 staticOffset = 125;
             else if (height == 736)
-                staticOffset = 80; //plus
+                staticOffset = 80;
             else if (width == 320)
-                staticOffset = 60; // 4/5
+                staticOffset = 60;
             else
-                staticOffset = 64; // 6/7
+                staticOffset = 64;
         });
         offset = staticOffset;
     }

@@ -566,7 +566,7 @@ typedef enum {
     _controlPlayButton.hidden = !status.paused;
     _controlPauseButton.hidden = status.paused;
     
-    _controlShuffleButton.selected = false; //status.shuffle;
+    _controlShuffleButton.selected = false;
     if (status.repeatType != previousStatus.repeatType)
     {
         switch (status.repeatType)
@@ -783,7 +783,6 @@ typedef enum {
 
 - (void)controlShuffle
 {
-    //[TGTelegraphInstance.musicPlayer controlShuffle];
 }
 
 - (void)controlRepeat

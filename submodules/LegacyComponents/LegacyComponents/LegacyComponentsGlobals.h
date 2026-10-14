@@ -20,6 +20,12 @@
 @class TGCheckButtonPallete;
 
 typedef enum {
+    TGNavigationBarBackgroundVariantDefault = 0,
+    TGNavigationBarBackgroundVariantGloss = 1,
+    TGNavigationBarBackgroundVariantContacts = 2
+} TGNavigationBarBackgroundVariant;
+
+typedef enum {
     TGAudioSessionTypePlayVoice,
     TGAudioSessionTypePlayMusic,
     TGAudioSessionTypePlayVideo,
@@ -54,6 +60,8 @@ typedef enum {
 - (void)setIdleTimerDisabled:(bool)value;
 
 - (void)pauseMusicPlayback;
+- (void)prepareAudioForVideoCapture:(void (^)(void))completion;
+- (id<SDisposable>)suppressNotificationSoundsForCapture;
 
 - (NSString *)dataStoragePath;
 - (NSString *)dataCachePath;
@@ -93,6 +101,21 @@ typedef enum {
 @optional
 - (bool)useNativeActionSheets;
 - (TGImageBorderPallete *)imageBorderPallete;
+- (UIImage *)brandedIOS6NavigationBarBackgroundImageForSize:(CGSize)size overflow:(CGFloat)overflow variant:(TGNavigationBarBackgroundVariant)variant;
+- (UIImage *)brandedIOS6NavigationBarBackButtonImageForWidth:(CGFloat)width highlighted:(bool)highlighted;
+- (UIColor *)brandedIOS6NavigationBarTintColor;
+- (bool)brandedIOS6NavigationBarHidesBottomStripe;
+- (UIFont *)brandedIOS6NavigationBarTitleFont;
+- (UIColor *)brandedIOS6NavigationBarTitleShadowColor;
+- (UIFont *)brandedIOS6NavigationBarButtonFont;
+- (UIColor *)brandedIOS6NavigationBarButtonShadowColor;
+- (UIColor *)brandedIOS6NavigationBarTitleColor;
+- (UIColor *)brandedIOS6NavigationBarButtonTitleColor;
+- (UIImage *)brandedIOS6SearchBarBackgroundImageForSize:(CGSize)size;
+- (UIImage *)brandedIOS6SearchBarFieldImageForSize:(CGSize)size;
+- (UIImage *)brandedIOS6SearchBarIconImage;
+- (UIOffset)brandedIOS6SearchBarIconOffset;
+- (UIOffset)brandedIOS6SearchBarPlaceholderOffset;
 
 @end
 
@@ -111,3 +134,5 @@ NSString *TGComponentsPathForResource(NSString *name, NSString *type);
 #ifdef __cplusplus
 }
 #endif
+
+FOUNDATION_EXPORT NSInteger TGCurrentInterfaceStyle(void);

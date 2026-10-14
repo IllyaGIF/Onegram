@@ -690,18 +690,6 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
         return true;
     }
     
-    /*NSString *instantViewPattern = @"https?:\\/\\/(t|telegram)\\.me\\/iv\\?(.*?)$";
-    NSRegularExpression *instantViewRegex = [NSRegularExpression regularExpressionWithPattern:instantViewPattern options:NSRegularExpressionCaseInsensitive error:NULL];
-    NSArray *instantViewMatches = [instantViewRegex matchesInString:rawAbsoluteString options:0 range:NSMakeRange(0, rawAbsoluteString.length)];
-    for (NSTextCheckingResult *match in instantViewMatches) {
-        if ([match rangeAtIndex:2].location != NSNotFound) {
-            [TGStringUtils argumentDictionaryInUrlString:[rawAbsoluteString substringWithRange:[match rangeAtIndex:2]]];
-            [(TGAppDelegate *)self.delegate handleOpenInstantView:];
-            return true;
-        }
-        
-        break;
-    }*/
     
     if ([absolutePrefixString hasPrefix:@"http://t.me/joinchat/"])
     {
@@ -876,21 +864,6 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
 {
     if (_processStatusBarHiddenRequests)
     {
-        /*if (animation != UIStatusBarAnimationNone)
-         {
-         [TGHacks animateApplicationStatusBarAppearance:hidden ? TGStatusBarAppearanceAnimationSlideUp : TGStatusBarAppearanceAnimationSlideUp duration:0.3 completion:^
-         {
-         if (hidden)
-         [TGHacks setApplicationStatusBarAlpha:0.0f];
-         }];
-         
-         if (!hidden)
-         [TGHacks setApplicationStatusBarAlpha:1.0f];
-         }
-         else
-         {
-         [TGHacks setApplicationStatusBarAlpha:hidden ? 0.0f : 1.0f];
-         }*/
         
         [self forceSetStatusBarHidden:hidden withAnimation:animation];
     }
@@ -903,7 +876,11 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
 
 - (void)forceSetStatusBarHidden:(BOOL)hidden withAnimation:(UIStatusBarAnimation)animation
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
     [super setStatusBarHidden:hidden withAnimation:animation];
+#else
+    [super setStatusBarHidden:hidden animated:animation != UIStatusBarAnimationNone];
+#endif
 }
 
 @end

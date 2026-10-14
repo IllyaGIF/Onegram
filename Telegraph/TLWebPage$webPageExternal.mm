@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//webPageExternal flags:# url:string display_url:string type:flags.0?string title:flags.1?string description:flags.2?string thumb_url:flags.3?string content_url:flags.4?string content_type:flags.4?string w:flags.5?int h:flags.5?int duration:flags.6?int = WebPage
 
 @implementation TLWebPage$webPageExternal
 

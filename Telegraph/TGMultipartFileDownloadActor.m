@@ -8,9 +8,6 @@
 
 #import "TGMultipartFileDownloadActor.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "TL/TLMetaScheme.h"
 
@@ -75,8 +72,6 @@
     bool _reportedProgress;
     int _lastReportedProgress;
     
-    NSTimeInterval _averageDownloadSpeed;
-    int _takenTimeSamples;
     
     float _progress;
     
@@ -91,6 +86,7 @@
     
     TGCdnFileData *_cdnFileData;
     TGNetworkMediaTypeTag _mediaTypeTag;
+    bool _useMainConnection;
     
     SMetaDisposable *_reuploadDisposable;
     bool _isReuploading;
@@ -228,7 +224,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
         NSDictionary *fileAttributes = [fileManager attributesOfItemAtPath:_tempStoreFilePath error:&error];
         int fileSize = [[fileAttributes objectForKey:NSFileSize] intValue];
         
-        if (fileAttributes == nil || (fileSize % 1024 != 0 && fileSize != _decryptedSize && _decryptedSize != 0))
+        if (fileAttributes == nil || (fileSize % 4096 != 0 && fileSize != _size && fileSize != _decryptedSize) || (_size > 0 && fileSize > _size))
         {
             if (fileAttributes != nil)
             {
@@ -260,6 +256,12 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
         _mediaTypeTag = mediaTypeTag;
         NSString *actorPath = [self.path copy];
         id lifetimeToken = _lifetimeToken;
+        if (_datacenterId == [[TGTelegramNetworking instance] masterDatacenterId] && _size < 1024 * 1024)
+        {
+            _useMainConnection = true;
+            [self downloadFileParts];
+            return;
+        }
         _worker1Token = [[TGTelegramNetworking instance] requestDownloadWorkerForDatacenterId:_datacenterId type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
         {
             [ActionStageInstance() dispatchOnStageQueue:^
@@ -273,9 +275,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
             }];
         }];
         
-        // A second connection only helps large, known-size files.  Previously
-        // every thumbnail and sticker reserved two of the four media workers,
-        // so two stalled items could block all media in a chat.
         if (_size >= 4 * 1024 * 1024)
         {
             _worker2Token = [[TGTelegramNetworking instance] requestDownloadWorkerForDatacenterId:_datacenterId type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
@@ -309,19 +308,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
 - (int)preferredPartSize
 {
     return 128 * 1024;
-}
-
-- (void)recordTimeSample:(int)length startTime:(NSTimeInterval)startTime
-{
-    NSTimeInterval downloadTime = CFAbsoluteTimeGetCurrent() - startTime;
-    float downloadSpeed = ((float)length) / ((float)downloadTime);
-    
-    _takenTimeSamples++;
-    _averageDownloadSpeed = (_averageDownloadSpeed + downloadSpeed) / 2.0f;
-    
-#ifdef DEBUG
-    IOS6_NOOP_LOG(@"Average speed: %f kbytes/s", _averageDownloadSpeed / 1024.0f);
-#endif
 }
 
 - (void)downloadFilePartsWithWorker:(TGNetworkWorkerGuard *)worker
@@ -360,7 +346,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
             if (partInfo == nil || partInfo.requestGeneration != generation || ![partInfo.token isEqual:token])
                 return;
 
-            // Slow links are allowed to continue while bytes are still moving.
             if (CFAbsoluteTimeGetCurrent() - partInfo.lastActivityTime < 25.0)
             {
                 [strongSelf scheduleTimeoutForPartOffset:offset generation:generation token:token];
@@ -373,8 +358,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
             partInfo.token = nil;
             partInfo.downloadedLength = 0;
 
-            // Retry a silent request once.  A second timeout is reported to
-            // the fetcher instead of keeping a worker and a 0.00 MB UI forever.
             if (partInfo.timeoutRetryCount < 1)
             {
                 partInfo.timeoutRetryCount++;
@@ -391,7 +374,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
 
 - (void)downloadFileParts
 {
-    if (_worker1 == nil) {
+    if (_worker1 == nil && !_useMainConnection) {
         return;
     }
     
@@ -412,13 +395,22 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
         if (_contextStoreFilePath != nil)
             [[NSFileManager defaultManager] removeItemAtPath:_contextStoreFilePath error:nil];
         
+        NSData *completedData = _completeWithData ? [[NSData alloc] initWithContentsOfFile:_tempStoreFilePath] : nil;
+        if (_completeWithData && completedData == nil) {
+            [ActionStageInstance() actionFailed:self.path reason:-1];
+            return;
+        }
         for (NSString *storeFilePath in _storeFilePaths)
         {
-            [[ActionStageInstance() globalFileManager] copyItemAtPath:_tempStoreFilePath toPath:storeFilePath error:NULL];
+            bool published = _completeWithData ? [completedData writeToFile:storeFilePath atomically:true] : [[ActionStageInstance() globalFileManager] copyItemAtPath:_tempStoreFilePath toPath:storeFilePath error:NULL];
+            if (!published) {
+                [ActionStageInstance() actionFailed:self.path reason:-1];
+                return;
+            }
         }
         [[ActionStageInstance() globalFileManager] removeItemAtPath:_tempStoreFilePath error:NULL];
 
-        [ActionStageInstance() actionCompleted:self.path result:_completeWithData ? [[NSData alloc] initWithContentsOfFile:_storeFilePaths[0]] : nil];
+        [ActionStageInstance() actionCompleted:self.path result:completedData];
     }
     else
     {
@@ -441,9 +433,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
         
         int partSize = [self preferredPartSize];
         
-        // Four small MTProto parts keep one connection saturated without
-        // consuming another worker. Unknown-size legacy resources remain
-        // strictly sequential so their end is detected safely.
         int maximumActiveParts = _size != 0 ? 4 : 1;
         while (activeDownloadingParts < maximumActiveParts)
         {
@@ -466,14 +455,14 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                     }
                 }];
                 
-                if (_size != 0 && nextDownloadOffset >= _size)
+                if (activeDownloadingParts >= maximumActiveParts || (_size != 0 && nextDownloadOffset >= _size))
                     break;
                 
                 int partLength = 0;
                 if (_size == 0)
                     partLength = partSize;
                 else
-                    partLength = MIN(partSize, _size - _downloadedFileSize);
+                    partLength = MIN(partSize, _size - nextDownloadOffset);
                 
                 TGFilePartRequestInfo *requestInfo = [[TGFilePartRequestInfo alloc] init];
                 requestInfo.offset = nextDownloadOffset;
@@ -587,6 +576,8 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                                 ((TGFilePartInfo *)strongSelf->_downloadingParts[@(requestInfo.offset)]).restart = true;
                                 TLupload_CdnFile$upload_cdnFileReuploadNeeded *reupload = (TLupload_CdnFile$upload_cdnFileReuploadNeeded *)result;
                                 [strongSelf reuploadToCdn:reupload.request_token];
+                            } else {
+                                [strongSelf filePartDownloadFailed:location offset:requestInfo.offset length:requestInfo.length];
                             }
                         }
                         else
@@ -597,7 +588,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                             {
                                 ((TGFilePartInfo *)strongSelf->_downloadingParts[@(requestInfo.offset)]).restart = true;
                                 
-                                while (false) TGLog(@"MEDIA multipart fileRef error text=%@ offset=%d", errorString, requestInfo.offset);
                                 [strongSelf updateFileReference:strongSelf->_originInfo offset:requestInfo.offset length:requestInfo.length];
                             }
                             else if (errorCode == 400 && ([errorString isEqualToString:@"PEER_ID_INVALID"] || [errorString isEqualToString:@"CHANNEL_INVALID"]) && !strongSelf->_retrying && [strongSelf->_fileLocation isKindOfClass:[TLInputFileLocation$inputPeerPhotoFileLocation class]])
@@ -609,7 +599,6 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                                     strongSelf->_retrying = true;
                                     int64_t oldPeerId = peerPhotoLocation.peer_id;
                                     peerPhotoLocation.peer_id = oldPeerId + ((int64_t)UINT32_MAX + 1);
-                                    while (false) TGLog(@"MEDIA multipart peerphoto retry unsigned type=%d error=%@ legacy=%lld modern=%lld photo=%lld", peerPhotoLocation.peer_type, errorString, oldPeerId, peerPhotoLocation.peer_id, peerPhotoLocation.photo_id);
                                     [strongSelf downloadFileParts];
                                 }
                                 else
@@ -651,7 +640,10 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                     worker = _worker2;
             }
             
-            [worker.strongWorker addRequest:request];
+            if (_useMainConnection)
+                [[TGTelegramNetworking instance] addRequest:request];
+            else
+                [worker.strongWorker addRequest:request];
             [self scheduleTimeoutForPartOffset:requestInfo.offset generation:requestGeneration token:token];
         }
     }
@@ -712,6 +704,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
     }
     
     _cdnFileData = fileData;
+    _useMainConnection = false;
     
     _worker1 = nil;
     _worker2 = nil;
@@ -812,11 +805,9 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                 
                 if (next == nil || updatedFileReference.length == 0)
                 {
-                    while (false) TGLog(@"MEDIA multipart fileRef refresh empty identifier=%lld", strongSelf->_identifier);
                     [strongSelf filePartDownloadFailed:nil offset:offset length:length];
                     return;
                 }
-                while (false) TGLog(@"MEDIA multipart fileRef refreshed identifier=%lld", strongSelf->_identifier);
                 [strongSelf downloadFileParts];
             }
         }];
@@ -855,7 +846,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
         readyFileSize += partInfo.downloadedLength;
     }];
     
-    if (force || (_lastReportedProgress < readyFileSize && (_lastReportedProgress / 16 * 1024 != readyFileSize / 16 * 1024 || readyFileSize == _size)))
+    if (force || (_lastReportedProgress < readyFileSize && (_lastReportedProgress / (16 * 1024) != readyFileSize / (16 * 1024) || readyFileSize == _size)))
     {
         _lastReportedProgress = readyFileSize;
         
@@ -870,16 +861,18 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
     if (self.cancelled)
         return;
     
+    if (_size > offset && data.length == 0) {
+        [self filePartDownloadFailed:location offset:offset length:length];
+        return;
+    }
     if (_size == 0 && (int)data.length < length)
-        _size = _downloadedFileSize + (int)data.length;
+        _size = offset + (int)data.length;
     
     TGFilePartInfo *partInfo = _downloadingParts[@(offset)];
     if (partInfo != nil)
     {
         partInfo.token = nil;
-        partInfo.downloadedLength = length;
-        
-        [self recordTimeSample:length startTime:partInfo.startTime];
+        partInfo.downloadedLength = MIN(length, (int)data.length);
     }
     
     int fileSize = _downloadedFileSize;
@@ -956,7 +949,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                                 return;
                             }
                             NSData *localHash = nil;
-                            if (partOffset + 128 * 1024 > (int32_t)dataToWrite.length) {
+                            if (localOffset + 128 * 1024 > (int32_t)dataToWrite.length) {
                                 localHash = MTSha256([[NSData alloc] initWithBytesNoCopy:(void *)dataToWrite.bytes + localOffset length:(int32_t)dataToWrite.length - localOffset freeWhenDone:false]);
                             } else {
                                 localHash = MTSha256([[NSData alloc] initWithBytesNoCopy:(void *)dataToWrite.bytes + localOffset length:128 * 1024 freeWhenDone:false]);
@@ -969,15 +962,22 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                         }
                     }
                     
-                    [_fileStream writeData:dataToWrite];
+                    NSUInteger writtenLength = 0;
+                    while (writtenLength < dataToWrite.length) {
+                        NSInteger result = [_fileStream write:(const uint8_t *)dataToWrite.bytes + writtenLength maxLength:dataToWrite.length - writtenLength];
+                        if (result <= 0) {
+                            [self filePartDownloadFailed:location offset:offset length:length];
+                            return;
+                        }
+                        writtenLength += (NSUInteger)result;
+                    }
                     
                     _downloadedFileSize += listPartInfo.downloadedData.length;
                     nextWriteOffset += listPartInfo.downloadedData.length;
                     
-                    if (_size != 0 && (int)listPartInfo.downloadedData.length < listPartInfo.partLength && _downloadedFileSize + (int)listPartInfo.downloadedData.length < _size)
+                    if (_size != 0 && (int)listPartInfo.downloadedData.length < listPartInfo.partLength && _downloadedFileSize < _size)
                     {
                         int dataGapLength = listPartInfo.partLength - (int)listPartInfo.downloadedData.length;
-                        TGLog(@"Data gap found: %d bytes", dataGapLength);
                         
                         TGFilePartRequestInfo *gapInfo = [[TGFilePartRequestInfo alloc] init];
                         gapInfo.offset = nextWriteOffset;

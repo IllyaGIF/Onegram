@@ -1,10 +1,3 @@
-//
-//  TGKeychainImport.h
-//  Telegraph
-//
-//  Created by Peter on 17/02/14.
-//
-//
 
 #import <Foundation/Foundation.h>
 

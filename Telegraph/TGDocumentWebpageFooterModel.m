@@ -285,7 +285,6 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 }
 
 - (void)setMediaIsAvailable:(bool)mediaIsAvailable {
-    //bool wasAvailable = self.mediaIsAvailable;
     
     [super setMediaIsAvailable:mediaIsAvailable];
     

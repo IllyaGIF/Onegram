@@ -39,7 +39,12 @@ const CGFloat TGLocationLiveCellHeight = 68;
     SMetaDisposable *_locationDisposable;
     SMetaDisposable *_remainingDisposable;
     
+#if defined(ONEGRAM_ARMV6)
+    NSTimer *_longPressTimer;
+    CGPoint _longPressStartPoint;
+#else
     UILongPressGestureRecognizer *_longPressGestureRecognizer;
+#endif
 }
 @end
 
@@ -96,14 +101,19 @@ const CGFloat TGLocationLiveCellHeight = 68;
         _wavesView = [[TGLocationWavesView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 48.0f, 48.0f)];
         [_circleView addSubview:_wavesView];
         
+#if !defined(ONEGRAM_ARMV6)
         _longPressGestureRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handlePress:)];
         [self addGestureRecognizer:_longPressGestureRecognizer];
+#endif
     }
     return self;
 }
 
 - (void)dealloc
 {
+#if defined(ONEGRAM_ARMV6)
+    [_longPressTimer invalidate];
+#endif
     [_locationDisposable dispose];
     [_wavesView invalidate];
 }
@@ -124,6 +134,54 @@ const CGFloat TGLocationLiveCellHeight = 68;
     [_elapsedView setColor:pallete.accentColor];
 }
 
+#if defined(ONEGRAM_ARMV6)
+- (void)longPressTimerFired:(NSTimer *)timer
+{
+    if (timer == _longPressTimer)
+    {
+        _longPressTimer = nil;
+        if (self.longPressed != nil)
+            self.longPressed();
+    }
+}
+
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    [super touchesBegan:touches withEvent:event];
+    UITouch *touch = [touches anyObject];
+    _longPressStartPoint = [touch locationInView:self];
+    [_longPressTimer invalidate];
+    _longPressTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(longPressTimerFired:) userInfo:nil repeats:NO];
+}
+
+- (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    [super touchesMoved:touches withEvent:event];
+    UITouch *touch = [touches anyObject];
+    CGPoint point = [touch locationInView:self];
+    CGFloat dx = point.x - _longPressStartPoint.x;
+    CGFloat dy = point.y - _longPressStartPoint.y;
+    if (dx * dx + dy * dy > 100.0f)
+    {
+        [_longPressTimer invalidate];
+        _longPressTimer = nil;
+    }
+}
+
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    [_longPressTimer invalidate];
+    _longPressTimer = nil;
+    [super touchesEnded:touches withEvent:event];
+}
+
+- (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    [_longPressTimer invalidate];
+    _longPressTimer = nil;
+    [super touchesCancelled:touches withEvent:event];
+}
+#else
 - (void)handlePress:(UILongPressGestureRecognizer *)gestureRecognizer
 {
     if (gestureRecognizer.state == UIGestureRecognizerStateBegan)
@@ -132,16 +190,25 @@ const CGFloat TGLocationLiveCellHeight = 68;
             self.longPressed();
     }
 }
+#endif
 
 - (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated
 {
     if (animated)
     {
+#if defined(ONEGRAM_ARMV6)
+        [UIView beginAnimations:nil context:NULL];
+        [UIView setAnimationDuration:0.2];
+        _highlightView.alpha = highlighted ? 1.0f : 0.0f;
+        _edgeView.alpha = highlighted ? 1.0f : 0.0f;
+        [UIView commitAnimations];
+#else
         [UIView animateWithDuration:0.2 animations:^
         {
             _highlightView.alpha = highlighted ? 1.0f : 0.0f;
             _edgeView.alpha = highlighted ? 1.0f : 0.0f;
         }];
+#endif
     }
     else
     {
@@ -167,7 +234,6 @@ const CGFloat TGLocationLiveCellHeight = 68;
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(diameter, diameter), false, 0.0f);
         CGContextRef context = UIGraphicsGetCurrentContext();
         
-        //!placeholder
         CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
         CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, diameter, diameter));
         CGContextSetStrokeColorWithColor(context, UIColorRGB(0xd9d9d9).CGColor);
@@ -216,7 +282,11 @@ const CGFloat TGLocationLiveCellHeight = 68;
         __strong TGLocationLiveCell *strongSelf = weakSelf;
         if (strongSelf != nil && next != nil)
         {
+#if defined(ONEGRAM_ARMV6)
+            CGFloat distance = [next getDistanceFrom:location];
+#else
             CGFloat distance = [next distanceFromLocation:location];
+#endif
             NSString *distanceString = [NSString stringWithFormat:TGLocalized(@"Map.DistanceAway"), [TGLocationUtils stringFromDistance:distance]];
             strongSelf->_subtitleLabel.text = [NSString stringWithFormat:@"%@ • %@", subtitle, distanceString];
         }

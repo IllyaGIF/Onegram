@@ -66,17 +66,30 @@
     return animation;
 }
 
+- (void)_updateAnimationState
+{
+    bool shouldAnimate = self.window != nil && !self.hidden;
+    if (_animating != shouldAnimate)
+    {
+        if (shouldAnimate)
+            [self startAnimating];
+        else
+            [self stopAnimating];
+    }
+}
+
 - (void)didMoveToWindow
 {
-    if (_animating != (self.window != nil))
-    {
-        if (self.window == nil)
-            [self stopAnimating];
-        else
-            [self startAnimating];
-    }
+    [self _updateAnimationState];
     
     [super didMoveToWindow];
+}
+
+- (void)setHidden:(BOOL)hidden
+{
+    [super setHidden:hidden];
+    
+    [self _updateAnimationState];
 }
 
 - (void)startAnimating

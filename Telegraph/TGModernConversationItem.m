@@ -124,6 +124,10 @@
 {
 }
 
+- (void)activateDeferredInlineMedia
+{
+}
+
 - (void)updateGroupedLayout:(TGMessageGroupedLayout *)__unused groupedLayout
 {
 }

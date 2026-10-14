@@ -44,9 +44,7 @@
 
 - (void)connectionOpened
 {
-    //_backoffCount = 0;
     
-    //[self invalidateTimer];
 }
 
 - (void)connectionValidDataReceived

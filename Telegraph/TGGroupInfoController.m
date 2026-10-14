@@ -402,15 +402,9 @@
     }
     
     if (!(_conversation.kickedFromChat || _conversation.leftChat || _conversation.isDeactivated)) {
-        //if (canEditGroup) {
             if (self.navigationItem.rightBarButtonItem == nil) {
                 [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:false];
             }
-        //} else {
-        //    if (self.navigationItem.rightBarButtonItem != nil) {
-        //        [self setRightBarButtonItem:nil];
-        //    }
-        //}
     }
 }
 
@@ -1062,7 +1056,6 @@
 
 - (void)_updateSharedMediaCount
 {
-    //_sharedMediaItem.variant = _sharedMediaCount == 0 ? TGLocalized(@"GroupInfo.SharedMediaNone") : ( TGIsLocaleArabic() ? [TGStringUtils stringWithLocalizedNumber:_sharedMediaCount] : [[NSString alloc] initWithFormat:@"%d", _sharedMediaCount]);
     _sharedMediaItem.variant = @"";
 }
 
@@ -1116,7 +1109,6 @@
 - (bool)showGroupUpgradeNotice {
     if (_conversation.isCreator) {
 #ifdef INTERNAL_RELEASE
-        //return _conversation.chatParticipantCount >= 2;
 #endif
         
         if (_upgradeNoticeMemberLimit != 0) {
@@ -1295,12 +1287,6 @@
                 insertIndex++;
             }
             
-            /*self.collectionLayout.withoutAnimation = true;
-            [UIView performWithoutAnimation:^
-            {
-                [self.collectionView reloadSections:[NSIndexSet indexSetWithIndex:sectionIndex]];
-            }];
-            self.collectionLayout.withoutAnimation = false;*/
             
             [self.collectionView reloadData];
             

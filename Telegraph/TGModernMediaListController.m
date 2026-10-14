@@ -212,7 +212,6 @@
     _collectionView.transform = CGAffineTransformIdentity;
     
     CGFloat lastInverseOffset = MAX(0, _collectionView.contentSize.height - (_collectionView.contentOffset.y + _collectionView.frame.size.height - _collectionView.contentInset.bottom));
-    //CGFloat lastOffset = _collectionView.contentOffset.y;
     
     CGRect tableFrame = CGRectMake(0, 0, screenSize.width, screenSize.height);
     _collectionViewWidth = tableFrame.size.width;
@@ -222,13 +221,6 @@
         [self _adjustContentOffsetToBottom:self.interfaceOrientation];
     else
         [self _adjustInverseContentOffset:lastInverseOffset];
-    /*else if (lastOffset < -_collectionView.contentInset.top + 2)
-    {
-        UIEdgeInsets contentInset = [self controllerInsetForInterfaceOrientation:self.interfaceOrientation];
-        
-        CGPoint contentOffset = CGPointMake(0, -contentInset.top);
-        [_collectionView setContentOffset:contentOffset animated:false];
-    }*/
     
     _collectionView.transform = tableTransform;
     

@@ -90,8 +90,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
     _longPressGestureRecognizer.minimumPressDuration = 0.2;
     _longPressGestureRecognizer.delegate = self;
     
-    // Links the default long press gesture recognizer to the custom long press gesture recognizer we are creating now
-    // by enforcing failure dependency so that they doesn't clash.
     for (UIGestureRecognizer *gestureRecognizer in self.collectionView.gestureRecognizers) {
         if ([gestureRecognizer isKindOfClass:[UILongPressGestureRecognizer class]]) {
             [gestureRecognizer requireGestureRecognizerToFail:_longPressGestureRecognizer];
@@ -105,7 +103,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
     _panGestureRecognizer.delegate = self;
     [self.collectionView addGestureRecognizer:_panGestureRecognizer];
     
-    // Useful in multiple scenarios: one common scenario being when the Notification Center drawer is pulled down
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleApplicationWillResignActive:) name: UIApplicationWillResignActiveNotification object:nil];
 }
 
@@ -239,7 +236,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
 
 #pragma mark - Target/Action methods
 
-// Tight loop, allocate memory sparely, even if they are stack allocation.
 - (void)handleScroll:(CADisplayLink *)displayLink {
     LXScrollingDirection direction = (LXScrollingDirection)[displayLink.LX_userInfo[kLXScrollingDirectionKey] integerValue];
     if (direction == LXScrollingDirectionUnknown) {
@@ -250,8 +246,6 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
     CGSize contentSize = self.collectionView.contentSize;
     CGPoint contentOffset = self.collectionView.contentOffset;
     UIEdgeInsets contentInset = self.collectionView.contentInset;
-    // Important to have an integer `distance` as the `contentOffset` property automatically gets rounded
-    // and it would diverge from the view's center resulting in a "cell is slipping away under finger"-bug.
     CGFloat distance = (CGFloat)rint(self.scrollingSpeed * displayLink.duration);
     CGPoint translation = CGPointZero;
     
@@ -569,11 +563,11 @@ static NSString * const kLXCollectionViewKeyPath = @"collectionView";
     
     for (PSTCollectionViewUpdateItem *update in updateItems)
     {
-        if (update.updateAction == UICollectionUpdateActionDelete)
+        if (update.updateAction == PSTCollectionUpdateActionDelete)
             [_deleteIndexPaths addObject:update.indexPathBeforeUpdate];
-        else if (update.updateAction == UICollectionUpdateActionInsert)
+        else if (update.updateAction == PSTCollectionUpdateActionInsert)
             [_insertIndexPaths addObject:update.indexPathAfterUpdate];
-        else if (update.updateAction == UICollectionUpdateActionReload)
+        else if (update.updateAction == PSTCollectionUpdateActionReload)
             [_reloadIndexPaths addObject:update.indexPathAfterUpdate];
     }
     

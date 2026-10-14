@@ -10,6 +10,7 @@
 
 #include <openssl/bn.h>
 #include <openssl/err.h>
+#include <openssl/sha.h>
 
 #import "MTAes.h"
 #import "MTRsa.h"
@@ -71,9 +72,8 @@ void MTRawSha256(void const *inData, NSUInteger length, void *outData)
 
 #define BIG_CONSTANT(x) (x)
 
-// Other compilers
 
-#else   // defined(_MSC_VER)
+#else
 
 #define FORCE_INLINE __attribute__((always_inline))
 
@@ -87,19 +87,14 @@ static inline uint32_t rotl32 ( uint32_t x, int8_t r )
 
 #define BIG_CONSTANT(x) (x##LLU)
 
-#endif // !defined(_MSC_VER)
+#endif
 
-//-----------------------------------------------------------------------------
-// Block read - if your platform needs to do endian-swapping or can only
-// handle aligned reads, do the conversion here
 
 static FORCE_INLINE uint32_t getblock ( const uint32_t * p, int i )
 {
     return p[i];
 }
 
-//-----------------------------------------------------------------------------
-// Finalization mix - force all bits of a hash block to avalanche
 
 static FORCE_INLINE uint32_t fmix ( uint32_t h )
 {
@@ -112,7 +107,6 @@ static FORCE_INLINE uint32_t fmix ( uint32_t h )
     return h;
 }
 
-//----------
 
 static void MurmurHash3_x86_32 ( const void * key, int len,
                                 uint32_t seed, void * out )
@@ -125,8 +119,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
     const uint32_t c1 = 0xcc9e2d51;
     const uint32_t c2 = 0x1b873593;
     
-    //----------
-    // body
     
     const uint32_t * blocks = (const uint32_t *)(data + nblocks*4);
     
@@ -143,8 +135,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
         h1 = h1*5+0xe6546b64;
     }
     
-    //----------
-    // tail
     
     const uint8_t * tail = (const uint8_t*)(data + nblocks*4);
     
@@ -158,8 +148,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
             k1 *= c1; k1 = ROTL32(k1,15); k1 *= c2; h1 ^= k1;
     };
     
-    //----------
-    // finalization
     
     h1 ^= len;
     
@@ -267,9 +255,6 @@ NSData *MTAesEncrypt(NSData *data, NSData *key, NSData *iv)
 {
     if (key == nil || iv == nil)
     {
-        if (MTLogEnabled()) {
-            MTLog(@"MTAesEncrypt: empty key or iv");
-        }
         return nil;
     }
     
@@ -285,9 +270,6 @@ NSData *MTAesDecrypt(NSData *data, NSData *key, NSData *iv)
 {
     if (key == nil || iv == nil)
     {
-        if (MTLogEnabled()) {
-            MTLog(@"MTAesEncrypt: empty key or iv");
-        }
         return nil;
     }
     
@@ -1109,6 +1091,89 @@ MTBackupDatacenterData *MTIPDataDecode(NSData *data, NSString *phoneNumber) {
     }
 }
 
+#if defined(ONEGRAM_ARMV6)
+static bool MTPBKDF2HMACSHA512Armv6(const void *password, size_t passwordLength, const void *salt, size_t saltLength, uint32_t rounds, void *output, size_t outputLength)
+{
+    if (rounds == 0 || output == NULL || outputLength == 0)
+        return false;
+
+    uint8_t keyBlock[SHA512_CBLOCK];
+    memset(keyBlock, 0, sizeof(keyBlock));
+    if (passwordLength > SHA512_CBLOCK)
+    {
+        SHA512((const unsigned char *)password, passwordLength, keyBlock);
+    }
+    else if (passwordLength != 0)
+    {
+        memcpy(keyBlock, password, passwordLength);
+    }
+
+    uint8_t innerPad[SHA512_CBLOCK];
+    uint8_t outerPad[SHA512_CBLOCK];
+    for (size_t i = 0; i < SHA512_CBLOCK; i++)
+    {
+        innerPad[i] = (uint8_t)(keyBlock[i] ^ 0x36);
+        outerPad[i] = (uint8_t)(keyBlock[i] ^ 0x5c);
+    }
+
+    SHA512_CTX innerTemplate;
+    SHA512_CTX outerTemplate;
+    SHA512_Init(&innerTemplate);
+    SHA512_Update(&innerTemplate, innerPad, sizeof(innerPad));
+    SHA512_Init(&outerTemplate);
+    SHA512_Update(&outerTemplate, outerPad, sizeof(outerPad));
+
+    uint8_t u[SHA512_DIGEST_LENGTH];
+    uint8_t innerDigest[SHA512_DIGEST_LENGTH];
+    uint8_t blockResult[SHA512_DIGEST_LENGTH];
+    uint8_t blockIndexBytes[4];
+    uint8_t *outputBytes = (uint8_t *)output;
+    size_t outputOffset = 0;
+    uint32_t blockIndex = 1;
+
+    while (outputOffset < outputLength)
+    {
+        blockIndexBytes[0] = (uint8_t)(blockIndex >> 24);
+        blockIndexBytes[1] = (uint8_t)(blockIndex >> 16);
+        blockIndexBytes[2] = (uint8_t)(blockIndex >> 8);
+        blockIndexBytes[3] = (uint8_t)blockIndex;
+
+        SHA512_CTX inner = innerTemplate;
+        if (saltLength != 0)
+            SHA512_Update(&inner, salt, saltLength);
+        SHA512_Update(&inner, blockIndexBytes, sizeof(blockIndexBytes));
+        SHA512_Final(innerDigest, &inner);
+
+        SHA512_CTX outer = outerTemplate;
+        SHA512_Update(&outer, innerDigest, sizeof(innerDigest));
+        SHA512_Final(u, &outer);
+        memcpy(blockResult, u, sizeof(blockResult));
+
+        for (uint32_t round = 1; round < rounds; round++)
+        {
+            inner = innerTemplate;
+            SHA512_Update(&inner, u, sizeof(u));
+            SHA512_Final(innerDigest, &inner);
+
+            outer = outerTemplate;
+            SHA512_Update(&outer, innerDigest, sizeof(innerDigest));
+            SHA512_Final(u, &outer);
+
+            for (size_t i = 0; i < sizeof(blockResult); i++)
+                blockResult[i] ^= u[i];
+        }
+
+        size_t remaining = outputLength - outputOffset;
+        size_t copyLength = remaining < sizeof(blockResult) ? remaining : sizeof(blockResult);
+        memcpy(outputBytes + outputOffset, blockResult, copyLength);
+        outputOffset += copyLength;
+        blockIndex++;
+    }
+
+    return true;
+}
+#endif
+
 static bool MTPBKDF2HMAC(CCHmacAlgorithm algorithm, size_t digestLength, const void *password, size_t passwordLength, const void *salt, size_t saltLength, uint32_t rounds, void *output, size_t outputLength)
 {
     if (rounds == 0 || digestLength == 0 || digestLength > CC_SHA512_DIGEST_LENGTH || output == NULL)
@@ -1162,8 +1227,13 @@ NSData * MTPBKDF2(NSData *data, NSData *salt, int rounds)
 
     const size_t hashLength = CC_SHA512_DIGEST_LENGTH;
     NSMutableData *result = [[NSMutableData alloc] initWithLength:hashLength];
+#if defined(ONEGRAM_ARMV6)
+    if (!MTPBKDF2HMACSHA512Armv6(data.bytes, data.length, salt.bytes, salt.length, (uint32_t)rounds, result.mutableBytes, hashLength))
+        return nil;
+#else
     if (!MTPBKDF2HMAC(kCCHmacAlgSHA512, hashLength, data.bytes, data.length, salt.bytes, salt.length, (uint32_t)rounds, result.mutableBytes, hashLength))
         return nil;
+#endif
 
     return result;
 }

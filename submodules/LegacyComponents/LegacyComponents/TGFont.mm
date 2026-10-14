@@ -1,9 +1,11 @@
 #import "TGFont.h"
+#import "../../../OnegramRuntime/OGRuntime.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "LegacyComponentsInternal.h"
 #import "NSObject+TGLock.h"
+#import "TGEmojiPackIndexTable.h"
 
-#import <CoreText/CoreText.h>
 #import <map>
 #import <vector>
 #import <string>
@@ -91,24 +93,37 @@ UIFont *TGEmojiFontOfSize(CGFloat size)
 }
 
 static NSDictionary *TGEmojiPackIndex = nil;
+static bool TGEmojiPackIndexTableValid = false;
 static NSFileHandle *TGEmojiPackHandle = nil;
 static NSCache *TGEmojiImageCache = nil;
 static NSObject *TGEmojiFileLock = nil;
 static NSMutableDictionary *TGEmojiSupportCache = nil;
+static NSObject *TGEmojiImageWorkLock = nil;
+static NSMutableSet *TGEmojiImageWorkInFlight = nil;
+static NSMutableDictionary *TGEmojiImageWorkCompletions = nil;
+
 static NSString *const TGEmojiRenderModeDefaultsKey = @"TGEmojiRenderMode";
+
+static volatile int TGEmojiStoredRenderMode = -1;
 
 TGEmojiRenderMode TGCurrentEmojiRenderMode(void)
 {
+    int storedMode = TGEmojiStoredRenderMode;
+    if (storedMode >= 0)
+        return (TGEmojiRenderMode)storedMode;
+    
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSNumber *value = [defaults objectForKey:TGEmojiRenderModeDefaultsKey];
-    if (value == nil)
-        return TGEmojiRenderModeCombined;
-
-    NSInteger mode = [value integerValue];
-    if (mode < TGEmojiRenderModeStockOnly || mode > TGEmojiRenderModeCombined)
-        return TGEmojiRenderModeCombined;
-
-    return (TGEmojiRenderMode)mode;
+    TGEmojiRenderMode mode = TGEmojiRenderModeCombined;
+    if (value != nil)
+    {
+        NSInteger storedValue = [value integerValue];
+        if (storedValue >= TGEmojiRenderModeStockOnly && storedValue <= TGEmojiRenderModeCombined)
+            mode = (TGEmojiRenderMode)storedValue;
+    }
+    
+    TGEmojiStoredRenderMode = (int)mode;
+    return mode;
 }
 
 void TGSetEmojiRenderMode(TGEmojiRenderMode mode)
@@ -118,6 +133,7 @@ void TGSetEmojiRenderMode(TGEmojiRenderMode mode)
 
     [[NSUserDefaults standardUserDefaults] setObject:@((NSInteger)mode) forKey:TGEmojiRenderModeDefaultsKey];
     [[NSUserDefaults standardUserDefaults] synchronize];
+    TGEmojiStoredRenderMode = (int)mode;
 
     if (TGEmojiImageCache != nil)
         [TGEmojiImageCache removeAllObjects];
@@ -128,16 +144,45 @@ static void TGEmojiLoadPack(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        NSString *indexPath = [[NSBundle mainBundle] pathForResource:@"OnegramEmojiIndex" ofType:@"plist"];
         NSString *packPath = [[NSBundle mainBundle] pathForResource:@"OnegramEmoji" ofType:@"pack"];
-        TGEmojiPackIndex = [NSDictionary dictionaryWithContentsOfFile:indexPath];
-        TGEmojiPackHandle = [NSFileHandle fileHandleForReadingAtPath:packPath];
+        TGEmojiPackHandle = packPath == nil ? nil : [NSFileHandle fileHandleForReadingAtPath:packPath];
+        if (TGEmojiPackHandle != nil)
+        {
+            NSDictionary *packAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:packPath error:NULL];
+            TGEmojiPackIndexTableValid = [packAttributes fileSize] == TGEmojiPackIndexTablePackSize;
+        }
+        if (!TGEmojiPackIndexTableValid)
+        {
+            NSString *indexPath = [[NSBundle mainBundle] pathForResource:@"OnegramEmojiIndex" ofType:@"plist"];
+            TGEmojiPackIndex = [NSDictionary dictionaryWithContentsOfFile:indexPath];
+        }
         TGEmojiImageCache = [[NSCache alloc] init];
-        TGEmojiImageCache.countLimit = 256;
+        TGEmojiImageCache.countLimit = iosMajorVersion() <= 3 ? 128 : 256;
         TGEmojiFileLock = [[NSObject alloc] init];
         TGEmojiSupportCache = [[NSMutableDictionary alloc] init];
 
-        NSLog(@"EMOJI pack loaded=%d entries=%d", TGEmojiPackHandle != nil ? 1 : 0, (int)TGEmojiPackIndex.count);
+    });
+}
+
+void TGPreloadEmojiPack(void)
+{
+    TGEmojiLoadPack();
+}
+
+void TGClearEmojiImageCache(void)
+{
+    if (TGEmojiImageCache != nil)
+        [TGEmojiImageCache removeAllObjects];
+}
+
+static void TGEmojiEnsureImageWorkState(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        TGEmojiImageWorkLock = [[NSObject alloc] init];
+        TGEmojiImageWorkInFlight = [[NSMutableSet alloc] init];
+        TGEmojiImageWorkCompletions = [[NSMutableDictionary alloc] init];
     });
 }
 
@@ -175,10 +220,190 @@ static bool TGEmojiMayStartWithCodepoint(uint32_t codepoint)
     return false;
 }
 
+static bool TGEmojiPackAvailable(void)
+{
+    return TGEmojiPackIndexTableValid || TGEmojiPackIndex.count != 0;
+}
+
+static int TGEmojiPackCompareCodepoints(uint32_t const *lhs, uint32_t lhsCount, uint32_t const *rhs, uint32_t rhsCount)
+{
+    uint32_t count = lhsCount < rhsCount ? lhsCount : rhsCount;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (lhs[i] != rhs[i])
+            return lhs[i] < rhs[i] ? -1 : 1;
+    }
+    if (lhsCount == rhsCount)
+        return 0;
+    return lhsCount < rhsCount ? -1 : 1;
+}
+
+static bool TGEmojiPackLookup(uint32_t const *codepoints, NSUInteger count, uint32_t *packOffset, uint32_t *packLength)
+{
+    if (count == 0)
+        return false;
+
+    if (TGEmojiPackIndexTableValid)
+    {
+        if (count > TGEmojiPackIndexTableMaxCodepoints)
+            return false;
+
+        uint32_t lower = 0;
+        uint32_t upper = TGEmojiPackIndexTableCount;
+        while (lower < upper)
+        {
+            uint32_t middle = lower + (upper - lower) / 2;
+            TGEmojiPackIndexTableEntry const *entry = &TGEmojiPackIndexTableEntries[middle];
+            int comparison = TGEmojiPackCompareCodepoints(TGEmojiPackIndexTableCodepoints + entry->codepointsOffset, entry->codepointsCount, codepoints, (uint32_t)count);
+            if (comparison == 0)
+            {
+                if (packOffset != NULL)
+                    *packOffset = entry->packOffset;
+                if (packLength != NULL)
+                    *packLength = entry->packLength;
+                return true;
+            }
+            if (comparison < 0)
+                lower = middle + 1;
+            else
+                upper = middle;
+        }
+        return false;
+    }
+
+    if (TGEmojiPackIndex.count == 0)
+        return false;
+
+    NSMutableString *key = [[NSMutableString alloc] init];
+    for (NSUInteger i = 0; i < count; i++)
+    {
+        if (i != 0)
+            [key appendString:@"-"];
+        [key appendFormat:@"%x", (unsigned int)codepoints[i]];
+    }
+
+    NSData *entry = [TGEmojiPackIndex objectForKey:key];
+    if (entry == nil)
+        return false;
+    if (packOffset == NULL && packLength == NULL)
+        return true;
+    if (entry.length != 8)
+        return false;
+
+    uint32_t values[2] = {0, 0};
+    [entry getBytes:values length:sizeof(values)];
+    if (packOffset != NULL)
+        *packOffset = CFSwapInt32BigToHost(values[0]);
+    if (packLength != NULL)
+        *packLength = CFSwapInt32BigToHost(values[1]);
+    return true;
+}
+
+static NSUInteger TGEmojiPackCodepoints(NSString *emoji, uint32_t *codepoints, NSUInteger capacity)
+{
+    NSUInteger count = 0;
+    NSUInteger length = emoji.length;
+    for (NSUInteger i = 0; i < length; )
+    {
+        uint32_t codepoint = 0;
+        NSUInteger codepointLength = 0;
+        if (!TGEmojiReadCodepoint(emoji, i, &codepoint, &codepointLength))
+            break;
+        i += codepointLength;
+
+        if (codepoint == 0xfe0e || codepoint == 0xfe0f)
+            continue;
+
+        if (count == capacity)
+            return 0;
+        codepoints[count++] = codepoint;
+    }
+    return count;
+}
+
+static const NSUInteger TGEmojiKeyBufferCapacity = 192;
+
+static NSUInteger TGEmojiKeyAppendHex(unichar *buffer, NSUInteger position, uint32_t value)
+{
+    static const char digits[] = "0123456789abcdef";
+    unichar reversed[8];
+    NSUInteger count = 0;
+    do
+    {
+        reversed[count++] = (unichar)digits[value & 0xf];
+        value >>= 4;
+    } while (value != 0 && count < 8);
+    
+    if (position + count > TGEmojiKeyBufferCapacity)
+        return NSNotFound;
+    
+    while (count != 0)
+        buffer[position++] = reversed[--count];
+    return position;
+}
+
+static NSUInteger TGEmojiKeyAppendDecimal(unichar *buffer, NSUInteger position, long value)
+{
+    if (position == NSNotFound)
+        return NSNotFound;
+    
+    unsigned long magnitude = value < 0 ? (unsigned long)(-(value + 1)) + 1 : (unsigned long)value;
+    unichar reversed[24];
+    NSUInteger count = 0;
+    do
+    {
+        reversed[count++] = (unichar)('0' + (magnitude % 10));
+        magnitude /= 10;
+    } while (magnitude != 0 && count < 24);
+    
+    if (position + count + (value < 0 ? 2 : 1) > TGEmojiKeyBufferCapacity)
+        return NSNotFound;
+    
+    buffer[position++] = '/';
+    if (value < 0)
+        buffer[position++] = '-';
+    while (count != 0)
+        buffer[position++] = reversed[--count];
+    return position;
+}
+
+static NSUInteger TGEmojiWritePackKey(NSString *emoji, unichar *buffer)
+{
+    NSUInteger position = 0;
+    NSUInteger length = emoji.length;
+    for (NSUInteger i = 0; i < length; )
+    {
+        uint32_t codepoint = 0;
+        NSUInteger codepointLength = 0;
+        if (!TGEmojiReadCodepoint(emoji, i, &codepoint, &codepointLength))
+            break;
+        i += codepointLength;
+        
+        if (codepoint == 0xfe0e || codepoint == 0xfe0f)
+            continue;
+        
+        if (position != 0)
+        {
+            if (position + 1 > TGEmojiKeyBufferCapacity)
+                return NSNotFound;
+            buffer[position++] = '-';
+        }
+        position = TGEmojiKeyAppendHex(buffer, position, codepoint);
+        if (position == NSNotFound)
+            return NSNotFound;
+    }
+    return position;
+}
+
 static NSString *TGEmojiPackKey(NSString *emoji)
 {
     if (emoji.length == 0)
         return nil;
+    
+    unichar buffer[TGEmojiKeyBufferCapacity];
+    NSUInteger keyLength = TGEmojiWritePackKey(emoji, buffer);
+    if (keyLength != NSNotFound)
+        return keyLength == 0 ? nil : [[NSString alloc] initWithCharacters:buffer length:keyLength];
 
     NSMutableString *key = [[NSMutableString alloc] init];
     NSUInteger length = emoji.length;
@@ -210,10 +435,10 @@ bool TGEmojiPackMatchAtIndex(NSString *text, NSUInteger index, NSRange *range)
         return false;
 
     TGEmojiLoadPack();
-    if (TGEmojiPackIndex.count == 0)
+    if (!TGEmojiPackAvailable())
         return false;
-
-    NSMutableString *key = [[NSMutableString alloc] initWithCapacity:48];
+    uint32_t codepoints[16];
+    NSUInteger codepointsCount = 0;
     NSUInteger cursor = index;
     NSUInteger lastEnd = NSNotFound;
     bool textPresentation = false;
@@ -243,13 +468,10 @@ bool TGEmojiPackMatchAtIndex(NSString *text, NSUInteger index, NSRange *range)
             continue;
         }
 
-        if (key.length != 0)
-            [key appendString:@"-"];
-        [key appendFormat:@"%x", (unsigned int)codepoint];
-
+        codepoints[codepointsCount++] = codepoint;
         cursor += codepointLength;
         steps++;
-        if ([TGEmojiPackIndex objectForKey:key] != nil)
+        if (TGEmojiPackLookup(codepoints, codepointsCount, NULL, NULL))
             lastEnd = cursor;
     }
 
@@ -415,8 +637,9 @@ static bool TGEmojiPackContainsEmoji(NSString *emoji)
         return false;
 
     TGEmojiLoadPack();
-    NSString *key = TGEmojiPackKey(emoji);
-    if (key.length == 0 || [TGEmojiPackIndex objectForKey:key] == nil)
+    uint32_t codepoints[16];
+    NSUInteger codepointsCount = TGEmojiPackCodepoints(emoji, codepoints, sizeof(codepoints) / sizeof(codepoints[0]));
+    if (!TGEmojiPackLookup(codepoints, codepointsCount, NULL, NULL))
         return false;
     if (!TGEmojiStringUsesEmojiPresentation(emoji))
         return false;
@@ -424,8 +647,42 @@ static bool TGEmojiPackContainsEmoji(NSString *emoji)
     return true;
 }
 
+#if OG_PLATFORM_HAS_CORETEXT
+static bool TGEmojiFontContainsCharacters(CTFontRef font, NSString *emoji)
+{
+    CFCharacterSetRef characters = CTFontCopyCharacterSet(font);
+    if (characters == NULL)
+        return false;
+
+    bool supported = true;
+    for (NSUInteger index = 0; index < emoji.length; )
+    {
+        uint32_t codepoint = 0;
+        NSUInteger length = 0;
+        if (!TGEmojiReadCodepoint(emoji, index, &codepoint, &length))
+        {
+            supported = false;
+            break;
+        }
+        index += length;
+
+        if (codepoint == 0x200d || codepoint == 0xfe0e || codepoint == 0xfe0f || (codepoint >= 0xe0020 && codepoint <= 0xe007f))
+            continue;
+        if (!CFCharacterSetIsLongCharacterMember(characters, codepoint))
+        {
+            supported = false;
+            break;
+        }
+    }
+
+    CFRelease(characters);
+    return supported;
+}
+#endif
+
 static bool TGEmojiNativeGlyphSupported(NSString *emoji)
 {
+#if OG_PLATFORM_HAS_CORETEXT
     if (emoji.length == 0)
         return false;
 
@@ -441,9 +698,36 @@ static bool TGEmojiNativeGlyphSupported(NSString *emoji)
     bool supported = false;
     if (emojiFont != NULL)
     {
+        if (!TGEmojiFontContainsCharacters(emojiFont, emoji))
+        {
+            CFRelease(emojiFont);
+            @synchronized(TGEmojiSupportCache)
+            {
+                [TGEmojiSupportCache setObject:[NSNumber numberWithBool:false] forKey:emoji];
+            }
+            return false;
+        }
+
+        NSString *layoutEmoji = emoji;
+        if (iosMajorVersion() >= 4 && iosMajorVersion() < 7)
+        {
+            NSMutableString *visibleEmoji = [[NSMutableString alloc] initWithCapacity:emoji.length];
+            for (NSUInteger index = 0; index < emoji.length; )
+            {
+                uint32_t codepoint = 0;
+                NSUInteger length = 0;
+                if (!TGEmojiReadCodepoint(emoji, index, &codepoint, &length))
+                    break;
+                if (!(codepoint == 0x200d || codepoint == 0xfe0e || codepoint == 0xfe0f || (codepoint >= 0xe0020 && codepoint <= 0xe007f)))
+                    [visibleEmoji appendString:[emoji substringWithRange:NSMakeRange(index, length)]];
+                index += length;
+            }
+            layoutEmoji = visibleEmoji;
+        }
+
         CFStringRef emojiFontName = CTFontCopyPostScriptName(emojiFont);
         NSDictionary *attributes = [NSDictionary dictionaryWithObject:(__bridge id)emojiFont forKey:(__bridge NSString *)kCTFontAttributeName];
-        NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:emoji attributes:attributes];
+        NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:layoutEmoji attributes:attributes];
         CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)attributedString);
         if (line != NULL)
         {
@@ -492,6 +776,9 @@ static bool TGEmojiNativeGlyphSupported(NSString *emoji)
         [TGEmojiSupportCache setObject:[NSNumber numberWithBool:supported] forKey:emoji];
     }
     return supported;
+#else
+    return false;
+#endif
 }
 
 bool TGEmojiNeedsPack(NSString *emoji)
@@ -506,26 +793,26 @@ bool TGEmojiNeedsPack(NSString *emoji)
     return true;
 }
 
-static CGSize TGEmojiVisiblePixelSize(UIImage *image)
+static CGRect TGEmojiVisiblePixelBounds(UIImage *image)
 {
     if (image == nil || image.CGImage == NULL)
-        return CGSizeZero;
+        return CGRectZero;
 
     CGImageRef cgImage = image.CGImage;
     size_t width = CGImageGetWidth(cgImage);
     size_t height = CGImageGetHeight(cgImage);
     if (width == 0 || height == 0)
-        return CGSizeZero;
+        return CGRectZero;
 
     uint8_t *alpha = (uint8_t *)calloc(width * height, sizeof(uint8_t));
     if (alpha == NULL)
-        return CGSizeZero;
+        return CGRectZero;
 
     CGContextRef context = CGBitmapContextCreate(alpha, width, height, 8, width, NULL, kCGImageAlphaOnly);
     if (context == NULL)
     {
         free(alpha);
-        return CGSizeZero;
+        return CGRectZero;
     }
 
     CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, width, height), cgImage);
@@ -568,9 +855,16 @@ static CGSize TGEmojiVisiblePixelSize(UIImage *image)
     free(alpha);
 
     if (!found)
-        return CGSizeZero;
+        return CGRectZero;
 
-    return CGSizeMake((CGFloat)(maxX - minX + 1), (CGFloat)(maxY - minY + 1));
+    return CGRectMake((CGFloat)minX, (CGFloat)minY, (CGFloat)(maxX - minX + 1), (CGFloat)(maxY - minY + 1));
+}
+
+static void TGEmojiBitmapDataRelease(void *info, const void *data, size_t size)
+{
+    (void)info;
+    (void)size;
+    free((void *)data);
 }
 
 static UIImage *TGNormalizeEmojiImage(UIImage *sourceImage, CGFloat size)
@@ -583,24 +877,78 @@ static UIImage *TGNormalizeEmojiImage(UIImage *sourceImage, CGFloat size)
     if (pixelWidth == 0 || pixelHeight == 0)
         return nil;
 
-    CGSize visibleSize = TGEmojiVisiblePixelSize(sourceImage);
-    CGFloat visibleExtent = MAX(visibleSize.width, visibleSize.height);
+    CGRect visibleBounds = TGEmojiVisiblePixelBounds(sourceImage);
+    CGFloat visibleExtent = MAX(visibleBounds.size.width, visibleBounds.size.height);
     if (visibleExtent <= 0.0f)
+        return nil;
+
+    CGImageRef visibleImage = CGImageCreateWithImageInRect(sourceImage.CGImage, visibleBounds);
+    if (visibleImage == NULL)
         return nil;
 
     CGFloat scale = size * 0.96f / visibleExtent;
 
-    CGSize drawSize = CGSizeMake((CGFloat)pixelWidth * scale, (CGFloat)pixelHeight * scale);
+    CGSize drawSize = CGSizeMake(visibleBounds.size.width * scale, visibleBounds.size.height * scale);
     CGRect drawRect = CGRectMake(CGFloor((size - drawSize.width) / 2.0f), CGFloor((size - drawSize.height) / 2.0f), drawSize.width, drawSize.height);
 
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), false, 0.0f);
-    [sourceImage drawInRect:drawRect];
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
+    UIImage *result = nil;
+    if (iosMajorVersion() < 4)
+    {
+        size_t outputWidth = (size_t)MAX(1.0f, CGCeil(size));
+        size_t outputHeight = outputWidth;
+        size_t bytesPerRow = outputWidth * 4;
+        uint8_t *pixels = (uint8_t *)calloc(outputHeight, bytesPerRow);
+        if (pixels != NULL)
+        {
+            CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+            if (colorSpace != NULL)
+            {
+                CGContextRef context = CGBitmapContextCreate(pixels, outputWidth, outputHeight, 8, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedLast);
+                if (context != NULL)
+                {
+                    CGContextClearRect(context, CGRectMake(0.0f, 0.0f, outputWidth, outputHeight));
+                    CGContextSetInterpolationQuality(context, kCGInterpolationHigh);
+                    CGContextTranslateCTM(context, 0.0f, (CGFloat)outputHeight);
+                    CGContextScaleCTM(context, 1.0f, -1.0f);
+                    CGContextSaveGState(context);
+                    CGContextTranslateCTM(context, CGRectGetMidX(drawRect), CGRectGetMidY(drawRect));
+                    CGContextScaleCTM(context, 1.0f, -1.0f);
+                    CGContextTranslateCTM(context, -CGRectGetMidX(drawRect), -CGRectGetMidY(drawRect));
+                    CGContextDrawImage(context, drawRect, visibleImage);
+                    CGContextRestoreGState(context);
+                    CGContextRelease(context);
+
+                    CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, pixels, outputHeight * bytesPerRow, TGEmojiBitmapDataRelease);
+                    if (provider != NULL)
+                    {
+                        CGImageRef image = CGImageCreate(outputWidth, outputHeight, 8, 32, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedLast, provider, NULL, false, kCGRenderingIntentDefault);
+                        if (image != NULL)
+                        {
+                            result = [UIImage imageWithCGImage:image];
+                            CGImageRelease(image);
+                        }
+                        CGDataProviderRelease(provider);
+                        pixels = NULL;
+                    }
+                }
+                CGColorSpaceRelease(colorSpace);
+            }
+            if (pixels != NULL)
+                free(pixels);
+        }
+    }
+    else
+    {
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(size, size), false, 0.0f);
+        [[[UIImage alloc] initWithCGImage:visibleImage] drawInRect:drawRect];
+        result = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    }
+    CGImageRelease(visibleImage);
     return result;
 }
 
-static UIImage *TGNativeEmojiImageOfSize(NSString *emoji, CGFloat size)
+static UIImage *TGNativeEmojiImageOfSizeCurrentThread(NSString *emoji, CGFloat size)
 {
     if (emoji.length == 0 || size <= 0.0f)
         return nil;
@@ -625,25 +973,28 @@ static UIImage *TGNativeEmojiImageOfSize(NSString *emoji, CGFloat size)
     return TGNormalizeEmojiImage(sourceImage, size);
 }
 
-static UIImage *TGPackEmojiImageOfSize(NSString *emoji, CGFloat size)
+static UIImage *TGNativeEmojiImageOfSize(NSString *emoji, CGFloat size)
 {
-    if (emoji.length == 0 || size <= 0.0f)
+    if (iosMajorVersion() < 4 && ![NSThread isMainThread])
+        return nil;
+
+    return TGNativeEmojiImageOfSizeCurrentThread(emoji, size);
+}
+
+static NSData *TGPackEmojiData(NSString *emoji)
+{
+    if (emoji.length == 0)
         return nil;
 
     TGEmojiLoadPack();
 
-    NSString *key = TGEmojiPackKey(emoji);
-    if (key.length == 0)
+    uint32_t codepoints[16];
+    NSUInteger codepointsCount = TGEmojiPackCodepoints(emoji, codepoints, sizeof(codepoints) / sizeof(codepoints[0]));
+    uint32_t offset = 0;
+    uint32_t length = 0;
+    if (!TGEmojiPackLookup(codepoints, codepointsCount, &offset, &length) || TGEmojiPackHandle == nil)
         return nil;
 
-    NSData *entry = [TGEmojiPackIndex objectForKey:key];
-    if (entry.length != 8 || TGEmojiPackHandle == nil)
-        return nil;
-
-    uint32_t values[2] = {0, 0};
-    [entry getBytes:values length:sizeof(values)];
-    uint32_t offset = CFSwapInt32BigToHost(values[0]);
-    uint32_t length = CFSwapInt32BigToHost(values[1]);
     if (length == 0)
         return nil;
 
@@ -656,11 +1007,64 @@ static UIImage *TGPackEmojiImageOfSize(NSString *emoji, CGFloat size)
     if (pngData.length != length)
         return nil;
 
+    return pngData;
+}
+
+static UIImage *TGPackEmojiImageFromData(NSData *pngData, CGFloat size)
+{
+    if (pngData.length == 0 || size <= 0.0f)
+        return nil;
+
     UIImage *sourceImage = [UIImage imageWithData:pngData];
     if (sourceImage == nil)
         return nil;
 
     return TGNormalizeEmojiImage(sourceImage, size);
+}
+
+static UIImage *TGPackEmojiImageOfSize(NSString *emoji, CGFloat size)
+{
+    return TGPackEmojiImageFromData(TGPackEmojiData(emoji), size);
+}
+
+static NSString *TGEmojiImageCacheKey(NSString *emoji, CGFloat size)
+{
+    if (emoji.length == 0 || size <= 0.0f)
+        return nil;
+
+    static int screenScale = 0;
+    if (screenScale == 0)
+        screenScale = MAX(1, (int)[UIScreen mainScreen].scale);
+    
+    TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
+    unichar buffer[TGEmojiKeyBufferCapacity];
+    NSUInteger keyLength = TGEmojiWritePackKey(emoji, buffer);
+    if (keyLength != NSNotFound && keyLength != 0)
+    {
+        keyLength = TGEmojiKeyAppendDecimal(buffer, keyLength, (long)lrintf(size * 10.0f));
+        keyLength = TGEmojiKeyAppendDecimal(buffer, keyLength, (long)screenScale);
+        keyLength = TGEmojiKeyAppendDecimal(buffer, keyLength, (long)mode);
+        if (keyLength != NSNotFound)
+            return [[NSString alloc] initWithCharacters:buffer length:keyLength];
+    }
+    
+    NSString *key = TGEmojiPackKey(emoji);
+    if (key.length == 0)
+        return nil;
+
+    return [NSString stringWithFormat:@"%@/%d/%d/%ld", key, (int)lrintf(size * 10.0f), screenScale, (long)mode];
+}
+
+UIImage *TGEmojiCachedImageOfSize(NSString *emoji, CGFloat size)
+{
+    if (TGEmojiImageCache == nil)
+        return nil;
+
+    NSString *cacheKey = TGEmojiImageCacheKey(emoji, size);
+    if (cacheKey.length == 0)
+        return nil;
+
+    return [TGEmojiImageCache objectForKey:cacheKey];
 }
 
 UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size)
@@ -670,16 +1074,15 @@ UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size)
 
     TGEmojiLoadPack();
 
-    NSString *key = TGEmojiPackKey(emoji);
-    if (key.length == 0)
+    NSString *cacheKey = TGEmojiImageCacheKey(emoji, size);
+    if (cacheKey.length == 0)
         return nil;
 
-    TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
-    NSString *cacheKey = [NSString stringWithFormat:@"%@/%d/%d/%ld", key, (int)lrintf(size * 10.0f), (int)[UIScreen mainScreen].scale, (long)mode];
     UIImage *cached = [TGEmojiImageCache objectForKey:cacheKey];
     if (cached != nil)
         return cached;
 
+    TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
     UIImage *result = nil;
     if (mode == TGEmojiRenderModeStockOnly)
     {
@@ -691,14 +1094,153 @@ UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size)
     }
     else
     {
-        result = TGNativeEmojiImageOfSize(emoji, size);
+        result = TGPackEmojiImageOfSize(emoji, size);
         if (result == nil)
-            result = TGPackEmojiImageOfSize(emoji, size);
+            result = TGNativeEmojiImageOfSize(emoji, size);
     }
 
     if (result != nil)
         [TGEmojiImageCache setObject:result forKey:cacheKey];
     return result;
+}
+
+static NSArray *TGEmojiFinishImageWork(NSString *cacheKey)
+{
+    NSArray *completions = nil;
+    @synchronized(TGEmojiImageWorkLock)
+    {
+        [TGEmojiImageWorkInFlight removeObject:cacheKey];
+        completions = [[TGEmojiImageWorkCompletions objectForKey:cacheKey] copy];
+        [TGEmojiImageWorkCompletions removeObjectForKey:cacheKey];
+    }
+    return completions;
+}
+
+static void TGEmojiRunImageWorkCompletions(NSArray *completions)
+{
+    if (completions.count == 0)
+        return;
+
+    for (void (^block)(void) in completions)
+        block();
+}
+
+static void TGEmojiScheduleLegacyImageRender(NSString *emoji, CGFloat size, NSString *cacheKey, NSData *packData)
+{
+    OGPlatformDispatchOnMainThread(^
+    {
+        if (OGRuntimeInteractionActiveFast())
+        {
+            OGPlatformDispatchOnMainThreadAfter(0.08, ^
+            {
+                TGEmojiScheduleLegacyImageRender(emoji, size, cacheKey, packData);
+            });
+            return;
+        }
+
+        UIImage *result = [TGEmojiImageCache objectForKey:cacheKey];
+        if (result == nil)
+        {
+            TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
+            if (mode == TGEmojiRenderModeStockOnly)
+            {
+                result = TGNativeEmojiImageOfSizeCurrentThread(emoji, size);
+            }
+            else if (mode == TGEmojiRenderModeNewOnly)
+            {
+                result = TGPackEmojiImageFromData(packData, size);
+            }
+            else
+            {
+                result = TGPackEmojiImageFromData(packData, size);
+                if (result == nil)
+                    result = TGNativeEmojiImageOfSizeCurrentThread(emoji, size);
+            }
+
+            if (result != nil)
+                [TGEmojiImageCache setObject:result forKey:cacheKey];
+        }
+
+        NSArray *completions = TGEmojiFinishImageWork(cacheKey);
+        if (result != nil)
+            TGEmojiRunImageWorkCompletions(completions);
+    });
+}
+
+void TGPreloadEmojiImageOfSize(NSString *emoji, CGFloat size, void (^completion)(void))
+{
+    if (emoji.length == 0 || size <= 0.0f)
+        return;
+
+    UIImage *cached = TGEmojiCachedImageOfSize(emoji, size);
+    if (cached != nil)
+    {
+        if (completion != nil)
+            OGPlatformDispatchOnMainThread(completion);
+        return;
+    }
+
+    NSString *cacheKey = TGEmojiImageCacheKey(emoji, size);
+    if (cacheKey.length == 0)
+        return;
+
+    TGEmojiEnsureImageWorkState();
+
+    __block bool shouldStart = false;
+    @synchronized(TGEmojiImageWorkLock)
+    {
+        if (completion != nil)
+        {
+            NSMutableArray *completions = [TGEmojiImageWorkCompletions objectForKey:cacheKey];
+            if (completions == nil)
+            {
+                completions = [[NSMutableArray alloc] init];
+                [TGEmojiImageWorkCompletions setObject:completions forKey:cacheKey];
+            }
+            [completions addObject:[completion copy]];
+        }
+
+        if (![TGEmojiImageWorkInFlight containsObject:cacheKey])
+        {
+            [TGEmojiImageWorkInFlight addObject:cacheKey];
+            shouldStart = true;
+        }
+    }
+
+    if (!shouldStart)
+        return;
+
+    NSString *emojiValue = [emoji copy];
+    if (iosMajorVersion() < 4)
+    {
+        OGRuntimeDispatch(OGRuntimePriorityUtility, ^
+        {
+            @autoreleasepool
+            {
+                TGEmojiLoadPack();
+                TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
+                NSData *packData = mode == TGEmojiRenderModeStockOnly ? nil : TGPackEmojiData(emojiValue);
+                TGEmojiScheduleLegacyImageRender(emojiValue, size, cacheKey, packData);
+            }
+        });
+        return;
+    }
+
+    OGRuntimeDispatchPreload([@"emoji:" stringByAppendingString:cacheKey], ^
+    {
+        @autoreleasepool
+        {
+            UIImage *result = TGEmojiImageOfSize(emojiValue, size);
+            NSArray *completions = TGEmojiFinishImageWork(cacheKey);
+            if (result != nil && completions.count != 0)
+            {
+                OGPlatformDispatchOnMainThread(^
+                {
+                    TGEmojiRunImageWorkCompletions(completions);
+                });
+            }
+        }
+    });
 }
 
 CTFontRef TGCoreTextFontForUIFont(UIFont *font);
@@ -727,6 +1269,7 @@ static CTFontRef TGCreateCoreTextFont(UIFont *font)
     if (font == nil)
         return NULL;
 
+#if OG_PLATFORM_HAS_CORETEXT
     if (iosMajorVersion() < 6)
         return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
 
@@ -744,7 +1287,6 @@ static CTFontRef TGCreateCoreTextFont(UIFont *font)
     static dispatch_once_t logOnceToken;
     dispatch_once(&logOnceToken, ^
     {
-        NSLog(@"UNICODE fonts appleEmoji=%d notoSans=%d notoMath=%d notoSymbols=%d", appleEmojiFont != nil ? 1 : 0, notoSansFont != nil ? 1 : 0, notoMathFont != nil ? 1 : 0, notoSymbolsFont != nil ? 1 : 0);
     });
 
     if (iosMajorVersion() >= 6 && baseDescriptor != NULL)
@@ -798,9 +1340,12 @@ static CTFontRef TGCreateCoreTextFont(UIFont *font)
         return result;
 
     return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
+#else
+    return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
+#endif
 }
 
-static std::map<std::string, CTFontRef> genericFontCache;
+static std::map<std::string, CTFontRef> &genericFontCache = *new std::map<std::string, CTFontRef>();
 static pthread_mutex_t genericFontCacheMutex = PTHREAD_MUTEX_INITIALIZER;
 
 CTFontRef TGCoreTextFontForUIFont(UIFont *font)
@@ -848,12 +1393,12 @@ CTFontRef TGCoreTextFontForUIFont(UIFont *font)
     return created;
 }
 
-static std::map<int, CTFontRef> systemFontCache;
-static std::map<int, CTFontRef> lightFontCache;
-static std::map<int, CTFontRef> mediumFontCache;
-static std::map<int, CTFontRef> boldFontCache;
-static std::map<int, CTFontRef> fixedFontCache;
-static std::map<int, CTFontRef> italicFontCache;
+static std::map<int, CTFontRef> &systemFontCache = *new std::map<int, CTFontRef>();
+static std::map<int, CTFontRef> &lightFontCache = *new std::map<int, CTFontRef>();
+static std::map<int, CTFontRef> &mediumFontCache = *new std::map<int, CTFontRef>();
+static std::map<int, CTFontRef> &boldFontCache = *new std::map<int, CTFontRef>();
+static std::map<int, CTFontRef> &fixedFontCache = *new std::map<int, CTFontRef>();
+static std::map<int, CTFontRef> &italicFontCache = *new std::map<int, CTFontRef>();
 static TG_SYNCHRONIZED_DEFINE(systemFontCache) = PTHREAD_MUTEX_INITIALIZER;
 
 CTFontRef TGCoreTextSystemFontOfSize(CGFloat size)

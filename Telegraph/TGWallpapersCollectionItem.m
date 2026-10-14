@@ -113,10 +113,8 @@
         _requestedList = true;
         
         [ActionStageInstance() watchForPaths:@[
-            //@"/tg/assets/wallpaperList",
             @"/tg/assets/currentWallpaperInfo"
         ] watcher:self];
-        //[ActionStageInstance() requestActor:@"/tg/assets/wallpaperList/(cached)" options:nil flags:0 watcher:self];
     }
 }
 

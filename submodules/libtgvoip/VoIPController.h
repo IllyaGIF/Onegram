@@ -18,7 +18,11 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#if defined(ONEGRAM_ARMV6)
+#include <map>
+#else
 #include <tr1/unordered_map>
+#endif
 #include <tr1/memory>
 #include "audio/AudioInput.h"
 #include "BlockingQueue.h"
@@ -567,7 +571,11 @@ namespace tgvoip{
 		bool setCurrentEndpointToTCP;
 
 		std::vector<UnacknowledgedExtraData> currentExtras;
+#if defined(ONEGRAM_ARMV6)
+		std::map<uint8_t, uint64_t> lastReceivedExtrasByType;
+#else
 		std::tr1::unordered_map<uint8_t, uint64_t> lastReceivedExtrasByType;
+#endif
 		bool useIPv6;
 		bool peerIPv6Available;
 		IPv6Address myIPv6;

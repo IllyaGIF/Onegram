@@ -18,7 +18,6 @@
 
 #import "TLSerializationEnvironment.h"
 
-//#define TL_LOG_SERIALIZATION
 
 @protocol TLObject <NSObject>
 

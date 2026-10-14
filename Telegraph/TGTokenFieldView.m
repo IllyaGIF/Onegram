@@ -387,7 +387,6 @@
 {
     return _textField.isFirstResponder;
     
-    //return [self findFirstResponder:_scrollView] != nil;
 }
 
 - (UIView *)findFirstResponder:(UIView *)view
@@ -411,7 +410,6 @@
 {
     if (textField == _textField)
     {
-        //[self addToken:_textField.text];
 
         bool wasEmpty = textField.text.length == 0;
         textField.text = @"";
@@ -505,7 +503,7 @@
 
 - (bool)searchIsActive
 {
-    return /*_textField.isFirstResponder && */_textField.text.length != 0;
+    return _textField.text.length != 0;
 }
 
 - (void)clearText

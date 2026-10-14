@@ -53,71 +53,87 @@
 }
 
 - (NSArray *)channels {
-    return [[NSArray alloc] initWithArray:_channels];
+    @synchronized (self) {
+        return [[NSArray alloc] initWithArray:_channels];
+    }
+}
+
+- (TGConversation *)channelWithId:(int64_t)peerId {
+    @synchronized (self) {
+        for (TGConversation *conversation in _channels) {
+            if (conversation.conversationId == peerId)
+                return conversation;
+        }
+        return nil;
+    }
 }
 
 - (bool)updateChannel:(TGConversation *)conversation {
-    NSNumber *peerId = @(conversation.conversationId);
+    @synchronized (self) {
+        NSNumber *peerId = @(conversation.conversationId);
 
-    for (NSUInteger i = 0; i < _channels.count; i++) {
-        TGConversation *currentChannel = _channels[i];
-        if (currentChannel.conversationId == conversation.conversationId) {
-            [_channels removeObjectAtIndex:i];
-            break;
+        for (NSUInteger i = 0; i < _channels.count; i++) {
+            TGConversation *currentChannel = _channels[i];
+            if (currentChannel.conversationId == conversation.conversationId) {
+                [_channels removeObjectAtIndex:i];
+                break;
+            }
         }
-    }
 
-    if (conversation.leftChat || conversation.kickedFromChat || conversation.kind != TGConversationKindPersistentChannel) {
-        TGConversation *deletedConversation = [conversation copy];
-        deletedConversation.isDeleted = true;
-        _removedChannels[peerId] = deletedConversation;
+        if (conversation.leftChat || conversation.kickedFromChat || conversation.kind != TGConversationKindPersistentChannel) {
+            TGConversation *deletedConversation = [conversation copy];
+            deletedConversation.isDeleted = true;
+            _removedChannels[peerId] = deletedConversation;
+            [_uncommitedPeerIds addObject:peerId];
+            return true;
+        }
+
+        [_removedChannels removeObjectForKey:peerId];
+
+        bool inserted = false;
+        for (NSUInteger i = 0; i < _channels.count; i++) {
+            TGConversation *currentChannel = _channels[i];
+            if (TGConversationSortKeyCompare(conversation.variantSortKey, currentChannel.variantSortKey) > 0) {
+                [_channels insertObject:conversation atIndex:i];
+                inserted = true;
+                break;
+            }
+        }
+
+        if (!inserted)
+            [_channels addObject:conversation];
+
         [_uncommitedPeerIds addObject:peerId];
         return true;
     }
-
-    [_removedChannels removeObjectForKey:peerId];
-
-    bool inserted = false;
-    for (NSUInteger i = 0; i < _channels.count; i++) {
-        TGConversation *currentChannel = _channels[i];
-        if (TGConversationSortKeyCompare(conversation.variantSortKey, currentChannel.variantSortKey) > 0) {
-            [_channels insertObject:conversation atIndex:i];
-            inserted = true;
-            break;
-        }
-    }
-
-    if (!inserted)
-        [_channels addObject:conversation];
-
-    [_uncommitedPeerIds addObject:peerId];
-
-    return true;
 }
 
 - (void)commitUpdatedChannels {
-    if (_uncommitedPeerIds.count == 0)
-        return;
+    NSArray *channels = nil;
+    @synchronized (self) {
+        if (_uncommitedPeerIds.count == 0)
+            return;
 
-    NSSet *peerIds = [_uncommitedPeerIds copy];
-    [_uncommitedPeerIds removeAllObjects];
+        NSSet *peerIds = [_uncommitedPeerIds copy];
+        [_uncommitedPeerIds removeAllObjects];
 
-    NSMutableArray *channels = [[NSMutableArray alloc] initWithCapacity:peerIds.count];
-    for (TGConversation *conversation in _channels) {
-        if ([peerIds containsObject:@(conversation.conversationId)])
-            [channels addObject:conversation];
-    }
-
-    for (NSNumber *peerId in peerIds) {
-        TGConversation *removedConversation = _removedChannels[peerId];
-        if (removedConversation != nil) {
-            [channels addObject:removedConversation];
-            [_removedChannels removeObjectForKey:peerId];
+        NSMutableArray *updatedChannels = [[NSMutableArray alloc] initWithCapacity:peerIds.count];
+        for (TGConversation *conversation in _channels) {
+            if ([peerIds containsObject:@(conversation.conversationId)])
+                [updatedChannels addObject:conversation];
         }
+
+        for (NSNumber *peerId in peerIds) {
+            TGConversation *removedConversation = _removedChannels[peerId];
+            if (removedConversation != nil) {
+                [updatedChannels addObject:removedConversation];
+                [_removedChannels removeObjectForKey:peerId];
+            }
+        }
+        channels = updatedChannels;
     }
 
     if (channels.count != 0)
         [ActionStageInstance() dispatchResource:@"/tg/conversations" resource:[[SGraphObjectNode alloc] initWithObject:channels]];
 }
-
 @end

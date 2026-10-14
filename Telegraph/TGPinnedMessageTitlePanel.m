@@ -1,4 +1,5 @@
 #import "TGPinnedMessageTitlePanel.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGMenuSheetController.h"
@@ -9,6 +10,11 @@
 #import "TGModenConcersationReplyAssociatedPanel.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramUI/Core/OGSurfaceStyle.h"
+#import "../OnegramUI/Core/OGMusicPlayerAppearance.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSurfaceRenderer.h"
 
 static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 {
@@ -140,7 +146,7 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
         _countLabel.text = [NSString stringWithFormat:@"%d", (int)messageCount];
         _countLabel.adjustsFontSizeToFitWidth = true;
         if ([_countLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            _countLabel.minimumScaleFactor = 0.7f;
+            OGPlatformSetLabelMinimumScaleFactor(_countLabel, 0.7f);
         else
             _countLabel.minimumFontSize = _countLabel.font.pointSize * 0.7f;
         [_countBackgroundView addSubview:_countLabel];
@@ -226,7 +232,7 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
         _indexLabel.text = [NSString stringWithFormat:@"%d", (int)index + 1];
         _indexLabel.adjustsFontSizeToFitWidth = true;
         if ([_indexLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            _indexLabel.minimumScaleFactor = 0.65f;
+            OGPlatformSetLabelMinimumScaleFactor(_indexLabel, 0.65f);
         else
             _indexLabel.minimumFontSize = _indexLabel.font.pointSize * 0.65f;
         [_indexBackgroundView addSubview:_indexLabel];
@@ -298,6 +304,16 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     TGModenConcersationReplyAssociatedPanel *_replyPanel;
     UIView *_separatorView;
     UIImageView *_classicIOS6BackgroundView;
+    UIView *_brandedBackgroundClipView;
+    UIImageView *_brandedBackgroundView;
+    UIImageView *_brandedIndicatorView;
+    UIImageView *_brandedBubbleView;
+    UIImageView *_brandedIconView;
+    UILabel *_brandedTextLabel;
+    UIButton *_brandedCloseButton;
+    UIImageView *_compactChevronView;
+    CGSize _brandedBackgroundSize;
+    CGFloat _brandedBubbleWidth;
 }
 
 @end
@@ -305,7 +321,7 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
 @implementation TGPinnedMessageTitlePanel
 
 - (instancetype)initWithMessage:(TGMessage *)message {
-    self = [super initWithFrame:CGRectMake(0.0f, 0.0f, 320.0f, 29.0f)];
+    self = [super initWithFrame:CGRectMake(0.0f, 0.0f, 320.0f, [TGPresentation brandedIOS6PinnedPanelAvailable] ? [TGPresentation brandedIOS6PinnedPanelHeight] : 29.0f)];
     if (self != nil) {
         _message = message;
         self.clipsToBounds = true;
@@ -340,10 +356,120 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
         _separatorView = [[UIView alloc] init];
         _separatorView.backgroundColor = [TGPresentation classicIOS6Style] ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? TGPresentation.current.pallete.barSeparatorColor : UIColorRGB(0x6d7884)) : TGSeparatorColor();
         [self addSubview:_separatorView];
+
+        _brandedBackgroundClipView = [[UIView alloc] init];
+        _brandedBackgroundClipView.userInteractionEnabled = false;
+        _brandedBackgroundClipView.clipsToBounds = true;
+        [self addSubview:_brandedBackgroundClipView];
+
+        _brandedBackgroundView = [[UIImageView alloc] init];
+        _brandedBackgroundView.userInteractionEnabled = false;
+        [_brandedBackgroundClipView addSubview:_brandedBackgroundView];
+
+        _compactChevronView = [[UIImageView alloc] init];
+        _compactChevronView.hidden = true;
+        [self addSubview:_compactChevronView];
+
+        _brandedIndicatorView = [[UIImageView alloc] init];
+        _brandedIndicatorView.userInteractionEnabled = false;
+        [self addSubview:_brandedIndicatorView];
+
+        _brandedBubbleView = [[UIImageView alloc] init];
+        _brandedBubbleView.userInteractionEnabled = false;
+        [self addSubview:_brandedBubbleView];
+
+        _brandedTextLabel = [[UILabel alloc] init];
+        _brandedTextLabel.backgroundColor = [UIColor clearColor];
+        _brandedTextLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        _brandedTextLabel.numberOfLines = 1;
+        _brandedTextLabel.userInteractionEnabled = false;
+        [self addSubview:_brandedTextLabel];
+
+        _brandedIconView = [[UIImageView alloc] init];
+        _brandedIconView.userInteractionEnabled = false;
+        [self addSubview:_brandedIconView];
+
+        _brandedCloseButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        [_brandedCloseButton addTarget:self action:@selector(brandedClosePressed) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_brandedCloseButton];
+
+        [self updateBrandedStyle];
         
         [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapGesture:)]];
     }
     return self;
+}
+
+- (void)setJoinsPreviousHeader:(bool)joinsPreviousHeader
+{
+    if (_joinsPreviousHeader != joinsPreviousHeader)
+    {
+        _joinsPreviousHeader = joinsPreviousHeader;
+        _brandedBackgroundSize = CGSizeZero;
+        [self setNeedsLayout];
+    }
+}
+
+- (void)setCompactHeader:(bool)compactHeader
+{
+    if (_compactHeader != compactHeader)
+    {
+        _compactHeader = compactHeader;
+        [self updateBrandedStyle];
+    }
+}
+
+- (void)updateBrandedStyle
+{
+    bool brandedStyle = [TGPresentation brandedIOS6PinnedPanelAvailable];
+    _brandedBackgroundView.hidden = !brandedStyle;
+    _brandedIndicatorView.hidden = !brandedStyle || _compactHeader;
+    _brandedBubbleView.hidden = !brandedStyle || _compactHeader;
+    _brandedTextLabel.hidden = !brandedStyle;
+    _brandedIconView.hidden = !brandedStyle || _compactHeader;
+    _brandedCloseButton.hidden = !brandedStyle || _compactHeader;
+    _compactChevronView.hidden = !brandedStyle || !_compactHeader;
+    _replyPanel.hidden = brandedStyle;
+    _separatorView.hidden = brandedStyle;
+    _brandedBackgroundSize = CGSizeZero;
+    _brandedBubbleWidth = 0.0f;
+    if (!brandedStyle)
+        return;
+
+    OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+    _classicIOS6BackgroundView.hidden = true;
+    self.backgroundColor = [UIColor clearColor];
+    _brandedIndicatorView.image = [TGPresentation brandedIOS6PinnedIndicatorImage];
+    _brandedIconView.image = [TGPresentation brandedIOS6PinnedIconImage];
+    [_brandedCloseButton setImage:[TGPresentation brandedIOS6PinnedCloseImage] forState:UIControlStateNormal];
+    _brandedTextLabel.font = appearance.pinnedTextFont;
+    _brandedTextLabel.textColor = appearance.pinnedTextColor;
+    _brandedTextLabel.shadowColor = appearance.pinnedTextShadowColor;
+    _brandedTextLabel.shadowOffset = appearance.pinnedTextShadowOffset;
+    _brandedTextLabel.text = _replyPanel.contentText;
+
+    CGRect frame = self.frame;
+    frame.size.height = _compactHeader ? 21.0f : [TGPresentation brandedIOS6PinnedPanelHeight];
+    if (_compactHeader)
+    {
+        OGMusicPlayerAppearance *compactAppearance = [OGMusicPlayerAppearance conversationAppearanceDark:[OGTheme brandedTheme].dark compact:YES];
+        _brandedTextLabel.font = compactAppearance.font;
+        _brandedTextLabel.textColor = compactAppearance.titleColor;
+        _brandedTextLabel.textAlignment = NSTextAlignmentCenter;
+        _brandedTextLabel.shadowColor = [UIColor colorWithWhite:0.0f alpha:0.3f];
+        _brandedTextLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        _compactChevronView.image = [compactAppearance imageForGlyph:OGMusicPlayerGlyphChevron];
+    }
+    else
+        _brandedTextLabel.textAlignment = NSTextAlignmentLeft;
+    self.frame = frame;
+    [self setNeedsLayout];
+}
+
+- (void)brandedClosePressed
+{
+    if (_dismiss)
+        _dismiss();
 }
 
 - (void)setPresentation:(TGPresentation *)presentation
@@ -357,15 +483,76 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     self.backgroundColor = classicIOS6Style ? [UIColor clearColor] : presentation.pallete.barBackgroundColor;
     _separatorView.backgroundColor = classicIOS6Style ? ([TGPresentation classicIOS6UsesPaletteAdaptedAssets] ? presentation.pallete.barSeparatorColor : UIColorRGB(0x6d7884)) : presentation.pallete.barSeparatorColor;
     _replyPanel.pallete = presentation.associatedInputPanelPallete;
+    [self updateBrandedStyle];
 }
 
 - (void)updateMessage:(TGMessage *)message {
     _message = message;
     [_replyPanel updateMessage:message];
+    _brandedTextLabel.text = _replyPanel.contentText;
 }
 
 - (void)setMessageCount:(NSUInteger)messageCount {
     _replyPanel.compactPrefix = messageCount > 1 ? [NSString stringWithFormat:@"%d", (int)messageCount] : nil;
+    _brandedTextLabel.text = _replyPanel.contentText;
+}
+
+- (void)layoutBrandedContent
+{
+    OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+    CGFloat bodyX = appearance.backgroundCardHorizontalInset + self.safeAreaInset.left;
+    CGFloat bodyWidth = MAX(0.0f, self.bounds.size.width - appearance.backgroundCardHorizontalInset * 2.0f - self.safeAreaInset.left - self.safeAreaInset.right);
+    _brandedBackgroundClipView.frame = CGRectMake(bodyX, 0.0f, bodyWidth, self.bounds.size.height);
+    if (_compactHeader)
+    {
+        OGMusicPlayerAppearance *compactAppearance = [OGMusicPlayerAppearance conversationAppearanceDark:[OGTheme brandedTheme].dark compact:YES];
+        CGSize compactSize = CGSizeMake(bodyWidth, compactAppearance.height);
+        if (!CGSizeEqualToSize(_brandedBackgroundSize, compactSize))
+        {
+            _brandedBackgroundSize = compactSize;
+            _brandedBackgroundView.image = [[OGTheme brandedTheme].surfaceRenderer imageWithStyle:compactAppearance.backgroundSurfaceStyle size:compactSize bodyFrame:CGRectMake(0.0f, 0.0f, compactSize.width, compactSize.height)];
+        }
+        _brandedBackgroundView.frame = CGRectMake(0.0f, 0.0f, compactSize.width, compactSize.height);
+        _brandedTextLabel.frame = CGRectMake(bodyX + (bodyWidth - 130.0f) / 2.0f, 4.0f, 130.0f, 17.0f);
+        _compactChevronView.frame = CGRectMake(bodyX + 8.0f, 9.0f, 13.0f, 9.0f);
+        return;
+    }
+    CGSize bodySize = CGSizeMake(bodyWidth, appearance.pinnedPanelHeight);
+
+    UIEdgeInsets backgroundOutsets = UIEdgeInsetsZero;
+    if (!CGSizeEqualToSize(_brandedBackgroundSize, bodySize))
+    {
+        _brandedBackgroundSize = bodySize;
+        _brandedBackgroundView.image = [TGPresentation brandedIOS6PinnedPanelImageForSize:bodySize joinedHeader:_joinsPreviousHeader outsets:&backgroundOutsets];
+    }
+    else if (appearance.pinnedPanelSurfaceStyle != nil)
+    {
+        backgroundOutsets = [appearance.pinnedPanelSurfaceStyle dropShadowOutsets];
+        backgroundOutsets = UIEdgeInsetsMake(ceilf(backgroundOutsets.top), ceilf(backgroundOutsets.left), ceilf(backgroundOutsets.bottom), ceilf(backgroundOutsets.right));
+    }
+    _brandedBackgroundView.frame = CGRectMake(-backgroundOutsets.left, -backgroundOutsets.top, bodySize.width + backgroundOutsets.left + backgroundOutsets.right, bodySize.height + backgroundOutsets.top + backgroundOutsets.bottom);
+
+    CGRect indicatorFrame = appearance.pinnedIndicatorFrame;
+    _brandedIndicatorView.frame = CGRectOffset(indicatorFrame, bodyX, 0.0f);
+
+    CGFloat bubbleWidth = MAX(0.0f, bodyWidth - appearance.pinnedBubbleLeft - appearance.pinnedBubbleRightInset);
+    UIEdgeInsets bubbleInsets = appearance.pinnedBubbleImageInsets;
+    if (ABS(_brandedBubbleWidth - bubbleWidth) > FLT_EPSILON)
+    {
+        _brandedBubbleWidth = bubbleWidth;
+        _brandedBubbleView.image = [TGPresentation brandedIOS6PinnedBubbleImageForWidth:bubbleWidth outsets:&bubbleInsets];
+    }
+    CGRect bubbleFrame = CGRectMake(bodyX + appearance.pinnedBubbleLeft, appearance.pinnedBubbleTop, bubbleWidth, appearance.pinnedBubbleHeight);
+    _brandedBubbleView.frame = CGRectMake(bubbleFrame.origin.x - bubbleInsets.left, bubbleFrame.origin.y - bubbleInsets.top, bubbleFrame.size.width + bubbleInsets.left + bubbleInsets.right, bubbleFrame.size.height + bubbleInsets.top + bubbleInsets.bottom);
+
+    UIEdgeInsets textInsets = appearance.pinnedTextInsets;
+    _brandedTextLabel.frame = CGRectMake(CGRectGetMinX(bubbleFrame) + textInsets.left, CGRectGetMinY(bubbleFrame) + textInsets.top, MAX(0.0f, bubbleFrame.size.width - textInsets.left - textInsets.right), MAX(0.0f, bubbleFrame.size.height - textInsets.top - textInsets.bottom));
+
+    CGSize iconSize = appearance.pinnedIconSize;
+    _brandedIconView.frame = CGRectMake(bodyX + bodyWidth - appearance.pinnedIconRightInset - iconSize.width, appearance.pinnedIconTop, iconSize.width, iconSize.height);
+
+    CGSize closeSize = appearance.pinnedCloseSize;
+    _brandedCloseButton.frame = CGRectMake(bodyX + bodyWidth - appearance.pinnedCloseRightInset - closeSize.width, appearance.pinnedCloseTop, closeSize.width, closeSize.height);
 }
 
 - (void)layoutSubviews {
@@ -376,10 +563,18 @@ static UIImage *TGClassicIOS6PinnedPanelBackgroundImage(void)
     _classicIOS6BackgroundView.frame = self.bounds;
     
     _replyPanel.frame = CGRectMake(self.safeAreaInset.left, 0.0f, self.frame.size.width - self.safeAreaInset.left - self.safeAreaInset.right, 28.0f);
+
+    if ([TGPresentation brandedIOS6PinnedPanelAvailable])
+        [self layoutBrandedContent];
 }
 
 - (void)tapGesture:(UITapGestureRecognizer *)recognizer {
     if (recognizer.state == UIGestureRecognizerStateEnded) {
+        if (_compactHeader && _compactHeaderActivated != nil)
+        {
+            _compactHeaderActivated();
+            return;
+        }
         if (_tapped) {
             _tapped();
         }

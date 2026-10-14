@@ -75,7 +75,6 @@
         
         [[NSFileManager defaultManager] createDirectoryAtPath:storeAudioPathDirectory withIntermediateDirectories:true attributes:nil error:nil];
         
-       // NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:audioFilePath error:nil];
         
         if (audioAttachment.audioUri.length != 0)
         {
@@ -128,7 +127,6 @@
             inputFileLocation = inputDocumentLocation;
             
             datacenterId = audioAttachment.datacenterId;
-            while (false) TGLog(@"MEDIA audio location id=%lld dc=%d size=%d fileRef=%d origin=%d", audioAttachment.audioId, audioAttachment.datacenterId, audioAttachment.fileSize, (int)inputDocumentLocation.file_reference.length, audioAttachment.ios6OriginInfo != nil ? 1 : 0);
         }
         
         if (inputFileLocation != nil)

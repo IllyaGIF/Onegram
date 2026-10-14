@@ -116,14 +116,14 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
 - (void)setAuthorNameColor:(UIColor *)authorNameColor;
 - (void)setAuthorSignature:(NSString *)authorSignature;
 
-- (bool)setDiscussionCommentsEnabled:(bool)enabled count:(int32_t)count channelId:(int64_t)channelId;
+- (bool)setDiscussionCommentsEnabled:(bool)enabled count:(int32_t)count channelId:(int64_t)channelId recentRepliers:(NSArray *)recentRepliers messageId:(int32_t)messageId;
 
-// The official Telegram iOS layout treats comments as an attached footer of
-// the same message bubble. Bubble subclasses use these helpers to reserve the
-// footer space before the base model places the interactive row inside it.
 - (CGFloat)discussionCommentsFooterHeight;
 - (CGFloat)discussionCommentsFooterMinimumWidth;
 - (bool)discussionCommentsFooterIntegratedInBubble;
+- (CGRect)discussionCommentsBubbleFrame;
+- (bool)brandedCommentsFooterTop:(CGFloat *)footerTop bubbleFrame:(CGRect)bubbleFrame;
+- (bool)brandedCommentsCountRight:(CGFloat *)countRight bubbleFrame:(CGRect)bubbleFrame;
 
 - (void)updateAssets;
 - (void)refreshMetrics;
@@ -143,11 +143,13 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
 - (void)updateMessageFocus;
 - (void)updateMessageVisibility;
 - (void)updateMessageAttributes;
+- (void)prepareForAsynchronousContentDrawing;
 - (void)updateEditingState:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage animationDelay:(NSTimeInterval)animationDelay;
 - (void)updateInlineMediaContext;
 - (void)updateAnimationsEnabled;
 - (void)stopInlineMedia:(int32_t)excludeMid;
 - (void)resumeInlineMedia;
+- (void)activateDeferredInlineMedia;
 
 - (void)updateReplySwipeInteraction:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage ended:(bool)ended;
 - (void)setExplicitReplyPanOffset:(CGFloat)replyPanOffset ended:(bool)ended;

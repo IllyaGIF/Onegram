@@ -39,7 +39,7 @@
 
 + (UIColor *)selectedImagesPanelBackgroundColor
 {
-    return UIColorRGBA(0x000000, 0.9f); //UIColorRGBA(0x191919, 0.9f);
+    return UIColorRGBA(0x000000, 0.9f);
 }
 
 + (UIColor *)editorButtonSelectionBackgroundColor

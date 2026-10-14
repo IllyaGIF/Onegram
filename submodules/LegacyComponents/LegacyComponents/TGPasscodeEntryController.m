@@ -218,20 +218,6 @@ typedef enum {
 {
     [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
     
-    /*if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
-    {
-        UIView *snapshotView = [_view snapshotViewAfterScreenUpdates:false];
-        snapshotView.frame = _view.frame;
-        [self.view addSubview:snapshotView];
-        [UIView animateWithDuration:duration animations:^
-        {
-            snapshotView.alpha = 0.0f;
-            snapshotView.frame = (CGRect){CGPointZero, [self referenceViewSizeForOrientation:toInterfaceOrientation]};
-        } completion:^(__unused BOOL finished)
-        {
-            [snapshotView removeFromSuperview];
-        }];
-    }*/
 }
 
 - (void)viewWillAppear:(BOOL)animated

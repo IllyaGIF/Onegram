@@ -96,7 +96,7 @@
     if (_dictionary == nil)
     {
         NSData *data = [NSData dataWithContentsOfFile:_path];
-        if (data != nil)
+        if (data.length != 0)
         {
             id object = nil;
             @try {

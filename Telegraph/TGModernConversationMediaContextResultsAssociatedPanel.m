@@ -355,8 +355,6 @@
     availableSize.height -= insets.top + insets.bottom;
     availableSize.width = MAX(1.0f, availableSize.width);
     availableSize.height = MAX(1.0f, availableSize.height);
-    // PSUICollectionViewFlowLayout on iOS 6 requires the item height to be
-    // strictly smaller than the collection height minus section insets.
     CGSize maximumItemSize = CGSizeMake(availableSize.width, MAX(1.0f, availableSize.height - 1.0f));
     return TGScaleToFill(TGFitSize(preferredSize, maximumItemSize), CGSizeMake(10.0f, maximumItemSize.height));
 }

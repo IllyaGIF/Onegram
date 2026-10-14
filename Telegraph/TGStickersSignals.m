@@ -1,8 +1,7 @@
 #import "TGStickersSignals.h"
+#include <pthread.h>
+#include <mach-o/dyld.h>
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "TGTelegramNetworking.h"
 #import "TL/TLMetaScheme.h"
@@ -37,14 +36,6 @@ static OSSpinLock cachedPacksLock = 0;
 static NSMutableDictionary *cachedStickerPackInfo = nil;
 static OSSpinLock cachedStickerPackInfoLock = 0;
 static const NSUInteger TGIOS6StickerPackInfoRefreshLimit = 32;
-
-static bool TGIOS6StickerSetIsUnsupported(TLStickerSet *stickerSet)
-{
-    if (![stickerSet isKindOfClass:[TLStickerSet class]])
-        return false;
-    const int32_t unsupportedFlags = (1 << 5) | (1 << 6) | (1 << 7);
-    return (stickerSet.flags & unsupportedFlags) != 0;
-}
 
 static SSignal *TGIOS6CombineStickerPackInfoSignals(NSArray *signals)
 {
@@ -128,19 +119,6 @@ static NSDictionary *TGIOS6EmptyStickerPacks(void)
     };
 }
 
-static bool TGIOS6StickerDocumentIsAnimated(TGDocumentMediaAttachment *document)
-{
-    if (![document isKindOfClass:[TGDocumentMediaAttachment class]])
-        return false;
-    
-    NSString *mimeType = [document.mimeType lowercaseString];
-    NSString *extension = [[document.fileName pathExtension] lowercaseString];
-    return [mimeType isEqualToString:@"application/x-tgsticker"] || [mimeType isEqualToString:@"video/webm"] || [extension isEqualToString:@"tgs"] || [extension isEqualToString:@"webm"];
-}
-
-// Modern Telegram accounts can have animated packs only.  The legacy picker still
-// uses a document thumbnail for its grid, so keep every document here: this lets
-// a user choose and send the sticker even when the old client cannot animate it.
 static NSArray *TGIOS6StaticStickerDocuments(NSArray *documents)
 {
     return [documents isKindOfClass:[NSArray class]] ? documents : @[];
@@ -170,7 +148,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 {
     if (![dict isKindOfClass:[NSDictionary class]])
     {
-        while (false) TGLog(@"MEDIA stickers.safe fallback class=%@", NSStringFromClass([dict class]));
         return TGIOS6EmptyStickerPacks();
     }
     
@@ -214,7 +191,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         
         int cacheInvalidationTimeout = 60 * 60;
 #ifdef DEBUG
-        //cacheInvalidationTimeout = 10;
 #endif
         
         NSDictionary *cachedPacks = [self cachedStickerPacks];
@@ -252,7 +228,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         
         int cacheInvalidationTimeout = 60 * 60;
 #ifdef DEBUG
-        //cacheInvalidationTimeout = 10;
 #endif
         
         NSDictionary *cachedPacks = [self cachedStickerPacks];
@@ -284,30 +259,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (void)updateShowStickerButtonModeForStickerPacks:(NSArray *)__unused stickerPacks
 {
-//    for (TGStickerPack *stickerPack in stickerPacks)
-//    {
-//        bool isExternalPack = true;
-//        if ([stickerPack.packReference isKindOfClass:[TGStickerPackBuiltinReference class]])
-//            isExternalPack = false;
-//        
-//        if ([stickerPack.packReference isKindOfClass:[TGStickerPackIdReference class]])
-//        {
-//            TGStickerPackIdReference *reference = (TGStickerPackIdReference *)stickerPack.packReference;
-//            if (reference.shortName.length == 0)
-//                isExternalPack = false;
-//        }
-//        
-//        if (true || isExternalPack)
-//        {
-//            if (TGAppDelegateInstance.alwaysShowStickersMode == 0)
-//            {
-//                TGAppDelegateInstance.alwaysShowStickersMode = 2;
-//                [TGAppDelegateInstance saveSettings];
-//            }
-//            
-//            break;
-//        }
-//    }
     
     if (TGAppDelegateInstance.alwaysShowStickersMode == 0)
     {
@@ -426,14 +377,10 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         {
             NSDictionary *emptyPacks = TGIOS6EmptyStickerPacks();
             data = [NSKeyedArchiver archivedDataWithRootObject:emptyPacks];
-            while (false) TGLog(@"MEDIA stickers cache bootstrap empty path=%@", [self filePath]);
         }
         
         NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-        __autoreleasing NSError *createError = nil;
-        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:&createError];
-        if (createError != nil)
-            while (false) TGLog(@"MEDIA stickers cache mkdir error=%@ path=%@", createError, directory);
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
         
         if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true]) {
             TGLog(@"***** TGStickersSignalsClass loadPacksData couldn't write to file");
@@ -446,10 +393,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (void)storePacksData:(NSData *)data {
     NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-    __autoreleasing NSError *createError = nil;
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:&createError];
-    if (createError != nil)
-        while (false) TGLog(@"MEDIA stickers cache mkdir error=%@ path=%@", createError, directory);
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
     
     if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true]) {
         TGLog(@"***** TGStickersSignalsClass storePacksData couldn't write to file");
@@ -465,9 +409,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     NSArray *featuredPacks = persistentDictionary[@"featuredPacks"];
     if ([featuredPacks isKindOfClass:[NSArray class]] && featuredPacks.count != 0)
     {
-        // Featured packs duplicate their documents in the installed-packs cache.
-        // Keep them in memory, but refetch them after the next launch instead of
-        // asking old devices to archive the full duplicate object graph.
         persistentDictionary[@"featuredPacks"] = @[];
         persistentDictionary[@"featuredCacheUpdateDate"] = @0;
     }
@@ -499,6 +440,41 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 + (NSDictionary *)cachedStickerPacks
 {
     OSSpinLockLock(&cachedPacksLock);
+    NSDictionary *memoryPacks = cachedPacks;
+    OSSpinLockUnlock(&cachedPacksLock);
+    if (memoryPacks != nil)
+        return memoryPacks;
+
+    static pthread_mutex_t loadMutex;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        pthread_mutexattr_t attributes;
+        pthread_mutexattr_init(&attributes);
+        pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&loadMutex, &attributes);
+        pthread_mutexattr_destroy(&attributes);
+    });
+    pthread_mutex_lock(&loadMutex);
+    NSDictionary *result = [self loadCachedStickerPacks];
+    pthread_mutex_unlock(&loadMutex);
+    return result;
+}
+
++ (void)prewarmCachedStickerPacks
+{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+    {
+        @autoreleasepool
+        {
+            [self cachedStickerPacks];
+        }
+    });
+}
+
++ (NSDictionary *)loadCachedStickerPacks
+{
+    OSSpinLockLock(&cachedPacksLock);
     NSDictionary *loadedFromCachePacks = cachedPacks;
     OSSpinLockUnlock(&cachedPacksLock);
     if (loadedFromCachePacks != nil) {
@@ -508,7 +484,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     NSData *cachedStickerPacksData = [self loadPacksData];
     if (cachedStickerPacksData == nil)
     {
-        while (false) TGLog(@"MEDIA stickers cache missing, using empty");
         return TGIOS6EmptyStickerPacks();
     }
     
@@ -523,7 +498,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     
     if (dict == nil || ![dict isKindOfClass:[NSDictionary class]])
     {
-        while (false) TGLog(@"MEDIA stickers cache invalid, using empty");
         dict = TGIOS6EmptyStickerPacks();
     }
     
@@ -544,6 +518,8 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         normalizedDict[@"maxDocumentIdsUseCount_v2"] = @0;
     if (![normalizedDict[@"archivedPacksSummary"] isKindOfClass:[TGArchivedStickerPacksSummary class]])
         normalizedDict[@"archivedPacksSummary"] = [[TGArchivedStickerPacksSummary alloc] initWithCount:0];
+    bool needsLazyDocumentsRewrite = ![normalizedDict[@"ios6LazyStickerDocuments"] boolValue];
+    normalizedDict[@"ios6LazyStickerDocuments"] = @true;
     const int32_t staticPackFetchVersion = 4;
     if ([normalizedDict[@"ios6StaticPackFetchVersion"] intValue] != staticPackFetchVersion)
     {
@@ -576,6 +552,10 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         }
     }
     
+    NSArray *storedPacks = dict[@"packs"];
+    if (needsLazyDocumentsRewrite && storedPacks.count != 0)
+        [self storePacksDictionary:dict];
+
     OSSpinLockLock(&cachedPacksLock);
     cachedPacks = dict;
     OSSpinLockUnlock(&cachedPacksLock);
@@ -789,18 +769,15 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (SSignal *)remoteStickerPacksWithCacheHash:(int32_t)cacheHash
 {
-    IOS6_NOOP_LOG(@"STICKER signals.remotePacks start hash=%d", cacheHash);
     
     TLRPCmessages_getAllStickers$messages_getAllStickers *getAllStickers = [[TLRPCmessages_getAllStickers$messages_getAllStickers alloc] init];
     getAllStickers.n_hash = cacheHash;
     
     SSignal *allStickers = [[[TGTelegramNetworking instance] requestSignal:getAllStickers] mapToSignal:^SSignal *(TLmessages_AllStickers *result)
     {
-        IOS6_NOOP_LOG(@"STICKER signals.remotePacks result=%@", NSStringFromClass([result class]));
         if ([result isKindOfClass:[TLmessages_AllStickers$messages_allStickers class]])
         {
             TLmessages_AllStickers$messages_allStickers *allStickers = (TLmessages_AllStickers$messages_allStickers *)result;
-            IOS6_NOOP_LOG(@"STICKER signals.remotePacks all sets=%d hash=%d", (int)allStickers.sets.count, allStickers.n_hash);
             
             NSArray *currentStickerPacks = [self cachedStickerPacks][@"packs"];
             
@@ -837,7 +814,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 [resultingPackReferences addObject:resultPackReference];
             }
             
-            IOS6_NOOP_LOG(@"STICKER signals.remotePacks missing=%d refs=%d cached=%d", (int)missingPackSignals.count, (int)resultingPackReferences.count, (int)currentStickerPacks.count);
             return [TGIOS6CombineStickerPackInfoSignals(missingPackSignals) map:^id (NSArray *additionalPacks)
             {
                 NSMutableArray *finalStickerPacks = [[NSMutableArray alloc] init];
@@ -872,13 +848,11 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                     if (foundPack != nil)
                         [finalStickerPacks addObject:foundPack];
                 }
-                
-                
-                
+
+
                 bool hadFailedPack = [additionalPacks containsObject:[NSNull null]];
                 int32_t cacheUpdateDate = hadFailedPack ? 0 : (int32_t)[[NSDate date] timeIntervalSince1970];
                 NSDictionary *result = [self replaceCachedStickerPacks:finalStickerPacks cacheUpdateDate:cacheUpdateDate];
-                IOS6_NOOP_LOG(@"STICKER signals.remotePacks stored packs=%d additional=%d", (int)finalStickerPacks.count, (int)additionalPacks.count);
                 return result;
             }];
         }
@@ -893,7 +867,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     getArchivedStickers.limit = 1;
     
     SSignal *archivedStickers = [[[[TGTelegramNetworking instance] requestSignal:getArchivedStickers] mapToSignal:^SSignal *(TLmessages_ArchivedStickers *result) {
-        IOS6_NOOP_LOG(@"STICKER signals.remotePacks archived result=%@ count=%d", NSStringFromClass([result class]), result.count);
         TGArchivedStickerPacksSummary *summary = [[TGArchivedStickerPacksSummary alloc] initWithCount:result.count];
         NSDictionary *dict = [self replaceArchivedStickerPacksSummary:summary];
         
@@ -908,8 +881,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         return [SSignal single:[NSNull null]];
     }];
     
-    // Do not make installed packs wait for optional archive metadata.
-    // Merge lets the first useful result reach the keyboard immediately.
     return [[SSignal mergeSignals:@[allStickers, archivedStickers]] mapToSignal:^SSignal *(id value)
     {
         if ([value isEqual:[NSNull null]])
@@ -920,7 +891,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (SSignal *)remoteFeaturedPacksWithCacheHash:(int32_t)cacheHash
 {
-    IOS6_NOOP_LOG(@"STICKER signals.featured start hash=%d", cacheHash);
     
 #ifdef DEBUG
     cacheHash = 0;
@@ -931,11 +901,9 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     
     return [[[TGTelegramNetworking instance] requestSignal:getFeaturedStickers] mapToSignal:^SSignal *(TLmessages_FeaturedStickers *result)
     {
-        IOS6_NOOP_LOG(@"STICKER signals.featured result=%@", NSStringFromClass([result class]));
         if ([result isKindOfClass:[TLmessages_FeaturedStickers$messages_featuredStickers class]])
         {
             TLmessages_FeaturedStickers$messages_featuredStickers *allStickers = (TLmessages_FeaturedStickers$messages_featuredStickers *)result;
-            IOS6_NOOP_LOG(@"STICKER signals.featured sets=%d unread=%d hash=%d", (int)allStickers.sets.count, (int)allStickers.unread.count, allStickers.n_hash);
             
             NSArray *currentStickerPacks = [self cachedStickerPacks][@"featuredPacks"];
             
@@ -963,7 +931,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 [resultingPackReferences addObject:resultPackReference];
             }
             
-            IOS6_NOOP_LOG(@"STICKER signals.featured missing=%d refs=%d cached=%d", (int)missingPackSignals.count, (int)resultingPackReferences.count, (int)currentStickerPacks.count);
             return [[SSignal combineSignals:missingPackSignals] map:^id (NSArray *additionalPacks)
             {
                 NSMutableArray *finalStickerPacks = [[NSMutableArray alloc] init];
@@ -1005,7 +972,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                 }
                 
                 NSDictionary *result = [self replaceCachedFeaturedPacks:finalStickerPacks unreadPackIds:unreadPackIds cacheUpdateDate:(int32_t)[[NSDate date] timeIntervalSince1970]];
-                IOS6_NOOP_LOG(@"STICKER signals.featured stored packs=%d additional=%d", (int)finalStickerPacks.count, (int)additionalPacks.count);
                 return result;
             }];
         }
@@ -1037,7 +1003,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (SSignal *)remoteStickersForEmoticon:(NSString *)emoticon
 {
-    IOS6_NOOP_LOG(@"STICKER signals.remoteByEmoji start emoticon=%@", emoticon);
     
     if (emoticon.length == 0)
         return [SSignal single:@[]];
@@ -1052,10 +1017,8 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         getStickers.n_hash = hash;
         return [[[TGTelegramNetworking instance] requestSignal:getStickers] mapToSignal:^SSignal *(TLmessages_Stickers *result)
         {
-            IOS6_NOOP_LOG(@"STICKER signals.remoteByEmoji result=%@", NSStringFromClass([result class]));
             if ([result isKindOfClass:[TLmessages_Stickers$messages_stickers class]]) {
                 TLmessages_Stickers$messages_stickers *concreteResult = (TLmessages_Stickers$messages_stickers *)result;
-                IOS6_NOOP_LOG(@"STICKER signals.remoteByEmoji stickers=%d hash=%d", (int)concreteResult.stickers.count, concreteResult.n_hash);
                 
                 NSMutableArray *documents = [[NSMutableArray alloc] init];
                 for (TLDocument *resultDocument in concreteResult.stickers) {
@@ -1096,7 +1059,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 
 + (SSignal *)stickerPackInfo:(id<TGStickerPackReference>)packReference packHash:(int32_t)packHash featured:(bool)featured
 {
-    IOS6_NOOP_LOG(@"STICKER signals.packInfo start reference=%@ hash=%d featured=%d", packReference, packHash, featured ? 1 : 0);
     
     NSString *multicastKey = TGIOS6StickerPackReferenceKey(packReference, packHash, featured);
     TGStickerPack *cachedPackInfo = TGIOS6CachedStickerPackInfo(multicastKey);
@@ -1109,7 +1071,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         getStickerSet.stickerset = [self _inputStickerSetFromPackReference:packReference];
         return [[[TGTelegramNetworking instance] requestSignal:getStickerSet] map:^id (TLmessages_StickerSet *result)
         {
-            IOS6_NOOP_LOG(@"STICKER signals.packInfo result=%@ set=%@ packs=%d docs=%d", NSStringFromClass([result class]), result.set, (int)result.packs.count, (int)result.documents.count);
             if (result.set == nil)
                 return [NSNull null];
             TGStickerPackIdReference *resultPackReference = [[TGStickerPackIdReference alloc] initWithPackId:result.set.n_id packAccessHash:result.set.access_hash shortName:result.set.short_name];
@@ -1446,7 +1407,6 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
                     {
                         if ([next isKindOfClass:[NSData class]])
                         {
-                            TGLog(@"preloaded sticker preview to %@", path);
                             [(NSData *)next writeToFile:path atomically:true];
                         }
                     }];
@@ -1520,14 +1480,12 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
 }
 
 + (SSignal *)archivedStickerPacksWithOffsetId:(int64_t)offsetId limit:(NSUInteger)limit {
-    IOS6_NOOP_LOG(@"STICKER signals.archived start offset=%lld limit=%d", offsetId, (int)limit);
     
     TLRPCmessages_getArchivedStickers$messages_getArchivedStickers *getArchivedStickers = [[TLRPCmessages_getArchivedStickers$messages_getArchivedStickers alloc] init];
     getArchivedStickers.offset_id = offsetId;
     getArchivedStickers.limit = (int32_t)limit;
     
     return [[[TGTelegramNetworking instance] requestSignal:getArchivedStickers] mapToSignal:^SSignal *(TLmessages_ArchivedStickers *result) {
-        IOS6_NOOP_LOG(@"STICKER signals.archived result=%@ count=%d sets=%d", NSStringFromClass([result class]), result.count, (int)result.sets.count);
         NSDictionary *dict = [self replaceArchivedStickerPacksSummary:[[TGArchivedStickerPacksSummary alloc] initWithCount:result.count]];
         
         if (dict != nil) {

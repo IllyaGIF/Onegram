@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 23
- */
 
 @class Secret23_DecryptedMessageAction;
 @class Secret23_DecryptedMessageAction_decryptedMessageActionSetMessageTTL;
@@ -83,9 +80,6 @@
 
 @end
 
-/*
- * Types 23
- */
 
 @interface Secret23_DecryptedMessageAction : NSObject
 
@@ -481,10 +475,6 @@
 
 @end
 
-
-/*
- * Functions 23
- */
 
 @interface Secret23: NSObject
 

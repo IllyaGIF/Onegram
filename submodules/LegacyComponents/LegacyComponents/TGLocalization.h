@@ -8,6 +8,8 @@
 @property (nonatomic, readonly) bool isActive;
     
 - (instancetype)initWithVersion:(int32_t)version code:(NSString *)code dict:(NSDictionary *)dict isActive:(bool)isActive;
+- (instancetype)initWithVersion:(int32_t)version code:(NSString *)code preparedDict:(NSDictionary *)dict isActive:(bool)isActive;
+- (NSDictionary *)dictionaryRepresentation;
     
 - (TGLocalization *)mergedWith:(NSDictionary *)other version:(int32_t)version;
     
@@ -18,5 +20,6 @@
 - (NSString *)get:(NSString *)key;
 - (NSString *)getPluralized:(NSString *)key count:(int32_t)count;
 - (bool)contains:(NSString *)key;
+- (void)preloadFallback;
 
 @end

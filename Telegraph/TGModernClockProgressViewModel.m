@@ -94,6 +94,15 @@
     [view setFrameImage:[TGModernClockProgressViewModel frameImageForType:type presentation:presentation] hourImage:[TGModernClockProgressViewModel hourImageForType:type presentation:presentation] minImage:[TGModernClockProgressViewModel minImageForType:type presentation:presentation]];
 }
 
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernClockProgressViewModel class]])
+        return false;
+    if (![self recordBaseDrawing:recording])
+        return false;
+    return self.skipDrawInContext;
+}
+
 - (void)drawInContext:(CGContextRef)context
 {
     [super drawInContext:context];

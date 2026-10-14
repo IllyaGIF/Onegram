@@ -1,8 +1,5 @@
 #import "TLLangPackStringPluralized.h"
 
-//langPackStringPluralized flags:# key:string zero_value:flags.0?string one_value:flags.1?string two_value:flags.2?string few_value:flags.3?string many_value:flags.4?string other_value:string = LangPackString;
-//langPackStringPluralized flags:# key:string zero_value:flags.0?string one_value:flags.1?string two_value:flags.2?string few_value:flags.3?string many_value:flags.4?string other_value:string = LangPackString;
-
 
 @implementation TLLangPackStringPluralized
 

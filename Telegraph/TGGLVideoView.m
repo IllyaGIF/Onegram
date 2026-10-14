@@ -1,5 +1,104 @@
 #import "TGGLVideoView.h"
 
+#if defined(ONEGRAM_ARMV6)
+
+#import "../OnegramPlatform/OGPlatformMedia.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGModernAnimatedImagePlayer.h"
+
+@interface TGGLVideoView ()
+{
+    UIImageView *_imageView;
+    TGModernAnimatedImagePlayer *_animatedPlayer;
+    NSString *_path;
+}
+@end
+
+@implementation TGGLVideoView
+
+@synthesize videoSize = _videoSize;
+
+- (instancetype)init
+{
+    return [self initWithFrame:CGRectZero];
+}
+
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self != nil)
+    {
+        self.clipsToBounds = YES;
+        _imageView = [[UIImageView alloc] initWithFrame:self.bounds];
+        _imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _imageView.contentMode = UIViewContentModeScaleAspectFill;
+        _imageView.clipsToBounds = YES;
+        [self addSubview:_imageView];
+    }
+    return self;
+}
+
+- (void)setVideoSize:(CGSize)videoSize
+{
+    _videoSize = videoSize;
+}
+
+- (void)setPath:(NSString *)path
+{
+    if ((_path == path) || [_path isEqualToString:path])
+        return;
+    [_animatedPlayer stop];
+    _animatedPlayer = nil;
+    _path = [path copy];
+    _imageView.image = nil;
+    if (_path.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:_path])
+        return;
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:_path];
+    NSData *header = [handle readDataOfLength:6];
+    [handle closeFile];
+    const uint8_t *bytes = [header bytes];
+    BOOL gif = [header length] >= 6 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8' && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a';
+    if (gif)
+    {
+        NSData *data = [NSData dataWithContentsOfFile:_path];
+        CGSize size = _videoSize;
+        if (size.width <= 0.0f || size.height <= 0.0f)
+            size = self.bounds.size;
+        if (size.width <= 0.0f || size.height <= 0.0f)
+            size = CGSizeMake(1.0f, 1.0f);
+        _animatedPlayer = [[TGModernAnimatedImagePlayer alloc] initWithSize:size data:data];
+        __weak TGGLVideoView *weakSelf = self;
+        _animatedPlayer.frameReady = ^(UIImage *image)
+        {
+            __strong TGGLVideoView *strongSelf = weakSelf;
+            if (strongSelf != nil)
+                strongSelf->_imageView.image = image;
+        };
+        [_animatedPlayer play];
+    }
+    else
+    {
+        CGSize size = _videoSize;
+        if (size.width <= 0.0f || size.height <= 0.0f)
+            size = self.bounds.size;
+        if (size.width <= 0.0f || size.height <= 0.0f)
+            size = CGSizeMake(800.0f, 800.0f);
+        _imageView.image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:_path], 0.0, size);
+    }
+}
+
+- (void)prepareForRecycle
+{
+    [_animatedPlayer stop];
+    _animatedPlayer = nil;
+    _path = nil;
+    _imageView.image = nil;
+}
+
+@end
+
+#else
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
@@ -12,6 +111,7 @@
 
 #import <libkern/OSAtomic.h>
 #import <pthread.h>
+#include <string.h>
 
 #import "TGImageMessageViewModel.h"
 
@@ -75,6 +175,7 @@ static int32_t nextSessionId = 0;
 typedef enum {
     UniformIndex_Y = 0,
     UniformIndex_UV,
+    UniformIndex_LuminanceAlpha,
     UniformIndex_RotationAngle,
     UniformIndex_ColorConversionMatrix,
     UniformIndex_NumUniforms
@@ -86,14 +187,12 @@ typedef enum {
     AttributeIndex_NumAttributes
 } AttributeIndex;
 
-// BT.601, which is the standard for SDTV.
 static GLfloat colorConversion601[] = {
     1.164f, 1.164f, 1.164f,
     0.0f, -0.392f, 2.017f,
     1.596f, -0.813f, 0.0f
 };
 
-// BT.709, which is the standard for HDTV.
 static GLfloat colorConversion709[] = {
     1.164f, 1.164f, 1.164f,
     0.0f, -0.213f, 2.112f,
@@ -274,10 +373,6 @@ static NSData *vertexShaderSource() {
     [sessions() removeObjectForKey:@(_sessionId)];
     OSSpinLockUnlock(&sessionsLock);
     
-    if (![_queue isCurrentQueue]) {
-        while (false) TGLog(@"MEDIA TGGLVideoFrameQueue dealloc off queue session=%d", _sessionId);
-    }
-    
     if (_decompressionSession) {
         VTDecompressionSessionInvalidate(_decompressionSession);
         CFRelease(_decompressionSession);
@@ -377,7 +472,6 @@ static NSData *vertexShaderSource() {
 static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCon, __unused void *sourceFrameRefCon, OSStatus status, __unused VTDecodeInfoFlags infoFlags, CVImageBufferRef imageBuffer, CMTime presentationTimestamp, __unused CMTime presentationDuration) {
     @autoreleasepool {
         if (status != noErr) {
-            //Console.WriteLine ("Error decompresssing frame at time: {0:#.###} error: {1} infoFlags: {2}", (float)presentationTimeStamp.Value / presentationTimeStamp.TimeScale, (int)status, flags);
             TGLog(@"TGVTPlayerDecompressionOutputCallback error %d", (int)status);
             return;
         }
@@ -393,7 +487,6 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
         
         CFAbsoluteTime presentationSeconds = CMTimeGetSeconds(presentationTimestamp);
         
-        //TGLog(@"out %f (%d)", presentationSeconds, (int)sourceFrameRefCon);
         
         OSSpinLockLock(&sessionsLock);
         TGWeakReference *sessionReference = sessions()[@((int32_t)((intptr_t)decompressionOutputRefCon))];
@@ -402,9 +495,7 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
         TGGLVideoFrameQueue *queue = sessionReference.object;
         TGGLVideoFrame *frame = [[TGGLVideoFrame alloc] initWithBuffer:imageBuffer timestamp:presentationSeconds angle:queue.angle];
         
-        //[queue dispatch:^{
         [queue.pendingFrames addObject:frame];
-        //}];
     }
 }
 
@@ -560,6 +651,7 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
         }
     }
     
+    _failed = true;
     return nil;
 }
 
@@ -662,6 +754,7 @@ static NSMutableDictionary *queueItemsByPath() {
 @property (nonatomic, readonly) CVOpenGLESTextureCacheRef videoTextureCache;
 @property (nonatomic, readonly) GLint *uniforms;
 @property (nonatomic, readonly) GLint program;
+@property (nonatomic, readonly) bool supportsRGTextures;
 
 
 @end
@@ -687,6 +780,8 @@ static NSMutableDictionary *queueItemsByPath() {
             _context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
             
             [EAGLContext setCurrentContext:_context];
+            const GLubyte *extensions = glGetString(GL_EXTENSIONS);
+            _supportsRGTextures = extensions != NULL && strstr((const char *)extensions, "GL_EXT_texture_rg") != NULL;
             
             glDisable(GL_DEPTH_TEST);
             
@@ -701,9 +796,9 @@ static NSMutableDictionary *queueItemsByPath() {
             
             glUseProgram(_program);
             
-            // 0 and 1 are the texture IDs of lumaTexture and chromaTexture respectively.
             glUniform1i(_uniforms[UniformIndex_Y], 0);
             glUniform1i(_uniforms[UniformIndex_UV], 1);
+            glUniform1f(_uniforms[UniformIndex_LuminanceAlpha], _supportsRGTextures ? 0.0f : 1.0f);
             
             glUniform1f(_uniforms[UniformIndex_RotationAngle], 0.0f);
             
@@ -749,6 +844,7 @@ static NSMutableDictionary *queueItemsByPath() {
     if (ok) {
         _uniforms[UniformIndex_Y] = glGetUniformLocation(_program, "SamplerY");
         _uniforms[UniformIndex_UV] = glGetUniformLocation(_program, "SamplerUV");
+        _uniforms[UniformIndex_LuminanceAlpha] = glGetUniformLocation(_program, "useLuminanceAlpha");
         _uniforms[UniformIndex_RotationAngle] = glGetUniformLocation(_program, "preferredRotation");
         _uniforms[UniformIndex_ColorConversionMatrix] = glGetUniformLocation(_program, "colorConversionMatrix");
     }
@@ -865,7 +961,6 @@ static NSMutableDictionary *queueItemsByPath() {
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self != nil) {
-        //TGLog(@"TGGLVideoView count %d", OSAtomicIncrement32(&TGGLVideoViewCount));
         
         _applicationWillEnterForeground = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(applicationDidBecomeActiveNotification:) name:UIApplicationDidBecomeActiveNotification];
         _applicationDidEnterBackground = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(applicationWillResignActiveNotification:) name:UIApplicationWillResignActiveNotification];
@@ -874,7 +969,7 @@ static NSMutableDictionary *queueItemsByPath() {
         pthread_mutex_init(&_inBackgroundMutex, NULL);
         
         _layer = (CAEAGLLayer *)self.layer;
-        _layer.contentsScale = [UIScreen mainScreen].scale;
+        OGPlatformSetLayerContentsScale(_layer, [UIScreen mainScreen].scale);
         self.opaque = true;
         _layer.drawableProperties = @{(NSString *)kEAGLDrawablePropertyRetainedBacking: @false, (NSString *)kEAGLDrawablePropertyColorFormat: (NSString *)kEAGLColorFormatRGBA8};
         
@@ -892,7 +987,6 @@ static NSMutableDictionary *queueItemsByPath() {
 }
 
 - (void)dealloc {
-    //TGLog(@"TGGLVideoView count %d", OSAtomicDecrement32(&TGGLVideoViewCount));
     
     NSAssert([NSThread isMainThread], @"dealloc from background thread");
     
@@ -970,7 +1064,6 @@ static NSMutableDictionary *queueItemsByPath() {
 
 - (void)displayFrame:(TGGLVideoFrame *)frame
 {
-    //TGLog(@"draw frame at %f", frame.timestamp);
     
     pthread_mutex_lock(&_inBackgroundMutex);
     if (!_inBackground && _buffersInitialized) {
@@ -987,9 +1080,7 @@ static NSMutableDictionary *queueItemsByPath() {
             int frameWidth = (int)CVPixelBufferGetWidth(frame.buffer);
             int frameHeight = (int)CVPixelBufferGetHeight(frame.buffer);
             
-            if ([TGGLVideoContext instance].videoTextureCache == NULL) {
-                TGLog(@"No video texture cache");
-            } else {
+            if ([TGGLVideoContext instance].videoTextureCache != NULL) {
                 CFTypeRef colorAttachments = CVBufferGetAttachment(frame.buffer, kCVImageBufferYCbCrMatrixKey, NULL);
                 if (colorAttachments == kCVImageBufferYCbCrMatrix_ITU_R_601_4) {
                     _preferredConversion = colorConversion601;
@@ -998,9 +1089,13 @@ static NSMutableDictionary *queueItemsByPath() {
                 }
                 
                 glActiveTexture(GL_TEXTURE0);
-                CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, [TGGLVideoContext instance].videoTextureCache, frame.buffer, NULL, GL_TEXTURE_2D, GL_RED_EXT, frameWidth, frameHeight, GL_RED_EXT, GL_UNSIGNED_BYTE, 0, &lumaTexture);
+                bool supportsRG = [TGGLVideoContext instance].supportsRGTextures;
+                GLenum lumaFormat = supportsRG ? GL_RED_EXT : GL_LUMINANCE;
+                GLenum chromaFormat = supportsRG ? GL_RG_EXT : GL_LUMINANCE_ALPHA;
+                CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, [TGGLVideoContext instance].videoTextureCache, frame.buffer, NULL, GL_TEXTURE_2D, lumaFormat, frameWidth, frameHeight, lumaFormat, GL_UNSIGNED_BYTE, 0, &lumaTexture);
                 if (lumaTexture == NULL) {
                     TGLog(@"Error at CVOpenGLESTextureCache.TextureFromImage");
+                    goto releaseTextures;
                 }
                 
                 glBindTexture(CVOpenGLESTextureGetTarget(lumaTexture), CVOpenGLESTextureGetName(lumaTexture));
@@ -1011,10 +1106,11 @@ static NSMutableDictionary *queueItemsByPath() {
                 
                 glActiveTexture(GL_TEXTURE1);
                 
-                CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, [TGGLVideoContext instance].videoTextureCache, frame.buffer, NULL, GL_TEXTURE_2D, GL_RG_EXT, frameWidth / 2, frameHeight / 2, GL_RG_EXT, GL_UNSIGNED_BYTE, 1, &chromaTexture);
+                CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, [TGGLVideoContext instance].videoTextureCache, frame.buffer, NULL, GL_TEXTURE_2D, chromaFormat, frameWidth / 2, frameHeight / 2, chromaFormat, GL_UNSIGNED_BYTE, 1, &chromaTexture);
                 
                 if (chromaTexture == NULL) {
                     TGLog(@"Error at CVOpenGLESTextureCache.TextureFromImage");
+                    goto releaseTextures;
                 }
                 
                 glBindTexture(CVOpenGLESTextureGetTarget(chromaTexture), CVOpenGLESTextureGetName(chromaTexture));
@@ -1027,7 +1123,6 @@ static NSMutableDictionary *queueItemsByPath() {
                 glUniform1f([TGGLVideoContext instance].uniforms[UniformIndex_RotationAngle], 0.0f);
                 glUniformMatrix3fv([TGGLVideoContext instance].uniforms[UniformIndex_ColorConversionMatrix], 1, false, _preferredConversion);
                 
-                // Set up the quad vertices with respect to the orientation and aspect ratio of the video.
                 
                 CGSize boundsSize = CGSizeMake(_backingWidth, _backingHeight);
                 CGSize imageSize = CGSizeMake(frameWidth, frameHeight);
@@ -1051,10 +1146,6 @@ static NSMutableDictionary *queueItemsByPath() {
                 normalizedSamplingSize.width = renderSize.width / boundsSize.width;
                 normalizedSamplingSize.height = renderSize.height / boundsSize.height;
                 
-                /*
-                 The quad vertex data defines the region of 2D plane onto which we draw our pixel buffers.
-                 Vertex data formed using (-1,-1) and (1,1) as the bottom left and top right coordinates respectively, covers the entire screen.
-                */
                 GLfloat quadVertexData [] = {
                     (GLfloat)(-1 * normalizedSamplingSize.width), (GLfloat)(-1 * normalizedSamplingSize.height),
                     (GLfloat)normalizedSamplingSize.width, (GLfloat)(-1 * normalizedSamplingSize.height),
@@ -1062,22 +1153,10 @@ static NSMutableDictionary *queueItemsByPath() {
                     (GLfloat)(normalizedSamplingSize.width), (GLfloat)(normalizedSamplingSize.height),
                 };
                 
-                // Update attribute values.
                 glVertexAttribPointer(AttributeIndex_Vertex, 2, GL_FLOAT, 0, 0, quadVertexData);
                 glEnableVertexAttribArray(AttributeIndex_Vertex);
-                
-                /*
-                 The texture vertices are set up such that we flip the texture vertically. This is so that our top left origin buffers match OpenGL's bottom left texture coordinate system.
-                */
-                
-                /*
-                 
-                 0,0---1,0
-                 |      |
-                 0,1---1,1
-                 
-                */
-                
+
+
                 CGRect textureSamplingRect = CGRectMake(0, 0, 1, 1);
                 if (ABS(frame.angle - ((CGFloat)M_PI / 2.0f)) < FLT_EPSILON) {
                     GLfloat quadTextureData[] = {
@@ -1115,6 +1194,11 @@ static NSMutableDictionary *queueItemsByPath() {
         
         [[TGGLVideoContext instance] presentRenderbuffer:GL_RENDERBUFFER];
         
+releaseTextures:
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
         if (chromaTexture != NULL) {
             CFRelease(chromaTexture);
         }
@@ -1172,7 +1256,7 @@ static NSMutableDictionary *queueItemsByPath() {
                                     OSSpinLockUnlock(&strongSelf->_pendingFramesLock);
                                     
                                     if (pendingFrame != nil) {
-                                        [strongSelf displayFrame:frame];
+                                        [strongSelf displayFrame:pendingFrame];
                                     }
                                     
                                     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1198,8 +1282,11 @@ static NSMutableDictionary *queueItemsByPath() {
     [super layoutSubviews];
     
     CGRect bounds = self.bounds;
+    CGFloat scale = _layer.contentsScale;
+    GLint width = (GLint)lrint(bounds.size.width * scale);
+    GLint height = (GLint)lrint(bounds.size.height * scale);
     [[TGGLVideoContext instance] performAsynchronouslyWithContext:^{
-        if ((_backingWidth != (int)bounds.size.width || _backingHeight != (int)bounds.size.height)) {
+        if (!_buffersInitialized || _backingWidth != width || _backingHeight != height) {
             if (_buffersInitialized) {
                 if (_frameBufferHandle) {
                     glDeleteFramebuffers(1, &_frameBufferHandle);
@@ -1226,3 +1313,5 @@ static NSMutableDictionary *queueItemsByPath() {
 }
 
 @end
+
+#endif

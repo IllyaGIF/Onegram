@@ -52,7 +52,6 @@
 {
     [super layoutSubviews];
     
-    //_buttonTitleLabel.frame = CGRectMake(0.0f, 0.0f, _buttonTitleLabel.frame.size.width, _buttonTitleLabel.frame.size.height);
 }
 
 @end

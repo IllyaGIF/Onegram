@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "TGEmbedPIPController.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -26,6 +27,12 @@ const CGFloat TGEmbedPIPLandscapeNavigationBarHeight = 32.0f;
 const CGFloat TGEmbedPIPAngleEpsilon = 30.0f;
 
 void freedomPIPInit();
+
+@protocol TGEmbedPIPPlayerViews <NSObject>
+- (void)addObject:(id)object;
+- (NSUInteger)count;
+- (id)anyObject;
+@end
 
 @interface TGEmbedPIPWindow : TGOverlayControllerWindow
 
@@ -81,7 +88,7 @@ void freedomPIPInit();
         window.hidden = false;
         _window = window;
         
-        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithKeyboardFrameTarget:self targetSelector:@selector(keyboardWillChangeFrame:)];
         
         _didEnterBackgroundProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(didEnterBackground:) name:UIApplicationDidEnterBackgroundNotification];
     }
@@ -200,7 +207,7 @@ void freedomPIPInit();
 + (TGEmbedPIPPlaceholderView *)placeholderViewForLocation:(TGPIPSourceLocation *)location invisible:(bool *)invisible
 {
     TGEmbedPIPPlaceholderView *placeholderView = nil;
-    for (TGEmbedPIPPlaceholderView *view in [TGEmbedPIPController placeholderViews])
+    for (TGEmbedPIPPlaceholderView *view in [[TGEmbedPIPController placeholderViews] allObjects])
     {
         if ([view.location isEqual:location])
         {
@@ -536,14 +543,13 @@ void freedomPIPInit();
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
     
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [self.view convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, self.view);
     
-    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f :  (self.view.frame.size.height - keyboardFrame.origin.y);
+    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f :  (self.view.bounds.size.height - keyboardFrame.origin.y);
     
     keyboardHeight = MAX(keyboardHeight, 0.0f);
 
-    if (keyboardFrame.origin.y + keyboardFrame.size.height < self.view.frame.size.height - FLT_EPSILON)
+    if (keyboardFrame.origin.y + keyboardFrame.size.height < self.view.bounds.size.height - FLT_EPSILON)
         keyboardHeight = 0.0f;
     
     _keyboardHeight = keyboardHeight;
@@ -909,14 +915,13 @@ static TGEmbedPIPCorner defaultCorner = TGEmbedPIPCornerTopRight;
             
 + (void)registerPlaceholderView:(TGEmbedPIPPlaceholderView *)view
 {
-    __weak TGEmbedPIPPlaceholderView *weakView = view;
-    [[self placeholderViews] addObject:weakView];
+    [[self placeholderViews] addObject:view];
 }
 
-+ (NSHashTable *)placeholderViews
++ (id)placeholderViews
 {
     static dispatch_once_t onceToken;
-    static NSHashTable *views;
+    static id views;
     dispatch_once(&onceToken, ^
     {
         views = TGWeakObjectHashTable();
@@ -926,16 +931,15 @@ static TGEmbedPIPCorner defaultCorner = TGEmbedPIPCornerTopRight;
 
 + (void)registerPlayerView:(UIView<TGPIPAblePlayerView> *)view
 {
-    __weak UIView<TGPIPAblePlayerView> *weakView = view;
-    [[self playerViews] addObject:weakView];
+    [[self playerViews] addObject:view];
     
     [self inhibitVolumeOverlay];
 }
 
-+ (NSHashTable *)playerViews
++ (id<TGEmbedPIPPlayerViews>)playerViews
 {
     static dispatch_once_t onceToken;
-    static NSHashTable *views;
+    static id<TGEmbedPIPPlayerViews> views;
     dispatch_once(&onceToken, ^
     {
         views = TGWeakObjectHashTable();
@@ -945,7 +949,7 @@ static TGEmbedPIPCorner defaultCorner = TGEmbedPIPCornerTopRight;
 
 + (bool)hasPlayerViews
 {
-    return [self playerViews].allObjects.count;
+    return [[self playerViews] count] != 0;
 }
 
 static MPVolumeView *volumeOverlayFixView;

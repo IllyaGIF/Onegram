@@ -22,6 +22,19 @@
 
 #import "TGDataItem.h"
 
+#import "../OnegramRuntime/OGRuntime.h"
+
+static NSMutableDictionary *TGLiveUploadActiveActors(void)
+{
+    static NSMutableDictionary *actors = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        actors = [[NSMutableDictionary alloc] init];
+    });
+    return actors;
+}
+
 @interface TGLiveUploadActorData () <ASWatcher>
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -82,6 +95,10 @@
     NSData *_aesIv;
     NSMutableData *_aesRunningIv;
     int32_t _keyFingerprint;
+    
+    dispatch_queue_t _transferQueue;
+    bool _transferFinished;
+    volatile float _progressValue;
 }
 
 @end
@@ -98,6 +115,94 @@
 
 - (void)dealloc
 {
+    if (_workerToken != nil)
+        [[TGTelegramNetworking instance] cancelUploadWorkerRequestByToken:_workerToken];
+    
+    [_worker releaseWorker];
+}
+
++ (TGLiveUploadActor *)liveUploadActorForPath:(NSString *)path
+{
+    if (path == nil)
+        return nil;
+    
+    NSMutableDictionary *actors = TGLiveUploadActiveActors();
+    @synchronized (actors)
+    {
+        return actors[path];
+    }
+}
+
++ (void)updateSize:(NSUInteger)availableSize forActorPath:(NSString *)path
+{
+    TGLiveUploadActor *actor = [self liveUploadActorForPath:path];
+    if (actor != nil)
+    {
+        [actor updateSize:availableSize];
+        return;
+    }
+    
+    [ActionStageInstance() dispatchOnStageQueue:^
+    {
+        [(TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:path] updateSize:availableSize];
+    }];
+}
+
++ (TGLiveUploadActorData *)finishForActorPath:(NSString *)path finish:(TGLiveUploadActorData *(^)(TGLiveUploadActor *))finish
+{
+    TGLiveUploadActor *actor = [self liveUploadActorForPath:path];
+    if (actor != nil)
+        return finish(actor);
+    
+    __block TGLiveUploadActorData *data = nil;
+    dispatch_block_t block = ^
+    {
+        TGLiveUploadActor *executingActor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:path];
+        if (executingActor != nil)
+            data = finish(executingActor);
+    };
+    
+    if ([ActionStageInstance() isCurrentQueueStageQueue])
+        block();
+    else
+        dispatch_sync([ActionStageInstance() globalStageDispatchQueue], block);
+    
+    return data;
+}
+
++ (TGLiveUploadActorData *)finishRestOfFile:(NSUInteger)finalSize forActorPath:(NSString *)path
+{
+    return [self finishForActorPath:path finish:^TGLiveUploadActorData *(TGLiveUploadActor *actor)
+    {
+        return [actor finishRestOfFile:finalSize];
+    }];
+}
+
++ (TGLiveUploadActorData *)finishRestOfFileWithHeader:(NSData *)header finalSize:(NSUInteger)finalSize forActorPath:(NSString *)path
+{
+    return [self finishForActorPath:path finish:^TGLiveUploadActorData *(TGLiveUploadActor *actor)
+    {
+        return [actor finishRestOfFileWithHeader:header finalSize:finalSize];
+    }];
+}
+
+- (void)registerActive
+{
+    NSMutableDictionary *actors = TGLiveUploadActiveActors();
+    @synchronized (actors)
+    {
+        actors[self.path] = self;
+    }
+}
+
+- (void)unregisterActive
+{
+    NSMutableDictionary *actors = TGLiveUploadActiveActors();
+    @synchronized (actors)
+    {
+        if (actors[self.path] == self)
+            [actors removeObjectForKey:self.path];
+    }
 }
 
 + (NSString *)genericPath
@@ -112,24 +217,36 @@
     {
         _doneParts = [[NSMutableArray alloc] init];
         _uploadingParts = [[NSMutableArray alloc] init];
+        _transferQueue = OGRuntimeTransferQueue();
     }
     return self;
 }
 
-- (void)_unlinkFileIfNeeded
+- (void)_finishTransfer
 {
+    if (_transferFinished)
+        return;
+    
+    _transferFinished = true;
+    [self unregisterActive];
+    
+    [_worker releaseWorker];
+    _worker = nil;
 }
 
 - (void)_complete:(id)result
 {
-    [self _unlinkFileIfNeeded];
+    [self _finishTransfer];
     
     [ActionStageInstance() actionCompleted:self.path result:result];
 }
 
 - (void)_fail
 {
-    [self _unlinkFileIfNeeded];
+    if (_transferFinished)
+        return;
+    
+    [self _finishTransfer];
     
     [ActionStageInstance() actionFailed:self.path reason:-1];
 }
@@ -149,7 +266,7 @@
     _liveMode = true;
     
     if (_fileItem == nil)
-        [self _fail];
+        [ActionStageInstance() actionFailed:self.path reason:-1];
     else
     {
         if (_encryptFile)
@@ -179,36 +296,45 @@
         
         TGNetworkMediaTypeTag mediaTypeTag = (TGNetworkMediaTypeTag)([options[@"mediaTypeTag"] intValue]);
         
+        [self registerActive];
+        
         __weak TGLiveUploadActor *weakSelf = self;
-        _workerToken = [[TGTelegramNetworking instance] requestDownloadWorkerForDatacenterId:[TGTelegramNetworking instance].masterDatacenterId type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
+        _workerToken = [[TGTelegramNetworking instance] requestUploadWorkerForDatacenterId:[TGTelegramNetworking instance].masterDatacenterId type:mediaTypeTag completion:^(TGNetworkWorkerGuard *worker)
         {
-            [ActionStageInstance() dispatchOnStageQueue:^
-            {
-                __strong TGLiveUploadActor *strongSelf = weakSelf;
-                [strongSelf _beginWithWorker:worker];
-            }];
+            __strong TGLiveUploadActor *strongSelf = weakSelf;
+            [strongSelf _beginWithWorker:worker];
         }];
     }
 }
 
 - (void)_beginWithWorker:(TGNetworkWorkerGuard *)worker
 {
-    _worker = worker;
-    
-    [_worker.strongWorker ensureConnection];
-    
-    [self _dequeuePartIfAny];
+    dispatch_async(_transferQueue, ^
+    {
+        if (_transferFinished)
+        {
+            [worker releaseWorker];
+            return;
+        }
+        
+        _worker = worker;
+        
+        [_worker.strongWorker ensureConnection];
+        
+        [self _dequeuePartIfAny];
+    });
 }
 
 - (void)updateSize:(NSUInteger)availableSize
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    dispatch_async(_transferQueue, ^
     {
         if (availableSize > _availableSize)
             _availableSize = availableSize;
         
+        [self _updateProgressValue];
         [self _dequeuePartIfAny];
-    }];
+    });
 }
 
 - (NSUInteger)doneSize
@@ -223,8 +349,16 @@
     return value;
 }
 
+- (void)_updateProgressValue
+{
+    _progressValue = _availableSize > 0 ? MAX(0.0f, MIN(1.0f, [self doneSize] / (float)_availableSize)) : 0.0f;
+}
+
 - (void)_dequeuePartIfAny
 {
+    if (_transferFinished || _worker == nil)
+        return;
+    
     if (!_liveMode && [self doneSize] >= _availableSize)
     {
         if (_canComplete)
@@ -375,19 +509,19 @@
                     part.cancelToken = request.internalId;
                     [_uploadingParts addObject:part];
                     
-                    TGLog(@"[TGLiveUploadActor#%p uploading part at %d (%d bytes)]", self, partIndex, (int)currentPartSize);
                     
                     __weak TGLiveUploadActor *weakSelf = self;
+                    dispatch_queue_t transferQueue = _transferQueue;
                     [request setCompleted:^(__unused id result, __unused NSTimeInterval timestamp, id error)
                     {
-                        [ActionStageInstance() dispatchOnStageQueue:^
+                        dispatch_async(transferQueue, ^
                         {
                             __strong TGLiveUploadActor *strongSelf = weakSelf;
                             if (error == nil)
                                 [strongSelf partUploadSuccess:partIndex];
                             else
                                 [strongSelf partUploadFailed];
-                        }];
+                        });
                     }];
                     
                     [_worker.strongWorker addRequest:request];
@@ -405,7 +539,9 @@
 
 - (void)partUploadSuccess:(int32_t)partIndex
 {
-    TGLog(@"[TGLiveUploadActor#%p finished part at %d]", self, (int)partIndex);
+    if (_transferFinished)
+        return;
+    
     
     NSInteger index = -1;
     for (TGLiveUploadPart *part in _uploadingParts)
@@ -420,6 +556,8 @@
         }
     }
     
+    [self _updateProgressValue];
+    
     if (!_liveMode)
         [self notifyAboutProgress];
     
@@ -428,7 +566,7 @@
 
 - (void)notifyAboutProgress
 {
-    [ActionStageInstance() dispatchMessageToWatchers:self.path messageType:@"progress" message:@([self progress])];
+    [ActionStageInstance() dispatchMessageToWatchers:self.path messageType:@"progress" message:@(_progressValue)];
 }
 
 - (void)partUploadFailed
@@ -452,11 +590,14 @@
     [ActionStageInstance() requestActor:self.path options:nil flags:-1 watcher:data];
     data.path = self.path;
     
-    _liveMode = false;
-    
-    _availableSize = finalSize;
-    
-    [self _dequeuePartIfAny];
+    dispatch_async(_transferQueue, ^
+    {
+        _liveMode = false;
+        _availableSize = finalSize;
+        
+        [self _updateProgressValue];
+        [self _dequeuePartIfAny];
+    });
     
     return data;
 }
@@ -467,51 +608,66 @@
     [ActionStageInstance() requestActor:self.path options:nil flags:-1 watcher:data];
     data.path = self.path;
     
-    _liveMode = false;
-    _lateHeaderMode = false;
-    
-    _availableSize = finalSize;
-    _unfinishedHeaderData = header;
-    
-    for (TGLiveUploadPart *part in _uploadingParts)
+    dispatch_async(_transferQueue, ^
     {
-        part.offset += header.length;
-    }
-    
-    for (TGLiveUploadPart *part in _doneParts)
-    {
-        part.offset += header.length;
-    }
-    
-    _dataProvider = nil;
-    
-    [self _dequeuePartIfAny];
+        _liveMode = false;
+        _lateHeaderMode = false;
+        
+        _availableSize = finalSize;
+        _unfinishedHeaderData = header;
+        
+        for (TGLiveUploadPart *part in _uploadingParts)
+        {
+            part.offset += header.length;
+        }
+        
+        for (TGLiveUploadPart *part in _doneParts)
+        {
+            part.offset += header.length;
+        }
+        
+        _dataProvider = nil;
+        
+        [self _updateProgressValue];
+        [self _dequeuePartIfAny];
+    });
     
     return data;
 }
 
 - (void)completeWhenReady
 {
-    _canComplete = true;
-    
-    [self _dequeuePartIfAny];
+    dispatch_async(_transferQueue, ^
+    {
+        _canComplete = true;
+        
+        [self _dequeuePartIfAny];
+    });
 }
 
 - (float)progress
 {
-    if (_availableSize > 0)
-        return MAX(0.0f, MIN(1.0f, [self doneSize] / (float)_availableSize));
-    
-    return 0.0f;
+    return _progressValue;
 }
 
 - (void)cancel
 {
-    for (TGLiveUploadPart *part in _uploadingParts)
+    if (_workerToken != nil)
     {
-        [_worker.strongWorker cancelRequestByIdSoft:part.cancelToken];
+        [[TGTelegramNetworking instance] cancelUploadWorkerRequestByToken:_workerToken];
+        _workerToken = nil;
     }
-    [_uploadingParts removeAllObjects];
+    
+    dispatch_async(_transferQueue, ^
+    {
+        for (TGLiveUploadPart *part in _uploadingParts)
+        {
+            [_worker.strongWorker cancelRequestByIdSoft:part.cancelToken];
+        }
+        [_uploadingParts removeAllObjects];
+        
+        [self _finishTransfer];
+    });
     
     [super cancel];
 }

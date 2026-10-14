@@ -48,7 +48,6 @@ extern bool debugShowMessageIds;
     TGModernClockProgressViewModel *_progressModel;
     TGModernImageViewModel *_checkFirstModel;
     TGModernImageViewModel *_checkSecondModel;
-    TGModernImageViewModel *_deliveryPlateModel;
     bool _checkFirstEmbeddedInContent;
     bool _checkSecondEmbeddedInContent;
     TGModernImageViewModel *_unsentButtonModel;
@@ -98,6 +97,7 @@ extern bool debugShowMessageIds;
 - (void)layoutContentForHeaderHeight:(CGFloat)headerHeight;
 - (void)layoutContentForHeaderHeight:(CGFloat)headerHeight containerSize:(CGSize)containerSize;
 - (CGSize)contentSizeForContainerSize:(CGSize)containerSize needsContentsUpdate:(bool *)needsContentsUpdate infoWidth:(CGFloat)infoWidth;
+- (bool)brandedReactionsShareTimeRow;
 
 + (TGReplyHeaderModel *)replyHeaderModelFromMessage:(TGMessage *)replyHeader peer:(id)peer incoming:(bool)incoming system:(bool)system presentation:(TGPresentation *)presentation;
 

@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//channels.feedSources#8e8bca3d flags:# newly_joined_feed:flags.0?int feeds:Vector<FeedBroadcasts> chats:Vector<Chat> users:Vector<User> = channels.FeedSources;
 
 @implementation TLchannels_FeedSources$channels_feedSources
 

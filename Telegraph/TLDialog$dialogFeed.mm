@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//dialogFeed#907750e4 flags:# pinned:flags.2?true peer:Peer top_message:int feed_id:int feed_other_channels:Vector<int> read_max_position:flags.3?FeedPosition unread_count:int unread_muted_count:int sources_hash:int = Dialog;
 
 @implementation TLDialog$dialogFeed
 

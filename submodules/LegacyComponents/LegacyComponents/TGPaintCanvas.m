@@ -40,7 +40,9 @@
     self = [super initWithFrame:frame];
     if (self != nil)
     {
+#if !defined(ONEGRAM_ARMV6)
         self.contentScaleFactor = _screenScale;
+#endif
         
         _state = [[TGPaintState alloc] init];
         

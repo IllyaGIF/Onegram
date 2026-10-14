@@ -1,10 +1,45 @@
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 #include "TLMetaClassStore.h"
-#import <sys/utsname.h>
+#import "../../OnegramPlatform/OGPlatformDispatch.h"
+#import "TLAuthorization.h"
+#import "TLaccount_Authorizations.h"
+#import "../../OnegramRuntime/OGRuntime.h"
+#import <pthread.h>
 #import <objc/runtime.h>
+
+volatile int32_t TGTLParserCurrentSignature = 0;
+volatile int32_t TGTLParserLastSignature = 0;
+volatile int32_t TGTLParserVectorItemSignature = 0;
+volatile int32_t TGTLParserVectorItemIndex = -1;
+volatile int32_t TGTLParserVectorItemCount = 0;
+
+static inline void CodexCooperateWithInteraction(int32_t index)
+{
+    if ((index & 3) != 3)
+        return;
+    if (!OGPlatformUsesConstrainedBackgroundExecution() && !OGRuntimeSingleCoreDevice())
+        return;
+    OGRuntimeCooperateWithInteraction();
+}
+
+class TGTLParserSignatureScope
+{
+private:
+    int32_t _previousSignature;
+    int32_t _signature;
+
+public:
+    explicit TGTLParserSignatureScope(int32_t signature) : _previousSignature(TGTLParserCurrentSignature), _signature(signature)
+    {
+        TGTLParserCurrentSignature = signature;
+    }
+
+    ~TGTLParserSignatureScope()
+    {
+        TGTLParserLastSignature = _signature;
+        TGTLParserCurrentSignature = _previousSignature;
+    }
+};
 
 #import "../../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -41,6 +76,7 @@
 #import "TLchannels_ChannelParticipants.h"
 #import "TLchannels_ChannelParticipant.h"
 #import "TLChannelParticipant.h"
+#import "TLChannelAdminRights.h"
 #import "TLUpdate.h"
 #import "TLUpdate$updateChangePts.h"
 #import "TLUpdates.h"
@@ -153,6 +189,10 @@
 
 #include <map>
 #include <set>
+#include <string>
+#include <algorithm>
+#include <string.h>
+#include <ctype.h>
 
 #include <zlib.h>
 #include <pthread.h>
@@ -172,8 +212,91 @@ std::tr1::unordered_map<int32_t, TLMetaTypeArgument> TLMetaClassStore::vectorEle
 std::tr1::unordered_map<int32_t, id<TLObject> > TLMetaClassStore::objectClassesByConstructorNames;
 std::tr1::unordered_map<int32_t, id<TLVector> > TLMetaClassStore::vectorClassesBySignature;
 
-std::tr1::unordered_map<int32_t, id<TLObject> > TLMetaClassStore::manualObjectParsers;
-std::tr1::unordered_map<int32_t, id<TLObject> > TLMetaClassStore::manualObjectSerializers;
+std::map<int32_t, TLManualObjectParser> TLMetaClassStore::manualObjectParsers;
+
+#define TLLazyManualObjectParser(parserClass) TLManualObjectParser(#parserClass)
+
+static id<TLObject> TLInstantiateManualObjectParser(const char *parserClassName)
+{
+    Class parserClass = parserClassName == NULL ? Nil : objc_getClass(parserClassName);
+    if (parserClass == Nil)
+    {
+        NSLog(@"TL manual parser class missing name=%s", parserClassName == NULL ? "" : parserClassName);
+        return nil;
+    }
+    return [[parserClass alloc] init];
+}
+std::map<int32_t, id<TLObject> > TLMetaClassStore::manualObjectSerializers;
+
+static pthread_mutex_t *TGIOS3TLParserMutex()
+{
+    static pthread_mutex_t mutex;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        pthread_mutexattr_t attributes;
+        pthread_mutexattr_init(&attributes);
+        pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&mutex, &attributes);
+        pthread_mutexattr_destroy(&attributes);
+    });
+    return &mutex;
+}
+
+static dispatch_group_t TGTLObjectClassRegistrationGroup()
+{
+    static dispatch_group_t group = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        group = dispatch_group_create();
+    });
+    return group;
+}
+
+static volatile bool TGTLObjectClassRegistrationPending = false;
+
+class TGTLClassRegistryGuard
+{
+public:
+    TGTLClassRegistryGuard()
+    {
+        pthread_mutex_lock(TGIOS3TLParserMutex());
+    }
+
+    ~TGTLClassRegistryGuard()
+    {
+        pthread_mutex_unlock(TGIOS3TLParserMutex());
+    }
+};
+
+static const char *TLMetaClassNameForKey(TLMetaClassEntry const *entries, uint32_t count, const char *classNames, int32_t key)
+{
+    uint32_t low = 0;
+    uint32_t high = count;
+    while (low < high)
+    {
+        uint32_t middle = low + (high - low) / 2;
+        if (entries[middle].key < key)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    if (low < count && entries[low].key == key)
+        return classNames + entries[low].className;
+    return NULL;
+}
+
+static id TLMetaClassInstantiate(TLMetaClassEntry const *entries, uint32_t count, const char *classNames, int32_t key)
+{
+    const char *className = TLMetaClassNameForKey(entries, count, classNames, key);
+    if (className == NULL)
+        return nil;
+    id objectClass = objc_getClass(className);
+    if (objectClass == nil)
+        return nil;
+    return [[objectClass alloc] init];
+}
 
 @interface TLCodexThreadContext : NSObject
 {
@@ -228,7 +351,9 @@ static TLCodexThreadContext *CodexThreadContextGet(void)
 
 static void addHashToString(int32_t hash, NSString *string)
 {
-
+    std::tr1::unordered_map<int32_t, NSString *>::iterator it = hashToStringMap.find(hash);
+    if (it != hashToStringMap.end() && [it->second isEqualToString:string])
+        return;
     hashToStringMap[hash] = [string copy];
 }
 
@@ -238,145 +363,6 @@ static NSString *stringForHash(int32_t hash)
     if (it == hashToStringMap.end())
         return [NSString stringWithFormat:@"#%.8x", hash];
     return it->second;
-}
-
-static NSString *CodexPanicReportEndpoint()
-{
-    return @"";
-}
-
-static NSString *CodexPanicReportSecret()
-{
-    return @"";
-}
-
-static NSString *CodexPanicEscape(NSString *string)
-{
-    if (string == nil)
-        return @"";
-    NSString *escaped = [string stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-    escaped = [escaped stringByReplacingOccurrencesOfString:@"&" withString:@"%26"];
-    escaped = [escaped stringByReplacingOccurrencesOfString:@"+" withString:@"%2B"];
-    escaped = [escaped stringByReplacingOccurrencesOfString:@"=" withString:@"%3D"];
-    return escaped;
-}
-
-static NSString *CodexPanicNormalizedMessage(NSString *message)
-{
-    if (message.length == 0)
-        return @"";
-    NSError *regexError = nil;
-    NSRegularExpression *userInfoRegex = [NSRegularExpression regularExpressionWithPattern:@"UserInfo=0x[0-9a-fA-F]+" options:0 error:&regexError];
-    NSString *result = userInfoRegex == nil ? message : [userInfoRegex stringByReplacingMatchesInString:message options:0 range:NSMakeRange(0, message.length) withTemplate:@"UserInfo=0xADDR"];
-    NSRegularExpression *longPointerRegex = [NSRegularExpression regularExpressionWithPattern:@"0x[0-9a-fA-F]{9,}" options:0 error:&regexError];
-    if (longPointerRegex == nil)
-        return result;
-    return [longPointerRegex stringByReplacingMatchesInString:result options:0 range:NSMakeRange(0, result.length) withTemplate:@"0xADDR"];
-}
-
-static NSString *CodexPanicDeviceMachine()
-{
-    struct utsname systemInfo;
-    uname(&systemInfo);
-    return [[NSString alloc] initWithUTF8String:systemInfo.machine] ?: @"?";
-}
-
-static NSString *CodexPanicDeviceMarketingName(NSString *machine)
-{
-    static NSDictionary *names = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        names = @{
-            @"iPhone3,1": @"iPhone 4", @"iPhone3,2": @"iPhone 4", @"iPhone3,3": @"iPhone 4",
-            @"iPhone4,1": @"iPhone 4S",
-            @"iPhone5,1": @"iPhone 5", @"iPhone5,2": @"iPhone 5",
-            @"iPhone5,3": @"iPhone 5c", @"iPhone5,4": @"iPhone 5c",
-            @"iPhone6,1": @"iPhone 5s", @"iPhone6,2": @"iPhone 5s",
-            @"iPad2,1": @"iPad 2", @"iPad2,2": @"iPad 2", @"iPad2,3": @"iPad 2", @"iPad2,4": @"iPad 2",
-            @"iPad2,5": @"iPad mini", @"iPad2,6": @"iPad mini", @"iPad2,7": @"iPad mini",
-            @"iPad3,1": @"iPad 3", @"iPad3,2": @"iPad 3", @"iPad3,3": @"iPad 3",
-            @"iPad3,4": @"iPad 4", @"iPad3,5": @"iPad 4", @"iPad3,6": @"iPad 4",
-            @"iPod5,1": @"iPod touch 5"
-        };
-    });
-    NSString *name = [names objectForKey:machine];
-    return name ?: machine ?: @"?";
-}
-
-static NSString *CodexPanicDeviceDescription()
-{
-    NSString *machine = CodexPanicDeviceMachine();
-    NSString *name = CodexPanicDeviceMarketingName(machine);
-    if ([name isEqualToString:machine])
-        return machine;
-    return [NSString stringWithFormat:@"%@ (%@)", name, machine];
-}
-
-static NSString *CodexPanicReportContext()
-{
-    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
-    NSString *build = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
-    UIDevice *device = [UIDevice currentDevice];
-    NSString *idiom = device.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";
-    return [NSString stringWithFormat:@"version=%@ build=%@ tlrev=20260713a os=%@ %@ idiom=%@ device=%@", version, build, device.systemName, device.systemVersion, idiom, CodexPanicDeviceDescription()];
-}
-
-static void CodexReportCritical(NSString *event, NSString *message)
-{
-    NSString *endpoint = CodexPanicReportEndpoint();
-    if (endpoint.length == 0)
-        return;
-    
-    NSString *secret = CodexPanicReportSecret();
-    NSString *normalizedMessage = CodexPanicNormalizedMessage(message);
-    NSString *key = [NSString stringWithFormat:@"%@:%@", event ?: @"", normalizedMessage ?: @""];
-    static NSMutableDictionary *lastReports = nil;
-    static NSLock *reportLock = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        lastReports = [[NSMutableDictionary alloc] init];
-        reportLock = [[NSLock alloc] init];
-    });
-    
-    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-    [reportLock lock];
-    NSNumber *last = [lastReports objectForKey:key];
-    if (last != nil && now - [last doubleValue] < 600.0)
-    {
-        [reportLock unlock];
-        return;
-    }
-    [lastReports setObject:@(now) forKey:key];
-    [reportLock unlock];
-
-    if ([event hasPrefix:@"tl_"])
-    {
-        NSLog(@"TLFAIL event=%@ %@", event, normalizedMessage);
-        return;
-    }
-    
-    NSString *messageWithContext = [NSString stringWithFormat:@"%@\n%@", CodexPanicReportContext(), normalizedMessage ?: @""];
-    NSString *bodyString = [NSString stringWithFormat:@"secret=%@&event=%@&message=%@",
-        CodexPanicEscape(secret),
-        CodexPanicEscape(event),
-        CodexPanicEscape(messageWithContext)];
-    NSData *body = [bodyString dataUsingEncoding:NSUTF8StringEncoding];
-    NSURL *url = [NSURL URLWithString:endpoint];
-    if (url == nil || body == nil)
-        return;
-    
-    NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:5.0];
-    [request setHTTPMethod:@"POST"];
-    [request setHTTPBody:body];
-    [request setValue:@"application/x-www-form-urlencoded; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
-    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue] completionHandler:^(NSURLResponse *response, NSData *data, NSError *connectionError)
-    {
-        NSHTTPURLResponse *httpResponse = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
-        NSString *body = data.length == 0 ? @"" : [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        IOS6_NOOP_LOG(@"PANIC report event=%@ status=%d error=%@ body=%@", event, httpResponse != nil ? (int)httpResponse.statusCode : 0, connectionError, body);
-    }];
 }
 
 static id<TLObject> CodexReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
@@ -414,7 +400,6 @@ static int32_t CodexReadReplyHeaderCompat(NSInputStream *is, id<TLSerializationE
             [is readInt32];
         if (signature == (int32_t)0x1b97dd66 && (flags & (1 << 12)))
             [is readBytes];
-        IOS6_NOOP_LOG(@"AUTH skipped replyHeader sig=0x%08x flags=0x%08x", signature, flags);
         return replyToMessageId;
     }
     if (signature > 0 && signature < 10000000)
@@ -451,7 +436,6 @@ static NSArray *CodexReadMaybeDoubleObjectVectorWithMarker(NSInputStream *is, in
     if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
     {
         int32_t nextMarker = [is readInt32];
-        IOS6_NOOP_LOG(@"AUTH vector marker followed by 0x%x", nextMarker);
         return CodexReadObjectVectorWithMarker(is, nextMarker, environment, error);
     }
     return CodexReadObjectVectorWithMarker(is, vectorMarker, environment, error);
@@ -466,15 +450,11 @@ static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vecto
         count = vectorMarker;
     else
     {
-        IOS6_NOOP_LOG(@"AUTH expected vector/count, got 0x%x manual=0x%08x parser=%@", vectorMarker, CodexCurrentManualSignature, CodexCurrentManualParser);
-        id object = TLMetaClassStore::constructObject(is, vectorMarker, environment, nil, error);
+        TLMetaClassStore::constructObject(is, vectorMarker, environment, nil, error);
         if (error != NULL && *error != nil)
         {
-            IOS6_NOOP_LOG(@"AUTH dropping singleton-vector parse error marker=0x%08x object=%@ error=%@", vectorMarker, object != nil ? NSStringFromClass([object class]) : nil, *error);
             *error = nil;
         }
-        else
-            IOS6_NOOP_LOG(@"AUTH dropped singleton where vector expected marker=0x%08x object=%@", vectorMarker, object != nil ? NSStringFromClass([object class]) : nil);
         return @[];
     }
     
@@ -489,7 +469,6 @@ static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vecto
             objectSignature = [is readInt32];
             if (objectSignature == 0 && CodexCurrentManualSignature == (int32_t)0x8fd4c4d8)
             {
-                IOS6_NOOP_LOG(@"AUTH skipping zero document attribute index=%d/%d", i, count);
                 continue;
             }
             id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
@@ -498,8 +477,6 @@ static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vecto
             if (itemError != nil)
             {
                 itemFailed = true;
-                IOS6_NOOP_LOG(@"AUTH vector failed index=%d/%d sig=0x%08x manual=0x%08x parser=%@ error=%@", i, count, objectSignature, CodexCurrentManualSignature, CodexCurrentManualParser, itemError);
-                CodexReportCritical(@"tl_vector_failed", [NSString stringWithFormat:@"index=%d/%d sig=0x%08x sigName=%@ manual=0x%08x manualName=%@ parser=%@ vectorRole=%@ lastCompleted=0x%08x lastCompletedName=%@ lastParser=%@ error=%@", i, count, objectSignature, stringForHash(objectSignature), CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, CodexCurrentVectorRole, CodexLastCompletedManualSignature, stringForHash(CodexLastCompletedManualSignature), CodexLastCompletedManualParser, itemError]);
             }
         }
         if (itemFailed)
@@ -511,49 +488,81 @@ static NSArray *CodexReadObjectVectorWithMarker(NSInputStream *is, int32_t vecto
             }
             break;
         }
+        CodexCooperateWithInteraction(i);
     }
     return array;
 }
 
 static NSArray *CodexReadStrictObjectVector(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
-    int32_t vectorMarker = [is readInt32];
-    if (vectorMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+    bool failed = false;
+    int32_t vectorMarker = [is readInt32:&failed];
+    if (failed || vectorMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
     {
         if (error != NULL)
         {
-            NSString *description = [NSString stringWithFormat:@"Expected vector constructor, got %08x", vectorMarker];
+            NSString *description = failed ? @"Unexpected end of stream while reading vector constructor" : [NSString stringWithFormat:@"Expected vector constructor, got %08x", vectorMarker];
             *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
         }
         return nil;
     }
 
-    int32_t count = [is readInt32];
-    if (count < 0)
+    int32_t count = [is readInt32:&failed];
+    if (failed || count < 0 || count > 100000)
     {
         if (error != NULL)
         {
-            NSString *description = [NSString stringWithFormat:@"Invalid vector count %d", count];
+            NSString *description = failed ? @"Unexpected end of stream while reading vector count" : [NSString stringWithFormat:@"Invalid vector count %d", count];
             *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
         }
         return nil;
     }
 
     NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
+    TGTLParserVectorItemCount = count;
     for (int32_t i = 0; i < count; i++)
     {
-        NSError *itemError = nil;
-        int32_t objectSignature = [is readInt32];
-        id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
-        if (itemError != nil)
+        int32_t objectSignature = [is readInt32:&failed];
+        TGTLParserVectorItemIndex = i;
+        TGTLParserVectorItemSignature = objectSignature;
+        if (failed)
         {
+            TGTLParserVectorItemIndex = -1;
+            TGTLParserVectorItemCount = 0;
+            TGTLParserVectorItemSignature = 0;
             if (error != NULL)
-                *error = itemError;
+            {
+                NSString *description = [NSString stringWithFormat:@"Unexpected end of stream at vector item %d/%d", i, count];
+                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+            }
             return nil;
         }
-        if (object != nil)
-            [array addObject:object];
+
+        NSError *itemError = nil;
+        id object = TLMetaClassStore::constructObject(is, objectSignature, environment, nil, &itemError);
+        if (itemError != nil || object == nil)
+        {
+            TGTLParserVectorItemIndex = -1;
+            TGTLParserVectorItemCount = 0;
+            TGTLParserVectorItemSignature = 0;
+            if (error != NULL)
+            {
+                if (itemError != nil)
+                    *error = itemError;
+                else
+                {
+                    NSString *description = [NSString stringWithFormat:@"Vector item %d/%d with signature %08x produced no object", i, count, objectSignature];
+                    *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+                }
+            }
+            return nil;
+        }
+        [array addObject:object];
+        CodexCooperateWithInteraction(i);
     }
+    TGTLParserVectorItemIndex = -1;
+    TGTLParserVectorItemCount = 0;
+    TGTLParserVectorItemSignature = 0;
     return array;
 }
 
@@ -592,7 +601,6 @@ static NSArray *CodexReadObjectVectorOrSingleWithMarker(NSInputStream *is, int32
     id object = TLMetaClassStore::constructObject(is, vectorMarker, environment, nil, error);
     if (object != nil)
     {
-        while (false) TGLog(@"MEDIA accepted singleton where vector expected sig=0x%08x object=%@", vectorMarker, NSStringFromClass([object class]));
         return @[object];
     }
     return @[];
@@ -656,21 +664,17 @@ static bool CodexSkipBareDocumentAttributeTailWord(NSInputStream *is, int32_t si
     switch (signature)
     {
         case (int32_t)0x11b58939:
-            IOS6_NOOP_LOG(@"AUTH skipped bare documentAttributeAnimated tail");
             return true;
         case (int32_t)0x9801d2f7:
-            IOS6_NOOP_LOG(@"AUTH skipped bare documentAttributeHasStickers tail");
             return true;
         case (int32_t)0x6c37c15c:
         {
-            int32_t w = [is readInt32];
-            int32_t h = [is readInt32];
-            IOS6_NOOP_LOG(@"AUTH skipped bare documentAttributeImageSize tail w=%d h=%d", w, h);
+            [is readInt32];
+            [is readInt32];
             return true;
         }
         case (int32_t)0x15590068:
             [is readString];
-            IOS6_NOOP_LOG(@"AUTH skipped bare documentAttributeFilename tail");
             return true;
         default:
             return false;
@@ -687,7 +691,6 @@ static NSArray *CodexReadInt64Vector(NSInputStream *is)
         count = vectorMarker;
     else
     {
-        IOS6_NOOP_LOG(@"AUTH expected long vector/count, got 0x%x", vectorMarker);
         return @[];
     }
     
@@ -707,7 +710,6 @@ static NSArray *CodexReadInt32Vector(NSInputStream *is)
         count = vectorMarker;
     else
     {
-        IOS6_NOOP_LOG(@"AUTH expected int vector/count, got 0x%x", vectorMarker);
         return @[];
     }
     
@@ -727,7 +729,6 @@ static void CodexSkipStringVector(NSInputStream *is)
         count = vectorMarker;
     else
     {
-        IOS6_NOOP_LOG(@"AUTH expected string vector/count, got 0x%x", vectorMarker);
         return;
     }
     for (int32_t i = 0; i < count; i++)
@@ -744,7 +745,6 @@ static void CodexSkipBytesVector(NSInputStream *is)
         count = vectorMarker;
     else
     {
-        IOS6_NOOP_LOG(@"AUTH expected bytes vector/count, got 0x%x", vectorMarker);
         return;
     }
     for (int32_t i = 0; i < count; i++)
@@ -783,31 +783,73 @@ static void CodexSkipBytesVector(NSInputStream *is)
 
 static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
-    if (data.length < 3)
-        return nil;
-
-    const uint8_t *sourceBytes = (const uint8_t *)data.bytes;
-    if (sourceBytes[0] != 1)
-        return nil;
-
-    static NSData *header = nil;
-    static NSData *footer = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
+    static const uint8_t header[] =
     {
-        header = [[NSData alloc] initWithBase64Encoding:@"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDACgcHiMeGSgjISMtKygwPGRBPDc3PHtYXUlkkYCZlo+AjIqgtObDoKrarYqMyP/L2u71////m8H////6/+b9//j/2wBDASstLTw1PHZBQXb4pYyl+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj4+Pj/wAARCAAAAAADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwA="];
-        footer = [[NSData alloc] initWithBase64Encoding:@"/9k="];
-    });
+        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01,
+        0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x28, 0x1c, 0x1e, 0x23, 0x1e, 0x19, 0x28,
+        0x23, 0x21, 0x23, 0x2d, 0x2b, 0x28, 0x30, 0x3c, 0x64, 0x41, 0x3c, 0x37, 0x37, 0x3c, 0x7b, 0x58,
+        0x5d, 0x49, 0x64, 0x91, 0x80, 0x99, 0x96, 0x8f, 0x80, 0x8c, 0x8a, 0xa0, 0xb4, 0xe6, 0xc3, 0xa0,
+        0xaa, 0xda, 0xad, 0x8a, 0x8c, 0xc8, 0xff, 0xcb, 0xda, 0xee, 0xf5, 0xff, 0xff, 0xff, 0x9b, 0xc1,
+        0xff, 0xff, 0xff, 0xfa, 0xff, 0xe6, 0xfd, 0xff, 0xf8, 0xff, 0xdb, 0x00, 0x43, 0x01, 0x2b, 0x2d,
+        0x2d, 0x3c, 0x35, 0x3c, 0x76, 0x41, 0x41, 0x76, 0xf8, 0xa5, 0x8c, 0xa5, 0xf8, 0xf8, 0xf8, 0xf8,
+        0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8,
+        0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8,
+        0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xf8, 0xff, 0xc0,
+        0x00, 0x11, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11,
+        0x01, 0xff, 0xc4, 0x00, 0x1f, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+        0x0a, 0x0b, 0xff, 0xc4, 0x00, 0xb5, 0x10, 0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05,
+        0x05, 0x04, 0x04, 0x00, 0x00, 0x01, 0x7d, 0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21,
+        0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07, 0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xa1, 0x08, 0x23,
+        0x42, 0xb1, 0xc1, 0x15, 0x52, 0xd1, 0xf0, 0x24, 0x33, 0x62, 0x72, 0x82, 0x09, 0x0a, 0x16, 0x17,
+        0x18, 0x19, 0x1a, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a,
+        0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a,
+        0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a,
+        0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99,
+        0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+        0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5,
+        0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf1,
+        0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xff, 0xc4, 0x00, 0x1f, 0x01, 0x00, 0x03,
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0xff, 0xc4, 0x00, 0xb5, 0x11, 0x00,
+        0x02, 0x01, 0x02, 0x04, 0x04, 0x03, 0x04, 0x07, 0x05, 0x04, 0x04, 0x00, 0x01, 0x02, 0x77, 0x00,
+        0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x21, 0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71, 0x13,
+        0x22, 0x32, 0x81, 0x08, 0x14, 0x42, 0x91, 0xa1, 0xb1, 0xc1, 0x09, 0x23, 0x33, 0x52, 0xf0, 0x15,
+        0x62, 0x72, 0xd1, 0x0a, 0x16, 0x24, 0x34, 0xe1, 0x25, 0xf1, 0x17, 0x18, 0x19, 0x1a, 0x26, 0x27,
+        0x28, 0x29, 0x2a, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49,
+        0x4a, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69,
+        0x6a, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88,
+        0x89, 0x8a, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6,
+        0xa7, 0xa8, 0xa9, 0xaa, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xc2, 0xc3, 0xc4,
+        0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xe2,
+        0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9,
+        0xfa, 0xff, 0xda, 0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+    };
+    static const uint8_t footer[] = {0xff, 0xd9};
 
-    if (header.length <= 166 || footer.length == 0)
+    if (data == nil)
         return nil;
 
-    NSMutableData *result = [[NSMutableData alloc] initWithCapacity:header.length + data.length + footer.length];
-    [result appendData:header];
-    [result appendBytes:sourceBytes + 3 length:data.length - 3];
-    [result appendData:footer];
+    CFIndex dataLength = CFDataGetLength((__bridge CFDataRef)data);
+    if (dataLength < 3)
+        return nil;
 
+    const uint8_t *sourceBytes = CFDataGetBytePtr((__bridge CFDataRef)data);
+    if (sourceBytes == NULL || sourceBytes[0] != 1)
+        return nil;
+
+    NSUInteger payloadLength = (NSUInteger)dataLength - 3;
+    NSUInteger totalLength = sizeof(header) + payloadLength + sizeof(footer);
+    NSMutableData *result = [[NSMutableData alloc] initWithLength:totalLength];
     uint8_t *resultBytes = (uint8_t *)result.mutableBytes;
+    if (resultBytes == NULL)
+        return nil;
+
+    memcpy(resultBytes, header, sizeof(header));
+    if (payloadLength != 0)
+        memcpy(resultBytes + sizeof(header), sourceBytes + 3, payloadLength);
+    memcpy(resultBytes + sizeof(header) + payloadLength, footer, sizeof(footer));
+
     resultBytes[164] = sourceBytes[1];
     resultBytes[166] = sourceBytes[2];
     return result;
@@ -1007,7 +1049,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    IOS6_NOOP_LOG(@"SKIP parse signature=0x%08x", signature);
     switch (signature)
     {
         case (int32_t)0xdc3d824f:
@@ -1123,7 +1164,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         [is readString];
     if (error != NULL && *error != nil)
         *error = nil;
-    IOS6_NOOP_LOG(@"AUTH parsed modern config sig=0x%x dc=%d dcOptions=%d flags=%d", signature, result.this_dc, (int)result.dc_options.count, flags);
     return result;
 }
 
@@ -1196,6 +1236,120 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
+@interface TLCodexIgnoredUpdate : TLUpdate
+@property (nonatomic) int32_t ignoredSignature;
+@end
+
+@implementation TLCodexIgnoredUpdate
+
+- (int32_t)TLconstructorSignature
+{
+    return _ignoredSignature;
+}
+
+- (int32_t)TLconstructorName
+{
+    return 0;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
+{
+    return self;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
+{
+}
+
+@end
+
+@interface TGDeviceAuthorizationParser : TLAuthorization$authorization
+@end
+
+@implementation TGDeviceAuthorizationParser
+- (id<TLObject>)TLdeserialize:(NSInputStream *)stream signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    bool failed = false;
+    TLAuthorization *result = [[TLAuthorization$authorization alloc] init];
+    result.flags = [stream readInt32:&failed];
+    result.n_hash = [stream readInt64:&failed];
+    result.device_model = [stream readString:&failed];
+    result.platform = [stream readString:&failed];
+    result.system_version = [stream readString:&failed];
+    result.api_id = [stream readInt32:&failed];
+    result.app_name = [stream readString:&failed];
+    result.app_version = [stream readString:&failed];
+    result.date_created = [stream readInt32:&failed];
+    result.date_active = [stream readInt32:&failed];
+    result.ip = [stream readString:&failed];
+    result.country = [stream readString:&failed];
+    result.region = [stream readString:&failed];
+    if (failed)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid authorization"}];
+        return nil;
+    }
+    return result;
+}
+@end
+
+@interface TGDeviceAuthorizationsParser : TLaccount_Authorizations$account_authorizations
+@end
+
+@implementation TGDeviceAuthorizationsParser
+- (id<TLObject>)TLdeserialize:(NSInputStream *)stream signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    bool failed = false;
+    [stream readInt32:&failed];
+    int32_t marker = [stream readInt32:&failed];
+    int32_t count = [stream readInt32:&failed];
+    if (failed || marker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR || count < 0 || count > 10000)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid authorizations vector"}];
+        return nil;
+    }
+    NSMutableArray *sessions = [[NSMutableArray alloc] initWithCapacity:count];
+    for (int32_t index = 0; index < count; index++)
+    {
+        int32_t objectSignature = [stream readInt32:&failed];
+        id object = failed ? nil : TLMetaClassStore::constructObject(stream, objectSignature, environment, nil, error);
+        if (![object isKindOfClass:[TLAuthorization class]])
+        {
+            if (error != NULL && *error == nil)
+                *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid authorization in vector"}];
+            return nil;
+        }
+        [sessions addObject:object];
+    }
+    TLaccount_Authorizations *result = [[TLaccount_Authorizations$account_authorizations alloc] init];
+    result.authorizations = sessions;
+    return result;
+}
+@end
+
+@interface TLCodexModernUpdateNewAuthorizationParser : TLUpdate$updateNewAuthorization
+@end
+
+@implementation TLCodexModernUpdateNewAuthorizationParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    TLUpdate$updateNewAuthorization *result = [[TLUpdate$updateNewAuthorization alloc] init];
+    result.flags = [is readInt32];
+    result.n_hash = [is readInt64];
+    if (result.flags & (1 << 0))
+    {
+        result.date = [is readInt32];
+        result.device = [is readString];
+        result.location = [is readString];
+    }
+    return result;
+}
+
+@end
+
 @interface TLCodexSkipObjectParser : NSObject <TLObject>
 @end
 
@@ -1227,7 +1381,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0x1cb5c415:
         {
             int32_t count = [is readInt32];
-            IOS6_NOOP_LOG(@"AUTH skipping vector-as-object count=%d manual=0x%08x parser=%@", count, CodexCurrentManualSignature, CodexCurrentManualParser);
             for (int32_t i = 0; i < count; i++)
             {
                 @try
@@ -1237,8 +1390,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 @catch (NSException *exception)
                 {
                     NSString *message = [NSString stringWithFormat:@"index=%d/%d manual=0x%08x manualName=%@ parser=%@ exception=%@ reason=%@", i, count, CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, exception.name, exception.reason];
-                    IOS6_NOOP_LOG(@"AUTH vector-as-object exception %@", message);
-                    CodexReportCritical(@"tl_vector_as_object_exception", message);
                     if (error != NULL)
                     {
                         NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
@@ -1249,7 +1400,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 }
                 if (error != NULL && *error != nil)
                 {
-                    IOS6_NOOP_LOG(@"AUTH vector-as-object item failed index=%d/%d manual=0x%08x parser=%@ error=%@", i, count, CodexCurrentManualSignature, CodexCurrentManualParser, *error);
                     break;
                 }
             }
@@ -1267,9 +1417,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             break;
         }
         case (int32_t)0x75b3b798:
+        {
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            break;
+            if (error != NULL && *error != nil)
+                return nil;
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
+        }
         case (int32_t)0x0ab4a819:
         {
             int32_t flags = [is readInt32];
@@ -1351,7 +1507,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt64];
                 [is readInt32];
             }
-            break;
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
         }
         case (int32_t)0xb390dc08:
         {
@@ -1379,7 +1537,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
             NSError *groupCallSkipError = nil;
             CodexReadObject(is, environment, &groupCallSkipError);
-            IOS6_NOOP_LOG(@"SKIP updateGroupCall");
             break;
         }
         case (int32_t)0x7063c3db:
@@ -1387,22 +1544,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             [is readInt32];
             CodexReadInt64Vector(is);
-            break;
-        }
-        case (int32_t)0xd64c522b:
-        {
-            int32_t flags = [is readInt32];
-            if (flags & (1 << 1))
-            {
-                CodexReadObject(is, environment, error);
-                [is readInt32];
-            }
-            if (flags & (1 << 2))
-                [is readInt32];
-            [is readInt64];
-            if (flags & (1 << 0))
-                CodexReadObject(is, environment, error);
-            CodexReadObject(is, environment, error);
             break;
         }
         case (int32_t)0xed85eab5:
@@ -1418,7 +1559,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.messages = messages;
             result.pts = pts;
             result.pts_count = ptsCount;
-            IOS6_NOOP_LOG(@"MODERN updatePinnedMessages flags=0x%08x messages=%d pts=%d ptsCount=%d", flags, (int)messages.count, pts, ptsCount);
             return result;
         }
         case (int32_t)0xd597650c:
@@ -1446,13 +1586,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt64];
             if (flags & (1 << 21))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP groupCall flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x1bf335b9:
             [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP updateStoryID");
             break;
         case (int32_t)0xfa0f3ca2:
         {
@@ -1461,7 +1599,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 0))
                 CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updatePinnedDialogs flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xfe198602:
@@ -1470,26 +1607,22 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             if (flags & (1 << 0))
                 CodexReadInt32Vector(is);
-            IOS6_NOOP_LOG(@"SKIP updateChannelPinnedTopics flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x7d627683:
             CodexReadObject(is, environment, error);
             [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateSentStoryReaction");
             break;
         case (int32_t)0x1824e40b:
             [is readInt32];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateNewStoryReaction");
             break;
         case (int32_t)0x904dd49c:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotChatBoost");
             break;
         case (int32_t)0xac21d3ce:
             CodexReadObject(is, environment, error);
@@ -1499,7 +1632,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotMessageReaction");
             break;
         case (int32_t)0x09cb7759:
             CodexReadObject(is, environment, error);
@@ -1507,12 +1639,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotMessageReactions");
             break;
         case (int32_t)0x8ae5c97a:
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotBusinessConnect");
             break;
         case (int32_t)0x9ddb347c:
         case (int32_t)0x07df587c:
@@ -1523,7 +1653,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotBusinessMessage sig=0x%08x flags=0x%08x", signature, flags);
             break;
         }
         case (int32_t)0xa02a982e:
@@ -1531,7 +1660,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             CodexReadInt32Vector(is);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotDeleteBusinessMessage");
             break;
         case (int32_t)0x1ea2fda7:
         {
@@ -1545,23 +1673,19 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             if (flags & (1 << 0))
                 [is readBytes];
-            IOS6_NOOP_LOG(@"SKIP updateBusinessBotCallbackQuery flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xa584b019:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateStarsRevenueStatus");
             break;
         case (int32_t)0x283bd312:
             [is readInt64];
             [is readString];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateBotPurchasedPaidMedia");
             break;
         case (int32_t)0x8b725fce:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updatePaidReactionPrivacy");
             break;
         case (int32_t)0xe16459c3:
         {
@@ -1570,7 +1694,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             TLUpdate$updateDialogUnreadMark *result = [[TLUpdate$updateDialogUnreadMark alloc] init];
             result.flags = flags;
             result.peer = peer;
-            IOS6_NOOP_LOG(@"MODERN updateDialogUnreadMark flags=0x%08x", flags);
             return result;
         }
         case (int32_t)0xe56dbf05:
@@ -1578,26 +1701,22 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
             TLDialogPeer$dialogPeer *result = [[TLDialogPeer$dialogPeer alloc] init];
             result.peer = peer;
-            IOS6_NOOP_LOG(@"MODERN dialogPeer");
             return result;
         }
         case (int32_t)0x514519e2:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP dialogPeerFolder");
             break;
         case (int32_t)0x77b0e372:
         case (int32_t)0xa4a79376:
             [is readInt64];
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadMonoForum sig=0x%08x", signature);
             break;
         case (int32_t)0x9f812b08:
         {
             [is readInt32];
             [is readInt64];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateMonoForumNoPaidException");
             break;
         }
         case (int32_t)0x683b2c52:
@@ -1605,7 +1724,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updatePinnedForumTopic");
             break;
         }
         case (int32_t)0xdef143d0:
@@ -1614,12 +1732,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 CodexReadInt32Vector(is);
-            IOS6_NOOP_LOG(@"SKIP updatePinnedForumTopics flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xfb9c547a:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateEmojiGameInfo");
             break;
         case (int32_t)0x9e84bc99:
         {
@@ -1630,7 +1746,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 [is readInt32];
             int32_t maxId = [is readInt32];
-            int32_t stillUnreadCount = [is readInt32];
+            [is readInt32];
             int32_t pts = [is readInt32];
             int32_t ptsCount = [is readInt32];
             TLUpdate$updateReadHistoryInbox *result = [[TLUpdate$updateReadHistoryInbox alloc] init];
@@ -1638,7 +1754,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.max_id = maxId;
             result.pts = pts;
             result.pts_count = ptsCount;
-            IOS6_NOOP_LOG(@"MODERN updateReadHistoryInbox flags=0x%08x maxId=%d stillUnread=%d pts=%d ptsCount=%d", flags, maxId, stillUnreadCount, pts, ptsCount);
             return result;
         }
         case (int32_t)0x2f2f21bf:
@@ -1652,17 +1767,14 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.max_id = maxId;
             result.pts = pts;
             result.pts_count = ptsCount;
-            IOS6_NOOP_LOG(@"MODERN updateReadHistoryOutbox maxId=%d pts=%d ptsCount=%d", maxId, pts, ptsCount);
             return result;
         }
         case (int32_t)0x0bb2d201:
             [is readInt32];
             CodexReadInt64Vector(is);
-            IOS6_NOOP_LOG(@"SKIP updateStickerSetsOrder");
             break;
         case (int32_t)0x31c24808:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateStickerSets");
             break;
         case (int32_t)0xb23fc698:
         {
@@ -1671,7 +1783,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             TLUpdate$updateChannelAvailableMessages *result = [[TLUpdate$updateChannelAvailableMessages alloc] init];
             result.channel_id = (int32_t)channelId;
             result.available_min_id = availableMinId;
-            IOS6_NOOP_LOG(@"MODERN updateChannelAvailableMessages channelId=%lld availableMinId=%d", channelId, availableMinId);
             return result;
         }
         case (int32_t)0x9d2216e0:
@@ -1680,7 +1791,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateGroupCall current flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xf2ebdb4e:
@@ -1691,7 +1801,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (error != NULL && *error != nil)
                 break;
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateGroupCallParticipants");
             break;
         case (int32_t)0x2a3dc7ac:
         case (int32_t)0xeba636fe:
@@ -1707,7 +1816,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 6)) CodexReadObject(is, environment, error);
             if (flags & (1 << 14)) CodexReadObject(is, environment, error);
             if (signature == (int32_t)0x2a3dc7ac && (flags & (1 << 16))) [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP groupCallParticipant sig=0x%08x flags=0x%08x", signature, flags);
             break;
         }
         case (int32_t)0x67753ac8:
@@ -1728,7 +1836,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updatePeerHistoryTTL flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x1e297bfa:
@@ -1741,7 +1848,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateMessageReactions flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xaca1657b:
@@ -1751,7 +1857,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateMessagePoll flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x86e18161:
@@ -1774,24 +1879,20 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0x30f443db:
         case (int32_t)0x39c67432:
         case (int32_t)0x8c0f91fb:
-            IOS6_NOOP_LOG(@"SKIP empty update sig=0x%08x", signature);
             break;
         case (int32_t)0x28373599:
             [is readInt64];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateUserEmojiStatus");
             break;
         case (int32_t)0x07b68920:
             [is readInt64];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateChannelViewForumAsMessages");
             break;
         case (int32_t)0xa477288f:
             CodexReadObject(is, environment, error);
             [is readInt32];
             CodexSkipBytesVector(is);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateGroupCallChainBlocks");
             break;
         case (int32_t)0x140502d1:
         {
@@ -1799,7 +1900,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateWebBrowserException flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x5bb98608:
@@ -1815,31 +1915,25 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.messages = messages;
             result.pts = pts;
             result.pts_count = ptsCount;
-            IOS6_NOOP_LOG(@"MODERN updatePinnedChannelMessages flags=0x%08x channel=%lld messages=%d pts=%d ptsCount=%d", flags, channelId, (int)messages.count, pts, ptsCount);
             return result;
         }
         case (int32_t)0x4e80a379:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateStarsBalance");
             break;
         case (int32_t)0x48e246c2:
             [is readInt64];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateStarGiftAuctionState");
             break;
         case (int32_t)0xdc58f31e:
             [is readInt64];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP updateStarGiftAuctionUserState");
             break;
         case (int32_t)0xac072444:
-            IOS6_NOOP_LOG(@"SKIP updateStarGiftCraftFail");
             break;
         case (int32_t)0x50cc03d3:
         {
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeStickerSet");
             break;
         }
         case (int32_t)0x22c0f6d5:
@@ -1856,7 +1950,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 4))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP inputReplyToMessage flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x8c39793f:
@@ -1870,12 +1963,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             if (flags & (1 << 2))
                 [is readString];
-            IOS6_NOOP_LOG(@"SKIP help.promoData flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xe46bcee4:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP chatParticipantCreator");
             break;
         case (int32_t)0xc7b57ce6:
             [is readString];
@@ -1923,7 +2014,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0x79b26a24:
         {
             int32_t flags = [is readInt32];
-            int32_t storyId = [is readInt32];
+            [is readInt32];
             [is readInt32];
             if (flags & (1 << 18))
                 CodexReadObject(is, environment, error);
@@ -1947,7 +2038,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadInt32Vector(is);
             if (flags & (1 << 20))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyItem id=%d flags=0x%08x", storyId, flags);
             break;
         }
         case (int32_t)0x68cb6283:
@@ -1957,7 +2047,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messageMediaStory flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9a35e999:
@@ -1967,7 +2056,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 [is readInt32];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP peerStories flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x63c3dd0a:
@@ -1979,7 +2067,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadInt32Vector(is);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP stories.stories flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x8d595cd6:
@@ -1994,7 +2081,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 0))
                 CodexReadInt64Vector(is);
-            IOS6_NOOP_LOG(@"SKIP storyViews flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xb826e150:
@@ -2006,7 +2092,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             if (flags & (1 << 2))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP storyFwdHeader flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x2e94c3e7:
@@ -2016,7 +2101,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeStory flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x54b56617:
@@ -2026,34 +2110,27 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 1))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeTheme flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xcf6f6db8:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeUniqueStarGift");
             break;
         case (int32_t)0x31cad303:
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeStarGiftCollection");
             break;
         case (int32_t)0x01c641c2:
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeStarGiftAuction");
             break;
         case (int32_t)0x7781fe18:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP webPageAttributeAiComposeTone");
             break;
         case (int32_t)0xbbb6b4a3:
             [is readInt64];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starsAmount");
             break;
         case (int32_t)0x74aee3e0:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starsTonAmount");
             break;
         case (int32_t)0x313a9547:
         {
@@ -2099,7 +2176,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 13))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGift flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x85f0a9cd:
@@ -2141,23 +2217,20 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 16))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftUnique flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x565251e2:
         {
-            int32_t flags = [is readInt32];
+            [is readInt32];
             [is readString];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeModel flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x4e7085ea:
             [is readString];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributePattern");
             break;
         case (int32_t)0x9f2504e4:
             [is readString];
@@ -2167,7 +2240,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeBackdrop");
             break;
         case (int32_t)0xe0bff26c:
         {
@@ -2178,31 +2250,25 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 1))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeOriginalDetails flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x36437737:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeRarity");
             break;
         case (int32_t)0xdbce6389:
         case (int32_t)0xf08d516b:
         case (int32_t)0x78fbf3a8:
         case (int32_t)0xcef7e7a8:
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeRarityEmpty sig=0x%08x", signature);
             break;
         case (int32_t)0xaff56398:
             [is readInt32];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftBackground");
             break;
         case (int32_t)0x71f276c4:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP disallowedGiftsSettings");
             break;
         case (int32_t)0x4d4bd46a:
-            IOS6_NOOP_LOG(@"SKIP profileTabGifts");
             break;
         case (int32_t)0xb98cd696:
         case (int32_t)0x72c64955:
@@ -2211,15 +2277,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0xe477092e:
         case (int32_t)0xd3656499:
         case (int32_t)0xa2c0f695:
-            IOS6_NOOP_LOG(@"SKIP profileTab sig=0x%08x", signature);
             break;
         case (int32_t)0x3458f9c8:
             CodexReadObject(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP chatThemeUniqueGift");
             break;
         case (int32_t)0xfe333952:
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionStateNotModified");
             break;
         case (int32_t)0x771a4e66:
             [is readInt32];
@@ -2233,7 +2296,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionState");
             break;
         case (int32_t)0x972dabbf:
         {
@@ -2248,7 +2310,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
                 [is readString];
             }
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionStateFinished flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x2eeed1c4:
@@ -2262,20 +2323,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             }
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionUserState flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x3aae0528:
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionRound");
             break;
         case (int32_t)0x0aa021e5:
             [is readInt32];
             [is readInt32];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionRoundExtendable");
             break;
         case (int32_t)0x03d1ea4e:
         {
@@ -2284,7 +2342,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readDouble];
             [is readDouble];
             [is readDouble];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaCoordinates legacy");
             break;
         }
         case (int32_t)0xcfc9e002:
@@ -2297,14 +2354,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readDouble];
             if (flags & (1 << 0))
                 [is readDouble];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaCoordinates flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x770416af:
             CodexReadObject(is, environment, error);
             [is readInt64];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaChannelPost");
             break;
         case (int32_t)0xbe82db9c:
             CodexReadObject(is, environment, error);
@@ -2314,13 +2369,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readString];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaVenue");
             break;
         case (int32_t)0xb282217f:
             CodexReadObject(is, environment, error);
             [is readInt64];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP inputMediaAreaVenue");
             break;
         case (int32_t)0xcad5452d:
         {
@@ -2329,39 +2382,33 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP mediaAreaGeoPoint flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x14455871:
         {
-            int32_t flags = [is readInt32];
+            [is readInt32];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP mediaAreaSuggestedReaction flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x2271f2bf:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP inputMediaAreaChannelPost");
             break;
         case (int32_t)0x37381085:
             CodexReadObject(is, environment, error);
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaUrl");
             break;
         case (int32_t)0x49a6549c:
             CodexReadObject(is, environment, error);
             [is readString];
             [is readDouble];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaWeather");
             break;
         case (int32_t)0x5787686d:
             CodexReadObject(is, environment, error);
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaStarGift");
             break;
         case (int32_t)0xdf8b3b22:
         {
@@ -2372,7 +2419,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readString];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP mediaAreaVenue df8b3b22");
             break;
         }
         case (int32_t)0xa5d9abb8:
@@ -2382,8 +2428,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readString];
             [is readString];
-            int32_t tail = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP geoPointAddress a5d9abb8 strings5 tail=%d", tail);
+            [is readInt32];
             break;
         }
         case (int32_t)0xde4c5d93:
@@ -2396,7 +2441,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             if (flags & (1 << 2))
                 [is readString];
-            IOS6_NOOP_LOG(@"SKIP geoPointAddress flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xb0bdeac5:
@@ -2406,14 +2450,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 2))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyView flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9083670b:
         {
             [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyViewPublicForward");
             break;
         }
         case (int32_t)0xbd74cf49:
@@ -2421,7 +2463,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyViewPublicRepost");
             break;
         }
         case (int32_t)0x59d78fc5:
@@ -2436,18 +2477,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 0))
                 [is readString];
-            IOS6_NOOP_LOG(@"SKIP stories.storyViewsList flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xde9eed1d:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP stories.storyViews");
             break;
         case (int32_t)0xe87acbc0:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP foundStory");
             break;
         case (int32_t)0xe2de7737:
         {
@@ -2458,23 +2496,19 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP stories.foundStories flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x6090d6d5:
             CodexReadObject(is, environment, error);
             [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyReaction");
             break;
         case (int32_t)0xbbab2643:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyReactionPublicForward");
             break;
         case (int32_t)0xcfcd0f13:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyReactionPublicRepost");
             break;
         case (int32_t)0xaa5f789c:
         {
@@ -2485,30 +2519,25 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 0))
                 [is readString];
-            IOS6_NOOP_LOG(@"SKIP stories.storyReactionsList flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xa388a368:
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftsNotModified");
             break;
         case (int32_t)0x2ed82995:
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGifts");
             break;
         case (int32_t)0x3de1dfed:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftUpgradePreview");
             break;
         case (int32_t)0x416c56e8:
             CodexReadObject(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.uniqueStarGift");
             break;
         case (int32_t)0x41df43fc:
         {
@@ -2545,7 +2574,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 20))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP savedStarGift flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x95f389b1:
@@ -2559,39 +2587,31 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.savedStarGifts flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x69279795:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP inputSavedStarGiftUser");
             break;
         case (int32_t)0xf101aa7f:
             CodexReadObject(is, environment, error);
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP inputSavedStarGiftChat");
             break;
         case (int32_t)0x2085c238:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP inputSavedStarGiftSlug");
             break;
         case (int32_t)0x84aa3a9c:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftWithdrawalUrl");
             break;
         case (int32_t)0x48aaae3c:
         case (int32_t)0x4a162433:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeIdDocument sig=0x%08x", signature);
             break;
         case (int32_t)0x1f01c757:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeIdBackdrop");
             break;
         case (int32_t)0x2eb1b658:
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAttributeCounter");
             break;
         case (int32_t)0x947a12df:
         {
@@ -2609,7 +2629,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 2))
                 CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.resaleStarGifts flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9d6b13b0:
@@ -2621,15 +2640,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starGiftCollection flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xa0ba4f17:
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftCollectionsNotModified");
             break;
         case (int32_t)0x8a2932f3:
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftCollections");
             break;
         case (int32_t)0x512fe446:
         {
@@ -2655,13 +2671,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
                 [is readString];
             }
-            IOS6_NOOP_LOG(@"SKIP payments.uniqueStarGiftValueInfo flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x99ea331d:
             [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starGiftUpgradePrice");
             break;
         case (int32_t)0x6b39f4ec:
             CodexReadObject(is, environment, error);
@@ -2670,7 +2684,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftAuctionState");
             break;
         case (int32_t)0x42b00348:
         {
@@ -2684,36 +2697,27 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             if (flags & (1 << 2))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starGiftAuctionAcquiredGift flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x7d5bd1f0:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftAuctionAcquiredGifts");
             break;
         case (int32_t)0xd31bc45d:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starGiftActiveAuctionState");
             break;
         case (int32_t)0xdb33dad0:
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftActiveAuctionsNotModified");
             break;
         case (int32_t)0xaef6abbc:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftActiveAuctions");
             break;
         case (int32_t)0x46c6e36f:
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starGiftUpgradeAttributes");
-            break;
-        case (int32_t)0x5fb224d5:
-            [is readInt32];
             break;
         case (int32_t)0x9f120418:
             [is readInt32];
@@ -2775,7 +2779,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP emojiStatus flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x7184603b:
@@ -2792,7 +2795,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP emojiStatusCollectible flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x07141dbf:
@@ -2801,7 +2803,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP inputEmojiStatusCollectible flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x929b619d:
@@ -2848,28 +2849,21 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             break;
         case (int32_t)0x3b6d152e:
         {
-            IOS6_NOOP_LOG(@"SKIP users.userFull");
             TLUserFull$userFull *fullUser = (TLUserFull$userFull *)CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP users.userFull after full_user error=%@", error != NULL ? *error : nil);
-            NSArray *chats = CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP users.userFull after chats error=%@", error != NULL ? *error : nil);
+            CodexReadObjectVector(is, environment, error);
             NSArray *users = CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP users.userFull after users error=%@", error != NULL ? *error : nil);
             if (fullUser.user == nil && users.count != 0)
                 fullUser.user = [users objectAtIndex:0];
-            IOS6_NOOP_LOG(@"SKIP users.userFull return fullUser=%@ user=%@ chats=%d users=%d", fullUser, fullUser.user, (int)chats.count, (int)users.count);
             return fullUser;
         }
         case (int32_t)0xb53e8b21:
             CodexReadObject(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.webPagePreview legacy");
             break;
         case (int32_t)0x8c9a88ac:
             CodexReadObject(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.webPagePreview modern");
             break;
         case (int32_t)0xcc997720:
         case (int32_t)0xd2234ea0:
@@ -2878,22 +2872,18 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             TLUserFull$userFull *result = [[TLUserFull$userFull alloc] init];
             int32_t flags = [is readInt32];
             int32_t flags2 = [is readInt32];
-            int64_t userId = [is readInt64];
+            [is readInt64];
             result.flags = flags & ((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3));
-            IOS6_NOOP_LOG(@"SKIP userFull flags=0x%08x flags2=0x%08x userId=%lld", flags, flags2, userId);
             if (flags & (1 << 1))
                 result.about = [is readString];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP userFull after settings error=%@", error != NULL ? *error : nil);
             if (flags & (1 << 21))
                 CodexReadObject(is, environment, error);
             if (flags & (1 << 2))
                 result.profile_photo = (TLPhoto *)CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP userFull after profile photos error=%@", error != NULL ? *error : nil);
             if (flags & (1 << 22))
                 CodexReadObject(is, environment, error);
             result.notify_settings = (TLPeerNotifySettings *)CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP userFull after notify_settings error=%@", error != NULL ? *error : nil);
             if (flags & (1 << 3))
                 result.bot_info = (TLBotInfo *)CodexReadObject(is, environment, error);
             if (flags & (1 << 6))
@@ -2918,7 +2908,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             if (signature != (int32_t)0x06cbe645 && (flags & (1 << 19)))
                 CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP userFull after premium_gifts error=%@", error != NULL ? *error : nil);
             if (flags & (1 << 24))
                 CodexReadObject(is, environment, error);
             if (flags & (1 << 25))
@@ -2962,36 +2951,32 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags2 & (1 << 21))
             {
                 result.saved_music = (TLDocument *)CodexReadObject(is, environment, error);
-                IOS6_NOOP_LOG(@"PROFILEMUSIC userFull saved_music=%@ id=%lld", result.saved_music, result.saved_music.n_id);
             }
             if (flags2 & (1 << 22))
                 CodexReadObject(is, environment, error);
             if (flags2 & (1 << 25))
                 [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP userFull sig=0x%08x return id=%lld flags2=0x%08x about=%d profile=%@ pinned=%d common=%d", signature, userId, flags2, result.about.length != 0 ? 1 : 0, result.profile_photo, result.pinned_msg_id, result.common_chats_count);
             return result;
         }
         case (int32_t)0x6c8e1e06:
         {
             int32_t flags = [is readInt32];
-            int32_t day = [is readInt32];
-            int32_t month = [is readInt32];
+            [is readInt32];
+            [is readInt32];
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP birthday flags=0x%08x day=%d month=%d", flags, day, month);
             break;
         }
         case (int32_t)0x120b1ab9:
         {
-            int32_t startMinute = [is readInt32];
-            int32_t endMinute = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP businessWeeklyOpen start=%d end=%d", startMinute, endMinute);
+            [is readInt32];
+            [is readInt32];
             break;
         }
         case (int32_t)0x8c92b098:
         {
-            int32_t flags = [is readInt32];
-            NSString *timezoneId = [is readString];
+            [is readInt32];
+            [is readString];
             int32_t vectorMarker = [is readInt32];
             int32_t count = 0;
             if (vectorMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
@@ -3000,7 +2985,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 count = vectorMarker;
             else
             {
-                IOS6_NOOP_LOG(@"SKIP businessWorkHours expected weekly vector got=0x%08x", vectorMarker);
                 break;
             }
             for (int32_t i = 0; i < count; i++)
@@ -3018,7 +3002,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                         break;
                 }
             }
-            IOS6_NOOP_LOG(@"SKIP businessWorkHours flags=0x%08x timezone=%@ weekly=%d", flags, timezoneId, count);
             break;
         }
         case (int32_t)0x5a0a066d:
@@ -3028,7 +3011,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP businessIntro flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xac5c1af7:
@@ -3037,7 +3019,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP businessLocation flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x21108ff7:
@@ -3045,23 +3026,19 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             int32_t flags = [is readInt32];
             if (flags & (1 << 4))
                 CodexReadInt64Vector(is);
-            IOS6_NOOP_LOG(@"SKIP businessRecipients flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xe519abab:
             [is readInt32];
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP businessGreetingMessage");
             break;
         case (int32_t)0xc9b9e2b9:
         case (int32_t)0xc3f2f501:
-            IOS6_NOOP_LOG(@"SKIP businessAwayMessageScheduleEmpty sig=0x%08x", signature);
             break;
         case (int32_t)0xcc4d9ecc:
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP businessAwayMessageScheduleCustom");
             break;
         case (int32_t)0xef156a5c:
         {
@@ -3069,7 +3046,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP businessAwayMessage");
             break;
         }
         case (int32_t)0x1b0e4f07:
@@ -3080,7 +3056,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             if (flags & (1 << 0))
                 [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starsRating flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x4b3e14d6:
@@ -3099,7 +3074,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 6))
                 [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP boost flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x8f34b2f5:
@@ -3111,7 +3085,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 2))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP botBusinessConnection flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xfebe5491:
@@ -3122,16 +3095,13 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 1))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP starsRevenueStatus flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x206ad49e:
         case (int32_t)0x1f0c1ad9:
-            IOS6_NOOP_LOG(@"SKIP paidReactionPrivacy sig=0x%08x", signature);
             break;
         case (int32_t)0xdc6cfcf0:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP paidReactionPrivacyPeer");
             break;
         case (int32_t)0xad628cc8:
         {
@@ -3145,38 +3115,32 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             if (flags & (1 << 2))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messageExtendedMediaPreview flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xee479c64:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messageExtendedMedia");
             break;
         case (int32_t)0xcba9a52f:
             [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP todoItem");
             break;
         case (int32_t)0x49b92a26:
         {
             [is readInt32];
             CodexReadObject(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP todoList");
             break;
         }
         case (int32_t)0x221bb5e4:
             [is readInt32];
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP todoCompletion");
             break;
         case (int32_t)0xcae68768:
         case (int32_t)0xfd5e12bd:
             CodexReadObject(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP peer/webPage container sig=0x%08x", signature);
             break;
         case (int32_t)0x257e962b:
         {
@@ -3189,7 +3153,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             [is readString];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP premiumGiftCodeOption flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xeb983f8f:
@@ -3207,7 +3170,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.checkedGiftCode flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x4367daa0:
@@ -3220,7 +3182,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt64];
             if (flags & (1 << 4))
                 [is readString];
-            IOS6_NOOP_LOG(@"SKIP payments.giveawayInfo flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xe175e66f:
@@ -3235,7 +3196,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 2))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP payments.giveawayInfoResults flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xb2539d54:
@@ -3243,7 +3203,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP prepaidGiveaway");
             break;
         case (int32_t)0x9a9d77e0:
             [is readInt64];
@@ -3251,7 +3210,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP prepaidStarsGiveaway");
             break;
         case (int32_t)0x86f8613c:
         {
@@ -3261,7 +3219,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 [is readString];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP premium.boostsList flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xc448415c:
@@ -3274,14 +3231,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 1))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP myBoost flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9ae228e2:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP premium.myBoosts");
             break;
         case (int32_t)0x4959427a:
         {
@@ -3300,7 +3255,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 2))
                 CodexReadInt32Vector(is);
-            IOS6_NOOP_LOG(@"SKIP premium.boostsStatus flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xe7058e7f:
@@ -3309,21 +3263,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP postInteractionCounters sig=0x%08x", signature);
             break;
         case (int32_t)0x50cd067c:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP stats.storyStats");
             break;
         case (int32_t)0x1f2bf4a:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP publicForwardMessage");
             break;
         case (int32_t)0xedf3add0:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP publicForwardStory");
             break;
         case (int32_t)0x93037e20:
         {
@@ -3334,22 +3284,18 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP stats.publicForwards flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xb8ea86a9:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP inputPeerColorCollectible");
             break;
         case (int32_t)0x26219a58:
             CodexReadInt32Vector(is);
-            IOS6_NOOP_LOG(@"SKIP help.peerColorSet");
             break;
         case (int32_t)0x767d61eb:
             CodexReadInt32Vector(is);
             CodexReadInt32Vector(is);
             CodexReadInt32Vector(is);
-            IOS6_NOOP_LOG(@"SKIP help.peerColorProfileSet");
             break;
         case (int32_t)0xadec6ebe:
         {
@@ -3363,16 +3309,13 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 4))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP help.peerColorOption flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x2ba1f5ce:
-            IOS6_NOOP_LOG(@"SKIP help.peerColorsNotModified");
             break;
         case (int32_t)0x00f8ed08:
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP help.peerColors");
             break;
         case (int32_t)0x64407ea7:
         {
@@ -3385,7 +3328,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 1))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP monoForumDialog flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xf83ae221:
@@ -3393,7 +3335,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.savedDialogs");
             break;
         case (int32_t)0x44ba9dd9:
             [is readInt32];
@@ -3401,11 +3342,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.savedDialogsSlice");
             break;
         case (int32_t)0xc01f6fe8:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messages.savedDialogsNotModified");
             break;
         case (int32_t)0xcb6ff828:
         {
@@ -3414,20 +3353,16 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0))
                 [is readString];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP savedReactionTag flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x889b59ef:
-            IOS6_NOOP_LOG(@"SKIP messages.savedReactionTagsNotModified");
             break;
         case (int32_t)0x3259950a:
             CodexReadObjectVector(is, environment, error);
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP messages.savedReactionTags");
             break;
         case (int32_t)0x3bb842ac:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP outboxReadDate");
             break;
         case (int32_t)0x2aee9191:
         {
@@ -3440,7 +3375,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 [is readString];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP smsjobs.status flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x6f8b32aa:
@@ -3451,14 +3385,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObjectVector(is, environment, error);
             if (signature == (int32_t)0xc4e5921e && (flags & (1 << 6)))
                 CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP inputBusinessRecipients sig=0x%08x flags=0x%08x", signature, flags);
             break;
         }
         case (int32_t)0x0194cb3b:
             [is readInt32];
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP inputBusinessGreetingMessage");
             break;
         case (int32_t)0x832175e0:
         {
@@ -3466,7 +3398,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP inputBusinessAwayMessage");
             break;
         }
         case (int32_t)0x033ed001:
@@ -3481,13 +3412,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             if (flags & (1 << 2))
                 [is readString];
-            IOS6_NOOP_LOG(@"SKIP connectedBot flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x17d7f87b:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP account.connectedBots");
             break;
         case (int32_t)0x09c469cd:
         {
@@ -3496,7 +3425,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP inputBusinessIntro flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xb88cf373:
@@ -3506,23 +3434,19 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadInt64Vector(is);
             if (flags & (1 << 6))
                 CodexReadInt64Vector(is);
-            IOS6_NOOP_LOG(@"SKIP businessBotRecipients flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x1d998733:
             [is readInt64];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP contactBirthday");
             break;
         case (int32_t)0x114ff30d:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP contacts.contactBirthdays");
             break;
         case (int32_t)0x628c9224:
             [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP missingInvitee");
             break;
         case (int32_t)0xb4ae666f:
         {
@@ -3534,14 +3458,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 [is readString];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP businessChatLink flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xec43a2d1:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP account.businessChatLinks");
             break;
         case (int32_t)0x9a23af21:
         {
@@ -3552,7 +3474,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP account.resolvedBusinessChatLinks flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x93c3e27e:
@@ -3565,17 +3486,14 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             if (flags & (1 << 1))
                 [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP availableEffect flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xd1ed9a5b:
-            IOS6_NOOP_LOG(@"SKIP messages.availableEffectsNotModified");
             break;
         case (int32_t)0xbddb616e:
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.availableEffects");
             break;
         case (int32_t)0xb89bfccf:
         {
@@ -3586,7 +3504,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             }
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP factCheck flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x95f2bfe4:
@@ -3596,11 +3513,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0xe92fd902:
         case (int32_t)0x60682812:
         case (int32_t)0xf9677aad:
-            IOS6_NOOP_LOG(@"SKIP starsTransactionPeer empty sig=0x%08x", signature);
             break;
         case (int32_t)0xd80da15d:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starsTransactionPeer");
             break;
         case (int32_t)0x0bd915c0:
         case (int32_t)0x5e0589f1:
@@ -3611,7 +3526,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             [is readString];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starsOption sig=0x%08x flags=0x%08x", signature, flags);
             break;
         }
         case (int32_t)0x13659eb0:
@@ -3637,7 +3551,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 19)) [is readInt32];
             if (flags & (1 << 20)) [is readInt32];
             if (flags & (1 << 23)) { [is readInt32]; [is readInt32]; }
-            IOS6_NOOP_LOG(@"SKIP starsTransaction flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x6c9ce8ed:
@@ -3656,7 +3569,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readString];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.starsStatus flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x6c207376:
@@ -3667,18 +3579,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
             [is readDouble];
-            IOS6_NOOP_LOG(@"SKIP payments.starsRevenueStats flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x1dab80b7:
         case (int32_t)0x394e7f21:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP payments.starsRevenueUrl sig=0x%08x", signature);
             break;
         case (int32_t)0x5416d58:
             [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starsSubscriptionPricing");
             break;
         case (int32_t)0x2e6eab1a:
         {
@@ -3691,7 +3600,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 4)) [is readString];
             if (flags & (1 << 5)) CodexReadObject(is, environment, error);
             if (flags & (1 << 6)) [is readString];
-            IOS6_NOOP_LOG(@"SKIP starsSubscription flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x94ce852a:
@@ -3704,14 +3612,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readInt64];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starsGiveawayOption flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x54236209:
             [is readInt32];
             [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP starsGiveawayWinnersOption");
             break;
         case (int32_t)0xdd0c66f2:
         {
@@ -3721,7 +3627,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0)) [is readInt32];
             if (flags & (1 << 1)) [is readInt32];
             if (flags & (1 << 2)) CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP starRefProgram flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x19a13f71:
@@ -3734,14 +3639,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 0)) [is readInt32];
             [is readInt64];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP connectedBotStarRef flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x98d5ea1d:
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP payments.connectedStarRefBots");
             break;
         case (int32_t)0xb4d5d859:
         {
@@ -3750,29 +3653,23 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 0)) [is readString];
-            IOS6_NOOP_LOG(@"SKIP payments.suggestedStarRefBots flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xf93cd45c:
             [is readInt64];
             [is readInt64];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP botVerification");
             break;
         case (int32_t)0x1e109708:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP account.paidMessagesRevenue");
             break;
         case (int32_t)0xe581e4e9:
-            IOS6_NOOP_LOG(@"SKIP requirementToContactPremium");
             break;
         case (int32_t)0xb4f67e93:
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP requirementToContactPaidMessages");
             break;
         case (int32_t)0xa0624cf7:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP businessBotRights");
             break;
         case (int32_t)0xc69708d3:
         {
@@ -3781,28 +3678,23 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0)) [is readString];
             if (flags & (1 << 1)) [is readString];
-            IOS6_NOOP_LOG(@"SKIP sponsoredPeer flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xea32b4b1:
-            IOS6_NOOP_LOG(@"SKIP contacts.sponsoredPeersEmpty");
             break;
         case (int32_t)0xeb032884:
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP contacts.sponsoredPeers");
             break;
         case (int32_t)0xc387c04e:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP stories.canSendStoryCount");
             break;
         case (int32_t)0xe7e82e12:
             [is readString];
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP pendingSuggestion");
             break;
         case (int32_t)0x0e8e37e5:
         {
@@ -3811,7 +3703,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP suggestedPost flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9325705a:
@@ -3821,24 +3712,19 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             if (flags & (1 << 0)) CodexReadObject(is, environment, error);
             if (flags & (1 << 1)) CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP storyAlbum flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xc3987a3a:
             [is readInt64];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP stories.albums");
             break;
         case (int32_t)0x374fa7ad:
-            IOS6_NOOP_LOG(@"SKIP checkCanSendGiftResultOk");
             break;
         case (int32_t)0xd5e58274:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP checkCanSendGiftResultFail");
             break;
         case (int32_t)0x87e5dfe4:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP inputChatThemeUniqueGift");
             break;
         case (int32_t)0x1a8afc7e:
         {
@@ -3848,7 +3734,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0)) [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP groupCallMessage flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xee430c85:
@@ -3857,7 +3742,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 3))
                 CodexReadObject(is, environment, error);
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP groupCallDonor flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9d1dbd26:
@@ -3865,16 +3749,13 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP phone.groupCallStars");
             break;
         case (int32_t)0xda2ad647:
             [is readBytes];
             [is readInt64];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP messages.emojiGameOutcome");
             break;
         case (int32_t)0x59e65335:
-            IOS6_NOOP_LOG(@"SKIP messages.emojiGameUnavailable");
             break;
         case (int32_t)0x44e56023:
         {
@@ -3884,7 +3765,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             CodexReadInt32Vector(is);
             if (flags & (1 << 0)) [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messages.emojiGameDiceInfo flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x90d7adfa:
@@ -3893,7 +3773,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.composedMessageWithAI flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xcff63ea9:
@@ -3908,28 +3787,23 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 2)) [is readInt32];
             if (flags & (1 << 3)) [is readInt64];
             if (flags & (1 << 5)) CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP aiComposeTone flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9bad6414:
             [is readString];
             [is readInt64];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP aiComposeToneDefault");
             break;
         case (int32_t)0xc1f46103:
-            IOS6_NOOP_LOG(@"SKIP aicompose.tonesNotModified");
             break;
         case (int32_t)0x6c9d0efe:
             [is readInt64];
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP aicompose.tones");
             break;
         case (int32_t)0xf1d628ec:
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP aiComposeToneExample");
             break;
         case (int32_t)0x933ca597:
         {
@@ -3938,7 +3812,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readString];
             if (flags & (1 << 0)) [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP webDomainException flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x79eb8cb3:
@@ -3947,7 +3820,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP account.webBrowserSettings");
             break;
         }
         case (int32_t)0xbaf39d8b:
@@ -3956,7 +3828,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP richMessage");
             break;
         }
         case (int32_t)0x7dbf8673:
@@ -3974,7 +3845,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 7)) [is readString];
             if (flags & (1 << 8)) [is readString];
             if (flags & (1 << 15)) { [is readInt32]; [is readInt32]; }
-            IOS6_NOOP_LOG(@"SKIP sponsoredMessage flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xffda656d:
@@ -3986,11 +3856,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.sponsoredMessages flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x1839490f:
-            IOS6_NOOP_LOG(@"SKIP messages.sponsoredMessagesEmpty");
             break;
         case (int32_t)0x31bd492d:
         {
@@ -4000,7 +3868,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 0)) [is readString];
-            IOS6_NOOP_LOG(@"SKIP messages.messageReactionsList flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xc077ec01:
@@ -4018,7 +3885,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 CodexReadObject(is, environment, error);
                 CodexReadObject(is, environment, error);
             }
-            IOS6_NOOP_LOG(@"SKIP availableReaction flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x9f071957:
@@ -4026,22 +3892,18 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         case (int32_t)0xd08ce645:
         case (int32_t)0x481eadfa:
         case (int32_t)0x6fb4ad87:
-            IOS6_NOOP_LOG(@"SKIP notModified/empty list sig=0x%08x", signature);
             break;
         case (int32_t)0x768e3aad:
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.availableReactions");
             break;
         case (int32_t)0x90c467d1:
             [is readInt64];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP account.emojiStatuses");
             break;
         case (int32_t)0xeafdf716:
             [is readInt64];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.reactions");
             break;
         case (int32_t)0x5f2d1df2:
         {
@@ -4052,14 +3914,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt64];
             [is readString];
             if (flags & (1 << 0)) [is readString];
-            IOS6_NOOP_LOG(@"SKIP premiumSubscriptionOption flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xb81c7034:
         {
             [is readInt32];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP sendAsPeer");
             break;
         }
         case (int32_t)0x367617d3:
@@ -4071,43 +3931,35 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messages.forumTopics");
             break;
         }
         case (int32_t)0x43b46b20:
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP defaultHistoryTTL");
             break;
         case (int32_t)0x7a1e11d1:
             [is readInt64];
             CodexReadInt64Vector(is);
-            IOS6_NOOP_LOG(@"SKIP emojiList");
             break;
         case (int32_t)0x7a9abda9:
         case (int32_t)0x80d26cc7:
             [is readString];
             [is readInt64];
             CodexSkipStringVector(is);
-            IOS6_NOOP_LOG(@"SKIP emojiGroup sig=0x%08x", signature);
             break;
         case (int32_t)0x093bcf34:
             [is readString];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP emojiGroupPremium");
             break;
         case (int32_t)0x881fb94b:
             [is readInt32];
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP messages.emojiGroups");
             break;
         case (int32_t)0xa26156c0:
             [is readInt64];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP textCustomEmoji");
             break;
         case (int32_t)0xc556a45d:
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP textAutoEmail");
             break;
         case (int32_t)0xd90d8dfe:
         {
@@ -4117,7 +3969,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 3))
                 CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP attachMenuBot flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xcfb9d957:
@@ -4130,7 +3981,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
                 [is readInt32];
             }
-            IOS6_NOOP_LOG(@"SKIP messages.transcribedAudio flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x5334759c:
@@ -4140,35 +3990,28 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
             CodexReadObjectVector(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP help.premiumPromo");
             break;
         case (int32_t)0x4345be73:
             [is readString];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP emailVerifyPurposeLoginSetup");
             break;
         case (int32_t)0x527d22eb:
         case (int32_t)0xbbf51685:
-            IOS6_NOOP_LOG(@"SKIP emailVerifyPurpose empty sig=0x%08x", signature);
             break;
         case (int32_t)0x922e55a9:
         case (int32_t)0xdb909ec2:
         case (int32_t)0x96d074fd:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP emailVerification sig=0x%08x", signature);
             break;
         case (int32_t)0x2b96cd1b:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP account.emailVerified");
             break;
         case (int32_t)0xe1bb0d61:
             [is readString];
             CodexReadObject(is, environment, error);
-            IOS6_NOOP_LOG(@"SKIP account.emailVerifiedLogin");
             break;
         case (int32_t)0x3fc9053b:
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP exportedStoryLink");
             break;
         case (int32_t)0x6ebdff91:
             [is readInt32];
@@ -4177,11 +4020,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readInt64];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP fragment.collectibleInfo");
             break;
         case (int32_t)0xbac3a61a:
         case (int32_t)0x4b9e22a0:
-            IOS6_NOOP_LOG(@"SKIP reactionNotificationsFrom sig=0x%08x", signature);
             break;
         case (int32_t)0x71e4ea58:
         {
@@ -4191,7 +4032,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 2)) CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP reactionsNotifySettings flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x98613ebf:
@@ -4202,13 +4042,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 0)) [is readInt64];
             if (flags & (1 << 1)) [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP passkey flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x0a339f0b:
         {
             int32_t flags = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messageReactions flags=0x%08x", flags);
             CodexReadObjectVector(is, environment, error);
             if (flags & (1 << 1))
                 CodexReadObjectVector(is, environment, error);
@@ -4227,7 +4065,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messageMediaGiveaway flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xc6991068:
@@ -4244,7 +4081,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 [is readString];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messageMediaGiveawayResults flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x4ba3a95a:
@@ -4253,7 +4089,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 3))
                 CodexReadObject(is, environment, error);
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP messageReactor flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x3e0b5b6a:
@@ -4264,7 +4099,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 [is readInt32];
             [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP searchPostsFlood flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xea29055d:
@@ -4277,7 +4111,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             TLUpdate$updateChannelReadMessagesContents *result = [[TLUpdate$updateChannelReadMessagesContents alloc] init];
             result.channel_id = (int32_t)channelId;
             result.messages = messages;
-            IOS6_NOOP_LOG(@"MODERN updateChannelReadMessagesContents flags=0x%08x channelId=%lld messages=%d", flags, channelId, (int)messages.count);
             return result;
         }
         case (int32_t)0xf8227181:
@@ -4292,7 +4125,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.messages = messages;
             result.pts = pts;
             result.pts_count = ptsCount;
-            IOS6_NOOP_LOG(@"MODERN updateReadMessagesContents flags=0x%08x messages=%d pts=%d ptsCount=%d", flags, (int)messages.count, pts, ptsCount);
             return result;
         }
         case (int32_t)0xebe07752:
@@ -4308,23 +4140,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             }
             return nil;
         }
-        case (int32_t)0x8951abef:
-        {
-            int32_t flags = [is readInt32];
-            int64_t hash = [is readInt64];
-            if (flags & (1 << 0))
-            {
-                [is readInt32];
-                [is readString];
-                [is readString];
-            }
-            IOS6_NOOP_LOG(@"SKIP updateNewAuthorization flags=0x%08x hash=%lld", flags, hash);
-            break;
-        }
         case (int32_t)0x20529438:
         {
-            int64_t userId = [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP updateUser userId=%lld", userId);
+            [is readInt64];
             break;
         }
         case (int32_t)0x635b4c09:
@@ -4332,7 +4150,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             int64_t channelId = [is readInt64];
             TLUpdate$updateChannel *result = [[TLUpdate$updateChannel alloc] init];
             result.channel_id = (int32_t)channelId;
-            IOS6_NOOP_LOG(@"MODERN updateChannel channelId=%lld", channelId);
             return result;
         }
         case (int32_t)0x922e6e10:
@@ -4342,19 +4159,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             int64_t channelId = [is readInt64];
             int32_t maxId = [is readInt32];
-            int32_t stillUnreadCount = [is readInt32];
-            int32_t pts = [is readInt32];
+            [is readInt32];
+            [is readInt32];
             TLUpdate$updateReadChannelInbox *result = [[TLUpdate$updateReadChannelInbox alloc] init];
             result.channel_id = (int32_t)channelId;
             result.max_id = maxId;
-            IOS6_NOOP_LOG(@"MODERN updateReadChannelInbox flags=0x%08x channelId=%lld maxId=%d stillUnread=%d pts=%d", flags, channelId, maxId, stillUnreadCount, pts);
             return result;
         }
         case (int32_t)0xf74e932b:
         {
             CodexReadObject(is, environment, error);
-            int32_t maxId = [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadStories maxId=%d", maxId);
+            [is readInt32];
             break;
         }
         case (int32_t)0x9c974fdf:
@@ -4364,7 +4179,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             TLPeer *peer = (TLPeer *)CodexReadObject(is, environment, error);
             int32_t maxId = [is readInt32];
-            int32_t stillUnreadCount = [is readInt32];
+            [is readInt32];
             int32_t pts = [is readInt32];
             int32_t ptsCount = [is readInt32];
             TLUpdate$updateReadHistoryInbox *result = [[TLUpdate$updateReadHistoryInbox alloc] init];
@@ -4372,7 +4187,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.max_id = maxId;
             result.pts = pts;
             result.pts_count = ptsCount;
-            IOS6_NOOP_LOG(@"MODERN updateReadHistoryInbox flags=0x%08x maxId=%d stillUnread=%d pts=%d ptsCount=%d", flags, maxId, stillUnreadCount, pts, ptsCount);
             return result;
         }
         case (int32_t)0xb75f99a9:
@@ -4382,7 +4196,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             TLUpdate$updateReadChannelOutbox *result = [[TLUpdate$updateReadChannelOutbox alloc] init];
             result.channel_id = (int32_t)channelId;
             result.max_id = maxId;
-            IOS6_NOOP_LOG(@"MODERN updateReadChannelOutbox channelId=%lld maxId=%d", channelId, maxId);
             return result;
         }
         case (int32_t)0xf226ac08:
@@ -4394,17 +4207,14 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.channel_id = (int32_t)channelId;
             result.n_id = messageId;
             result.views = views;
-            IOS6_NOOP_LOG(@"MODERN updateChannelMessageViews channelId=%lld id=%d views=%d", channelId, messageId, views);
             return result;
         }
         case (int32_t)0x6f7863f4:
-            IOS6_NOOP_LOG(@"SKIP updateRecentReactions");
             break;
         case (int32_t)0x86fccf85:
         {
-            int32_t flags = [is readInt32];
-            int64_t stickerSetId = [is readInt64];
-            IOS6_NOOP_LOG(@"SKIP updateMoveStickerSetToTop flags=0x%08x stickerSet=%lld", flags, stickerSetId);
+            [is readInt32];
+            [is readInt64];
             break;
         }
         case (int32_t)0x74c34319:
@@ -4471,7 +4281,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             return result;
         }
         case (int32_t)0xb05ac6b1:
-            IOS6_NOOP_LOG(@"SKIP sendMessageChooseStickerAction");
             break;
         case (int32_t)0x7c8fe7b6:
         {
@@ -4662,11 +4471,14 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             return result;
         }
         case (int32_t)0x695c9e7c:
+        {
             [is readInt64];
             [is readInt32];
             [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP updateReadChannelDiscussionOutbox");
-            break;
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
+        }
         case (int32_t)0x83d60fc2:
         {
             int32_t flags = [is readInt32];
@@ -4855,7 +4667,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             if (flags & (1 << 2))
                 [is readInt32];
-            IOS6_NOOP_LOG(@"SKIP modern documentAttributeVideo sig=0xd38ff1c2 flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xeeca5ce3:
@@ -4870,7 +4681,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             [is readString];
-            IOS6_NOOP_LOG(@"SKIP modern langPackLanguage sig=0xeeca5ce3 flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x751f3146:
@@ -4915,11 +4725,71 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             break;
         case (int32_t)0x6a7e7366:
+        {
             CodexReadObject(is, environment, error);
             CodexReadObject(is, environment, error);
+            if (error != NULL && *error != nil)
+                return nil;
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
+        }
+        case (int32_t)0xd9c6dc1a:
+        {
+            int32_t flags = [is readInt32];
+            [is readInt32];
+            CodexReadObject(is, environment, error);
+            CodexReadObject(is, environment, error);
+            [is readInt64];
+            if (flags & (1 << 1))
+                [is readInt32];
+            [is readInt32];
+            [is readString];
+            if (flags & (1 << 2))
+                CodexReadObjectVector(is, environment, error);
+            if (flags & (1 << 3))
+                CodexReadObject(is, environment, error);
+            if (flags & (1 << 4))
+                CodexReadObject(is, environment, error);
+            if (flags & (1 << 6))
+                CodexReadObject(is, environment, error);
+            break;
+        }
+        case (int32_t)0x20bcbba1:
+        case (int32_t)0x4bbb8f01:
+        {
+            CodexReadObject(is, environment, error);
+            if (error != NULL && *error != nil)
+                return nil;
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
+        }
+        case (int32_t)0x56dbfcf8:
+        {
+            CodexReadObject(is, environment, error);
+            CodexReadInt32Vector(is);
+            if (error != NULL && *error != nil)
+                return nil;
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
+        }
+        case (int32_t)0x6c0d8e23:
+        {
+            [is readInt32];
+            [is readInt64];
+            [is readBytes];
+            [is readInt32];
+            TLCodexIgnoredUpdate *result = [[TLCodexIgnoredUpdate alloc] init];
+            result.ignoredSignature = signature;
+            return result;
+        }
+        case (int32_t)0xbe376999:
+        case (int32_t)0x2f65c8e4:
+            [is readInt64];
             break;
         default:
-            IOS6_NOOP_LOG(@"AUTH skip parser has no payload rule for sig=0x%08x", signature);
             break;
     }
     return nil;
@@ -4964,7 +4834,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         result.peer_tag = [is readBytes];
         if (error != NULL)
             *error = nil;
-        TGLog(@"CALL parse phoneConnection flags=%d id=%lld ip=%@ ipv6=%@ port=%d peerTagLen=%d", result.flags, result.n_id, result.ip, result.ipv6, result.port, (int)result.peer_tag.length);
         return result;
     }
     
@@ -4980,7 +4849,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         result.password = [is readString];
         if (error != NULL)
             *error = nil;
-        TGLog(@"CALL parse phoneConnectionWebrtc flags=%d id=%lld ip=%@ ipv6=%@ port=%d user=%@ passLen=%d", result.flags, result.n_id, result.ip, result.ipv6, result.port, result.username, (int)result.password.length);
         return result;
     }
     
@@ -5078,12 +4946,10 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             if (flags & (1 << 4))
                 CodexReadObject(is, environment, error);
-            while (false) TGLog(@"MEDIA unsupported invoice flags=0x%08x", flags);
             break;
         }
         case (int32_t)0x3ded6320:
         case (int32_t)0x9f84f49e:
-            while (false) TGLog(@"MEDIA unsupported empty sig=0x%08x", signature);
             break;
         case (int32_t)0x56e0d474:
         {
@@ -5118,11 +4984,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readString];
             [is readString];
             [is readString];
-            while (false) TGLog(@"MEDIA unsupported venue");
             break;
         case (int32_t)0xfdb19008:
             CodexReadObject(is, environment, error);
-            while (false) TGLog(@"MEDIA unsupported game");
             break;
         case (int32_t)0x773f4e66:
         {
@@ -5131,14 +4995,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 CodexReadObject(is, environment, error);
-            while (false) TGLog(@"MEDIA unsupported poll flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xca5cab89:
         {
-            int32_t flags = [is readInt32];
+            [is readInt32];
             CodexReadObject(is, environment, error);
-            while (false) TGLog(@"MEDIA unsupported videoStream flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xaa073beb:
@@ -5155,7 +5017,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 5))
                 [is readInt64];
             [is readInt32];
-            while (false) TGLog(@"MEDIA unsupported giveaway flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xceaa3ea1:
@@ -5175,13 +5036,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (flags & (1 << 1))
                 [is readString];
             [is readInt32];
-            while (false) TGLog(@"MEDIA unsupported giveawayResults flags=0x%08x", flags);
             break;
         }
         case (int32_t)0xa8852491:
             [is readInt64];
             CodexReadObjectVector(is, environment, error);
-            while (false) TGLog(@"MEDIA unsupported paidMedia");
             break;
         case (int32_t)0x8a53b014:
         {
@@ -5189,11 +5048,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0))
                 CodexReadObjectVector(is, environment, error);
-            while (false) TGLog(@"MEDIA unsupported todo flags=0x%08x", flags);
             break;
         }
         default:
-            while (false) TGLog(@"MEDIA unsupported unknown sig=0x%08x", signature);
             break;
     }
     if (error != NULL && *error != nil)
@@ -5223,7 +5080,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.period = [is readInt32];
     if (flags & (1 << 1))
         [is readInt32];
-    while (false) TGLog(@"MEDIA messageMediaGeoLive flags=0x%08x period=%d geo=%@", flags, result.period, result.geo);
     return result;
 }
 
@@ -5305,17 +5161,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (signature == (int32_t)0x08cbec07)
     {
         int32_t flags = [is readInt32];
-        int32_t value = [is readInt32];
-        NSString *emoticon = [is readString];
+        [is readInt32];
+        [is readString];
         if (flags & (1 << 0))
             CodexReadObject(is, environment, error);
-        while (false) TGLog(@"MEDIA messageMediaDice modern flags=0x%08x value=%d emoticon=%@", flags, value, emoticon);
     }
     else
     {
-        int32_t value = [is readInt32];
-        NSString *emoticon = [is readString];
-        while (false) TGLog(@"MEDIA messageMediaDice legacy sig=0x%08x value=%d emoticon=%@", signature, value, emoticon);
+        [is readInt32];
+        [is readString];
     }
     if (error != NULL && *error != nil)
         return nil;
@@ -5324,20 +5178,325 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexModernMessageMediaPollParser : TLMessageMedia$messageMediaUnsupported
+@interface TLCodexTextWithEntitiesValue : NSObject <TLObject>
+@property (nonatomic, strong) NSString *text;
+@property (nonatomic, strong) NSArray *entities;
+@end
+
+@implementation TLCodexTextWithEntitiesValue
+- (int32_t)TLconstructorSignature { return (int32_t)0x751f3146; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+@implementation TLCodexPollAnswerValue
+- (int32_t)TLconstructorSignature { return (int32_t)0x4b7d786a; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+@implementation TLCodexPollValue
+- (int32_t)TLconstructorSignature { return (int32_t)0x966e2dbf; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+@implementation TLCodexPollAnswerVotersValue
+- (int32_t)TLconstructorSignature { return (int32_t)0x3645230a; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+@implementation TLCodexPollResultsValue
+- (int32_t)TLconstructorSignature { return (int32_t)0xba7bb15e; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+static NSArray *CodexReadPollStringVector(NSInputStream *is, __autoreleasing NSError **error)
+{
+    bool failed = false;
+    int32_t marker = [is readInt32:&failed];
+    if (failed || marker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid poll string vector"}];
+        return nil;
+    }
+    int32_t count = [is readInt32:&failed];
+    if (failed || count < 0 || count > 10000)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid poll string vector count"}];
+        return nil;
+    }
+    NSMutableArray *result = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
+    for (int32_t i = 0; i < count; i++)
+    {
+        NSString *value = [is readString];
+        if (value == nil)
+        {
+            if (error != NULL)
+                *error = [NSError errorWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: @"Invalid poll string vector item"}];
+            return nil;
+        }
+        [result addObject:value];
+    }
+    return result;
+}
+
+@interface TLCodexTextWithEntitiesParser : NSObject <TLObject>
+@end
+
+@implementation TLCodexTextWithEntitiesParser
+- (int32_t)TLconstructorSignature { return 0; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLCodexTextWithEntitiesValue *result = [[TLCodexTextWithEntitiesValue alloc] init];
+    result.text = [is readString];
+    result.entities = CodexReadObjectVector(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    return result;
+}
+@end
+
+static NSString *CodexPollText(id text)
+{
+    if ([text isKindOfClass:[NSString class]])
+        return text;
+    if ([text isKindOfClass:[TLCodexTextWithEntitiesValue class]])
+        return ((TLCodexTextWithEntitiesValue *)text).text ?: @"";
+    return @"";
+}
+
+@interface TLCodexPollAnswerParser : NSObject <TLObject>
+@end
+
+@implementation TLCodexPollAnswerParser
+- (int32_t)TLconstructorSignature { return 0; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLCodexPollAnswerValue *result = [[TLCodexPollAnswerValue alloc] init];
+    if (signature == (int32_t)0x6ca9c2e9)
+    {
+        result.text = [is readString];
+        result.option = [is readBytes];
+        return result;
+    }
+    result.flags = [is readInt32];
+    id text = CodexReadObject(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    result.text = CodexPollText(text);
+    result.option = [is readBytes];
+    if (result.flags & (1 << 0))
+        result.media = CodexReadObject(is, environment, error);
+    if (result.flags & (1 << 1))
+    {
+        result.addedBy = CodexReadObject(is, environment, error);
+        result.date = [is readInt32];
+    }
+    if (error != NULL && *error != nil)
+        return nil;
+    return result;
+}
+@end
+
+@interface TLCodexPollParser : NSObject <TLObject>
+@end
+
+@implementation TLCodexPollParser
+- (int32_t)TLconstructorSignature { return 0; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLCodexPollValue *result = [[TLCodexPollValue alloc] init];
+    result.pollId = [is readInt64];
+    result.flags = [is readInt32];
+    if (signature == (int32_t)0x86e18161)
+        result.question = [is readString];
+    else
+    {
+        id question = CodexReadObject(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.question = CodexPollText(question);
+    }
+    result.answers = CodexReadObjectVector(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    if (result.flags & (1 << 4))
+        result.closePeriod = [is readInt32];
+    if (result.flags & (1 << 5))
+        result.closeDate = [is readInt32];
+    if (signature == (int32_t)0x966e2dbf && (result.flags & (1 << 12)))
+        result.countries = CodexReadPollStringVector(is, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    if (signature != (int32_t)0x86e18161)
+        result.pollHash = [is readInt64];
+    return result;
+}
+@end
+
+@interface TLCodexPollAnswerVotersParser : NSObject <TLObject>
+@end
+
+@implementation TLCodexPollAnswerVotersParser
+- (int32_t)TLconstructorSignature { return 0; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLCodexPollAnswerVotersValue *result = [[TLCodexPollAnswerVotersValue alloc] init];
+    result.flags = [is readInt32];
+    result.option = [is readBytes];
+    if (result.flags & (1 << 2))
+    {
+        result.voters = [is readInt32];
+        result.recentVoters = CodexReadObjectVector(is, environment, error);
+    }
+    if (error != NULL && *error != nil)
+        return nil;
+    return result;
+}
+@end
+
+@interface TLCodexPollResultsParser : NSObject <TLObject>
+@end
+
+@implementation TLCodexPollResultsParser
+- (int32_t)TLconstructorSignature { return 0; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLCodexPollResultsValue *result = [[TLCodexPollResultsValue alloc] init];
+    result.flags = [is readInt32];
+    if (result.flags & (1 << 1))
+        result.results = CodexReadObjectVector(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    if (result.flags & (1 << 2))
+        result.totalVoters = [is readInt32];
+    if (result.flags & (1 << 3))
+        result.recentVoters = CodexReadObjectVector(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    if (result.flags & (1 << 4))
+    {
+        result.solution = [is readString];
+        result.solutionEntities = CodexReadObjectVector(is, environment, error);
+    }
+    if (error != NULL && *error != nil)
+        return nil;
+    if (signature == (int32_t)0xba7bb15e && (result.flags & (1 << 5)))
+        result.solutionMedia = CodexReadObject(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    return result;
+}
+@end
+
+
+@interface TLCodexModernMessageMediaPollParser : TLMessageMedia$messageMediaPollCodex
 @end
 
 @implementation TLCodexModernMessageMediaPollParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    int32_t first = [is readInt32];
+    bool firstIsPoll = first == (int32_t)0x86e18161 || first == (int32_t)0xb8425be9 || first == (int32_t)0x966e2dbf;
+    int32_t flags = 0;
+    id poll = nil;
+    if (firstIsPoll)
+        poll = TLMetaClassStore::constructObject(is, first, environment, nil, error);
+    else
+    {
+        flags = first;
+        poll = CodexReadObject(is, environment, error);
+    }
+    if (error != NULL && *error != nil)
         return nil;
-    CodexReadObject(is, environment, error);
-    if (error != nil && *error != nil)
+    id results = CodexReadObject(is, environment, error);
+    if (error != NULL && *error != nil)
         return nil;
-    return [[TLMessageMedia$messageMediaUnsupported alloc] init];
+    if (!firstIsPoll && (flags & (1 << 0)))
+        CodexReadObject(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    if (![poll isKindOfClass:[TLCodexPollValue class]] || ![results isKindOfClass:[TLCodexPollResultsValue class]])
+        return [[TLMessageMedia$messageMediaUnsupported alloc] init];
+    TLMessageMedia$messageMediaPollCodex *result = [[TLMessageMedia$messageMediaPollCodex alloc] init];
+    result.poll = poll;
+    result.results = results;
+    return result;
+}
+
+@end
+
+@interface TLCodexUpdateMessagePollParser : TLUpdate$updateMessagePollCodex
+@end
+
+@implementation TLCodexUpdateMessagePollParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLUpdate$updateMessagePollCodex *result = [[TLUpdate$updateMessagePollCodex alloc] init];
+    int32_t flags = [is readInt32];
+    if (flags & (1 << 1))
+    {
+        id peer = CodexReadObject(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        if ([peer isKindOfClass:[TLPeer class]])
+            result.peer = peer;
+        result.msg_id = [is readInt32];
+    }
+    if (flags & (1 << 2))
+        [is readInt32];
+    result.poll_id = [is readInt64];
+    if (flags & (1 << 0))
+    {
+        id poll = CodexReadObject(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        if ([poll isKindOfClass:[TLCodexPollValue class]])
+            result.poll = poll;
+    }
+    id results = CodexReadObject(is, environment, error);
+    if (error != NULL && *error != nil)
+        return nil;
+    if ([results isKindOfClass:[TLCodexPollResultsValue class]])
+        result.results = results;
+    return result;
 }
 
 @end
@@ -5395,54 +5554,79 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexModernDialogsSliceParser : TLmessages_Dialogs$messages_dialogsSlice
+@interface TLCodexDialogsParser : TLmessages_Dialogs
 @end
 
-@implementation TLCodexModernDialogsSliceParser
+@implementation TLCodexDialogsParser
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
-    TLCodexModernDialogsSliceParser *result = [[TLCodexModernDialogsSliceParser alloc] init];
-    result.count = [is readInt32];
-    IOS6_NOOP_LOG(@"DIALOGS parse sig=0x%08x count=%d", signature, result.count);
-    if (signature == (int32_t)0x0200185b)
+    TLmessages_Dialogs *result = nil;
+    if (signature == (int32_t)0x15ba6c40)
     {
-        result.dialogs = @[];
-        result.messages = @[];
-        result.chats = @[];
-        result.users = @[];
-        IOS6_NOOP_LOG(@"DIALOGS notModified count=%d", result.count);
-        return result;
+        result = [[TLmessages_Dialogs$messages_dialogs alloc] init];
     }
-    NSString *previousVectorRole = CodexCurrentVectorRole;
-    CodexCurrentVectorRole = @"dialogsSlice.dialogs";
-    result.dialogs = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"DIALOGS dialogs=%d error=%@", (int)result.dialogs.count, error != NULL ? *error : nil);
-    if (error != NULL && *error != nil)
+    else if (signature == (int32_t)0x71e094f3)
     {
-        CodexCurrentVectorRole = previousVectorRole;
+        bool failed = false;
+        int32_t count = [is readInt32:&failed];
+        if (failed || count < 0)
+        {
+            if (error != NULL)
+            {
+                NSString *description = failed ? @"Unexpected end of stream while reading dialogs count" : [NSString stringWithFormat:@"Invalid dialogs count %d", count];
+                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+            }
+            return nil;
+        }
+        TLmessages_Dialogs$messages_dialogsSlice *slice = [[TLmessages_Dialogs$messages_dialogsSlice alloc] init];
+        slice.count = count;
+        result = slice;
+    }
+    else if (signature == (int32_t)0xf0e3e596 || signature == (int32_t)0x0200185b)
+    {
+        bool failed = false;
+        int32_t count = [is readInt32:&failed];
+        if (failed || count < 0)
+        {
+            if (error != NULL)
+            {
+                NSString *description = failed ? @"Unexpected end of stream while reading dialogs count" : [NSString stringWithFormat:@"Invalid dialogs count %d", count];
+                *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+            }
+            return nil;
+        }
+        TLmessages_Dialogs$messages_dialogsSlice *slice = [[TLmessages_Dialogs$messages_dialogsSlice alloc] init];
+        slice.count = count;
+        slice.dialogs = @[];
+        slice.messages = @[];
+        slice.chats = @[];
+        slice.users = @[];
+        return slice;
+    }
+    else
+    {
+        if (error != NULL)
+        {
+            NSString *description = [NSString stringWithFormat:@"Unsupported messages.Dialogs constructor %08x", signature];
+            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+        }
         return nil;
     }
-    CodexCurrentVectorRole = @"dialogsSlice.messages";
-    result.messages = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"DIALOGS messages=%d error=%@", (int)result.messages.count, error != NULL ? *error : nil);
-    if (error != NULL && *error != nil)
-    {
-        CodexCurrentVectorRole = previousVectorRole;
+
+    result.dialogs = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.dialogs", environment, error);
+    if (result.dialogs == nil)
         return nil;
-    }
-    CodexCurrentVectorRole = @"dialogsSlice.chats";
-    result.chats = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"DIALOGS chats=%d error=%@", (int)result.chats.count, error != NULL ? *error : nil);
-    if (error != NULL && *error != nil)
-    {
-        CodexCurrentVectorRole = previousVectorRole;
+    result.messages = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.messages", environment, error);
+    if (result.messages == nil)
         return nil;
-    }
-    CodexCurrentVectorRole = @"dialogsSlice.users";
-    result.users = CodexReadObjectVector(is, environment, error);
-    CodexCurrentVectorRole = previousVectorRole;
-    IOS6_NOOP_LOG(@"DIALOGS users=%d error=%@", (int)result.users.count, error != NULL ? *error : nil);
+    result.chats = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.chats", environment, error);
+    if (result.chats == nil)
+        return nil;
+    result.users = CodexReadStrictObjectVectorWithRole(is, @"messages.dialogs.users", environment, error);
+    if (result.users == nil)
+        return nil;
+
     return result;
 }
 
@@ -5478,7 +5662,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         count = [is readInt32];
     else if (vectorMarker >= 0 && vectorMarker <= 10000)
         count = vectorMarker;
-    IOS6_NOOP_LOG(@"AUTH contacts vectorMarker=0x%x count=%d", vectorMarker, count);
     
     NSMutableArray *contacts = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
     bool hasUsersMarker = false;
@@ -5488,7 +5671,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         int32_t contactSignature = [is readInt32];
         if (contactSignature == TL_UNIVERSAL_VECTOR_CONSTRUCTOR || (contactSignature >= 0 && contactSignature <= 10000))
         {
-            IOS6_NOOP_LOG(@"AUTH contacts early users marker=0x%x at index=%d expected=%d", contactSignature, i, count);
             hasUsersMarker = true;
             usersMarker = contactSignature;
             break;
@@ -5516,11 +5698,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     {
         result.saved_count = 0;
         result.users = CodexReadMaybeDoubleObjectVectorWithMarker(is, usersMarker, environment, error);
-        IOS6_NOOP_LOG(@"AUTH contacts early contacts=%d users=%d error=%@", (int)result.contacts.count, (int)result.users.count, error != NULL ? *error : nil);
         return result;
     }
     int32_t nextMarker = [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH contacts nextMarker=0x%x contacts=%d", nextMarker, (int)result.contacts.count);
     if (nextMarker == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
     {
         result.saved_count = 0;
@@ -5530,7 +5710,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     {
         result.saved_count = nextMarker;
         int32_t usersMarker = [is readInt32];
-        IOS6_NOOP_LOG(@"AUTH contacts saved_count=%d usersMarker=0x%x", result.saved_count, usersMarker);
         result.users = CodexReadMaybeDoubleObjectVectorWithMarker(is, usersMarker, environment, error);
     }
     return result;
@@ -5552,7 +5731,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     CodexReadObjectVector(is, environment, error);
     result.blocked = @[];
     result.users = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"AUTH contacts.blocked users=%d error=%@", (int)result.users.count, error != NULL ? *error : nil);
     return result;
 }
 
@@ -5628,7 +5806,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         count = vectorMarker;
     else
     {
-        TGLog(@"VIEWS expected views vector, got 0x%08x", vectorMarker);
         count = 0;
     }
     
@@ -5688,33 +5865,27 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.messages = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.messages", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at messages error=%@", *error);
         return nil;
     }
     if (signature == (int32_t)0x1d73e7ea)
     {
-        NSArray *topics = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.topics", environment, error);
+        CodexReadStrictObjectVectorWithRole(is, @"messages.messages.topics", environment, error);
         if (error != nil && *error != nil)
         {
-            IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at topics messages=%d error=%@", (int)result.messages.count, *error);
             return nil;
         }
-        IOS6_NOOP_LOG(@"DIALOGS messages.messages topics=%d", (int)topics.count);
     }
     result.chats = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.chats", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at chats messages=%d error=%@", (int)result.messages.count, *error);
         return nil;
     }
     result.users = CodexReadStrictObjectVectorWithRole(is, @"messages.messages.users", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS messages.messages failed at users messages=%d chats=%d error=%@", (int)result.messages.count, (int)result.chats.count, *error);
         return nil;
     }
     
-    IOS6_NOOP_LOG(@"DIALOGS messages.messages messages=%d chats=%d users=%d", (int)result.messages.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
@@ -5744,33 +5915,27 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.messages = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.messages", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at messages count=%d flags=%d error=%@", result.count, flags, *error);
         return nil;
     }
     if (signature == (int32_t)0x5f206716)
     {
-        NSArray *topics = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.topics", environment, error);
+        CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.topics", environment, error);
         if (error != nil && *error != nil)
         {
-            IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at topics count=%d messages=%d flags=%d error=%@", result.count, (int)result.messages.count, flags, *error);
             return nil;
         }
-        IOS6_NOOP_LOG(@"DIALOGS messagesSlice topics=%d", (int)topics.count);
     }
     result.chats = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.chats", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at chats count=%d messages=%d flags=%d error=%@", result.count, (int)result.messages.count, flags, *error);
         return nil;
     }
     result.users = CodexReadStrictObjectVectorWithRole(is, @"messagesSlice.users", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS messagesSlice failed at users count=%d messages=%d chats=%d flags=%d error=%@", result.count, (int)result.messages.count, (int)result.chats.count, flags, *error);
         return nil;
     }
     
-    IOS6_NOOP_LOG(@"DIALOGS messagesSlice count=%d messages=%d chats=%d users=%d flags=%d", result.count, (int)result.messages.count, (int)result.chats.count, (int)result.users.count, flags);
     return result;
 }
 
@@ -5789,6 +5954,145 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     return [[TLDraftMessage$draftMessageEmpty alloc] init];
 }
 
+@end
+
+@interface TLCodexModernInputPeerValue : NSObject <TLObject>
+@property (nonatomic) int32_t signature;
+@property (nonatomic) int64_t peerId;
+@property (nonatomic) int64_t accessHash;
+@property (nonatomic) int32_t messageId;
+@property (nonatomic, strong) id sourcePeer;
+@end
+
+@implementation TLCodexModernInputPeerValue
+- (int32_t)TLconstructorSignature { return _signature; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+{
+    int32_t signature = [is readInt32];
+    TLCodexModernInputPeerValue *result = [[TLCodexModernInputPeerValue alloc] init];
+    result.signature = signature;
+    switch (signature)
+    {
+        case (int32_t)0x7f3b18ea:
+        case (int32_t)0x7da07ec9:
+            break;
+        case (int32_t)0x35a95cb9:
+            result.peerId = [is readInt64];
+            break;
+        case (int32_t)0xdde8a54c:
+        case (int32_t)0x27bcbbfc:
+            result.peerId = [is readInt64];
+            result.accessHash = [is readInt64];
+            break;
+        case (int32_t)0xa87b0a1c:
+        case (int32_t)0xbd2a0840:
+            result.sourcePeer = CodexReadModernInputPeerValue(is, environment, error);
+            if (error != NULL && *error != nil)
+                return nil;
+            result.messageId = [is readInt32];
+            result.peerId = [is readInt64];
+            break;
+        default:
+        {
+            id object = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+            if (error != NULL && *error != nil)
+                return nil;
+            result.sourcePeer = object;
+            break;
+        }
+    }
+    return result;
+}
+
+@interface TLCodexModernInputReplyToValue : NSObject <TLObject>
+@property (nonatomic) int32_t signature;
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int32_t replyToMessageId;
+@property (nonatomic) int32_t topMessageId;
+@property (nonatomic, strong) id replyToPeer;
+@property (nonatomic, strong) NSString *quoteText;
+@property (nonatomic, strong) NSArray *quoteEntities;
+@property (nonatomic) int32_t quoteOffset;
+@property (nonatomic, strong) id monoforumPeer;
+@property (nonatomic) int32_t todoItemId;
+@property (nonatomic, strong) NSData *pollOption;
+@property (nonatomic) int32_t storyId;
+@end
+
+@implementation TLCodexModernInputReplyToValue
+- (int32_t)TLconstructorSignature { return _signature; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+@end
+
+@interface TLCodexModernInputReplyToParser : NSObject <TLObject>
+@end
+
+@implementation TLCodexModernInputReplyToParser
+- (int32_t)TLconstructorSignature { return 0; }
+- (int32_t)TLconstructorName { return -1; }
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values { }
+- (void)TLserialize:(NSOutputStream *)__unused os { }
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    TLCodexModernInputReplyToValue *result = [[TLCodexModernInputReplyToValue alloc] init];
+    result.signature = signature;
+    if (signature == (int32_t)0x5881323a)
+    {
+        result.replyToPeer = CodexReadModernInputPeerValue(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        result.storyId = [is readInt32];
+        return result;
+    }
+    if (signature == (int32_t)0x69d66c45)
+    {
+        result.monoforumPeer = CodexReadModernInputPeerValue(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+        return result;
+    }
+    result.flags = [is readInt32];
+    result.replyToMessageId = [is readInt32];
+    if (result.flags & (1 << 0))
+        result.topMessageId = [is readInt32];
+    if (result.flags & (1 << 1))
+    {
+        result.replyToPeer = CodexReadModernInputPeerValue(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+    }
+    if (result.flags & (1 << 2))
+        result.quoteText = [is readString];
+    if (result.flags & (1 << 3))
+    {
+        result.quoteEntities = CodexReadObjectVector(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+    }
+    if (result.flags & (1 << 4))
+        result.quoteOffset = [is readInt32];
+    if (signature != (int32_t)0x22c0f6d5 && (result.flags & (1 << 5)))
+    {
+        result.monoforumPeer = CodexReadModernInputPeerValue(is, environment, error);
+        if (error != NULL && *error != nil)
+            return nil;
+    }
+    if (signature != (int32_t)0x22c0f6d5 && (result.flags & (1 << 6)))
+        result.todoItemId = [is readInt32];
+    if (signature == (int32_t)0x3bd4b7c2 && (result.flags & (1 << 7)))
+        result.pollOption = [is readBytes];
+    return result;
+}
 @end
 
 @interface TLCodexModernDraftMessageParser : TLDraftMessage$draftMessage
@@ -5827,7 +6131,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         CodexReadObject(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"DIALOGS draftMessage flags=0x%08x textLen=%d", flags, (int)result.message.length);
     return result;
 }
 
@@ -5854,7 +6157,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.draft = (TLDraftMessage *)CodexReadObject(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"DIALOGS updateDraftMessage flags=0x%08x draft=%@", flags, NSStringFromClass([result.draft class]));
     return result;
 }
 
@@ -5896,7 +6198,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             break;
         }
     }
-    IOS6_NOOP_LOG(@"DIALOGS chatParticipant sig=0x%08x user=%d", signature, result.user_id);
     return result;
 }
 
@@ -6013,7 +6314,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     }
     if (error != nil && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"DIALOGS channelParticipant sig=0x%08x user=%d flags=0x%08x", signature, result.user_id, flags);
     return result;
 }
 
@@ -6055,7 +6355,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (error != nil && *error != nil)
         return nil;
     result.users = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"DIALOGS channelParticipants count=%d participants=%d users=%d", result.count, (int)result.participants.count, (int)result.users.count);
     return result;
 }
 
@@ -6073,7 +6372,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.n_id = [is readInt32];
     if (flags & (1 << 0))
         CodexReadObject(is, environment, error);
-    TGLog(@"MSG messageEmpty id=%d flags=0x%08x", result.n_id, flags);
     return result;
 }
 
@@ -6111,7 +6409,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         [is readInt32];
     if (flags & (1 << 18))
         [is readInt32];
-    IOS6_NOOP_LOG(@"DIALOGS peerSettings flags=0x%08x", flags);
     return result;
 }
 
@@ -6146,9 +6443,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @implementation TLCodexModernBotCommandParser
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLBotCommand$botCommand *result = [[TLBotCommand$botCommand alloc] init];
+    if (signature == (int32_t)0x9852d6d2)
+        [is readInt32];
     result.command = [is readString];
     result.n_description = [is readString];
     return result;
@@ -6165,7 +6464,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0xe86602c3)
     {
-        IOS6_NOOP_LOG(@"STICKER tl.allStickersNotModified");
         return [[TLmessages_AllStickers$messages_allStickersNotModified alloc] init];
     }
     
@@ -6174,8 +6472,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.sets = CodexReadObjectVector(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
-    id firstSet = result.sets.count == 0 ? nil : result.sets[0];
-    IOS6_NOOP_LOG(@"STICKER tl.allStickers hash=%d sets=%d first=%@", result.n_hash, (int)result.sets.count, firstSet == nil ? nil : NSStringFromClass([firstSet class]));
     return result;
 }
 
@@ -6190,7 +6486,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0x0b17f890)
     {
-        IOS6_NOOP_LOG(@"STICKER tl.recentStickersNotModified");
         return [[TLmessages_RecentStickers$messages_recentStickersNotModified alloc] init];
     }
     
@@ -6203,7 +6498,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (error != nil && *error != nil)
         return nil;
     result.dates = CodexReadInt32Vector(is);
-    IOS6_NOOP_LOG(@"STICKER tl.recentStickers hash=%d packs=%d stickers=%d dates=%d", result.n_hash, (int)result.packs.count, (int)result.stickers.count, (int)result.dates.count);
     return result;
 }
 
@@ -6218,20 +6512,18 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0xc6dc0c66)
     {
-        int32_t count = [is readInt32];
-        IOS6_NOOP_LOG(@"STICKER tl.featuredStickersNotModified count=%d", count);
+        [is readInt32];
         return [[TLmessages_FeaturedStickers$messages_featuredStickersNotModified alloc] init];
     }
     
     TLmessages_FeaturedStickers$messages_featuredStickers *result = [[TLmessages_FeaturedStickers$messages_featuredStickers alloc] init];
-    int32_t flags = [is readInt32];
+    [is readInt32];
     result.n_hash = (int32_t)[is readInt64];
     [is readInt32];
     result.sets = CodexReadObjectVector(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
     result.unread = CodexReadInt64Vector(is);
-    IOS6_NOOP_LOG(@"STICKER tl.featuredStickers flags=0x%08x hash=%d sets=%d unread=%d", flags, result.n_hash, (int)result.sets.count, (int)result.unread.count);
     return result;
 }
 
@@ -6246,7 +6538,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0x9e8fa6d3)
     {
-        IOS6_NOOP_LOG(@"STICKER tl.favedStickersNotModified");
         return [[TLmessages_FavedStickers$messages_favedStickersNotModified alloc] init];
     }
     
@@ -6258,8 +6549,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.stickers = CodexReadObjectVector(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
-    id firstSticker = result.stickers.count == 0 ? nil : result.stickers[0];
-    IOS6_NOOP_LOG(@"STICKER tl.favedStickers hash=%d packs=%d stickers=%d firstSticker=%@", result.n_hash, (int)result.packs.count, (int)result.stickers.count, firstSticker == nil ? nil : NSStringFromClass([firstSticker class]));
     return result;
 }
 
@@ -6277,20 +6566,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         TLInputStickerSet$inputStickerSetID *result = [[TLInputStickerSet$inputStickerSetID alloc] init];
         result.n_id = [is readInt64];
         result.access_hash = [is readInt64];
-        IOS6_NOOP_LOG(@"STICKER tl.inputStickerSetID id=%lld", (long long)result.n_id);
         return result;
     }
     if (signature == (int32_t)0x861cc8a0)
     {
         TLInputStickerSet$inputStickerSetShortName *result = [[TLInputStickerSet$inputStickerSetShortName alloc] init];
         result.short_name = [is readString];
-        IOS6_NOOP_LOG(@"STICKER tl.inputStickerSetShortName short=%@", result.short_name);
         return result;
     }
     if (signature == (int32_t)0xe67f520e)
         [is readString];
     
-    IOS6_NOOP_LOG(@"STICKER tl.inputStickerSet.emptyish sig=0x%08x", signature);
     return [[TLInputStickerSet$inputStickerSetEmpty alloc] init];
 }
 
@@ -6312,7 +6598,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         return nil;
     if (flags & (1 << 0))
         result.mask_coords = (TLMaskCoords *)CodexReadObject(is, environment, error);
-    IOS6_NOOP_LOG(@"STICKER tl.documentAttributeSticker flags=0x%08x alt=%@ set=%@ mask=%d", flags, result.alt, NSStringFromClass([result.stickerset class]), (flags & (1 << 0)) ? 1 : 0);
     return result;
 }
 
@@ -6369,7 +6654,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         [is readInt64];
     result.count = [is readInt32];
     result.n_hash = [is readInt32];
-    IOS6_NOOP_LOG(@"STICKER tl.stickerSetMeta sig=0x%08x flags=0x%08x id=%lld title=%@ short=%@ count=%d hash=%d", signature, flags, (long long)result.n_id, result.title, result.short_name, result.count, result.n_hash);
     return result;
 }
 
@@ -6413,7 +6697,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0xd3f924eb)
     {
-        IOS6_NOOP_LOG(@"STICKER tl.stickerSetNotModified");
         return [[TLmessages_StickerSet alloc] init];
     }
     
@@ -6430,8 +6713,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.documents = CodexReadObjectVector(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
-    id firstDocument = result.documents.count == 0 ? nil : result.documents[0];
-    IOS6_NOOP_LOG(@"STICKER tl.stickerSet set=%@ packs=%d documents=%d firstDocument=%@", result.set, (int)result.packs.count, (int)result.documents.count, firstDocument == nil ? nil : NSStringFromClass([firstDocument class]));
     return result;
 }
 
@@ -6449,7 +6730,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         TLStickerSetCovered$stickerSetCovered *result = [[TLStickerSetCovered$stickerSetCovered alloc] init];
         result.set = (TLStickerSet *)CodexReadObject(is, environment, error);
         result.cover = (TLDocument *)CodexReadObject(is, environment, error);
-        IOS6_NOOP_LOG(@"STICKER tl.stickerSetCovered single sig=0x%08x set=%@ cover=%@", signature, result.set, result.cover == nil ? nil : NSStringFromClass([result.cover class]));
         return result;
     }
 
@@ -6473,8 +6753,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         result.covers = @[];
     }
 
-    id firstCover = result.covers.count == 0 ? nil : result.covers[0];
-    IOS6_NOOP_LOG(@"STICKER tl.stickerSetCovered sig=0x%08x set=%@ covers=%d firstCover=%@", signature, result.set, (int)result.covers.count, firstCover == nil ? nil : NSStringFromClass([firstCover class]));
     return result;
 }
 
@@ -6489,13 +6767,11 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0x38641628)
     {
-        IOS6_NOOP_LOG(@"STICKER tl.installResult success");
         return [[TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultSuccess alloc] init];
     }
     
     TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive *result = [[TLmessages_StickerSetInstallResult$messages_stickerSetInstallResultArchive alloc] init];
     result.sets = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"STICKER tl.installResult archive sets=%d", (int)result.sets.count);
     return result;
 }
 
@@ -6510,14 +6786,12 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 {
     if (signature == (int32_t)0x0d54b65d)
     {
-        IOS6_NOOP_LOG(@"STICKER tl.foundStickerSetsNotModified");
         return [[TLmessages_FoundStickerSets alloc] init];
     }
     
     TLmessages_FoundStickerSets$messages_foundStickerSets *result = [[TLmessages_FoundStickerSets$messages_foundStickerSets alloc] init];
     result.n_hash = [is readInt32];
     result.sets = CodexReadObjectVector(is, environment, error);
-    IOS6_NOOP_LOG(@"STICKER tl.foundStickerSets hash=%d sets=%d", result.n_hash, (int)result.sets.count);
     return result;
 }
 
@@ -6533,7 +6807,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     TLauth_ExportedAuthorization$auth_exportedAuthorization *result = [[TLauth_ExportedAuthorization$auth_exportedAuthorization alloc] init];
     result.n_id = (int32_t)[is readInt64];
     result.bytes = [is readBytes];
-    IOS6_NOOP_LOG(@"AUTH exportedAuthorization bytes=%d", (int)result.bytes.length);
     return result;
 }
 
@@ -6571,7 +6844,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         CodexReadObject(is, environment, error);
     if (error != nil && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"DIALOGS botInfo user=%d commands=%d flags=0x%08x", result.user_id, (int)result.commands.count, flags);
     return result;
 }
 
@@ -6644,7 +6916,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     {
         result.topicId = [is readInt32];
         result.deleted = true;
-        IOS6_NOOP_LOG(@"FORUM topic.deleted id=%d", result.topicId);
         return result;
     }
 
@@ -6689,7 +6960,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             return nil;
     }
 
-    IOS6_NOOP_LOG(@"FORUM topic id=%d top=%d unread=%d flags=0x%08x title=%@", result.topicId, result.topMessage, result.unreadCount, flags, result.title);
     return result;
 }
 
@@ -6728,7 +6998,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (error != nil && *error != nil)
         return nil;
     result.pts = [is readInt32];
-    IOS6_NOOP_LOG(@"FORUM topics.result count=%d parsed=%d messages=%d chats=%d users=%d pts=%d", result.count, (int)result.ios6_forumTopics.count, (int)result.messages.count, (int)result.chats.count, (int)result.users.count, result.pts);
     return result;
 }
 
@@ -6774,32 +7043,27 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.messages = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.messages", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at messages count=%d flags=%d error=%@", result.count, flags, *error);
         return nil;
     }
     
-    NSArray *topics = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.topics", environment, error);
+    CodexReadStrictObjectVectorWithRole(is, @"channelMessages.topics", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at topics count=%d messages=%d flags=%d error=%@", result.count, (int)result.messages.count, flags, *error);
         return nil;
     }
     
     result.chats = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.chats", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at chats count=%d messages=%d topics=%d flags=%d error=%@", result.count, (int)result.messages.count, (int)topics.count, flags, *error);
         return nil;
     }
     
     result.users = CodexReadStrictObjectVectorWithRole(is, @"channelMessages.users", environment, error);
     if (error != nil && *error != nil)
     {
-        IOS6_NOOP_LOG(@"DIALOGS channelMessages failed at users count=%d messages=%d topics=%d chats=%d flags=%d error=%@", result.count, (int)result.messages.count, (int)topics.count, (int)result.chats.count, flags, *error);
         return nil;
     }
     
-    IOS6_NOOP_LOG(@"DIALOGS channelMessages count=%d pts=%d messages=%d topics=%d chats=%d users=%d flags=%d", result.count, result.pts, (int)result.messages.count, (int)topics.count, (int)result.chats.count, (int)result.users.count, flags);
     return result;
 }
 
@@ -7320,7 +7584,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             return result;
         }
         default:
-            IOS6_NOOP_LOG(@"AUTH modern messageAction fallback sig=0x%08x", signature);
             return [[TLMessageAction$messageActionEmpty alloc] init];
     }
 }
@@ -7427,7 +7690,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     {
         result.dc_id = 0;
         result.attributes = CodexReadObjectVectorWithMarker(is, dcIdOrAttributesMarker, environment, error);
-        IOS6_NOOP_LOG(@"AUTH modern document without dc_id id=%lld flags=0x%08x", (long long)result.n_id, flags);
     }
     else
     {
@@ -7446,11 +7708,9 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 else if (CodexLooksLikeStringFirstWord(tailWord))
                 {
                     CodexSkipStringWithFirstWord(is, tailWord);
-                    IOS6_NOOP_LOG(@"AUTH skipped bare document attribute string first=0x%08x id=%lld", tailWord, (long long)result.n_id);
                 }
                 else if (CodexLooksLikeTinyBareDocumentTailWord(tailWord))
                 {
-                    IOS6_NOOP_LOG(@"AUTH skipped bare document attribute tail word=0x%08x id=%lld", tailWord, (long long)result.n_id);
                 }
                 else
                     break;
@@ -7478,7 +7738,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.duration = (int32_t)[is readDouble];
     result.w = [is readInt32];
     result.h = [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH documentAttributeVideo d38 flags=0x%08x duration=%d w=%d h=%d unknown=0x%08x", flags, result.duration, result.w, result.h, flags & ~((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5)));
     if (flags & (1 << 2))
         [is readInt32];
     if (flags & (1 << 4))
@@ -7505,7 +7764,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     result.h = [is readInt32];
     if (flags & (1 << 2))
         [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH documentAttributeVideo d38 flags=0x%08x duration=%d w=%d h=%d unknown=0x%08x", flags, result.duration, result.w, result.h, flags & ~((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3)));
     return result;
 }
 
@@ -7525,20 +7783,6 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
-@interface TLCodexModernDocumentAttributeFilenameLikeParser : TLDocumentAttribute
-@end
-
-@implementation TLCodexModernDocumentAttributeFilenameLikeParser
-
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
-{
-    [is readString];
-    IOS6_NOOP_LOG(@"AUTH documentAttribute filename-like 6a4a7967");
-    return [[TLDocumentAttribute alloc] init];
-}
-
-@end
-
 @interface TLCodexModernUserProfilePhotoParser : TLUserProfilePhoto$userProfilePhoto
 @end
 
@@ -7549,9 +7793,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     TLCodexModernUserProfilePhotoParser *result = [[TLCodexModernUserProfilePhotoParser alloc] init];
     int32_t flags = [is readInt32];
     result.photo_id = [is readInt64];
+    NSData *strippedThumbnail = nil;
     if (flags & (1 << 1))
-        [is readBytes];
+        strippedThumbnail = [is readBytes];
     result.dc_id = [is readInt32];
+    if (OGPlatformUsesConstrainedBackgroundExecution() && strippedThumbnail.length != 0)
+    {
+        NSData *decodedThumbnail = CodexDecodedStrippedThumbnail(strippedThumbnail);
+        UIImage *thumbnailImage = decodedThumbnail.length == 0 ? nil : [[UIImage alloc] initWithData:decodedThumbnail];
+        if (thumbnailImage != nil)
+            objc_setAssociatedObject(result, NSSelectorFromString(@"onegramStrippedAvatar"), thumbnailImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 
     return result;
 }
@@ -7570,9 +7822,17 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     {
         int32_t flags = [is readInt32];
         result.photo_id = [is readInt64];
+        NSData *strippedThumbnail = nil;
         if (flags & (1 << 1))
-            [is readBytes];
+            strippedThumbnail = [is readBytes];
         result.dc_id = [is readInt32];
+        if (OGPlatformUsesConstrainedBackgroundExecution() && strippedThumbnail.length != 0)
+        {
+            NSData *decodedThumbnail = CodexDecodedStrippedThumbnail(strippedThumbnail);
+            UIImage *thumbnailImage = decodedThumbnail.length == 0 ? nil : [[UIImage alloc] initWithData:decodedThumbnail];
+            if (thumbnailImage != nil)
+                objc_setAssociatedObject(result, NSSelectorFromString(@"onegramStrippedAvatar"), thumbnailImage, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
 
     }
     return result;
@@ -7629,6 +7889,20 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
 
 @end
 
+@interface TLCodexModernChatAdminRightsParser : TLChannelAdminRights$channelAdminRights
+@end
+
+@implementation TLCodexModernChatAdminRightsParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    TLChannelAdminRights$channelAdminRights *result = [[TLChannelAdminRights$channelAdminRights alloc] init];
+    result.flags = [is readInt32];
+    return result;
+}
+
+@end
+
 @interface TLCodexModernChannelParser : TLChat$channel
 @end
 
@@ -7667,7 +7941,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
     if (flags2 & (1 << 4))
     {
 
-        if (signature == (int32_t)0x1c32b11c)
+        if (signature == (int32_t)0x1c32b11c || signature == (int32_t)0xd49f34c6)
             CodexReadObject(is, environment, error);
         else
             [is readInt32];
@@ -7700,7 +7974,8 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         [is readInt64];
     if (flags2 & (1 << 18))
         [is readInt64];
-    IOS6_NOOP_LOG(@"DIALOGS channel sig=0x%08x id=%lld stored=%d hash=%lld flags=0x%08x flags2=0x%08x title=%@", signature, channelId, result.n_id, result.access_hash, flags, flags2, result.title);
+    if (signature == (int32_t)0xd49f34c6 && (flags2 & (1 << 20)))
+        result.linked_community_id = [is readInt64];
     return result;
 }
 
@@ -7792,7 +8067,6 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
         if (flags & (1 << 17)) { [is readInt32]; CodexReadInt64Vector(is); }
         if (flags & (1 << 18)) TLCodexStoreChatReactionPolicy(result, TLCodexReadChatReactionPolicy(is, environment, error));
         if (flags & (1 << 20)) [is readInt32];
-        TGLog(@"FULL chatFull parsed id=%lld about=%d", channelId, (int)about.length);
         return result;
     }
 
@@ -7866,7 +8140,6 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
         if (flags2 & (1 << 22)) CodexReadObject(is, environment, error);
         if (signature != (int32_t)0xe4e0b29d && (flags2 & (1 << 23))) [is readInt64];
     }
-    TGLog(@"FULL channelFull parsed sig=0x%08x id=%lld about=%d members=%d flags=0x%08x flags2=0x%08x", signature, channelId, (int)result.about.length, result.participants_count, flags, flags2);
     return result;
 }
 
@@ -8067,7 +8340,6 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
     CodexReadObject(is, environment, &nestedError);
     if (error != NULL)
         *error = nil;
-    IOS6_NOOP_LOG(@"SKIP updateGroupCall preserved flags=0x%08x", flags);
     return self;
 }
 
@@ -8306,10 +8578,9 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     {
         int32_t folderFlags = [is readInt32];
         [is readInt32];
-        NSString *title = [is readString];
+        [is readString];
         if (folderFlags & (1 << 3))
             CodexReadObject(is, environment, error);
-        IOS6_NOOP_LOG(@"AUTH dialogFolder title=%@ flags=%d folderFlags=%d", title, flags, folderFlags);
     }
     else
     {
@@ -8322,7 +8593,6 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     [is readInt32];
     [is readInt32];
     [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH skip dialogFolder from main list");
     return nil;
 }
 
@@ -8397,7 +8667,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         case 0x541a1d1a:
         case 0x65899777:
         {
-            int32_t flags = [is readInt32];
+            [is readInt32];
             return [[TLUserStatus$userStatusRecently alloc] init];
         }
         default:
@@ -8615,6 +8885,26 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 
 @end
 
+@interface TLCodexModernUpdateUserParser : TLUpdate
+{
+    int64_t _userId;
+}
+@property (nonatomic) int64_t userId;
+@end
+
+@implementation TLCodexModernUpdateUserParser
+
+@synthesize userId = _userId;
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    TLCodexModernUpdateUserParser *result = [[TLCodexModernUpdateUserParser alloc] init];
+    result.userId = [is readInt64];
+    return result;
+}
+
+@end
+
 @interface TLCodexModernUpdateUserStatusParser : TLUpdate$updateUserStatus
 @end
 
@@ -8627,7 +8917,6 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     int32_t statusSignature = [is readInt32];
     result.user_id = TGModernLegacyIdForModernId(userId);
     result.status = (TLUserStatus *)TLMetaClassStore::constructObject(is, statusSignature, environment, nil, error);
-    IOS6_NOOP_LOG(@"AUTH updateUserStatus userId=%lld statusSig=0x%08x status=%@", userId, statusSignature, result.status);
     return result;
 }
 
@@ -8665,7 +8954,6 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     result.channel_id = (int32_t)channelId;
     if (flags & 1)
         result.pts = [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH updateChannelTooLong modern channel=%lld flags=%d pts=%d", channelId, flags, result.pts);
     return result;
 }
 
@@ -8696,7 +8984,6 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         result.entities = CodexReadObjectVector(is, environment, error);
     if (result.flags & (1 << 25))
         [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH updateShortMessage modern id=%d user=%d flags=%d", result.n_id, result.user_id, result.flags);
     return result;
 }
 
@@ -8728,7 +9015,6 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         result.entities = CodexReadObjectVector(is, environment, error);
     if (result.flags & (1 << 25))
         [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH updateShortChatMessage modern id=%d from=%d chat=%d flags=%d", result.n_id, result.from_id, result.chat_id, result.flags);
     return result;
 }
 
@@ -8753,7 +9039,6 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         result.entities = CodexReadObjectVector(is, environment, error);
     if (result.flags & (1 << 25))
         [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH updateShortSentMessage modern id=%d flags=%d", result.n_id, result.flags);
     return result;
 }
 
@@ -8935,7 +9220,7 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
         }
     }
 
-    dispatch_async(dispatch_get_main_queue(), ^{
+    OGPlatformDispatchOnMainThread(^{
         [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6DialogFiltersUpdated" object:nil];
     });
     return self;
@@ -8957,7 +9242,6 @@ static NSString *CodexReadDialogFilterTitle(NSInputStream *is, bool textWithEnti
     result.seq = [is readInt32];
     result.unread_count = [is readInt32];
     CodexLastReadUpdatesState = result;
-    IOS6_NOOP_LOG(@"AUTH updates.state pts=%d qts=%d date=%d seq=%d unread=%d", result.pts, result.qts, result.date, result.seq, result.unread_count);
     return result;
 }
 
@@ -8975,7 +9259,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
         result.seq = [is readInt32];
         result.unread_count = [is readInt32];
         CodexLastReadUpdatesState = result;
-        IOS6_NOOP_LOG(@"AUTH updates.state.inline pts=%d qts=%d date=%d seq=%d unread=%d", result.pts, result.qts, result.date, result.seq, result.unread_count);
         return result;
     }
     
@@ -8996,7 +9279,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
         if (error != NULL && *error != nil)
             return nil;
         result.date = [is readInt32];
-        IOS6_NOOP_LOG(@"AUTH updateShort date=%d update=%@", result.date, result.update);
         return result;
     }
 
@@ -9015,7 +9297,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
         result.date = [is readInt32];
         result.seq_start = [is readInt32];
         result.seq = [is readInt32];
-        IOS6_NOOP_LOG(@"AUTH updatesCombined updates=%d users=%d chats=%d date=%d seq=%d", (int)result.updates.count, (int)result.users.count, (int)result.chats.count, result.date, result.seq);
         return result;
     }
 
@@ -9031,7 +9312,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
         return nil;
     result.date = [is readInt32];
     result.seq = [is readInt32];
-    IOS6_NOOP_LOG(@"AUTH updates updates=%d users=%d chats=%d date=%d seq=%d", (int)result.updates.count, (int)result.users.count, (int)result.chats.count, result.date, result.seq);
     return result;
 }
 
@@ -9080,7 +9360,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
         result.intermediate_state = CodexReadUpdatesStateCompat(is, environment, error);
         if (error != NULL && *error != nil)
             return nil;
-        IOS6_NOOP_LOG(@"AUTH updates.differenceSlice messages=%d encrypted=%d other=%d chats=%d users=%d", (int)result.n_new_messages.count, (int)result.n_new_encrypted_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
         return result;
     }
 
@@ -9103,7 +9382,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     result.state = CodexReadUpdatesStateCompat(is, environment, error);
     if (error != NULL && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"AUTH updates.difference messages=%d encrypted=%d other=%d chats=%d users=%d", (int)result.n_new_messages.count, (int)result.n_new_encrypted_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
@@ -9135,7 +9413,6 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     result.users = CodexReadStrictObjectVectorWithRole(is, @"channelDifference.users", environment, error);
     if (error != NULL && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"AUTH channelDifference pts=%d messages=%d updates=%d chats=%d users=%d", result.pts, (int)result.n_new_messages.count, (int)result.other_updates.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
@@ -9175,19 +9452,45 @@ static TLupdates_State *CodexReadUpdatesStateCompat(NSInputStream *is, id<TLSeri
     result.users = CodexReadStrictObjectVectorWithRole(is, @"channelDifferenceTooLong.users", environment, error);
     if (error != NULL && *error != nil)
         return nil;
-    IOS6_NOOP_LOG(@"AUTH channelDifferenceTooLong pts=%d top=%d messages=%d chats=%d users=%d", result.pts, result.top_message, (int)result.messages.count, (int)result.chats.count, (int)result.users.count);
     return result;
 }
 
 @end
 
+void TLMetaClassStore::beginObjectClassRegistration()
+{
+    TGTLClassRegistryGuard guard;
+    if (!TGTLObjectClassRegistrationPending)
+    {
+        TGTLObjectClassRegistrationPending = true;
+        dispatch_group_enter(TGTLObjectClassRegistrationGroup());
+    }
+}
+
+void TLMetaClassStore::completeObjectClassRegistration()
+{
+    bool shouldLeave = false;
+    {
+        TGTLClassRegistryGuard guard;
+        if (TGTLObjectClassRegistrationPending)
+        {
+            TGTLObjectClassRegistrationPending = false;
+            shouldLeave = true;
+        }
+    }
+    if (shouldLeave)
+        dispatch_group_leave(TGTLObjectClassRegistrationGroup());
+}
+
 void TLMetaClassStore::registerObjectClass(id<TLObject> objectClass)
 {
+    TGTLClassRegistryGuard guard;
     objectClassesByConstructorNames.insert(std::pair<int32_t, id<TLObject> >([objectClass TLconstructorName], objectClass));
 }
 
 void TLMetaClassStore::registerVectorClass(id<TLVector> vectorClass)
 {
+    TGTLClassRegistryGuard guard;
 #if TARGET_IPHONE_SIMULATOR
     std::tr1::unordered_map<int32_t, id<TLVector> >::iterator it = vectorClassesBySignature.find([vectorClass TLconstructorSignature]);
     if (it != vectorClassesBySignature.end())
@@ -9199,190 +9502,175 @@ void TLMetaClassStore::registerVectorClass(id<TLVector> vectorClass)
 
 id<TLObject> TLMetaClassStore::getObjectClass(int32_t name)
 {
-    std::tr1::unordered_map<int32_t, id<TLObject> >::iterator it = objectClassesByConstructorNames.find(name);
-    if (it == objectClassesByConstructorNames.end())
+    id<TLObject> result = nil;
+    bool registrationPending = false;
     {
-        TGLog(@"%.8x -> %@", name, stringForHash(name));
+        TGTLClassRegistryGuard guard;
+        std::tr1::unordered_map<int32_t, id<TLObject> >::iterator it = objectClassesByConstructorNames.find(name);
+        if (it != objectClassesByConstructorNames.end())
+            result = it->second;
+        registrationPending = TGTLObjectClassRegistrationPending;
+    }
+
+    if (result == nil)
+    {
+        TLMetaClassTable const *table = TLgetMetaClassTable();
+        id<TLObject> objectClass = TLMetaClassInstantiate(table->objectClasses, table->objectClassesCount, table->classNames, name);
+        if (objectClass != nil)
+        {
+            TGTLClassRegistryGuard guard;
+            result = objectClassesByConstructorNames.insert(std::pair<int32_t, id<TLObject> >(name, objectClass)).first->second;
+        }
+    }
+
+    if (result == nil && registrationPending)
+    {
+        dispatch_group_wait(TGTLObjectClassRegistrationGroup(), DISPATCH_TIME_FOREVER);
+        TGTLClassRegistryGuard guard;
+        std::tr1::unordered_map<int32_t, id<TLObject> >::iterator it = objectClassesByConstructorNames.find(name);
+        if (it != objectClassesByConstructorNames.end())
+            result = it->second;
+    }
+
+    if (result == nil)
+    {
         return nil;
     }
-    return it->second;
+    return result;
 }
 
-void TLMetaClassStore::clearScheme()
+id<TLVector> TLMetaClassStore::getVectorClass(int32_t signature)
 {
-    constructorsBySignature.clear();
-    constructorsByName.clear();
-    typesByName.clear();
-    vectorElementTypesByConstructor.clear();
+    {
+        TGTLClassRegistryGuard guard;
+        std::tr1::unordered_map<int32_t, id<TLVector> >::iterator it = vectorClassesBySignature.find(signature);
+        if (it != vectorClassesBySignature.end())
+            return it->second;
+    }
+
+    TLMetaClassTable const *table = TLgetMetaClassTable();
+    id<TLVector> vectorClass = TLMetaClassInstantiate(table->vectorClasses, table->vectorClassesCount, table->classNames, signature);
+    if (vectorClass == nil)
+        return nil;
+
+    TGTLClassRegistryGuard guard;
+    return vectorClassesBySignature.insert(std::pair<int32_t, id<TLVector> >(signature, vectorClass)).first->second;
 }
 
-TLMetaTypeArgument createTypeArgumentFromString(NSString *desc, std::set<int32_t> &typesToResolve, std::map<int32_t, TLMetaTypeArgumentWithName> &vectorTypeMap, bool &hasUnresolvedTypes)
+static inline int32_t TLSchemeTextHash(const char *text, size_t length)
+{
+    return murMurHashBytes32((void *)text, (int)length);
+}
+
+static inline bool TLSchemeTextEquals(const char *text, size_t length, const char *literal)
+{
+    size_t literalLength = strlen(literal);
+    return length == literalLength && memcmp(text, literal, length) == 0;
+}
+
+static inline bool TLSchemeTextHasPrefix(const char *text, size_t length, const char *prefix)
+{
+    size_t prefixLength = strlen(prefix);
+    return length >= prefixLength && memcmp(text, prefix, prefixLength) == 0;
+}
+
+static void addHashToStringText(int32_t hash, const char *text, size_t length)
+{
+    std::tr1::unordered_map<int32_t, NSString *>::iterator it = hashToStringMap.find(hash);
+    if (it != hashToStringMap.end())
+    {
+        const char *existing = [it->second UTF8String];
+        if (existing != NULL && strlen(existing) == length && memcmp(existing, text, length) == 0)
+            return;
+    }
+    NSString *string = [[NSString alloc] initWithBytes:text length:length encoding:NSUTF8StringEncoding];
+    if (string != nil)
+        hashToStringMap[hash] = string;
+}
+
+static int32_t TLVectorConstructorSignature(const char *elementType, size_t elementTypeLength)
+{
+    static const char vectorPrefix[] = "vector # [ ";
+    static const char vectorSuffix[] = " ] = Vector ";
+    std::vector<char> signatureString;
+    signatureString.reserve(sizeof(vectorPrefix) + sizeof(vectorSuffix) + elementTypeLength * 2);
+    signatureString.insert(signatureString.end(), vectorPrefix, vectorPrefix + sizeof(vectorPrefix) - 1);
+    signatureString.insert(signatureString.end(), elementType, elementType + elementTypeLength);
+    signatureString.insert(signatureString.end(), vectorSuffix, vectorSuffix + sizeof(vectorSuffix) - 1);
+    signatureString.insert(signatureString.end(), elementType, elementType + elementTypeLength);
+    return (int32_t)crc32(0, (const Bytef *)&signatureString[0], (uInt)signatureString.size());
+}
+
+struct TLSchemeBuiltinType
+{
+    const char *desc;
+    const char *name;
+    TLMetaTypeCategory category;
+    bool boxed;
+    int32_t unboxedConstructorSignature;
+};
+
+static const TLSchemeBuiltinType TLSchemeBuiltinTypes[] =
+{
+    {"int", "Int", TLMetaTypeCategoryBuiltinInt32, false, TL_INT32_CONSTRUCTOR},
+    {"Int", "Int", TLMetaTypeCategoryBuiltinInt32, true, 0},
+    {"long", "Long", TLMetaTypeCategoryBuiltinInt64, false, TL_INT64_CONSTRUCTOR},
+    {"Long", "Long", TLMetaTypeCategoryBuiltinInt64, true, 0},
+    {"int128", "Int128", TLMetaTypeCategoryBuiltinInt128, false, TL_INT128_CONSTRUCTOR},
+    {"int256", "Int256", TLMetaTypeCategoryBuiltinInt256, false, TL_INT256_CONSTRUCTOR},
+    {"double", "Double", TLMetaTypeCategoryBuiltinDouble, false, TL_DOUBLE_CONSTRUCTOR},
+    {"Double", "Double", TLMetaTypeCategoryBuiltinDouble, true, 0},
+    {"string", "String", TLMetaTypeCategoryBuiltinString, false, TL_STRING_CONSTRUCTOR},
+    {"String", "String", TLMetaTypeCategoryBuiltinString, true, 0},
+    {"bytes", "Bytes", TLMetaTypeCategoryBuiltinBytes, false, TL_BYTES_CONSTRUCTOR},
+    {"Bytes", "Bytes", TLMetaTypeCategoryBuiltinBytes, true, 0},
+    {"Bool", "Bool", TLMetaTypeCategoryBuiltinBool, true, 0},
+    {"Object", "Object", TLMetaTypeCategoryObject, true, 0}
+};
+
+static TLMetaTypeArgument createTypeArgumentFromText(const char *desc, size_t length, std::set<int32_t> &typesToResolve, std::map<int32_t, TLMetaTypeArgumentWithName> &vectorTypeMap, bool &hasUnresolvedTypes)
 {
     TLMetaTypeArgument type;
     
+    type.boxed = false;
     type.unboxedConstructorName = 0;
     type.unboxedConstructorSignature = 0;
     
-    TLMetaTypeCategory category;
+    TLMetaTypeCategory category = TLMetaTypeCategoryObject;
     int32_t typeName = 0;
     
     std::vector<TLMetaTypeArgument> typeArguments;
     
-    if ([desc isEqualToString:@"int"])
+    const TLSchemeBuiltinType *builtinType = NULL;
+    for (size_t i = 0; i < sizeof(TLSchemeBuiltinTypes) / sizeof(TLSchemeBuiltinTypes[0]); i++)
     {
-        typeName = murMurHash32(@"Int");
-        addHashToString(typeName, @"Int");
-        
-        category = TLMetaTypeCategoryBuiltinInt32;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_INT32_CONSTRUCTOR;
+        if (TLSchemeTextEquals(desc, length, TLSchemeBuiltinTypes[i].desc))
+        {
+            builtinType = &TLSchemeBuiltinTypes[i];
+            break;
+        }
     }
-    else if ([desc isEqualToString:@"Int"])
+    
+    if (builtinType != NULL)
     {
-        typeName = murMurHash32(@"Int");
-        addHashToString(typeName, @"Int");
+        size_t builtinNameLength = strlen(builtinType->name);
+        typeName = TLSchemeTextHash(builtinType->name, builtinNameLength);
+        addHashToStringText(typeName, builtinType->name, builtinNameLength);
         
-        category = TLMetaTypeCategoryBuiltinInt32;
-        type.boxed = true;
+        category = builtinType->category;
+        type.boxed = builtinType->boxed;
+        type.unboxedConstructorSignature = builtinType->unboxedConstructorSignature;
     }
-    else if ([desc isEqualToString:@"long"])
+    else if (length > 7 && (TLSchemeTextHasPrefix(desc, length, "Vector<") || TLSchemeTextHasPrefix(desc, length, "vector<")))
     {
-        typeName = murMurHash32(@"Long");
-        addHashToString(typeName, @"Long");
+        bool boxedVector = desc[0] == 'V';
         
-        category = TLMetaTypeCategoryBuiltinInt64;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_INT64_CONSTRUCTOR;
-    }
-    else if ([desc isEqualToString:@"Long"])
-    {
-        typeName = murMurHash32(@"Long");
-        addHashToString(typeName, @"Long");
+        typeName = TLSchemeTextHash(desc, length);
+        addHashToStringText(typeName, desc, length);
         
-        category = TLMetaTypeCategoryBuiltinInt64;
-        type.boxed = true;
-    }
-    else if ([desc isEqualToString:@"int128"])
-    {
-        typeName = murMurHash32(@"Int128");
-        addHashToString(typeName, @"Int128");
-        
-        category = TLMetaTypeCategoryBuiltinInt128;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_INT128_CONSTRUCTOR;
-    }
-    else if ([desc isEqualToString:@"int256"])
-    {
-        typeName = murMurHash32(@"Int256");
-        addHashToString(typeName, @"Int256");
-        
-        category = TLMetaTypeCategoryBuiltinInt256;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_INT256_CONSTRUCTOR;
-    }
-    else if ([desc isEqualToString:@"double"])
-    {
-        typeName = murMurHash32(@"Double");
-        addHashToString(typeName, @"Double");
-        
-        category = TLMetaTypeCategoryBuiltinDouble;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_DOUBLE_CONSTRUCTOR;
-    }
-    else if ([desc isEqualToString:@"Double"])
-    {
-        typeName = murMurHash32(@"Double");
-        addHashToString(typeName, @"Double");
-        
-        category = TLMetaTypeCategoryBuiltinDouble;
-        type.boxed = true;
-    }
-    else if ([desc isEqualToString:@"string"])
-    {
-        typeName = murMurHash32(@"String");
-        addHashToString(typeName, @"String");
-        
-        category = TLMetaTypeCategoryBuiltinString;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_STRING_CONSTRUCTOR;
-    }
-    else if ([desc isEqualToString:@"String"])
-    {
-        typeName = murMurHash32(@"String");
-        addHashToString(typeName, @"String");
-        
-        category = TLMetaTypeCategoryBuiltinString;
-        type.boxed = true;
-    }
-    else if ([desc isEqualToString:@"bytes"])
-    {
-        typeName = murMurHash32(@"Bytes");
-        addHashToString(typeName, @"Bytes");
-        
-        category = TLMetaTypeCategoryBuiltinBytes;
-        type.boxed = false;
-        type.unboxedConstructorSignature = TL_BYTES_CONSTRUCTOR;
-    }
-    else if ([desc isEqualToString:@"Bytes"])
-    {
-        typeName = murMurHash32(@"Bytes");
-        addHashToString(typeName, @"Bytes");
-        
-        category = TLMetaTypeCategoryBuiltinBytes;
-        type.boxed = true;
-    }
-    else if ([desc isEqualToString:@"Bool"])
-    {
-        typeName = murMurHash32(@"Bool");
-        addHashToString(typeName, @"Bool");
-        
-        category = TLMetaTypeCategoryBuiltinBool;
-        type.boxed = true;
-    }
-    else if ([desc hasPrefix:@"Vector<"])
-    {
-        typeName = murMurHash32(desc);
-        addHashToString(typeName, desc);
-        
-        NSString *typeArgumentDesc = [desc substringWithRange:NSMakeRange(7, desc.length - 7 - 1)];
-        TLMetaTypeArgument typeArgument = createTypeArgumentFromString(typeArgumentDesc, typesToResolve, vectorTypeMap, hasUnresolvedTypes);
-        typeArguments.push_back(typeArgument);
-        
-        TLMetaTypeArgumentWithName typeArgumentWithName;
-        typeArgumentWithName.boxed = typeArgument.boxed;
-        typeArgumentWithName.unboxedConstructorSignature = typeArgument.unboxedConstructorSignature;
-        typeArgumentWithName.type = typeArgument.type;
-        
-        const char *utf8String = [typeArgumentDesc UTF8String];
-        typeArgumentWithName.name.insert(typeArgumentWithName.name.end(), utf8String, utf8String + strlen(utf8String));
-        
-        vectorTypeMap[typeArgument.type->getName()] = typeArgumentWithName;
-        
-        category = TLMetaTypeCategoryBuiltinVector;
-        type.boxed = true;
-        
-        type.unboxedConstructorName = murMurHash32(desc);
-
-        const char *vectorPrefix = "vector # [ ";
-        const char *vectorSuffix = " ] = Vector ";
-        
-        const char *utf8string = [typeArgumentDesc UTF8String];
-        
-        std::vector<char> signatureString;
-        signatureString.insert(signatureString.end(), vectorPrefix, vectorPrefix + 11);
-        signatureString.insert(signatureString.end(), utf8string, utf8string + strlen(utf8string));
-        signatureString.insert(signatureString.end(), vectorSuffix, vectorSuffix + 12);
-        signatureString.insert(signatureString.end(), utf8string, utf8string + strlen(utf8string));
-        
-        type.unboxedConstructorSignature = (int32_t)crc32(0, (const Bytef *)signatureString.data(), (int32_t)signatureString.size());
-    }
-    else if ([desc hasPrefix:@"vector<"])
-    {
-        typeName = murMurHash32(desc);
-        addHashToString(typeName, desc);
-        
-        NSString *typeArgumentDesc = [desc substringWithRange:NSMakeRange(7, desc.length - 7 - 1)];
-        TLMetaTypeArgument typeArgument = createTypeArgumentFromString(typeArgumentDesc, typesToResolve, vectorTypeMap, hasUnresolvedTypes);
+        const char *elementDesc = desc + 7;
+        size_t elementLength = length - 7 - 1;
+        TLMetaTypeArgument typeArgument = createTypeArgumentFromText(elementDesc, elementLength, typesToResolve, vectorTypeMap, hasUnresolvedTypes);
         typeArguments.push_back(typeArgument);
         
         TLMetaTypeArgumentWithName typeArgumentWithName;
@@ -9390,66 +9678,29 @@ TLMetaTypeArgument createTypeArgumentFromString(NSString *desc, std::set<int32_t
         typeArgumentWithName.unboxedConstructorSignature = typeArgument.unboxedConstructorSignature;
         typeArgumentWithName.unboxedConstructorName = typeArgument.unboxedConstructorName;
         typeArgumentWithName.type = typeArgument.type;
-        
-        const char *utf8String = [typeArgumentDesc UTF8String];
-        typeArgumentWithName.name.insert(typeArgumentWithName.name.end(), utf8String, utf8String + strlen(utf8String));
+        typeArgumentWithName.name.insert(typeArgumentWithName.name.end(), elementDesc, elementDesc + elementLength);
         
         vectorTypeMap[typeArgument.type->getName()] = typeArgumentWithName;
         
         category = TLMetaTypeCategoryBuiltinVector;
-        type.boxed = false;
-        
-        const char *vectorPrefix = "vector # [ ";
-        const char *vectorSuffix = " ] = Vector ";
-        
-        const char *utf8string = [typeArgumentDesc UTF8String];
-
-        std::vector<char> signatureString;
-        signatureString.insert(signatureString.end(), vectorPrefix, vectorPrefix + 11);
-        signatureString.insert(signatureString.end(), utf8string, utf8string + strlen(utf8string));
-        signatureString.insert(signatureString.end(), vectorSuffix, vectorSuffix + 12);
-        signatureString.insert(signatureString.end(), utf8string, utf8string + strlen(utf8string));
-        
-        type.unboxedConstructorSignature = (int32_t)crc32(0, (const Bytef *)signatureString.data(), (int32_t)signatureString.size());
-    }
-    else if ([desc isEqualToString:@"Object"])
-    {
-        typeName = murMurHash32(@"Object");
-        addHashToString(typeName, @"Object");
-        
-        category = TLMetaTypeCategoryObject;
-        type.boxed = true;
+        type.boxed = boxedVector;
+        if (boxedVector)
+            type.unboxedConstructorName = typeName;
+        type.unboxedConstructorSignature = TLVectorConstructorSignature(elementDesc, elementLength);
     }
     else
     {
-        NSString *boxedDesc = desc;
+        const char *dot = (const char *)memchr(desc, '.', length);
+        size_t caseIndex = dot == NULL ? 0 : (size_t)(dot - desc) + 1;
+        unsigned char c = caseIndex < length ? (unsigned char)desc[caseIndex] : 0;
+        type.boxed = isupper(c) != 0;
         
-        NSRange range = [desc rangeOfString:@"."];
-        if (range.location == NSNotFound)
-        {
-            unichar c = [desc characterAtIndex:0];
-            type.boxed = isupper(c);
-            
-            if (!type.boxed)
-            {
-                c = (unichar)toupper(c);
-                boxedDesc = [desc stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[NSString stringWithCharacters:&c length:1]];
-            }
-        }
-        else
-        {
-            unichar c = [desc characterAtIndex:range.location + 1];
-            type.boxed = isupper(c);
-            
-            if (!type.boxed)
-            {
-                c = (unichar)toupper(c);
-                boxedDesc = [desc stringByReplacingCharactersInRange:NSMakeRange(range.location + 1, 1) withString:[NSString stringWithCharacters:&c length:1]];
-            }
-        }
+        std::string boxedDesc(desc, length);
+        if (!type.boxed && caseIndex < length)
+            boxedDesc[caseIndex] = (char)toupper(c);
         
-        typeName = murMurHash32(boxedDesc);
-        addHashToString(typeName, boxedDesc);
+        typeName = TLSchemeTextHash(boxedDesc.data(), boxedDesc.size());
+        addHashToStringText(typeName, boxedDesc.data(), boxedDesc.size());
         
         category = TLMetaTypeCategoryObject;
         
@@ -9457,8 +9708,8 @@ TLMetaTypeArgument createTypeArgumentFromString(NSString *desc, std::set<int32_t
         type.unboxedConstructorName = 0;
         if (!type.boxed)
         {
-            type.unboxedConstructorName = murMurHash32(desc);
-            addHashToString(type.unboxedConstructorName, desc);
+            type.unboxedConstructorName = TLSchemeTextHash(desc, length);
+            addHashToStringText(type.unboxedConstructorName, desc, length);
             hasUnresolvedTypes = true;
         }
         
@@ -9472,1479 +9723,1706 @@ TLMetaTypeArgument createTypeArgumentFromString(NSString *desc, std::set<int32_t
     return type;
 }
 
-bool resolveUnboxedTypes(TLMetaTypeArgument *type, std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > const &constructorsByName, std::tr1::unordered_map<int32_t, TLMetaTypeArgument> const &vectorElementTypes)
+struct TLCachedFieldDescriptor
+{
+    TLMetaTypeArgument type;
+    bool unresolved;
+    bool hasFlag;
+    int32_t flagName;
+    int32_t flagBit;
+    bool flagOnly;
+};
+
+static int32_t TLSchemeParseInteger(const char *text, size_t length)
+{
+    size_t index = 0;
+    while (index < length && isspace((unsigned char)text[index]))
+        index++;
+    bool negative = false;
+    if (index < length && (text[index] == '-' || text[index] == '+'))
+    {
+        negative = text[index] == '-';
+        index++;
+    }
+    int32_t value = 0;
+    while (index < length && text[index] >= '0' && text[index] <= '9')
+    {
+        value = value * 10 + (text[index] - '0');
+        index++;
+    }
+    return negative ? -value : value;
+}
+
+static void TLApplyCachedFieldDescriptor(const char *rawTypeName, TLMetaField &field, bool &hasUnresolvedTypes, std::tr1::unordered_map<int32_t, TLCachedFieldDescriptor> &cachedFieldDescriptors, std::tr1::unordered_map<int32_t, std::pair<TLMetaTypeArgument, bool> > &cachedFieldTypes, std::set<int32_t> &typesToResolve, std::map<int32_t, TLMetaTypeArgumentWithName> &vectorTypeMap)
+{
+    size_t rawTypeLength = strlen(rawTypeName);
+    int32_t rawTypeHash = TLSchemeTextHash(rawTypeName, rawTypeLength);
+    std::tr1::unordered_map<int32_t, TLCachedFieldDescriptor>::iterator descriptorIt = cachedFieldDescriptors.find(rawTypeHash);
+    if (descriptorIt == cachedFieldDescriptors.end())
+    {
+        TLCachedFieldDescriptor descriptor;
+        descriptor.unresolved = false;
+        descriptor.hasFlag = false;
+        descriptor.flagName = 0;
+        descriptor.flagBit = 0;
+        descriptor.flagOnly = false;
+
+        const char *typeName = rawTypeName;
+        size_t typeNameLength = rawTypeLength;
+        const char *optional = (const char *)memchr(rawTypeName, '?', rawTypeLength);
+        if (optional != NULL)
+        {
+            const char *flagDesc = rawTypeName;
+            size_t flagDescLength = (size_t)(optional - rawTypeName);
+            const char *actualTypeName = optional + 1;
+            size_t actualTypeNameLength = rawTypeLength - flagDescLength - 1;
+            const char *dot = (const char *)memchr(flagDesc, '.', flagDescLength);
+            if (dot != NULL)
+            {
+                size_t flagNameLength = (size_t)(dot - flagDesc);
+                descriptor.hasFlag = true;
+                descriptor.flagName = TLSchemeTextHash(flagDesc, flagNameLength);
+                descriptor.flagBit = TLSchemeParseInteger(dot + 1, flagDescLength - flagNameLength - 1);
+                descriptor.flagOnly = TLSchemeTextEquals(actualTypeName, actualTypeNameLength, "true");
+                if (descriptor.flagOnly)
+                {
+                    typeName = "Bool";
+                    typeNameLength = 4;
+                }
+                else
+                {
+                    typeName = actualTypeName;
+                    typeNameLength = actualTypeNameLength;
+                }
+            }
+        }
+
+        int32_t fieldTypeName = TLSchemeTextHash(typeName, typeNameLength);
+        std::tr1::unordered_map<int32_t, std::pair<TLMetaTypeArgument, bool> >::iterator typeIt = cachedFieldTypes.find(fieldTypeName);
+        if (typeIt == cachedFieldTypes.end())
+        {
+            bool fieldUnresolvedTypes = false;
+            descriptor.type = createTypeArgumentFromText(typeName, typeNameLength, typesToResolve, vectorTypeMap, fieldUnresolvedTypes);
+            descriptor.unresolved = fieldUnresolvedTypes;
+            cachedFieldTypes.insert(std::pair<int32_t, std::pair<TLMetaTypeArgument, bool> >(fieldTypeName, std::make_pair(descriptor.type, descriptor.unresolved)));
+        }
+        else
+        {
+            descriptor.type = typeIt->second.first;
+            descriptor.unresolved = typeIt->second.second;
+        }
+
+        cachedFieldDescriptors.insert(std::pair<int32_t, TLCachedFieldDescriptor>(rawTypeHash, descriptor));
+        descriptorIt = cachedFieldDescriptors.find(rawTypeHash);
+    }
+
+    field.type = descriptorIt->second.type;
+    field.hasFlag = descriptorIt->second.hasFlag;
+    field.flagName = descriptorIt->second.flagName;
+    field.flagBit = descriptorIt->second.flagBit;
+    field.flagOnly = descriptorIt->second.flagOnly;
+    if (descriptorIt->second.unresolved)
+        hasUnresolvedTypes = true;
+}
+
+static std::tr1::shared_ptr<TLMetaType> TLCachedTypeFromText(const char *desc, size_t length, std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > &cachedResultTypes, std::set<int32_t> &typesToResolve, std::map<int32_t, TLMetaTypeArgumentWithName> &vectorTypeMap, bool &created)
+{
+    int32_t hash = TLSchemeTextHash(desc, length);
+    std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> >::iterator it = cachedResultTypes.find(hash);
+    if (it != cachedResultTypes.end())
+    {
+        created = false;
+        return it->second;
+    }
+
+    bool hasUnresolvedTypes = false;
+    std::tr1::shared_ptr<TLMetaType> type = createTypeArgumentFromText(desc, length, typesToResolve, vectorTypeMap, hasUnresolvedTypes).type;
+    cachedResultTypes.insert(std::pair<int32_t, std::tr1::shared_ptr<TLMetaType> >(hash, type));
+    created = true;
+    return type;
+}
+
+struct TLMetaSchemeParamView
+{
+    const char *name;
+    const char *type;
+};
+
+struct TLMetaSchemeEntryView
+{
+    int32_t signature;
+    const char *name;
+    const char *type;
+    size_t paramsOffset;
+    size_t paramsCount;
+};
+
+struct TLMetaSchemeEntries
+{
+    std::vector<TLMetaSchemeParamView> params;
+    std::vector<TLMetaSchemeEntryView> types;
+    std::vector<TLMetaSchemeEntryView> methods;
+};
+
+static void TLMetaSchemeAppendEntry(std::vector<TLMetaSchemeParamView> &params, std::vector<TLMetaSchemeEntryView> &list, int32_t signature, const char *name, const char *type, TLMetaSchemeParamView const *entryParams, size_t entryParamsCount)
+{
+    TLMetaSchemeEntryView entry;
+    entry.signature = signature;
+    entry.name = name;
+    entry.type = type;
+    entry.paramsOffset = params.size();
+    entry.paramsCount = entryParamsCount;
+    params.insert(params.end(), entryParams, entryParams + entryParamsCount);
+    list.push_back(entry);
+}
+
+static void TLMetaSchemeAppendTableEntries(TLMetaSchemeEntries &entries, std::vector<TLMetaSchemeEntryView> &list, TLMetaSchemeTable const *table, TLMetaSchemeEntry const *tableEntries, uint32_t tableEntriesCount)
+{
+    list.reserve(list.size() + tableEntriesCount);
+    for (uint32_t i = 0; i < tableEntriesCount; i++)
+    {
+        TLMetaSchemeEntry const &tableEntry = tableEntries[i];
+        TLMetaSchemeEntryView entry;
+        entry.signature = tableEntry.signature;
+        entry.name = table->strings + tableEntry.name;
+        entry.type = table->strings + tableEntry.type;
+        entry.paramsOffset = entries.params.size();
+        entry.paramsCount = tableEntry.paramsCount;
+        for (uint32_t j = 0; j < tableEntry.paramsCount; j++)
+        {
+            TLMetaSchemeParamEntry const &tableParam = table->params[tableEntry.paramsOffset + j];
+            TLMetaSchemeParamView param;
+            param.name = table->strings + tableParam.name;
+            param.type = table->strings + tableParam.type;
+            entries.params.push_back(param);
+        }
+        list.push_back(entry);
+    }
+}
+
+static void TLMetaSchemeAppendObjectEntry(TLMetaSchemeEntries &entries, std::vector<TLMetaSchemeEntryView> &list, int32_t signature, NSString *name, NSString *type, NSArray *params)
+{
+    TLMetaSchemeEntryView entry;
+    entry.signature = signature;
+    entry.name = name.UTF8String ?: "";
+    entry.type = type.UTF8String ?: "";
+    entry.paramsOffset = entries.params.size();
+    entry.paramsCount = params.count;
+    for (TLSchemeParam *objectParam in params)
+    {
+        TLMetaSchemeParamView param;
+        param.name = objectParam.name.UTF8String ?: "";
+        param.type = objectParam.type.UTF8String ?: "";
+        entries.params.push_back(param);
+    }
+    list.push_back(entry);
+}
+
+static TLMetaSchemeParamView const TLMetaSchemeMessageContainerParams[] =
+{
+    {"messages", "vector<protoMessage>"}
+};
+
+static TLMetaSchemeParamView const TLMetaSchemeRpcResultParams[] =
+{
+    {"req_msg_id", "long"},
+    {"result", "Object"}
+};
+
+static TLMetaSchemeParamView const TLMetaSchemeFutureSaltsParams[] =
+{
+    {"req_msg_id", "long"},
+    {"now", "int"},
+    {"salts", "vector<futureSalt>"}
+};
+
+static TLMetaSchemeParamView const TLMetaSchemeGetDifferenceParams[] =
+{
+    {"flags", "int"},
+    {"pts", "int"},
+    {"pts_limit", "flags.1?int"},
+    {"pts_total_limit", "flags.0?int"},
+    {"date", "int"},
+    {"qts", "int"},
+    {"qts_limit", "flags.2?int"}
+};
+
+typedef std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > TLMetaConstructorMap;
+typedef std::vector<std::pair<int32_t, uint32_t> > TLMetaSchemeIndex;
+
+struct TLMetaSchemeLazyStore
+{
+    TLMetaSchemeEntries entries;
+    std::vector<TLMetaSchemeEntryView> registered;
+    std::vector<std::tr1::shared_ptr<TLMetaConstructor> > constructors;
+    TLMetaSchemeIndex signatureIndex;
+    TLMetaSchemeIndex nameIndex;
+    std::tr1::unordered_map<int32_t, std::pair<TLMetaTypeArgument, bool> > cachedFieldTypes;
+    std::tr1::unordered_map<int32_t, TLCachedFieldDescriptor> cachedFieldDescriptors;
+    std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > cachedResultTypes;
+    std::map<int32_t, TLMetaTypeArgumentWithName> vectorTypeMap;
+    std::set<int32_t> typesToResolve;
+    size_t registeredTypeCount;
+};
+
+static TLMetaSchemeLazyStore *TLMetaClassStoreLazyStore = NULL;
+
+static void TLMetaSchemeFinishIndex(TLMetaSchemeIndex &index)
+{
+    std::sort(index.begin(), index.end());
+    TLMetaSchemeIndex uniqueIndex;
+    uniqueIndex.reserve(index.size());
+    for (TLMetaSchemeIndex::const_iterator it = index.begin(); it != index.end(); ++it)
+    {
+        if (!uniqueIndex.empty() && uniqueIndex.back().first == it->first)
+            uniqueIndex.back() = *it;
+        else
+            uniqueIndex.push_back(*it);
+    }
+    index.swap(uniqueIndex);
+}
+
+static bool TLMetaSchemeIndexFind(TLMetaSchemeIndex const &index, int32_t key, uint32_t *ref)
+{
+    TLMetaSchemeIndex::const_iterator it = std::lower_bound(index.begin(), index.end(), std::pair<int32_t, uint32_t>(key, 0));
+    if (it == index.end() || it->first != key)
+        return false;
+    *ref = it->second;
+    return true;
+}
+
+static bool TLMetaSchemeSignatureForName(TLMetaSchemeLazyStore const &store, TLMetaConstructorMap const &materializedByName, int32_t name, int32_t *signature)
+{
+    uint32_t ref = 0;
+    if (TLMetaSchemeIndexFind(store.nameIndex, name, &ref))
+    {
+        *signature = store.registered[ref].signature;
+        return true;
+    }
+    TLMetaConstructorMap::const_iterator it = materializedByName.find(name);
+    if (it != materializedByName.end())
+    {
+        *signature = it->second->getSignature();
+        return true;
+    }
+    return false;
+}
+
+static bool TLMetaSchemeResolveUnboxedTypes(TLMetaTypeArgument *type, TLMetaSchemeLazyStore const &store, TLMetaConstructorMap const &materializedByName)
 {
     for (std::vector<TLMetaTypeArgument>::iterator it = type->type->getArguments().begin(); it != type->type->getArguments().end(); it++)
     {
-        if (!resolveUnboxedTypes(&(*it), constructorsByName, vectorElementTypes))
+        if (!TLMetaSchemeResolveUnboxedTypes(&(*it), store, materializedByName))
             return false;
     }
     
     if (!type->boxed && type->unboxedConstructorSignature == 0)
     {
-        std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >::const_iterator foundIt = constructorsByName.find(type->unboxedConstructorName);
-        if (foundIt != constructorsByName.end())
-        {
-            type->unboxedConstructorSignature = foundIt->second->getSignature();
-        }
-        else
-        {
+        int32_t signature = 0;
+        if (!TLMetaSchemeSignatureForName(store, materializedByName, type->unboxedConstructorName, &signature))
             return false;
-        }
+        type->unboxedConstructorSignature = signature;
     }
     
     return true;
 }
 
-std::tr1::shared_ptr<TLMetaType> createTypeFromString(NSString *desc, std::set<int32_t> &typesToResolve, std::map<int32_t, TLMetaTypeArgumentWithName> &vectorTypeMap)
+static void TLMetaSchemeLoadEntryVectorTypes(TLMetaSchemeLazyStore &store, TLMetaSchemeEntryView const &entry)
 {
+    for (size_t paramIndex = 0; paramIndex < entry.paramsCount; paramIndex++)
+    {
+        const char *rawType = store.entries.params[entry.paramsOffset + paramIndex].type;
+        if (strchr(rawType, '<') == NULL)
+            continue;
+        
+        TLMetaField field;
+        bool hasUnresolvedTypes = false;
+        TLApplyCachedFieldDescriptor(rawType, field, hasUnresolvedTypes, store.cachedFieldDescriptors, store.cachedFieldTypes, store.typesToResolve, store.vectorTypeMap);
+    }
+}
+
+static std::tr1::shared_ptr<TLMetaConstructor> TLMetaSchemeLazyConstructor(TLMetaSchemeLazyStore &store, TLMetaConstructorMap const &materializedByName, std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > &typesByName, uint32_t ref)
+{
+    if (store.constructors[ref])
+        return store.constructors[ref];
+    
+    TLMetaSchemeEntryView const &entry = store.registered[ref];
+    std::tr1::shared_ptr<std::vector<TLMetaField> > fields(new std::vector<TLMetaField>());
+    fields->reserve(entry.paramsCount);
+    
     bool hasUnresolvedTypes = false;
-    TLMetaTypeArgument type = createTypeArgumentFromString(desc, typesToResolve, vectorTypeMap, hasUnresolvedTypes);
-    return type.type;
+    for (size_t paramIndex = 0; paramIndex < entry.paramsCount; paramIndex++)
+    {
+        TLMetaSchemeParamView const &argDesc = store.entries.params[entry.paramsOffset + paramIndex];
+        TLMetaField field;
+        field.name = TLSchemeTextHash(argDesc.name, strlen(argDesc.name));
+        TLApplyCachedFieldDescriptor(argDesc.type, field, hasUnresolvedTypes, store.cachedFieldDescriptors, store.cachedFieldTypes, store.typesToResolve, store.vectorTypeMap);
+        fields->push_back(field);
+    }
+    
+    bool createdResultType = false;
+    std::tr1::shared_ptr<TLMetaType> resultType = TLCachedTypeFromText(entry.type, strlen(entry.type), store.cachedResultTypes, store.typesToResolve, store.vectorTypeMap, createdResultType);
+    if (ref < store.registeredTypeCount)
+        typesByName.insert(std::pair<int32_t, std::tr1::shared_ptr<TLMetaType> >(resultType->getName(), resultType));
+    
+    if (hasUnresolvedTypes)
+    {
+        for (std::vector<TLMetaField>::iterator fieldIt = fields->begin(); fieldIt != fields->end(); fieldIt++)
+        {
+            TLMetaSchemeResolveUnboxedTypes(&fieldIt->type, store, materializedByName);
+        }
+    }
+    
+    std::tr1::shared_ptr<TLMetaConstructor> constructor(new TLMetaConstructor(TLSchemeTextHash(entry.name, strlen(entry.name)), entry.signature, fields, resultType));
+    store.constructors[ref] = constructor;
+    return constructor;
+}
+
+static TLMetaSchemeLazyStore *TLMetaSchemeBuildLazyStore(TLMetaSchemeEntries &entries, size_t schemeMethodsCount, std::tr1::unordered_map<int32_t, TLMetaTypeArgument> &vectorElementTypesByConstructor, TLMetaConstructorMap const &materializedByName)
+{
+    CFAbsoluteTime buildStart = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime phaseStart = buildStart;
+    TLMetaSchemeLazyStore *store = new TLMetaSchemeLazyStore();
+    store->entries.params.swap(entries.params);
+    store->entries.types.swap(entries.types);
+    store->entries.methods.swap(entries.methods);
+    store->registered.reserve(store->entries.types.size() + schemeMethodsCount);
+    
+    for (std::vector<TLMetaSchemeEntryView>::const_iterator typeIt = store->entries.types.begin(); typeIt != store->entries.types.end(); ++typeIt)
+    {
+        size_t typeLength = strlen(typeIt->type);
+        if (TLSchemeTextEquals(typeIt->type, typeLength, "Bool") || TLSchemeTextEquals(typeIt->type, typeLength, "Null") || TLSchemeTextHasPrefix(typeIt->type, typeLength, "Vector<"))
+            continue;
+        
+        TLMetaSchemeLoadEntryVectorTypes(*store, *typeIt);
+        store->registered.push_back(*typeIt);
+    }
+    store->registeredTypeCount = store->registered.size();
+    
+    phaseStart = CFAbsoluteTimeGetCurrent();
+    
+    for (std::vector<TLMetaSchemeEntryView>::const_iterator methodIt = store->entries.methods.begin(); methodIt != store->entries.methods.end(); ++methodIt)
+    {
+        size_t typeLength = strlen(methodIt->type);
+        if (TLSchemeTextHasPrefix(methodIt->type, typeLength, "Vector<"))
+        {
+            bool createdResultType = false;
+            TLCachedTypeFromText(methodIt->type, typeLength, store->cachedResultTypes, store->typesToResolve, store->vectorTypeMap, createdResultType);
+        }
+    }
+    
+    for (std::map<int32_t, TLMetaTypeArgumentWithName>::iterator it = store->vectorTypeMap.begin(); it != store->vectorTypeMap.end(); it++)
+    {
+        int32_t signature = it->second.name.empty() ? TLVectorConstructorSignature("", 0) : TLVectorConstructorSignature(&it->second.name[0], it->second.name.size());
+        
+        TLMetaTypeArgument typeArgument;
+        typeArgument.boxed = it->second.boxed;
+        typeArgument.unboxedConstructorName = it->second.unboxedConstructorName;
+        typeArgument.unboxedConstructorSignature = it->second.unboxedConstructorSignature;
+        typeArgument.type = it->second.type;
+        
+        vectorElementTypesByConstructor.insert(std::pair<int32_t, TLMetaTypeArgument>(signature, typeArgument));
+    }
+    
+    phaseStart = CFAbsoluteTimeGetCurrent();
+    
+    for (size_t methodIndex = 0; methodIndex < schemeMethodsCount; methodIndex++)
+        store->registered.push_back(store->entries.methods[methodIndex]);
+    
+    phaseStart = CFAbsoluteTimeGetCurrent();
+    
+    store->signatureIndex.reserve(store->registered.size());
+    store->nameIndex.reserve(store->registered.size());
+    for (uint32_t ref = 0; ref < (uint32_t)store->registered.size(); ref++)
+    {
+        TLMetaSchemeEntryView const &entry = store->registered[ref];
+        store->signatureIndex.push_back(std::pair<int32_t, uint32_t>(entry.signature, ref));
+        store->nameIndex.push_back(std::pair<int32_t, uint32_t>(TLSchemeTextHash(entry.name, strlen(entry.name)), ref));
+    }
+    TLMetaSchemeFinishIndex(store->signatureIndex);
+    TLMetaSchemeFinishIndex(store->nameIndex);
+    store->constructors.resize(store->registered.size());
+    
+    for (std::tr1::unordered_map<int32_t, TLMetaTypeArgument>::iterator it = vectorElementTypesByConstructor.begin(); it != vectorElementTypesByConstructor.end(); ++it)
+    {
+        TLMetaSchemeResolveUnboxedTypes(&it->second, *store, materializedByName);
+    }
+    
+    return store;
 }
 
 void TLMetaClassStore::mergeScheme(TLScheme *scheme)
 {
-    if ([scheme isKindOfClass:[TLScheme$scheme class]])
-    {   
-        std::tr1::unordered_map<int32_t, std::pair<TLMetaTypeArgument, bool> > cachedFieldTypes;
-        std::map<int32_t, TLMetaTypeArgumentWithName> vectorTypeMap;
-        std::set<int32_t> typesToResolve;
-        std::vector<std::tr1::shared_ptr<TLMetaConstructor> > constructorsWithUnresolvedTypes;
-        
-        NSMutableArray *types = [[NSMutableArray alloc] initWithArray:((TLScheme$scheme *)scheme).types];
-        NSMutableArray *methods = [[NSMutableArray alloc] initWithArray:((TLScheme$scheme *)scheme).methods];
-        
-        {
-            id<TLObject> object = [[TLDestroySessionsRes$destroy_sessions_res alloc] init];
-            manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >([object TLconstructorSignature], object));
-        }
-        
-        {
-            TLSchemeType$schemeType *constructor = [[TLSchemeType$schemeType alloc] init];
-            constructor.n_id = (int32_t)0x73f1f8dc;
-            constructor.predicate = @"msg_container";
-            constructor.type = @"MessageContainer";
-            NSMutableArray *fields = [[NSMutableArray alloc] init];
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"messages";
-                arg.type = @"vector<protoMessage>";
-                [fields addObject:arg];
-            }
-            constructor.params = fields;
-            [types addObject:constructor];
-            
-            manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(constructor.n_id, [[TLMessageContainer$msg_container alloc] init]));
-        }
-        
-        {
-            TLSchemeType$schemeType *constructor = [[TLSchemeType$schemeType alloc] init];
-            constructor.n_id = (int32_t)0xf35c6d01;
-            constructor.predicate = @"rpc_result";
-            constructor.type = @"RpcResult";
-            NSMutableArray *fields = [[NSMutableArray alloc] init];
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"req_msg_id";
-                arg.type = @"long";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"result";
-                arg.type = @"Object";
-                [fields addObject:arg];
-            }
-            constructor.params = fields;
-            [types addObject:constructor];
-            
-            manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(constructor.n_id, [[TLRpcResult$rpc_result alloc] init]));
-        }
-        
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x5162463, [[TLResPQ$resPQ_manual alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x62d6b459, [[TLMsgsAck$msgs_ack_manual alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x44f9b43d, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9815cec8, [[TLMessage$modernMessage alloc] init]));
-        addHashToString((int32_t)0x9815cec8, @"message");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x9e19a1f6, [[TLMessage$modernMessageService alloc] init]));
-        
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5f07b4bc, [[TLWebPage_manual alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4b46c37e, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x31774388, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x020b1422, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb1b8cc83, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2e13f4c3, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x215c4438, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83314fca, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2813e6db, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1afeb7ac, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd0a1d008, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd7c0ff9c, [[TLUser$modernUser alloc] init]));
-        IOS6_NOOP_LOG(@"AUTH registered modern user parser 0xd7c0ff9c without constructor-name override");
-        objectClassesByConstructorNames[(int32_t)0x6c3e5402] = [[TLMessageEntity$messageEntityTextUrl alloc] init];
-        objectClassesByConstructorNames[(int32_t)0x9fbde43f] = [[TLChat$channelMeta alloc] init];
-        addHashToString((int32_t)0x9fbde43f, @"channel");
-        IOS6_NOOP_LOG(@"AUTH registered modern channel meta alias 0x9fbde43f");
-        objectClassesByConstructorNames[(int32_t)0xe2f65ce2] = [[TLUserFull$userFullMeta alloc] init];
-        addHashToString((int32_t)0xe2f65ce2, @"UserFull");
-        IOS6_NOOP_LOG(@"AUTH registered modern UserFull type alias 0xe2f65ce2");
-        objectClassesByConstructorNames[(int32_t)0x8c5d990f] = [[TLupdates_ChannelDifference$updates_channelDifferenceMeta alloc] init];
-        addHashToString((int32_t)0x8c5d990f, @"updates.ChannelDifference");
-        IOS6_NOOP_LOG(@"AUTH registered modern channelDifference meta alias 0x8c5d990f");
-        objectClassesByConstructorNames[(int32_t)0x4ccda305] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x4ccda305, @"updatePinnedChannelMessages");
-        IOS6_NOOP_LOG(@"AUTH registered modern updatePinnedChannelMessages meta skip alias 0x4ccda305");
-        objectClassesByConstructorNames[(int32_t)0xf9a7c6d9] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xf9a7c6d9, @"businessLocation");
-        IOS6_NOOP_LOG(@"AUTH registered modern businessLocation meta skip alias 0xf9a7c6d9");
-        objectClassesByConstructorNames[(int32_t)0xae9f31e8] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xae9f31e8, @"pollAnswerVoters");
-        IOS6_NOOP_LOG(@"AUTH registered modern pollAnswerVoters meta skip alias 0xae9f31e8");
-        objectClassesByConstructorNames[(int32_t)0xd5d4c7f5] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xd5d4c7f5, @"mediaAreaSuggestedReaction");
-        IOS6_NOOP_LOG(@"AUTH registered modern mediaAreaSuggestedReaction meta skip alias 0xd5d4c7f5");
-        objectClassesByConstructorNames[(int32_t)0x377d3538] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x377d3538, @"webPageAttributeStickerSet");
-        IOS6_NOOP_LOG(@"AUTH registered modern webPageAttributeStickerSet meta alias 0x377d3538");
-        objectClassesByConstructorNames[(int32_t)0x9ac0c0cc] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x9ac0c0cc, @"messageEntityFormattedDate");
-        IOS6_NOOP_LOG(@"AUTH registered modern messageEntityFormattedDate meta alias 0x9ac0c0cc");
-        objectClassesByConstructorNames[(int32_t)0x1f1ea79e] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x1f1ea79e, @"PeerColor");
-        IOS6_NOOP_LOG(@"AUTH registered modern peerColor meta alias 0x1f1ea79e");
-        objectClassesByConstructorNames[(int32_t)0xa61d7ecc] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xa61d7ecc, @"botApp");
-        IOS6_NOOP_LOG(@"AUTH registered modern botApp meta alias 0xa61d7ecc");
-        objectClassesByConstructorNames[(int32_t)0xd91a34ac] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xd91a34ac, @"storyViews");
-        IOS6_NOOP_LOG(@"AUTH registered modern storyViews meta alias 0xd91a34ac");
-        objectClassesByConstructorNames[(int32_t)0x731eca73] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x731eca73, @"updatePinnedDialogs");
-        IOS6_NOOP_LOG(@"AUTH registered modern updatePinnedDialogs meta skip alias 0x731eca73");
-        objectClassesByConstructorNames[(int32_t)0x8350972b] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x8350972b, @"recentStory");
-        IOS6_NOOP_LOG(@"AUTH registered modern recentStory meta alias 0x8350972b");
-        objectClassesByConstructorNames[(int32_t)0xcba86ca2] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xcba86ca2, @"RequestPeerType");
-        IOS6_NOOP_LOG(@"AUTH registered modern requestPeerType meta alias 0xcba86ca2");
-        objectClassesByConstructorNames[(int32_t)0xf6781f7c] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xf6781f7c, @"modernOptionalFeature");
-        IOS6_NOOP_LOG(@"AUTH registered modern optional feature meta alias 0xf6781f7c");
-        objectClassesByConstructorNames[(int32_t)0x7f6b4284] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x7f6b4284, @"modernOptionalFeature");
-        IOS6_NOOP_LOG(@"AUTH registered modern optional feature meta alias 0x7f6b4284");
-        objectClassesByConstructorNames[(int32_t)0xd7bb4f53] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xd7bb4f53, @"modernOptionalFeature");
-        IOS6_NOOP_LOG(@"AUTH registered modern optional feature meta alias 0xd7bb4f53");
-        objectClassesByConstructorNames[(int32_t)0xc18fad86] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xc18fad86, @"modernOptionalFeature");
-        IOS6_NOOP_LOG(@"AUTH registered modern optional feature meta alias 0xc18fad86");
-        objectClassesByConstructorNames[(int32_t)0xff68ab47] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xff68ab47, @"notificationSound");
-        IOS6_NOOP_LOG(@"AUTH registered notificationSound meta alias 0xff68ab47");
-        objectClassesByConstructorNames[(int32_t)0x7a557809] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x7a557809, @"modernReactionFeature");
-        IOS6_NOOP_LOG(@"AUTH registered modern reaction feature meta alias 0x7a557809");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x09d05049, [[TLCodexUserStatusEmptyParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xedb93949, [[TLCodexUserStatusOnlineParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x008c703f, [[TLCodexUserStatusOfflineParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7b197dc8, [[TLCodexUserStatusNoPayloadParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x541a1d1a, [[TLCodexUserStatusNoPayloadParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x65899777, [[TLCodexUserStatusNoPayloadParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x16d9703b, [[TLCodexModernContactStatusParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe5bdf8de, [[TLCodexModernUpdateUserStatusParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x18b7a10d, [[TLDcOption$modernDcOption alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x14b24500, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd597650c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5bb98608, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50cc03d3, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8d595cd6, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4e80a379, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48e246c2, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdc58f31e, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xac072444, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x22c0f6d5, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c39793f, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc02d4007, [[TLCodexModernChatParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe46bcee4, [[TLCodexModernChatParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa0933f5b, [[TLCodexModernChatParticipantParser alloc] init]));
-        addHashToString((int32_t)0x22c0f6d5, @"inputReplyToMessage");
-        addHashToString((int32_t)0x8c39793f, @"help.promoData");
-        addHashToString((int32_t)0xc02d4007, @"chatParticipant");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x914FBF11, [[TLUpdates$modernUpdateShortMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x313bc7f8, [[TLCodexModernUpdateShortMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x16812688, [[TLUpdates$modernUpdateShortChatMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4d6deea5, [[TLCodexModernUpdateShortChatMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xBC0F17BC, [[TLmessages_Messages$modernChannelMessages alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x11f1331c, [[TLUpdates$updateShortSentMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9015e101, [[TLCodexModernUpdateShortSentMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa56c2a3e, [[TLCodexModernUpdatesStateParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x78d4dec1, [[TLCodexModernUpdatesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x725b04c3, [[TLCodexModernUpdatesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x74ae4240, [[TLCodexModernUpdatesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5fb5523b, [[TLCodexDialogFilterParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7438f7e8, [[TLCodexDialogFilterParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x363293ae, [[TLCodexDialogFilterParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9fe28ea4, [[TLCodexDialogFilterParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xaa472651, [[TLCodexDialogFilterParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x96537bd7, [[TLCodexDialogFilterParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2ad93719, [[TLCodexDialogFiltersParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x26ffde7d, [[TLCodexDialogFilterUpdateParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa5d72105, [[TLCodexDialogFilterUpdateParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3504914f, [[TLCodexDialogFilterUpdateParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5d75a138, [[TLCodexModernDifferenceEmptyParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x00f49ca0, [[TLCodexModernDifferenceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa8fb1981, [[TLCodexModernDifferenceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x2064674E, [[TLCodexModernChannelDifferenceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x3E11AFFB, [[TLUpdates_ChannelDifference$empty alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xc88974ac, [[TLChat$channel alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0aadfc8f, [[TLCodexModernChannelParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1c32b11c, [[TLCodexModernChannelParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe00998b7, [[TLCodexModernChannelParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfe4478bd, [[TLCodexModernChannelParser alloc] init]));
-        addHashToString((int32_t)0xfe4478bd, @"channel");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x17d493d5, [[TLCodexModernChannelForbiddenParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x76af5481, [[TLChatFull$channelFull alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbbab348d, [[TLCodexModernChannelFullParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa04e8d3a, [[TLCodexModernChannelFullParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe4e0b29d, [[TLCodexModernChannelFullParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xFC900C2B, [[TLChatParticipants$chatParticipantsForbidden alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xD91CDD54, [[TLChat$chat alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x41cbf256, [[TLCodexModernChatParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6592a1a7, [[TLCodexModernChatForbiddenParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1c6e1c11, [[TLCodexModernChatPhotoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xB08FBB93, [[TLWebPage$webPageExternal alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x947ca848, [[TLMessages_BotResults$botResults alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x764cf810, [[TLBotInlineMessage$botInlineMessageMediaAuto alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x8c7f65e2, [[TLBotInlineMessage$botInlineMessageText alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xb722de65, [[TLBotInlineMessage$botInlineMessageMediaGeo alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x8a86659c, [[TLBotInlineMessage$botInlineMessageMediaVenue alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x18d1cdc2, [[TLBotInlineMessage$botInlineMessageMediaContact alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x11965f3a, [[TLBotInlineResult$botInlineResult alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x9852F9C6, [[TLDocumentAttribute$documentAttributeAudio alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x43c57c48, [[TLCodexModernDocumentAttributeVideoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x559ebe6d, [[TLMessageFwdHeader$messageFwdHeader alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xf220f3f, [[TLUserFull$userFull alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3b6d152e, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcc997720, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd2234ea0, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x06cbe645, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c92b098, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x120b1ab9, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5a0a066d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x711d692d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x75b3b798, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers[(int32_t)0x1bf335b9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfe198602] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xfe198602, @"updateChannelPinnedTopics");
-        manualObjectParsers[(int32_t)0x7d627683] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1824e40b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0ab4a819, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc01e857f, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2a17bf5c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83487af0, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc32d5b12, [[TLCodexModernUpdateDeleteChannelMessagesParser alloc] init]));
-        addHashToString((int32_t)0xc32d5b12, @"updateDeleteChannelMessages");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5e1b3cb8, [[TLCodexUpdateMessageReactionsParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd6b19546, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x51e6ee4f, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xea29055d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x922e6e10, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9c974fdf, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8951abef, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb75f99a9, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf226ac08, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6f7863f4, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x86fccf85, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x74c34319, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xffadc913, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb390dc08, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x16a4b93c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xedf164f1, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x79b26a24, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x68cb6283, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9a35e999, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x63c3dd0a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb826e150, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2e94c3e7, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcf6f6db8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x31cad303, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x01c641c2, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbbb6b4a3, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x74aee3e0, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x313a9547, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x85f0a9cd, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x565251e2, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4e7085ea, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9f2504e4, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe0bff26c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x36437737, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdbce6389, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf08d516b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x78fbf3a8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcef7e7a8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xaff56398, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71f276c4, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4d4bd46a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3458f9c8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfe333952, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x771a4e66, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x972dabbf, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2eeed1c4, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3aae0528, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0aa021e5, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbe82db9c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb282217f, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcad5452d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x14455871, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2271f2bf, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5787686d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdf8b3b22, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa5d9abb8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers[(int32_t)0xde4c5d93] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb0bdeac5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9083670b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbd74cf49] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x59d78fc5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xde9eed1d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe87acbc0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe2de7737] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6090d6d5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbbab2643] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcfcd0f13] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xaa5f789c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa388a368] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2ed82995] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x3de1dfed] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x416c56e8] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x41df43fc] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x95f389b1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x69279795] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf101aa7f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2085c238] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x84aa3a9c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x48aaae3c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x4a162433] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1f01c757] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2eb1b658] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x947a12df] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9d6b13b0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa0ba4f17] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8a2932f3] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x512fe446] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x99ea331d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6b39f4ec] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x42b00348] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7d5bd1f0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd31bc45d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdb33dad0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xaef6abbc] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x46c6e36f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdaad85b0] = [[TLCodexMessageMediaGiveawayParser alloc] init];
-        addHashToString((int32_t)0xdaad85b0, @"messageMediaGiveaway");
-        manualObjectParsers[(int32_t)0xc6991068] = [[TLCodexMessageMediaGiveawayParser alloc] init];
-        addHashToString((int32_t)0xc6991068, @"messageMediaGiveawayResults");
-        manualObjectParsers[(int32_t)0xbec268ef] = [[TLCodexUpdateNotifySettingsParser alloc] init];
-        addHashToString((int32_t)0xbec268ef, @"updateNotifySettings");
-        manualObjectParsers[(int32_t)0xcde0ec40] = [[TLCodexChatInviteParser alloc] init];
-        addHashToString((int32_t)0xcde0ec40, @"chatInvite");
-        manualObjectParsers[(int32_t)0x4ba3a95a] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x4ba3a95a, @"messageReactor");
-        manualObjectParsers[(int32_t)0xe16459c3] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xe16459c3, @"updateDialogUnreadMark");
-        manualObjectParsers[(int32_t)0xe56dbf05] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0xe56dbf05, @"dialogPeer");
-        manualObjectParsers[(int32_t)0x514519e2] = [[TLCodexSkipObjectParser alloc] init];
-        addHashToString((int32_t)0x514519e2, @"dialogPeerFolder");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf74e932b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb05ac6b1, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xeb0467fb, [[TLUpdate$updateChannelTooLong alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x108d941f, [[TLCodexModernUpdateChannelTooLongParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa4bcc6fe, [[TLCodexChannelDifferenceTooLongParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x38faab5f, [[TLauth_SentCode$auth_sentCode alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x5e002502, [[TLauth_SentCode$auth_sentCode alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x36585ea4, [[TLmessages_BotCallbackAnswer$botCallbackAnswer alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x17db940b, [[TLBotInlineResult$botInlineMediaResult alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xe4def5db, [[TLCodexModernDialogParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd58a08c6, [[TLCodexModernDialogParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x90a6ca84, [[TLCodexModernMessageEmptyParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb6c4f543, [[TLCodexMessageViewsResultParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c718e87, [[TLCodexModernMessagesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1d73e7ea, [[TLCodexModernMessagesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3a54685e, [[TLCodexModernMessagesSliceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5f206716, [[TLCodexModernMessagesSliceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e0b5b6a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc776ba4e, [[TLCodexModernChannelMessagesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9ab0feaf, [[TLCodexModernChannelsParticipantsParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdfb80317, [[TLCodexModernChannelParticipantResultParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc00c07c0, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1bd54456, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x35a8bfa7, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa9478a1a, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2fe601d3, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x34c3bb53, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6df8014e, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd5f0ad91, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b03f006, [[TLCodexModernChannelParticipantParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71701da9, [[TLCodexForumTopicParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfcdad815, [[TLCodexForumTopicParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x023f109b, [[TLCodexForumTopicParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71e094f3, [[TLCodexModernDialogsSliceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0200185b, [[TLCodexModernDialogsSliceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x94345242, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x96fdbbe9, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7600b9d3, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x95ef6f2b, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6a26cb37, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd0bbd081, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x003e38e7, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd9a7d88a, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd18fd1bb, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xff86154d, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbb294f27, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x65fdf943, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6a4ced37, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6236ae4a, [[TLMessage$modernMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd8a8d820, [[TLMessage$modernMessage alloc] init]));
-        addHashToString((int32_t)0x6a26cb37, @"message");
-        addHashToString((int32_t)0x96fdbbe9, @"message");
-        addHashToString((int32_t)0xd0bbd081, @"message");
-        addHashToString((int32_t)0x003e38e7, @"message");
-        addHashToString((int32_t)0xd9a7d88a, @"message");
-        addHashToString((int32_t)0xd18fd1bb, @"message");
-        addHashToString((int32_t)0xff86154d, @"message");
-        addHashToString((int32_t)0xbb294f27, @"message");
-        addHashToString((int32_t)0x65fdf943, @"message");
-        addHashToString((int32_t)0x6a4ced37, @"message");
-        addHashToString((int32_t)0x6236ae4a, @"message");
-        addHashToString((int32_t)0xd8a8d820, @"message");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2b085862, [[TLMessage$modernMessageService alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7063c3db, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd64c522b, [[TLCodexSkipObjectParser alloc] init]));
-        addHashToString((int32_t)0xd64c522b, @"updateMessagePoll");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xed85eab5, [[TLCodexSkipObjectParser alloc] init]));
-        addHashToString((int32_t)0xed85eab5, @"updatePinnedMessages");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7a800e0a, [[TLMessage$modernMessageService alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6a3ac8ea, [[TLMessage$modernMessageService alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4fdd3430, [[TLCodexModernKeyboardButtonStyleParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa03e5b85, [[TLCodexModernReplyMarkupParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x86b40b08, [[TLCodexModernReplyMarkupParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf4108aa0, [[TLCodexModernReplyMarkupParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x85dd99d1, [[TLCodexModernReplyMarkupParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3502758c, [[TLCodexModernReplyMarkupParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48a30254, [[TLCodexModernReplyMarkupParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x77608b83, [[TLCodexModernKeyboardButtonRowParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3081ed9d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x833c0fac, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd766c50a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5ec4be43, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6334ee9a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0e3b2d0c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa2fa4880, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7d170cff, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x258aff05, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd80c25ec, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x683a5e46, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x35bbdb6b, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe62bc960, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb16a6c29, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x417efd8f, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfc796b3f, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xaa40f94d, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0568a748, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x93b9fbb5, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x991399fc, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50f41ccf, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x89c590f9, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xafd93fbb, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3fa53905, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x10b78d29, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd02e7fd4, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf51006f9, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x68013e72, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbbc7515d, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7a11d782, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe988037b, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x308660c1, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7d5e07c7, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc0fd5d09, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x13767230, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa0c0505c, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe846b1a0, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe15c4370, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x53d7bfd8, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc9662d05, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5b0f15f5, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x02b78156, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x75d2698e, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbcc4af10, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5f3b8a00, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc9f06e1b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x339bef6c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e81e078, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71bd134c, [[TLCodexDialogFolderParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x69274bc6, [[TLCodexModernDialogParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfc89f7f3, [[TLCodexModernDialogParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x59511722, [[TLCodexModernPeerUserParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x15752102, [[TLCodexModernPeerUserParser alloc] init]));
-        addHashToString((int32_t)0x15752102, @"peerUser");
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x36c6019a, [[TLCodexModernPeerChatParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa2a5371e, [[TLCodexModernPeerChannelParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb9c0639a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5da674b7, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x95fcd1d6, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x99622c0c, [[TLCodexModernPeerNotifySettingsParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc13e3c50, [[TLCodexModernImportedContactParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5ce14175, [[TLPopularContact$popularContact alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5fb224d5, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9f120418, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd072acb4, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb4073647, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb54b5acf, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2de11aae, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x929b619d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfa30a8c7, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xee8c1e86, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf35aec28, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5b934f9d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcdbbcebb, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbe382906, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2cb51097, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x03d1ea4e, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcfc9e002, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x770416af, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x37381085, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x49a6549c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50a04e45, [[TLCodexModernPrivacyRulesParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfffe1bac, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x65427b82, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb8905fb2, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf888fa1a, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8b73e763, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe4621141, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6b134e8e, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x41c87565, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf7e8d89b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xece9814b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x21461b5d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf6a5f82f, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbc2eab30, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x500e6dfa, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3d662b7b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x39491cc8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x69ec56a3, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x96151fed, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd19ae46d, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x42ffd42b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0697f414, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa486b761, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2000a518, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2ca4fdf8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x17d348d2, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xff7a571b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2dd14edc, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4f2b9479, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0a339f0b, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa3d1cb80, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c79b63c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b2286b8, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8935fc73, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x79f5d419, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x523da4eb, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xeafc32bc, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x52928bca, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x661d4037, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe9baa668, [[TLCodexFolderPeerParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x19360dc0, [[TLCodexUpdateFolderPeersParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1e297bfa, [[TLCodexUpdateMessageReactionsParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x695c9e7c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4f11bae1, [[TLUserProfilePhoto$userProfilePhotoEmpty alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x82d1f706, [[TLCodexModernUserProfilePhotoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xebd1c797, [[TLCodexModernUserProfilePhotoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x85dd99d1, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48a30254, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa03e5b85, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x86b40b08, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x77608b83, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa2fa4880, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x258aff05, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x35bbdb6b, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb16a6c29, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfc796b3f, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x93b9fbb5, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50f41ccf, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xafd93fbb, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x10b78d29, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd02e7fd4, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbbc7515d, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe988037b, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x308660c1, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x13767230, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa0c0505c, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x53d7bfd8, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc9662d05, [[TLCodexModernKeyboardButtonParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x36086d42, [[TLDialog$dialogFeed alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xfd8e711f, [[TLDraftMessage$draftMessage alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x60fe3294, [[TLCodexModernDraftMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3fccf7ef, [[TLCodexModernDraftMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x96eaa5eb, [[TLCodexModernDraftMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2d65321f, [[TLCodexModernDraftMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b49ec6d, [[TLCodexModernUpdateDraftMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xedfc111e, [[TLCodexModernUpdateDraftMessageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8f300b57, [[TLCodexModernBotInfoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc27ac8c7, [[TLCodexModernBotCommandParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7533a588, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4258c205, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc7b57ce6, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xdb74f558, [[TLChatInvite$chatInvite alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x3213dbba, [[TLConfig$config alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xcc1a241e, [[TLCodexModernConfigParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xcd050916, [[TLauth_Authorization$auth_authorization alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x2ea2c0d4, [[TLauth_Authorization$auth_authorization alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6319d612, [[TLDocumentAttributeSticker alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6c37c15c, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x11b58939, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x17399fad, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x15590068, [[TLCodexModernDocumentAttributeFilenameParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9801d2f7, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfd149899, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xbdf9653b, [[TLGame$game alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xcde200d1, [[TLPageBlock$pageBlockEmbed alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x1b8f4ad1, [[TLPhoneCall$phoneCallWaiting alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xebe46819, [[TLUpdate$updateServiceNotification alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x50ca4de1, [[TLPhoneCall$phoneCallDiscarded alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xeed42858, [[TLPhoneCall$phoneCallWaitingMeta alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x45361c63, [[TLPhoneCall$phoneCallRequested alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x22fd7181, [[TLPhoneCall$phoneCallAccepted alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3ba5940c, [[TLPhoneCall$phoneCall alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf9d25503, [[TLPhoneCall$phoneCallDiscardedMeta alloc] init]));
-        objectClassesByConstructorNames[(int32_t)0xdc7555ab] = [[TLPhoneCall$phoneCallWaitingMeta alloc] init];
-        objectClassesByConstructorNames[(int32_t)0x9627ce57] = [[TLPhoneCall$phoneCallRequested alloc] init];
-        objectClassesByConstructorNames[(int32_t)0xd149f2bd] = [[TLPhoneCall$phoneCallAccepted alloc] init];
-        objectClassesByConstructorNames[(int32_t)0xc9908a15] = [[TLPhoneCall$phoneCall alloc] init];
-        objectClassesByConstructorNames[(int32_t)0xf01017df] = [[TLPhoneCall$phoneCallDiscardedMeta alloc] init];
-        TLCodexPhoneConnectionParser *phoneConnectionParser = [[TLCodexPhoneConnectionParser alloc] init];
-        manualObjectParsers[(int32_t)0x9cc123c7] = phoneConnectionParser;
-        manualObjectParsers[(int32_t)0x635fe375] = phoneConnectionParser;
-        TGLog(@"CALL registered modern PhoneCall aliases 5.12/5.13");
-        manualObjectParsers[(int32_t)0xeccaad39] = [[TLCodexSkipObjectParser alloc] init];
-        objectClassesByConstructorNames[(int32_t)0xeccaad39] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xea4cb65b, [[TLUpdate$updatePinnedDialogs alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x80e11a7f, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb6aef7b0, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbd47cbad, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb5a1ce5a, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7fcb13a8, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x95e3fbef, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x15cefd00, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa43f30cc, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x031224c3, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x95d2ac92, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe1037f92, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xea3948e9, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x94bd38ed, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9fbab604, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x92a72876, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3c134d7b, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcc02aa6d, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0d999256, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8f31b327, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x96163f56, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4792929b, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfae69f56, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc516d679, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b287353, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd95c6154, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x98e0d697, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7a0d7f42, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x502f92f7, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb3a07661, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xaa786345, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x47dd8079, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb4c38cb5, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc83d6aec, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc0944820, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x57de635e, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x31518e9b, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5060a3f4, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x678c2e09, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x332ba9ed, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2a9fadc5, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x93b31848, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x41b3e202, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x45d5b021, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf3f25f76, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xebbca3cb, [[TLCodexModernMessageActionParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd7c0ff9c, [[TLUser$modernUser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xc30aa358, [[TLInvoice$invoice alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x84551347, [[TLMessageMedia$messageMediaInvoice alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x3f56aea3, [[TLpayments_PaymentForm$payments_paymentForm alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xfb8fe43c, [[TLpayments_SavedInfo$payments_savedInfo alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x909c3f94, [[TLPaymentRequestedInfo$paymentRequestedInfo alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x500911e1, [[TLPayments_PaymentCeceipt$payments_paymentReceipt alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xd1451883, [[TLpayments_ValidatedRequestedInfo$payments_validatedRequestedInfo alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6c47ac9f, [[TLLangPackStringPluralized alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x289da732, [[TLChat$channelForbidden alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x695150d7, [[TLCodexModernMessageMediaPhotoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe216eb63, [[TLCodexModernMessageMediaPhotoParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb940c666, [[TLCodexModernMessageMediaGeoLiveParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xddf10c3b, [[TLCodexModernMessageMediaWebPageParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3f7ee58b, [[TLCodexModernMessageMediaDiceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x08cbec07, [[TLCodexModernMessageMediaDiceParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdc7b1140, [[TLCodexModernMessageEntityMentionNameParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc8cf05f8, [[TLCodexModernMessageEntityCustomEmojiParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x145ade0b, [[TLCodexModernContactParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6a7e7366, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x9cb070d7, [[TLCodexModernMessageMediaDocumentParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4cf4d72d, [[TLCodexModernMessageMediaDocumentParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x52d8ccd9, [[TLCodexModernMessageMediaDocumentParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfb197a65, [[TLCodexModernPhotoParser alloc] init]));
-        manualObjectParsers[(int32_t)0xdd570bd5] = [[TLCodexModernMessageMediaDocumentParser alloc] init];
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x75c78e60, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x021e1ad6, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe0b0bc2e, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfa3efb95, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd8214d41, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xde33b094, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf85c413c, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0da082fe, [[TLCodexModernPhotoSizeParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x77d01c3b, [[TLCodexModernImportedContactsParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83d60fc2, [[TLCodexSkipObjectParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8fd4c4d8, [[TLCodexModernDocumentParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6a9d7b35, [[TLchannelDifferenceTooLong alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x55c3a1b1, [[TLmessages_FeedMessages$messages_feedMessages alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x8e8bca3d, [[TLchannels_FeedSources$channels_feedSources alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x31bc3d25, [[TLInputSingleMedia$inputSingleMedia alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x5585a139, [[TLStickerSet$stickerSet alloc] init]));
-        manualObjectParsers[(int32_t)0x6410a5d2] = [[TLCodexModernStickerSetCoveredParser alloc] init];
-        manualObjectParsers[(int32_t)0x3407e51b] = [[TLCodexModernStickerSetCoveredParser alloc] init];
-        manualObjectParsers[(int32_t)0x40d13c0e] = [[TLCodexModernStickerSetCoveredParser alloc] init];
-        manualObjectParsers[(int32_t)0x77b15d1c] = [[TLCodexModernStickerSetCoveredParser alloc] init];
-        manualObjectParsers[(int32_t)0xcdbbcebb] = [[TLCodexModernAllStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0x2cb51097] = [[TLCodexModernFavedStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0xfcfeb29c] = [[TLCodexModernStickerKeywordParser alloc] init];
-        manualObjectParsers[(int32_t)0x12b299d4] = [[TLCodexStickerPackParser alloc] init];
-        manualObjectParsers[(int32_t)0x6e153f16] = [[TLCodexModernStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0xe86602c3] = [[TLCodexModernAllStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0x9e8fa6d3] = [[TLCodexModernFavedStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0x88d37c56] = [[TLCodexModernRecentStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0x0b17f890] = [[TLCodexModernRecentStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0xbe382906] = [[TLCodexModernFeaturedStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0xc6dc0c66] = [[TLCodexModernFeaturedStickersParser alloc] init];
-        manualObjectParsers[(int32_t)0x38641628] = [[TLCodexModernStickerSetInstallResultParser alloc] init];
-        manualObjectParsers[(int32_t)0x35e410a8] = [[TLCodexModernStickerSetInstallResultParser alloc] init];
-        manualObjectParsers[(int32_t)0x8af09dd2] = [[TLCodexModernFoundStickerSetsParser alloc] init];
-        manualObjectParsers[(int32_t)0x0d54b65d] = [[TLCodexModernFoundStickerSetsParser alloc] init];
-        manualObjectParsers[(int32_t)0x2dd14edc] = [[TLCodexModernStickerSetMetaParser alloc] init];
-        manualObjectParsers[(int32_t)0xd3f924eb] = [[TLCodexModernStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x6319d612] = [[TLCodexModernDocumentAttributeStickerParser alloc] init];
-        manualObjectParsers[(int32_t)0xffb62b95] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x9de7a269] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x861cc8a0] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x028703c8] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0xe67f520e] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0xcde3739] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0xc88b3b02] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x04c4d4ce] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x29d0f5ee] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x44c1f8e9] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x49748553] = [[TLCodexModernInputStickerSetParser alloc] init];
-        manualObjectParsers[(int32_t)0x1cf671a0] = [[TLCodexModernInputStickerSetParser alloc] init];
-        addHashToString((int32_t)0x6cdf9cef, @"stickerPack");
-        addHashToString((int32_t)0x2dd14edc, @"stickerSet");
-        addHashToString((int32_t)0x88d37c56, @"messages.recentStickers");
-        addHashToString((int32_t)0xbe382906, @"messages.featuredStickers");
-        addHashToString((int32_t)0x8af09dd2, @"messages.foundStickerSets");
-        addHashToString((int32_t)0x6319d612, @"documentAttributeSticker");
-        IOS6_NOOP_LOG(@"STICKER registered modern sticker parsers");
-        manualObjectParsers[(int32_t)0xb434e2b8] = [[TLCodexModernExportedAuthorizationParser alloc] init];
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6fa68e41, [[TLUpdate$updateReadFeed alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xe09e1fb8, [[TLhelp_ProxyData$proxyDataEmpty alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x2bf7ee23, [[TLhelp_ProxyData$proxyDataPromo alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x780a0310, [[TLhelp_TermsOfService$help_termsOfService alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x187fa0ca, [[TLSecureValue$secureValue alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xdb21d0a7, [[TLInputSecureValue$inputSecureValue alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xad2e1cd8, [[TLaccount_AuthorizationForm$account_authorizationForm alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xaf509d20, [[TLPeerNotifySettings$peerNotifySettings alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6a4ee832, [[TLhelp_DeepLinkInfo$help_deepLinkInfo alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x1b0c841a, [[TLCodexModernDraftMessageEmptyParser alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x1da7158f, [[TLhelp_AppUpdate$help_appUpdate alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0xad2641f8, [[TLaccount_Password$account_password alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x957b50fb, [[TLaccount_Password$account_password alloc] init]));
-        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x9a5c33e5, [[TLaccount_PasswordSettings$account_passwordSettings alloc] init]));
-
-        manualObjectParsers[(int32_t)0x80e11a7f] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xffa00ccc] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xc624b16e] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xb91bbd3a] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x48e91302] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x31c48347] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xa80f51e4] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x87e2f155] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xb00c47a2] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xea2c31d3] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xe6c31522] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xac1f1fcd] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x84b88578] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x2ffe2f7a] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xcc7c5c89] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xc7edbc83] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xee7a1596] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x95ddcf69] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x69f916f8] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xa8a3c699] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x2c8f2a25] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x774278d4] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x73ada76b] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xb07ed085] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xe188503b] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xbf7d6572] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x3e2793ba] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x9da1cd6c] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x399674dc] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x16605e3e] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0xd7c0ff9c] = [[TLUser$modernUser alloc] init];
-        manualObjectParsers[(int32_t)0x020b1422] = [[TLUser$modernUser alloc] init];
-        manualObjectParsers[(int32_t)0xd8aa840f] = [[TLCodexInputGroupCallParser alloc] init];
-        manualObjectParsers[(int32_t)0x6880b94d] = [[TLCodexPeerSettingsContainerParser alloc] init];
-        manualObjectParsers[(int32_t)0xacd66c5e] = [[TLCodexModernPeerSettingsParser alloc] init];
-        manualObjectParsers[(int32_t)0xcc02aa6d] = [[TLCodexModernMessageActionParser alloc] init];
-        manualObjectParsers[(int32_t)0x83314fca] = [[TLUser$modernUser alloc] init];
-        manualObjectParsers[(int32_t)0x2813e6db] = [[TLUser$modernUser alloc] init];
-        manualObjectParsers[(int32_t)0x1afeb7ac] = [[TLUser$modernUser alloc] init];
-        manualObjectParsers[(int32_t)0xd0a1d008] = [[TLUser$modernUser alloc] init];
-        manualObjectParsers[(int32_t)0x145ade0b] = [[TLCodexModernContactParser alloc] init];
-        manualObjectParsers[(int32_t)0xeae87e42] = [[TLCodexModernContactsParser alloc] init];
-        manualObjectParsers[(int32_t)0x0ade1591] = [[TLCodexModernBlockedParser alloc] init];
-        manualObjectParsers[(int32_t)0xe1664194] = [[TLCodexModernBlockedParser alloc] init];
-        manualObjectParsers[(int32_t)0xe8fd8014] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x211a1788] = [[TLCodexModernWebPageEmptyParser alloc] init];
-        manualObjectParsers[(int32_t)0xe89c45b2] = [[TLCodexModernWebPageParser alloc] init];
-        manualObjectParsers[(int32_t)0xddf10c3b] = [[TLCodexModernMessageMediaWebPageParser alloc] init];
-        manualObjectParsers[(int32_t)0xb53e8b21] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8c9a88ac] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x3f7ee58b] = [[TLCodexModernMessageMediaDiceParser alloc] init];
-        manualObjectParsers[(int32_t)0x08cbec07] = [[TLCodexModernMessageMediaDiceParser alloc] init];
-        manualObjectParsers[(int32_t)0x4bd6e798] = [[TLCodexModernMessageMediaPollParser alloc] init];
-        manualObjectParsers[(int32_t)0xb2a2f663] = [[TLCodexModernGeoPointSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x4e4df4bb] = [[TLCodexModernMessageFwdHeaderParser alloc] init];
-        manualObjectParsers[(int32_t)0xdc7b1140] = [[TLCodexModernMessageEntityMentionNameParser alloc] init];
-        manualObjectParsers[(int32_t)0xc8cf05f8] = [[TLCodexModernMessageEntityCustomEmojiParser alloc] init];
-        manualObjectParsers[(int32_t)0x9c4e7e8b] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0xbf0693d4] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x761e6af4] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x32ca960f] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0xf1ccaaac] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x904ac7c7] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x71777116] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0xc6c1e5a7] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x0652c1c5] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x6c622f67] = [[TLCodexModernMessageEntitySimpleParser alloc] init];
-        manualObjectParsers[(int32_t)0x751f3146] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x58747131] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xff16e2ca] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7adf2420] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf8227181] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xebe07752] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x20529438] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x635b4c09] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6c8e1e06] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x3b6ddad2] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd38ff1c2] = [[TLCodexModernDocumentAttributeVideoD38Parser alloc] init];
-        manualObjectParsers[(int32_t)0xeeca5ce3] = [[TLCodexModernLangPackLanguageParser alloc] init];
-        manualObjectParsers[(int32_t)0x17399fad] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfd149899] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6a7e7366] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x98657f0d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xde33b094] = [[TLCodexModernPhotoSizeParser alloc] init];
-        manualObjectParsers[(int32_t)0xf85c413c] = [[TLCodexModernPhotoSizeParser alloc] init];
-        manualObjectParsers[(int32_t)0x0da082fe] = [[TLCodexModernPhotoSizeParser alloc] init];
-        manualObjectParsers[(int32_t)0x1759c560] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8c88c923] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7c8fe7b6] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x39f23300] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa8718dc5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf259a80b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x65a0fa4d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x031f9590] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xef1751b5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x804361ea] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1e148390] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbf4dea82] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x76768bed] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x16115a96] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa44f3ef6] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x25e073fc] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe4e88011] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb92fb6cd] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9a8ae1e1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x5e068047] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x98dd8936] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6f747657] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdc3d824f] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x744694e0] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x6724abc4] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0xd912a59c] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0xc12622c4] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x9bf8bb95] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x6c3f19b9] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x3c2884c1] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0xde5a0dd6] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x7e6260d7] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0xed6a8504] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0xc7fb5e01] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x034b8621] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x1ccb966a] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x081ccf4f] = [[TLCodexRichTextSkipParser alloc] init];
-        manualObjectParsers[(int32_t)0x35553762] = [[TLCodexRichTextSkipParser alloc] init];
-
-        manualObjectParsers[(int32_t)0x2633421b] = [[TLCodexModernChannelFullParser alloc] init];
-        manualObjectParsers[(int32_t)0x3ded6320] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x56e0d474] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x70322949] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x9f84f49e] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x2ec0533f] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0xfdb19008] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0xf6a548d3] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x773f4e66] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0xaa073beb] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0xceaa3ea1] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0xa8852491] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x8a53b014] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0xca5cab89] = [[TLCodexModernMessageMediaUnsupportedParser alloc] init];
-        manualObjectParsers[(int32_t)0x904dd49c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xac21d3ce] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x09cb7759] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8ae5c97a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9ddb347c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x07df587c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa02a982e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1ea2fda7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa584b019] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x283bd312] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8b725fce] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x77b0e372] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa4a79376] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9f812b08] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x683b2c52] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdef143d0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfb9c547a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x54b56617] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7781fe18] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb98cd696] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x72c64955] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xab339c00] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9f27d26e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe477092e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd3656499] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa2c0f695] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe7ff068a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7184603b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x07141dbf] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xac5c1af7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x21108ff7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe519abab] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc9b9e2b9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc3f2f501] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcc4d9ecc] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xef156a5c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1b0e4f07] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x4b3e14d6] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8f34b2f5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfebe5491] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x206ad49e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1f0c1ad9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdc6cfcf0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xad628cc8] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xee479c64] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcba9a52f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x49b92a26] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x221bb5e4] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcae68768] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfd5e12bd] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x257e962b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xeb983f8f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x4367daa0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe175e66f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb2539d54] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9a9d77e0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x86f8613c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc448415c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9ae228e2] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x4959427a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe7058e7f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8a480e27] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x50cd067c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1f2bf4a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xedf3add0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x93037e20] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb8ea86a9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x26219a58] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x767d61eb] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xadec6ebe] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2ba1f5ce] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x00f8ed08] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x64407ea7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf83ae221] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x44ba9dd9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc01f6fe8] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcb6ff828] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x889b59ef] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x3259950a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x3bb842ac] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2aee9191] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6f8b32aa] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x0194cb3b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x832175e0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x033ed001] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x17d7f87b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x09c469cd] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc4e5921e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb88cf373] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1d998733] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x114ff30d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x628c9224] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb4ae666f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xec43a2d1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9a23af21] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x93c3e27e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd1ed9a5b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbddb616e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb89bfccf] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x95f2bfe4] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb457b375] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7b560a0b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x250dbaf8] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe92fd902] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd80da15d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x60682812] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf9677aad] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x0bd915c0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x13659eb0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6c9ce8ed] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6c207376] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1dab80b7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x394e7f21] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x5e0589f1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x5416d58] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2e6eab1a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x94ce852a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x54236209] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdd0c66f2] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x19a13f71] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x98d5ea1d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb4d5d859] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf93cd45c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1e109708] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe581e4e9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb4f67e93] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa0624cf7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc69708d3] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xea32b4b1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xeb032884] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc387c04e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe7e82e12] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x0e8e37e5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9325705a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc3987a3a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x374fa7ad] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd5e58274] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x87e5dfe4] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1a8afc7e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xee430c85] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9d1dbd26] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xda2ad647] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x59e65335] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x44e56023] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x90d7adfa] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcff63ea9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9bad6414] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc1f46103] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6c9d0efe] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xf1d628ec] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x933ca597] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x79eb8cb3] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbaf39d8b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7dbf8673] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xffda656d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1839490f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x31bd492d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc077ec01] = [[TLCodexAvailableReactionParser alloc] init];
-        manualObjectParsers[(int32_t)0x9f071957] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x768e3aad] = [[TLCodexAvailableReactionsParser alloc] init];
-        manualObjectParsers[(int32_t)0xd08ce645] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x90c467d1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb06fdbdf] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xeafdf716] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x5f2d1df2] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb81c7034] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x367617d3] = [[TLCodexForumTopicsParser alloc] init];
-        manualObjectParsers[(int32_t)0x5fb5523b] = [[TLCodexDialogFilterParser alloc] init];
-        manualObjectParsers[(int32_t)0x7438f7e8] = [[TLCodexDialogFilterParser alloc] init];
-        manualObjectParsers[(int32_t)0x363293ae] = [[TLCodexDialogFilterParser alloc] init];
-        manualObjectParsers[(int32_t)0x9fe28ea4] = [[TLCodexDialogFilterParser alloc] init];
-        manualObjectParsers[(int32_t)0xaa472651] = [[TLCodexDialogFilterParser alloc] init];
-        manualObjectParsers[(int32_t)0x96537bd7] = [[TLCodexDialogFilterParser alloc] init];
-        manualObjectParsers[(int32_t)0x2ad93719] = [[TLCodexDialogFiltersParser alloc] init];
-        manualObjectParsers[(int32_t)0x26ffde7d] = [[TLCodexDialogFilterUpdateParser alloc] init];
-        manualObjectParsers[(int32_t)0x43b46b20] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x481eadfa] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7a1e11d1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x7a9abda9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x80d26cc7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x093bcf34] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6fb4ad87] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x881fb94b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa26156c0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xc556a45d] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9e84bc99] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2f2f21bf] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x0bb2d201] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x31c24808] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xb23fc698] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x9d2216e0] = [[TLCodexUpdateGroupCallParser alloc] init];
-        manualObjectParsers[(int32_t)0xf2ebdb4e] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2a3dc7ac] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xeba636fe] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x67753ac8] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdcb118b7] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbb9bb9a5] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x1e297bfa] = [[TLCodexUpdateMessageReactionsParser alloc] init];
-        manualObjectParsers[(int32_t)0xaca1657b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x86e18161] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6ca9c2e9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfa0f3ca2] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xfb4c496c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x28373599] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x30f443db] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x07b68920] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x39c67432] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xa477288f] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x8c0f91fb] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x140502d1] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xd90d8dfe] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xcfb9d957] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x5334759c] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x4345be73] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x527d22eb] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbbf51685] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x922e55a9] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xdb909ec2] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x96d074fd] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x2b96cd1b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xe1bb0d61] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x3fc9053b] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x6ebdff91] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0xbac3a61a] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x4b9e22a0] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x71e4ea58] = [[TLCodexSkipObjectParser alloc] init];
-        manualObjectParsers[(int32_t)0x98613ebf] = [[TLCodexSkipObjectParser alloc] init];
-
-        {
-            TLSchemeType$schemeType *constructor = [[TLSchemeType$schemeType alloc] init];
-            constructor.n_id = (int32_t)0xae500895;
-            constructor.predicate = @"futuresalts";
-            constructor.type = @"FutureSalts";
-            NSMutableArray *fields = [[NSMutableArray alloc] init];
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"req_msg_id";
-                arg.type = @"long";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"now";
-                arg.type = @"int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"salts";
-                arg.type = @"vector<futureSalt>";
-                [fields addObject:arg];
-            }
-            constructor.params = fields;
-            [types addObject:constructor];
-        }
-        {
-            TLSchemeMethod$schemeMethod *method = [[TLSchemeMethod$schemeMethod alloc] init];
-            method.n_id = (int32_t)0x19c2f763;
-            method.method = @"updates.getDifference";
-            method.type = @"updates.Difference";
-            NSMutableArray *fields = [[NSMutableArray alloc] init];
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"flags";
-                arg.type = @"int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"pts";
-                arg.type = @"int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"pts_limit";
-                arg.type = @"flags.1?int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"pts_total_limit";
-                arg.type = @"flags.0?int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"date";
-                arg.type = @"int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"qts";
-                arg.type = @"int";
-                [fields addObject:arg];
-            }
-            {
-                TLSchemeParam$schemeParam *arg = [[TLSchemeParam$schemeParam alloc] init];
-                arg.name = @"qts_limit";
-                arg.type = @"flags.2?int";
-                [fields addObject:arg];
-            }
-            method.params = fields;
-            [methods addObject:method];
-        }
-        
-        for (TLSchemeType *typeDesc in types)
-        {
-            NSString *name = typeDesc.type;
-            if ([name isEqualToString:@"Bool"] || [name isEqualToString:@"Null"] || [name hasPrefix:@"Vector<"])
-            {
-                continue;
-            }
-            
-            std::tr1::shared_ptr<std::vector<TLMetaField> > fields(new std::vector<TLMetaField>());
-            
-            bool hasUnresolvedTypes = false;
-            
-            for (TLSchemeParam *argDesc in typeDesc.params)
-            {
-                TLMetaField field;
-                field.name = murMurHash32(argDesc.name);
-                field.hasFlag = false;
-                field.flagName = 0;
-                field.flagBit = 0;
-                field.flagOnly = false;
-                
-                NSString *typeName = argDesc.type;
-                NSRange optionalRange = [typeName rangeOfString:@"?"];
-                if (optionalRange.location != NSNotFound)
-                {
-                    NSString *flagDesc = [typeName substringToIndex:optionalRange.location];
-                    NSString *actualTypeName = [typeName substringFromIndex:optionalRange.location + 1];
-                    NSRange dotRange = [flagDesc rangeOfString:@"."];
-                    if (dotRange.location != NSNotFound)
-                    {
-                        NSString *flagName = [flagDesc substringToIndex:dotRange.location];
-                        NSString *flagBit = [flagDesc substringFromIndex:dotRange.location + 1];
-                        field.hasFlag = true;
-                        field.flagName = murMurHash32(flagName);
-                        field.flagBit = [flagBit intValue];
-                        field.flagOnly = [actualTypeName isEqualToString:@"true"];
-                        typeName = field.flagOnly ? @"Bool" : actualTypeName;
-                    }
-                }
-                
-                int32_t fieldTypeName = murMurHash32(typeName);
-                std::tr1::unordered_map<int32_t, std::pair<TLMetaTypeArgument, bool> >::iterator it = cachedFieldTypes.find(fieldTypeName);
-                if (it == cachedFieldTypes.end())
-                {
-                    bool fieldUnresolvedTypes = false;
-                    field.type = createTypeArgumentFromString(typeName, typesToResolve, vectorTypeMap, fieldUnresolvedTypes);
-                    cachedFieldTypes.insert(std::pair<int32_t, std::pair<TLMetaTypeArgument, bool> >(fieldTypeName, std::make_pair(field.type, fieldUnresolvedTypes)));
-                    if (fieldUnresolvedTypes)
-                        hasUnresolvedTypes = true;
-                }
-                else
-                {
-                    field.type = it->second.first;
-                    if (it->second.second)
-                        hasUnresolvedTypes = true;
-                }
-                
-                fields->push_back(field);
-            }
-            
-            std::tr1::shared_ptr<TLMetaType> resultType = createTypeFromString(name, typesToResolve, vectorTypeMap);
-            typesByName[resultType->getName()] = resultType;
-            
-            std::tr1::shared_ptr<TLMetaConstructor> constructor(new TLMetaConstructor(murMurHash32(typeDesc.predicate), typeDesc.n_id, fields, resultType));
-            constructorsBySignature[constructor->getSignature()] = constructor;
-            constructorsByName[constructor->getName()] = constructor;
-            
-            if (hasUnresolvedTypes)
-            {
-                constructorsWithUnresolvedTypes.push_back(constructor);
-            }
-        }
-        
-        for (TLSchemeMethod *method in methods)
-        {
-            if ([method.type hasPrefix:@"Vector<"])
-            {
-                bool hasUnresolvedTypes = false;
-                createTypeArgumentFromString(method.type, typesToResolve, vectorTypeMap, hasUnresolvedTypes);
-            }
-        }
-        
-        const char *vectorPrefix = "vector # [ ";
-        const char *vectorSuffix = " ] = Vector ";
-        for (std::map<int32_t, TLMetaTypeArgumentWithName>::iterator it = vectorTypeMap.begin(); it != vectorTypeMap.end(); it++)
-        {
-            std::vector<char> signatureString;
-            signatureString.insert(signatureString.end(), vectorPrefix, vectorPrefix + 11);
-            signatureString.insert(signatureString.end(), it->second.name.begin(), it->second.name.end());
-            signatureString.insert(signatureString.end(), vectorSuffix, vectorSuffix + 12);
-            signatureString.insert(signatureString.end(), it->second.name.begin(), it->second.name.end());
-            
-            int32_t signature = (int32_t)crc32(0, (const Bytef *)signatureString.data(), (int32_t)signatureString.size());
-            
-            TLMetaTypeArgument typeArgument;
-            typeArgument.boxed = it->second.boxed;
-            typeArgument.unboxedConstructorName = it->second.unboxedConstructorName;
-            typeArgument.unboxedConstructorSignature = it->second.unboxedConstructorSignature;
-            typeArgument.type = it->second.type;
-            
-            vectorElementTypesByConstructor.insert(std::pair<int32_t, TLMetaTypeArgument>(signature, typeArgument));
-        }
-        
-        for (TLSchemeMethod *methodDesc in ((TLScheme$scheme *)scheme).methods)
-        {
-            NSString *resultTypeName = methodDesc.type;
-            NSString *method = methodDesc.method;
-            
-            std::tr1::shared_ptr<std::vector<TLMetaField> > fields(new std::vector<TLMetaField>());
-            
-            bool hasUnresolvedTypes = false;
-            
-            for (TLSchemeParam *argDesc in methodDesc.params)
-            {
-                TLMetaField field;
-                field.name = murMurHash32(argDesc.name);
-                field.hasFlag = false;
-                field.flagName = 0;
-                field.flagBit = 0;
-                field.flagOnly = false;
-                
-                NSString *typeName = argDesc.type;
-                NSRange optionalRange = [typeName rangeOfString:@"?"];
-                if (optionalRange.location != NSNotFound)
-                {
-                    NSString *flagDesc = [typeName substringToIndex:optionalRange.location];
-                    NSString *actualTypeName = [typeName substringFromIndex:optionalRange.location + 1];
-                    NSRange dotRange = [flagDesc rangeOfString:@"."];
-                    if (dotRange.location != NSNotFound)
-                    {
-                        NSString *flagName = [flagDesc substringToIndex:dotRange.location];
-                        NSString *flagBit = [flagDesc substringFromIndex:dotRange.location + 1];
-                        field.hasFlag = true;
-                        field.flagName = murMurHash32(flagName);
-                        field.flagBit = [flagBit intValue];
-                        field.flagOnly = [actualTypeName isEqualToString:@"true"];
-                        typeName = field.flagOnly ? @"Bool" : actualTypeName;
-                    }
-                }
-                
-                int32_t fieldTypeName = murMurHash32(typeName);
-                std::tr1::unordered_map<int32_t, std::pair<TLMetaTypeArgument, bool> >::iterator it = cachedFieldTypes.find(fieldTypeName);
-                if (it == cachedFieldTypes.end())
-                {
-                    bool fieldUnresolvedTypes = false;
-                    field.type = createTypeArgumentFromString(typeName, typesToResolve, vectorTypeMap, fieldUnresolvedTypes);
-                    cachedFieldTypes.insert(std::pair<int32_t, std::pair<TLMetaTypeArgument, bool> >(fieldTypeName, std::make_pair(field.type, fieldUnresolvedTypes)));
-                    if (fieldUnresolvedTypes)
-                        hasUnresolvedTypes = true;
-                }
-                else
-                {
-                    field.type = it->second.first;
-                    if (it->second.second)
-                        hasUnresolvedTypes = true;
-                }
-                
-                fields->push_back(field);
-            }
-            
-            std::tr1::shared_ptr<TLMetaType> resultType = createTypeFromString(resultTypeName, typesToResolve, vectorTypeMap);
-            
-            std::tr1::shared_ptr<TLMetaConstructor> constructor(new TLMetaConstructor(murMurHash32(method), methodDesc.n_id, fields, resultType));
-            constructorsBySignature[constructor->getSignature()] = constructor;
-            constructorsByName[constructor->getName()] = constructor;
-            
-            if (hasUnresolvedTypes)
-            {
-                constructorsWithUnresolvedTypes.push_back(constructor);
-            }
-        }
-        
-        for (std::vector<std::tr1::shared_ptr<TLMetaConstructor> >::iterator it = constructorsWithUnresolvedTypes.begin(); it != constructorsWithUnresolvedTypes.end(); it++)
-        {
-            std::tr1::shared_ptr<std::vector<TLMetaField> > fields = (*it)->getFields();
-            for (std::vector<TLMetaField>::iterator fieldIt = fields->begin(); fieldIt != fields->end(); fieldIt++)
-            {
-                resolveUnboxedTypes(&fieldIt->type, constructorsByName, vectorElementTypesByConstructor);
-            }
-        }
-        
-        for (std::tr1::unordered_map<int32_t, TLMetaTypeArgument>::iterator it = vectorElementTypesByConstructor.begin(); it != vectorElementTypesByConstructor.end(); it++)
-        {
-            resolveUnboxedTypes(&it->second, constructorsByName, vectorElementTypesByConstructor);
-        }
+    if (![scheme isKindOfClass:[TLScheme$scheme class]])
+        return;
+    
+    @autoreleasepool
+    {
+        TLScheme$scheme *concreteScheme = (TLScheme$scheme *)scheme;
+        TLMetaSchemeEntries entries;
+        for (TLSchemeType *typeDesc in concreteScheme.types)
+            TLMetaSchemeAppendObjectEntry(entries, entries.types, typeDesc.n_id, typeDesc.predicate, typeDesc.type, typeDesc.params);
+        for (TLSchemeMethod *methodDesc in concreteScheme.methods)
+            TLMetaSchemeAppendObjectEntry(entries, entries.methods, methodDesc.n_id, methodDesc.method, methodDesc.type, methodDesc.params);
+        mergeSchemeEntries(entries, true);
     }
+}
+
+void TLMetaClassStore::mergeSchemeTable(TLMetaSchemeTable const *table)
+{
+    if (table == NULL)
+        return;
+    
+    TLMetaSchemeEntries entries;
+    entries.params.reserve(table->paramsCount + 16);
+    TLMetaSchemeAppendTableEntries(entries, entries.types, table, table->types, table->typesCount);
+    TLMetaSchemeAppendTableEntries(entries, entries.methods, table, table->methods, table->methodsCount);
+    mergeSchemeEntries(entries, false);
+}
+
+void TLMetaClassStore::clearScheme()
+{
+    TGTLClassRegistryGuard guard;
+    constructorsBySignature.clear();
+    constructorsByName.clear();
+    typesByName.clear();
+    vectorElementTypesByConstructor.clear();
+    delete TLMetaClassStoreLazyStore;
+    TLMetaClassStoreLazyStore = NULL;
+}
+
+std::tr1::shared_ptr<TLMetaConstructor> TLMetaClassStore::getConstructorBySignature(int32_t signature)
+{
+    TGTLClassRegistryGuard guard;
+    std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >::iterator it = constructorsBySignature.find(signature);
+    if (it != constructorsBySignature.end())
+        return it->second;
+    
+    uint32_t ref = 0;
+    if (TLMetaClassStoreLazyStore == NULL || !TLMetaSchemeIndexFind(TLMetaClassStoreLazyStore->signatureIndex, signature, &ref))
+        return std::tr1::shared_ptr<TLMetaConstructor>();
+    
+    std::tr1::shared_ptr<TLMetaConstructor> constructor = TLMetaSchemeLazyConstructor(*TLMetaClassStoreLazyStore, constructorsByName, typesByName, ref);
+    constructorsBySignature[signature] = constructor;
+    return constructor;
+}
+
+std::tr1::shared_ptr<TLMetaConstructor> TLMetaClassStore::getConstructorByName(int32_t name)
+{
+    TGTLClassRegistryGuard guard;
+    std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >::iterator it = constructorsByName.find(name);
+    if (it != constructorsByName.end())
+        return it->second;
+    
+    uint32_t ref = 0;
+    if (TLMetaClassStoreLazyStore == NULL || !TLMetaSchemeIndexFind(TLMetaClassStoreLazyStore->nameIndex, name, &ref))
+        return std::tr1::shared_ptr<TLMetaConstructor>();
+    
+    std::tr1::shared_ptr<TLMetaConstructor> constructor = TLMetaSchemeLazyConstructor(*TLMetaClassStoreLazyStore, constructorsByName, typesByName, ref);
+    constructorsByName[name] = constructor;
+    return constructor;
+}
+
+void TLMetaClassStore::materializeLazyScheme()
+{
+    TLMetaSchemeLazyStore *store = TLMetaClassStoreLazyStore;
+    if (store == NULL)
+        return;
+    
+    for (TLMetaSchemeIndex::const_iterator it = store->signatureIndex.begin(); it != store->signatureIndex.end(); ++it)
+    {
+        if (constructorsBySignature.find(it->first) == constructorsBySignature.end())
+            constructorsBySignature[it->first] = TLMetaSchemeLazyConstructor(*store, constructorsByName, typesByName, it->second);
+    }
+    for (TLMetaSchemeIndex::const_iterator it = store->nameIndex.begin(); it != store->nameIndex.end(); ++it)
+    {
+        if (constructorsByName.find(it->first) == constructorsByName.end())
+            constructorsByName[it->first] = TLMetaSchemeLazyConstructor(*store, constructorsByName, typesByName, it->second);
+    }
+    
+    TLMetaClassStoreLazyStore = NULL;
+    delete store;
+}
+
+void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool materialize)
+{
+    TGTLClassRegistryGuard guard;
+    CFAbsoluteTime mergeStart = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime mergePhaseStart = mergeStart;
+    
+    size_t schemeMethodsCount = entries.methods.size();
+    TLCodexSkipObjectParser *sharedSkipObjectParser = [[TLCodexSkipObjectParser alloc] init];
+    mergePhaseStart = CFAbsoluteTimeGetCurrent();
+    
+    {
+        id<TLObject> object = [[TLDestroySessionsRes$destroy_sessions_res alloc] init];
+        manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >([object TLconstructorSignature], object));
+    }
+    
+    TLMetaSchemeAppendEntry(entries.params, entries.types, (int32_t)0x73f1f8dc, "msg_container", "MessageContainer", TLMetaSchemeMessageContainerParams, sizeof(TLMetaSchemeMessageContainerParams) / sizeof(TLMetaSchemeMessageContainerParams[0]));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x73f1f8dc, TLLazyManualObjectParser(TLMessageContainer$msg_container)));
+    
+    TLMetaSchemeAppendEntry(entries.params, entries.types, (int32_t)0xf35c6d01, "rpc_result", "RpcResult", TLMetaSchemeRpcResultParams, sizeof(TLMetaSchemeRpcResultParams) / sizeof(TLMetaSchemeRpcResultParams[0]));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf35c6d01, TLLazyManualObjectParser(TLRpcResult$rpc_result)));
+    
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x5162463, TLLazyManualObjectParser(TLResPQ$resPQ_manual)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x62d6b459, TLLazyManualObjectParser(TLMsgsAck$msgs_ack_manual)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x44f9b43d, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9815cec8, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    addHashToString((int32_t)0x9815cec8, @"message");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9e19a1f6, TLLazyManualObjectParser(TLMessage$modernMessageService)));
+    
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5f07b4bc, TLLazyManualObjectParser(TLWebPage_manual)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4b46c37e, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x31774388, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x020b1422, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb1b8cc83, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2e13f4c3, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x215c4438, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x83314fca, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2813e6db, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1afeb7ac, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd0a1d008, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd7c0ff9c, TLLazyManualObjectParser(TLUser$modernUser)));
+    objectClassesByConstructorNames[(int32_t)0x6c3e5402] = [[TLMessageEntity$messageEntityTextUrl alloc] init];
+    objectClassesByConstructorNames[(int32_t)0x9fbde43f] = [[TLChat$channelMeta alloc] init];
+    addHashToString((int32_t)0x9fbde43f, @"channel");
+    objectClassesByConstructorNames[(int32_t)0xe2f65ce2] = [[TLUserFull$userFullMeta alloc] init];
+    addHashToString((int32_t)0xe2f65ce2, @"UserFull");
+    objectClassesByConstructorNames[(int32_t)0x8c5d990f] = [[TLupdates_ChannelDifference$updates_channelDifferenceMeta alloc] init];
+    addHashToString((int32_t)0x8c5d990f, @"updates.ChannelDifference");
+    objectClassesByConstructorNames[(int32_t)0x4ccda305] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x4ccda305, @"updatePinnedChannelMessages");
+    objectClassesByConstructorNames[(int32_t)0xf9a7c6d9] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xf9a7c6d9, @"businessLocation");
+    objectClassesByConstructorNames[(int32_t)0xae9f31e8] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xae9f31e8, @"pollAnswerVoters");
+    objectClassesByConstructorNames[(int32_t)0xd5d4c7f5] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xd5d4c7f5, @"mediaAreaSuggestedReaction");
+    objectClassesByConstructorNames[(int32_t)0x377d3538] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x377d3538, @"webPageAttributeStickerSet");
+    objectClassesByConstructorNames[(int32_t)0x9ac0c0cc] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x9ac0c0cc, @"messageEntityFormattedDate");
+    objectClassesByConstructorNames[(int32_t)0x1f1ea79e] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x1f1ea79e, @"PeerColor");
+    objectClassesByConstructorNames[(int32_t)0xa61d7ecc] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xa61d7ecc, @"botApp");
+    objectClassesByConstructorNames[(int32_t)0xd91a34ac] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xd91a34ac, @"storyViews");
+    objectClassesByConstructorNames[(int32_t)0x731eca73] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x731eca73, @"updatePinnedDialogs");
+    objectClassesByConstructorNames[(int32_t)0x8350972b] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x8350972b, @"recentStory");
+    objectClassesByConstructorNames[(int32_t)0xcba86ca2] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xcba86ca2, @"RequestPeerType");
+    objectClassesByConstructorNames[(int32_t)0xf6781f7c] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xf6781f7c, @"modernOptionalFeature");
+    objectClassesByConstructorNames[(int32_t)0x7f6b4284] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x7f6b4284, @"modernOptionalFeature");
+    objectClassesByConstructorNames[(int32_t)0xd7bb4f53] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xd7bb4f53, @"modernOptionalFeature");
+    objectClassesByConstructorNames[(int32_t)0xc18fad86] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xc18fad86, @"modernOptionalFeature");
+    objectClassesByConstructorNames[(int32_t)0xff68ab47] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xff68ab47, @"notificationSound");
+    objectClassesByConstructorNames[(int32_t)0x7a557809] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x7a557809, @"modernReactionFeature");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x09d05049, TLLazyManualObjectParser(TLCodexUserStatusEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xedb93949, TLLazyManualObjectParser(TLCodexUserStatusOnlineParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x008c703f, TLLazyManualObjectParser(TLCodexUserStatusOfflineParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7b197dc8, TLLazyManualObjectParser(TLCodexUserStatusNoPayloadParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x541a1d1a, TLLazyManualObjectParser(TLCodexUserStatusNoPayloadParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x65899777, TLLazyManualObjectParser(TLCodexUserStatusNoPayloadParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x16d9703b, TLLazyManualObjectParser(TLCodexModernContactStatusParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe5bdf8de, TLLazyManualObjectParser(TLCodexModernUpdateUserStatusParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x18b7a10d, TLLazyManualObjectParser(TLDcOption$modernDcOption)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x14b24500, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd597650c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5bb98608, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50cc03d3, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8d595cd6, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4e80a379, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48e246c2, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdc58f31e, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xac072444, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x22c0f6d5, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x869fbe10, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3bd4b7c2, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5881323a, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x69d66c45, TLLazyManualObjectParser(TLCodexModernInputReplyToParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c39793f, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc02d4007, TLLazyManualObjectParser(TLCodexModernChatParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe46bcee4, TLLazyManualObjectParser(TLCodexModernChatParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0933f5b, TLLazyManualObjectParser(TLCodexModernChatParticipantParser)));
+    addHashToString((int32_t)0x22c0f6d5, @"inputReplyToMessage");
+    addHashToString((int32_t)0x869fbe10, @"inputReplyToMessage");
+    addHashToString((int32_t)0x3bd4b7c2, @"inputReplyToMessage");
+    addHashToString((int32_t)0x5881323a, @"inputReplyToStory");
+    addHashToString((int32_t)0x69d66c45, @"inputReplyToMonoForum");
+    addHashToString((int32_t)0x8c39793f, @"help.promoData");
+    addHashToString((int32_t)0xc02d4007, @"chatParticipant");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x914FBF11, TLLazyManualObjectParser(TLUpdates$modernUpdateShortMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x313bc7f8, TLLazyManualObjectParser(TLCodexModernUpdateShortMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x16812688, TLLazyManualObjectParser(TLUpdates$modernUpdateShortChatMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4d6deea5, TLLazyManualObjectParser(TLCodexModernUpdateShortChatMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xBC0F17BC, TLLazyManualObjectParser(TLmessages_Messages$modernChannelMessages)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x11f1331c, TLLazyManualObjectParser(TLUpdates$updateShortSentMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9015e101, TLLazyManualObjectParser(TLCodexModernUpdateShortSentMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa56c2a3e, TLLazyManualObjectParser(TLCodexModernUpdatesStateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x78d4dec1, TLLazyManualObjectParser(TLCodexModernUpdatesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x725b04c3, TLLazyManualObjectParser(TLCodexModernUpdatesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x74ae4240, TLLazyManualObjectParser(TLCodexModernUpdatesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb5523b, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7438f7e8, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x363293ae, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9fe28ea4, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa472651, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96537bd7, TLLazyManualObjectParser(TLCodexDialogFilterParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2ad93719, TLLazyManualObjectParser(TLCodexDialogFiltersParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x26ffde7d, TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa5d72105, TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3504914f, TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5d75a138, TLLazyManualObjectParser(TLCodexModernDifferenceEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x00f49ca0, TLLazyManualObjectParser(TLCodexModernDifferenceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa8fb1981, TLLazyManualObjectParser(TLCodexModernDifferenceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2064674E, TLLazyManualObjectParser(TLCodexModernChannelDifferenceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x3E11AFFB, TLLazyManualObjectParser(TLUpdates_ChannelDifference$empty)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xc88974ac, TLLazyManualObjectParser(TLChat$channel)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0aadfc8f, TLLazyManualObjectParser(TLCodexModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c32b11c, TLLazyManualObjectParser(TLCodexModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe00998b7, TLLazyManualObjectParser(TLCodexModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfe4478bd, TLLazyManualObjectParser(TLCodexModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfe685355, TLLazyManualObjectParser(TLCodexModernChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd49f34c6, TLLazyManualObjectParser(TLCodexModernChannelParser)));
+    addHashToString((int32_t)0xfe4478bd, @"channel");
+    addHashToString((int32_t)0xfe685355, @"channel");
+    addHashToString((int32_t)0xd49f34c6, @"channel");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x65efe954, TLLazyManualObjectParser(TLChat$community)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfd3cdab8, TLLazyManualObjectParser(TLChat$communityForbidden)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xcbb7a507, TLLazyManualObjectParser(TLChatFull$communityFull)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x76141ebd, TLLazyManualObjectParser(TLCommunityPeer$communityPeer)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf78a0973, TLLazyManualObjectParser(TLDialog$dialogCommunity)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5d20bae8, TLLazyManualObjectParser(TLMessageAction$messageActionChangeCommunity)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x20bcbba1, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4bbb8f01, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x56dbfcf8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6c0d8e23, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd9c6dc1a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbe376999, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2f65c8e4, sharedSkipObjectParser));
+    addHashToString((int32_t)0x65efe954, @"community");
+    addHashToString((int32_t)0xfd3cdab8, @"communityForbidden");
+    addHashToString((int32_t)0xcbb7a507, @"communityFull");
+    addHashToString((int32_t)0x76141ebd, @"communityPeer");
+    addHashToString((int32_t)0xf78a0973, @"dialogCommunity");
+    addHashToString((int32_t)0x5d20bae8, @"messageActionChangeCommunity");
+    addHashToString((int32_t)0x20bcbba1, @"updateNewEphemeralMessage");
+    addHashToString((int32_t)0x4bbb8f01, @"updateEditEphemeralMessage");
+    addHashToString((int32_t)0x56dbfcf8, @"updateDeleteEphemeralMessages");
+    addHashToString((int32_t)0x6c0d8e23, @"updateBotStarsSubscription");
+    addHashToString((int32_t)0xd9c6dc1a, @"ephemeralMessage");
+    addHashToString((int32_t)0xbe376999, @"notifyCommunity");
+    addHashToString((int32_t)0x2f65c8e4, @"dialogPeerCommunity");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x17d493d5, TLLazyManualObjectParser(TLCodexModernChannelForbiddenParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x76af5481, TLLazyManualObjectParser(TLChatFull$channelFull)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbab348d, TLLazyManualObjectParser(TLCodexModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa04e8d3a, TLLazyManualObjectParser(TLCodexModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe4e0b29d, TLLazyManualObjectParser(TLCodexModernChannelFullParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xFC900C2B, TLLazyManualObjectParser(TLChatParticipants$chatParticipantsForbidden)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xD91CDD54, TLLazyManualObjectParser(TLChat$chat)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x41cbf256, TLLazyManualObjectParser(TLCodexModernChatParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6592a1a7, TLLazyManualObjectParser(TLCodexModernChatForbiddenParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c6e1c11, TLLazyManualObjectParser(TLCodexModernChatPhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xB08FBB93, TLLazyManualObjectParser(TLWebPage$webPageExternal)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x947ca848, TLLazyManualObjectParser(TLMessages_BotResults$botResults)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x764cf810, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaAuto)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x8c7f65e2, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageText)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xb722de65, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaGeo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x8a86659c, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaVenue)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x18d1cdc2, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaContact)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x11965f3a, TLLazyManualObjectParser(TLBotInlineResult$botInlineResult)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9852F9C6, TLLazyManualObjectParser(TLDocumentAttribute$documentAttributeAudio)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x43c57c48, TLLazyManualObjectParser(TLCodexModernDocumentAttributeVideoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x559ebe6d, TLLazyManualObjectParser(TLMessageFwdHeader$messageFwdHeader)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xf220f3f, TLLazyManualObjectParser(TLUserFull$userFull)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3b6d152e, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcc997720, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd2234ea0, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x06cbe645, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c92b098, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x120b1ab9, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5a0a066d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x711d692d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x75b3b798, sharedSkipObjectParser));
+    manualObjectParsers[(int32_t)0x1bf335b9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xfe198602] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xfe198602, @"updateChannelPinnedTopics");
+    manualObjectParsers[(int32_t)0x7d627683] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1824e40b] = sharedSkipObjectParser;
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0ab4a819, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc01e857f, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2a17bf5c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83487af0, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc32d5b12, TLLazyManualObjectParser(TLCodexModernUpdateDeleteChannelMessagesParser)));
+    addHashToString((int32_t)0xc32d5b12, @"updateDeleteChannelMessages");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5e1b3cb8, TLLazyManualObjectParser(TLCodexUpdateMessageReactionsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd6b19546, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x51e6ee4f, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xea29055d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x922e6e10, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9c974fdf, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8951abef, TLLazyManualObjectParser(TLCodexModernUpdateNewAuthorizationParser)));
+    addHashToString((int32_t)0x8951abef, @"updateNewAuthorization");
+    manualObjectParsers[(int32_t)0xad01d61d] = TLLazyManualObjectParser(TGDeviceAuthorizationParser);
+    manualObjectParsers[(int32_t)0x4bff8ea0] = TLLazyManualObjectParser(TGDeviceAuthorizationsParser);
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb75f99a9, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf226ac08, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6f7863f4, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x86fccf85, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x74c34319, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xffadc913, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb390dc08, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x16a4b93c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xedf164f1, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x79b26a24, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x68cb6283, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9a35e999, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x63c3dd0a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb826e150, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2e94c3e7, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcf6f6db8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x31cad303, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x01c641c2, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbbb6b4a3, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x74aee3e0, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x313a9547, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x85f0a9cd, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x565251e2, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4e7085ea, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9f2504e4, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe0bff26c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x36437737, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdbce6389, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf08d516b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x78fbf3a8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcef7e7a8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xaff56398, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x71f276c4, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4d4bd46a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3458f9c8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfe333952, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x771a4e66, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x972dabbf, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2eeed1c4, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3aae0528, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0aa021e5, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbe82db9c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb282217f, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcad5452d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x14455871, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2271f2bf, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5787686d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xdf8b3b22, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa5d9abb8, sharedSkipObjectParser));
+    manualObjectParsers[(int32_t)0xde4c5d93] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb0bdeac5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9083670b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbd74cf49] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x59d78fc5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xde9eed1d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe87acbc0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe2de7737] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6090d6d5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbbab2643] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcfcd0f13] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xaa5f789c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa388a368] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2ed82995] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x3de1dfed] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x416c56e8] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x41df43fc] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x95f389b1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x69279795] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf101aa7f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2085c238] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x84aa3a9c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x48aaae3c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x4a162433] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1f01c757] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2eb1b658] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x947a12df] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9d6b13b0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa0ba4f17] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8a2932f3] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x512fe446] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x99ea331d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6b39f4ec] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x42b00348] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7d5bd1f0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd31bc45d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdb33dad0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xaef6abbc] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x46c6e36f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdaad85b0] = TLLazyManualObjectParser(TLCodexMessageMediaGiveawayParser);
+    addHashToString((int32_t)0xdaad85b0, @"messageMediaGiveaway");
+    manualObjectParsers[(int32_t)0xc6991068] = TLLazyManualObjectParser(TLCodexMessageMediaGiveawayParser);
+    addHashToString((int32_t)0xc6991068, @"messageMediaGiveawayResults");
+    manualObjectParsers[(int32_t)0xbec268ef] = TLLazyManualObjectParser(TLCodexUpdateNotifySettingsParser);
+    addHashToString((int32_t)0xbec268ef, @"updateNotifySettings");
+    manualObjectParsers[(int32_t)0xcde0ec40] = TLLazyManualObjectParser(TLCodexChatInviteParser);
+    addHashToString((int32_t)0xcde0ec40, @"chatInvite");
+    manualObjectParsers[(int32_t)0x4ba3a95a] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x4ba3a95a, @"messageReactor");
+    manualObjectParsers[(int32_t)0xe16459c3] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xe16459c3, @"updateDialogUnreadMark");
+    manualObjectParsers[(int32_t)0xe56dbf05] = sharedSkipObjectParser;
+    addHashToString((int32_t)0xe56dbf05, @"dialogPeer");
+    manualObjectParsers[(int32_t)0x514519e2] = sharedSkipObjectParser;
+    addHashToString((int32_t)0x514519e2, @"dialogPeerFolder");
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf74e932b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb05ac6b1, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xeb0467fb, TLLazyManualObjectParser(TLUpdate$updateChannelTooLong)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x108d941f, TLLazyManualObjectParser(TLCodexModernUpdateChannelTooLongParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa4bcc6fe, TLLazyManualObjectParser(TLCodexChannelDifferenceTooLongParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x38faab5f, TLLazyManualObjectParser(TLauth_SentCode$auth_sentCode)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x5e002502, TLLazyManualObjectParser(TLauth_SentCode$auth_sentCode)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x36585ea4, TLLazyManualObjectParser(TLmessages_BotCallbackAnswer$botCallbackAnswer)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x17db940b, TLLazyManualObjectParser(TLBotInlineResult$botInlineMediaResult)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xe4def5db, TLLazyManualObjectParser(TLCodexModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd58a08c6, TLLazyManualObjectParser(TLCodexModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x90a6ca84, TLLazyManualObjectParser(TLCodexModernMessageEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb6c4f543, TLLazyManualObjectParser(TLCodexMessageViewsResultParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8c718e87, TLLazyManualObjectParser(TLCodexModernMessagesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1d73e7ea, TLLazyManualObjectParser(TLCodexModernMessagesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3a54685e, TLLazyManualObjectParser(TLCodexModernMessagesSliceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5f206716, TLLazyManualObjectParser(TLCodexModernMessagesSliceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e0b5b6a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc776ba4e, TLLazyManualObjectParser(TLCodexModernChannelMessagesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9ab0feaf, TLLazyManualObjectParser(TLCodexModernChannelsParticipantsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xdfb80317, TLLazyManualObjectParser(TLCodexModernChannelParticipantResultParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc00c07c0, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1bd54456, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35a8bfa7, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa9478a1a, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2fe601d3, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x34c3bb53, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6df8014e, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd5f0ad91, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b03f006, TLLazyManualObjectParser(TLCodexModernChannelParticipantParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71701da9, TLLazyManualObjectParser(TLCodexForumTopicParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfcdad815, TLLazyManualObjectParser(TLCodexForumTopicParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x023f109b, TLLazyManualObjectParser(TLCodexForumTopicParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15ba6c40, TLLazyManualObjectParser(TLCodexDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71e094f3, TLLazyManualObjectParser(TLCodexDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf0e3e596, TLLazyManualObjectParser(TLCodexDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0200185b, TLLazyManualObjectParser(TLCodexDialogsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x94345242, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96fdbbe9, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7600b9d3, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95ef6f2b, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6a26cb37, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd0bbd081, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x003e38e7, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd9a7d88a, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd18fd1bb, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xff86154d, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbb294f27, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x65fdf943, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6a4ced37, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6236ae4a, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd8a8d820, TLLazyManualObjectParser(TLMessage$modernMessage)));
+    addHashToString((int32_t)0x6a26cb37, @"message");
+    addHashToString((int32_t)0x96fdbbe9, @"message");
+    addHashToString((int32_t)0xd0bbd081, @"message");
+    addHashToString((int32_t)0x003e38e7, @"message");
+    addHashToString((int32_t)0xd9a7d88a, @"message");
+    addHashToString((int32_t)0xd18fd1bb, @"message");
+    addHashToString((int32_t)0xff86154d, @"message");
+    addHashToString((int32_t)0xbb294f27, @"message");
+    addHashToString((int32_t)0x65fdf943, @"message");
+    addHashToString((int32_t)0x6a4ced37, @"message");
+    addHashToString((int32_t)0x6236ae4a, @"message");
+    addHashToString((int32_t)0xd8a8d820, @"message");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2b085862, TLLazyManualObjectParser(TLMessage$modernMessageService)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7063c3db, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd64c522b, TLLazyManualObjectParser(TLCodexUpdateMessagePollParser)));
+    addHashToString((int32_t)0xd64c522b, @"updateMessagePoll");
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xed85eab5, sharedSkipObjectParser));
+    addHashToString((int32_t)0xed85eab5, @"updatePinnedMessages");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a800e0a, TLLazyManualObjectParser(TLMessage$modernMessageService)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x6a3ac8ea, TLLazyManualObjectParser(TLMessage$modernMessageService)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4fdd3430, TLLazyManualObjectParser(TLCodexModernKeyboardButtonStyleParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa03e5b85, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x86b40b08, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf4108aa0, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x85dd99d1, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3502758c, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x48a30254, TLLazyManualObjectParser(TLCodexModernReplyMarkupParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x77608b83, TLLazyManualObjectParser(TLCodexModernKeyboardButtonRowParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3081ed9d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x833c0fac, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd766c50a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5ec4be43, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6334ee9a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0e3b2d0c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa2fa4880, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7d170cff, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x258aff05, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd80c25ec, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x683a5e46, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35bbdb6b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe62bc960, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb16a6c29, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x417efd8f, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfc796b3f, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa40f94d, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0568a748, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b9fbb5, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x991399fc, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x50f41ccf, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x89c590f9, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xafd93fbb, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3fa53905, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x10b78d29, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd02e7fd4, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf51006f9, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x68013e72, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbc7515d, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a11d782, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe988037b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x308660c1, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7d5e07c7, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc0fd5d09, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x13767230, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0c0505c, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe846b1a0, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe15c4370, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x53d7bfd8, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc9662d05, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5b0f15f5, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x02b78156, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75d2698e, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbcc4af10, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5f3b8a00, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc9f06e1b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x339bef6c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3e81e078, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x71bd134c, TLLazyManualObjectParser(TLCodexDialogFolderParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x69274bc6, TLLazyManualObjectParser(TLCodexModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfc89f7f3, TLLazyManualObjectParser(TLCodexModernDialogParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x59511722, TLLazyManualObjectParser(TLCodexModernPeerUserParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15752102, TLLazyManualObjectParser(TLCodexModernPeerUserParser)));
+    addHashToString((int32_t)0x15752102, @"peerUser");
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x36c6019a, TLLazyManualObjectParser(TLCodexModernPeerChatParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa2a5371e, TLLazyManualObjectParser(TLCodexModernPeerChannelParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb9c0639a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5da674b7, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x95fcd1d6, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x99622c0c, TLLazyManualObjectParser(TLCodexModernPeerNotifySettingsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc13e3c50, TLLazyManualObjectParser(TLCodexModernImportedContactParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5ce14175, TLLazyManualObjectParser(TLPopularContact$popularContact)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb224d5, TLLazyManualObjectParser(TLCodexModernChatAdminRightsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9f120418, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd072acb4, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb4073647, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb54b5acf, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2de11aae, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x929b619d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfa30a8c7, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xee8c1e86, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf35aec28, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x5b934f9d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcdbbcebb, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbe382906, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2cb51097, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x03d1ea4e, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xcfc9e002, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x770416af, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x37381085, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x49a6549c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x50a04e45, TLLazyManualObjectParser(TLCodexModernPrivacyRulesParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfffe1bac, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x65427b82, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb8905fb2, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf888fa1a, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8b73e763, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xe4621141, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6b134e8e, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x41c87565, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf7e8d89b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xece9814b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x21461b5d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xf6a5f82f, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xbc2eab30, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x500e6dfa, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x3d662b7b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x39491cc8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x69ec56a3, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x96151fed, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd19ae46d, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x42ffd42b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0697f414, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa486b761, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2000a518, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2ca4fdf8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x17d348d2, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xff7a571b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x2dd14edc, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4f2b9479, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x0a339f0b, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa3d1cb80, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8c79b63c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x1b2286b8, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x8935fc73, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x79f5d419, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x523da4eb, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xeafc32bc, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x52928bca, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x661d4037, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe9baa668, TLLazyManualObjectParser(TLCodexFolderPeerParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x19360dc0, TLLazyManualObjectParser(TLCodexUpdateFolderPeersParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1e297bfa, TLLazyManualObjectParser(TLCodexUpdateMessageReactionsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x695c9e7c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4f11bae1, TLLazyManualObjectParser(TLUserProfilePhoto$userProfilePhotoEmpty)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x82d1f706, TLLazyManualObjectParser(TLCodexModernUserProfilePhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xebd1c797, TLLazyManualObjectParser(TLCodexModernUserProfilePhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x85dd99d1, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x48a30254, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa03e5b85, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x86b40b08, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x77608b83, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xa2fa4880, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x258aff05, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x35bbdb6b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb16a6c29, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfc796b3f, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b9fbb5, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x50f41ccf, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xafd93fbb, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x10b78d29, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd02e7fd4, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbbc7515d, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe988037b, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x308660c1, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x13767230, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa0c0505c, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x53d7bfd8, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc9662d05, TLLazyManualObjectParser(TLCodexModernKeyboardButtonParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x36086d42, TLLazyManualObjectParser(TLDialog$dialogFeed)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xfd8e711f, TLLazyManualObjectParser(TLDraftMessage$draftMessage)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x60fe3294, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3fccf7ef, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96eaa5eb, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2d65321f, TLLazyManualObjectParser(TLCodexModernDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b49ec6d, TLLazyManualObjectParser(TLCodexModernUpdateDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xedfc111e, TLLazyManualObjectParser(TLCodexModernUpdateDraftMessageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8f300b57, TLLazyManualObjectParser(TLCodexModernBotInfoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc27ac8c7, TLLazyManualObjectParser(TLCodexModernBotCommandParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9852d6d2, TLLazyManualObjectParser(TLCodexModernBotCommandParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x7533a588, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x4258c205, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xc7b57ce6, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xdb74f558, TLLazyManualObjectParser(TLChatInvite$chatInvite)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x3213dbba, TLLazyManualObjectParser(TLConfig$config)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xcc1a241e, TLLazyManualObjectParser(TLCodexModernConfigParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xcd050916, TLLazyManualObjectParser(TLauth_Authorization$auth_authorization)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2ea2c0d4, TLLazyManualObjectParser(TLauth_Authorization$auth_authorization)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6319d612, TLLazyManualObjectParser(TLDocumentAttributeSticker)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x6c37c15c, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x11b58939, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x17399fad, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15590068, TLLazyManualObjectParser(TLCodexModernDocumentAttributeFilenameParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9801d2f7, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xfd149899, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xbdf9653b, TLLazyManualObjectParser(TLGame$game)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xcde200d1, TLLazyManualObjectParser(TLPageBlock$pageBlockEmbed)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x1b8f4ad1, TLLazyManualObjectParser(TLPhoneCall$phoneCallWaiting)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xebe46819, TLLazyManualObjectParser(TLUpdate$updateServiceNotification)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x50ca4de1, TLLazyManualObjectParser(TLPhoneCall$phoneCallDiscarded)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xeed42858, TLLazyManualObjectParser(TLPhoneCall$phoneCallWaitingMeta)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x45361c63, TLLazyManualObjectParser(TLPhoneCall$phoneCallRequested)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x22fd7181, TLLazyManualObjectParser(TLPhoneCall$phoneCallAccepted)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3ba5940c, TLLazyManualObjectParser(TLPhoneCall$phoneCall)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf9d25503, TLLazyManualObjectParser(TLPhoneCall$phoneCallDiscardedMeta)));
+    objectClassesByConstructorNames[(int32_t)0xdc7555ab] = [[TLPhoneCall$phoneCallWaitingMeta alloc] init];
+    objectClassesByConstructorNames[(int32_t)0x9627ce57] = [[TLPhoneCall$phoneCallRequested alloc] init];
+    objectClassesByConstructorNames[(int32_t)0xd149f2bd] = [[TLPhoneCall$phoneCallAccepted alloc] init];
+    objectClassesByConstructorNames[(int32_t)0xc9908a15] = [[TLPhoneCall$phoneCall alloc] init];
+    objectClassesByConstructorNames[(int32_t)0xf01017df] = [[TLPhoneCall$phoneCallDiscardedMeta alloc] init];
+    TLCodexPhoneConnectionParser *phoneConnectionParser = [[TLCodexPhoneConnectionParser alloc] init];
+    manualObjectParsers[(int32_t)0x9cc123c7] = phoneConnectionParser;
+    manualObjectParsers[(int32_t)0x635fe375] = phoneConnectionParser;
+    manualObjectParsers[(int32_t)0xeccaad39] = sharedSkipObjectParser;
+    objectClassesByConstructorNames[(int32_t)0xeccaad39] = sharedSkipObjectParser;
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xea4cb65b, TLLazyManualObjectParser(TLUpdate$updatePinnedDialogs)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x80e11a7f, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb6aef7b0, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xbd47cbad, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb5a1ce5a, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7fcb13a8, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95e3fbef, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x15cefd00, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xa43f30cc, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x031224c3, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x95d2ac92, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe1037f92, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xea3948e9, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x94bd38ed, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9fbab604, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x92a72876, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3c134d7b, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xcc02aa6d, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0d999256, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8f31b327, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x96163f56, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4792929b, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfae69f56, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc516d679, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1b287353, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd95c6154, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x98e0d697, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x7a0d7f42, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x502f92f7, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb3a07661, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xaa786345, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x47dd8079, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb4c38cb5, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc83d6aec, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc0944820, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x57de635e, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x31518e9b, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5060a3f4, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x678c2e09, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x332ba9ed, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x2a9fadc5, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x93b31848, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x41b3e202, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x45d5b021, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf3f25f76, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xebbca3cb, TLLazyManualObjectParser(TLCodexModernMessageActionParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd7c0ff9c, TLLazyManualObjectParser(TLUser$modernUser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xc30aa358, TLLazyManualObjectParser(TLInvoice$invoice)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x84551347, TLLazyManualObjectParser(TLMessageMedia$messageMediaInvoice)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x3f56aea3, TLLazyManualObjectParser(TLpayments_PaymentForm$payments_paymentForm)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xfb8fe43c, TLLazyManualObjectParser(TLpayments_SavedInfo$payments_savedInfo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x909c3f94, TLLazyManualObjectParser(TLPaymentRequestedInfo$paymentRequestedInfo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x500911e1, TLLazyManualObjectParser(TLPayments_PaymentCeceipt$payments_paymentReceipt)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xd1451883, TLLazyManualObjectParser(TLpayments_ValidatedRequestedInfo$payments_validatedRequestedInfo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6c47ac9f, TLLazyManualObjectParser(TLLangPackStringPluralized)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x289da732, TLLazyManualObjectParser(TLChat$channelForbidden)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x695150d7, TLLazyManualObjectParser(TLCodexModernMessageMediaPhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe216eb63, TLLazyManualObjectParser(TLCodexModernMessageMediaPhotoParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xb940c666, TLLazyManualObjectParser(TLCodexModernMessageMediaGeoLiveParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xddf10c3b, TLLazyManualObjectParser(TLCodexModernMessageMediaWebPageParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x3f7ee58b, TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x08cbec07, TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xdc7b1140, TLLazyManualObjectParser(TLCodexModernMessageEntityMentionNameParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc8cf05f8, TLLazyManualObjectParser(TLCodexModernMessageEntityCustomEmojiParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x145ade0b, TLLazyManualObjectParser(TLCodexModernContactParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >(0x6a7e7366, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9cb070d7, TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x4cf4d72d, TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x52d8ccd9, TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfb197a65, TLLazyManualObjectParser(TLCodexModernPhotoParser)));
+    manualObjectParsers[(int32_t)0xdd570bd5] = TLLazyManualObjectParser(TLCodexModernMessageMediaDocumentParser);
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x75c78e60, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x021e1ad6, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe0b0bc2e, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xfa3efb95, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xd8214d41, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xde33b094, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xf85c413c, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x0da082fe, TLLazyManualObjectParser(TLCodexModernPhotoSizeParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x77d01c3b, TLLazyManualObjectParser(TLCodexModernImportedContactsParser)));
+    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x83d60fc2, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x8fd4c4d8, TLLazyManualObjectParser(TLCodexModernDocumentParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6a9d7b35, TLLazyManualObjectParser(TLchannelDifferenceTooLong)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x55c3a1b1, TLLazyManualObjectParser(TLmessages_FeedMessages$messages_feedMessages)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x8e8bca3d, TLLazyManualObjectParser(TLchannels_FeedSources$channels_feedSources)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x31bc3d25, TLLazyManualObjectParser(TLInputSingleMedia$inputSingleMedia)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x5585a139, TLLazyManualObjectParser(TLStickerSet$stickerSet)));
+    manualObjectParsers[(int32_t)0x6410a5d2] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0x3407e51b] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0x40d13c0e] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0x77b15d1c] = TLLazyManualObjectParser(TLCodexModernStickerSetCoveredParser);
+    manualObjectParsers[(int32_t)0xcdbbcebb] = TLLazyManualObjectParser(TLCodexModernAllStickersParser);
+    manualObjectParsers[(int32_t)0x2cb51097] = TLLazyManualObjectParser(TLCodexModernFavedStickersParser);
+    manualObjectParsers[(int32_t)0xfcfeb29c] = TLLazyManualObjectParser(TLCodexModernStickerKeywordParser);
+    manualObjectParsers[(int32_t)0x12b299d4] = TLLazyManualObjectParser(TLCodexStickerPackParser);
+    manualObjectParsers[(int32_t)0x6e153f16] = TLLazyManualObjectParser(TLCodexModernStickerSetParser);
+    manualObjectParsers[(int32_t)0xe86602c3] = TLLazyManualObjectParser(TLCodexModernAllStickersParser);
+    manualObjectParsers[(int32_t)0x9e8fa6d3] = TLLazyManualObjectParser(TLCodexModernFavedStickersParser);
+    manualObjectParsers[(int32_t)0x88d37c56] = TLLazyManualObjectParser(TLCodexModernRecentStickersParser);
+    manualObjectParsers[(int32_t)0x0b17f890] = TLLazyManualObjectParser(TLCodexModernRecentStickersParser);
+    manualObjectParsers[(int32_t)0xbe382906] = TLLazyManualObjectParser(TLCodexModernFeaturedStickersParser);
+    manualObjectParsers[(int32_t)0xc6dc0c66] = TLLazyManualObjectParser(TLCodexModernFeaturedStickersParser);
+    manualObjectParsers[(int32_t)0x38641628] = TLLazyManualObjectParser(TLCodexModernStickerSetInstallResultParser);
+    manualObjectParsers[(int32_t)0x35e410a8] = TLLazyManualObjectParser(TLCodexModernStickerSetInstallResultParser);
+    manualObjectParsers[(int32_t)0x8af09dd2] = TLLazyManualObjectParser(TLCodexModernFoundStickerSetsParser);
+    manualObjectParsers[(int32_t)0x0d54b65d] = TLLazyManualObjectParser(TLCodexModernFoundStickerSetsParser);
+    manualObjectParsers[(int32_t)0x2dd14edc] = TLLazyManualObjectParser(TLCodexModernStickerSetMetaParser);
+    manualObjectParsers[(int32_t)0xd3f924eb] = TLLazyManualObjectParser(TLCodexModernStickerSetParser);
+    manualObjectParsers[(int32_t)0x6319d612] = TLLazyManualObjectParser(TLCodexModernDocumentAttributeStickerParser);
+    manualObjectParsers[(int32_t)0xffb62b95] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x9de7a269] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x861cc8a0] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x028703c8] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0xe67f520e] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0xcde3739] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0xc88b3b02] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x04c4d4ce] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x29d0f5ee] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x44c1f8e9] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x49748553] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    manualObjectParsers[(int32_t)0x1cf671a0] = TLLazyManualObjectParser(TLCodexModernInputStickerSetParser);
+    addHashToString((int32_t)0x6cdf9cef, @"stickerPack");
+    addHashToString((int32_t)0x2dd14edc, @"stickerSet");
+    addHashToString((int32_t)0x88d37c56, @"messages.recentStickers");
+    addHashToString((int32_t)0xbe382906, @"messages.featuredStickers");
+    addHashToString((int32_t)0x8af09dd2, @"messages.foundStickerSets");
+    addHashToString((int32_t)0x6319d612, @"documentAttributeSticker");
+    manualObjectParsers[(int32_t)0xb434e2b8] = TLLazyManualObjectParser(TLCodexModernExportedAuthorizationParser);
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6fa68e41, TLLazyManualObjectParser(TLUpdate$updateReadFeed)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xe09e1fb8, TLLazyManualObjectParser(TLhelp_ProxyData$proxyDataEmpty)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x2bf7ee23, TLLazyManualObjectParser(TLhelp_ProxyData$proxyDataPromo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x780a0310, TLLazyManualObjectParser(TLhelp_TermsOfService$help_termsOfService)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x187fa0ca, TLLazyManualObjectParser(TLSecureValue$secureValue)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xdb21d0a7, TLLazyManualObjectParser(TLInputSecureValue$inputSecureValue)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xad2e1cd8, TLLazyManualObjectParser(TLaccount_AuthorizationForm$account_authorizationForm)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xaf509d20, TLLazyManualObjectParser(TLPeerNotifySettings$peerNotifySettings)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x6a4ee832, TLLazyManualObjectParser(TLhelp_DeepLinkInfo$help_deepLinkInfo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x1b0c841a, TLLazyManualObjectParser(TLCodexModernDraftMessageEmptyParser)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x1da7158f, TLLazyManualObjectParser(TLhelp_AppUpdate$help_appUpdate)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xad2641f8, TLLazyManualObjectParser(TLaccount_Password$account_password)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x957b50fb, TLLazyManualObjectParser(TLaccount_Password$account_password)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x9a5c33e5, TLLazyManualObjectParser(TLaccount_PasswordSettings$account_passwordSettings)));
+
+    manualObjectParsers[(int32_t)0x80e11a7f] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xffa00ccc] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xc624b16e] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xb91bbd3a] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x48e91302] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x31c48347] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xa80f51e4] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x87e2f155] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xb00c47a2] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xea2c31d3] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xe6c31522] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xac1f1fcd] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x84b88578] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x2ffe2f7a] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xcc7c5c89] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xc7edbc83] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xee7a1596] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x95ddcf69] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x69f916f8] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xa8a3c699] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x2c8f2a25] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x774278d4] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x73ada76b] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xb07ed085] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xe188503b] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xbf7d6572] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x3e2793ba] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x9da1cd6c] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x399674dc] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x16605e3e] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0xd7c0ff9c] = TLLazyManualObjectParser(TLUser$modernUser);
+    manualObjectParsers[(int32_t)0x020b1422] = TLLazyManualObjectParser(TLUser$modernUser);
+    manualObjectParsers[(int32_t)0xd8aa840f] = TLLazyManualObjectParser(TLCodexInputGroupCallParser);
+    manualObjectParsers[(int32_t)0x6880b94d] = TLLazyManualObjectParser(TLCodexPeerSettingsContainerParser);
+    manualObjectParsers[(int32_t)0xacd66c5e] = TLLazyManualObjectParser(TLCodexModernPeerSettingsParser);
+    manualObjectParsers[(int32_t)0xcc02aa6d] = TLLazyManualObjectParser(TLCodexModernMessageActionParser);
+    manualObjectParsers[(int32_t)0x83314fca] = TLLazyManualObjectParser(TLUser$modernUser);
+    manualObjectParsers[(int32_t)0x2813e6db] = TLLazyManualObjectParser(TLUser$modernUser);
+    manualObjectParsers[(int32_t)0x1afeb7ac] = TLLazyManualObjectParser(TLUser$modernUser);
+    manualObjectParsers[(int32_t)0xd0a1d008] = TLLazyManualObjectParser(TLUser$modernUser);
+    manualObjectParsers[(int32_t)0x145ade0b] = TLLazyManualObjectParser(TLCodexModernContactParser);
+    manualObjectParsers[(int32_t)0xeae87e42] = TLLazyManualObjectParser(TLCodexModernContactsParser);
+    manualObjectParsers[(int32_t)0x0ade1591] = TLLazyManualObjectParser(TLCodexModernBlockedParser);
+    manualObjectParsers[(int32_t)0xe1664194] = TLLazyManualObjectParser(TLCodexModernBlockedParser);
+    manualObjectParsers[(int32_t)0xe8fd8014] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x211a1788] = TLLazyManualObjectParser(TLCodexModernWebPageEmptyParser);
+    manualObjectParsers[(int32_t)0xe89c45b2] = TLLazyManualObjectParser(TLCodexModernWebPageParser);
+    manualObjectParsers[(int32_t)0xddf10c3b] = TLLazyManualObjectParser(TLCodexModernMessageMediaWebPageParser);
+    manualObjectParsers[(int32_t)0xb53e8b21] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8c9a88ac] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x3f7ee58b] = TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser);
+    manualObjectParsers[(int32_t)0x08cbec07] = TLLazyManualObjectParser(TLCodexModernMessageMediaDiceParser);
+    manualObjectParsers[(int32_t)0x4bd6e798] = TLLazyManualObjectParser(TLCodexModernMessageMediaPollParser);
+    manualObjectParsers[(int32_t)0xb2a2f663] = TLLazyManualObjectParser(TLCodexModernGeoPointSkipParser);
+    manualObjectParsers[(int32_t)0x4e4df4bb] = TLLazyManualObjectParser(TLCodexModernMessageFwdHeaderParser);
+    manualObjectParsers[(int32_t)0xdc7b1140] = TLLazyManualObjectParser(TLCodexModernMessageEntityMentionNameParser);
+    manualObjectParsers[(int32_t)0xc8cf05f8] = TLLazyManualObjectParser(TLCodexModernMessageEntityCustomEmojiParser);
+    manualObjectParsers[(int32_t)0x9c4e7e8b] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0xbf0693d4] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x761e6af4] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x32ca960f] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0xf1ccaaac] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x904ac7c7] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x71777116] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0xc6c1e5a7] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x0652c1c5] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x6c622f67] = TLLazyManualObjectParser(TLCodexModernMessageEntitySimpleParser);
+    manualObjectParsers[(int32_t)0x751f3146] = TLLazyManualObjectParser(TLCodexTextWithEntitiesParser);
+    manualObjectParsers[(int32_t)0x58747131] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xff16e2ca] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7adf2420] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf8227181] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xebe07752] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x20529438] = TLLazyManualObjectParser(TLCodexModernUpdateUserParser);
+    manualObjectParsers[(int32_t)0x635b4c09] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6c8e1e06] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x3b6ddad2] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd38ff1c2] = TLLazyManualObjectParser(TLCodexModernDocumentAttributeVideoD38Parser);
+    manualObjectParsers[(int32_t)0xeeca5ce3] = TLLazyManualObjectParser(TLCodexModernLangPackLanguageParser);
+    manualObjectParsers[(int32_t)0x17399fad] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xfd149899] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6a7e7366] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x98657f0d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xde33b094] = TLLazyManualObjectParser(TLCodexModernPhotoSizeParser);
+    manualObjectParsers[(int32_t)0xf85c413c] = TLLazyManualObjectParser(TLCodexModernPhotoSizeParser);
+    manualObjectParsers[(int32_t)0x0da082fe] = TLLazyManualObjectParser(TLCodexModernPhotoSizeParser);
+    manualObjectParsers[(int32_t)0x1759c560] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8c88c923] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7c8fe7b6] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x39f23300] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa8718dc5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf259a80b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x65a0fa4d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x031f9590] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xef1751b5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x804361ea] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1e148390] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbf4dea82] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x76768bed] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x16115a96] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa44f3ef6] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x25e073fc] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe4e88011] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb92fb6cd] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9a8ae1e1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x5e068047] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x98dd8936] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6f747657] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdc3d824f] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x744694e0] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x6724abc4] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xd912a59c] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xc12622c4] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x9bf8bb95] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x6c3f19b9] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x3c2884c1] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xde5a0dd6] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x7e6260d7] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xed6a8504] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0xc7fb5e01] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x034b8621] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x1ccb966a] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x081ccf4f] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+    manualObjectParsers[(int32_t)0x35553762] = TLLazyManualObjectParser(TLCodexRichTextSkipParser);
+
+    manualObjectParsers[(int32_t)0x2633421b] = TLLazyManualObjectParser(TLCodexModernChannelFullParser);
+    manualObjectParsers[(int32_t)0x3ded6320] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x56e0d474] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x70322949] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x9f84f49e] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x2ec0533f] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xfdb19008] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xf6a548d3] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x773f4e66] = TLLazyManualObjectParser(TLCodexModernMessageMediaPollParser);
+    manualObjectParsers[(int32_t)0xaa073beb] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xceaa3ea1] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xa8852491] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x8a53b014] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0xca5cab89] = TLLazyManualObjectParser(TLCodexModernMessageMediaUnsupportedParser);
+    manualObjectParsers[(int32_t)0x904dd49c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xac21d3ce] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x09cb7759] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8ae5c97a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9ddb347c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x07df587c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa02a982e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1ea2fda7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa584b019] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x283bd312] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8b725fce] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x77b0e372] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa4a79376] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9f812b08] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x683b2c52] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdef143d0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xfb9c547a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x54b56617] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7781fe18] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb98cd696] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x72c64955] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xab339c00] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9f27d26e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe477092e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd3656499] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa2c0f695] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe7ff068a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7184603b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x07141dbf] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xac5c1af7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x21108ff7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe519abab] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc9b9e2b9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc3f2f501] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcc4d9ecc] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xef156a5c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1b0e4f07] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x4b3e14d6] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8f34b2f5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xfebe5491] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x206ad49e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1f0c1ad9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdc6cfcf0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xad628cc8] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xee479c64] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcba9a52f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x49b92a26] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x221bb5e4] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcae68768] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xfd5e12bd] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x257e962b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xeb983f8f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x4367daa0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe175e66f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb2539d54] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9a9d77e0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x86f8613c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc448415c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9ae228e2] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x4959427a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe7058e7f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8a480e27] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x50cd067c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1f2bf4a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xedf3add0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x93037e20] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb8ea86a9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x26219a58] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x767d61eb] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xadec6ebe] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2ba1f5ce] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x00f8ed08] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x64407ea7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf83ae221] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x44ba9dd9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc01f6fe8] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcb6ff828] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x889b59ef] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x3259950a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x3bb842ac] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2aee9191] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6f8b32aa] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x0194cb3b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x832175e0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x033ed001] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x17d7f87b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x09c469cd] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc4e5921e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb88cf373] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1d998733] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x114ff30d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x628c9224] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb4ae666f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xec43a2d1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9a23af21] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x93c3e27e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd1ed9a5b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbddb616e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb89bfccf] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x95f2bfe4] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb457b375] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7b560a0b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x250dbaf8] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe92fd902] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd80da15d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x60682812] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf9677aad] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x0bd915c0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x13659eb0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6c9ce8ed] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6c207376] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1dab80b7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x394e7f21] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x5e0589f1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x5416d58] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2e6eab1a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x94ce852a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x54236209] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdd0c66f2] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x19a13f71] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x98d5ea1d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb4d5d859] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf93cd45c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1e109708] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe581e4e9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb4f67e93] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa0624cf7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc69708d3] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xea32b4b1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xeb032884] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc387c04e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe7e82e12] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x0e8e37e5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9325705a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc3987a3a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x374fa7ad] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd5e58274] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x87e5dfe4] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1a8afc7e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xee430c85] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9d1dbd26] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xda2ad647] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x59e65335] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x44e56023] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x90d7adfa] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcff63ea9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9bad6414] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc1f46103] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6c9d0efe] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xf1d628ec] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x933ca597] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x79eb8cb3] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbaf39d8b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7dbf8673] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xffda656d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1839490f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x31bd492d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc077ec01] = TLLazyManualObjectParser(TLCodexAvailableReactionParser);
+    manualObjectParsers[(int32_t)0x9f071957] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x768e3aad] = TLLazyManualObjectParser(TLCodexAvailableReactionsParser);
+    manualObjectParsers[(int32_t)0xd08ce645] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x90c467d1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb06fdbdf] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xeafdf716] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x5f2d1df2] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb81c7034] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x367617d3] = TLLazyManualObjectParser(TLCodexForumTopicsParser);
+    manualObjectParsers[(int32_t)0x5fb5523b] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
+    manualObjectParsers[(int32_t)0x7438f7e8] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
+    manualObjectParsers[(int32_t)0x363293ae] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
+    manualObjectParsers[(int32_t)0x9fe28ea4] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
+    manualObjectParsers[(int32_t)0xaa472651] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
+    manualObjectParsers[(int32_t)0x96537bd7] = TLLazyManualObjectParser(TLCodexDialogFilterParser);
+    manualObjectParsers[(int32_t)0x2ad93719] = TLLazyManualObjectParser(TLCodexDialogFiltersParser);
+    manualObjectParsers[(int32_t)0x26ffde7d] = TLLazyManualObjectParser(TLCodexDialogFilterUpdateParser);
+    manualObjectParsers[(int32_t)0x43b46b20] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x481eadfa] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7a1e11d1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x7a9abda9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x80d26cc7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x093bcf34] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6fb4ad87] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x881fb94b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa26156c0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xc556a45d] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9e84bc99] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2f2f21bf] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x0bb2d201] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x31c24808] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xb23fc698] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x9d2216e0] = TLLazyManualObjectParser(TLCodexUpdateGroupCallParser);
+    manualObjectParsers[(int32_t)0xf2ebdb4e] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2a3dc7ac] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xeba636fe] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x67753ac8] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdcb118b7] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbb9bb9a5] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x1e297bfa] = TLLazyManualObjectParser(TLCodexUpdateMessageReactionsParser);
+    manualObjectParsers[(int32_t)0xaca1657b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x86e18161] = TLLazyManualObjectParser(TLCodexPollParser);
+    manualObjectParsers[(int32_t)0xb8425be9] = TLLazyManualObjectParser(TLCodexPollParser);
+    manualObjectParsers[(int32_t)0x966e2dbf] = TLLazyManualObjectParser(TLCodexPollParser);
+    manualObjectParsers[(int32_t)0x6ca9c2e9] = TLLazyManualObjectParser(TLCodexPollAnswerParser);
+    manualObjectParsers[(int32_t)0x4b7d786a] = TLLazyManualObjectParser(TLCodexPollAnswerParser);
+    manualObjectParsers[(int32_t)0x3645230a] = TLLazyManualObjectParser(TLCodexPollAnswerVotersParser);
+    manualObjectParsers[(int32_t)0x7adf2420] = TLLazyManualObjectParser(TLCodexPollResultsParser);
+    manualObjectParsers[(int32_t)0xba7bb15e] = TLLazyManualObjectParser(TLCodexPollResultsParser);
+    manualObjectParsers[(int32_t)0xfa0f3ca2] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xfb4c496c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x28373599] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x30f443db] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x07b68920] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x39c67432] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xa477288f] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x8c0f91fb] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x140502d1] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xd90d8dfe] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xcfb9d957] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x5334759c] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x4345be73] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x527d22eb] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbbf51685] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x922e55a9] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xdb909ec2] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x96d074fd] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x2b96cd1b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xe1bb0d61] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x3fc9053b] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x6ebdff91] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0xbac3a61a] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x4b9e22a0] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x71e4ea58] = sharedSkipObjectParser;
+    manualObjectParsers[(int32_t)0x98613ebf] = sharedSkipObjectParser;
+
+    TLMetaSchemeAppendEntry(entries.params, entries.types, (int32_t)0xae500895, "futuresalts", "FutureSalts", TLMetaSchemeFutureSaltsParams, sizeof(TLMetaSchemeFutureSaltsParams) / sizeof(TLMetaSchemeFutureSaltsParams[0]));
+    TLMetaSchemeAppendEntry(entries.params, entries.methods, (int32_t)0x19c2f763, "updates.getDifference", "updates.Difference", TLMetaSchemeGetDifferenceParams, sizeof(TLMetaSchemeGetDifferenceParams) / sizeof(TLMetaSchemeGetDifferenceParams[0]));
+    
+
+    materializeLazyScheme();
+    TLMetaSchemeLazyStore *store = TLMetaSchemeBuildLazyStore(entries, schemeMethodsCount, vectorElementTypesByConstructor, constructorsByName);
+    for (TLMetaSchemeIndex::const_iterator it = store->signatureIndex.begin(); it != store->signatureIndex.end(); ++it)
+        constructorsBySignature.erase(it->first);
+    for (TLMetaSchemeIndex::const_iterator it = store->nameIndex.begin(); it != store->nameIndex.end(); ++it)
+        constructorsByName.erase(it->first);
+    TLMetaClassStoreLazyStore = store;
+    if (materialize)
+        materializeLazyScheme();
+    
 }
 
 id TLMetaClassStore::constructObject(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, TLSerializationContext *context, __autoreleasing NSError **error)
 {
     TLConstructedValue value = constructValue(is, signature, environment, context, error);
-    if (error != nil && *error != nil)
+    id result = nil;
+    if (error == nil || *error == nil)
     {
-        return nil;
+        switch (value.type)
+        {
+            case TLConstructedValueTypeObject:
+            case TLConstructedValueTypeString:
+            case TLConstructedValueTypeBytes:
+            case TLConstructedValueTypeVector:
+                result = value.nativeObject;
+                break;
+            case TLConstructedValueTypePrimitiveInt32:
+                result = [NSNumber numberWithInt:value.primitive.int32Value];
+                break;
+            case TLConstructedValueTypePrimitiveInt64:
+                result = [NSNumber numberWithLongLong:value.primitive.int64Value];
+                break;
+            case TLConstructedValueTypePrimitiveDouble:
+                result = [NSNumber numberWithDouble:value.primitive.doubleValue];
+                break;
+            case TLConstructedValueTypePrimitiveBool:
+                result = [NSNumber numberWithBool:value.primitive.boolValue];
+                break;
+            default:
+                break;
+        }
     }
-    
-    switch (value.type)
-    {
-        case TLConstructedValueTypeEmpty:
-            return nil;
-        case TLConstructedValueTypeObject:
-            return value.nativeObject;
-        case TLConstructedValueTypePrimitiveInt32:
-            return [NSNumber numberWithInt:value.primitive.int32Value];
-        case TLConstructedValueTypePrimitiveInt64:
-            return [NSNumber numberWithLongLong:value.primitive.int64Value];
-        case TLConstructedValueTypePrimitiveDouble:
-            return [NSNumber numberWithDouble:value.primitive.doubleValue];
-        case TLConstructedValueTypePrimitiveBool:
-            return [NSNumber numberWithBool:value.primitive.boolValue];
-        case TLConstructedValueTypeString:
-            return value.nativeObject;
-        case TLConstructedValueTypeBytes:
-            return value.nativeObject;
-        case TLConstructedValueTypeVector:
-            return value.nativeObject;
-        default:
-            break;
-    }
-    
-    return nil;
+
+    return result;
 }
 
 TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, TLSerializationContext *context, __autoreleasing NSError **error)
 {
+    TGTLParserSignatureScope parserSignatureScope(signature);
     if (signature == 0x3072cfa1)
     {
         NSData *packedData = [is readBytes];
@@ -11060,7 +11538,6 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
             {
                 int32_t count = [is readInt32];
                 NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
-                IOS6_NOOP_LOG(@"AUTH generic vector-as-object count=%d manual=0x%08x parser=%@", count, CodexCurrentManualSignature, CodexCurrentManualParser);
                 for (int32_t i = 0; i < count; i++)
                 {
                     int32_t itemSignature = [is readInt32];
@@ -11069,8 +11546,6 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
                         [array addObject:object];
                     if (error != NULL && *error != nil)
                     {
-                        IOS6_NOOP_LOG(@"AUTH generic vector-as-object failed index=%d/%d sig=0x%08x manual=0x%08x parser=%@ error=%@", i, count, itemSignature, CodexCurrentManualSignature, CodexCurrentManualParser, *error);
-                        CodexReportCritical(@"tl_generic_vector_failed", [NSString stringWithFormat:@"index=%d/%d sig=0x%08x sigName=%@ manual=0x%08x manualName=%@ parser=%@ error=%@", i, count, itemSignature, stringForHash(itemSignature), CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, *error]);
                         break;
                     }
                 }
@@ -11084,7 +11559,6 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         {
             int32_t count = [is readInt32];
             NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)MAX(0, count)];
-            IOS6_NOOP_LOG(@"AUTH generic vector-as-object count=%d manual=0x%08x parser=%@", count, CodexCurrentManualSignature, CodexCurrentManualParser);
             for (int32_t i = 0; i < count; i++)
             {
                 int32_t itemSignature = [is readInt32];
@@ -11093,8 +11567,6 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
                     [array addObject:object];
                 if (error != NULL && *error != nil)
                 {
-                    IOS6_NOOP_LOG(@"AUTH generic vector-as-object failed index=%d/%d sig=0x%08x manual=0x%08x parser=%@ error=%@", i, count, itemSignature, CodexCurrentManualSignature, CodexCurrentManualParser, *error);
-                    CodexReportCritical(@"tl_generic_vector_failed", [NSString stringWithFormat:@"index=%d/%d sig=0x%08x sigName=%@ manual=0x%08x manualName=%@ parser=%@ error=%@", i, count, itemSignature, stringForHash(itemSignature), CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, *error]);
                     break;
                 }
             }
@@ -11137,16 +11609,24 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         result.type = TLConstructedValueTypeObject;
         result.nativeObject = object;
 
-        TGLog(@"CALL phoneCallWaiting.direct call=%lld access=%lld adminRaw=%lld admin=%d participantRaw=%lld participant=%d flags=%08x protocol=%@ receive=%d",
-              callId, accessHash, adminId, object.admin_id, participantId, object.participant_id, (unsigned int)flags,
-              object.protocol, object.receive_date);
         return result;
     }
 
-    auto manualIt = manualObjectParsers.find(signature);
-    if (manualIt != manualObjectParsers.end())
+    id<TLObject> parser = nil;
+    bool hasManualParser = false;
     {
-        id<TLObject> parser = manualIt->second;
+        TGTLClassRegistryGuard guard;
+        std::map<int32_t, TLManualObjectParser>::iterator manualIt = manualObjectParsers.find(signature);
+        if (manualIt != manualObjectParsers.end())
+        {
+            if (manualIt->second.parser == nil)
+                manualIt->second.parser = TLInstantiateManualObjectParser(manualIt->second.parserClassName);
+            parser = manualIt->second.parser;
+            hasManualParser = parser != nil;
+        }
+    }
+    if (hasManualParser)
+    {
         id<TLObject> result = nil;
         int32_t previousManualSignature = CodexCurrentManualSignature;
         NSString *previousManualParser = CodexCurrentManualParser;
@@ -11160,8 +11640,6 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         {
             CodexCurrentManualSignature = previousManualSignature;
             CodexCurrentManualParser = previousManualParser;
-            IOS6_NOOP_LOG(@"AUTH TL exception sig=0x%08x parser=%@ name=%@ reason=%@", signature, NSStringFromClass([parser class]), exception.name, exception.reason);
-            CodexReportCritical(@"tl_exception", [NSString stringWithFormat:@"sig=0x%08x sigName=%@ parser=%@ name=%@ reason=%@", signature, stringForHash(signature), NSStringFromClass([parser class]), exception.name, exception.reason]);
             if (error != NULL)
             {
                 NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
@@ -11177,11 +11655,19 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
             NSString *safeDescription = [NSString stringWithFormat:@"Manual parser %@ failed for constructor %08x: %@", parserName, signature, underlyingDescription];
             NSError *safeError = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: safeDescription}];
             *error = safeError;
-            IOS6_NOOP_LOG(@"AUTH TL manual error sig=0x%08x parser=%@", signature, parserName);
-            CodexReportCritical(@"tl_manual_error", [NSString stringWithFormat:@"sig=0x%08x sigName=%@ parser=%@ vectorRole=%@ lastCompleted=0x%08x lastCompletedName=%@ lastParser=%@", signature, stringForHash(signature), parserName, CodexCurrentVectorRole, CodexLastCompletedManualSignature, stringForHash(CodexLastCompletedManualSignature), CodexLastCompletedManualParser]);
             CodexCurrentManualSignature = previousManualSignature;
             CodexCurrentManualParser = previousManualParser;
             return TLConstructedValue();
+        }
+        if (result == nil && [parser isKindOfClass:[TLCodexSkipObjectParser class]])
+        {
+            std::tr1::shared_ptr<TLMetaConstructor> constructor = getConstructorBySignature(signature);
+            if (constructor && constructor->getResultType() && constructor->getResultType()->getName() == murMurHash32(@"Update"))
+            {
+                TLCodexIgnoredUpdate *ignoredUpdate = [[TLCodexIgnoredUpdate alloc] init];
+                ignoredUpdate.ignoredSignature = signature;
+                result = ignoredUpdate;
+            }
         }
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
@@ -11199,16 +11685,25 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
     
     if (!constructor)
     {
-        std::tr1::unordered_map<int32_t, TLMetaTypeArgument>::iterator it = vectorElementTypesByConstructor.find(signature);
-        if (it != vectorElementTypesByConstructor.end())
+        TLMetaTypeArgument vectorElementType;
+        bool hasVectorElementType = false;
         {
+            TGTLClassRegistryGuard guard;
+            std::tr1::unordered_map<int32_t, TLMetaTypeArgument>::iterator it = vectorElementTypesByConstructor.find(signature);
+            if (it != vectorElementTypesByConstructor.end())
+            {
+                vectorElementType = it->second;
+                hasVectorElementType = true;
+            }
+        }
+        if (hasVectorElementType)
+        {
+            id<TLVector> vectorClass = getVectorClass(signature);
             int32_t count = [is readInt32];
-            
-            std::tr1::unordered_map<int32_t, id<TLVector> >::iterator classIt = vectorClassesBySignature.find(signature);
-            
+
             NSMutableArray *array = nil;
-            if (classIt != vectorClassesBySignature.end())
-                array = [classIt->second TLvectorConstruct];
+            if (vectorClass != nil)
+                array = [vectorClass TLvectorConstruct];
             else
                 array = [[NSMutableArray alloc] init];
             
@@ -11218,10 +11713,10 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
             for (int32_t i = 0; i < count; i++)
             {
                 int itemSignature = 0;
-                if (it->second.boxed)
+                if (vectorElementType.boxed)
                     itemSignature = [is readInt32];
                 else
-                    itemSignature = it->second.unboxedConstructorSignature;
+                    itemSignature = vectorElementType.unboxedConstructorSignature;
                 
                 TLConstructedValue itemValue = constructValue(is, itemSignature, environment, nil, error);
                 if (error != nil && *error != nil)
@@ -11278,8 +11773,6 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
 #endif
                 NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
                 [userInfo setValue:[NSString stringWithFormat:@"Constructor with signature %.8x not found", signature] forKey:NSLocalizedDescriptionKey];
-                IOS6_NOOP_LOG(@"AUTH unknown signature=0x%08x currentManual=0x%08x parser=%@", signature, CodexCurrentManualSignature, CodexCurrentManualParser);
-                CodexReportCritical(@"tl_unknown_constructor", [NSString stringWithFormat:@"sig=0x%08x sigName=%@ currentManual=0x%08x currentManualName=%@ parser=%@ vectorRole=%@ lastCompleted=0x%08x lastCompletedName=%@ lastParser=%@", signature, stringForHash(signature), CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, CodexCurrentVectorRole, CodexLastCompletedManualSignature, stringForHash(CodexLastCompletedManualSignature), CodexLastCompletedManualParser]);
                 *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:userInfo];
             }
             return TLConstructedValue();
@@ -11291,14 +11784,11 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         TLConstructedValue result = constructor->construct(is, environment, nil, error);
         if (error != NULL && *error != nil)
         {
-            CodexReportCritical(@"tl_auto_error", [NSString stringWithFormat:@"sig=0x%08x sigName=%@ currentManual=0x%08x currentManualName=%@ parser=%@ vectorRole=%@ error=%@", signature, stringForHash(signature), CodexCurrentManualSignature, stringForHash(CodexCurrentManualSignature), CodexCurrentManualParser, CodexCurrentVectorRole, *error]);
         }
         return result;
     }
     @catch (NSException *exception)
     {
-        IOS6_NOOP_LOG(@"AUTH TL auto exception sig=0x%08x name=%@ reason=%@", signature, exception.name, exception.reason);
-        CodexReportCritical(@"tl_auto_exception", [NSString stringWithFormat:@"sig=0x%08x sigName=%@ name=%@ reason=%@", signature, stringForHash(signature), exception.name, exception.reason]);
         if (error != NULL)
         {
             NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
@@ -11373,7 +11863,6 @@ void TLMetaClassStore::serializeObject(NSOutputStream *os, id<TLObject> object, 
                 if ([object isKindOfClass:[TLRPCphone_sendSignalingData class]])
                 {
                     TLRPCphone_sendSignalingData *request = (TLRPCphone_sendSignalingData *)object;
-                    TGLog(@"CALL signaling.serialize.fallback boxed=%d peer=%@ dataLen=%d", boxed ? 1 : 0, request.peer, (int)request.data.length);
                     if (boxed)
                         [os writeInt32:(int32_t)0xff7a9383];
                     TLMetaClassStore::serializeObject(os, request.peer, true);

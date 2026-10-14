@@ -17,7 +17,11 @@
 
 #import "TGBuiltinWallpaperInfo.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 30200
 @interface TGPasswordEntryInputView : UIView <UIInputViewAudioFeedback>
+#else
+@interface TGPasswordEntryInputView : UIView
+#endif
 
 @end
 
@@ -108,7 +112,6 @@
         __weak TGPasswordEntryView *weakSelf = self;
         _simpleKeyboardView.characterEntered = ^(NSString *text)
         {
-            //AudioServicesPlaySystemSound(0x450);
             
             __strong TGPasswordEntryView *strongSelf = weakSelf;
             if (strongSelf != nil)
@@ -405,11 +408,13 @@
         
         if (_isComplex)
         {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 30200
             if (_textField.inputView != nil)
             {
                 _textField.inputView = nil;
                 [_textField resignFirstResponder];
             }
+#endif
             [_textField becomeFirstResponder];
             _simpleKeyboardView.hidden = true;
             _simpleKeyboardCancelButton.hidden = true;
@@ -419,12 +424,16 @@
         }
         else
         {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 30200
             if (_textField.inputView == nil)
             {
                 _textField.inputView = _inputView;
                 [_textField resignFirstResponder];
             }
             [_textField becomeFirstResponder];
+#else
+            [_textField resignFirstResponder];
+#endif
             _simpleKeyboardView.hidden = false;
             _simpleKeyboardCancelButton.hidden = _cancel == nil;
             _simpleKeyboardDeleteButton.hidden = false;
@@ -487,11 +496,19 @@
 
 - (void)becomeFirstResponder
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+    if (!_isComplex)
+        return;
+#endif
     [_textField becomeFirstResponder];
 }
 
 - (void)willMoveToWindow:(UIWindow *)window {
     [super willMoveToWindow:window];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+    if (!_isComplex)
+        return;
+#endif
     [_textField becomeFirstResponder];
     dispatch_async(dispatch_get_main_queue(), ^{
         [_textField becomeFirstResponder];

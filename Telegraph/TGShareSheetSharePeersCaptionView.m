@@ -81,11 +81,6 @@
     
     _textView.contentOffset = CGPointMake(0.0f, completeTextHeight - _textView.bounds.size.height);
     
-    /*if (_textView.scrollEnabled) {
-        _textView.contentOffset = CGPointZero;
-    } else {
-        _textView.contentOffset = CGPointMake(0.0f, completeTextHeight - _placeholderView.bounds.size.height);
-    }*/
 }
 
 - (void)textViewDidChange:(UITextView *)__unused textView {

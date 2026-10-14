@@ -8,7 +8,7 @@
 
 @property (nonatomic, assign) CGFloat buttonWidth;
 
-- (void)setTitle:(NSString *)title animationName:(NSString *)animationName;
+- (void)setTitle:(NSString *)title animationName:(NSString *)animationName fallbackImage:(UIImage *)image;
 - (void)playAnimation;
 - (void)resetAnimation;
 - (void)skipAnimation;

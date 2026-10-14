@@ -23,6 +23,7 @@
 #import "TGProxyItem.h"
 
 #import "TGProxyDetailsController.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/MtProtoKit/MTProtoKit/MTProtoKit.h"
 
@@ -518,14 +519,14 @@
     if (TGShareItemsViaLegacyPasteboard(@[proxiesString]))
         return;
 
-    UIActivityViewController *activityViewController = [[UIActivityViewController alloc] initWithActivityItems:@[proxiesString] applicationActivities:nil];
-    [self presentViewController:activityViewController animated:true completion:nil];
+    UIView *sourceView = nil;
+    CGRect sourceRect = CGRectZero;
     if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
     {
-        UIView *sourceView = [_shareItem boundView];
-        activityViewController.popoverPresentationController.sourceView = sourceView;
-        activityViewController.popoverPresentationController.sourceRect = sourceView.bounds;
+        sourceView = [_shareItem boundView];
+        sourceRect = sourceView.bounds;
     }
+    OGPlatformPresentActivityItems(self, @[proxiesString], sourceView, sourceRect, nil, UIPopoverArrowDirectionAny, nil);
 }
 
 - (BOOL)prefersStatusBarHidden

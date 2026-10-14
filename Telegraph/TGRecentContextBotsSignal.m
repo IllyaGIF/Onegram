@@ -101,7 +101,6 @@
         }
         return userIds;
     }];
-    //return [[self _recentBots] signal];
 }
 
 @end

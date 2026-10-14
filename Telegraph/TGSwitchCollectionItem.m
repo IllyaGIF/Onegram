@@ -12,6 +12,9 @@
 
 #import "TGSwitchCollectionItemView.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 @interface TGSwitchCollectionItem () <TGSwitchCollectionItemViewDelegate>
 {
@@ -49,7 +52,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? 35.0f : 44.0f);
+    return CGSizeMake(containerSize.width, _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.actionRowAppearance.controlRowHeight : 44.0f);
 }
 
 - (void)bindView:(TGCollectionItemView *)view

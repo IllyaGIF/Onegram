@@ -14,6 +14,7 @@
     
     pthread_mutex_t _mutex;
     pthread_cond_t _cond;
+    double _threadPriority;
 }
 
 @end
@@ -22,6 +23,10 @@
 
 + (void)threadEntryPoint:(SThreadPool *)threadPool
 {
+#ifdef ONEGRAM_ARMV6
+    [NSThread setThreadPriority:threadPool->_threadPriority];
+#endif
+
     SThreadPoolQueue *queue = nil;
 
     while (true)
@@ -68,11 +73,15 @@
 
 - (instancetype)initWithThreadCount:(NSUInteger)threadCount threadPriority:(double)threadPriority
 {
+#ifdef ONEGRAM_ARMV6
+    threadCount = 1;
+#endif
     self = [super init];
     if (self != nil)
     {
         pthread_mutex_init(&_mutex, 0);
         pthread_cond_init(&_cond, 0);
+        _threadPriority = threadPriority;
         
         _managementQueue = [[SQueue alloc] init];
         
@@ -85,7 +94,9 @@
             {
                 NSThread *thread = [[NSThread alloc] initWithTarget:[SThreadPool class] selector:@selector(threadEntryPoint:) object:self];
                 thread.name = [[NSString alloc] initWithFormat:@"SThreadPool-%p-%d", self, (int)i];
+#ifndef ONEGRAM_ARMV6
                 [thread setThreadPriority:threadPriority];
+#endif
                 [_threads addObject:thread];
                 [thread start];
             }

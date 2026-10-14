@@ -22,5 +22,6 @@ typedef enum {
 @interface TGActionSheet : UIActionSheet
 
 - (instancetype)initWithTitle:(NSString *)title actions:(NSArray *)actions actionBlock:(void (^)(id target, NSString *action))actionBlock target:(id)target;
+- (void)showFromRect:(CGRect)rect inView:(UIView *)view animated:(BOOL)animated;
 
 @end

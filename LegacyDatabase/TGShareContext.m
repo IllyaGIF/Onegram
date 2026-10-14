@@ -32,9 +32,13 @@
         _datacenterPoolsLock = [[NSLock alloc] init];
         _datacenterPools = [[NSMutableDictionary alloc] init];
         
+#if ONEGRAM_ARMV6
+        NSString *persistentCachePath = [[containerUrl path] stringByAppendingPathComponent:@"temp-cache"];
+        float factor = 1.0f;
+#else
         NSString *persistentCachePath = [[containerUrl URLByAppendingPathComponent:@"temp-cache"] path];
-        
         float factor = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad ? 3.0f : 1.0f;
+#endif
         _persistentCache = [[TGModernCache alloc] initWithPath:persistentCachePath size:8 * 1024 * 1024];
         _memoryImageCache = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:(NSUInteger)(2 * 1024 * 1024 * factor) hardMemoryLimit:(NSUInteger)(3 * 1024 * 1024 * factor)];
         _memoryCache = [[TGMemoryCache alloc] init];
@@ -71,7 +75,6 @@
                     [subscriber putError:error];
             }];
             
-            //request.dependsOnPasswordEntry = (requestClass & TGRequestClassIgnorePasswordEntryRequired) == 0;
             
             [request setShouldContinueExecutionWithErrorContext:^bool(MTRequestErrorContext *errorContext)
             {

@@ -25,6 +25,7 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 
 @class TGAppDelegate;
 extern TGAppDelegate *TGAppDelegateInstance;
+FOUNDATION_EXPORT UIViewController *TGCreateLoginQRController(void);
 
 @class TGGlobalContext;
 
@@ -80,7 +81,6 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 
 - (void)displayPrivacyNoticeIfNeeded;
 
-// Settings
 @property (nonatomic) bool soundEnabled;
 @property (nonatomic) bool outgoingSoundEnabled;
 @property (nonatomic) bool vibrationEnabled;
@@ -189,6 +189,7 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 
 - (void)applyIOS6BackgroundNotificationsEnabled:(bool)enabled;
 - (void)applyIOS6APNsNotificationsEnabled:(bool)enabled;
+- (void)ios6RegisterLocalNotificationSettings;
 
 - (NSString *)applicationName;
 

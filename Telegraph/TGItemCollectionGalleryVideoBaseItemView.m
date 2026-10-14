@@ -258,7 +258,6 @@
     _playerView.initialFrame = CGRectMake(0, 0, _videoDimensions.width, _videoDimensions.height);
     
     [self _subscribeToStateOfPlayerView:_playerView];
-    //[_playerView loadImageWithUri:((TGModernGalleryVideoItem *)self.item).previewUri update:false synchronously:synchronously];
     if ([media isKindOfClass:[TGVideoMediaAttachment class]]) {
         [_playerView loadImageWithSignal:videoMediaTransform(TGTelegraphInstance.mediaBox, media)];
         _resource = videoFullSizeResource(media);
@@ -287,7 +286,7 @@
                         break;
                 }
                 
-                [strongSelf->_pipHeaderView setPictureInPictureEnabled:false];//status.status == MediaResourceStatusLocal];
+                [strongSelf->_pipHeaderView setPictureInPictureEnabled:false];
             }
         }
     }]];

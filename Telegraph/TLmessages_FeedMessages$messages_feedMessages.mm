@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messages.feedMessages#b295e17 flags:# max_position:flags.0?FeedPosition min_position:flags.1?FeedPosition messages:Vector<Message> chats:Vector<Chat> users:Vector<User> = messages.FeedMessages;
 
 @implementation TLmessages_FeedMessages$messages_feedMessages
 

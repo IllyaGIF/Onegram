@@ -69,20 +69,6 @@
                 __strong TGInstantPageImageView *strongSelf = weakSelf;
                 if (strongSelf != nil) {
                     strongSelf->_resourceStatus = status;
-                    /*switch (status.status) {
-                        case MediaResourceStatusLocal:
-                            [strongSelf->_overlayView setNone];
-                            strongSelf->_overlayView.hidden = true;
-                            break;
-                        case MediaResourceStatusRemote:
-                            [strongSelf->_overlayView setDownload];
-                            strongSelf->_overlayView.hidden = false;
-                            break;
-                        case MediaResourceStatusFetching:
-                            [strongSelf->_overlayView setProgress:status.progress cancelEnabled:true animated:true];
-                            strongSelf->_overlayView.hidden = false;
-                            break;
-                    }*/
                 }
             }];
         } else if ([media.media isKindOfClass:[TGVideoMediaAttachment class]]) {

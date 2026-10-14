@@ -208,7 +208,6 @@ static TGLocationManager *locationManager()
         
         if (currentTime - lastLocationUpdateTime < timeThreshold)
         {
-            TGLog(@"Cached location (%d m): %f, %f", precisionMeters, location.coordinate.latitude, location.coordinate.longitude);
             
             NSDictionary *result = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithDouble:location.coordinate.latitude], @"latitude", [NSNumber numberWithDouble:location.coordinate.longitude], @"longitude", nil];
             [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphObjectNode alloc] initWithObject:result]];
@@ -224,7 +223,6 @@ static TGLocationManager *locationManager()
 {
     CLLocationCoordinate2D coordinate = location.coordinate;
     
-    TGLog(@"Location: %f, %f", location.coordinate.latitude, location.coordinate.longitude);
     
     NSDictionary *result = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithDouble:coordinate.latitude], @"latitude", [NSNumber numberWithDouble:coordinate.longitude], @"longitude", nil];
     [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphObjectNode alloc] initWithObject:result]];

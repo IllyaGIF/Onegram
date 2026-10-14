@@ -2521,3 +2521,15 @@
 "Settings.DonateInfo" = "Support Onegram to help maintain and improve the app. Choose any amount on the donation page; every contribution is optional and appreciated.";
 "Settings.DonateButton" = "Open donation page";
 
+"RichMessage.Thinking" = "생각 중";
+"RichMessage.ShowMore" = "더 보기";
+"RichMessage.Unsupported" = "아직 지원되지 않는 콘텐츠입니다";
+"RichMessage.Embed" = "삽입된 콘텐츠";
+"RichMessage.TapToReveal" = "탭하여 보기";
+"RichMessage.Relative.Now" = "지금";
+"RichMessage.Relative.InMinutes" = "%@분 후";
+"RichMessage.Relative.MinutesAgo" = "%@분 전";
+"RichMessage.Relative.InHours" = "%@시간 후";
+"RichMessage.Relative.HoursAgo" = "%@시간 전";
+"RichMessage.Relative.InDays" = "%@일 후";
+"RichMessage.Relative.DaysAgo" = "%@일 전";

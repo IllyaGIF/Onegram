@@ -1,4 +1,5 @@
 #import "TGRecentCallsController.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -115,27 +116,27 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
         UIImage *normalImage = TGRecentCallsBrandedSegmentImage(false);
         UIImage *selectedImage = TGRecentCallsBrandedSegmentImage(true);
         UIImage *dividerImage = TGRecentCallsBrandedSegmentDividerImage();
-        [segmentedControl setBackgroundImage:normalImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [segmentedControl setBackgroundImage:selectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-        [segmentedControl setBackgroundImage:selectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [segmentedControl setBackgroundImage:selectedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [segmentedControl setDividerImage:dividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [segmentedControl setDividerImage:dividerImage forLeftSegmentState:UIControlStateSelected rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [segmentedControl setDividerImage:dividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, normalImage, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, selectedImage, UIControlStateSelected, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, selectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, selectedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlDividerImage(segmentedControl, dividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlDividerImage(segmentedControl, dividerImage, UIControlStateSelected, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlDividerImage(segmentedControl, dividerImage, UIControlStateNormal, UIControlStateSelected, UIBarMetricsDefault);
         NSDictionary *attributes = @{UITextAttributeTextColor:[UIColor whiteColor], UITextAttributeTextShadowColor:UIColorRGBA(0x000000, 0.55f), UITextAttributeFont:TGBoldSystemFontOfSize(13.0f)};
-        [segmentedControl setTitleTextAttributes:attributes forState:UIControlStateNormal];
-        [segmentedControl setTitleTextAttributes:attributes forState:UIControlStateSelected];
-        [segmentedControl setTitleTextAttributes:attributes forState:UIControlStateHighlighted];
+        OGPlatformSetSegmentedControlTitleTextAttributes(segmentedControl, attributes, UIControlStateNormal);
+        OGPlatformSetSegmentedControlTitleTextAttributes(segmentedControl, attributes, UIControlStateSelected);
+        OGPlatformSetSegmentedControlTitleTextAttributes(segmentedControl, attributes, UIControlStateHighlighted);
     }
     else if (iosMajorVersion() >= 5)
     {
-        [segmentedControl setBackgroundImage:presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-        [segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [segmentedControl setBackgroundImage:presentation.images.segmentedControlHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [segmentedControl setDividerImage:presentation.images.segmentedControlDividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeFont:TGSystemFontOfSize(13)} forState:UIControlStateNormal];
-        [segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeFont:TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, presentation.images.segmentedControlBackgroundImage, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(segmentedControl, presentation.images.segmentedControlHighlightedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlDividerImage(segmentedControl, presentation.images.segmentedControlDividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlTitleTextAttributes(segmentedControl, @{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeFont:TGSystemFontOfSize(13)}, UIControlStateNormal);
+        OGPlatformSetSegmentedControlTitleTextAttributes(segmentedControl, @{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor:[UIColor clearColor], UITextAttributeFont:TGSystemFontOfSize(13)}, UIControlStateSelected);
     }
     else
     {
@@ -238,6 +239,9 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
 - (void)setPresentation:(TGPresentation *)presentation
 {
     _presentation = presentation;
+
+    if (![self isViewLoaded])
+        return;
     
     self.view.backgroundColor = _presentation.pallete.backgroundColor;
     _tableView.backgroundColor = self.view.backgroundColor;
@@ -264,7 +268,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
     NSArray *items = @[TGLocalized(@"Calls.All"), TGLocalized(@"Calls.Missed")];
     _segmentedControl = [[UISegmentedControl alloc] initWithItems:items];
     if (iosMajorVersion() >= 11)
-        _segmentedControl.translatesAutoresizingMaskIntoConstraints = false;
+        OGPlatformSetViewTranslatesAutoresizingMaskIntoConstraints(_segmentedControl, false);
     TGConfigureRecentCallsSegmentedControl(_segmentedControl, _presentation);
     
     CGFloat width = 0.0f;
@@ -512,10 +516,6 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
 
 - (UIBarButtonItem *)actionBarButtonItem
 {
-    //if (_editingMode)
-    //{
-    //    return [[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Calls.Clear") style:UIBarButtonItemStylePlain target:self action:@selector(clearButtonPressed)];
-    //}
     return nil;
 }
 
@@ -738,8 +738,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
             [self setReloadReady:false];
             
             [CATransaction begin];
-            
-            [CATransaction setCompletionBlock:^
+            void (^completionBlock)(void) = ^
             {
                 [self setReloadReady:true];
                 
@@ -748,7 +747,10 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
                     if (_missed)
                         [self _maybeLoadMore];
                 });
-            }];
+            };
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+            [CATransaction setCompletionBlock:completionBlock];
+#endif
     
             [_tableView beginUpdates];
             
@@ -797,6 +799,9 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
             [_tableView endUpdates];
             
             [CATransaction commit];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            TGDispatchAfter(0.3, dispatch_get_main_queue(), completionBlock);
+#endif
         }
         else
         {

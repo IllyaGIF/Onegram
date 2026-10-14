@@ -13,6 +13,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
 @class TGPresentation;
+@class OGContactListAppearance;
 
 @interface TGContactCell : UITableViewCell
 
@@ -21,6 +22,7 @@
 @property (nonatomic, strong) TGUser *user;
 
 @property (nonatomic, strong) TGPresentation *presentation;
+@property (nonatomic, strong) OGContactListAppearance *contactListAppearance;
 
 @property (nonatomic, strong) NSString *titleTextFirst;
 @property (nonatomic, strong) NSString *titleTextSecond;
@@ -38,6 +40,7 @@
 @property (nonatomic) bool isDisabled;
 
 @property (nonatomic) bool subtitleActive;
+@property (nonatomic) bool separatorHidden;
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier selectionControls:(bool)selectionControls editingControls:(bool)editingControls;
 

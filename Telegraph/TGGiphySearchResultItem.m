@@ -19,17 +19,23 @@
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder
 {
-    return [self initWithGifId:[aDecoder decodeObjectForKey:@"gifId"] gifUrl:[aDecoder decodeObjectForKey:@"gifUrl"] gifSize:[aDecoder decodeCGSizeForKey:@"gifSize"] gifFileSize:[aDecoder decodeIntegerForKey:@"gifFileSize"] previewUrl:[aDecoder decodeObjectForKey:@"previewUrl"] previewSize:[aDecoder decodeCGSizeForKey:@"previewSize"]];
+    CGFloat gifWidth = (CGFloat)[aDecoder decodeDoubleForKey:@"gifWidth"];
+    CGFloat gifHeight = (CGFloat)[aDecoder decodeDoubleForKey:@"gifHeight"];
+    CGFloat previewWidth = (CGFloat)[aDecoder decodeDoubleForKey:@"previewWidth"];
+    CGFloat previewHeight = (CGFloat)[aDecoder decodeDoubleForKey:@"previewHeight"];
+    return [self initWithGifId:[aDecoder decodeObjectForKey:@"gifId"] gifUrl:[aDecoder decodeObjectForKey:@"gifUrl"] gifSize:CGSizeMake(gifWidth, gifHeight) gifFileSize:[aDecoder decodeIntegerForKey:@"gifFileSize"] previewUrl:[aDecoder decodeObjectForKey:@"previewUrl"] previewSize:CGSizeMake(previewWidth, previewHeight)];
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder
 {
     [aCoder encodeObject:_gifId == nil ? @"" : _gifId forKey:@"gifId"];
     [aCoder encodeObject:_gifUrl == nil ? @"" : _gifUrl forKey:@"gifUrl"];
-    [aCoder encodeCGSize:_gifSize forKey:@"gifSize"];
+    [aCoder encodeDouble:_gifSize.width forKey:@"gifWidth"];
+    [aCoder encodeDouble:_gifSize.height forKey:@"gifHeight"];
     [aCoder encodeInteger:_gifFileSize forKey:@"gifFileSize"];
     [aCoder encodeObject:_previewUrl == nil ? @"" : _previewUrl forKey:@"previewUrl"];
-    [aCoder encodeCGSize:_previewSize forKey:@"previewSize"];
+    [aCoder encodeDouble:_previewSize.width forKey:@"previewWidth"];
+    [aCoder encodeDouble:_previewSize.height forKey:@"previewHeight"];
 }
 
 - (BOOL)isEqual:(id)object

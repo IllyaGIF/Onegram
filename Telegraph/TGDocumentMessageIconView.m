@@ -8,6 +8,9 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernButton.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSurfaceRenderer.h"
 
 @interface TGDocumentMessageIconView ()
 {
@@ -31,41 +34,52 @@ static UIImage *TGBrandedMediaButtonImage(CGFloat diameter, bool paused)
 {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(diameter, diameter), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    CGRect bounds = CGRectMake(0.5f, 0.5f, diameter - 1.0f, diameter - 1.0f);
-    CGContextSaveGState(context);
-    CGContextAddEllipseInRect(context, bounds);
-    CGContextClip(context);
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGFloat components[] = {
-        0.67f, 0.86f, 1.0f, 1.0f,
-        0.19f, 0.69f, 0.96f, 1.0f,
-        0.03f, 0.58f, 0.89f, 1.0f
-    };
-    CGFloat locations[] = {0.0f, 0.48f, 1.0f};
-    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 3);
-    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, diameter), 0);
-    CGGradientRelease(gradient);
-    CGColorSpaceRelease(colorSpace);
-    CGContextRestoreGState(context);
+    if (ABS(diameter - 20.0f) < FLT_EPSILON)
+    {
+        OGTheme *theme = [OGTheme brandedTheme];
+        CGSize size = CGSizeMake(diameter, diameter);
+        UIImage *background = [theme.surfaceRenderer imageWithStyle:theme.conversationAppearance.voiceButtonSurfaceStyle size:size bodyFrame:CGRectMake(0.0f, 0.0f, diameter, diameter)];
+        [background drawAtPoint:CGPointZero];
+    }
+    else
+    {
+        CGRect bounds = CGRectMake(0.5f, 0.5f, diameter - 1.0f, diameter - 1.0f);
+        CGContextSaveGState(context);
+        CGContextAddEllipseInRect(context, bounds);
+        CGContextClip(context);
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGFloat components[] = {
+            0.67f, 0.86f, 1.0f, 1.0f,
+            0.19f, 0.69f, 0.96f, 1.0f,
+            0.03f, 0.58f, 0.89f, 1.0f
+        };
+        CGFloat locations[] = {0.0f, 0.48f, 1.0f};
+        CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 3);
+        CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, diameter), 0);
+        CGGradientRelease(gradient);
+        CGColorSpaceRelease(colorSpace);
+        CGContextRestoreGState(context);
 
-    CGContextSaveGState(context);
-    CGContextAddEllipseInRect(context, CGRectMake(2.0f, 1.5f, diameter - 4.0f, diameter * 0.53f));
-    CGContextClip(context);
-    CGColorSpaceRef glossColorSpace = CGColorSpaceCreateDeviceRGB();
-    CGFloat glossComponents[] = {
-        1.0f, 1.0f, 1.0f, 0.72f,
-        1.0f, 1.0f, 1.0f, 0.10f
-    };
-    CGFloat glossLocations[] = {0.0f, 1.0f};
-    CGGradientRef glossGradient = CGGradientCreateWithColorComponents(glossColorSpace, glossComponents, glossLocations, 2);
-    CGContextDrawLinearGradient(context, glossGradient, CGPointMake(0.0f, 1.0f), CGPointMake(0.0f, diameter * 0.53f), 0);
-    CGGradientRelease(glossGradient);
-    CGColorSpaceRelease(glossColorSpace);
-    CGContextRestoreGState(context);
+        CGContextSaveGState(context);
+        CGContextAddEllipseInRect(context, CGRectMake(2.0f, 1.5f, diameter - 4.0f, diameter * 0.53f));
+        CGContextClip(context);
+        CGColorSpaceRef glossColorSpace = CGColorSpaceCreateDeviceRGB();
+        CGFloat glossComponents[] = {
+            1.0f, 1.0f, 1.0f, 0.72f,
+            1.0f, 1.0f, 1.0f, 0.10f
+        };
+        CGFloat glossLocations[] = {0.0f, 1.0f};
+        CGGradientRef glossGradient = CGGradientCreateWithColorComponents(glossColorSpace, glossComponents, glossLocations, 2);
+        CGContextDrawLinearGradient(context, glossGradient, CGPointMake(0.0f, 1.0f), CGPointMake(0.0f, diameter * 0.53f), 0);
+        CGGradientRelease(glossGradient);
+        CGColorSpaceRelease(glossColorSpace);
+        CGContextRestoreGState(context);
 
-    CGContextSetStrokeColorWithColor(context, UIColorRGBA(0x4d8db8, 0.70f).CGColor);
-    CGContextSetLineWidth(context, 1.0f);
-    CGContextStrokeEllipseInRect(context, bounds);
+        CGContextSetStrokeColorWithColor(context, UIColorRGBA(0x4d8db8, 0.70f).CGColor);
+        CGContextSetLineWidth(context, 1.0f);
+        CGContextStrokeEllipseInRect(context, bounds);
+
+    }
 
     CGContextSaveGState(context);
     CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 1.0f), 0.5f, UIColorRGBA(0x000000, 0.25f).CGColor);

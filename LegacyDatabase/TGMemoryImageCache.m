@@ -73,6 +73,25 @@
     {
         __block NSInteger requiredMemory = _cacheSize + size - _softMemoryLimit;
         
+#if ONEGRAM_ARMV6
+        while (requiredMemory > 0 && [_cache count] != 0)
+        {
+            id oldestKey = nil;
+            CFAbsoluteTime oldestTimestamp = 0.0;
+            for (id key in _cache)
+            {
+                TGMemoryImageCacheItem *item = [_cache objectForKey:key];
+                if (oldestKey == nil || item.timestamp < oldestTimestamp)
+                {
+                    oldestKey = key;
+                    oldestTimestamp = item.timestamp;
+                }
+            }
+            TGMemoryImageCacheItem *item = [_cache objectForKey:oldestKey];
+            requiredMemory -= item.size;
+            [_cache removeObjectForKey:oldestKey];
+        }
+#else
         [[_cache keysSortedByValueUsingComparator:^NSComparisonResult(TGMemoryImageCacheItem *item1, TGMemoryImageCacheItem *item2)
         {
             return item1.timestamp < item2.timestamp ? NSOrderedAscending : NSOrderedDescending;
@@ -85,12 +104,21 @@
             if (requiredMemory <= 0 && stop != NULL)
                *stop = true;
         }];
+#endif
         
         __block NSUInteger currentCacheSize = 0;
+#if ONEGRAM_ARMV6
+        for (id key in _cache)
+        {
+            TGMemoryImageCacheItem *item = [_cache objectForKey:key];
+            currentCacheSize += item.size;
+        }
+#else
         [_cache enumerateKeysAndObjectsUsingBlock:^(__unused id key, TGMemoryImageCacheItem *item, __unused BOOL *stop)
         {
             currentCacheSize += item.size;
         }];
+#endif
         
         _cacheSize = currentCacheSize;
     }
@@ -138,7 +166,11 @@
             if (image != nil && [image isKindOfClass:[UIImage class]])
             {
                 CGSize dimensions = image.size;
+#if ONEGRAM_ARMV6
+                CGFloat scale = 1.0f;
+#else
                 CGFloat scale = image.scale;
+#endif
                 NSUInteger size = (NSUInteger)((dimensions.width * scale * dimensions.height * scale) * 4);
                 _cache[key] = [[TGMemoryImageCacheItem alloc] initWithObject:image attributes:attributes size:size timestamp:CFAbsoluteTimeGetCurrent()];
                 [self _addSize:size];

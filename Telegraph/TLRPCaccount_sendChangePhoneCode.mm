@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//account.sendChangePhoneCode flags:# allow_flashcall:flags.0?true phone_number:string current_number:flags.0?Bool = auth.SentCode
 
 @implementation TLRPCaccount_sendChangePhoneCode
 

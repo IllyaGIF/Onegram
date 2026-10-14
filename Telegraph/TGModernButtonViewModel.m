@@ -145,6 +145,31 @@
     self.frame = frame;
 }
 
+static void TGModernButtonViewModelDrawImageOperation(__unused CGContextRef context, TGModernDrawingOperation *operation)
+{
+    [(UIImage *)operation.object drawInRect:operation.rect blendMode:kCGBlendModeNormal alpha:1.0f];
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernButtonViewModel class]])
+        return false;
+    if (!self.skipDrawInContext && self.alpha > FLT_EPSILON && !self.hidden)
+    {
+        if (_title.length != 0)
+            return false;
+        if (_backgroundImage != nil)
+            [recording addOperationWithFunction:&TGModernButtonViewModelDrawImageOperation rect:self.bounds object:_backgroundImage secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+        if (_image != nil)
+        {
+            CGRect bounds = self.bounds;
+            CGSize imageSize = _image.size;
+            [recording addOperationWithFunction:&TGModernButtonViewModelDrawImageOperation rect:CGRectMake(CGFloor((bounds.size.width - imageSize.width) / 2.0f), CGFloor((bounds.size.height - imageSize.height) / 2.0f), imageSize.width, imageSize.height) object:_image secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+        }
+    }
+    return true;
+}
+
 - (void)drawInContext:(CGContextRef)__unused context
 {
     if (!self.skipDrawInContext && self.alpha > FLT_EPSILON && !self.hidden)

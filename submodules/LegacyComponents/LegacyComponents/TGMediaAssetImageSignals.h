@@ -1,5 +1,4 @@
 #import "SSignalKitCompat/SSignalKit.h"
-#import <CoreMedia/CoreMedia.h>
 #import <UIKit/UIKit.h>
 
 @class TGMediaAsset;

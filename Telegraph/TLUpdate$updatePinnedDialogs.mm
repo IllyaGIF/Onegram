@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//updatePinnedDialogs flags:# order:flags.0?Vector<Peer> = Update;
 
 @implementation TLUpdate$updatePinnedDialogs
 

@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 86
- */
 
 @class Api86_messages_StickerSet;
 @class Api86_messages_StickerSet_messages_stickerSet;
@@ -1131,9 +1128,6 @@
 
 @end
 
-/*
- * Types 86
- */
 
 @interface Api86_messages_StickerSet : NSObject
 
@@ -7696,10 +7690,6 @@
 
 @end
 
-
-/*
- * Functions 86
- */
 
 @interface Api86: NSObject
 

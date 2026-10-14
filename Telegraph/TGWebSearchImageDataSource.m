@@ -95,6 +95,9 @@ static ASQueue *taskManagementQueue()
         return nil;
     }
     
+    NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGWebSearchImageDataSource uriPrefix].length + 1]];
+    bool cacheOnly = [args[@"cacheOnly"] boolValue];
+
     TGMediaPreviewTask *previewTask = [[TGMediaPreviewTask alloc] init];
     
     [taskManagementQueue() dispatchOnQueue:^
@@ -118,7 +121,7 @@ static ASQueue *taskManagementQueue()
         if ([TGWebSearchImageDataSource _isDataLocallyAvailableForUri:uri isThumbnail:&isThumbnail])
         {
             TGDataResource *result = [TGWebSearchImageDataSource _performLoad:uri isCancelled:nil];
-            if (isThumbnail)
+            if (isThumbnail && !cacheOnly)
             {
                 if (partialCompletion)
                     partialCompletion(result);
@@ -129,10 +132,15 @@ static ASQueue *taskManagementQueue()
                     completion(result);
             }
             
-            completed = !isThumbnail;
+            completed = !isThumbnail || cacheOnly;
         }
         
-        if (!completed)
+        if (!completed && cacheOnly)
+        {
+            if (completion != nil)
+                completion([TGWebSearchImageDataSource resultForUnavailableImage]);
+        }
+        else if (!completed)
         {
             if (progress)
                 progress(0.0f);
@@ -299,15 +307,11 @@ static ASQueue *taskManagementQueue()
     {
         UIImage *thumbnailImage = nil;
         
-        //NSNumber *averageColor = [[TGMediaStoreContext instance] mediaImageAverageColor:uri];
-        //bool needsAverageColor = averageColor == nil;
-        //uint32_t averageColorValue = [averageColor intValue];
         
         thumbnailImage = thumbnailSourceImage;
         
         if (thumbnailImage != nil)
         {
-            //[[TGMediaStoreContext instance] setMediaImageAverageColorForKey:uri averageColor:@(averageColorValue)];
             [[TGMediaStoreContext instance] setMediaImageForKey:uri image:thumbnailImage attributes:@{}];
             
             return [[TGDataResource alloc] initWithImage:thumbnailImage decoded:true];

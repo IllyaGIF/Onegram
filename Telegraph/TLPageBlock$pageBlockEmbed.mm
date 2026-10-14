@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//pageBlockEmbed#cde200d1 flags:# full_width:flags.0?true allow_scrolling:flags.3?true url:flags.1?string html:flags.2?string poster_photo_id:flags.4?long w:int h:int caption:RichText = PageBlock;
 
 @implementation TLPageBlock$pageBlockEmbed
 

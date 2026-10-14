@@ -39,15 +39,19 @@
         [self addSubview:_wrapperView];
         
         PGCamera *camera = nil;
+#if !defined(ONEGRAM_ARMV6)
         if ([PGCamera cameraAvailable])
         {
             camera = [[PGCamera alloc] initWithMode:PGCameraModePhoto position:selfPortrait ? PGCameraPositionFront : PGCameraPositionUndefined];
         }
+#endif
         _camera = camera;
         
+#if !defined(ONEGRAM_ARMV6)
         _previewView = [[TGCameraPreviewView alloc] initWithFrame:CGRectMake(0, 0, 84.0f, 84.0f)];
         [_wrapperView addSubview:_previewView];
         [camera attachPreviewView:_previewView];
+#endif
         
         _iconView = [[UIImageView alloc] initWithImage:TGComponentsImageNamed(@"AttachmentMenuInteractiveCameraIcon")];
         [self addSubview:_iconView];
@@ -144,6 +148,9 @@
 
 - (void)detachPreviewView
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     [UIView animateWithDuration:0.1f animations:^
     {
         _cornersView.alpha = 0.0f;
@@ -153,6 +160,9 @@
 
 - (void)attachPreviewViewAnimated:(bool)animated
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     [_wrapperView addSubview:_previewView];
     [self setNeedsLayout];
     
@@ -168,6 +178,9 @@
 
 - (void)willAttachPreviewView
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     [UIView animateWithDuration:0.1f delay:0.1f options:kNilOptions animations:^
     {
         _cornersView.alpha = 1.0f;
@@ -185,12 +198,18 @@
 
 - (void)startPreview
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     PGCamera *camera = _camera;
     [camera startCaptureForResume:false completion:nil];
 }
 
 - (void)stopPreview
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     PGCamera *camera = _camera;
     [camera stopCaptureForPause:false completion:nil];
     _camera = nil;
@@ -198,6 +217,9 @@
 
 - (void)pausePreview
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     TGCameraPreviewView *previewView = _previewView;
     if (previewView.superview != _wrapperView)
         return;
@@ -208,6 +230,9 @@
 
 - (void)resumePreview
 {
+#if defined(ONEGRAM_ARMV6)
+    return;
+#endif
     TGCameraPreviewView *previewView = _previewView;
     if (previewView.superview != _wrapperView)
         return;

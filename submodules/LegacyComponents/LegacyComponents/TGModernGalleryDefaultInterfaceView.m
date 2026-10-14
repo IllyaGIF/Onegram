@@ -10,7 +10,6 @@
 
 #import "TGModernBackToolbarButton.h"
 
-#import <CoreMotion/CoreMotion.h>
 
 @interface TGModernGalleryToolbarView : UIView
 

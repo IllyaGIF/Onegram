@@ -8,14 +8,12 @@
 
 #import "TGModernConversationAudioPlayer.h"
 #import "IOS6FeatureProbe.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGTimerTarget.h"
 
 #import "TGModernConversationAudioPlayerContext.h"
 
-#ifndef IOS6_MUSIC_LOG
-#define IOS6_MUSIC_LOG(...) do { } while (0)
-#endif
 
 @interface TGModernConversationAudioPlayer () <TGAudioPlayerDelegate>
 {
@@ -153,7 +151,10 @@
 {
     _isPaused = true;
     
-    [_audioPlayer pause:completion];
+    if (_audioPlayer != nil)
+        [_audioPlayer pause:completion];
+    else if (completion != nil)
+        completion();
     
     if (_timer != nil)
     {
@@ -246,25 +247,24 @@
 - (void)audioPlayerDidFinishPlaying:(TGAudioPlayer *)__unused audioPlayer
 {
     UIApplication *application = [UIApplication sharedApplication];
-    __block UIBackgroundTaskIdentifier backgroundTask = UIBackgroundTaskInvalid;
+    __block OGPlatformBackgroundTaskIdentifier backgroundTask = OGPlatformBackgroundTaskInvalid;
     if (application.applicationState != UIApplicationStateActive)
     {
         dispatch_block_t beginTask = ^
         {
-            backgroundTask = [application beginBackgroundTaskWithExpirationHandler:^
+            backgroundTask = OGPlatformBeginBackgroundTask(application, ^
             {
-                UIBackgroundTaskIdentifier task = backgroundTask;
-                backgroundTask = UIBackgroundTaskInvalid;
-                if (task != UIBackgroundTaskInvalid)
-                    [application endBackgroundTask:task];
-            }];
+                OGPlatformBackgroundTaskIdentifier task = backgroundTask;
+                backgroundTask = OGPlatformBackgroundTaskInvalid;
+                if (task != OGPlatformBackgroundTaskInvalid)
+                    OGPlatformEndBackgroundTask(application, task);
+            });
         };
         if ([NSThread isMainThread])
             beginTask();
         else
             dispatch_sync(dispatch_get_main_queue(), beginTask);
     }
-    IOS6_MUSIC_LOG(@"MUSIC audio.finish.callback music=%d task=%d", _music ? 1 : 0, (int)backgroundTask);
 
     TGDispatchOnMainThread(^
     {
@@ -279,30 +279,22 @@
         
         [_inlineMediaContext postUpdatePlaybackPosition:false];
         
-        // Keep the native AVPlayer alive for music.  iOS 6 frequently refuses
-        // to start a newly-created AVPlayer after the screen has locked; the
-        // music player replaces its item instead.
         if (!_music)
             [self cleanup];
         
         id<TGModernConversationAudioPlayerDelegate> delegate = _delegate;
-        IOS6_MUSIC_LOG(@"MUSIC audio.finish.delegate delegate=%@ responds=%d", NSStringFromClass([(id)delegate class]), [delegate respondsToSelector:@selector(audioPlayerDidFinish)] ? 1 : 0);
         if ([delegate respondsToSelector:@selector(audioPlayerDidFinish)])
             [delegate audioPlayerDidFinish];
 
-        // The delegate schedules the actual next-track work asynchronously.
-        // Keep this tiny bridge alive long enough for that work to create and
-        // start the next audio player before iOS suspends the process again.
-        if (backgroundTask != UIBackgroundTaskInvalid)
+        if (backgroundTask != OGPlatformBackgroundTaskInvalid)
         {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
             {
-                UIBackgroundTaskIdentifier task = backgroundTask;
-                backgroundTask = UIBackgroundTaskInvalid;
-                if (task != UIBackgroundTaskInvalid)
+                OGPlatformBackgroundTaskIdentifier task = backgroundTask;
+                backgroundTask = OGPlatformBackgroundTaskInvalid;
+                if (task != OGPlatformBackgroundTaskInvalid)
                 {
-                    IOS6_MUSIC_LOG(@"MUSIC audio.finish.taskEnd task=%d", (int)task);
-                    [application endBackgroundTask:task];
+                    OGPlatformEndBackgroundTask(application, task);
                 }
             });
         }

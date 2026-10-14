@@ -3,7 +3,6 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-#import <map>
 
 #include <inttypes.h>
 
@@ -43,8 +42,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
     const uint32_t c1 = 0xcc9e2d51;
     const uint32_t c2 = 0x1b873593;
     
-    //----------
-    // body
     
     const uint32_t * blocks = (const uint32_t *)(data + nblocks*4);
     
@@ -61,8 +58,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
         h1 = h1*5+0xe6546b64;
     }
     
-    //----------
-    // tail
     
     const uint8_t * tail = (const uint8_t*)(data + nblocks*4);
     
@@ -76,8 +71,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
             k1 *= c1; k1 = ROTL32(k1,15); k1 *= c2; h1 ^= k1;
     };
     
-    //----------
-    // finalization
     
     h1 ^= len;
     
@@ -94,10 +87,10 @@ static int32_t murMurHashBytes32(void *bytes, int length)
     return result;
 }
 
-static const char *freedomDecoratedClass = "freedomDecoratedClass";
+static char freedomDecoratedClassKey;
 
-static int (*freedom_getClassList)(Class *, int) = NULL;
-static const char * (*freedom_class_getName)(Class cls) = NULL;
+static const char ** (*freedom_copyImageNames)(unsigned int *) = NULL;
+static const char ** (*freedom_copyClassNamesForImage)(const char *, unsigned int *) = NULL;
 static bool freedom_initialized = false;
 
 FreedomIdentifier FreedomIdentifierEmpty = (FreedomIdentifier){ .string = NULL, .key = 0 };
@@ -123,34 +116,58 @@ char *copyFreedomIdentifierValue(FreedomIdentifier identifier)
 
 Class freedomClass(uint32_t name)
 {
-    static std::map<uint32_t, __unsafe_unretained Class> classMap;
-    
+    typedef struct
+    {
+        uint32_t hashName;
+        const char *className;
+    } FreedomClassEntry;
+
+    static FreedomClassEntry *classEntries = NULL;
+    static unsigned int classEntryCount = 0;
+
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        int classCount = freedom_getClassList(NULL, 0);
-        if (classCount > 0)
+        unsigned int imageCount = 0;
+        const char **imageNames = freedom_copyImageNames(&imageCount);
+        unsigned int capacity = 0;
+        for (unsigned int imageIndex = 0; imageIndex < imageCount; imageIndex++)
         {
-            __unsafe_unretained Class *classList = (Class *)malloc(classCount * sizeof(Class));
-            objc_getClassList(classList, classCount);
-            
-            for (int i = 0; i < classCount; i++)
+            unsigned int classCount = 0;
+            const char **classNames = freedom_copyClassNamesForImage(imageNames[imageIndex], &classCount);
+            if (classNames == NULL)
+                continue;
+
+            if (classEntryCount + classCount > capacity)
             {
-                const char *className = freedom_class_getName(classList[i]);
-                uint32_t hashName = (uint32_t)murMurHashBytes32((void *)className, (int)strlen(className));
-                //NSLog(@"0x%" PRIx32 " -> %s", hashName, className);
-                classMap[hashName] = classList[i];
+                capacity = MAX(capacity * 2, classEntryCount + classCount);
+                classEntries = (FreedomClassEntry *)realloc(classEntries, capacity * sizeof(FreedomClassEntry));
             }
-            
-            free(classList);
+
+            for (unsigned int classIndex = 0; classIndex < classCount; classIndex++)
+            {
+                const char *className = classNames[classIndex];
+                classEntries[classEntryCount].hashName = (uint32_t)murMurHashBytes32((void *)className, (int)strlen(className));
+                classEntries[classEntryCount].className = className;
+                classEntryCount++;
+            }
+
+            free(classNames);
         }
+        free(imageNames);
         freedom_initialized = true;
     });
-    
-    auto it = classMap.find(name);
-    if (it != classMap.end())
-        return it->second;
-    
+
+    for (unsigned int i = classEntryCount; i > 0; i--)
+    {
+        if (classEntries[i - 1].hashName == name)
+        {
+            Class result = objc_getClass(classEntries[i - 1].className);
+            if (result != Nil)
+                return result;
+        }
+    }
+
     return nil;
 }
 
@@ -161,7 +178,8 @@ Class freedomMakeClass(Class superclass, Class subclass)
     
     int32_t randomId = 0;
     arc4random_buf(&randomId, 4);
-    Class decoratedClass = objc_allocateClassPair(superclass, [[NSString alloc] initWithFormat:@"Decorated%" PRIx32 "", randomId].UTF8String, 0);
+    NSString *decoratedClassName = [NSString stringWithFormat:@"Decorated%08x", (unsigned int)randomId];
+    Class decoratedClass = objc_allocateClassPair(superclass, [decoratedClassName UTF8String], 0);
     
     unsigned int count = 0;
     Method *methodList = class_copyMethodList(subclass, &count);
@@ -193,7 +211,6 @@ ptrdiff_t freedomIvarOffset(Class targetClass, uint32_t name)
         {
             const char *ivarName = ivar_getName(ivarList[i]);
             uint32_t hashName = (uint32_t)murMurHashBytes32((void *)ivarName, (int)strlen(ivarName));
-            //NSLog(@"%s -> 0x%x", ivarName, hashName);
             if (hashName == name)
             {
                 result = ivar_getOffset(ivarList[i]);
@@ -269,7 +286,6 @@ static bool consumeField(const char *desc, int length, int &offset, uint32_t &ou
                 {
                     offset = newOffset;
                     outBitSize = fieldLength;
-                    //NSLog(@"%s", buf);
                     return true;
                 }
                 else
@@ -279,7 +295,6 @@ static bool consumeField(const char *desc, int length, int &offset, uint32_t &ou
             {
                 offset = newOffset;
                 outBitSize = sizeof(unsigned int) * 8;
-                //NSLog(@"%s", buf);
                 return true;
             }
             else
@@ -337,7 +352,6 @@ static void freedomDumpBitfieldsByDescription(void *address, const char *desc)
             if (bitLength == 1)
             {
                 uint8_t *value = ((uint8_t *)address) + currentBitOffset / 8 + (currentBitOffset % 8 == 0 ? 0 : 1);
-                NSLog(@" : %d", ((*value) & ((uint8_t)(1 << (8 - currentBitOffset % 8)))) != 0 ? 1 : 0);
             }
             
             currentBitOffset += bitLength;
@@ -360,7 +374,6 @@ FreedomBitfield freedomIvarBitOffset(Class targetClass, uint32_t fieldName, uint
         {
             const char *ivarName = ivar_getName(ivarList[i]);
             uint32_t hashName = (uint32_t)murMurHashBytes32((void *)ivarName, (int)strlen(ivarName));
-            //NSLog(@"%s -> 0x%x", ivarName, hashName);
             if (hashName == fieldName)
             {
                 ptrdiff_t ivarOffset = ivar_getOffset(ivarList[i]);
@@ -392,7 +405,6 @@ FreedomBitfield freedomIvarBitOffset2(Class targetClass, uint32_t fieldName, uin
         {
             const char *ivarName = ivar_getName(ivarList[i]);
             uint32_t hashName = (uint32_t)murMurHashBytes32((void *)ivarName, (int)strlen(ivarName));
-            //NSLog(@"%s -> 0x%x", ivarName, hashName);
             if (hashName == fieldName)
             {
                 ptrdiff_t ivarOffset = ivar_getOffset(ivarList[i]);
@@ -467,7 +479,7 @@ Class adjustDecoratedClass(Class targetClass)
     __unsafe_unretained Class currentClass = targetClass;
     while (currentClass != Nil)
     {
-        __unsafe_unretained Class currentDecoratedClass = objc_getAssociatedObject(currentClass, freedomDecoratedClass);
+        __unsafe_unretained Class currentDecoratedClass = objc_getAssociatedObject(currentClass, &freedomDecoratedClassKey);
         if (currentDecoratedClass != Nil)
         {
             decoratedClass = currentDecoratedClass;
@@ -475,7 +487,8 @@ Class adjustDecoratedClass(Class targetClass)
             if (currentClass != targetClass)
             {
                 const char *currentClassName = class_getName(targetClass);
-                Class adjustedDecoratedClass = objc_allocateClassPair(targetClass, [[NSString alloc] initWithFormat:@"%s_Super%" PRIx32 "", class_getName(decoratedClass), murMurHashBytes32((void *)currentClassName, (int)strlen(currentClassName))].UTF8String, 0);
+                NSString *adjustedDecoratedClassName = [NSString stringWithFormat:@"%s_Super%08x", class_getName(decoratedClass), (unsigned int)murMurHashBytes32((void *)currentClassName, (int)strlen(currentClassName))];
+                Class adjustedDecoratedClass = objc_allocateClassPair(targetClass, [adjustedDecoratedClassName UTF8String], 0);
                 
                 unsigned int methodCount = 0;
                 Method *methodList = class_copyMethodList(decoratedClass, &methodCount);
@@ -488,7 +501,7 @@ Class adjustDecoratedClass(Class targetClass)
                 objc_registerClassPair(adjustedDecoratedClass);
                 
                 decoratedClass = adjustedDecoratedClass;
-                objc_setAssociatedObject(targetClass, freedomDecoratedClass, adjustedDecoratedClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                objc_setAssociatedObject(targetClass, &freedomDecoratedClassKey, adjustedDecoratedClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
             
             break;
@@ -525,7 +538,6 @@ static SEL freedomFindMethodName(uint32_t name, Class className, Method *methodL
         SEL methodName = method_getName(methodList[j]);
         const char *selectorName = sel_getName(methodName);
         uint32_t methodHashName = (uint32_t)murMurHashBytes32((void *)selectorName, (int)strlen(selectorName));
-        //NSLog(@"0x%" PRIx32 " -> %s", methodHashName, selectorName);
         if (methodHashName == name)
         {
             if (methodTypeEncoding != NULL)
@@ -564,7 +576,8 @@ void freedomClassAutoDecorateExplicit(Class className, uint32_t name, __unused F
             name = (uint32_t)murMurHashBytes32((void *)string, (int)strlen(string));
         }
             
-        Class decoratedClass = objc_allocateClassPair(className, [[NSString alloc] initWithFormat:@"Decorated%" PRIx32 "", name].UTF8String, 0);
+        NSString *decoratedClassName = [NSString stringWithFormat:@"Decorated%08x", (unsigned int)name];
+        Class decoratedClass = objc_allocateClassPair(className, [decoratedClassName UTF8String], 0);
         
         unsigned int methodCount = 0;
         Method *methodList = class_copyMethodList(className, &methodCount);
@@ -589,9 +602,7 @@ void freedomClassAutoDecorateExplicit(Class className, uint32_t name, __unused F
                 char *identifier = copyFreedomIdentifierValue(instanceDecorations[i].newIdentifier);
                 char *encoding = copyFreedomIdentifierValue(instanceDecorations[i].newEncoding);
                 
-                SEL selector = sel_getUid(identifier);
-                if (!sel_isMapped(selector))
-                    selector = sel_registerName(identifier);
+                SEL selector = sel_registerName(identifier);
                 
                 class_addMethod(decoratedClass, selector, instanceDecorations[i].imp, encoding);
                 
@@ -610,7 +621,7 @@ void freedomClassAutoDecorateExplicit(Class className, uint32_t name, __unused F
         
         objc_registerClassPair(decoratedClass);
         
-        objc_setAssociatedObject(className, freedomDecoratedClass, decoratedClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(className, &freedomDecoratedClassKey, decoratedClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         Class metaClass = object_getClass(className);
         class_addMethod(metaClass, @selector(alloc), (IMP)&freedomAllocImpl, "@:@");
     }
@@ -664,8 +675,8 @@ void freedomInit()
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        freedom_getClassList = &objc_getClassList;
-        freedom_class_getName = &class_getName;
+        freedom_copyImageNames = &objc_copyImageNames;
+        freedom_copyClassNamesForImage = &objc_copyClassNamesForImage;
     });
 }
 

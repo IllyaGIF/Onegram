@@ -31,7 +31,7 @@
     [coder encodeInt32:_date forCKey:"date"];
 }
 
-- (bool)isEqual:(id)object {
+- (BOOL)isEqual:(id)object {
     return [object isKindOfClass:[TGDatabaseMessageDraft class]] && TGStringCompare(((TGDatabaseMessageDraft *)object)->_text, _text) && TGObjectCompare(((TGDatabaseMessageDraft *)object)->_entities, _entities) && ((TGDatabaseMessageDraft *)object)->_disableLinkPreview == _disableLinkPreview && ((TGDatabaseMessageDraft *)object)->_replyToMessageId == _replyToMessageId && ((TGDatabaseMessageDraft *)object)->_date == _date;
 }
 

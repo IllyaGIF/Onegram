@@ -46,7 +46,6 @@
 
 - (instancetype)initWithKeyCommandController:(TGKeyCommandController *)keyCommandController;
 
-+ (void)addTextViewMethods;
 
 - (void)textViewEnsureSelectionVisible;
 

@@ -3,12 +3,15 @@
 #import "TGColor.h"
 
 #import "TGPaintUtils.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 #import <QuartzCore/QuartzCore.h>
 
 const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 
 @interface TGPhotoTextView ()
-
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 32000
+@property (nonatomic, assign) BOOL legacyShadowEnabled;
+#endif
 @end
 
 @interface TGPhotoTextSelectionView () <UIGestureRecognizerDelegate>
@@ -75,8 +78,7 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
         _textView.maximumZoomScale = 1.0f;
         _textView.keyboardAppearance = UIKeyboardAppearanceDark;
         _textView.autocorrectionType = UITextAutocorrectionTypeNo;
-        if ([_textView respondsToSelector:@selector(setSpellCheckingType:)])
-            _textView.spellCheckingType = UITextSpellCheckingTypeNo;
+        OGPlatformDisableSpellChecking(_textView);
         _textView.font = [UIFont boldSystemFontOfSize:_baseFontSize];
         
         [self setSwatch:entity.swatch];
@@ -156,6 +158,10 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 - (void)setStroke:(bool)stroke
 {
     _stroke = stroke;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 32000
+    _textView.legacyShadowEnabled = !stroke;
+    [_textView setNeedsDisplay];
+#else
     if (stroke)
     {
         _textView.layer.shadowRadius = 0.0f;
@@ -170,6 +176,7 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
         _textView.layer.shadowOpacity = 0.4f;
         _textView.layer.shadowRadius = 4.0f;
     }
+#endif
     
     [self updateColor];
     [self setNeedsLayout];
@@ -432,12 +439,32 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     return [super initWithFrame:frame textContainer:textContainer];
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 32000
+- (void)drawRect:(CGRect)rect
+{
+    if (self.legacyShadowEnabled)
+    {
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSaveGState(context);
+        CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 4.0f), 4.0f, [[UIColor colorWithWhite:0.0f alpha:0.4f] CGColor]);
+        [super drawRect:rect];
+        CGContextRestoreGState(context);
+    }
+    else
+    {
+        [super drawRect:rect];
+    }
+}
+#endif
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
 - (CGRect)caretRectForPosition:(UITextPosition *)position
 {
     CGRect rect = [super caretRectForPosition:position];
     rect.size.width = rect.size.height / 25.0f;
     return rect;
 }
+#endif
 
 - (CGFloat)strokeWidth
 {

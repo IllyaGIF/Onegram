@@ -314,11 +314,6 @@
     
     textView.followLink = ^(NSString *url)
     {
-//        __strong TGLoginCodeController *strongSelf = weakSelf;
-//        if (strongSelf != nil) {
-//            [strongSelf->_alertView dismiss:true fromDim:true animated:true];
-//            strongSelf->_restoreTermsAlert = true;
-//        }
         [TGAppDelegateInstance handleOpenInstantView:url disableActions:true];
     };
     
@@ -413,8 +408,7 @@
 - (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
 {
     [super controllerInsetUpdated:previousInset];
-    
-    //[self updateInterface:UIInterfaceOrientationPortrait];
+    [self updateInterface:self.interfaceOrientation];
 }
 
 - (void)updateInterface:(UIInterfaceOrientation)orientation
@@ -472,16 +466,9 @@
     CGSize noticeSize = [_noticeLabel sizeThatFits:CGSizeMake(screenSize.width - 48.0f, CGFLOAT_MAX)];
     _noticeLabel.frame = CGRectMake(CGFloor((screenSize.width - noticeSize.width) / 2.0f), noticeLabelOffset, noticeSize.width, noticeSize.height);
     
-    CGFloat keyboardHeight = [TGHacks keyboardHeightForOrientation:self.interfaceOrientation];
-//    CGFloat longSize = MAX(screenSize.width, screenSize.height);
-//    if (TGIsPad()) {
-//        if (fabs(longSize - 1024.0f) < FLT_EPSILON)
-//            keyboardHeight = (screenSize.width > screenSize.height) ? 370.0f : 300.0f;
-//        else
-//            keyboardHeight = (screenSize.width > screenSize.height) ? 435.0f : 350.0f;
-//    }
-//    else if (fabs(longSize - 812.0f) < FLT_EPSILON)
-//        keyboardHeight = 291.0f;
+    CGFloat keyboardHeight = self.controllerCleanInset.bottom;
+    if (keyboardHeight < FLT_EPSILON && [TGHacks isKeyboardVisible])
+        keyboardHeight = [TGHacks keyboardHeightForOrientation:orientation];
     
     if (!_termsOfServiceLabel.hidden) {
         CGSize termsOfServiceSize = [_termsOfServiceLabel sizeThatFits:CGSizeMake(278.0f, CGFLOAT_MAX)];
@@ -489,6 +476,26 @@
         CGFloat termsOfServiceOffset = 50.0f;
         
         _termsOfServiceLabel.frame = CGRectMake(CGFloor((screenSize.width - termsOfServiceSize.width) / 2.0f), screenSize.height - termsOfServiceSize.height - termsOfServiceOffset - keyboardHeight, termsOfServiceSize.width, termsOfServiceSize.height);
+    }
+
+    if (!TGIsPad() && keyboardHeight > FLT_EPSILON)
+    {
+        CGFloat visibleBottom = screenSize.height - keyboardHeight - 10.0f;
+        CGFloat activeBottom = MAX(CGRectGetMaxY(_firstNameField.frame), CGRectGetMaxY(_lastNameField.frame));
+        CGFloat shift = MAX(0.0f, activeBottom - visibleBottom);
+        if (shift > 0.0f)
+        {
+            _grayBackground.frame = CGRectOffset(_grayBackground.frame, 0.0f, -shift);
+            _separatorView.frame = CGRectOffset(_separatorView.frame, 0.0f, -shift);
+            _titleLabel.frame = CGRectOffset(_titleLabel.frame, 0.0f, -shift);
+            _addPhotoButton.frame = CGRectOffset(_addPhotoButton.frame, 0.0f, -shift);
+            _avatarView.frame = CGRectOffset(_avatarView.frame, 0.0f, -shift);
+            _firstNameSeparator.frame = CGRectOffset(_firstNameSeparator.frame, 0.0f, -shift);
+            _lastNameSeparator.frame = CGRectOffset(_lastNameSeparator.frame, 0.0f, -shift);
+            _firstNameField.frame = CGRectOffset(_firstNameField.frame, 0.0f, -shift);
+            _lastNameField.frame = CGRectOffset(_lastNameField.frame, 0.0f, -shift);
+            _noticeLabel.frame = CGRectOffset(_noticeLabel.frame, 0.0f, -shift);
+        }
     }
 }
 
@@ -594,7 +601,7 @@
             {
                 [UIView setAnimationRepeatCount:3];
                 v.frame = r;
-            } completion:^(__unused BOOL finished)
+            } completion:^(__unused BOOL secondFinished)
             {
                 v.frame = originalFrame;
             }];
@@ -609,12 +616,10 @@
     if (string.length == 0)
         return @"";
     
-    NSString *withoutWhitespace = [string stringByReplacingOccurrencesOfString:@" +" withString:@" "
-                                                                       options:NSRegularExpressionSearch
-                                                                         range:NSMakeRange(0, string.length)];
-    withoutWhitespace = [withoutWhitespace stringByReplacingOccurrencesOfString:@"\n\n+" withString:@"\n\n"
-                                                                        options:NSRegularExpressionSearch
-                                                                          range:NSMakeRange(0, withoutWhitespace.length)];
+    NSRegularExpression *spaceRegex = [NSRegularExpression regularExpressionWithPattern:@" +" options:0 error:NULL];
+    NSString *withoutWhitespace = [spaceRegex stringByReplacingMatchesInString:string options:0 range:NSMakeRange(0, string.length) withTemplate:@" "];
+    NSRegularExpression *lineRegex = [NSRegularExpression regularExpressionWithPattern:@"\n\n+" options:0 error:NULL];
+    withoutWhitespace = [lineRegex stringByReplacingMatchesInString:withoutWhitespace options:0 range:NSMakeRange(0, withoutWhitespace.length) withTemplate:@"\n\n"];
     return [withoutWhitespace stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 
@@ -791,7 +796,7 @@
             [ActionStageInstance() requestActor:action options:options watcher:TGTelegraphInstance];
         }
         
-        dispatch_async(dispatch_get_main_queue(), ^
+        TGDispatchOnMainThread(^
         {
             if (resultCode == ASStatusSuccess)
             {
@@ -831,7 +836,7 @@
 {
     if ([path isEqualToString:@"/tg/activation"])
     {
-        dispatch_async(dispatch_get_main_queue(), ^
+        TGDispatchOnMainThread(^
         {
             [TGAppDelegateInstance presentMainController];
         });
@@ -840,7 +845,7 @@
     {
         if (![((SGraphObjectNode *)resource).object boolValue])
         {
-            dispatch_async(dispatch_get_main_queue(), ^
+            TGDispatchOnMainThread(^
             {
                 [TGAppDelegateInstance presentMainController];
             });

@@ -30,10 +30,6 @@
 #import "TGLegacyDatabase.h"
 #import "TGLegacyUser.h"
 
-@implementation TGUnauthorizedShareContext
-
-@end
-
 @implementation TGEncryptedShareContext
 
 - (instancetype)initWithSimplePassword:(bool)simplePassword allowTouchId:(bool)allowTouchId verifyPassword:(bool (^)(NSString *))verifyPassword
@@ -74,8 +70,12 @@
     NSURL *groupURL = [self groupUrl];
     if (groupURL != nil)
     {
+#if ONEGRAM_ARMV6
+        return [NSURL fileURLWithPath:[[groupURL path] stringByAppendingPathComponent:@"shared-auth-info"] isDirectory:true];
+#else
         NSURL *sharedAuthInfoPath = [groupURL URLByAppendingPathComponent:@"shared-auth-info" isDirectory:true];
         return sharedAuthInfoPath;
+#endif
     }
 
     return nil;
@@ -273,10 +273,18 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                             if ([mtContext authInfoForDatacenterWithId:[nDatacenterId integerValue]] == nil)
                                 [mtContext updateAuthInfoForDatacenterWithId:[nDatacenterId integerValue] authInfo:datacenterAuthInfo];
                             
+#if ONEGRAM_ARMV6
+                            for (NSNumber *nDatacenterId in datacenterAddressSets)
+                            {
+                                MTDatacenterAddressSet *addressSet = [datacenterAddressSets objectForKey:nDatacenterId];
+                                [mtContext updateAddressSetForDatacenterWithId:[nDatacenterId integerValue] addressSet:addressSet forceUpdateSchemes:true];
+                            }
+#else
                             [datacenterAddressSets enumerateKeysAndObjectsUsingBlock:^(NSNumber *nDatacenterId, MTDatacenterAddressSet *addressSet, BOOL * stop)
                             {
                                 [mtContext updateAddressSetForDatacenterWithId:[nDatacenterId integerValue] addressSet:addressSet forceUpdateSchemes:true];
                             }];
+#endif
                         }];
                         
                         MTSignal *discoverBackupAddressList = [[MTSignal alloc] initWithGenerator:^id<MTDisposable>(MTSubscriber *subscriber) {
@@ -286,23 +294,6 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                                 phoneNumber = [TGLegacyDatabase cleanPhone:user.phoneNumber clip:false];
                             }
                             id<MTDisposable> disposable = [[MTBackupAddressSignals fetchBackupIps:isTestingEnvironment currentContext:mtContext additionalSource:nil
-//                            [[MTSignal alloc] initWithGenerator:^id<MTDisposable>(MTSubscriber *internalSubscriber) {
-//                                TGLegacyUser *user = [database userWithIdSync:clientUserId];
-//                                NSString *prefix = @"0";
-//                                if (user != nil) {
-//                                    NSString *phone = [TGLegacyDatabase cleanPhone:user.phoneNumber clip:false];
-//                                    if (phone.length > 0) {
-//                                        prefix = [phone substringToIndex:1];
-//                                    }
-//                                }
-//                                id<SDisposable> disposable = [[TGICloudEmergencyDataSignals fetchBackupAddressInfo:prefix phoneNumber:phoneNumber] startWithNext:^(MTBackupDatacenterData *result) {
-//                                    [internalSubscriber putNext:result];
-//                                    [internalSubscriber putCompletion];
-//                                }];
-//                                return [[MTBlockDisposable alloc] initWithBlock:^{
-//                                    [disposable dispose];
-//                                }];
-//                            }]
                             phoneNumber:phoneNumber] startWithNext:nil error:^(__unused id error) {
                                 [subscriber putCompletion];
                             } completed:^{

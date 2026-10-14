@@ -1,3 +1,4 @@
+#import "GCDAsyncSocketOpenSSL.h"
 //
 //  GCDAsyncSocket.m
 //  
@@ -60,6 +61,18 @@ void syslog(int priority, const char *format, ...)
 
 #import "MTNetworkUsageCalculationInfo.h"
 #import "MTNetworkUsageManager.h"
+
+static ssize_t GCDAsyncSocketSendNoSignal(int fd, const void *bytes, size_t size)
+{
+    int one = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) < 0)
+        return -1;
+    ssize_t result;
+    do {
+        result = send(fd, bytes, size, 0);
+    } while (result < 0 && errno == EINTR);
+    return result;
+}
 
 #if ! __has_feature(objc_arc)
 #warning This file must be compiled with ARC. Use -fobjc-arc flag (or convert project to ARC).
@@ -167,6 +180,7 @@ NSString *const GCDAsyncSocketThreadName = @"GCDAsyncSocket-CFStream";
 
 #if TARGET_OS_IPHONE
 NSString *const GCDAsyncSocketUseOpenSSL = @"GCDAsyncSocketUseOpenSSL";
+NSString *const GCDAsyncSocketOpenSSLPeerName = @"GCDAsyncSocketOpenSSLPeerName";
 NSString *const GCDAsyncSocketOpenSSLTrustedCertificates = @"GCDAsyncSocketOpenSSLTrustedCertificates";
 NSString *const GCDAsyncSocketOpenSSLVerificationTime = @"GCDAsyncSocketOpenSSLVerificationTime";
 #endif
@@ -236,7 +250,7 @@ static void GCDAsyncSocketOpenSSLThreadIdCallback(CRYPTO_THREADID *id)
 	CRYPTO_THREADID_set_pointer(id, (void *)pthread_self());
 }
 
-static void GCDAsyncSocketInitializeOpenSSL(void)
+void GCDAsyncSocketInitializeOpenSSL(void)
 {
 	static dispatch_once_t onceToken;
 	dispatch_once(&onceToken, ^{
@@ -1854,7 +1868,11 @@ static void GCDAsyncSocketInitializeOpenSSL(void)
 	// Prevent SIGPIPE signals
 	
 	int nosigpipe = 1;
-	setsockopt(childSocketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+	if (setsockopt(childSocketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe)) != 0)
+	{
+		close(childSocketFD);
+		return NO;
+	}
 	
 	// Notify delegate
 	
@@ -2480,7 +2498,12 @@ static void GCDAsyncSocketInitializeOpenSSL(void)
 	// Prevent SIGPIPE signals
 	
 	int nosigpipe = 1;
-	setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
+	if (setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe)) != 0)
+	{
+		if (errPtr)
+			*errPtr = [self errnoErrorWithReason:@"Cannot configure socket writes"];
+		return NO;
+	}
     
     /*int32_t rcvBuf = 400 * 1024;
     setsockopt(socketFD, SOL_SOCKET, SO_RCVBUF, &rcvBuf, 4);
@@ -5909,7 +5932,7 @@ static void GCDAsyncSocketInitializeOpenSSL(void)
         ssize_t result = 0;
         
         {
-            result = write(socketFD, buffer, (size_t)bytesToWrite);
+            result = GCDAsyncSocketSendNoSignal(socketFD, buffer, (size_t)bytesToWrite);
 		
             if (result < 0)
             {
@@ -6269,7 +6292,11 @@ static void GCDAsyncSocketInitializeOpenSSL(void)
 
     GCDAsyncSpecialPacket *tlsPacket = (GCDAsyncSpecialPacket *)currentRead;
     NSDictionary *tlsSettings = tlsPacket->tlsSettings;
+#if defined(ONEGRAM_ARMV6)
+    NSString *peerName = [tlsSettings objectForKey:GCDAsyncSocketOpenSSLPeerName];
+#else
     NSString *peerName = [tlsSettings objectForKey:(NSString *)kCFStreamSSLPeerName];
+#endif
     NSData *trustedCertificates = [tlsSettings objectForKey:GCDAsyncSocketOpenSSLTrustedCertificates];
     NSNumber *verificationTime = [tlsSettings objectForKey:GCDAsyncSocketOpenSSLVerificationTime];
     if (peerName.length == 0 || trustedCertificates.length == 0)
@@ -6620,7 +6647,7 @@ static void GCDAsyncSocketInitializeOpenSSL(void)
 	
 	int socketFD = (socket4FD == SOCKET_NULL) ? socket6FD : socket4FD;
 	
-	ssize_t result = write(socketFD, buffer, bytesToWrite);
+	ssize_t result = GCDAsyncSocketSendNoSignal(socketFD, buffer, bytesToWrite);
 	
 	if (result < 0)
 	{
@@ -7681,6 +7708,9 @@ static void CFWriteStreamCallback (CFWriteStreamRef stream, CFStreamEventType ty
 
 - (BOOL)enableBackgroundingOnSocketWithCaveat:(BOOL)caveat
 {
+#if defined(ONEGRAM_ARMV6)
+    return NO;
+#else
 	if (![self createReadAndWriteStream])
 	{
 		// Error occured creating streams (perhaps socket isn't open)
@@ -7708,6 +7738,7 @@ static void CFWriteStreamCallback (CFWriteStreamRef stream, CFStreamEventType ty
 	}
 	
 	return YES;
+#endif
 }
 
 - (BOOL)enableBackgroundingOnSocket

@@ -132,7 +132,7 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
     int32_t _minMessageId;
     int64_t _minEntryId;
     
-    TGModernConversationActionInputPanel *_joinChannelPanel; // Main Thread
+    TGModernConversationActionInputPanel *_joinChannelPanel;
     
     SMetaDisposable *_requestDisposable;
     
@@ -196,7 +196,6 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
     
     if (firstTime) {
         [TGModernConversationCompanion dispatchOnMessageQueue:^{
-            //[self _updateVisibleHoles];
         }];
     }
 }
@@ -564,8 +563,6 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
                             } else {
                                 originalMedia.siteName = TGLocalized(@"Channel.AdminLog.MessagePreviousMessage");
                             }
-//                            if (previousId != currentId)
-//                                originalMedia.photo = previousImage;
                             NSMutableArray *medias = [[NSMutableArray alloc] init];
                             if (editedMessage.mediaAttachments != nil) {
                                 [medias addObjectsFromArray:editedMessage.mediaAttachments];
@@ -1006,43 +1003,12 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
 }
 
 - (void)loadMoreMessagesBelow {
-    int count = 100;
     
     TGModernConversationController *controller = self.controller;
     [controller setEnableBelowHistoryRequests:false];
     
     [TGModernConversationCompanion dispatchOnMessageQueue:^{
-        if (!_loadingHistoryBelow) {
-            if (_historyBelow) {
-                /*TGMessageTransparentSortKey minKey = TGMessageTransparentSortKeyLowerBound(_conversationId);
-                for (TGMessageModernConversationItem *item in _items) {
-                    TGMessageTransparentSortKey itemKey = item->_message.transparentSortKey;
-                    if (TGMessageTransparentSortKeyCompare(minKey, itemKey) < 0) {
-                        minKey = itemKey;
-                    }
-                }
-                
-                __weak TGChannelConversationCompanion *weakSelf = self;
-                _loadingHistoryBelow = true;
-                [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:minKey count:count important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestLater completion:^(NSArray *messages, __unused bool hasLater) {
-                    [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                        __strong TGChannelConversationCompanion *strongSelf = weakSelf;
-                        if (strongSelf != nil) {
-                            strongSelf->_loadingHistoryBelow = false;
-                            if (messages.count == 0) {
-                                strongSelf->_historyBelow = false;
-                            } else {
-                                strongSelf->_historyBelow = true;
-                            }
-                            if (messages.count != 0) {
-                                [strongSelf _addMessages:messages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesBelow];
-                            }
-                            [strongSelf _updateControllerHistoryRequestsFlags];
-                        }
-                    }];
-                }];*/
-            }
-        } else {
+        if (_loadingHistoryBelow) {
             [self _updateControllerHistoryRequestsFlags];
         }
     }];
@@ -1181,7 +1147,6 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
     controller.completion = ^(TGChannelEventFilter filter, NSArray * usersFilter, bool allUsersSelected) {
         __strong TGAdminLogConversationCompanion *strongSelf = weakSelf;
         if (strongSelf != nil) {
-            //strongSelf->_eventFilter != filter || strongSelf->_userFilter != userFilter)
             strongSelf->_eventFilter = filter;
             strongSelf->_usersFilter = usersFilter;
             bool allEvents = true;
@@ -1288,8 +1253,6 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
                     [progressWindow dismissWithSuccess];
                 } error:^(__unused id error) {
                     __strong TGAdminLogConversationCompanion *strongSelf = weakSelf;
-                    if (strongSelf != nil) {
-                    }
                 } completed:^{
                 }];
             } else {

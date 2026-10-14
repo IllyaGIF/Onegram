@@ -49,11 +49,11 @@
     
     NSTimeInterval _lastTypingActivity;
     
-    TGConversation *_conversation; // Main Thread
-    int _encryptionState; // Main Thread
+    TGConversation *_conversation;
+    int _encryptionState;
     
     TGSecretModernConversationAccessoryTimerView *_selfDestructTimerView;
-    int _selfDestructTimer; // Main Thread
+    int _selfDestructTimer;
     
     TGPickerSheet *_pickerSheet;
 }
@@ -307,7 +307,7 @@
             statusPanel.delegate = self.controller;
             panel = statusPanel;
             
-            if (encryptionState == 1) // awaiting
+            if (encryptionState == 1)
             {
                 NSString *formatText = TGLocalized(@"Conversation.EncryptionWaiting");
                 NSString *baseText = [[NSString alloc] initWithFormat:formatText, [TGDatabaseInstance() loadUser:_uid].displayFirstName];
@@ -316,7 +316,7 @@
             else
                 [statusPanel setText:TGLocalized(@"Conversation.EncryptionProcessing")];
         }
-        else if (encryptionState == 3) // cancelled
+        else if (encryptionState == 3)
         {
             TGModernConversationActionInputPanel *deleteAndExitPanel = [[TGModernConversationActionInputPanel alloc] init];
             [deleteAndExitPanel setActionWithTitle:TGLocalized(@"ConversationProfile.LeaveDeleteAndExit") action:@"deleteAndExit"];
@@ -345,34 +345,6 @@
 
 - (void)updateDebugPanel
 {
-/*#ifdef INTERNAL_RELEASE
-    TGDispatchOnMainThread(^
-    {
-        TGModernConversationController *controller = self.controller;
-        
-        TGModernConversationUpgradeStateTitlePanel *panel = [controller.secondaryTitlePanel isKindOfClass:[TGModernConversationUpgradeStateTitlePanel class]] ? (TGModernConversationUpgradeStateTitlePanel *)controller.secondaryTitlePanel : nil;
-        if (panel == nil)
-        {
-            panel = [[TGModernConversationUpgradeStateTitlePanel alloc] init];
-            __weak TGSecretModernConversationCompanion *weakSelf = self;
-            panel.rekey = ^
-            {
-                __strong TGSecretModernConversationCompanion *strongSelf = weakSelf;
-                if (strongSelf != nil)
-                {
-                    [strongSelf _maybeRekey];
-                }
-            };
-        }
-        
-        int64_t keyId = 0;
-        [TGDatabaseInstance() encryptionKeyForConversationId:_conversationId requestedKeyFingerprint:0 outKeyFingerprint:&keyId];
-        
-        [panel setCurrentLayer:self.layer keyId:keyId rekeySessionId:_conversation.encryptedData.currentRekeyExchangeId canRekey:self.layer >= 20 && _conversation.encryptedData.keyFingerprint != 0 && _conversation.encryptedData.currentRekeyExchangeId == 0];
-        
-        [controller setSecondaryTitlePanel:panel animated:false];
-    });
-#endif*/
 }
 
 - (NSDictionary *)userActivityData
@@ -471,7 +443,6 @@
             int32_t messageId = [nMid intValue];
             
             int messageFlags = [TGDatabaseInstance() secretMessageFlags:messageId];
-            //if ((messageFlags & TGSecretMessageFlagScreenshot) == 0)
             {
                 messageFlags |= TGSecretMessageFlagScreenshot;
                 TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:_conversationId];

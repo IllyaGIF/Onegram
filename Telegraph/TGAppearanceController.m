@@ -1,5 +1,7 @@
 #import "TGAppearanceController.h"
 
+#import "TGAppDelegate.h"
+
 #import "TGLegacyComponentsContext.h"
 
 #import "TGHeaderCollectionItem.h"
@@ -32,6 +34,8 @@
     TGAppearanceColorCollectionItem *_colorItem;
     TGCollectionMenuSection *_previewSection;
     TGAppearancePreviewCollectionItem *_previewItem;
+    TGDisclosureActionCollectionItem *_backgroundItem;
+    TGCollectionMenuSection *_themeSection;
     TGCheckCollectionItem *_dayClassicItem;
     TGCheckCollectionItem *_dayItem;
     TGCheckCollectionItem *_nightItem;
@@ -39,6 +43,7 @@
     
     TGDisclosureActionCollectionItem *_autoNightItem;
     TGSwitchCollectionItem *_newGesturesItem;
+    TGSwitchCollectionItem *_callsTabItem;
     TGCheckCollectionItem *_interfaceModernItem;
     TGCheckCollectionItem *_interfaceClassicItem;
     TGCheckCollectionItem *_interfaceFeklaItem;
@@ -112,13 +117,13 @@
         
         _autoNightItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.AutoNightTheme") action:@selector(autoNightPressed)];
         
-        TGDisclosureActionCollectionItem *backgroundItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.ChatBackground") action:@selector(wallpapersPressed)];
-        backgroundItem.ignoreSeparatorInset = true;
+        _backgroundItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.ChatBackground") action:@selector(wallpapersPressed)];
+        _backgroundItem.ignoreSeparatorInset = true;
         _previewSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.Preview")],
          _previewItem,
-         backgroundItem
+         _backgroundItem
         ]];
         [self.menuSections addSection:_previewSection];
         
@@ -126,11 +131,14 @@
         
         _newGesturesItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.NewGestures") isOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"TGIOS6NewChatListGestures"]];
         _newGesturesItem.interfaceHandle = _actionHandle;
+        _callsTabItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.CallsTabIcon") isOn:TGAppDelegateInstance.showCallsTab];
+        _callsTabItem.interfaceHandle = _actionHandle;
 
         TGCollectionMenuSection *interfaceStyleSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyle")],
          _newGesturesItem,
+         _callsTabItem,
          _interfaceModernItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleModern") action:@selector(interfaceModernPressed)],
          _interfaceClassicItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleClassic") action:@selector(interfaceClassicPressed)],
          _interfaceFeklaItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleFekla") action:@selector(interfaceFeklaPressed)]
@@ -146,7 +154,7 @@
         ]];
         [self.menuSections addSection:emojiSection];
 
-        TGCollectionMenuSection *themeSection = [[TGCollectionMenuSection alloc] initWithItems:@
+        _themeSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ColorTheme")],
          _dayClassicItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeDayClassic") action:@selector(dayClassicPressed)],
@@ -154,7 +162,7 @@
          _nightBlueItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeNightBlue") action:@selector(nightBluePressed)],
          _nightItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeNight") action:@selector(nightPressed)]
         ]];
-        [self.menuSections addSection:themeSection];
+        [self.menuSections addSection:_themeSection];
 
         [self updateSelection];
         [self updateInterfaceStyleSelection];
@@ -185,6 +193,9 @@
 
 - (void)wallpapersPressed
 {
+    if ([TGPresentation brandedIOS6Style])
+        return;
+
     TGWallpaperListController *controller = [[TGWallpaperListController alloc] init];
     controller.presentation = self.presentation;
     [self.navigationController pushViewController:controller animated:true];
@@ -192,6 +203,9 @@
 
 - (void)accentColorPressed
 {
+    if ([TGPresentation brandedIOS6Style])
+        return;
+
     TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
     controller.dismissesByOutsideTap = true;
     controller.narrowInLandscape = true;
@@ -254,43 +268,26 @@
 
 - (void)updateColorItem:(TGPresentationPallete *)pallete
 {
-    bool colorVisible = [pallete isKindOfClass:[TGDayPresentationPallete class]];
+    bool fekla = [TGPresentation brandedIOS6Style];
+    bool colorVisible = !fekla && [pallete isKindOfClass:[TGDayPresentationPallete class]];
     bool autoNightVisible = [pallete isKindOfClass:[TGDefaultPresentationPallete class]];
-    bool changed = false;
     
     if (colorVisible)
         _colorItem.color = pallete.accentColor;
     
-    NSUInteger indexOfColorItem = [_previewSection indexOfItem:_colorItem];
-    if (indexOfColorItem != NSNotFound) {
-        if (!colorVisible) {
-            [_previewSection deleteItemAtIndex:indexOfColorItem];
-            changed = true;
-        }
-    } else {
-        if (colorVisible) {
-            indexOfColorItem = 3;
-            [_previewSection insertItem:_colorItem atIndex:3];
-            changed = true;
-        }
-    }
-    
-    NSUInteger indexOfAutoNightItem = [_previewSection indexOfItem:_autoNightItem];
-    if (indexOfAutoNightItem != NSNotFound) {
-        if (!autoNightVisible) {
-            [_previewSection deleteItemAtIndex:indexOfAutoNightItem];
-            changed = true;
-        }
-    } else {
-        if (autoNightVisible) {
-            NSUInteger targetIndex = indexOfColorItem != NSNotFound ? indexOfColorItem + 1 : 3;
-            [_previewSection insertItem:_autoNightItem atIndex:targetIndex];
-            changed = true;
-        }
-    }
-    
-    if (changed)
+    NSMutableArray *items = [NSMutableArray arrayWithObjects:_previewSection.items.firstObject, _previewItem, nil];
+    if (!fekla)
+        [items addObject:_backgroundItem];
+    if (colorVisible)
+        [items addObject:_colorItem];
+    if (autoNightVisible)
+        [items addObject:_autoNightItem];
+
+    if (![_previewSection.items isEqualToArray:items])
+    {
+        [_previewSection replaceItems:items];
         [self.collectionView reloadData];
+    }
 }
 
 - (void)dayClassicPressed
@@ -299,6 +296,9 @@
         return;
     
     [self setPallete:[TGDefaultPresentationPallete new] applyColorWallpaper:false];
+
+    if ([TGPresentation brandedIOS6Style])
+        return;
     
     TGWallpaperInfo *info = [[TGWallpaperManager instance] builtinWallpaperList].firstObject;
     [[TGWallpaperManager instance] setCurrentWallpaperWithInfo:info];
@@ -359,7 +359,7 @@
 
 - (void)setPallete:(TGPresentationPallete *)pallete applyColorWallpaper:(bool)applyColorWallpaper
 {
-    if (applyColorWallpaper)
+    if (applyColorWallpaper && ![TGPresentation brandedIOS6Style])
     {
         TGColorWallpaperInfo *info = [[TGColorWallpaperInfo alloc] initWithColor:TGColorHexCode(pallete.backgroundColor)];
         [[TGWallpaperManager instance] setCurrentWallpaperWithInfo:info];
@@ -397,6 +397,11 @@
         [[NSUserDefaults standardUserDefaults] synchronize];
         [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6NewChatListGesturesChanged" object:nil];
     }
+    else if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _callsTabItem)
+    {
+        TGAppDelegateInstance.showCallsTab = _callsTabItem.isOn;
+        [TGAppDelegateInstance.rootController.mainTabsController setCallsHidden:!_callsTabItem.isOn animated:true];
+    }
 }
 
 - (void)setInterfaceStyle:(TGInterfaceStyle)style
@@ -432,6 +437,14 @@
     _interfaceModernItem.isChecked = style == TGInterfaceStyleModern;
     _interfaceClassicItem.isChecked = style == TGInterfaceStyleClassic;
     _interfaceFeklaItem.isChecked = style == TGInterfaceStyleFekla;
+
+    bool fekla = style == TGInterfaceStyleFekla;
+    _dayClassicItem.title = TGLocalized(fekla ? @"Appearance.ThemeWhite" : @"Appearance.ThemeDayClassic");
+    _nightItem.title = TGLocalized(fekla ? @"Appearance.ThemeBlack" : @"Appearance.ThemeNight");
+    TGCollectionItem *header = _themeSection.items.firstObject;
+    [_themeSection replaceItems:fekla ? @[header, _dayClassicItem, _nightItem] : @[header, _dayClassicItem, _dayItem, _nightBlueItem, _nightItem]];
+    [self updateSelection];
+    [self updateColorItem:TGPresentation.currentSavedPallete];
 }
 
 - (void)updateSelection

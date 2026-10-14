@@ -4,6 +4,7 @@
 #import "TGLocalization.h"
 
 #import <MapKit/MapKit.h>
+#import "OGPlatformLocation.h"
 
 @implementation TGLocationUtils
 
@@ -18,43 +19,42 @@
 
 + (bool)requestWhenInUserLocationAuthorizationWithLocationManager:(CLLocationManager *)locationManager
 {
-    CLAuthorizationStatus authorizationStatus = [CLLocationManager authorizationStatus];
-    
-    if (authorizationStatus == kCLAuthorizationStatusDenied || authorizationStatus == kCLAuthorizationStatusRestricted)
+    if (locationManager == nil)
         return false;
-    
-    if ([locationManager respondsToSelector:@selector(requestWhenInUseAuthorization)])
-    {
-        if (authorizationStatus == kCLAuthorizationStatusNotDetermined)
-            [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TG_askedForAlwaysAuthorization_v0"];
-        
-        [locationManager performSelector:@selector(requestWhenInUseAuthorization)];
-        return true;
-    }
 
-    return false;
+    OGPlatformLocationAuthorizationStatus authorizationStatus = OGPlatformLocationAuthorizationStatusCurrent();
+    if (authorizationStatus == OGPlatformLocationAuthorizationStatusDenied || authorizationStatus == OGPlatformLocationAuthorizationStatusRestricted)
+        return false;
+
+    if (authorizationStatus == OGPlatformLocationAuthorizationStatusNotDetermined)
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"TG_askedForAlwaysAuthorization_v0"];
+
+    return OGPlatformRequestWhenInUseLocationAuthorization(locationManager);
 }
 
 + (bool)requestAlwaysUserLocationAuthorizationWithLocationManager:(CLLocationManager *)locationManager
 {
-    CLAuthorizationStatus authorizationStatus = [CLLocationManager authorizationStatus];
-    if (authorizationStatus == kCLAuthorizationStatusDenied || authorizationStatus == kCLAuthorizationStatusRestricted)
+    if (locationManager == nil)
         return false;
-    
-    if ([locationManager respondsToSelector:@selector(requestAlwaysAuthorization)])
-    {
-        NSString *key = @"TG_askedForAlwaysAuthorization_v0";
-        bool askedForAlwaysAuthorization = [[[NSUserDefaults standardUserDefaults] objectForKey:key] boolValue];
-        if (authorizationStatus == kCLAuthorizationStatusAuthorized && askedForAlwaysAuthorization)
-            return false;
-        
-        [locationManager performSelector:@selector(requestAlwaysAuthorization)];
-        [[NSUserDefaults standardUserDefaults] setObject:@true forKey:key];
-        
-        return true;
-    }
-    
-    return false;
+
+    OGPlatformLocationAuthorizationStatus authorizationStatus = OGPlatformLocationAuthorizationStatusCurrent();
+    if (authorizationStatus == OGPlatformLocationAuthorizationStatusDenied || authorizationStatus == OGPlatformLocationAuthorizationStatusRestricted)
+        return false;
+
+    SEL selector = NSSelectorFromString(@"requestAlwaysAuthorization");
+    if (![locationManager respondsToSelector:selector])
+        return OGPlatformRequestAlwaysLocationAuthorization(locationManager);
+
+    NSString *key = @"TG_askedForAlwaysAuthorization_v0";
+    bool askedForAlwaysAuthorization = [[[NSUserDefaults standardUserDefaults] objectForKey:key] boolValue];
+    if (authorizationStatus == OGPlatformLocationAuthorizationStatusAuthorized && askedForAlwaysAuthorization)
+        return false;
+
+    if (!OGPlatformRequestAlwaysLocationAuthorization(locationManager))
+        return false;
+
+    [[NSUserDefaults standardUserDefaults] setObject:@true forKey:key];
+    return true;
 }
 
 + (NSString *)stringFromDistance:(CLLocationDistance)distance
@@ -87,7 +87,6 @@
     if (iosMajorVersion() >= 7)
     {
         MKDistanceFormatter *formatter = [self sharedAccuracyFormatter];
-        //formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:legacyEffectiveLocalization().code];
         return [[self sharedAccuracyFormatter] stringFromDistance:accuracy];
     }
 #endif
@@ -238,6 +237,15 @@ const CGFloat TGGoogleMapsRadius = TGGoogleMapsOffset / (CGFloat)M_PI;
 
 + (void)openMapsWithCoordinate:(CLLocationCoordinate2D)coordinate withDirections:(bool)withDirections locationName:(NSString *)locationName
 {
+#if defined(ONEGRAM_ARMV6)
+    (void)locationName;
+    NSString *urlString = nil;
+    if (withDirections)
+        urlString = [NSString stringWithFormat:@"http://maps.google.com/maps?saddr=Current%%20Location&daddr=%f,%f", coordinate.latitude, coordinate.longitude];
+    else
+        urlString = [NSString stringWithFormat:@"http://maps.google.com/maps?q=%f,%f", coordinate.latitude, coordinate.longitude];
+    [[UIApplication sharedApplication] openURL:[NSURL URLWithString:urlString]];
+#else
     if (iosMajorVersion() < 6)
     {
         NSString *urlString = nil;
@@ -265,6 +273,7 @@ const CGFloat TGGoogleMapsRadius = TGGoogleMapsOffset / (CGFloat)M_PI;
     {
         [mapItem openInMapsWithLaunchOptions:nil];
     }
+#endif
 }
 
 #pragma mark Google Maps

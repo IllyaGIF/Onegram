@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//chatInvite flags:# channel:flags.0?true broadcast:flags.1?true public:flags.2?true megagroup:flags.3?true title:string photo:ChatPhoto participants:flags.4?Vector<User> = ChatInvite;
 
 @implementation TLChatInvite$chatInvite
 

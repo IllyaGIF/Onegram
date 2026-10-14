@@ -6,6 +6,9 @@
 @interface TGPinnedMessageTitlePanel : TGModernConversationTitlePanel
 
 @property (nonatomic, readonly) TGMessage *message;
+@property (nonatomic) bool joinsPreviousHeader;
+@property (nonatomic) bool compactHeader;
+@property (nonatomic, copy) void (^compactHeaderActivated)();
 @property (nonatomic, copy) void (^dismiss)();
 @property (nonatomic, copy) void (^tapped)();
 

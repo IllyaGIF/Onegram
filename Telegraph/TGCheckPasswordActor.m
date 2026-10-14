@@ -55,7 +55,6 @@
     if (![self markFinished])
         return;
 
-    TGLog(@"QR password authorized fallback=%@ user=%d qr=%d", source, user.uid, _qrLogin ? 1 : 0);
 
     [TGUserDataRequestBuilder executeUserObjectsUpdate:@[user]];
     [ActionStageInstance() actionCompleted:self.path result:@{@"userId": @(user.uid)}];
@@ -85,7 +84,6 @@
 
             if (error == nil && users.count != 0)
             {
-                TGLog(@"QR password post-check probe authorized users=%d", (int)users.count);
                 [strongSelf completeWithUserDescription:users[0] source:@"selfProbe"];
             }
             else
@@ -94,7 +92,6 @@
             }
         }];
 
-        TGLog(@"QR password post-check probe send");
         [[TGTelegramNetworking instance] addRequest:probeRequest];
     });
 }
@@ -117,8 +114,6 @@
     _plaintextPassword = options[@"password"];
     _twoStepConfig = options[@"twoStepConfig"];
     _qrLogin = [options[@"qrLogin"] boolValue];
-    if (_qrLogin)
-        TGLog(@"QR password actor qrMode=1 path=%@", self.path);
     
     MTRequest *request = [[MTRequest alloc] init];
     request.dependsOnPasswordEntry = false;
@@ -143,22 +138,12 @@
 {
     if (password.flags & (1 << 2))
     {
-        /*
-         * account.getPassword returns a fresh SRP session.  srp_id/srp_B
-         * belong to that exact response and must be used together with its
-         * current_algo.  The old code fetched a fresh account.Password but
-         * then built the proof from _twoStepConfig (an older SRP session),
-         * which makes Telegram reject a correct password with SRP_ID_INVALID.
-         */
         TGPasswordKdfAlgo *freshAlgo = [TGPasswordKdfAlgo algoWithTL:password.current_algo];
         TLInputCheckPasswordSRP *srpPassword = [TGTwoStepUtils srpPasswordWithPassword:_plaintextPassword
                                                                                  algo:freshAlgo
                                                                                 srpId:password.srp_id
                                                                                  srpB:password.srp_B];
 
-        TGLog(@"QR password SRP freshId=%lld oldId=%lld B=%d proof=%@",
-              password.srp_id, _twoStepConfig.srpId, (int)password.srp_B.length,
-              srpPassword == nil ? @"nil" : @"ok");
 
         if (srpPassword == nil)
         {
@@ -190,7 +175,6 @@
         };
         
         self.cancelToken = request.internalId;
-        TGLog(@"QR password auth.checkPassword send request=%@", request.internalId);
         [[TGTelegramNetworking instance] addRequest:request];
         [self scheduleAuthorizationProbe];
     }
@@ -209,7 +193,6 @@
 
 - (void)checkPasswordSuccess:(TLauth_Authorization *)auth
 {    
-    TGLog(@"QR password auth.checkPassword success auth=%@ user=%@", auth, auth.user);
     [self completeWithUserDescription:auth.user source:@"checkPassword"];
 }
 

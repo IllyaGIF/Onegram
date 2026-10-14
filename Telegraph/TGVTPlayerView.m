@@ -1,3 +1,4 @@
+#if !defined(ONEGRAM_ARMV6)
 #import "TGVTPlayerView.h"
 
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
@@ -20,14 +21,12 @@ typedef enum {
     AttributeIndex_NumAttributes
 } AttributeIndex;
 
-// BT.601, which is the standard for SDTV.
 static GLfloat colorConversion601[] = {
     1.164f, 1.164f, 1.164f,
     0.0f, -0.392f, 2.017f,
     1.596f, -0.813f, 0.0f
 };
 
-// BT.709, which is the standard for HDTV.
 static GLfloat colorConversion709[] = {
     1.164f, 1.164f, 1.164f,
     0.0f, -0.213f, 2.112f,
@@ -124,7 +123,6 @@ static NSData *vertexShaderSource() {
     
     glUseProgram(_program);
     
-    // 0 and 1 are the texture IDs of lumaTexture and chromaTexture respectively.
     glUniform1i(_uniforms[UniformIndex_Y], 0);
     glUniform1i(_uniforms[UniformIndex_UV], 1);
     
@@ -277,7 +275,6 @@ static NSData *vertexShaderSource() {
             int frameHeight = (int)CVPixelBufferGetHeight(pixelBuffer);
             
             if (_videoTextureCache == NULL) {
-                TGLog(@"No video texture cache");
                 return;
             }
             
@@ -329,14 +326,11 @@ static NSData *vertexShaderSource() {
         glUniform1f(_uniforms[UniformIndex_RotationAngle], 0.0f);
         glUniformMatrix3fv(_uniforms[UniformIndex_ColorConversionMatrix], 1, false, _preferredConversion);
         
-        // Set up the quad vertices with respect to the orientation and aspect ratio of the video.
         CGRect vertexSamplingRect = AVMakeRectWithAspectRatioInsideRect(self.layer.bounds.size, self.layer.bounds);
         
-        // Compute normalized quad coordinates to draw the frame into.
         CGSize normalizedSamplingSize = CGSizeMake(0.0, 0.0);
         CGSize cropScaleAmount = CGSizeMake(vertexSamplingRect.size.width / self.layer.bounds.size.width, vertexSamplingRect.size.height/self.layer.bounds.size.height);
         
-        // Normalize the quad vertices.
         if (cropScaleAmount.width > cropScaleAmount.height) {
             normalizedSamplingSize.width = 1.0;
             normalizedSamplingSize.height = cropScaleAmount.height/cropScaleAmount.width;
@@ -346,10 +340,6 @@ static NSData *vertexShaderSource() {
             normalizedSamplingSize.height = cropScaleAmount.width/cropScaleAmount.height;
         }
         
-        /*
-         The quad vertex data defines the region of 2D plane onto which we draw our pixel buffers.
-         Vertex data formed using (-1,-1) and (1,1) as the bottom left and top right coordinates respectively, covers the entire screen.
-         */
         GLfloat quadVertexData [] = {
             (GLfloat)(-1 * normalizedSamplingSize.width), (GLfloat)(-1 * normalizedSamplingSize.height),
             (GLfloat)normalizedSamplingSize.width, (GLfloat)(-1 * normalizedSamplingSize.height),
@@ -357,13 +347,9 @@ static NSData *vertexShaderSource() {
             (GLfloat)(normalizedSamplingSize.width), (GLfloat)(normalizedSamplingSize.height),
         };
         
-        // Update attribute values.
         glVertexAttribPointer(AttributeIndex_Vertex, 2, GL_FLOAT, 0, 0, quadVertexData);
         glEnableVertexAttribArray(AttributeIndex_Vertex);
         
-        /*
-         The texture vertices are set up such that we flip the texture vertically. This is so that our top left origin buffers match OpenGL's bottom left texture coordinate system.
-         */
         CGRect textureSamplingRect = CGRectMake(0, 0, 1, 1);
         GLfloat quadTextureData[] = {
             (GLfloat)CGRectGetMinX(textureSamplingRect), (GLfloat)CGRectGetMaxY(textureSamplingRect),
@@ -383,3 +369,4 @@ static NSData *vertexShaderSource() {
 }
 
 @end
+#endif

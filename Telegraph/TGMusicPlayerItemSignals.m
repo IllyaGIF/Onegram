@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGMusicPlayerItemSignals.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -280,16 +281,6 @@ static int64_t TGMusicPlayerItemAvailabilityPack(TGMusicPlayerItemAvailability v
             TGDocumentMediaAttachment *document = ((TGBotContextMediaResult *)result).document;
             NSString *cacheKey = cacheKeyForDocument(document);
             return [[[TGMediaStoreContext instance] temporaryFilesCache] _filePathForKey:[cacheKey dataUsingEncoding:NSUTF8StringEncoding]];
-            /*if (document != nil) {
-                NSString *path = nil;
-                if (document.documentId != 0) {
-                    path = [TGPreparedLocalDocumentMessage localDocumentDirectoryForDocumentId:document.documentId];
-                } else {
-                    path = [TGPreparedLocalDocumentMessage localDocumentDirectoryForLocalDocumentId:document.localDocumentId];
-                }
-                path = [path stringByAppendingPathComponent:[document safeFileName]];
-                return path;
-            }*/
         } else if ([result isKindOfClass:[TGBotContextExternalResult class]]) {
             TGBotContextExternalResult *externalResult = (TGBotContextExternalResult *)result;
             if (externalResult.originalUrl.length != 0) {
@@ -340,12 +331,17 @@ static int64_t TGMusicPlayerItemAvailabilityPack(TGMusicPlayerItemAvailability v
         }];
         return [[SBlockDisposable alloc] initWithBlock:^
         {
-            [helper description]; //keep reference
+            [helper description];
         }];
     }];
 }
 
 + (SSignal *)itemAvailability:(TGMusicPlayerItem *)item priority:(bool)priority
+{
+    return [self itemAvailability:item priority:priority allowDownload:true];
+}
+
++ (SSignal *)itemAvailability:(TGMusicPlayerItem *)item priority:(bool)priority allowDownload:(bool)allowDownload
 {
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
@@ -360,6 +356,11 @@ static int64_t TGMusicPlayerItemAvailabilityPack(TGMusicPlayerItemAvailability v
         return nil;
     }] catch:^SSignal *(__unused id error)
     {
+        if (!allowDownload)
+        {
+            TGMusicPlayerItemAvailability availability = {.downloaded = false, .downloading = false, .progress = 0.0f};
+            return [SSignal single:@(TGMusicPlayerItemAvailabilityPack(availability))];
+        }
         return [self downloadItem:item priority:priority];
     }];
 }
@@ -441,7 +442,7 @@ NSData *cacheKeyForItemAlbumArt(TGDocumentMediaAttachment *media, bool thumbnail
     uint8_t zero = 0;
     NSData *emptyData = [NSData dataWithBytes:&zero length:1];
     
-    SSignal *webAlbumArtSignal = [TGMusicPlayerItemSignals _webAlbumArtForPerformer:performer song:song thumbnail:thumbnail];
+    SSignal *webAlbumArtSignal = OGPlatformMediaDownloadsRequireUserAction() ? [SSignal fail:nil] : [TGMusicPlayerItemSignals _webAlbumArtForPerformer:performer song:song thumbnail:thumbnail];
     SSignal *(^cachedWebSignal)(bool) = ^(bool storeAsFinal)
     {
         return [cachedSignal(false, true) mapToSignal:^SSignal *(NSData *data)
@@ -573,6 +574,7 @@ NSString *TGURLEncodedStringFromString(NSString *string)
 {
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         AVAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
         if (asset == nil)
             [subscriber putError:nil];
@@ -609,6 +611,18 @@ NSString *TGURLEncodedStringFromString(NSString *string)
             else
                 [subscriber putError:nil];
         }
+#else
+        [TGMusicUtils albumArtworkForURL:url completion:^(UIImage *image)
+        {
+            if (image != nil)
+            {
+                [subscriber putNext:image];
+                [subscriber putCompletion];
+            }
+            else
+                [subscriber putError:nil];
+        }];
+#endif
         
         return nil;
     }] catch:^SSignal *(__unused id error)

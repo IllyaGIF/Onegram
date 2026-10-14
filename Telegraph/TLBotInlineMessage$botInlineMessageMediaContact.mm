@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//botInlineMessageMediaContact flags:# phone_number:string first_name:string last_name:string vcard:string reply_markup:flags.2?ReplyMarkup = BotInlineMessage;
 
 @implementation TLBotInlineMessage$botInlineMessageMediaContact
 

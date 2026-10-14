@@ -174,8 +174,6 @@
             
             [_wrapperView addSubview:_cameraButton];
             
-            //if (_selectionContext != nil)
-            //    [_cameraButton setHidden:true animated:false];
         }
         
         if (_selectionContext != nil)
@@ -668,7 +666,6 @@
     [_photoCounterButton setSelected:!_photoCounterButton.selected animated:true];
     [_selectedPhotosView setHidden:!_photoCounterButton.selected animated:true];
     [_groupButton setHidden:!_photoCounterButton.selected animated:true];
-    //[_cameraButton setHidden:!_photoCounterButton.selected animated:true];
     
     void (^changeBlock)(void) = ^
     {
@@ -1230,7 +1227,7 @@
         return;
     
     TGModernGalleryItemView *currentItemView = _currentItemView;
-    bool sendableAsGif = [currentItemView isKindOfClass:[TGMediaPickerGalleryVideoItemView class]]; // || ([currentItemView.item isKindOfClass:[TGMediaPickerGalleryPhotoItem class]];  && ((TGMediaPickerGalleryPhotoItem *)currentItemView.item).asset.subtypes & TGMediaAssetSubtypePhotoLive);
+    bool sendableAsGif = [currentItemView isKindOfClass:[TGMediaPickerGalleryVideoItemView class]];
     if (sendableAsGif)
         [(TGMediaPickerGalleryVideoItemView *)currentItemView toggleSendAsGif];
 }

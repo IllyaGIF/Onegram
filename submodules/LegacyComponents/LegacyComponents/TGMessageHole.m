@@ -28,7 +28,7 @@
     return self;
 }
 
-- (bool)isEqual:(id)object {
+- (BOOL)isEqual:(id)object {
     return [object isKindOfClass:[TGMessageHole class]] && ((TGMessageHole *)object)->_minId == _minId && ((TGMessageHole *)object)->_maxId == _maxId && ((TGMessageHole *)object)->_maxTimestamp == _maxTimestamp && ((TGMessageHole *)object)->_minPeerId == _minPeerId && ((TGMessageHole *)object)->_maxPeerId == _maxPeerId;
 }
 

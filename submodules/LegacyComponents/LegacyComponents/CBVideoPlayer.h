@@ -7,7 +7,11 @@
 //
 
 #import <Foundation/Foundation.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@class CALayer;
+#else
 #import <AVFoundation/AVFoundation.h>
+#endif
 
 typedef enum
 {
@@ -24,9 +28,16 @@ CBVideoPlayerStatus;
 
 @property (nonatomic, assign) CBVideoPlayerStatus status;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (id)initWithVideoLayer:(CALayer *)layer;
+- (void)prepareWithURL:(NSURL *)url completion:(void (^)(NSError *error))completion;
+#else
 - (id)initWithVideoLayer:(AVPlayerLayer *)layer;
+#endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (void)prepareWithAVAsset:(AVAsset *)asset completion:(void (^)(NSError *error))completion;
+#endif
 - (void)stopPrepairing;
 
 - (void)play;

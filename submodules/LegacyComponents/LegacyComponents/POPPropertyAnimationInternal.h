@@ -133,10 +133,18 @@ struct _POPPropertyAnimationState : _POPAnimationState
 
     if (0 != progressMarkerCount) {
       progressMarkerState = (POPProgressMarker *)malloc(progressMarkerCount * sizeof(POPProgressMarker));
+#if defined(ONEGRAM_ARMV6)
+      for (NSUInteger idx = 0; idx < progressMarkerCount; idx++) {
+        NSNumber *progressMarker = [progressMarkers objectAtIndex:idx];
+        progressMarkerState[idx].reached = false;
+        progressMarkerState[idx].progress = [progressMarker floatValue];
+      }
+#else
       [progressMarkers enumerateObjectsUsingBlock:^(NSNumber *progressMarker, NSUInteger idx, BOOL *stop) {
         progressMarkerState[idx].reached = false;
         progressMarkerState[idx].progress = [progressMarker floatValue];
       }];
+#endif
     }
 
     nextProgressMarkerIdx = 0;

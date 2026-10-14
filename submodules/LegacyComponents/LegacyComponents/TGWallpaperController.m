@@ -9,7 +9,6 @@
 #import "TGWallpaperInfo.h"
 #import "TGCustomImageWallpaperInfo.h"
 
-//#import "TGDefaultPresentationPallete.h"
 
 #import "TGRemoteImageView.h"
 
@@ -175,7 +174,6 @@
     
     _cancelButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0, 0, CGFloor(_panelView.frame.size.width / 2) - separatorWidth, _panelView.frame.size.height)];
     _cancelButton.backgroundColor = [UIColor clearColor];
-    //_cancelButton.highlightBackgroundColor = self.presentation.pallete.selectionColor;
     [_cancelButton addTarget:self action:@selector(cancelButtonPressed) forControlEvents:UIControlEventTouchUpInside];
     [_cancelButton setTitle:TGLocalized(@"Common.Cancel") forState:UIControlStateNormal];
     _cancelButton.titleLabel.font = TGSystemFontOfSize(17);
@@ -185,13 +183,11 @@
     
     _setButton = [[TGModernButton alloc] initWithFrame:CGRectMake(_cancelButton.frame.origin.x + _cancelButton.frame.size.width + separatorWidth, 0, CGFloor(_panelView.frame.size.width / 2), _panelView.frame.size.height)];
     _setButton.backgroundColor = [UIColor clearColor];
-    //_setButton.highlightBackgroundColor = self.presentation.pallete.selectionColor;
     _setButton.enabled = !imageLoading;
     [_setButton addTarget:self action:@selector(doneButtonPressed) forControlEvents:UIControlEventTouchUpInside];
     [_setButton setTitle:TGLocalized(@"Wallpaper.Set") forState:UIControlStateNormal];
     _setButton.titleLabel.font = TGSystemFontOfSize(17);
     [_setButton setTitleColor:pallete.titleColor];
-    //[_setButton setTitleColor:[self.presentation.pallete.textColor colorWithAlphaComponent:0.4f] forState:UIControlStateDisabled];
     [_setButton setTitleShadowColor:[UIColor clearColor] forState:UIControlStateNormal];
     [_panelView addSubview:_setButton];
     

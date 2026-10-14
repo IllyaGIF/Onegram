@@ -19,6 +19,7 @@ typedef enum {
 
 @class TGCollectionItem;
 @class TGPresentation;
+@class OGSettingsAppearance;
 
 @interface TGCollectionItemView : PSUICollectionViewCell
 {
@@ -35,6 +36,7 @@ typedef enum {
 @property (nonatomic) CGFloat separatorInset;
 @property (nonatomic) UIEdgeInsets selectionInsets;
 @property (nonatomic) CGFloat classicIOS6HorizontalInset;
+@property (nonatomic, strong) OGSettingsAppearance *brandedGroupedAppearance;
 
 @property (nonatomic, strong) TGCollectionItem *boundItem;
 @property (nonatomic, strong) TGPresentation *presentation;
@@ -43,5 +45,8 @@ typedef enum {
 
 - (void)setItemPosition:(int)itemPosition;
 - (void)setItemPosition:(int)itemPosition animated:(bool)animated;
+
+- (bool)usesBrandedGroupedSurface;
+- (CGRect)classicIOS6GroupedFrame;
 
 @end

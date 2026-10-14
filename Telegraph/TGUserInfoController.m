@@ -14,6 +14,8 @@
 #import "TGUserInfoCollectionItem.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 @interface TGUserInfoController ()
 {
@@ -42,6 +44,8 @@
             _userInfoItem
         ]];
         UIEdgeInsets infoSectionInsets = infoSection.insets;
+        if ([TGPresentation brandedIOS6Style])
+            infoSectionInsets.top = [OGTheme brandedTheme].profileAppearance.infoSectionTopInset;
         infoSectionInsets.bottom = 0.0f;
         infoSection.insets = infoSectionInsets;
         [self.menuSections addSection:infoSection];
@@ -90,10 +94,15 @@
     [super setPresentation:presentation];
     
     if ([self isViewLoaded])
-    {
-        self.view.backgroundColor = presentation.pallete.backgroundColor;
-        self.collectionView.backgroundColor = presentation.pallete.backgroundColor;
-    }
+        [self updateUserInfoBackground];
+}
+
+- (void)updateUserInfoBackground
+{
+    bool brandedScreenBackground = [self usesBrandedScreenBackground];
+    UIColor *backgroundColor = brandedScreenBackground ? [self collectionMenuBackgroundColor] : self.presentation.pallete.backgroundColor;
+    self.view.backgroundColor = backgroundColor;
+    self.collectionView.backgroundColor = brandedScreenBackground ? nil : backgroundColor;
 }
 
 #pragma mark -
@@ -102,8 +111,7 @@
 {
     [super _resetCollectionView];
     
-    self.view.backgroundColor = self.presentation.pallete.backgroundColor;
-    self.collectionView.backgroundColor = self.presentation.pallete.backgroundColor;
+    [self updateUserInfoBackground];
 }
 
 #pragma mark -

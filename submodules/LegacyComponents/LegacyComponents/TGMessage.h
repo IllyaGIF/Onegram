@@ -190,7 +190,6 @@ static inline TGMessageSortKey TGTaggedMessageSortKeyExtract(NSData *data, int32
 
 @property (nonatomic) int32_t pts;
 
-//@property (nonatomic, readonly) bool unread;
 @property (nonatomic) bool hintUnread;
 @property (nonatomic) bool outgoing;
 @property (nonatomic) TGMessageDeliveryState deliveryState;
@@ -282,11 +281,13 @@ static inline TGMessageSortKey TGTaggedMessageSortKeyExtract(NSData *data, int32
 
 @end
 
+#if !defined(ONEGRAM_ARMV6)
 @interface NSTextCheckingResult (TGMessage)
 
 - (bool)isTelegramHiddenLink;
 
 @end
+#endif
 
 @interface TGMessageIndex : NSObject
 

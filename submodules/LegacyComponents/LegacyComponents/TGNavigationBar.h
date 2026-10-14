@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import "LegacyComponentsGlobals.h"
 
 @class SSignal;
 
@@ -13,7 +14,18 @@
 
 @end
 
+typedef enum {
+    TGNavigationBarMusicPlayerLayoutStandard,
+    TGNavigationBarMusicPlayerLayoutConversation,
+    TGNavigationBarMusicPlayerLayoutCompactConversation
+} TGNavigationBarMusicPlayerLayout;
+
 @protocol TGNavigationBarMusicPlayerView <NSObject>
+
+@optional
+- (CGFloat)preferredHeight;
+- (void)setPlayerLayout:(TGNavigationBarMusicPlayerLayout)layout;
+- (void)setCompactHeaderActivated:(void (^)(void))activated;
 
 @end
 
@@ -21,6 +33,9 @@
 
 - (UIView<TGNavigationBarMusicPlayerView> *)makeMusicPlayerView:(UINavigationController *)navigationController;
 - (SSignal *)musicPlayerIsActive;
+
+@optional
+- (CGFloat)musicPlayerHeight;
 
 @end
 
@@ -36,6 +51,7 @@
 @property (nonatomic, weak) UIView *additionalView;
 
 @property (nonatomic) bool keepAlpha;
+@property (nonatomic) TGNavigationBarBackgroundVariant backgroundVariant;
 
 - (id)initWithFrame:(CGRect)frame barStyle:(UIBarStyle)barStyle;
 
@@ -50,6 +66,10 @@
 @property (nonatomic, assign) CGFloat musicPlayerOffset;
 @property (nonatomic, strong) UIView<TGNavigationBarMusicPlayerView> *musicPlayerView;
 @property (nonatomic) bool minimizedMusicPlayer;
+@property (nonatomic, readonly) CGFloat musicPlayerHeight;
+@property (nonatomic, weak) UIView *musicPlayerHostView;
+@property (nonatomic) TGNavigationBarMusicPlayerLayout musicPlayerLayout;
+@property (nonatomic, copy) void (^musicPlayerCompactHeaderActivated)(void);
 
 - (void)showMusicPlayerView:(bool)show animation:(void (^)())animation;
 

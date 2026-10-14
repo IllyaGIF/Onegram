@@ -26,6 +26,7 @@
 #import "TGArchivedStickerPacksController.h"
 
 #import "TGLegacyComponentsContext.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGStickerPacksSettingsController ()
 {
@@ -79,22 +80,6 @@
             [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)]];
         }
         
-//        _showStickersButtonItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"StickerPacksSettings.ShowStickersButton") isOn:TGAppDelegateInstance.alwaysShowStickersMode == 2];
-//
-//        _showStickersButtonItem.toggled = ^(bool value, __unused TGSwitchCollectionItem *item)
-//        {
-//            TGAppDelegateInstance.alwaysShowStickersMode = value ? 2 : 1;
-//            [TGAppDelegateInstance saveSettings];
-//        };
-//
-//        TGCommentCollectionItem *showStickersHelpItem = [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"StickerPacksSettings.ShowStickersButtonHelp")];
-//        TGCollectionMenuSection *showStickersSection = [[TGCollectionMenuSection alloc] initWithItems:@[
-//            _showStickersButtonItem,
-//            showStickersHelpItem
-//        ]];
-//        if (!_editingMode && !_masksMode) {
-//            [self.menuSections addSection:showStickersSection];
-//        }
         
         _suggestPopularStickersItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Stickers.SuggestStickers") variant:nil action:@selector(suggestStickersPressed)];
         _suggestPopularStickersItem.deselectAutomatically = true;
@@ -108,7 +93,6 @@
         
         _featuredPacksSection = [[TGCollectionMenuSection alloc] initWithItems:@[
         ]];
-        //_featuredPacksSection.insets = UIEdgeInsetsMake(16.0f, 0.0f, 16.0f, 0.0f);
         [self.menuSections addSection:_featuredPacksSection];
         
         NSString *hintString = [TGLocalized(@"StickerPacksSettings.ManagingHelp") stringByReplacingOccurrencesOfString:@"@stickers" withString:@"[@stickers]"];
@@ -394,7 +378,7 @@
         
         if ([stickerPack.packReference isKindOfClass:[TGStickerPackIdReference class]])
         {
-            packItem.enableEditing = true;//((TGStickerPackIdReference *)stickerPack.packReference).shortName.length != 0;
+            packItem.enableEditing = true;
         }
         else
         {
@@ -626,14 +610,14 @@
                 if (TGShareItemsViaLegacyPasteboard(dataToShare))
                     break;
 
-                UIActivityViewController *activityViewController = [[UIActivityViewController alloc] initWithActivityItems:dataToShare applicationActivities:nil];
-                [self presentViewController:activityViewController animated:true completion:nil];
+                UIView *sourceView = nil;
+                CGRect sourceRect = CGRectZero;
                 if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
                 {
-                    UIView *sourceView = [(TGStickerPackCollectionItem *)item boundView];
-                    activityViewController.popoverPresentationController.sourceView = sourceView;
-                    activityViewController.popoverPresentationController.sourceRect = sourceView.bounds;
+                    sourceView = [(TGStickerPackCollectionItem *)item boundView];
+                    sourceRect = sourceView.bounds;
                 }
+                OGPlatformPresentActivityItems(self, dataToShare, sourceView, sourceRect, nil, UIPopoverArrowDirectionAny, nil);
                 
                 break;
             }

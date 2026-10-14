@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGImageMessageViewModel.h"
 #import "TGMessageGroupedLayout.h"
 
@@ -71,6 +72,8 @@ static inline bool TGIOS6ImagePeerIdIsModernRawChannel(int64_t peerId)
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "TGMessageReactionsLayout.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 static const int TGIOS6SquareGroupedMediaInnerCorners = 1 << 8;
 
@@ -96,26 +99,6 @@ static NSString *TGIOS6ImageChosenReactionFromMessage(TGMessage *message)
     if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
         return ((TGMessageReactionSummaryContentProperty *)value).chosenReaction;
     return nil;
-}
-
-static void TGBrandedIOS6UpdateImageDeliveryPlate(TGModernImageViewModel *model, NSString *timeText, bool incomingAppearance, TGMessageDeliveryState deliveryState, bool read)
-{
-    if (model == nil)
-        return;
-
-    bool hidden = !incomingAppearance && deliveryState != TGMessageDeliveryStateDelivered;
-    model.hidden = hidden;
-    if (hidden)
-        return;
-
-    UIImage *image = [TGPresentationAssets brandedIOS6DeliveryTagImage:timeText incoming:incomingAppearance read:read];
-    model.image = image;
-    CGRect frame = model.frame;
-    frame.size = image.size;
-    model.frame = frame;
-    UIImageView *view = (UIImageView *)[model boundView];
-    if (view != nil)
-        view.image = image;
 }
 
 @interface TGImageMessageViewModel () <UIGestureRecognizerDelegate, TGDoubleTapGestureRecognizerDelegate, TGMessageImageViewDelegate>
@@ -160,7 +143,6 @@ static void TGBrandedIOS6UpdateImageDeliveryPlate(TGModernImageViewModel *model,
     TGModernClockProgressViewModel *_progressModel;
     TGModernImageViewModel *_checkFirstModel;
     TGModernImageViewModel *_checkSecondModel;
-    TGModernImageViewModel *_brandedDeliveryPlateModel;
     TGModernTextViewModel *_authorSignatureModel;
     NSString *_authorSignature;
     
@@ -236,7 +218,29 @@ static void TGBrandedIOS6UpdateImageDeliveryPlate(TGModernImageViewModel *model,
 
 - (bool)discussionCommentsFooterIntegratedInBubble
 {
-    return _positionFlags == TGMessageGroupPositionNone;
+    return _positionFlags == TGMessageGroupPositionNone || [self hasMainPosition];
+}
+
+- (CGRect)discussionCommentsBubbleFrame
+{
+    if (_backgroundModel != nil)
+        return _backgroundModel.frame;
+    return _imageModel.frame;
+}
+
+- (bool)_ios6BrandedMediaReactionsInBubble
+{
+    return [TGPresentation brandedIOS6Style] && _ios6MediaReactionSummary.length != 0 && (_positionFlags == TGMessageGroupPositionNone || [self hasMainPosition]);
+}
+
+- (bool)_ios6RequiresBubbleBackground
+{
+    return ([self discussionCommentsFooterHeight] > FLT_EPSILON && [self discussionCommentsFooterIntegratedInBubble]) || [self _ios6BrandedMediaReactionsInBubble];
+}
+
+- (bool)_ios6GroupHasBubbleFooter
+{
+    return _groupedLayout != nil && (_groupedLayout.discussion != nil || ([TGPresentation brandedIOS6Style] && _groupedLayout.reactionSummary.length != 0));
 }
 
 - (bool)_ios6ClassicSingleImageGloss
@@ -607,9 +611,10 @@ static CTFontRef textFontForSize(CGFloat size)
             }
         }
         
-        if (_incomingAppearance && ((_savedMessage && hasForwardPostId) || isChannel || _context.isBot || _context.isPublicGroup || isBot || forwardedFromChannel) && !_context.isAdminLog) {
+        if (_incomingAppearance && ((_savedMessage && hasForwardPostId) || isChannel || _context.isBot || _context.isPublicGroup || isBot || forwardedFromChannel) && !_context.isAdminLog)
             [_backgroundModel setPartialMode:false];
-            
+        
+        if (_incomingAppearance && ((_savedMessage && hasForwardPostId) || isChannel || _context.isBot || _context.isPublicGroup || isBot || forwardedFromChannel) && !_context.isAdminLog && (_savedMessage || ![TGPresentation brandedIOS6Style])) {
             _actionButtonModel = [[TGModernButtonViewModel alloc] init];
             _actionButtonModel.image = _savedMessage ? context.presentation.images.chatActionGoToImage : context.presentation.images.chatActionShareImage;
             _actionButtonModel.modernHighlight = true;
@@ -725,7 +730,7 @@ static CTFontRef textFontForSize(CGFloat size)
     
     bool classicMedia = [TGPresentation classicIOS6Style];
     bool classicGroupedMedia = classicMedia && _positionFlags != TGMessageGroupPositionNone && _positionFlags != TGMessageGroupPositionUnknown;
-    if (classicMedia || (_positionFlags == TGMessageGroupPositionNone && ((_authorPeer != nil && _context.isFeed) || _replyHeader != nil || _caption.length != 0 || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil || _webPage != nil || TGIOS6ImageMessageHasDiscussionFooter(_message))) || (_positionFlags != TGMessageGroupPositionNone && (_backgroundModel != nil || [self hasHeader])))
+    if (classicMedia || (_positionFlags == TGMessageGroupPositionNone && ((_authorPeer != nil && _context.isFeed) || _replyHeader != nil || _caption.length != 0 || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil || _webPage != nil || TGIOS6ImageMessageHasDiscussionFooter(_message) || [self _ios6RequiresBubbleBackground])) || (_positionFlags != TGMessageGroupPositionNone && (_backgroundModel != nil || [self hasHeader])))
         imageUri = [imageUri stringByAppendingString:@"&flat=1"];
     
     int positionFlags = [self visiblePositionFlags];
@@ -739,6 +744,9 @@ static CTFontRef textFontForSize(CGFloat size)
 
 - (void)updateImageUri:(NSString *)imageUri
 {
+    if (OGPlatformMediaDownloadsRequireUserAction() && [imageUri hasPrefix:@"web-search-gallery://?"] && [imageUri rangeOfString:@"&cacheOnly=1"].location == NSNotFound)
+        imageUri = [imageUri stringByAppendingString:@"&cacheOnly=1"];
+
     _legacyThumbnailCacheUri = nil;
     if (imageUri == nil) {
         imageUri = @"photo-thumbnail://?";
@@ -901,7 +909,7 @@ static CTFontRef textFontForSize(CGFloat size)
     bool hasBottomCorners = true;
     
     bool hasCaption = _caption.length > 0 && _positionFlags == TGMessageGroupPositionNone;
-    if (hasCaption)
+    if (hasCaption || (_positionFlags == TGMessageGroupPositionNone && [self _ios6RequiresBubbleBackground]))
         hasBottomCorners = false;
     
     if (((!hasBottomCorners || _context.isFeed) && _authorPeer != nil) || _replyHeader != nil || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil)
@@ -912,6 +920,8 @@ static CTFontRef textFontForSize(CGFloat size)
         TGMessageGroupPositionFlags position = _positionFlags;
         if (!hasTopCorners)
             position &= ~TGMessageGroupPositionTop;
+        if ([self _ios6GroupHasBubbleFooter])
+            position &= ~TGMessageGroupPositionBottom;
         if (position == TGMessageGroupPositionNone)
             position = TGMessageGroupPositionInside;
         return position;
@@ -1050,6 +1060,9 @@ static CTFontRef textFontForSize(CGFloat size)
 
 - (void)updateMediaAvailability:(bool)mediaIsAvailable viewStorage:(TGModernViewStorage *)__unused viewStorage delayDisplay:(bool)delayDisplay
 {
+    if (mediaIsAvailable && !_mediaIsAvailable && OGPlatformMediaDownloadsRequireUserAction())
+        [_imageModel reloadImage:false];
+
     _mediaIsAvailable = mediaIsAvailable;
     
     if (mediaIsAvailable || !delayDisplay) {
@@ -1291,7 +1304,6 @@ static CTFontRef textFontForSize(CGFloat size)
         
         bool previousRead = _read;
         _read = !messageUnread;
-        TGBrandedIOS6UpdateImageDeliveryPlate(_brandedDeliveryPlateModel, [self timestampString], _incomingAppearance, _deliveryState, _read);
         
         bool hasCaption = _caption.length > 0 && (_positionFlags == TGMessageGroupPositionNone || [self hasMainPosition]);
         if (!hasCaption && _webPageFooterModel == nil)
@@ -1304,7 +1316,6 @@ static CTFontRef textFontForSize(CGFloat size)
             if (_date != (int32_t)message.date && !debugShowMessageIds)
             {
                 _date = (int32_t)message.date;
-                TGBrandedIOS6UpdateImageDeliveryPlate(_brandedDeliveryPlateModel, [self timestampString], _incomingAppearance, _deliveryState, _read);
                 
                 int daytimeVariant = 0;
                 NSString *dateText = [TGDateUtils stringForShortTime:(int)message.date daytimeVariant:&daytimeVariant];
@@ -1623,7 +1634,6 @@ static CTFontRef textFontForSize(CGFloat size)
     bool previousRead = _read;
     _read = ![_context isMessageUnread:_message];
     if (previousRead != _read) {
-        TGBrandedIOS6UpdateImageDeliveryPlate(_brandedDeliveryPlateModel, [self timestampString], _incomingAppearance, _deliveryState, _read);
         if (_checkSecondModel != nil) {
             _checkSecondModel.alpha = 1.0f;
             
@@ -2247,9 +2257,15 @@ static CTFontRef textFontForSize(CGFloat size)
 
 - (void)layoutForContainerSize:(CGSize)containerSize
 {
-    if ([self discussionCommentsFooterHeight] > FLT_EPSILON && [self discussionCommentsFooterIntegratedInBubble] && _backgroundModel == nil)
+    if (_positionFlags != TGMessageGroupPositionUnknown && (_backgroundModel != nil) != [self _requiresContentModel])
     {
-        [self setupContentModel:nil];
+        TGModernViewStorage *viewStorage = [[TGModernViewStorage alloc] init];
+        UIView *container = _imageModel.boundView.superview;
+        if (container != nil)
+            [self unbindView:viewStorage];
+        [self setupContentModel:viewStorage];
+        if (container != nil)
+            [self bindViewToContainer:container viewStorage:viewStorage];
         [self updateImageUri:[self updatedImageUri]];
     }
 
@@ -2261,7 +2277,8 @@ static CTFontRef textFontForSize(CGFloat size)
     CGFloat topSpacing = (_collapseFlags & TGModernConversationItemCollapseTop) ? layoutConstants->topInsetCollapsed : layoutConstants->topInset;
     CGFloat bottomSpacing = (_collapseFlags & TGModernConversationItemCollapseBottom) ? layoutConstants->bottomInsetCollapsed : layoutConstants->bottomInset;
     bool groupedAlbumHasReaction = self.groupedLayout != nil && self.groupedLayout.reactionSummary.length != 0;
-    CGFloat reactionExtraHeight = (self.groupedLayout != nil ? groupedAlbumHasReaction : (_ios6MediaReactionButtonModels.count != 0)) ? 25.0f : 0.0f;
+    bool brandedMediaReactions = [self _ios6BrandedMediaReactionsInBubble] && _ios6MediaReactionButtonModels.count != 0 && _backgroundModel != nil;
+    CGFloat reactionExtraHeight = (![TGPresentation brandedIOS6Style] && (self.groupedLayout != nil ? groupedAlbumHasReaction : (_ios6MediaReactionButtonModels.count != 0))) ? 25.0f : 0.0f;
     
     if (isPost) {
         topSpacing = layoutConstants->topPostInset;
@@ -2399,10 +2416,11 @@ static CTFontRef textFontForSize(CGFloat size)
         CGFloat mediaOffsetY = [self hasMainPosition] ? 0.0f : _groupedMediaOffsetY;
         imageFrame = CGRectMake(layoutOrigin.x + mediaOffsetX + inGroupFrame.origin.x, layoutOrigin.y + mediaOffsetY + inGroupFrame.origin.y, inGroupFrame.size.width, inGroupFrame.size.height);
         
-        if (_imagePosition != _positionFlags || fabs(_imageSize.width - imageFrame.size.width) > FLT_EPSILON || fabs(_imageSize.height - imageFrame.size.height) > FLT_EPSILON)
+        TGMessageGroupPositionFlags visiblePosition = [self visiblePositionFlags];
+        if (_imagePosition != visiblePosition || fabs(_imageSize.width - imageFrame.size.width) > FLT_EPSILON || fabs(_imageSize.height - imageFrame.size.height) > FLT_EPSILON)
         {
             _imageSize = imageFrame.size;
-            _imagePosition = _positionFlags;
+            _imagePosition = visiblePosition;
             [self updateImageUri:[self updatedImageUri]];
         }
         
@@ -2526,7 +2544,7 @@ static CTFontRef textFontForSize(CGFloat size)
     bool updateContent = false;
     if (hasCaption)
     {
-        textSize = [self contentSizeForContainerSize:CGSizeMake(captionMediaFrame.size.width - 12, containerSize.height) needsContentsUpdate:&updateContent infoWidth:infoWidth];
+        textSize = [self contentSizeForContainerSize:CGSizeMake(captionMediaFrame.size.width - 12, containerSize.height) needsContentsUpdate:&updateContent infoWidth:brandedMediaReactions ? 0.0f : infoWidth];
         textSize.height += 5.0;
         CGRect textFrame = _textModel.frame;
         textFrame.origin = CGPointMake(3.0f, CGRectGetMaxY(captionMediaFrame) - 3.0f + TGScreenPixel);
@@ -2543,11 +2561,69 @@ static CTFontRef textFontForSize(CGFloat size)
     
     if (_webPageFooterModel != nil && _positionFlags == TGMessageGroupPositionNone) {
         bool bottomInset = false;
-        [_webPageFooterModel layoutForContainerSize:contentContainerSize contentSize:contentContainerSize infoWidth:infoWidth needsContentUpdate:&updateContent bottomInset:&bottomInset];
+        [_webPageFooterModel layoutForContainerSize:contentContainerSize contentSize:contentContainerSize infoWidth:brandedMediaReactions ? 0.0f : infoWidth needsContentUpdate:&updateContent bottomInset:&bottomInset];
         _webPageFooterModel.frame = CGRectMake(_textModel.frame.origin.x, _caption.length > 0 ? CGRectGetMaxY(_textModel.frame) : imageFrame.origin.y + imageFrame.size.height - 6.0f, _webPageFooterModel.frame.size.width, _webPageFooterModel.frame.size.height);
         
         if (!hasCaption)
             textSize.height += _webPageFooterModel.frame.size.height + 4.0f;
+    }
+    
+    TGMessageReactionsLayout *mediaReactionsLayout = nil;
+    bool mediaReactionsShareTimeRow = false;
+    CGFloat mediaReactionsTop = 0.0f;
+    CGFloat mediaReactionsDateShift = 0.0f;
+    CGFloat mediaReactionsBottomSpace = 0.0f;
+    CGFloat mediaReactionsAttachedHeight = 0.0f;
+    if (brandedMediaReactions)
+    {
+        OGConversationAppearance *conversationAppearance = [TGPresentation brandedIOS6ConversationAppearance];
+        mediaReactionsShareTimeRow = (hasCaption || _webPageFooterModel != nil) && _dateModel != nil;
+        CGFloat trailingWidth = 0.0f;
+        if (mediaReactionsShareTimeRow)
+        {
+            trailingWidth = (_incomingAppearance ? 19.0f : 27.0f) + _dateModel.frame.size.width;
+            if (_editedLabelModel != nil)
+                trailingWidth += _editedLabelModel.frame.size.width + 4.0f;
+            if (hasSignature)
+                trailingWidth += _authorSignatureModel.frame.size.width + 6.0f;
+            if (_messageViewsModel != nil)
+                trailingWidth += _messageViewsModel.frame.size.width + 6.0f;
+
+            CGFloat probeBubbleRight = captionMediaFrame.origin.x - (_incomingAppearance ? 7.0f : 2.0f) + contentSize.width + 9.0f + classicMediaBubbleExtraWidth;
+            CGFloat probeCountRight = 0.0f;
+            if ([self brandedCommentsCountRight:&probeCountRight bubbleFrame:CGRectMake(0.0f, 0.0f, probeBubbleRight, 0.0f)])
+            {
+                CGFloat contentRight = imageFrame.origin.x + 3.0f + TGScreenPixel + contentSize.width + 1.0f;
+                CGFloat defaultInfoRight = contentRight - (_incomingAppearance ? 19.0f : 8.0f) - TGScreenPixel;
+                trailingWidth += MAX(0.0f, defaultInfoRight - probeCountRight);
+            }
+        }
+
+        NSMutableArray *reactionSizes = [[NSMutableArray alloc] init];
+        for (TGModernButtonViewModel *button in _ios6MediaReactionButtonModels)
+            [reactionSizes addObject:[NSValue valueWithCGSize:button.image.size]];
+        mediaReactionsLayout = [TGMessageReactionsLayout layoutWithItemSizes:reactionSizes maximumWidth:captionMediaFrame.size.width - (mediaReactionsShareTimeRow ? 2.0f : 6.0f) trailingWidth:trailingWidth trailingHeight:mediaReactionsShareTimeRow ? _dateModel.frame.size.height : 0.0f itemSpacing:conversationAppearance.reactionsSpacing lineSpacing:conversationAppearance.reactionsSpacing trailingSpacing:conversationAppearance.reactionsTimeSpacing];
+
+        if (mediaReactionsShareTimeRow)
+        {
+            CGFloat contentHeight = CGRectGetMaxY(captionMediaFrame) + 1.0f + TGScreenPixel + textSize.height;
+            CGFloat textBottom = hasCaption ? CGRectGetMaxY(_textModel.frame) : 0.0f;
+            if (_webPageFooterModel != nil)
+                textBottom = MAX(textBottom, CGRectGetMaxY(_webPageFooterModel.frame));
+            CGFloat standardDateBottom = 24.0f + (TGIsLocaleArabic() ? 1.0f : 0.0f);
+            CGFloat dateHeight = _dateModel.frame.size.height;
+            CGFloat bottomSpace = MAX(0.0f, standardDateBottom - dateHeight);
+            mediaReactionsTop = textBottom + conversationAppearance.reactionsTopSpacing;
+            CGFloat targetContentHeight = mediaReactionsTop + mediaReactionsLayout.size.height + bottomSpace;
+            textSize.height += targetContentHeight - contentHeight;
+            mediaReactionsDateShift = (mediaReactionsTop + mediaReactionsLayout.size.height - dateHeight) - (targetContentHeight - standardDateBottom);
+        }
+        else
+        {
+            mediaReactionsBottomSpace = [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance].bottom + conversationAppearance.reactionsTopSpacing;
+            mediaReactionsAttachedHeight = conversationAppearance.reactionsTopSpacing + mediaReactionsLayout.size.height + mediaReactionsBottomSpace;
+            textSize.height += mediaReactionsAttachedHeight;
+        }
     }
     
     CGFloat commentsFooterHeight = [self discussionCommentsFooterIntegratedInBubble] ? [self discussionCommentsFooterHeight] : 0.0f;
@@ -2564,11 +2640,11 @@ static CTFontRef textFontForSize(CGFloat size)
         if (self.groupedLayout != nil)
         {
             CGRect inGroupFrame = [self.groupedLayout frameForMessageId:_message.mid];
-            imageFrame.origin.y = CGRectGetMaxY(backgroundFrame) - self.groupedLayout.dimensions.height + inGroupFrame.origin.y - 2;
+            imageFrame.origin.y = CGRectGetMaxY(backgroundFrame) - commentsFooterHeight - mediaReactionsAttachedHeight - self.groupedLayout.dimensions.height + inGroupFrame.origin.y - 2;
         }
         else
         {
-            imageFrame.origin.y = CGRectGetMaxY(backgroundFrame) - commentsFooterHeight - _imageModel.frame.size.height - 2;
+            imageFrame.origin.y = CGRectGetMaxY(backgroundFrame) - commentsFooterHeight - mediaReactionsAttachedHeight - _imageModel.frame.size.height - 2;
         }
         _imageModel.frame = imageFrame;
         displayedImageFrame = imageFrame;
@@ -2628,10 +2704,34 @@ static CTFontRef textFontForSize(CGFloat size)
     
     _instantPreviewTouchAreaModel.frame = imageFrame;
     
+    CGFloat brandedFooterAdjustment = 0.0f;
     if (hasCaption || _webPageFooterModel != nil)
     {
-        CGFloat dateOffset = -3.0f;
+        CGFloat dateOffset = -3.0f + mediaReactionsDateShift;
         _dateModel.frame = CGRectMake(_contentModel.frame.size.width - (_incomingAppearance ? 12.0f : 20.0f) - _dateModel.frame.size.width - 7.0f - TGScreenPixel, _contentModel.frame.size.height - 21.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f) + dateOffset, _dateModel.frame.size.width, _dateModel.frame.size.height);
+        
+        CGFloat brandedDateShiftX = 0.0f;
+        if ([TGPresentation brandedIOS6Style])
+        {
+            CGFloat brandedFooterTop = 0.0f;
+            if ([self brandedCommentsFooterTop:&brandedFooterTop bubbleFrame:backgroundFrame])
+            {
+                CGFloat dateBottom = _contentModel.frame.origin.y + CGRectGetMaxY(_dateModel.frame);
+                brandedFooterAdjustment = brandedFooterTop - [TGPresentation brandedIOS6ConversationAppearance].commentsTimeBottomSpacing - dateBottom;
+                backgroundFrame.size.height -= brandedFooterAdjustment;
+                _backgroundModel.frame = backgroundFrame;
+            }
+            
+            CGFloat brandedCountRight = 0.0f;
+            if ([self brandedCommentsCountRight:&brandedCountRight bubbleFrame:backgroundFrame])
+            {
+                CGRect dateFrame = _dateModel.frame;
+                CGFloat infoRight = _incomingAppearance ? CGRectGetMaxX(dateFrame) : _contentModel.frame.size.width - 8.0f - TGScreenPixel;
+                brandedDateShiftX = CGFloor(brandedCountRight - _contentModel.frame.origin.x - infoRight);
+                dateFrame.origin.x += brandedDateShiftX;
+                _dateModel.frame = dateFrame;
+            }
+        }
         
         _editedLabelModel.frame = CGRectMake(_dateModel.frame.origin.x - _editedLabelModel.frame.size.width - 4.0f, _dateModel.frame.origin.y, _editedLabelModel.frame.size.width, _editedLabelModel.frame.size.height);
         
@@ -2663,32 +2763,34 @@ static CTFontRef textFontForSize(CGFloat size)
             if (_authorSignature.length != 0) {
                 minX = _authorSignatureModel.frame.origin.x;
             }
-            _messageViewsModel.frame = CGRectMake(minX - _messageViewsModel.frame.size.width - 6.0f + _contentModel.frame.origin.x, _dateModel.frame.origin.y + _contentModel.frame.origin.y + 2.0f + TGScreenPixel, _messageViewsModel.frame.size.width, _messageViewsModel.frame.size.height);
+            CGFloat viewsY = [TGPresentation brandedIOS6Style] ? (CGRectGetMaxY(_dateModel.frame) - _messageViewsModel.frame.size.height) : (_dateModel.frame.origin.y + 2.0f + TGScreenPixel);
+            _messageViewsModel.frame = CGRectMake(minX - _messageViewsModel.frame.size.width - 6.0f + _contentModel.frame.origin.x, viewsY + _contentModel.frame.origin.y, _messageViewsModel.frame.size.width, _messageViewsModel.frame.size.height);
         }
         
         CGPoint stateOffset = _contentModel.frame.origin;
         if (_checkFirstModel != nil)
-            _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 17 - 7.0f - TGScreenPixel, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 17 + TGScreenPixel + dateOffset, 12, 11);
+            _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 17 - 7.0f - TGScreenPixel + brandedDateShiftX, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 17 + TGScreenPixel + dateOffset, 12, 11);
         
         if (_checkSecondModel != nil)
-            _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 13 - 7.0f - TGScreenPixel, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 17 + TGScreenPixel + dateOffset, 12, 11);
+            _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - 13 - 7.0f - TGScreenPixel + brandedDateShiftX, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + _contentModel.frame.size.height - 17 + TGScreenPixel + dateOffset, 12, 11);
     }
 
-    if (_brandedDeliveryPlateModel != nil)
+    if (mediaReactionsLayout != nil)
     {
-        bool groupedTagHidden = self.groupedLayout != nil && !(_positionFlags & TGMessageGroupPositionBottom && _positionFlags & TGMessageGroupPositionRight);
-        _brandedDeliveryPlateModel.hidden = groupedTagHidden || (!_incomingAppearance && _deliveryState != TGMessageDeliveryStateDelivered);
-        if (!_brandedDeliveryPlateModel.hidden)
+        CGFloat reactionsX = _contentModel.frame.origin.x + 3.0f;
+        CGFloat reactionsY = mediaReactionsShareTimeRow ? (_contentModel.frame.origin.y + mediaReactionsTop) : (CGRectGetMaxY(backgroundFrame) - commentsFooterHeight - mediaReactionsBottomSpace - mediaReactionsLayout.size.height);
+        NSUInteger reactionIndex = 0;
+        for (TGModernButtonViewModel *button in _ios6MediaReactionButtonModels)
         {
-            UIImage *deliveryImage = [TGPresentationAssets brandedIOS6DeliveryTagImage:[self timestampString] incoming:_incomingAppearance read:_read];
-            _brandedDeliveryPlateModel.image = deliveryImage;
-            CGSize deliverySize = deliveryImage.size;
-            CGRect deliveryAnchorFrame = displayedImageFrame;
-            _brandedDeliveryPlateModel.frame = [TGPresentationAssets brandedIOS6DeliveryTagFrameForMessageFrame:deliveryAnchorFrame tagSize:deliverySize incoming:_incomingAppearance];
+            button.hidden = false;
+            button.frame = CGRectOffset([mediaReactionsLayout frameForItemAtIndex:reactionIndex], reactionsX, reactionsY);
+            reactionIndex++;
+            UIView *buttonView = [button boundView];
+            if (buttonView != nil)
+                [buttonView.superview bringSubviewToFront:buttonView];
         }
     }
-
-    if (_ios6MediaReactionButtonModels.count != 0)
+    else if (_ios6MediaReactionButtonModels.count != 0)
     {
         CGFloat totalWidth = 0.0f;
         for (TGModernButtonViewModel *button in _ios6MediaReactionButtonModels)
@@ -2725,7 +2827,7 @@ static CTFontRef textFontForSize(CGFloat size)
     
     if (_unsentButtonModel != nil)
     {
-        _unsentButtonModel.frame = CGRectMake(containerSize.width - _unsentButtonModel.frame.size.width - 9, contentSize.height + topSpacing + bottomSpacing + headerSize.height + textSize.height + classicCaptionBottomInset + commentsFooterHeight - _unsentButtonModel.frame.size.height - ((_collapseFlags & TGModernConversationItemCollapseBottom) ? 5 : 6), _unsentButtonModel.frame.size.width, _unsentButtonModel.frame.size.height);
+        _unsentButtonModel.frame = CGRectMake(containerSize.width - _unsentButtonModel.frame.size.width - 9, contentSize.height + topSpacing + bottomSpacing + headerSize.height + textSize.height + classicCaptionBottomInset + commentsFooterHeight - brandedFooterAdjustment - _unsentButtonModel.frame.size.height - ((_collapseFlags & TGModernConversationItemCollapseBottom) ? 5 : 6), _unsentButtonModel.frame.size.width, _unsentButtonModel.frame.size.height);
     }
     
     CGFloat replyButtonsHeight = 0.0f;
@@ -2749,7 +2851,7 @@ static CTFontRef textFontForSize(CGFloat size)
     }
     
     CGRect frame = self.frame;
-    frame.size = CGSizeMake(containerSize.width, contentSize.height + topSpacing + bottomSpacing + headerSize.height + textSize.height + classicCaptionBottomInset + 1.0f + commentsFooterHeight + reactionExtraHeight + replyButtonsHeight);
+    frame.size = CGSizeMake(containerSize.width, contentSize.height + topSpacing + bottomSpacing + headerSize.height + textSize.height + classicCaptionBottomInset + 1.0f + commentsFooterHeight - brandedFooterAdjustment + reactionExtraHeight + replyButtonsHeight);
     self.frame = frame;
     
     [_contentModel updateSubmodelContentsIfNeeded];
@@ -2995,14 +3097,19 @@ static CTFontRef textFontForSize(CGFloat size)
     }
 }
 
+- (bool)_requiresContentModel
+{
+    bool displaysGroupedCaption = _caption.length != 0 && [self hasMainPosition];
+    return (_positionFlags == TGMessageGroupPositionNone && ((_authorPeer != nil && _context.isFeed) || _replyHeader != nil || _caption.length != 0 || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil || _webPageFooterModel != nil || TGIOS6ImageMessageHasDiscussionFooter(_message) || [self _ios6RequiresBubbleBackground])) || (_positionFlags & TGMessageGroupPositionTop && _positionFlags & TGMessageGroupPositionLeft && ([self hasHeader] || displaysGroupedCaption || [self _ios6RequiresBubbleBackground]));
+}
+
 - (void)setupContentModel:(TGModernViewStorage *)viewStorage {
     if (_positionFlags == TGMessageGroupPositionUnknown)
         return;
     
     [self removeContentModel:viewStorage];
 
-    bool displaysGroupedCaption = _caption.length != 0 && [self hasMainPosition];
-    if ((_positionFlags == TGMessageGroupPositionNone && ((_authorPeer != nil && _context.isFeed) || _replyHeader != nil || _caption.length != 0 || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil || _webPageFooterModel != nil || TGIOS6ImageMessageHasDiscussionFooter(_message))) || (_positionFlags & TGMessageGroupPositionTop && _positionFlags & TGMessageGroupPositionLeft && ([self hasHeader] || displaysGroupedCaption)))
+    if ([self _requiresContentModel])
     {
         static TGTelegraphConversationMessageAssetsSource *assetsSource = nil;
         static dispatch_once_t onceToken;
@@ -3048,7 +3155,7 @@ static CTFontRef textFontForSize(CGFloat size)
             NSMutableArray *additionalAttributes = [[NSMutableArray alloc] init];
             NSMutableArray *textCheckingResults = [[NSMutableArray alloc] init];
             
-            NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (NSString *)kCTFontAttributeName, nil];
+            NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (__bridge NSString *)kCTFontAttributeName, nil];
             
             if (_viaUser != nil) {
                 NSString *formatString = [@" " stringByAppendingString:TGLocalized(@"Conversation.MessageViaUser")];
@@ -3361,31 +3468,26 @@ static CTFontRef textFontForSize(CGFloat size)
         if (isVoice) {
             _webPageFooterModel = [[TGAudioWebpageFooterModel alloc] initWithContext:_context messageId:_mid authorPeerId:_authorPeerId incoming:_incomingAppearance webPage:webPage hasViews:_messageViews != nil];
             _webPageFooterModel.mediaIsAvailable = _mediaIsAvailable;
-            //[_webPageFooterModel updateMediaProgressVisible:_mediaProgressVisible mediaProgress:_mediaProgress animated:false];
             _webPageFooterModel.boundToContainer = _boundToContainer;
             [_contentModel addSubmodel:_webPageFooterModel];
         } else if (isMusic) {
             _webPageFooterModel = [[TGMusicWebpageFooterModel alloc] initWithContext:_context messageId:_mid authorPeerId:_authorPeerId incoming:_incomingAppearance webPage:webPage hasViews:_messageViews != nil];
             _webPageFooterModel.mediaIsAvailable = _mediaIsAvailable;
-            //[_webPageFooterModel updateMediaProgressVisible:_mediaProgressVisible mediaProgress:_mediaProgress animated:false];
             _webPageFooterModel.boundToContainer = _boundToContainer;
             [_contentModel addSubmodel:_webPageFooterModel];
         } else if (isSticker) {
             _webPageFooterModel = [[TGStickerWebpageFooterModel alloc] initWithContext:_context incoming:_incomingAppearance webPage:webPage hasViews:_messageViews != nil];
             _webPageFooterModel.mediaIsAvailable = _mediaIsAvailable;
-            //[_webPageFooterModel updateMediaProgressVisible:_mediaProgressVisible mediaProgress:_mediaProgress animated:false];
             _webPageFooterModel.boundToContainer = _boundToContainer;
             [_contentModel addSubmodel:_webPageFooterModel];
         } else if (isRoundVideo) {
             _webPageFooterModel = [[TGRoundVideoWebpageFooterModel alloc] initWithContext:_context messageId:_mid incoming:_incomingAppearance webPage:webPage];
             _webPageFooterModel.mediaIsAvailable = _mediaIsAvailable;
-            //[_webPageFooterModel updateMediaProgressVisible:_mediaProgressVisible mediaProgress:_mediaProgress animated:false];
             _webPageFooterModel.boundToContainer = _boundToContainer;
             [_contentModel addSubmodel:_webPageFooterModel];
         } else if (webPage.photo == nil && webPage.document != nil && !isAnimationOrVideo) {
             _webPageFooterModel = [[TGDocumentWebpageFooterModel alloc] initWithContext:_context incoming:_incomingAppearance webPage:webPage hasViews:_messageViews != nil];
             _webPageFooterModel.mediaIsAvailable = _mediaIsAvailable;
-            //[_webPageFooterModel updateMediaProgressVisible:_mediaProgressVisible mediaProgress:_mediaProgress animated:false];
             _webPageFooterModel.boundToContainer = _boundToContainer;
             [_contentModel addSubmodel:_webPageFooterModel];
         } else {
@@ -3394,7 +3496,6 @@ static CTFontRef textFontForSize(CGFloat size)
             
             _webPageFooterModel = [[TGArticleWebpageFooterModel alloc] initWithContext:_context incoming:_incomingAppearance webPage:webPage imageInText:imageInText invoice:invoice];
             _webPageFooterModel.mediaIsAvailable = _mediaIsAvailable;
-            //[_webPageFooterModel updateMediaProgressVisible:_mediaProgressVisible mediaProgress:_mediaProgress animated:false];
             _webPageFooterModel.boundToContainer = _boundToContainer;
             TGMessageViewModelReference *messageLifetimeReference2 = [self lifetimeReference];
             ((TGArticleWebpageFooterModel *)_webPageFooterModel).instantPagePressed = ^{

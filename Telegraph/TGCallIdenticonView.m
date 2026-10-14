@@ -23,7 +23,7 @@
 static int32_t get_bits(uint8_t const *bytes, unsigned int bitOffset, unsigned int numBits)
 {
     uint8_t const *data = bytes;
-    numBits = (unsigned int)pow(2, numBits) - 1; //this will only work up to 32 bits, of course
+    numBits = (unsigned int)pow(2, numBits) - 1;
     data += bitOffset / 8;
     bitOffset %= 8;
     return (*((int*)data) >> bitOffset) & numBits;

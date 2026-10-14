@@ -17,6 +17,8 @@
 
 #import "MP4Atom.h"
 
+#import <fcntl.h>
+#import <limits.h>
 #import <sys/stat.h>
 
 #import "TGLiveUploadActor.h"
@@ -29,6 +31,81 @@ const NSInteger TGVideoConverterVideoBitrate = 800000;
 const CGSize TGVideoConverterGifResultSize = { 640.0f, 640.0f };
 const NSInteger TGVideoConverterGifVideoBitrate = 500000;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+static uint32_t TGVideoConverterReadUInt32(NSData *data, NSUInteger offset)
+{
+    if (offset + 4 > data.length)
+        return 0;
+    const uint8_t *bytes = data.bytes;
+    return ((uint32_t)bytes[offset] << 24) | ((uint32_t)bytes[offset + 1] << 16) | ((uint32_t)bytes[offset + 2] << 8) | bytes[offset + 3];
+}
+
+static NSURL *TGVideoConverterAssetURL(id asset)
+{
+    if ([asset isKindOfClass:[NSURL class]])
+        return asset;
+    SEL selector = NSSelectorFromString(@"URL");
+    if (![asset respondsToSelector:selector])
+        return nil;
+    id (*function)(id, SEL) = (id (*)(id, SEL))[asset methodForSelector:selector];
+    return function == NULL ? nil : function(asset, selector);
+}
+
+static void TGVideoConverterReadMovieInfo(NSString *path, CGSize *dimensions, NSTimeInterval *duration)
+{
+    if (dimensions != NULL)
+        *dimensions = CGSizeZero;
+    if (duration != NULL)
+        *duration = 0.0;
+    NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (file == nil)
+        return;
+    struct stat info;
+    if (fstat([file fileDescriptor], &info) != 0 || info.st_size <= 0 || info.st_size > INT_MAX)
+    {
+        [file closeFile];
+        return;
+    }
+    MP4Atom *root = [MP4Atom atomAt:0 size:(int)info.st_size type:(OSType)'file' inFile:file];
+    MP4Atom *movie = [root childOfType:(OSType)'moov' startAt:0];
+    MP4Atom *movieHeader = [movie childOfType:(OSType)'mvhd' startAt:0];
+    NSData *movieData = [movieHeader readAt:0 size:(int)MIN((int64_t)32, movieHeader.length)];
+    if (movieData.length >= 20)
+    {
+        const uint8_t *bytes = movieData.bytes;
+        uint32_t timescale = bytes[0] == 1 ? TGVideoConverterReadUInt32(movieData, 20) : TGVideoConverterReadUInt32(movieData, 12);
+        uint64_t value = 0;
+        if (bytes[0] == 1 && movieData.length >= 32)
+            value = ((uint64_t)TGVideoConverterReadUInt32(movieData, 24) << 32) | TGVideoConverterReadUInt32(movieData, 28);
+        else
+            value = TGVideoConverterReadUInt32(movieData, 16);
+        if (duration != NULL && timescale != 0)
+            *duration = value / (NSTimeInterval)timescale;
+    }
+    [movie setChildOffset:0];
+    MP4Atom *track = nil;
+    while ((track = [movie nextChild]) != nil)
+    {
+        if (track.type != (OSType)'trak')
+            continue;
+        MP4Atom *media = [track childOfType:(OSType)'mdia' startAt:0];
+        MP4Atom *handler = [media childOfType:(OSType)'hdlr' startAt:0];
+        NSData *handlerData = [handler readAt:0 size:12];
+        if (handlerData.length < 12 || TGVideoConverterReadUInt32(handlerData, 8) != (uint32_t)'vide')
+            continue;
+        MP4Atom *trackHeader = [track childOfType:(OSType)'tkhd' startAt:0];
+        if (trackHeader.length >= 8)
+        {
+            NSData *sizeData = [trackHeader readAt:trackHeader.length - 8 size:8];
+            if (sizeData.length == 8 && dimensions != NULL)
+                *dimensions = CGSizeMake(TGVideoConverterReadUInt32(sizeData, 0) / 65536.0f, TGVideoConverterReadUInt32(sizeData, 4) / 65536.0f);
+        }
+        break;
+    }
+    [file closeFile];
+}
+#endif
+
 @interface TGVideoConverter () <ASWatcher>
 {
     ATQueue *_queue;
@@ -40,7 +117,9 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
     NSString *_tempFilePath;
     dispatch_source_t _readerSource;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVAssetWriter *_assetWriter;
+#endif
     
     NSString *_liveUploadPath;
     
@@ -76,7 +155,11 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
 
 - (void)commonInit
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     _trimRange = kCMTimeRangeZero;
+#else
+    _trimRange = CMTimeRangeMake(CMTimeMake(0, 1), CMTimeMake(0, 1));
+#endif
     
     _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:false];
     
@@ -212,13 +295,7 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
     [file closeFile];
     
     if (availableSize != 0)
-    {
-        [ActionStageInstance() dispatchOnStageQueue:^
-        {
-            TGLiveUploadActor *actor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:_liveUploadPath];
-            [actor updateSize:availableSize];
-        }];
-    }
+        [TGLiveUploadActor updateSize:availableSize forActorPath:_liveUploadPath];
 }
 
 - (NSData *)_finalHeaderDataAndSize:(NSUInteger *)finalSize
@@ -268,8 +345,37 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
                 completion(nil, CGSizeZero, 0.0, nil, nil);
         };
         
-        TGLog(@"[VideoConverter] Conversion Started: %@", _tempFilePath);
-        
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        NSURL *sourceURL = TGVideoConverterAssetURL(_asset ?: _itemURL);
+        bool requiresRendering = _trimRange.duration.value != 0 || !CGRectEqualToRect(_cropRect, CGRectZero) || _cropMirorred || _overlayImagePath.length != 0 || _asGif;
+        if (sourceURL == nil || !sourceURL.isFileURL || requiresRendering || _isCancelled)
+        {
+            fail();
+            return;
+        }
+        NSError *copyError = nil;
+        if (![[NSFileManager defaultManager] copyItemAtPath:sourceURL.path toPath:_tempFilePath error:&copyError])
+        {
+            fail();
+            return;
+        }
+        if (progress != nil)
+            progress(1.0f);
+        CGSize dimensions = CGSizeZero;
+        NSTimeInterval duration = 0.0;
+        TGVideoConverterReadMovieInfo(_tempFilePath, &dimensions, &duration);
+        __block TGLiveUploadActorData *liveData = nil;
+        if (_liveUpload)
+        {
+            NSUInteger finalSize = 0;
+            NSData *headerData = [self _finalHeaderDataAndSize:&finalSize];
+            if (headerData != nil && finalSize != 0)
+                liveData = [TGLiveUploadActor finishRestOfFileWithHeader:headerData finalSize:finalSize forActorPath:_liveUploadPath];
+        }
+        if (completion != nil)
+            completion(_tempFilePath, dimensions, duration, nil, liveData);
+#else
         NSURL *fullPath = [NSURL fileURLWithPath:_tempFilePath];
         NSError *error = nil;
         _assetWriter = [[AVAssetWriter alloc] initWithURL:fullPath fileType:AVFileTypeMPEG4 error:&error];
@@ -547,14 +653,7 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
                         headerData = [self _finalHeaderDataAndSize:&finalSize];
                         
                         if (headerData != nil && finalSize != 0)
-                        {
-                            dispatch_sync([ActionStageInstance() globalStageDispatchQueue], ^
-                            {
-                                TGLiveUploadActor *actor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:_liveUploadPath];
-                                
-                                liveData = [actor finishRestOfFileWithHeader:headerData finalSize:finalSize];
-                            });
-                        }
+                            liveData = [TGLiveUploadActor finishRestOfFileWithHeader:headerData finalSize:finalSize forActorPath:_liveUploadPath];
                     }
                     
                     if (completion != nil)
@@ -675,6 +774,7 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
                  }
              }
          }];
+#endif
     }];
 }
 
@@ -688,7 +788,9 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
             dispatch_source_cancel(_readerSource);
         [ActionStageInstance() removeWatcher:self];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         [_assetWriter cancelWriting];
+#endif
     }];
 }
 
@@ -707,10 +809,14 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
         if (url == nil)
             return nil;
         
-        NSError *error;
+        NSError *error = nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         NSData *fileData = [NSData dataWithContentsOfURL:url
                                                  options:NSDataReadingMappedIfSafe
                                                    error:&error];
+#else
+        NSData *fileData = [NSData dataWithContentsOfURL:url];
+#endif
         if (error != nil)
             return nil;
         
@@ -721,6 +827,11 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
     };
     
     NSString *hash = nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSURL *assetURL = TGVideoConverterAssetURL(asset);
+    if (assetURL != nil)
+        hash = readAssetWithURL(assetURL, nil);
+#else
     if ([asset isKindOfClass:[AVURLAsset class]])
     {
         hash = readAssetWithURL(((AVURLAsset *)asset).URL, nil);
@@ -764,10 +875,10 @@ const NSInteger TGVideoConverterGifVideoBitrate = 500000;
             [representation getBytes:buffer fromOffset:offset length:length error:nil];
         }];
     }
+#endif
     
     if (hash != nil)
     {
-        TGLog(@"Computed video hash in %f ms", (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
         
         if (completion != nil)
             completion(hash);

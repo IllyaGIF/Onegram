@@ -2,6 +2,8 @@
 #import "unistd.h"
 #import <objc/runtime.h>
 
+static const NSUInteger FMDatabaseMaximumCachedStatementCount = 256;
+
 @interface FMDatabase ()
 
 - (FMResultSet *)executeQuery:(NSString *)sql withArgumentsInArray:(NSArray*)arrayArgs orDictionary:(NSDictionary *)dictionaryArgs orVAList:(va_list)args;
@@ -143,6 +145,8 @@
     while (retry);
     
     _db = nil;
+    _inTransaction = NO;
+    _nestedTransactionDepth = 0;
     return YES;
 }
 
@@ -190,7 +194,11 @@
     [statement setQuery:query];
     
     if (query != nil)
+    {
+        if ([_cachedStatements count] >= FMDatabaseMaximumCachedStatementCount)
+            [_cachedStatements removeAllObjects];
         [_cachedStatements setObject:statement forKey:query];
+    }
     
     FMDBRelease(query);
 }
@@ -506,7 +514,7 @@
             retry   = NO;
             rc      = sqlite3_prepare_v2(_db, [sql UTF8String], -1, &pStmt, 0);
             
-            if (SQLITE_BUSY == rc || SQLITE_LOCKED == rc) {
+            if (SQLITE_BUSY == rc) {
                 retry = YES;
                 usleep(20);
                 
@@ -687,7 +695,7 @@
         do {
             retry   = NO;
             rc      = sqlite3_prepare_v2(_db, [sql UTF8String], -1, &pStmt, 0);
-            if (SQLITE_BUSY == rc || SQLITE_LOCKED == rc) {
+            if (SQLITE_BUSY == rc) {
                 retry = YES;
                 usleep(20);
                 
@@ -793,16 +801,15 @@
         rc      = sqlite3_step(pStmt);
         retry   = NO;
         
-        if (SQLITE_BUSY == rc || SQLITE_LOCKED == rc) {
+        if (SQLITE_LOCKED == rc) {
+            TGLog(@"Error calling sqlite3_step (%d: %s) SQLITE_LOCKED", rc, sqlite3_errmsg(_db));
+            TGLog(@"DB Query: %@", sql);
+            sqlite3_reset(pStmt);
+        }
+        else if (SQLITE_BUSY == rc) {
             // this will happen if the db is locked, like if we are doing an update or insert.
             // in that case, retry the step... and maybe wait just 10 milliseconds.
             retry = YES;
-            if (SQLITE_LOCKED == rc) {
-                rc = sqlite3_reset(pStmt);
-                if (rc != SQLITE_LOCKED) {
-                    TGLog(@"Unexpected result from sqlite3_reset (%d) eu", rc);
-                }
-            }
             usleep(20);
             
             if (_busyRetryTimeout && (numberOfRetries++ > _busyRetryTimeout)) {
@@ -910,7 +917,33 @@
     return result;
 }
 
+- (NSString *)nestedTransactionSavePointName:(NSUInteger)depth {
+    return [[NSString alloc] initWithFormat:@"fmdb_nested_%lu", (unsigned long)depth];
+}
+
+- (BOOL)beginNestedTransaction {
+    _nestedTransactionDepth++;
+    return [self executeUpdate:[[NSString alloc] initWithFormat:@"savepoint %@", [self nestedTransactionSavePointName:_nestedTransactionDepth]]];
+}
+
+- (BOOL)endNestedTransactionWithRollback:(BOOL)rollback {
+    NSString *name = [self nestedTransactionSavePointName:_nestedTransactionDepth];
+    _nestedTransactionDepth--;
+    
+    BOOL rolledBack = YES;
+    if (rollback) {
+        rolledBack = [self executeUpdate:[[NSString alloc] initWithFormat:@"rollback transaction to savepoint %@", name]];
+    }
+    
+    BOOL released = [self executeUpdate:[[NSString alloc] initWithFormat:@"release savepoint %@", name]];
+    return rolledBack && released;
+}
+
 - (BOOL)rollback {
+    if (_nestedTransactionDepth != 0) {
+        return [self endNestedTransactionWithRollback:YES];
+    }
+    
     BOOL b = [self executeUpdate:@"rollback transaction"];
     
     if (b) {
@@ -921,6 +954,10 @@
 }
 
 - (BOOL)commit {
+    if (_nestedTransactionDepth != 0) {
+        return [self endNestedTransactionWithRollback:NO];
+    }
+    
     BOOL b =  [self executeUpdate:@"commit transaction"];
     
     if (b) {
@@ -931,6 +968,9 @@
 }
 
 - (BOOL)beginDeferredTransaction {
+    if (_inTransaction) {
+        return [self beginNestedTransaction];
+    }
     
     BOOL b = [self executeUpdate:@"begin deferred transaction"];
     if (b) {
@@ -941,6 +981,9 @@
 }
 
 - (BOOL)beginTransaction {
+    if (_inTransaction) {
+        return [self beginNestedTransaction];
+    }
     
     BOOL b = [self executeUpdate:@"begin exclusive transaction"];
     if (b) {
@@ -952,6 +995,20 @@
 
 - (BOOL)inTransaction {
     return _inTransaction;
+}
+
+- (BOOL)commitOutstandingTransaction {
+    if (!_inTransaction) {
+        return YES;
+    }
+    
+    _nestedTransactionDepth = 0;
+    BOOL b = [self executeUpdate:@"commit transaction"];
+    if (b) {
+        _inTransaction = NO;
+    }
+    
+    return b;
 }
 
 #if SQLITE_VERSION_NUMBER >= 3007000

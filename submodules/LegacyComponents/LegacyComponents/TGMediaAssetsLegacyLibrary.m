@@ -4,6 +4,103 @@
 
 #import "TGObserverProxy.h"
 
+#if defined(ONEGRAM_ARMV6)
+@interface TGMediaAssetsLegacySaveContext : NSObject
+@property (nonatomic, strong) SSubscriber *subscriber;
+@property (nonatomic, strong) UIImage *image;
+@property (nonatomic, copy) NSString *videoPath;
+- (instancetype)initWithSubscriber:(SSubscriber *)subscriber;
+- (void)saveImage:(UIImage *)image;
+- (void)saveVideoAtURL:(NSURL *)url;
+@end
+
+static NSMutableSet *TGMediaAssetsLegacySaveContexts(void)
+{
+    static NSMutableSet *contexts = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        contexts = [[NSMutableSet alloc] init];
+    });
+    return contexts;
+}
+
+@implementation TGMediaAssetsLegacySaveContext
+
+- (instancetype)initWithSubscriber:(SSubscriber *)subscriber
+{
+    self = [super init];
+    if (self != nil)
+        _subscriber = subscriber;
+    return self;
+}
+
+- (void)finishWithError:(NSError *)error
+{
+    SSubscriber *subscriber = _subscriber;
+    _subscriber = nil;
+    _image = nil;
+    _videoPath = nil;
+    if (error == nil)
+        [subscriber putCompletion];
+    else
+        [subscriber putError:error];
+    @synchronized(TGMediaAssetsLegacySaveContexts())
+    {
+        [TGMediaAssetsLegacySaveContexts() removeObject:self];
+    }
+}
+
+- (void)saveImage:(UIImage *)image
+{
+    if (image == nil)
+    {
+        [self finishWithError:[NSError errorWithDomain:@"TGMediaAssetsLegacyLibrary" code:-1 userInfo:nil]];
+        return;
+    }
+    _image = image;
+    @synchronized(TGMediaAssetsLegacySaveContexts())
+    {
+        [TGMediaAssetsLegacySaveContexts() addObject:self];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        UIImageWriteToSavedPhotosAlbum(self.image, self, @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+    });
+}
+
+- (void)saveVideoAtURL:(NSURL *)url
+{
+    NSString *path = [url path];
+    if ([path length] == 0)
+    {
+        [self finishWithError:[NSError errorWithDomain:@"TGMediaAssetsLegacyLibrary" code:-2 userInfo:nil]];
+        return;
+    }
+    _videoPath = [path copy];
+    @synchronized(TGMediaAssetsLegacySaveContexts())
+    {
+        [TGMediaAssetsLegacySaveContexts() addObject:self];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        UISaveVideoAtPathToSavedPhotosAlbum(self.videoPath, self, @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+    });
+}
+
+- (void)image:(UIImage *)__unused image didFinishSavingWithError:(NSError *)error contextInfo:(void *)__unused contextInfo
+{
+    [self finishWithError:error];
+}
+
+- (void)video:(NSString *)__unused videoPath didFinishSavingWithError:(NSError *)error contextInfo:(void *)__unused contextInfo
+{
+    [self finishWithError:error];
+}
+
+@end
+#endif
+
 @interface TGMediaAssetsLegacyLibrary ()
 {
     ALAssetsLibrary *_assetsLibrary;
@@ -19,8 +116,10 @@
     self = [super initForAssetType:assetType];
     if (self != nil)
     {
+#if !defined(ONEGRAM_ARMV6)
         _assetsLibrary = [[ALAssetsLibrary alloc] init];
         _assetsChangeObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(assetsLibraryDidChange:) name:ALAssetsLibraryChangedNotification];
+#endif
         _libraryChangePipe = [[SPipe alloc] init];
     }
     return self;
@@ -30,7 +129,10 @@
 {
     if (identifier.length == 0)
         return [SSignal fail:nil];
-    
+
+#if defined(ONEGRAM_ARMV6)
+    return [SSignal fail:nil];
+#else
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
         [_assetsLibrary assetForURL:[NSURL URLWithString:identifier] resultBlock:^(ALAsset *asset)
@@ -51,10 +153,14 @@
         
         return nil;
     }];
+#endif
 }
 
 - (SSignal *)assetGroups
 {
+#if defined(ONEGRAM_ARMV6)
+    return [SSignal single:@[]];
+#else
     SSignal *(^groupsSignal)(void) = ^
     {
         return [[[[[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
@@ -119,10 +225,14 @@
     }];
     
     return [groupsSignal() then:updateSignal];
+#endif
 }
 
 - (SSignal *)cameraRollGroup
 {
+#if defined(ONEGRAM_ARMV6)
+    return [SSignal fail:nil];
+#else
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
         [_assetsLibrary enumerateGroupsWithTypes:ALAssetsGroupSavedPhotos usingBlock:^(ALAssetsGroup *group, BOOL *stop)
@@ -149,12 +259,17 @@
 
         return nil;
     }];
+#endif
 }
 
 - (SSignal *)assetsOfAssetGroup:(TGMediaAssetGroup *)assetGroup reversed:(bool)reversed
 {
     NSParameterAssert(assetGroup);
-    
+
+#if defined(ONEGRAM_ARMV6)
+    TGMediaAssetFetchResult *mediaFetchResult = [[TGMediaAssetFetchResult alloc] init];
+    return [SSignal single:mediaFetchResult];
+#else
     SSignal *(^fetchSignal)(TGMediaAssetGroup *) = ^SSignal *(TGMediaAssetGroup *group)
     {
         return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
@@ -186,10 +301,14 @@
     }];
     
     return [fetchSignal(assetGroup) then:updateSignal];
+#endif
 }
 
 - (SSignal *)updatedAssetsForAssets:(NSArray *)assets
 {
+#if defined(ONEGRAM_ARMV6)
+    return [SSignal single:assets == nil ? @[] : assets];
+#else
     SSignal *(^updatedAssetSignal)(TGMediaAsset *) = ^SSignal *(TGMediaAsset *asset)
     {
         return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
@@ -236,10 +355,14 @@
         [array addObject:updatedAsset];
         return array;
     }];
+#endif
 }
 
 - (SSignal *)filterDeletedAssets:(NSArray *)assets
 {
+#if defined(ONEGRAM_ARMV6)
+    return [SSignal single:@[]];
+#else
     SSignal *(^assetDeletedSignal)(TGMediaAsset *) = ^SSignal *(TGMediaAsset *asset)
     {
         return [[[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
@@ -282,6 +405,7 @@
         [array addObject:deletedAsset];
         return array;
     }];
+#endif
 }
 
 #pragma mark -
@@ -306,6 +430,10 @@
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
+#if defined(ONEGRAM_ARMV6)
+        TGMediaAssetsLegacySaveContext *context = [[TGMediaAssetsLegacySaveContext alloc] initWithSubscriber:subscriber];
+        [context saveImage:image];
+#else
         [_assetsLibrary writeImageToSavedPhotosAlbum:image.CGImage orientation:(ALAssetOrientation)image.imageOrientation completionBlock:^(NSURL *assetURL, NSError *error)
         {
             if (assetURL != nil && error == nil)
@@ -313,6 +441,7 @@
             else
                 [subscriber putError:error];
         }];
+#endif
         
         return nil;
     }];
@@ -322,6 +451,11 @@
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
+#if defined(ONEGRAM_ARMV6)
+        UIImage *image = [[UIImage alloc] initWithData:imageData];
+        TGMediaAssetsLegacySaveContext *context = [[TGMediaAssetsLegacySaveContext alloc] initWithSubscriber:subscriber];
+        [context saveImage:image];
+#else
         [_assetsLibrary writeImageDataToSavedPhotosAlbum:imageData metadata:nil completionBlock:^(NSURL *assetURL, NSError *error)
         {
             if (assetURL != nil && error == nil)
@@ -329,6 +463,7 @@
             else
                 [subscriber putError:error];
         }];
+#endif
         
         return nil;
     }];
@@ -338,6 +473,7 @@
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
+#if !defined(ONEGRAM_ARMV6)
         void (^writeCompletionBlock)(NSURL *, NSError *) = ^(NSURL *assetURL, NSError *error)
         {
             if (assetURL != nil && error == nil)
@@ -345,7 +481,21 @@
             else
                 [subscriber putError:error];
         };
+#endif
         
+#if defined(ONEGRAM_ARMV6)
+        TGMediaAssetsLegacySaveContext *context = [[TGMediaAssetsLegacySaveContext alloc] initWithSubscriber:subscriber];
+        if (!isVideo)
+        {
+            NSData *data = [[NSData alloc] initWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
+            UIImage *image = [[UIImage alloc] initWithData:data];
+            [context saveImage:image];
+        }
+        else
+        {
+            [context saveVideoAtURL:url];
+        }
+#else
         if (!isVideo)
         {
             NSData *data = [[NSData alloc] initWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:nil];
@@ -355,6 +505,7 @@
         {
             [_assetsLibrary writeVideoAtPathToSavedPhotosAlbum:url completionBlock:writeCompletionBlock];
         }
+#endif
         
         return nil;
     }];
@@ -362,6 +513,9 @@
 
 + (ALAssetsFilter *)_assetsFilterForAssetType:(TGMediaAssetType)assetType
 {
+#if defined(ONEGRAM_ARMV6)
+    return nil;
+#else
     switch (assetType)
     {
         case TGMediaAssetPhotoType:
@@ -373,6 +527,7 @@
         default:
             return [ALAssetsFilter allAssets];
     }
+#endif
 }
 
 + (SSignal *)authorizationStatusSignal
@@ -412,7 +567,11 @@
         return TGMediaLibraryAuthorizationStatusAuthorized;
     }
     
+#if defined(ONEGRAM_ARMV6)
+    return TGMediaLibraryAuthorizationStatusAuthorized;
+#else
     return [self _authorizationStatusForALAuthorizationStatus:[ALAssetsLibrary authorizationStatus]];
+#endif
 }
 
 + (TGMediaLibraryAuthorizationStatus)_authorizationStatusForALAuthorizationStatus:(ALAuthorizationStatus)status

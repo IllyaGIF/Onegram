@@ -1,4 +1,5 @@
 #import "TGDialogListCellEditingButton.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -54,10 +55,17 @@
     _labelView.font = TGMediumSystemFontOfSize(_smallLabel ? 14.0f : (_labelOnly ? 18.0f : 13.0f));
 }
 
-- (void)setTitle:(NSString *)title animationName:(NSString *)animationName {
-    _iconView.hidden = true;
-    if (!_labelOnly && _labelView.text.length == 0)
-        _labelView.alpha = 0.0f;
+- (void)setTitle:(NSString *)title animationName:(NSString *)animationName fallbackImage:(UIImage *)image {
+    if (![_animationName isEqualToString:animationName]) {
+        [_animationView removeFromSuperview];
+        _animationView = nil;
+    }
+    [_animationView stop];
+    _animationView.hidden = true;
+    _iconView.image = image;
+    _iconView.hidden = _labelOnly;
+    _labelView.transform = CGAffineTransformIdentity;
+    _labelView.alpha = 1.0f;
     _labelView.text = title;
     [_labelView sizeToFit];
     
@@ -72,7 +80,8 @@
         return nil;
 
     LOTAnimationView *animationView = [LOTAnimationView animationNamed:_animationName];
-    if (animationView == nil)
+    LOTComposition *model = animationView.sceneModel;
+    if (model == nil || model.compBounds.size.width <= 0.0f || model.compBounds.size.height <= 0.0f || model.endFrame.doubleValue <= model.startFrame.doubleValue || model.framerate.doubleValue <= 0.0f)
         return nil;
 
     animationView.transform = CGAffineTransformMakeScale(0.3333f, 0.3333f);
@@ -91,15 +100,18 @@
         _animationView = [self animationView];
         if (_animationView == nil) {
             _labelView.alpha = 1.0f;
+            _iconView.hidden = _labelOnly;
             return;
         }
         [self addSubview:_animationView];
-    } else if (![_animationView.sceneModel.cacheKey isEqualToString:_animationName]) {
-        [_animationView setAnimationNamed:_animationName];
+        [self setNeedsLayout];
+        [self layoutIfNeeded];
     }
     
+    _iconView.hidden = true;
     if (_animationView.isAnimationPlaying)
         return;
+    _animationView.hidden = false;
     
     _labelView.transform = CGAffineTransformMakeScale(0.4f, 0.4f);
     [UIView animateWithDuration:0.2 animations:^
@@ -110,7 +122,15 @@
     
     [self fixAnimation];
     
-    [_animationView playWithCompletion:nil];
+    __weak TGDialogListCellEditingButton *weakSelf = self;
+    __weak LOTAnimationView *currentAnimationView = _animationView;
+    [_animationView playWithCompletion:^(BOOL finished) {
+        __strong TGDialogListCellEditingButton *strongSelf = weakSelf;
+        if (finished && strongSelf != nil && strongSelf->_animationView == currentAnimationView) {
+            strongSelf->_animationView.hidden = true;
+            strongSelf->_iconView.hidden = strongSelf->_labelOnly;
+        }
+    }];
 }
 
 - (void)resetAnimation {
@@ -120,39 +140,19 @@
         [self setNeedsLayout];
     }
     
-    if (_labelOnly)
-        return;
-    
-    if (_animationName.length == 0)
-        return;
-    
     [_animationView stop];
-    
-    _labelView.alpha = 0.0f;
-    
-    if (![_animationView.sceneModel.cacheKey isEqualToString:_animationName])
-        [_animationView setAnimationNamed:_animationName];
+    _animationView.hidden = true;
+    _labelView.alpha = 1.0f;
+    _labelView.transform = CGAffineTransformIdentity;
+    _iconView.hidden = _labelOnly;
 }
 
 - (void)skipAnimation {
-    if (_labelOnly)
-        return;
-
-    if (_animationName.length == 0)
-        return;
-    
+    [_animationView stop];
+    _animationView.hidden = true;
     _labelView.alpha = 1.0f;
-    
-    if (_animationView == nil) {
-        _animationView = [self animationView];
-        if (_animationView == nil)
-            return;
-        [self addSubview:_animationView];
-    } else if (![_animationView.sceneModel.cacheKey isEqualToString:_animationName]) {
-        [_animationView setAnimationNamed:_animationName];
-    }
-    
-    [_animationView playFromProgress:1.0f toProgress:1.0f withCompletion:nil];
+    _labelView.transform = CGAffineTransformIdentity;
+    _iconView.hidden = _labelOnly;
 }
 
 - (void)fixAnimation {
@@ -170,16 +170,17 @@
 
 - (void)setTitle:(NSString *)title image:(UIImage *)image {
     _animationName = nil;
+    [_animationView stop];
     [_animationView removeFromSuperview];
     _animationView = nil;
     
     _labelView.alpha = 1.0f;
+    _labelView.transform = CGAffineTransformIdentity;
     _labelView.text = title;
     [_labelView sizeToFit];
     
-    _iconView.hidden = false;
-    if (!_labelOnly)
-        _iconView.image = image;
+    _iconView.hidden = _labelOnly;
+    _iconView.image = image;
     [self setNeedsLayout];
 }
 
@@ -224,10 +225,7 @@
         _labelView.textColor = [UIColor whiteColor];
         _labelView.shadowColor = UIColorRGBA(0x000000, 0.40f);
         _labelView.shadowOffset = CGSizeMake(0.0f, 1.0f);
-        _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
-        _iconView.layer.shadowOpacity = 0.30f;
-        _iconView.layer.shadowRadius = 1.0f;
-        _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        OGPlatformApplyViewShadow(_iconView, [UIColor blackColor], 0.30f, 1.0f, CGSizeMake(0.0f, 1.0f));
     }
 
     CGSize labelSize = _labelView.bounds.size;

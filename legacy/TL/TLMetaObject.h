@@ -39,6 +39,9 @@ public:
     NSData *getBytes(int32_t name);
     NSArray *getArray(int32_t name);
     id getObject(int32_t name);
+
+private:
+    int fieldIndexForName(int32_t name);
 };
 
 #endif

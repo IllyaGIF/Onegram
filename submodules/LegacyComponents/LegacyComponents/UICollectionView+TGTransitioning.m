@@ -38,17 +38,16 @@
 {
     NSMutableDictionary *data = [[NSMutableDictionary alloc] init];
     data[@"duration"] = @(duration);
-    data[@"startTime"] = @(CACurrentMediaTime());
     [self tg_setTransitionData:data];
     
     CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(updateProgress:)];
-    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     
     __weak PSUICollectionView *weakSelf = self;
     UICollectionViewTransitionLayout *transitionLayout = [self startInteractiveTransitionToCollectionViewLayout:layout completion:^(BOOL completed, BOOL finish)
     {
         __strong PSUICollectionView *strongSelf = weakSelf;
         NSMutableDictionary *data = [strongSelf tg_transitionData];
+        [data[@"link"] invalidate];
         UICollectionViewTransitionLayout *transitionLayout = data[@"transitionLayout"];
         if ([transitionLayout conformsToProtocol:@protocol(TGTransitionAnimatorLayout)])
         {
@@ -67,6 +66,8 @@
     }];
     data[@"transitionLayout"] = transitionLayout;
     data[@"link"] = link;
+    data[@"startTime"] = @(CACurrentMediaTime());
+    [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     
     return transitionLayout;
 }
@@ -86,8 +87,8 @@ CGFloat TGQuadraticEaseInOut(CGFloat p)
     
     if ([layout isKindOfClass:[UICollectionViewTransitionLayout class]])
     {
-        CFTimeInterval startTime = [data[@"startTime"] floatValue];
-        NSTimeInterval duration = [data[@"duration"] floatValue];
+        CFTimeInterval startTime = [data[@"startTime"] doubleValue];
+        NSTimeInterval duration = [data[@"duration"] doubleValue];
         CFTimeInterval time = duration > 0 ? (link.timestamp - startTime) / duration : 1;
         time = MIN(1, time);
         time = MAX(0, time);

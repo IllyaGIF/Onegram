@@ -15,7 +15,7 @@
     result.server_nonce = [is readData:16];
     result.pq = [is readBytes];
     
-    [is readInt32]; // Vector
+    [is readInt32];
     
     int32_t count = [is readInt32];
     NSMutableArray *vector = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];

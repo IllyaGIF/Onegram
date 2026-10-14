@@ -1,9 +1,6 @@
 #include <syslog.h>
 #import "TGMessage+Telegraph.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -27,6 +24,9 @@
 
 #import "TLMessage$modernMessage.h"
 #import "TLMessage$modernMessageService.h"
+#import "TGRichMessageMediaAttachment.h"
+#import "TGPollMediaAttachment+Telegraph.h"
+#import "TGPollSignals.h"
 
 #import "TGDatabase.h"
 
@@ -120,38 +120,6 @@
 
 @end
 
-static bool TGIOS6ShouldRepairRoundVideoDocument(int32_t duration, CGSize dimensions, NSString *caption, bool hasStickers, NSString *mimeType)
-{
-    if (![mimeType hasPrefix:@"video/"] || hasStickers || caption.length != 0)
-        return false;
-    
-    if (duration < 0 || duration > 60)
-        return false;
-    
-    if (dimensions.width < 120.0f || dimensions.height < 120.0f)
-        return false;
-    
-    CGFloat diff = dimensions.width > dimensions.height ? dimensions.width - dimensions.height : dimensions.height - dimensions.width;
-    CGFloat maxSide = MAX(dimensions.width, dimensions.height);
-    return maxSide > FLT_EPSILON && diff / maxSide < 0.08f;
-}
-
-static bool TGIOS6ShouldTreatVideoDocumentAsGifLike(int32_t duration, CGSize dimensions, NSString *caption, bool hasStickers, NSString *mimeType, NSString *fileName)
-{
-    NSString *lowerFileName = [fileName lowercaseString];
-    if ([mimeType isEqualToString:@"image/gif"] || [lowerFileName.pathExtension isEqualToString:@"gif"] || ([mimeType isEqualToString:@"video/mp4"] && [lowerFileName isEqualToString:@"animation.mp4"]))
-        return true;
-    
-    if (![mimeType isEqualToString:@"video/mp4"] || hasStickers || caption.length != 0)
-        return false;
-    
-    if (duration <= 0 || duration > 15)
-        return false;
-    
-    CGFloat maxSide = MAX(dimensions.width, dimensions.height);
-    return maxSide <= 640.0f;
-}
-
 static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment *documentAttachment, TGAudioMediaAttachment *audioMedia, bool isSticker)
 {
     if (![documentAttachment.mimeType isEqualToString:@"video/mp4"] || audioMedia != nil || isSticker)
@@ -175,7 +143,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         TGImageMediaAttachment *imageMediaAttachment = [[TGImageMediaAttachment alloc] initWithTelegraphDesc:mediaPhoto.photo];
         imageMediaAttachment.originInfo = origin;
         [mediaAttachments addObject:imageMediaAttachment];
-        IOS6_NOOP_LOG(@"TRACE media photo cid=%lld mid=%d imageId=%lld hasOrigin=%d", cid, mid, imageMediaAttachment.imageId, origin != nil ? 1 : 0);
         
         if (mediaLifetime != nil) {
            *mediaLifetime = mediaPhoto.ttl_seconds;
@@ -260,11 +227,22 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         
         locationMediaAttachment.venue = [[TGVenueAttachment alloc] initWithTitle:mediaVenue.title address:mediaVenue.address provider:mediaVenue.provider venueId:mediaVenue.venue_id type:mediaVenue.venue_type];
     }
+    else if ([media isKindOfClass:[TLMessageMedia$messageMediaPollCodex class]])
+    {
+        TLMessageMedia$messageMediaPollCodex *pollMedia = (TLMessageMedia$messageMediaPollCodex *)media;
+        TGPollMediaAttachment *pollAttachment = [TGPollMediaAttachment pollWithTelegraphPoll:pollMedia.poll results:pollMedia.results];
+        if (pollAttachment != nil)
+        {
+            [mediaAttachments addObject:pollAttachment];
+            [TGPollSignals registerPollId:pollAttachment.pollId peerId:cid messageId:mid];
+        }
+        else
+            [mediaAttachments addObject:[[TGUnsupportedMediaAttachment alloc] init]];
+    }
     else if ([media isKindOfClass:[TLMessageMedia$messageMediaUnsupported class]])
     {
         TGUnsupportedMediaAttachment *unsupportedAttachment = [[TGUnsupportedMediaAttachment alloc] init];
         [mediaAttachments addObject:unsupportedAttachment];
-        IOS6_NOOP_LOG(@"TRACE media unsupported cid=%lld mid=%d class=%@", cid, mid, NSStringFromClass([media class]));
     }
     else if ([media isKindOfClass:[TLMessageMedia$messageMediaDocument class]])
     {
@@ -302,7 +280,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
                 TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
                 [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", videoMedia.videoId, videoMedia.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
                 videoMedia.videoInfo = videoInfo;
-                IOS6_NOOP_LOG(@"MEDIA document promoted to video id=%lld dc=%d size=%d duration=%d dims=%.0fx%.0f round=%d mime=%@", videoMedia.videoId, documentAttachment.datacenterId, documentAttachment.size, videoMedia.duration, videoMedia.dimensions.width, videoMedia.dimensions.height, videoMedia.roundMessage ? 1 : 0, documentAttachment.mimeType);
             } else if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
                 TGDocumentAttributeAudio *audio = (TGDocumentAttributeAudio *)attribute;
                 
@@ -314,9 +291,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
                     audioMedia.duration = audio.duration;
                     audioMedia.fileSize = documentAttachment.size;
                     audioMedia.ios6OriginInfo = origin;
-                    IOS6_NOOP_LOG(@"MEDIA document promoted to voice audio id=%lld dc=%d size=%d duration=%d mime=%@", audioMedia.audioId, audioMedia.datacenterId, audioMedia.fileSize, audioMedia.duration, documentAttachment.mimeType);
-                } else {
-                    IOS6_NOOP_LOG(@"MEDIA document kept as music id=%lld dc=%d size=%d duration=%d mime=%@", documentAttachment.documentId, documentAttachment.datacenterId, documentAttachment.size, audio.duration, documentAttachment.mimeType);
                 }
             } else if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]]) {
                 isAnimated = true;
@@ -327,19 +301,14 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         
         if (isSticker) {
             [mediaAttachments addObject:documentAttachment];
-            IOS6_NOOP_LOG(@"STICKER document kept as sticker cid=%lld mid=%d id=%lld mime=%@ animated=%d attrs=%d", cid, mid, documentAttachment.documentId, documentAttachment.mimeType, isAnimated ? 1 : 0, (int)documentAttachment.attributes.count);
             if (mediaLifetime != nil)
                 *mediaLifetime = videoTTLSeconds;
             return mediaAttachments;
         }
         
-        bool isRoundVideo = videoMedia != nil && videoMedia.roundMessage;
-        if (!isRoundVideo && videoMedia != nil && TGIOS6ShouldRepairRoundVideoDocument(videoMedia.duration, videoMedia.dimensions, videoMedia.caption, videoMedia.hasStickers, documentAttachment.mimeType))
-        {
+        if (videoMedia != nil && (documentMedia.flags & (1 << 7)))
             videoMedia.roundMessage = true;
-            isRoundVideo = true;
-            IOS6_NOOP_LOG(@"MEDIA roundRepair document cid=%lld mid=%d id=%lld duration=%d dims=%.0fx%.0f mime=%@", cid, mid, videoMedia.videoId, videoMedia.duration, videoMedia.dimensions.width, videoMedia.dimensions.height, documentAttachment.mimeType);
-        }
+        bool isRoundVideo = videoMedia != nil && videoMedia.roundMessage;
         if (isRoundVideo)
             isAnimated = false;
 
@@ -363,13 +332,12 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
             [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", videoMedia.videoId, videoMedia.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
             videoMedia.videoInfo = videoInfo;
-            IOS6_NOOP_LOG(@"MEDIA smallMp4GifLike document cid=%lld mid=%d id=%lld size=%d dims=%.0fx%.0f mime=%@", cid, mid, videoMedia.videoId, documentAttachment.size, videoMedia.dimensions.width, videoMedia.dimensions.height, documentAttachment.mimeType);
         }
         
         NSString *safeFileName = [documentAttachment safeFileName];
         NSString *lowerSafeFileName = [safeFileName lowercaseString];
         bool isGifFile = [documentAttachment.mimeType isEqualToString:@"image/gif"] || [lowerSafeFileName.pathExtension isEqualToString:@"gif"];
-        bool isGifLikeMp4 = !isRoundVideo && [documentAttachment.mimeType isEqualToString:@"video/mp4"] && (isSmallGifLikeMp4 || isAnimated || [lowerSafeFileName isEqualToString:@"animation.mp4"] || (videoMedia != nil && TGIOS6ShouldTreatVideoDocumentAsGifLike(videoMedia.duration, videoMedia.dimensions, nil, videoMedia.hasStickers, documentAttachment.mimeType, safeFileName)));
+        bool isGifLikeMp4 = !isRoundVideo && [documentAttachment.mimeType isEqualToString:@"video/mp4"] && (isSmallGifLikeMp4 || isAnimated || [lowerSafeFileName isEqualToString:@"animation.mp4"]);
         if (isGifFile || isGifLikeMp4)
         {
             isAnimated = true;
@@ -388,7 +356,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             if (!hasAnimatedAttribute)
                 documentAttachment.attributes = [documentAttachment.attributes arrayByAddingObject:[[TGDocumentAttributeAnimated alloc] init]];
 
-            IOS6_NOOP_LOG(@"MEDIA gifLikeDocument cid=%lld mid=%d id=%lld mime=%@ file=%@", cid, mid, documentAttachment.documentId, documentAttachment.mimeType, safeFileName);
         }
         if (videoTTLSeconds > 0 && videoTTLSeconds <= 60) {
             isAnimated = false;
@@ -413,22 +380,14 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
             [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", videoMedia.videoId, videoMedia.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
             videoMedia.videoInfo = videoInfo;
-            IOS6_NOOP_LOG(@"MEDIA document mime promoted to video id=%lld dc=%d size=%d dims=%.0fx%.0f mime=%@", videoMedia.videoId, documentAttachment.datacenterId, documentAttachment.size, videoMedia.dimensions.width, videoMedia.dimensions.height, documentAttachment.mimeType);
         }
         
         if (videoMedia != nil && !isAnimated) {
             [mediaAttachments addObject:videoMedia];
-            IOS6_NOOP_LOG(@"TRACE media result cid=%lld mid=%d type=video videoId=%lld size=%d mime=%@ animated=%d", cid, mid, videoMedia.videoId, documentAttachment.size, documentAttachment.mimeType, isAnimated ? 1 : 0);
         } else if (audioMedia != nil && !isAnimated && !isSticker) {
             [mediaAttachments addObject:audioMedia];
-            IOS6_NOOP_LOG(@"TRACE media result cid=%lld mid=%d type=audio audioId=%lld size=%d mime=%@", cid, mid, audioMedia.audioId, audioMedia.fileSize, documentAttachment.mimeType);
         } else {
-            if (videoMedia != nil && isAnimated)
-                IOS6_NOOP_LOG(@"MEDIA document kept as animated document id=%lld mime=%@", documentAttachment.documentId, documentAttachment.mimeType);
-            else
-                IOS6_NOOP_LOG(@"MEDIA document kept as file id=%lld dc=%d size=%d attrs=%d mime=%@", documentAttachment.documentId, documentAttachment.datacenterId, documentAttachment.size, (int)documentAttachment.attributes.count, documentAttachment.mimeType);
             [mediaAttachments addObject:documentAttachment];
-            IOS6_NOOP_LOG(@"TRACE media result cid=%lld mid=%d type=document docId=%lld size=%d mime=%@ animated=%d", cid, mid, documentAttachment.documentId, documentAttachment.size, documentAttachment.mimeType, isAnimated ? 1 : 0);
         }
         
         if (mediaLifetime != nil) {
@@ -439,7 +398,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
     {
         TGWebPageMediaAttachment *webPage = [[TGWebPageMediaAttachment alloc] initWithTelegraphWebPageDesc:((TLMessageMedia$messageMediaWebPage *)media).webpage];        
         [mediaAttachments addObject:webPage];
-        IOS6_NOOP_LOG(@"TRACE media webpage cid=%lld mid=%d class=%@", cid, mid, NSStringFromClass([media class]));
     } else if ([media isKindOfClass:[TLMessageMedia$messageMediaGame class]]) {
         TLMessageMedia$messageMediaGame *gameDesc = ((TLMessageMedia$messageMediaGame *)media);
         
@@ -522,6 +480,39 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
     return result;
 }
 
+static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLMessage$modernMessage *message, int64_t cid, int32_t mid)
+{
+    if (message.richMessage == nil)
+        return nil;
+
+    NSMutableDictionary *photos = [[NSMutableDictionary alloc] init];
+    for (id photoDesc in message.richMessagePhotos)
+    {
+        if (![photoDesc isKindOfClass:[TLPhoto class]])
+            continue;
+        TGImageMediaAttachment *photo = [[TGImageMediaAttachment alloc] initWithTelegraphDesc:photoDesc];
+        if (photo.imageId == 0)
+            continue;
+        photo.originInfo = [TGMediaOriginInfo mediaOriginInfoForPhoto:photoDesc cid:cid mid:mid];
+        photos[@(photo.imageId)] = photo;
+    }
+
+    NSMutableDictionary *documents = [[NSMutableDictionary alloc] init];
+    for (id documentDesc in message.richMessageDocuments)
+    {
+        if (![documentDesc isKindOfClass:[TLDocument class]])
+            continue;
+        TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:documentDesc];
+        if (document.documentId == 0)
+            continue;
+        document.originInfo = [TGMediaOriginInfo mediaOriginInfoForDocument:documentDesc cid:cid mid:mid];
+        documents[@(document.documentId)] = document;
+    }
+
+    TGRichMessage *richMessage = [[TGRichMessage alloc] initWithRtl:message.richMessage.rtl part:message.richMessage.part blocks:message.richMessage.blocks photos:photos documents:documents];
+    return [[TGRichMessageMediaAttachment alloc] initWithRichMessage:richMessage];
+}
+
 - (id)initWithTelegraphMessageDesc:(TLMessage *)desc
 {
     self = [super init];
@@ -531,6 +522,7 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         TGReplyMarkupAttachment *replyMarkupAttachment = nil;
         TGMessageEntitiesAttachment *entitiesAttachment = nil;
         TGAuthorSignatureMediaAttachment *signatureAttachment = nil;
+        TGRichMessageMediaAttachment *richMessageAttachment = nil;
         
         if ([desc isKindOfClass:[TLMessage$message class]] || [desc isKindOfClass:[TLMessage$modernMessage class]])
         {
@@ -542,7 +534,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             }
             
             self.mid = concreteMessage.n_id;
-            //self.unread = concreteMessage.flags & 1;
             self.outgoing = concreteMessage.flags & 2;
             self.fromUid = concreteMessage.from_id;
             if ([desc isKindOfClass:[TLMessage$modernMessage class]])
@@ -558,7 +549,7 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             self.date = concreteMessage.date;
             
             self.isSilent = concreteMessage.flags & (1 << 13);
-            self.isEdited = concreteMessage.flags & (1 << 15);
+            self.isEdited = (concreteMessage.flags & (1 << 15)) && !(concreteMessage.flags & (1 << 21));
             
             if ([concreteMessage.to_id isKindOfClass:[TLPeer$peerUser class]])
             {
@@ -699,7 +690,8 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
                         replies:modernMessage.discussion_replies
                         channelId:modernMessage.discussion_channel_id
                         maxId:modernMessage.discussion_max_id
-                        readMaxId:modernMessage.discussion_read_max_id];
+                        readMaxId:modernMessage.discussion_read_max_id
+                        recentRepliers:modernMessage.discussion_recent_repliers];
                     self.contentProperties = discussionProperties;
                 }
 
@@ -804,13 +796,19 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
             {
                 signatureAttachment = [[TGAuthorSignatureMediaAttachment alloc] initWithSignature:((TLMessage$modernMessage *)desc).post_author];
             }
+
+            if ([desc isKindOfClass:[TLMessage$modernMessage class]])
+            {
+                richMessageAttachment = TGRichMessageAttachmentForModernMessage((TLMessage$modernMessage *)desc, self.cid, self.mid);
+                if (richMessageAttachment != nil && self.text.length == 0)
+                    self.text = [richMessageAttachment.richMessage plainText];
+            }
         }
         else if ([desc isKindOfClass:[TLMessage$modernMessageService class]])
         {
             TLMessage$modernMessageService *concreteMessage = (TLMessage$modernMessageService *)desc;
             
             self.mid = concreteMessage.n_id;
-            //self.unread = concreteMessage.flags & 1;
             self.outgoing = concreteMessage.flags & 2;
             self.fromUid = concreteMessage.senderPeerId != 0 ? concreteMessage.senderPeerId : concreteMessage.from_id;
             if (concreteMessage.senderPeerId == 0 && self.fromUid > 0)
@@ -940,6 +938,15 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
                 mediaAttachments = array;
             }
         }
+        
+        if (richMessageAttachment != nil)
+        {
+            NSMutableArray *array = [[NSMutableArray alloc] init];
+            if (mediaAttachments != nil)
+                [array addObjectsFromArray:mediaAttachments];
+            [array addObject:richMessageAttachment];
+            mediaAttachments = array;
+        }
 
         self.mediaAttachments = mediaAttachments;
     }
@@ -955,7 +962,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -1212,7 +1218,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret1_DecryptedMessage_decryptedMessageService class]])
         {
             Secret1_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret1_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret1_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {
@@ -1249,7 +1254,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -1507,7 +1511,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret17_DecryptedMessage_decryptedMessageService class]])
         {
             Secret17_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret17_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret17_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {
@@ -1563,7 +1566,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -1821,7 +1823,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret20_DecryptedMessage_decryptedMessageService class]])
         {
             Secret20_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret20_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret20_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {
@@ -1877,7 +1878,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -2153,7 +2153,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret23_DecryptedMessage_decryptedMessageService class]])
         {
             Secret23_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret23_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret23_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {
@@ -2208,7 +2207,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -2632,7 +2630,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret46_DecryptedMessage_decryptedMessageService class]])
         {
             Secret46_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret46_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret46_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {
@@ -2705,7 +2702,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -3160,7 +3156,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret66_DecryptedMessage_decryptedMessageService class]])
         {
             Secret66_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret66_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret66_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {
@@ -3233,7 +3228,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         self.fromUid = fromUid;
         self.toUid = TGTelegraphInstance.clientUserId;
         self.date = date;
-        //self.unread = true;
         self.outgoing = false;
         self.cid = conversationId;
         
@@ -3690,7 +3684,6 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         else if ([desc isKindOfClass:[Secret73_DecryptedMessage_decryptedMessageService class]])
         {
             Secret73_DecryptedMessage_decryptedMessageService *concreteMessage = (Secret73_DecryptedMessage_decryptedMessageService *)desc;
-            //self.unread = false;
             
             if ([concreteMessage.action isKindOfClass:[Secret73_DecryptedMessageAction_decryptedMessageActionSetMessageTTL class]])
             {

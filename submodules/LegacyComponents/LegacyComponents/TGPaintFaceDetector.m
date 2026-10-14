@@ -1,8 +1,8 @@
 #import "TGPaintFaceDetector.h"
 #import "TGPhotoEditorUtils.h"
 #import "TGPaintUtils.h"
-#import <ImageIO/ImageIO.h>
 
+#if !defined(ONEGRAM_ARMV6)
 @interface CIImage (LegacyComponentsOrientation)
 - (CIImage *)imageByApplyingOrientation:(int)orientation;
 @end
@@ -13,6 +13,7 @@
 @property (nonatomic, readonly) BOOL hasSmile;
 @property (nonatomic, readonly) float faceAngle;
 @end
+#endif
 
 @interface TGPaintFace ()
 
@@ -39,6 +40,14 @@
 
 + (SSignal *)detectFacesInImage:(UIImage *)image originalSize:(CGSize)originalSize
 {
+#if defined(ONEGRAM_ARMV6)
+    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        [subscriber putNext:@[]];
+        [subscriber putCompletion];
+        return nil;
+    }];
+#else
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
         if (NSClassFromString(@"CIDetector") == Nil || NSClassFromString(@"CIImage") == Nil)
@@ -78,6 +87,7 @@
         
         return nil;
     }];
+#endif
 }
 
 + (int)tiffOrientationFromImageOrientation:(UIImageOrientation)orientation
@@ -113,6 +123,7 @@
     }
 }
 
+#if !defined(ONEGRAM_ARMV6)
 + (TGPaintFace *)_paintFaceForFaceFeature:(CIFaceFeature *)faceFeature initialSize:(CGSize)initialSize targetSize:(CGSize)targetSize
 {
     if (faceFeature == nil)
@@ -136,6 +147,8 @@
     
     return [TGPaintFace faceWithBounds:[self _transposedRect:faceFeature.bounds initialSize:initialSize targetSize:targetSize] angle:[self _transposedAngle:TGDegreesToRadians(faceAngle)] leftEye:leftEye rightEye:rightEye mouth:mouth];
 }
+
+#endif
 
 + (CGFloat)_transposedAngle:(CGFloat)angle
 {

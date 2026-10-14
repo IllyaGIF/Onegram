@@ -12,6 +12,9 @@
 #import "LOTAssetGroup.h"
 #import "LOTLayerGroup.h"
 #import "LOTAnimationCache.h"
+#if ONEGRAM_ARMV6
+#import "../../../../../submodules/MtProtoKit/thirdparty/AFNetworking/AFJSONUtilities.h"
+#endif
 
 @implementation LOTComposition
 
@@ -33,8 +36,12 @@
   NSError *error;
   NSString *filePath = [bundle pathForResource:animationName ofType:@"json"];
   NSData *jsonData = [[NSData alloc] initWithContentsOfFile:filePath];
+#if ONEGRAM_ARMV6
+  NSDictionary *JSONObject = jsonData ? AFJSONDecode(jsonData, &error) : nil;
+#else
   NSDictionary  *JSONObject = jsonData ? [NSJSONSerialization JSONObjectWithData:jsonData
                                                                          options:0 error:&error] : nil;
+#endif
   if (JSONObject && !error) {
     LOTComposition *laScene = [[self alloc] initWithJSON:JSONObject withAssetBundle:bundle];
     [[LOTAnimationCache sharedCache] addAnimation:laScene forKey:animationName];
@@ -55,8 +62,12 @@
   
   NSError *error;
   NSData *jsonData = [[NSData alloc] initWithContentsOfFile:filePath];
+#if ONEGRAM_ARMV6
+  NSDictionary *JSONObject = jsonData ? AFJSONDecode(jsonData, &error) : nil;
+#else
   NSDictionary  *JSONObject = jsonData ? [NSJSONSerialization JSONObjectWithData:jsonData
                                                                          options:0 error:&error] : nil;
+#endif
   if (JSONObject && !error) {
     LOTComposition *laScene = [[self alloc] initWithJSON:JSONObject withAssetBundle:[NSBundle mainBundle]];
     laScene.rootDirectory = [filePath stringByDeletingLastPathComponent];

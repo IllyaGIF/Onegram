@@ -1,7 +1,6 @@
 #import "TLChatParticipants$chatParticipantsForbidden.h"
 #import "TLMetaClassStore.h"
 
-//chatParticipantsForbidden flags:# chat_id:int self_participant:flags.0?ChatParticipant = ChatParticipants
 
 @implementation TLChatParticipants$chatParticipantsForbidden
 

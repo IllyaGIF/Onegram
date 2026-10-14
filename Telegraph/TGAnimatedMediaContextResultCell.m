@@ -1,4 +1,5 @@
 #import "TGAnimatedMediaContextResultCell.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import <AVFoundation/AVFoundation.h>
@@ -84,7 +85,6 @@
         [self addSubview:_durationBackground];
         [self addSubview:_durationLabel];
         
-        //self.backgroundColor = UIColorRGB(0xdddddd);
         
         _converterDisposable = [[SMetaDisposable alloc] init];
         
@@ -289,17 +289,10 @@
                     bool exists = [[NSFileManager defaultManager] fileExistsAtPath:filePath];
                     UIImage *videoFirstFrame = nil;
                     if (exists && [document.mimeType isEqualToString:@"video/mp4"]) {
-                        AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:filePath] options:nil];
-                        AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-                        imageGenerator.appliesPreferredTrackTransform = true;
-                        imageGenerator.maximumSize = CGSizeMake(256.0f, 256.0f);
-                        CGImageRef imageRef = [imageGenerator copyCGImageAtTime:kCMTimeZero actualTime:NULL error:NULL];
-                        if (imageRef == NULL)
-                            imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(1, 30) actualTime:NULL error:NULL];
-                        if (imageRef != NULL) {
-                            videoFirstFrame = [[UIImage alloc] initWithCGImage:imageRef];
-                            CGImageRelease(imageRef);
-                        }
+                        NSURL *videoUrl = [NSURL fileURLWithPath:filePath];
+                        videoFirstFrame = OGPlatformVideoThumbnailAtURL(videoUrl, 0.0, CGSizeMake(256.0f, 256.0f));
+                        if (videoFirstFrame == nil)
+                            videoFirstFrame = OGPlatformVideoThumbnailAtURL(videoUrl, 1.0 / 30.0, CGSizeMake(256.0f, 256.0f));
                     }
                     
                     TGDispatchOnMainThread(^{

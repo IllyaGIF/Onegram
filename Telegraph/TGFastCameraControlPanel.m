@@ -51,10 +51,15 @@
         _videoLabel.alpha = 0.0f;
         _videoLabel.attributedText = [[NSAttributedString alloc] initWithString:TGLocalized(@"Camera.VideoMode") attributes:@{ NSForegroundColorAttributeName: [UIColor whiteColor], NSKernAttributeName: @(2.0f), NSFontAttributeName: [TGCameraInterfaceAssets normalFontOfSize:13] }];
         _videoLabel.backgroundColor = [UIColor clearColor];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+        _videoLabel.shadowColor = [UIColor blackColor];
+        _videoLabel.shadowOffset = CGSizeZero;
+#else
         _videoLabel.layer.shadowOpacity = 0.8f;
         _videoLabel.layer.shadowRadius = 3.0f;
         _videoLabel.layer.shadowColor = [UIColor blackColor].CGColor;
         _videoLabel.layer.shadowOffset = CGSizeMake(0.0f, 0.0f);
+#endif
         [_videoLabel sizeToFit];
         _videoLabel.frame = CGRectMake(70.0f, _videoButton.frame.origin.y + 18.0f, _videoLabel.frame.size.width, _videoLabel.frame.size.height);
         [self addSubview:_videoLabel];
@@ -67,10 +72,15 @@
         _photoLabel.alpha = 0.0f;
         _photoLabel.attributedText = [[NSAttributedString alloc] initWithString:TGLocalized(@"Camera.PhotoMode") attributes:@{ NSForegroundColorAttributeName: [UIColor whiteColor], NSKernAttributeName: @(2.0f), NSFontAttributeName: [TGCameraInterfaceAssets normalFontOfSize:13] }];
         _photoLabel.backgroundColor = [UIColor clearColor];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 30200
+        _photoLabel.shadowColor = [UIColor blackColor];
+        _photoLabel.shadowOffset = CGSizeZero;
+#else
         _photoLabel.layer.shadowOpacity = 0.8f;
         _photoLabel.layer.shadowRadius = 3.0f;
         _photoLabel.layer.shadowColor = [UIColor blackColor].CGColor;
         _photoLabel.layer.shadowOffset = CGSizeMake(0.0f, 0.0f);
+#endif
         [_photoLabel sizeToFit];
         _photoLabel.frame = CGRectMake(70.0f, _photoButton.frame.origin.y + 18.0f, _photoLabel.frame.size.width, _photoLabel.frame.size.height);
         [self addSubview:_photoLabel];

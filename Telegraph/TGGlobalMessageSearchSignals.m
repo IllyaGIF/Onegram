@@ -691,7 +691,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
                     
                     NSMutableArray *result = [[NSMutableArray alloc] init];
                     
-                    NSArray *categoryOrder = @[@(TGPeerRatingCategoryPeople)/*, @(TGPeerRatingCategoryGroups), @(TGPeerRatingCategoryBots)*/];
+                    NSArray *categoryOrder = @[@(TGPeerRatingCategoryPeople)];
                     
                     for (NSNumber *category in categoryOrder) {
                         TGDialogListRecentPeers *parsedCategory = parsedCategories[category];

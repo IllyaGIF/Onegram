@@ -10,6 +10,14 @@
 
 #import "NSDecimalNumber+Stripe_Currency.h"
 
+@protocol STPPaymentSummaryItem <NSObject>
+@property (nonatomic, readonly) NSDecimalNumber *amount;
+@end
+
+@protocol STPPaymentSummaryItemClass <NSObject>
++ (id<STPPaymentSummaryItem>)summaryItemWithLabel:(NSString *)label amount:(NSDecimalNumber *)amount;
+@end
+
 @implementation STPPaymentContextAmountModel {
     NSInteger _paymentAmount;
     NSArray *_paymentSummaryItems;
@@ -40,7 +48,7 @@ FAUXPAS_IGNORED_IN_CLASS(APIAvailability)
         return _paymentAmount;
     }
     else {
-        id lastItem = _paymentSummaryItems.lastObject;
+        id<STPPaymentSummaryItem> lastItem = _paymentSummaryItems.lastObject;
         return [[lastItem amount] stp_amountWithCurrency:paymentCurrency];
     }
 }
@@ -50,8 +58,9 @@ FAUXPAS_IGNORED_IN_CLASS(APIAvailability)
     if (_paymentSummaryItems == nil) {
         NSDecimalNumber *amount = [NSDecimalNumber stp_decimalNumberWithAmount:_paymentAmount
                                                                       currency:paymentCurrency];
-        id totalItem = [(id)NSClassFromString(@"PKPaymentSummaryItem") summaryItemWithLabel:companyName
-                                                                              amount:amount];
+        Class<STPPaymentSummaryItemClass> summaryItemClass = NSClassFromString(@"PKPaymentSummaryItem");
+        id<STPPaymentSummaryItem> totalItem = [summaryItemClass summaryItemWithLabel:companyName
+                                                                            amount:amount];
         return @[totalItem];
         
     }

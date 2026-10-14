@@ -7,7 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
-#import <PassKit/PassKit.h>
+#import "STPPassKitCompatibility.h"
 #import "STPBlocks.h"
 
 NS_ASSUME_NONNULL_BEGIN

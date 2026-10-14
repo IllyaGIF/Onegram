@@ -117,7 +117,7 @@ static BOOL STPAnalyticsCollectionDisabled = YES;
 - (void)logTokenCreationAttemptWithConfiguration:(STPPaymentConfiguration *)configuration {
     
     NSSortDescriptor *sortDescriptor = [NSSortDescriptor sortDescriptorWithKey:NSStringFromSelector(@selector(description)) ascending:YES];
-    NSArray *productUsage = [self.apiUsage sortedArrayUsingDescriptors:@[sortDescriptor]];
+    NSArray *productUsage = [[self.apiUsage allObjects] sortedArrayUsingDescriptors:@[sortDescriptor]];
     NSDictionary *configurationDictionary = [self.class serializeConfiguration:configuration];
     NSMutableDictionary *payload = [self.class commonPayload];
     [payload addEntriesFromDictionary:@{

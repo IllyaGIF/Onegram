@@ -138,7 +138,6 @@
         fixedSharedLink = [NSString stringWithFormat:@"https://t.me/%@?game=%@", shareGameData.botName, shareGameData.shareName];
     }
     
-    //__unsafe_unretained TGWebAppController *weakSelf = self;
     __weak UIViewController *weakParentController = parentController;
     id _menuController = [TGShareMenu presentInParentController:parentController menuController:nil buttonTitle:TGLocalized(@"ShareMenu.CopyShareLinkGame") buttonAction:^
     {
@@ -151,7 +150,6 @@
         }
     } shareAction:^(NSArray *peerIds, NSString *caption)
     {
-        //__strong TGWebAppController *strongSelf = weakSelf;
         if (peerIds.count == 0)
             return;
         
@@ -182,7 +180,6 @@
         }] startWithNext:nil error:nil completed:^{
             [progressWindow dismissWithSuccess];
         }];
-        //[strongSelf->_shareDisposable setDisposable:disposable];
     } externalShareItemSignal:nil sourceView:parentController.view sourceRect:^CGRect {
         __strong UIViewController *strongParentController = weakParentController;
         if (strongParentController != nil) {
@@ -234,16 +231,6 @@
         UIScrollView *scrollView = TGUIWebViewScrollView(webView);
         scrollView.alwaysBounceVertical = false;
         scrollView.alwaysBounceHorizontal = false;
-        /*id scriptObject = [webView performSelector:NSSelectorFromString(TGEncodeText(@"xjoepxTdsjquPckfdu", -1))];
-        if (scriptObject != nil) {
-            __weak TGWebAppController *weakSelf = self;
-            [scriptObject setValue:[[TGWebAppControllerLegacyInterface alloc] initWithEventReceived:^(id event) {
-                __strong TGWebAppController *strongSelf = weakSelf;
-                if (strongSelf != nil) {
-                    TGLog(@"legacy event received: %@", event);
-                }
-            }] forKey:@"TelegramEventProxy"];
-        }*/
         _webView = webView;
         if ([[_url.absoluteString lowercaseString] hasPrefix:@"http://"] || [[_url.absoluteString lowercaseString] hasPrefix:@"https://"]) {
             [webView loadRequest:[NSURLRequest requestWithURL:_url]];

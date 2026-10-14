@@ -1,4 +1,6 @@
 #import "TGContactCell.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -17,6 +19,7 @@
 #import <QuartzCore/QuartzCore.h>
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGContactListAppearance.h"
 
 @interface TGContactCell ()
 {
@@ -121,13 +124,31 @@
 {
     _presentation = presentation;
     
-    self.backgroundColor = presentation.pallete.backgroundColor;
+    self.backgroundColor = _contactListAppearance.rowBackgroundColor ?: presentation.pallete.backgroundColor;
+    _contactContentsView.titleColor = _contactListAppearance.rowTitleColor;
     
     _contactContentsView.presentation = presentation;
     _subtitleLabel.textColor = _subtitleActive ? _presentation.pallete.accentColor : _presentation.pallete.secondaryTextColor;
     
-    _separatorLayer.backgroundColor = [TGPresentation brandedIOS6Style] ? UIColorRGB(0xd7d7d7).CGColor : presentation.pallete.separatorColor.CGColor;
+    UIColor *brandedSeparatorColor = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ContactListAppearance].separatorColor : nil;
+    _separatorLayer.backgroundColor = (brandedSeparatorColor ?: presentation.pallete.separatorColor).CGColor;
     self.selectedBackgroundView.backgroundColor = presentation.pallete.selectionColor;
+}
+
+- (void)setContactListAppearance:(OGContactListAppearance *)contactListAppearance
+{
+    _contactListAppearance = contactListAppearance;
+    self.backgroundColor = contactListAppearance.rowBackgroundColor ?: _presentation.pallete.backgroundColor;
+    _contactContentsView.titleColor = contactListAppearance.rowTitleColor;
+    _contactContentsView.titleRightInset = contactListAppearance.rowTitleRightInset;
+    [_contactContentsView setNeedsDisplay];
+    [self setNeedsLayout];
+}
+
+- (void)setSeparatorHidden:(bool)separatorHidden
+{
+    _separatorHidden = separatorHidden;
+    _separatorLayer.hidden = separatorHidden;
 }
 
 - (void)setSubtitleText:(NSString *)subtitleText
@@ -258,10 +279,7 @@
     {
         _avatarView.clipsToBounds = false;
         _avatarView.layer.cornerRadius = 8.0f;
-        _avatarView.layer.shadowColor = [UIColor blackColor].CGColor;
-        _avatarView.layer.shadowOpacity = 0.18f;
-        _avatarView.layer.shadowRadius = 2.0f;
-        _avatarView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        OGPlatformApplyViewShadow(_avatarView, [UIColor blackColor], 0.18f, 2.0f, CGSizeMake(0.0f, 1.0f));
     }
     
     if (_checkButton != nil)
@@ -359,13 +377,14 @@
 
     if ([TGPresentation brandedIOS6Style])
     {
-        CGFloat separatorHeight = TGScreenPixel;
+        CGFloat brandedSeparatorHeight = [TGPresentation brandedIOS6ContactListAppearance].separatorHeight;
+        CGFloat separatorHeight = brandedSeparatorHeight > FLT_EPSILON ? brandedSeparatorHeight : TGScreenPixel;
         CGFloat avatarLeft = _selectionEnabled ? 44.0f : 8.0f;
         CGFloat avatarSize = 34.0f;
         bool compactListStyle = _hideAvatar && _subtitleLabel.hidden;
         _separatorLayer.frame = CGRectMake(0.0f, self.frame.size.height - separatorHeight, self.frame.size.width, separatorHeight);
-        _contactContentsView.titleFont = TGSystemFontOfSize(compactListStyle ? 20.0f : 16.0f);
-        _contactContentsView.titleBoldFont = TGBoldSystemFontOfSize(compactListStyle ? 20.0f : 16.0f);
+        _contactContentsView.titleFont = compactListStyle && _contactListAppearance != nil ? _contactListAppearance.rowTitleFont : TGSystemFontOfSize(compactListStyle ? 20.0f : 16.0f);
+        _contactContentsView.titleBoldFont = compactListStyle && _contactListAppearance != nil ? _contactListAppearance.rowTitleBoldFont : TGBoldSystemFontOfSize(compactListStyle ? 20.0f : 16.0f);
         _subtitleLabel.dateFont = TGSystemFontOfSize(11.0f);
         _subtitleLabel.dateTextFont = _subtitleLabel.dateFont;
         _subtitleLabel.dateLabelFont = _subtitleLabel.dateFont;
@@ -411,8 +430,6 @@
     self.selectedBackgroundView.frame = frame;
     
     CGSize viewSize = self.contentView.frame.size;
-    //viewSize.width = MAX(viewSize.width, frame.size.width);
-    //self.contentView.frame = CGRectMake(self.contentView.frame.origin.x, self.contentView.frame.origin.y, viewSize.width, viewSize.height);
     
     int leftPadding = _selectionEnabled ? (TGIsPad() ? 45.0f : 34.0f) : 0;
     if (self.editing)
@@ -422,9 +439,9 @@
     if (TGIsPad())
         avatarWidth += 8;
     
-    CGSize titleSizeGeneric = CGSizeMake(viewSize.width - avatarWidth - 9 - 5 - leftPadding, _contactContentsView.titleFont.lineHeight);
+    CGSize titleSizeGeneric = CGSizeMake(viewSize.width - avatarWidth - 9 - 5 - leftPadding, OGPlatformFontLineHeight(_contactContentsView.titleFont));
     
-    CGSize subtitleSize = CGSizeMake(viewSize.width - avatarWidth - 9 - 5 - leftPadding, _subtitleLabel.font.lineHeight);
+    CGSize subtitleSize = CGSizeMake(viewSize.width - avatarWidth - 9 - 5 - leftPadding, OGPlatformFontLineHeight(_subtitleLabel.font));
     
     CGRect avatarFrame = CGRectMake(leftPadding + 14, 4.0f, 40, 40);
     if (TGIsPad())
@@ -529,7 +546,6 @@
                 bottomStripe.backgroundColor = UIColorRGB(0xd5dee5);
                 [_highlightedBackgroundView addSubview:bottomStripe];
                 
-                //[self.contentView insertSubview:_highlightedBackgroundView atIndex:0];
             }
             
             _highlightedBackgroundView.hidden = false;

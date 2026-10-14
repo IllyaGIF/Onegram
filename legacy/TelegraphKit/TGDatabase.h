@@ -182,6 +182,9 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)dispatchOnDatabaseThread:(dispatch_block_t)block synchronous:(bool)synchronous;
 #endif
 - (void)dispatchOnIndexThread:(dispatch_block_t)block synchronous:(bool)synchronous;
+- (void)beginStorageBatch;
+- (void)endStorageBatch;
+- (void)performStorageBatch:(dispatch_block_t)block;
 
 - (void)closeDatabase;
 - (void)dropDatabase;
@@ -192,6 +195,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)applyPts:(int)pts date:(int)date seq:(int)seq qts:(int)qts unreadCount:(int)unreadCount;
 - (void)setUnreadCount:(int)unreadCount;
 - (TGDatabaseState)databaseState;
+- (bool)startupSynchronizationQueueKnownEmpty;
 
 - (int)cachedUnreadCount;
 - (int)unreadCountForConversation:(int64_t)conversationId;
@@ -242,6 +246,8 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 
 - (void)storeConversationList:(NSArray *)conversations replace:(bool)replace;
 - (void)storeConversationList:(NSArray *)conversations replace:(bool)replace folderId:(int32_t)folderId;
+- (void)loadDialogListSynchronizationPeerIdsForFolder:(int32_t)folderId completion:(void (^)(NSSet *peerIds))completion;
+- (NSSet *)reconcileDialogListForFolder:(int32_t)folderId initialPeerIds:(NSSet *)initialPeerIds receivedPeerIds:(NSSet *)receivedPeerIds beforeDate:(int32_t)beforeDate;
 - (void)setConversationArchived:(int64_t)conversationId archived:(bool)archived;
 
 - (void)loadConversationListFromDate:(int)date limit:(int)limit excludeConversationIds:(NSArray *)excludeConversationIds completion:(void (^)(NSArray *result, bool loadedAllRegular))completion;
@@ -262,6 +268,8 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)setLocalUserId:(int)localUserId;
 - (void)setLocalUserStatusPrivacyRules:(TGNotificationPrivacyAccountSetting *)privacyRules changedLoadedUsers:(void (^)(NSArray *))changedLoadedUsers;
 - (TGUser *)loadUser:(int)uid;
+- (NSDictionary *)loadUsersForUserIds:(NSArray *)userIds;
+- (void)preloadUsersForUserIds:(NSArray *)userIds;
 - (int)loadCachedPhoneIdByUid:(int)uid;
 - (void)storeUsers:(NSArray *)userList;
 - (int)loadUsersOnlineCount:(NSArray *)uids alwaysOnlineUid:(int)alwaysOnlineUid;
@@ -283,25 +291,13 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (NSArray *)messagesWithDateInConversation:(int64_t)peerId date:(int32_t)date;
 - (void)loadMessagesFromConversationDownwards:(int64_t)conversationId minMid:(int)argMinMid minLocalMid:(int)argMinLocalMid minDate:(int)argMinDate limit:(int)argLimit completion:(void (^)(NSArray *messages))completion;
 
-//- (void)addMessagesToConversation:(NSArray *)messages conversationId:(int64_t)conversationId updateConversation:(TGConversation *)conversation dispatch:(bool)dispatch countUnread:(bool)countUnread;
-//- (void)addMessagesToConversation:(NSArray *)argMessages conversationId:(int64_t)conversationId updateConversation:(TGConversation *)conversation dispatch:(bool)dispatch countUnread:(bool)countUnread updateDates:(bool)updateDates;
 
 - (void)replaceContentPropertiesInMessageWithId:(int32_t)messageId contentProperties:(NSDictionary *)contentProperties;
 - (NSArray *)generateLocalMids:(int)count;
-//- (void)deleteMessages:(NSArray *)mids populateActionQueue:(bool)populateActionQueue fillMessagesByConversationId:(NSMutableDictionary *)messagesByConversationId;
-//- (void)deleteConversation:(int64_t)conversationId populateActionQueue:(bool)populateActionQueue;
-//- (void)clearConversation:(int64_t)conversationId populateActionQueue:(bool)populateActionQueue;
-//- (void)markMessagesAsReadInConversation:(int64_t)conversationId maxDate:(int32_t)maxDate referenceDate:(int32_t)referenceDate;
 
 #ifdef __cplusplus
-/*- (void)updateMessage:(int)mid peerId:(int64_t)peerId flags:(std::vector<TGDatabaseMessageFlagValue> const &)flags media:(NSArray *)media dispatch:(bool)dispatch;
-- (void)updateMessage:(int)mid peerId:(int64_t)peerId flags:(std::vector<TGDatabaseMessageFlagValue> const &)flags media:(NSArray *)media text:(NSString *)text dispatch:(bool)dispatch;*/
 #endif
 
-//- (void)updateMessageTextOrMedia:(int)mid peerId:(int64_t)peerId media:(NSArray *)media text:(NSString *)text messageFlags:(NSNumber *)flags dispatch:(bool)dispatch;
-
-//- (void)updateMessage:(int32_t)mid peerId:(int64_t)peerId withMessage:(TGMessage *)message;
-//- (void)updateMessages:(NSArray *)messages;
 
 - (void)updateMessageViews:(int64_t)peerId messageIdToViews:(NSDictionary *)messageIdToViews;
 - (void)updateMessageRangesPts:(int64_t)peerId messageRanges:(NSArray *)messageRanges pts:(int32_t)pts;
@@ -311,6 +307,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 
 #ifdef __cplusplus
 - (void)messageIdsForTempIds:(NSArray *)tempIds mapping:(std::map<int64_t, int> *)mapping;
+- (void)resolveAndStoreTempMessageIdUpdates:(std::vector<std::pair<int64_t, int> > const &)updates mapping:(std::map<int64_t, int> *)mapping;
 - (void)tempIdsForLocalMessages:(void (^)(std::vector<std::pair<int64_t, int> >))completion;
 #endif
 
@@ -326,7 +323,6 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)storeConversationState:(int64_t)conversationId messageEditingContext:(TGMessageEditingContext *)messageEditingContext forwardMessageDescs:(NSArray *)forwardMessageDescs scrollState:(TGConversationScrollState *)scrollState;
 - (void)storeConversationParticipantData:(int64_t)conversationId participantData:(TGConversationParticipantsData *)participantData;
 
-//- (void)readHistory:(int64_t)conversationId includeOutgoing:(bool)includeOutgoing populateActionQueue:(bool)populateActionQueue minRemoteMid:(int)minRemoteMid completion:(void (^)(bool hasItemsOnActionQueue))completion;
 
 - (void)loadMediaPositionInConversation:(int64_t)conversationId messageId:(int)messageId completion:(void (^)(int position, int count))completion;
 - (NSArray *)loadMediaInConversation:(int64_t)conversationId atMessageId:(int)atMessageId limitAfter:(int)limitAfter count:(int *)count important:(bool)important;
@@ -351,6 +347,9 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)loadPeerNotificationSettings:(int64_t)peerId soundId:(NSNumber **)soundId muteUntil:(NSNumber **)muteUntil previewText:(NSNumber **)previewText messagesMuted:(NSNumber **)messagesMuted notFound:(bool *)notFound;
 - (BOOL)isPeerMuted:(int64_t)peerId;
 - (BOOL)isPeerMuted:(int64_t)peerId forceUpdate:(bool)forceUpdate;
+- (void)preloadPeerMuteStates:(NSArray *)peerIds;
+- (void)preloadConversationCustomProperties:(NSArray *)peerIds;
+- (void)preloadConversationStates:(NSArray *)conversationIds;
 
 - (void)loadPeerNotificationExceptions:(void (^)(NSArray *privateExceptions, NSArray *groupExceptions))completion;
 
@@ -488,6 +487,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 
 - (void)initializeChannel:(TGConversation *)conversation;
 - (void)storeSynchronizedChannels:(NSArray *)channels;
+- (void)storeSynchronizedChannels:(NSArray *)channels replace:(bool)replace folderId:(int32_t)folderId;
 - (void)updateChannels:(NSArray *)channels;
 - (void)updateChannels:(NSArray *)channels updateFeeds:(bool)updateFeeds;
 
@@ -594,6 +594,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 
 - (void)transactionAddMessages:(NSArray *)addMessages updateConversationDatas:(NSDictionary *)updateConversationDatas notifyAdded:(bool)notifyAdded;
 - (void)transactionRemoveMessages:(NSDictionary *)removeMessages updateConversationDatas:(NSDictionary *)updateConversationDatas;
+- (void)removeLegacyContactRegisteredMessages;
 - (void)transactionUpdateMessages:(NSArray *)updateMessages updateConversationDatas:(NSDictionary *)updateConversationDatas;
 - (void)transactionRemoveMessagesInteractive:(NSDictionary *)removeMessagesInteractive keepDates:(bool)keepDates removeMessagesInteractiveForEveryone:(bool) removeMessagesInteractiveForEveryone updateConversationDatas:(NSDictionary *)updateConversationDatas;
 - (void)transactionResetPeerReadStates:(NSDictionary *)resetPeerReadStates;
@@ -607,9 +608,6 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)transactionUpdateFeededChannels:(NSDictionary *)feededChannels newlyJoinedFeedId:(int32_t)newlyJoinedFeedId synchronizeFeededChannels:(bool)synchronizeFeededChannels;
 - (void)transactionCalculateUnreadChats;
 
-// Flushes lightweight conversation/message notifications that were deferred
-// while an iOS 6 application was in the background. Database state itself is
-// always committed immediately.
 - (void)ios6FlushDeferredBackgroundUpdates;
 
 - (void)transactionAddMessages:(NSArray *)addMessages
@@ -672,6 +670,7 @@ readMessageContentsInteractive:(NSDictionary *)readMessageContentsInteractive
 
 - (NSArray *)contactUsersMatchingPhone:(NSString *)phoneNumber;
 
+- (NSDictionary *)_getPinnedConversationDates;
 - (NSArray *)_getPinnedConversations;
 
 - (TGInstantPageScrollState *)loadInstantPageScrollState:(int64_t)webPageId;
@@ -689,7 +688,7 @@ readMessageContentsInteractive:(NSDictionary *)readMessageContentsInteractive
 
 - (int32_t)_unseenPeerMentionsCount:(int64_t)peerId;
 - (int32_t)_nextUnreadMentionMessageId:(int64_t)peerId loadRequiredAfterMessageId:(int32_t *)loadRequiredAfterMessageId;
-- (void)_addUnreadMensionMessageIds:(int64_t)peerId messageIds:(NSArray *)messageIds replaceAfter:(int32_t)replaceAfter afterFinal:(bool)afterFinal;
+- (NSArray *)_addUnreadMensionMessageIds:(int64_t)peerId messageIds:(NSArray *)messageIds replaceAfter:(int32_t)replaceAfter afterFinal:(bool)afterFinal;
 
 - (id<SDisposable>)installReadMessagesAutomaticallyAction:(int64_t)peerId;
 

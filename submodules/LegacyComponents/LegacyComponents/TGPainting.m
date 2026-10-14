@@ -44,6 +44,9 @@
     __weak TGPaintUndoManager *_undoManager;
     NSUInteger _strokeCount;
 }
+- (GLuint)_quad;
+- (void)_bindQuad;
+- (void)_unbindQuad;
 @end
 
 @implementation TGPainting
@@ -77,7 +80,9 @@
         glDeleteTextures(1, &_paintTextureName);
     
     glDeleteBuffers(1, &_quadVBO);
+#if !defined(ONEGRAM_ARMV6)
     glDeleteVertexArraysOES(1, &_quadVAO);
+#endif
     
     if (_reusableFramebuffer != 0)
         glDeleteFramebuffers(1, &_reusableFramebuffer);
@@ -226,10 +231,10 @@
             
             glBlendFunc(GL_ONE, GL_ZERO);
             
-            glBindVertexArrayOES([self _quad]);
+            [self _bindQuad];
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             
-            glBindVertexArrayOES(0);
+            [self _unbindQuad];
             
             glBindTexture(GL_TEXTURE_2D, self.textureName);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -361,10 +366,10 @@
     
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     
-    glBindVertexArrayOES([self _quad]);
+    [self _bindQuad];
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     
-    glBindVertexArrayOES(0);
+    [self _unbindQuad];
 }
 
 - (void)_renderWithProjection:(GLfloat *)projection
@@ -380,10 +385,10 @@
     
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     
-    glBindVertexArrayOES([self _quad]);
+    [self _bindQuad];
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     
-    glBindVertexArrayOES(0);
+    [self _unbindQuad];
 }
 
 #pragma mark -
@@ -457,9 +462,9 @@
     
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     
-    glBindVertexArrayOES([self _quad]);
+    [self _bindQuad];
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glBindVertexArrayOES(0);
+    [self _unbindQuad];
     
     NSUInteger length = width * 4 * height;
     GLubyte *pixels = malloc(sizeof(GLubyte) * length);
@@ -496,9 +501,9 @@
     
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     
-    glBindVertexArrayOES([self _quad]);
+    [self _bindQuad];
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glBindVertexArrayOES(0);
+    [self _unbindQuad];
     
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     NSData *result = [NSData dataWithBytes:pixels length:length];
@@ -612,9 +617,36 @@
     return _reusableFramebuffer;
 }
 
+- (void)_bindQuad
+{
+#if defined(ONEGRAM_ARMV6)
+    [self _quad];
+    glBindBuffer(GL_ARRAY_BUFFER, _quadVBO);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void *)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void *)(sizeof(GLfloat) * 2));
+    glEnableVertexAttribArray(1);
+#else
+    glBindVertexArrayOES([self _quad]);
+#endif
+}
+
+- (void)_unbindQuad
+{
+#if defined(ONEGRAM_ARMV6)
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+#else
+    glBindVertexArrayOES(0);
+#endif
+}
+
 - (GLuint)_quad
 {
+#if defined(ONEGRAM_ARMV6)
+    if (_quadVBO == 0)
+#else
     if (_quadVAO == 0)
+#endif
     {
         [EAGLContext setCurrentContext:self.context];
         CGRect rect = CGRectMake(0, 0, self.size.width, self.size.height);
@@ -633,23 +665,30 @@
             (GLfloat)corners[2].x, (GLfloat)corners[2].y, 1.0, 1.0,
         };
         
+#if !defined(ONEGRAM_ARMV6)
         glGenVertexArraysOES(1, &_quadVAO);
         glBindVertexArrayOES(_quadVAO);
-        
+#endif
         glGenBuffers(1, &_quadVBO);
         glBindBuffer(GL_ARRAY_BUFFER, _quadVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 16, vertices, GL_STATIC_DRAW);
-        
+#if !defined(ONEGRAM_ARMV6)
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void*)0);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void*)8);
         glEnableVertexAttribArray(1);
-        
-        glBindBuffer(GL_ARRAY_BUFFER,0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArrayOES(0);
+#else
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+#endif
     }
     
+#if defined(ONEGRAM_ARMV6)
+    return _quadVBO;
+#else
     return _quadVAO;
+#endif
 }
 
 - (GLfloat *)_projection

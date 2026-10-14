@@ -13,9 +13,9 @@ NSString *const PGPhotoLookupFilterFragmentShaderString = PGShaderString(
      vec3 i1 = floor(index);
      vec3 i2 = clamp(i1 + 1.0, 0.0, 15.0);
      
-     const vec2 offset = vec2(0.001953125, 0.03125); // vec2(0.5 / 256.0, 0.5 / 16.0)
+     const vec2 offset = vec2(0.001953125, 0.03125);
      
-     vec3 color1 = i1 * 0.0625; // 1.0 * 0.0625 = 1.0 / 16.0;
+     vec3 color1 = i1 * 0.0625;
      color1.r = color1.r * 0.0625;
      
      vec3 color2 = i2 * 0.0625;

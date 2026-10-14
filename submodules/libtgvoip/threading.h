@@ -38,6 +38,9 @@ namespace tgvoip{
 #include <pthread.h>
 #include <semaphore.h>
 #include <sched.h>
+#if defined(__APPLE__) && defined(ONEGRAM_ARMV6)
+#include <dlfcn.h>
+#endif
 
 namespace tgvoip{
 	class Mutex{
@@ -96,6 +99,11 @@ namespace tgvoip{
 			if(self->name){
 #ifndef __APPLE__
 				pthread_setname_np(self->thread, self->name);
+#elif defined(ONEGRAM_ARMV6)
+				typedef int (*PthreadSetNameFunction)(const char*);
+				PthreadSetNameFunction setName=reinterpret_cast<PthreadSetNameFunction>(dlsym(RTLD_DEFAULT, "pthread_setname_np"));
+				if(setName)
+					setName(self->name);
 #else
 				pthread_setname_np(self->name);
 #endif

@@ -34,7 +34,6 @@
         _redoButton.exclusiveTouch = true;
         [_redoButton setImage:TGComponentsImageNamed(@"PaintRedoIcon") forState:UIControlStateNormal];
         [_redoButton addTarget:self action:@selector(redoButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-        //[self addSubview:_redoButton];
         
         _clearButton = [[TGModernButton alloc] init];
         _clearButton.enabled = false;
@@ -102,7 +101,6 @@
     }
     else
     {
-        //_redoButton.frame = CGRectMake(0, self.frame.size.height - 40 - 14, self.frame.size.width, 40);
         _undoButton.frame = CGRectMake(0, self.frame.size.height - 40 - 6, self.frame.size.width, 40);
         
         _clearButton.titleLabel.font = TGSystemFontOfSize(13.0f);

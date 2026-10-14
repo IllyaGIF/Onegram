@@ -289,7 +289,6 @@ const CGFloat TGMusicPlaylistCellHeight = 56.0f;
                 barAnimation.fromValue = @([[bar.layer.presentationLayer valueForKeyPath: @"transform.scale.y"] floatValue]);
                 barAnimation.toValue = @(0.2f);
                 barAnimation.duration = 0.25;
-                //barAnimation.beginTime = CACurrentMediaTime() + 0.1;
          
                 [bar.layer removeAllAnimations];
                 [bar.layer addAnimation:barAnimation forKey:@"barStopAnimation"];

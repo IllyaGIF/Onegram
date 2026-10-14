@@ -171,7 +171,6 @@ static void TGCallKitConfigureAudioSession(void)
 
 - (void)reportIncomingCallWithPeerId:(int64_t)peerId session:(TGCallSession *)session uuid:(NSUUID *)uuid completion:(void (^)(bool))completion
 {
-    TGLog(@"CALLKIT REPORT INCOMING CALL %@", uuid);
     
     TGUser *user = nil;
     CXCallUpdate *update = [[CXCallUpdate alloc] init];

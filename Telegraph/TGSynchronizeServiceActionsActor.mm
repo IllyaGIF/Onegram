@@ -158,7 +158,6 @@
                         } synchronous:true];
                     }
 
-                    TGLog(@"MUTE synchronize peer=%lld channel=%d accessHash=%lld muteUntil=%@", notificationSettingsAction.uniqueId, TGPeerIdIsChannel(notificationSettingsAction.uniqueId) ? 1 : 0, accessHash, notificationSettingsAction.muteUntil);
                     
                     self.cancelToken = [TGTelegraphInstance doChangePeerNotificationSettings:notificationSettingsAction.uniqueId accessHash:accessHash muteUntil:notificationSettingsAction.muteUntil soundId:peerSoundId previewText:notificationSettingsAction.previewText messagesMuted:notificationSettingsAction.messagesMuted actor:self];
                     
@@ -347,7 +346,6 @@
 
 - (void)changePeerNotificationSettingsSuccess:(TLPeerNotifySettings *)__unused settings
 {
-    TGLog(@"MUTE synchronize success peer=%lld", _currentActionUniqueId);
     [TGDatabaseInstance() removeFutureAction:_currentActionUniqueId type:_currentActionType randomId:_currentActionRandomId];
     [self execute:nil];
 }

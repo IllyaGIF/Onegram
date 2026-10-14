@@ -1,4 +1,6 @@
 #import "TGModernConversationTitleView.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -11,17 +13,22 @@
 
 #import "TGPresentation.h"
 #import "TGReusableLabel.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 const NSTimeInterval typingIntervalFirst = 0.16;
 const NSTimeInterval typingIntervalSecond = 0.14;
 
 static UIColor *TGClassicAwareNavigationTitleColor(TGPresentation *presentation)
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].titleColor;
     return [TGPresentation classicIOS6Style] ? [UIColor whiteColor] : presentation.pallete.navigationTitleColor;
 }
 
 static UIColor *TGClassicAwareNavigationSubtitleColor(TGPresentation *presentation)
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].subtitleColor;
     if (![TGPresentation classicIOS6Style])
         return presentation.pallete.navigationSubtitleColor;
     return presentation.pallete.isDark ? presentation.pallete.navigationSubtitleColor : UIColorRGB(0xdbe6ee);
@@ -37,6 +44,27 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
     if (![TGPresentation classicIOS6Style])
         return [UIColor clearColor];
     return presentation.pallete.isDark ? UIColorRGBA(0x000000, alpha) : UIColorRGBA(0x1f3446, alpha);
+}
+
+static UIColor *TGConversationTitleShadowColor(TGPresentation *presentation)
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6NavigationTitleShadowColor];
+    return TGClassicAwareNavigationShadowColor(presentation, 0.9f);
+}
+
+static UIColor *TGConversationStatusShadowColor(TGPresentation *presentation)
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].subtitleShadowColor;
+    return TGClassicAwareNavigationShadowColor(presentation, 0.72f);
+}
+
+static CGSize TGConversationStatusShadowOffset(void)
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].subtitleShadowOffset;
+    return CGSizeMake(0.0f, -1.0f);
 }
 
 @interface TGModernConversationTitleView ()
@@ -100,10 +128,10 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
     _presentation = presentation;
     
     _titleLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
-    _titleLabel.shadowColor = TGClassicAwareNavigationShadowColor(presentation, 0.9f);
+    _titleLabel.shadowColor = TGConversationTitleShadowColor(presentation);
     _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
-    _statusLabel.shadowColor = TGClassicAwareNavigationShadowColor(presentation, 0.72f);
-    _statusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
+    _statusLabel.shadowColor = TGConversationStatusShadowColor(presentation);
+    _statusLabel.shadowOffset = TGConversationStatusShadowOffset();
     _activityIndicator.color = TGClassicAwareNavigationActiveSubtitleColor(presentation);
     _titleModalProgressIndicator.color = presentation.pallete.navigationSpinnerColor;
     _titleModalProgressLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
@@ -121,12 +149,8 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
         {
             CGFloat badgeWidth = MAX(18.0f, _unreadBackground.frame.size.width);
             _unreadBackground.image = [TGPresentation brandedIOS6BadgeImageForWidth:badgeWidth];
-            _unreadBackground.layer.shadowColor = [UIColor blackColor].CGColor;
-            _unreadBackground.layer.shadowOpacity = 0.80f;
-            _unreadBackground.layer.shadowRadius = 1.5f;
-            _unreadBackground.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
-            _unreadBackground.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadBackground.bounds cornerRadius:9.0f].CGPath;
-            UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:11.0f];
+            OGPlatformApplyViewShadow(_unreadBackground, [UIColor blackColor], 0.80f, 1.5f, CGSizeMake(0.0f, 2.0f));
+            UIFont *badgeFont = TGBoldSystemFontOfSize(11.0f);
             _unreadLabel.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(11.0f);
             _unreadLabel.textColor = [UIColor whiteColor];
             _unreadLabel.textAlignment = NSTextAlignmentCenter;
@@ -136,8 +160,7 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
         else
         {
             _unreadBackground.image = presentation.images.chatNavBadgeImage;
-            _unreadBackground.layer.shadowOpacity = 0.0f;
-            _unreadBackground.layer.shadowPath = NULL;
+            OGPlatformApplyViewShadow(_unreadBackground, nil, 0.0f, 0.0f, CGSizeZero);
             _unreadLabel.font = TGSystemFontOfSize(12.0f);
             _unreadLabel.textColor = presentation.pallete.navigationBadgeTextColor;
             _unreadLabel.textAlignment = NSTextAlignmentLeft;
@@ -159,7 +182,7 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
     if (iosMajorVersion() >= 11)
         return false;
     
-    return [super translatesAutoresizingMaskIntoConstraints];
+    return OGPlatformSuperclassViewTranslatesAutoresizingMaskIntoConstraints(self, [TGModernConversationTitleView class]);
 }
 
 - (CGSize)intrinsicContentSize
@@ -174,9 +197,9 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
         _titleLabel = [[TGReusableLabel alloc] init];
         _titleLabel.backgroundColor = [UIColor clearColor];
         _titleLabel.textColor = TGClassicAwareNavigationTitleColor(_presentation);
-        _titleLabel.shadowColor = TGClassicAwareNavigationShadowColor(_presentation, 0.9f);
+        _titleLabel.shadowColor = TGConversationTitleShadowColor(_presentation);
         _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
-        _titleLabel.font = TGBoldSystemFontOfSize([TGPresentation brandedIOS6Style] ? 20.0f : 17.0f);
+        _titleLabel.font = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6NavigationTitleFont] : TGBoldSystemFontOfSize(17.0f);
         _titleLabel.numberOfLines = 1;
         [self addSubview:_titleLabel];
     }
@@ -188,14 +211,14 @@ static UIColor *TGClassicAwareNavigationShadowColor(TGPresentation *presentation
 {
     if (_statusLabel == nil)
     {
-        _titleLabel.font = [TGPresentation brandedIOS6Style] ? TGBoldSystemFontOfSize(20.0f) : TGMediumSystemFontOfSize(17.0f);
+        _titleLabel.font = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6NavigationTitleFont] : TGMediumSystemFontOfSize(17.0f);
         
         _statusLabel = [[UILabel alloc] init];
         _statusLabel.backgroundColor = [UIColor clearColor];
         _statusLabel.textColor = TGClassicAwareNavigationSubtitleColor(_presentation);
-        _statusLabel.shadowColor = TGClassicAwareNavigationShadowColor(_presentation, 0.72f);
-        _statusLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
-        _statusLabel.font = TGSystemFontOfSize([TGPresentation brandedIOS6Style] ? 10.0f : ([TGPresentation classicIOS6Style] ? 12.0f : 13.0f));
+        _statusLabel.shadowColor = TGConversationStatusShadowColor(_presentation);
+        _statusLabel.shadowOffset = TGConversationStatusShadowOffset();
+        _statusLabel.font = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].subtitleFont : TGSystemFontOfSize([TGPresentation classicIOS6Style] ? 12.0f : 13.0f);
         [self addSubview:_statusLabel];
     }
     
@@ -579,11 +602,8 @@ static UIView *findNavigationBar(UIView *view)
                 _unreadLabel.backgroundColor = [UIColor clearColor];
                 if ([TGPresentation brandedIOS6Style])
                 {
-                    _unreadBackground.layer.shadowColor = [UIColor blackColor].CGColor;
-                    _unreadBackground.layer.shadowOpacity = 0.80f;
-                    _unreadBackground.layer.shadowRadius = 1.5f;
-                    _unreadBackground.layer.shadowOffset = CGSizeMake(0.0f, 2.0f);
-                    UIFont *badgeFont = [UIFont fontWithName:@"HelveticaNeue-Bold" size:11.0f];
+                    OGPlatformApplyViewShadow(_unreadBackground, [UIColor blackColor], 0.80f, 1.5f, CGSizeMake(0.0f, 2.0f));
+                    UIFont *badgeFont = TGBoldSystemFontOfSize(11.0f);
                     _unreadLabel.font = badgeFont != nil ? badgeFont : TGBoldSystemFontOfSize(11.0f);
                     _unreadLabel.textColor = [UIColor whiteColor];
                     _unreadLabel.textAlignment = NSTextAlignmentCenter;
@@ -620,7 +640,6 @@ static UIView *findNavigationBar(UIView *view)
             if (brandedBadge)
             {
                 _unreadBackground.image = [TGPresentation brandedIOS6BadgeImageForWidth:badgeWidth];
-                _unreadBackground.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadBackground.bounds cornerRadius:9.0f].CGPath;
                 _unreadLabel.textAlignment = NSTextAlignmentCenter;
                 _unreadLabel.frame = CGRectMake(_unreadBackground.frame.origin.x, _unreadBackground.frame.origin.y, _unreadBackground.frame.size.width, _unreadBackground.frame.size.height);
             }
@@ -635,6 +654,11 @@ static UIView *findNavigationBar(UIView *view)
             _unreadContainer.hidden = true;
         }
     }
+}
+
+- (bool)unreadBadgeVisible
+{
+    return _unreadContainer != nil && !_unreadContainer.hidden && _unreadCount > 0;
 }
 
 - (void)setShowUnreadCount:(bool)showUnreadCount {
@@ -751,7 +775,6 @@ static UIView *findNavigationBar(UIView *view)
             if ([TGPresentation brandedIOS6Style])
             {
                 _unreadBackground.image = [TGPresentation brandedIOS6BadgeImageForWidth:_unreadBackground.frame.size.width];
-                _unreadBackground.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:_unreadBackground.bounds cornerRadius:9.0f].CGPath;
                 _unreadLabel.textAlignment = NSTextAlignmentCenter;
                 _unreadLabel.frame = _unreadBackground.frame;
             }
@@ -852,6 +875,13 @@ static UIView *findNavigationBar(UIView *view)
         statusLandscapeOffset = 2.0f;
     }
     
+    if ([TGPresentation brandedIOS6Style] && !TGIsPad())
+    {
+        OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+        titlePortraitOffset = appearance.titlePortraitOffset;
+        statusPortraitOffset = appearance.subtitlePortraitOffset;
+    }
+    
     CGRect bounds = self.bounds;
     
     if (_titleLabel != nil)
@@ -887,7 +917,7 @@ static UIView *findNavigationBar(UIView *view)
         CGFloat portraitAdjustmentBounds = CGFloor(screenWidth - (_editingMode ? clearAllButtonSize : backButtonSize) * 2.0f);
 
         if (_typingStatus != nil)
-            maxStatusWidth -= 18; // dots
+            maxStatusWidth -= 18;
         
         CGFloat titleHorizontalOffset = 0.0f;
         CGFloat iconsWeightedWidth = 0.0f;
@@ -902,10 +932,20 @@ static UIView *findNavigationBar(UIView *view)
             maxTitleWidth -= icon.bounds.size.width;
         }
         
+        if (!UIInterfaceOrientationIsPortrait(_orientation)) {
+            CGFloat availableWidth = MAX(0.0f, screenWidth - buttonsWidth);
+            CGFloat spacing = _showStatus ? 6.0f + (_typingStatus != nil ? 18.0f : 0.0f) : 0.0f;
+            CGFloat naturalTitleWidth = CGCeil([_titleLabel.text sizeWithFont:_titleLabel.font].width) + 1.0f;
+            CGFloat naturalStatusWidth = _showStatus ? CGCeil([_statusLabel.text sizeWithFont:_statusLabel.font].width) : 0.0f;
+            maxStatusWidth = MIN(naturalStatusWidth, MAX(availableWidth / 2.0f, availableWidth - naturalTitleWidth - iconsTotalWidth - spacing));
+            maxTitleWidth = MAX(0.0f, availableWidth - maxStatusWidth - iconsTotalWidth - spacing);
+        }
+        maxTitleWidth = MAX(0.0f, maxTitleWidth);
+        maxStatusWidth = MAX(0.0f, maxStatusWidth);
         CGSize titleLabelSize = [_titleLabel sizeThatFits:CGSizeMake(maxTitleWidth, 1000.0f)];
-        titleLabelSize.width = MIN(titleLabelSize.width, maxTitleWidth);
+        titleLabelSize.width = MIN(CGCeil(titleLabelSize.width) + 1.0f, maxTitleWidth);
         CGSize statusLabelSize = [_statusLabel sizeThatFits:CGSizeMake(maxStatusWidth, 1000.0f)];
-        statusLabelSize.width = MIN(statusLabelSize.width, maxStatusWidth);
+        statusLabelSize.width = MIN(CGCeil(statusLabelSize.width), maxStatusWidth);
         
         if (UIInterfaceOrientationIsPortrait(_orientation))
         {
@@ -918,7 +958,7 @@ static UIView *findNavigationBar(UIView *view)
             
             CGPoint titleOrigin = CGPointMake(titleHorizontalAdjustment + CGFloor((bounds.size.width - titleTotalWidth) / 2.0f), -17.0f + titlePortraitOffset);
             if (!_showStatus) {
-                titleOrigin.y += [TGPresentation brandedIOS6Style] ? 6.0f : 8.0f;
+                titleOrigin.y += [TGPresentation brandedIOS6Style] ? 2.0f : 8.0f;
             }
             
             for (TGModernConversationTitleIcon *icon in _icons)
@@ -983,9 +1023,9 @@ static UIView *findNavigationBar(UIView *view)
         }
         else
         {
-            CGFloat spacing = 6.0f;
+            CGFloat spacing = _showStatus ? 6.0f : 0.0f;
             
-            if (_typingStatus != nil)
+            if (_showStatus && _typingStatus != nil)
                 spacing += 18.0f;
             
             CGFloat totalTitleWidth = titleLabelSize.width + iconsTotalWidth;

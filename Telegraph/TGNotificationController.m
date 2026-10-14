@@ -677,7 +677,6 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
         }
         else
         {
-            //fix ios8 crash
             dispatch_async(dispatch_get_main_queue(), ^
             {
                 [self _updateStatusBarHiding:true];
@@ -774,7 +773,7 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
         UIEdgeInsets safeAreaInset = [self calculatedSafeAreaInset];
         safeAreaInset.top = safeAreaInset.top > FLT_EPSILON ? safeAreaInset.top - 20.0f : 0.0f;
         
-        CGFloat origin = safeAreaInset.top; // _notificationView.frame.origin.y;
+        CGFloat origin = safeAreaInset.top;
         _overlayView.center = self.view.center;
         _notificationView.safeAreaInset = safeAreaInset;
         _notificationView.frame = CGRectMake(0, origin, _wrapperView.frame.size.width, _notificationView.frame.size.height);
@@ -1188,7 +1187,7 @@ static id mediaIdForAttachment(TGMediaAttachment *attachment)
     
     bool maybeReadContents = ([attachment isKindOfClass:[TGAudioMediaAttachment class]] || [attachment isKindOfClass:[TGDocumentMediaAttachment class]]);
     
-    if (maybeReadContents)// && [self allowMessageForwarding] && !TGPeerIdIsChannel(_conversationId))
+    if (maybeReadContents)
     {
         TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
         if (message == nil)
@@ -1408,10 +1407,6 @@ static id mediaIdForAttachment(TGMediaAttachment *attachment)
     return (iosMajorVersion() >= 7 && viewPresented && !isHiding && (statusBarHeight - 20.0f) < FLT_EPSILON);
 }
 
-//- (void)viewDidLayoutSubviews
-//{
-//    self.view.frame = TGAppDelegateInstance.rootController.applicationBounds;
-//}
 
 @end
 

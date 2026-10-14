@@ -1,4 +1,5 @@
 #import "TGCameraController.h"
+#import "OGPlatformMedia.h"
 
 #import "LegacyComponentsInternal.h"
 
@@ -482,9 +483,13 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
         
         if (mirrored != NULL)
         {
+#if defined(ONEGRAM_ARMV6)
+            *mirrored = false;
+#else
             TGCameraPreviewView *previewView = strongSelf->_previewView;
             if (previewView != nil)
-                *mirrored = previewView.captureConnection.videoMirrored;
+                *mirrored = OGPlatformCaptureConnectionIsVideoMirrored(previewView.captureConnection);
+#endif
         }
         
         return [strongSelf->_interfaceView interfaceOrientation];
@@ -729,7 +734,9 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
 
 - (void)viewWillLayoutSubviews
 {
+#if !defined(ONEGRAM_ARMV6)
     [super viewWillLayoutSubviews];
+#endif
     
     if ([self shouldCorrectAutorotation])
         [self applyAutorotationCorrectingTransformForOrientation:[[LegacyComponentsGlobals provider] applicationStatusBarOrientation]];
@@ -1220,6 +1227,12 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
             
             if ([item.asset isKindOfClass:[TGCameraCapturedVideo class]])
             {
+#if defined(ONEGRAM_ARMV6)
+                [[item.asset thumbnailImageSignal] startWithNext:^(UIImage *thumbnailImage)
+                {
+                    item.immediateThumbnailImage = thumbnailImage;
+                }];
+#else
                 AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:((TGCameraCapturedVideo *)item.asset).avAsset];
                 generator.appliesPreferredTrackTransform = true;
                 generator.maximumSize = CGSizeMake(640.0f, 640.0f);
@@ -1228,6 +1241,7 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
                 CGImageRelease(imageRef);
                 
                 item.immediateThumbnailImage = thumbnailImage;
+#endif
             }
         }
     }];
@@ -2197,7 +2211,11 @@ static CGPoint TGCameraControllerClampPointToScreenSize(__unused id self, __unus
 
 + (bool)useLegacyCamera
 {
+#if defined(ONEGRAM_ARMV6)
+    return true;
+#else
     return iosMajorVersion() < 7 || [UIDevice currentDevice].platformType == UIDevice4iPhone || [UIDevice currentDevice].platformType == UIDevice4GiPod;
+#endif
 }
 
 + (NSArray *)resultSignalsForSelectionContext:(TGMediaSelectionContext *)selectionContext editingContext:(TGMediaEditingContext *)editingContext currentItem:(id<TGMediaSelectableItem>)currentItem storeAssets:(bool)storeAssets saveEditedPhotos:(bool)saveEditedPhotos descriptionGenerator:(id (^)(id, NSString *, NSArray *, NSString *))descriptionGenerator

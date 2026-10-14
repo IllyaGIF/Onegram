@@ -137,16 +137,6 @@ static const float luminanceThreshold = 0.8f;
     
     CGFloat luminance = 0.0f;
     
-    /*if (_backdropArea == nil)
-    {
-        CGContextSetFillColorWithColor(context, UIColorRGB(0xaaaaaa).CGColor);
-        CGContextFillRect(context, backgroundRect);
-    }
-    else
-    {
-        luminance = _backdropArea.luminance;
-        [_backdropArea drawRelativeToImageRect:CGRectMake(-position.x, -position.y, imageSize.width, imageSize.height)];
-    }*/
 
     UIColor *textColor = luminance > luminanceThreshold ? UIColorRGBA(0x525252, 0.6f) : _timestampTextColor;
     CGContextSetFillColorWithColor(context, textColor.CGColor);

@@ -25,9 +25,6 @@
         return;
     }
 
-    // The legacy future-action format does not carry an access hash. Modern
-    // channels and supergroups require it, so preserve the value supplied by
-    // the UI until the queued RPC is serialized.
     int64_t accessHash = [options[@"accessHash"] longLongValue];
     if (TGPeerIdIsChannel(peerId) && accessHash != 0)
     {
@@ -35,7 +32,6 @@
         [TGDatabaseInstance() dispatchOnDatabaseThread:^{
             [TGDatabaseInstance() setConversationCustomProperty:peerId name:murMurHash32(@"ios6NotificationAccessHash") value:accessHashData];
         } synchronous:true];
-        TGLog(@"MUTE queued peer=%lld accessHash=%lld muteUntil=%@", peerId, accessHash, options[@"muteUntil"]);
     }
     
     NSNumber *currentSoundId = nil;

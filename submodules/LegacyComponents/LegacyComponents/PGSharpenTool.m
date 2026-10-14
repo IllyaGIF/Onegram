@@ -41,7 +41,6 @@
 - (bool)shouldBeSkipped
 {
     return false;
-    //return (fabsf(((NSNumber *)self.displayValue).floatValue - self.defaultValue) < FLT_EPSILON);
 }
 
 - (void)updatePassParameters

@@ -44,6 +44,7 @@
 #import "TGAudioMediaAttachment+Telegraph.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 typedef enum {
     TGAudioMessageButtonPlay = 0,
@@ -106,6 +107,7 @@ static CTFontRef textFontForSize(CGFloat size)
     self = [super initWithMessage:message authorPeer:authorPeer viaUser:viaUser context:context];
     if (self != nil)
     {
+        _backgroundModel.voiceMessage = true;
         for (id attachment in message.mediaAttachments) {
             if ([attachment isKindOfClass:[TGAudioMediaAttachment class]]) {
                 _audioMedia = attachment;
@@ -121,9 +123,10 @@ static CTFontRef textFontForSize(CGFloat size)
         _iconModel = [[TGDocumentMessageIconModel alloc] init];
         _iconModel.presentation = context.presentation;
         _iconModel.skipDrawInContext = true;
-        _iconModel.frame = CGRectMake(0.0f, 0.0f, 37.0f, 37.0f);
+        CGFloat buttonDiameter = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].voiceButtonFrame.size.width : 37.0f;
+        _iconModel.frame = CGRectMake(0.0f, 0.0f, buttonDiameter, buttonDiameter);
         _iconModel.incoming = _incomingAppearance;
-        _iconModel.diameter = 37.0f;
+        _iconModel.diameter = buttonDiameter;
         [self addSubmodel:_iconModel];
         
         NSString *transcription = message.contentProperties[@"ios6Transcription"];
@@ -388,7 +391,7 @@ static CTFontRef textFontForSize(CGFloat size)
     if (_textModel.text.length != 0 && ![_textModel.text isEqualToString:@" "]) {
         CGRect textFrame = _textModel.frame;
         
-        CGFloat textInset = 48.0f;
+        CGFloat textInset = [TGPresentation brandedIOS6Style] ? CGRectGetMaxY([TGPresentation brandedIOS6ConversationAppearance].voiceWaveformFrame) + 2.0f : 48.0f;
         textFrame.origin = CGPointMake(1, textInset + headerHeight);
         _textModel.frame = textFrame;
         headerHeight += textFrame.size.height;
@@ -414,6 +417,20 @@ static CTFontRef textFontForSize(CGFloat size)
     
     if (needsContentsUpdate != NULL && updateContents)
        *needsContentsUpdate = updateContents;
+
+    if ([TGPresentation brandedIOS6Style])
+    {
+        OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+        CGFloat voiceWidth = appearance.voiceBubbleBodySize.width - appearance.bubbleContentPadding.left - appearance.bubbleTimeTrailingInset;
+        CGFloat voiceHeight = appearance.voiceBubbleBodySize.height - appearance.bubbleContentPadding.top - appearance.bubbleContentPadding.bottom;
+        if (_textModel.text.length != 0 && ![_textModel.text isEqualToString:@" "])
+        {
+            textSize = _textModel.frame.size;
+            voiceWidth = MAX(voiceWidth, textSize.width);
+            voiceHeight += textSize.height + 10.0f;
+        }
+        return CGSizeMake(voiceWidth, voiceHeight);
+    }
     
     CGFloat width = MAX(160, MIN(205, _duration * 30));
     
@@ -423,14 +440,10 @@ static CTFontRef textFontForSize(CGFloat size)
     CGFloat minVoiceWidth = 124.0f;
     
     CGFloat calcDuration = MAX(minVoiceLength, MIN(maxVoiceLength, _duration));
-    
-    //CGFloat b = ((CGFloat)log(maxVoiceWidth / minVoiceWidth)) / (maxVoiceLength);
-    //CGFloat a = minVoiceWidth / expf(0.0f);
-    
-    //width = a * exp(b * MIN(maxVoiceLength, (CGFloat)_duration));
-    
+
+
     width = minVoiceWidth + (maxVoiceWidth - minVoiceWidth) * (calcDuration - minVoiceLength) / (maxVoiceLength - minVoiceLength);
-    width = [TGPresentation brandedIOS6Style] ? 172.0f : CGFloor(width);
+    width = CGFloor(width);
     
     CGFloat height = 50.0f;
     
@@ -456,42 +469,19 @@ static CTFontRef textFontForSize(CGFloat size)
     
     if ([TGPresentation brandedIOS6Style])
     {
-        _iconModel.frame = CGRectMake(_backgroundModel.frame.origin.x + (_incomingAppearance ? 12.0f : 9.0f), _headerHeight + _backgroundModel.frame.origin.y + 6.0f, 37.0f, 37.0f);
-        CGFloat trackOriginX = CGRectGetMaxX(_iconModel.frame) + 8.0f;
-        CGRect sliderFrame = CGRectMake(trackOriginX, _iconModel.frame.origin.y + 3.0f, CGRectGetMaxX(_backgroundModel.frame) - trackOriginX - 10.0f, 24.0f);
+        OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+        UIEdgeInsets bubbleInsets = [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance];
+        CGPoint bodyOrigin = CGPointMake(_backgroundModel.frame.origin.x + bubbleInsets.left, _backgroundModel.frame.origin.y + bubbleInsets.top + _headerHeight);
+        _iconModel.diameter = appearance.voiceButtonFrame.size.width;
+        _iconModel.frame = CGRectOffset(appearance.voiceButtonFrame, bodyOrigin.x, bodyOrigin.y);
+        CGRect sliderFrame = CGRectOffset(appearance.voiceWaveformFrame, bodyOrigin.x, bodyOrigin.y);
+        sliderFrame.size.width = CGRectGetMaxX(appearance.voiceDurationFrame) - appearance.voiceWaveformFrame.origin.x;
         _sliderModel.frame = sliderFrame;
-        if (_textModel.frame.size.height < FLT_EPSILON)
-        {
-            CGFloat dateY = _contentModel.frame.size.height - _dateModel.frame.size.height - 3.0f - (TGIsLocaleArabic() ? 1.0f : 0.0f);
-            if (_incomingAppearance)
-            {
-                _dateModel.frame = CGRectMake(18.0f, dateY, _dateModel.frame.size.width, _dateModel.frame.size.height);
-            }
-            else
-            {
-                CGFloat rightX = _contentModel.frame.size.width - 9.0f;
-                if (_checkSecondModel != nil)
-                {
-                    CGRect secondFrame = _checkSecondModel.frame;
-                    secondFrame.origin.x = rightX - secondFrame.size.width;
-                    secondFrame.origin.y = _contentModel.frame.size.height - 15.0f + TGScreenPixel;
-                    _checkSecondModel.frame = secondFrame;
-                    rightX = secondFrame.origin.x - 1.0f;
-                }
-                if (_checkFirstModel != nil)
-                {
-                    CGRect firstFrame = _checkFirstModel.frame;
-                    firstFrame.origin.x = rightX - firstFrame.size.width;
-                    firstFrame.origin.y = _contentModel.frame.size.height - 15.0f + TGScreenPixel;
-                    _checkFirstModel.frame = firstFrame;
-                    rightX = firstFrame.origin.x - 4.0f;
-                }
-                _dateModel.frame = CGRectMake(rightX - _dateModel.frame.size.width, dateY, _dateModel.frame.size.width, _dateModel.frame.size.height);
-            }
-        }
+        _dateModel.textColor = UIColorRGB(0x595959);
     }
     else
     {
+        _iconModel.diameter = 37.0f;
         _iconModel.frame = CGRectMake(_backgroundModel.frame.origin.x + (_incomingAppearance ? 14.0f : 9.0f), _headerHeight + _backgroundModel.frame.origin.y + 12.0f, 37.0f, 37.0f);
         CGFloat trackOriginX = CGRectGetMaxX(_iconModel.frame) + 5.0f;
         CGRect sliderFrame = CGRectMake(trackOriginX, _iconModel.frame.origin.y - 3.0f, CGRectGetMaxX(_backgroundModel.frame) - trackOriginX - 13.0f + (_incomingAppearance ? 5.0f : 0.0f), 14.0f);

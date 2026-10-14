@@ -16,7 +16,7 @@
     NSUInteger _rangeMessageCount;
     SSignal *_initialSignal;
     
-    TGChatMessageListView *_currentView; // no need for any kind of locking, all mutations are guaranteed to run on the ActionStage thread
+    TGChatMessageListView *_currentView;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -94,7 +94,6 @@
         }
     }
     
-    TGLog(@"DELETE list.peer=%lld requested=%d removed=%d", _peerId, (int)deletedMessageIds.count, (int)removedCount);
     
     if (removedCount == 0)
         return;
@@ -148,7 +147,6 @@
     
     if (updatedCount != 0)
     {
-        TGLog(@"DELETE list.update peer=%lld updated=%d", _peerId, (int)updatedCount);
         [self _replaceCurrentViewMessages:updatedMessages];
     }
 }
@@ -470,7 +468,6 @@
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
-        while (false) TGLog(@"READ signal.readChatList peer=%lld", peerId);
         [TGDatabaseInstance() transactionReadHistoryForPeerIds:@[[[TGReadPeerMessagesRequest alloc] initWithPeerId:peerId maxMessageIndex:nil date:0 length:0 unread:false]]];
         [subscriber putCompletion];
         

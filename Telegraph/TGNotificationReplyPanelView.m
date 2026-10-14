@@ -14,6 +14,7 @@
 #import "TGStickerKeyboardView.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGNotificationReplyPanelView () <HPGrowingTextViewDelegate>
 {
@@ -309,7 +310,7 @@
 
 - (void)keyboardModeButtonPressed
 {
-    if (self.maybeInputField.internalTextView.inputView == nil)
+    if (OGPlatformTextInputView(self.maybeInputField.internalTextView) == nil)
         return;
     
     if (self.maybeInputField.isFirstResponder)
@@ -318,7 +319,7 @@
         [self.inputField resignFirstResponder];
     }
     
-    self.inputField.internalTextView.inputView = nil;
+    OGPlatformSetTextInputView(self.inputField.internalTextView, nil);
     
     self.inputField.internalTextView.enableFirstResponder = true;
     [self.inputField becomeFirstResponder];
@@ -331,7 +332,7 @@
 {
     _notIdle = true;
     
-    if ([self.inputField.internalTextView.inputView isKindOfClass:[TGStickerKeyboardView class]])
+    if ([OGPlatformTextInputView(self.inputField.internalTextView) isKindOfClass:[TGStickerKeyboardView class]])
         return;
     
     if (self.maybeInputField.isFirstResponder)
@@ -363,7 +364,7 @@
         [_stickerKeyboardView updateIfNeeded];
     }
     
-    self.inputField.internalTextView.inputView = _stickerKeyboardView;
+    OGPlatformSetTextInputView(self.inputField.internalTextView, _stickerKeyboardView);
     
     self.inputField.internalTextView.enableFirstResponder = true;
     [self.inputField becomeFirstResponder];
@@ -380,7 +381,7 @@
 - (void)updateModeButtonVisibilityForce:(bool)force
 {
     NSMutableArray *commands = [[NSMutableArray alloc] init];
-    if (self.maybeInputField.internalTextView.inputView != nil)
+    if (OGPlatformTextInputView(self.maybeInputField.internalTextView) != nil)
     {
         [commands addObject:_keyboardModeButton];
     }
@@ -573,7 +574,7 @@
 
 - (void)reset
 {
-    _inputField.internalTextView.inputView = nil;
+    OGPlatformSetTextInputView(_inputField.internalTextView, nil);
     _inputField.text = nil;
     _stickerKeyboardView = nil;
     _notIdle = false;

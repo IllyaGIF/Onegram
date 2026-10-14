@@ -1,8 +1,7 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGStickerMessageViewModel.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -163,7 +162,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
     return image;
 }
 
-@interface TGStickerMessageViewModel () <TGDoubleTapGestureRecognizerDelegate, UIGestureRecognizerDelegate>
+@interface TGStickerMessageViewModel () <TGDoubleTapGestureRecognizerDelegate, UIGestureRecognizerDelegate, TGMessageImageViewDelegate>
 {
     bool _incoming;
     bool _read;
@@ -174,6 +173,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
     
     float _progress;
     bool _progressVisible;
+    bool _mediaIsAvailable;
     
     TGDocumentMediaAttachment *_document;
     TGMessageImageViewModel *_imageModel;
@@ -282,9 +282,6 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
 
 - (bool)shouldKeepEmojiFallbackForDocument:(TGDocumentMediaAttachment *)document
 {
-    // Animated sticker payloads (.tgs/.webm) cannot be decoded on iOS 6.
-    // They use the same static preview loader as the sticker keyboard instead.
-    // Keep the alt emoji only while that preview is still loading.
     return false;
 }
 
@@ -327,6 +324,8 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         if (document.documentUri.length != 0)
             [uri appendFormat:@"&documentUri=%@", [TGStringUtils stringByEscapingForURL:document.documentUri]];
     }
+    if (OGPlatformMediaDownloadsRequireUserAction())
+        [uri appendString:@"&cacheOnly=1"];
     return uri;
 }
 
@@ -390,7 +389,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         _emojiFallbackLabel.userInteractionEnabled = false;
         _emojiFallbackLabel.adjustsFontSizeToFitWidth = true;
         if ([_emojiFallbackLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            _emojiFallbackLabel.minimumScaleFactor = 0.5f;
+            OGPlatformSetLabelMinimumScaleFactor(_emojiFallbackLabel, 0.5f);
         else
             _emojiFallbackLabel.minimumFontSize = _emojiFallbackLabel.font.pointSize * 0.5f;
         _emojiFallbackLabel.shadowColor = UIColorRGBA(0xffffff, 0.65f);
@@ -495,7 +494,6 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
             {
                 _emojiFallbackText = alt;
                 _emojiFallbackUntilImageLoaded = !keepFallback;
-                IOS6_NOOP_LOG(@"STICKER emojiFallback mid=%d docId=%lld mime=%@ alt=%@", (int)_mid, _document.documentId, _document.mimeType, alt);
             }
         }
         
@@ -516,7 +514,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
                     if (strongSelf->_progressVisible)
                         [strongSelf updateProgressInternal:false progress:1.0f animated:true];
 
-                    if (strongSelf->_emojiFallbackUntilImageLoaded)
+                    if (strongSelf->_emojiFallbackUntilImageLoaded && (!OGPlatformMediaDownloadsRequireUserAction() || [strongSelf stickerImageIsLocallyAvailable:strongSelf->_document]))
                     {
                         strongSelf->_emojiFallbackUntilImageLoaded = false;
                         strongSelf->_emojiFallbackText = nil;
@@ -632,6 +630,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
 }
 
 - (void)dealloc {
+    ((TGMessageImageViewContainer *)[_imageModel boundView]).imageView.delegate = nil;
     [self invalidateLifetimeReference];
     [_callbackButtonInProgressDisposable dispose];
 }
@@ -645,7 +644,6 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
 {
     [super updateAssets];
     
-    //[_imageModel setTimestampColor:[[TGTelegraphConversationMessageAssetsSource instance] systemMessageBackgroundColor]];
 }
 
 - (TGModernImageViewModel *)unsentButtonModel
@@ -676,13 +674,37 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
 {
     if (_progressVisible)
     {
-        [_imageModel setOverlayType:TGMessageImageViewOverlayProgressNoCancel animated:false];
+        [_imageModel setOverlayType:OGPlatformMediaDownloadsRequireUserAction() ? TGMessageImageViewOverlayProgress : TGMessageImageViewOverlayProgressNoCancel animated:false];
         [_imageModel setProgress:_progress animated:animated];
+    }
+    else if (OGPlatformMediaDownloadsRequireUserAction() && !_mediaIsAvailable)
+    {
+        [_imageModel setOverlayType:TGMessageImageViewOverlayDownload animated:false];
     }
     else
     {
         [_imageModel setOverlayType:TGMessageImageViewOverlayNone animated:animated];
     }
+}
+
+- (void)updateMediaAvailability:(bool)mediaIsAvailable viewStorage:(TGModernViewStorage *)viewStorage delayDisplay:(bool)delayDisplay
+{
+    [super updateMediaAvailability:mediaIsAvailable viewStorage:viewStorage delayDisplay:delayDisplay];
+    bool becameAvailable = mediaIsAvailable && !_mediaIsAvailable;
+    _mediaIsAvailable = mediaIsAvailable;
+    if (OGPlatformMediaDownloadsRequireUserAction())
+    {
+        if (becameAvailable)
+            [_imageModel reloadImage:false];
+        [self updateImageOverlay:false];
+    }
+}
+
+- (void)updateProgress:(bool)progressVisible progress:(float)progress viewStorage:(TGModernViewStorage *)viewStorage animated:(bool)animated
+{
+    [super updateProgress:progressVisible progress:progress viewStorage:viewStorage animated:animated];
+    if (OGPlatformMediaDownloadsRequireUserAction())
+        [self updateProgressInternal:progressVisible progress:progress animated:animated];
 }
 
 - (void)updateMessageAttributes
@@ -838,7 +860,6 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
             _emojiFallbackText = alt;
             _emojiFallbackUntilImageLoaded = !keepFallback;
             [self updateEmojiFallbackLabel];
-            IOS6_NOOP_LOG(@"STICKER emojiFallback mid=%d docId=%lld mime=%@ alt=%@", (int)_mid, _document.documentId, _document.mimeType, alt);
         }
         else if (_emojiFallbackText.length != 0 || _emojiFallbackLabel != nil)
         {
@@ -956,6 +977,8 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         if ([button boundView] != nil)
             [container bringSubviewToFront:[button boundView]];
     
+    ((TGMessageImageViewContainer *)[_imageModel boundView]).imageView.delegate = self;
+
     [_replyHeaderModel bindSpecialViewsToContainer:_contentModel.boundView viewStorage:viewStorage atItemPosition:CGPointMake(_replyHeaderModel.frame.origin.x, _replyHeaderModel.frame.origin.y)];
     
     _tapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(messageTapGesture:)];
@@ -992,6 +1015,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
 
 - (void)unbindView:(TGModernViewStorage *)viewStorage
 {
+    ((TGMessageImageViewContainer *)[_imageModel boundView]).imageView.delegate = nil;
     UIView *imageView = [_imageModel boundView];
     [imageView removeGestureRecognizer:_tapGestureRecognizer];
     _tapGestureRecognizer.delegate = nil;
@@ -1069,10 +1093,43 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
     }
 }
 
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
+{
+    if (OGPlatformMediaDownloadsRequireUserAction() && (gestureRecognizer == _tapGestureRecognizer || gestureRecognizer == _boundDoubleTapRecognizer))
+    {
+        UIView *container = [_imageModel boundView];
+        for (UIView *view = touch.view; view != nil && view != container; view = view.superview)
+        {
+            if ([view isKindOfClass:[UIControl class]])
+                return false;
+        }
+    }
+    return true;
+}
+
+- (void)messageImageViewActionButtonPressed:(TGMessageImageView *)messageImageView withAction:(TGMessageImageViewActionType)action
+{
+    if (!OGPlatformMediaDownloadsRequireUserAction() || messageImageView != ((TGMessageImageViewContainer *)[_imageModel boundView]).imageView)
+        return;
+
+    if (action == TGMessageImageViewActionCancelDownload)
+        [_context.companionHandle requestAction:@"mediaProgressCancelRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+    else if (action == TGMessageImageViewActionDownload && !_mediaIsAvailable && !_progressVisible)
+        [_context.companionHandle requestAction:@"mediaDownloadRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+}
+
 - (void)messageTapGesture:(UITapGestureRecognizer *)recognizer
 {
     if (recognizer.state == UIGestureRecognizerStateRecognized)
+    {
+        if (OGPlatformMediaDownloadsRequireUserAction() && !_mediaIsAvailable)
+        {
+            if (!_progressVisible)
+                [_context.companionHandle requestAction:@"mediaDownloadRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+            return;
+        }
         [_context.companionHandle requestAction:@"stickerPackInfoRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+    }
 }
 
 - (void)messageDoubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer
@@ -1250,7 +1307,7 @@ static UIImage *TGIOS6StickerReactionButtonImage(NSString *emoji, NSInteger coun
         else
             contentFrame.origin.x = 9.0f + (_editing ? 42.0f : 0.0f);
         
-        contentFrame.origin.y = 0.0f; //CGRectGetMaxY(imageFrame) - contentFrame.size.height - 4.0f - 8.0f;
+        contentFrame.origin.y = 0.0f;
         
         _contentModel.frame = contentFrame;
         _replyHeaderModel.frame = CGRectMake(7.0f, _replyHeaderViaUserModel == nil ? 0.0f : (_replyHeaderViaUserModel.frame.size.height + 2.0), _replyHeaderModel.frame.size.width, _replyHeaderModel.frame.size.height);

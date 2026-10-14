@@ -65,13 +65,9 @@
                 NSArray *featuredPacksUnreadIds = dict[@"featuredPacksUnreadIds"];
                 strongSelf->_initialUnreadPackIds = [[NSSet alloc] initWithArray:featuredPacksUnreadIds == nil ? @[] : featuredPacksUnreadIds];
                 
-                //if (featuredPacksUnreadIds.count != 0) {
                 if (_masksMode) {
-                    //[TGMaskStickersSignals markFeaturedStickersAsRead];
                 } else {
-                    //[TGStickersSignals markFeaturedStickersAsRead];
                 }
-                //}
                 
                 NSMutableSet *installedPacks = [[NSMutableSet alloc] init];
                 for (TGStickerPack *pack in dict[@"packs"]) {

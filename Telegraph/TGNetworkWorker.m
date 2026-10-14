@@ -1,10 +1,3 @@
-//
-//  TGDownloadWorker.m
-//  Telegraph
-//
-//  Created by Peter on 14/02/14.
-//
-//
 
 #import "TGNetworkWorker.h"
 
@@ -28,6 +21,7 @@ static int workerCount = 0;
 {
     MTContext *_context;
     MTProto *_mtProto;
+    ASQueue *_stateQueue;
     MTRequestMessageService *_requestService;
 
     TGTimer *_timeoutTimer;
@@ -40,7 +34,7 @@ static int workerCount = 0;
 
 @implementation TGNetworkWorker
 
-- (instancetype)initWithContext:(MTContext *)context datacenterId:(NSInteger)datacenterId masterDatacenterId:(NSInteger)masterDatacenterId isCdn:(bool)isCdn
+- (instancetype)initWithContext:(MTContext *)context datacenterId:(NSInteger)datacenterId masterDatacenterId:(NSInteger)masterDatacenterId isCdn:(bool)isCdn networkQueue:(MTQueue *)networkQueue stateQueue:(ASQueue *)stateQueue
 {
     self = [super init];
     if (self != nil)
@@ -50,8 +44,9 @@ static int workerCount = 0;
 
         _context = context;
         _datacenterId = datacenterId;
+        _stateQueue = stateQueue;
 
-        _mtProto = [[MTProto alloc] initWithContext:_context datacenterId:_datacenterId usageCalculationInfo:[[TGTelegramNetworking instance] mediaUsageInfoForType:TGNetworkMediaTypeTagGeneric]];
+        _mtProto = [[MTProto alloc] initWithContext:_context datacenterId:_datacenterId usageCalculationInfo:[[TGTelegramNetworking instance] mediaUsageInfoForType:TGNetworkMediaTypeTagGeneric] queue:networkQueue];
         _mtProto.cdn = isCdn;
         if (!isCdn) {
             _mtProto.requiredAuthToken = @(TGTelegraphInstance.clientUserId);
@@ -88,9 +83,22 @@ static int workerCount = 0;
     [_mtProto setUsageCalculationInfo:usageCalculationInfo];
 }
 
+- (void)dispatchOnStateQueue:(dispatch_block_t)block
+{
+    if (_stateQueue != nil)
+        [_stateQueue dispatchOnQueue:block];
+    else
+        [ActionStageInstance() dispatchOnStageQueue:block];
+}
+
+- (dispatch_queue_t)nativeStateQueue
+{
+    return _stateQueue != nil ? _stateQueue.nativeQueue : [ActionStageInstance() globalStageDispatchQueue];
+}
+
 - (void)startTimer
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [self dispatchOnStateQueue:^
     {
         [self clearTimer];
 
@@ -99,14 +107,14 @@ static int workerCount = 0;
         {
             __strong TGNetworkWorker *strongSelf = weakSelf;
             [strongSelf timerTimeout];
-        } queue:[ActionStageInstance() globalStageDispatchQueue]];
+        } queue:[self nativeStateQueue]];
         [_timeoutTimer start];
     }];
 }
 
 - (void)clearTimer
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [self dispatchOnStateQueue:^
     {
         if (_timeoutTimer != nil)
         {
@@ -118,7 +126,7 @@ static int workerCount = 0;
 
 - (void)timerTimeout
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [self dispatchOnStateQueue:^
     {
         if (_isBusy)
             return;
@@ -138,7 +146,7 @@ static int workerCount = 0;
 
 - (void)setIsBusy:(bool)isBusy
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [self dispatchOnStateQueue:^
     {
         if (_isBusy != isBusy)
         {
@@ -163,7 +171,7 @@ static int workerCount = 0;
 
 - (void)updateReadyToBeRemoved
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [self dispatchOnStateQueue:^
     {
         if (_isReadyToBeRemoved)
         {
@@ -176,10 +184,7 @@ static int workerCount = 0;
 
 - (void)addRequest:(MTRequest *)request
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
-    {
-        [_requestService addRequest:request];
-    }];
+    [_requestService addRequest:request];
 }
 
 - (void)cancelRequestById:(id)requestId

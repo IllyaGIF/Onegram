@@ -74,6 +74,9 @@
 #import "TGCustomAlertView.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 #import "TGMusicPlayer.h"
 #import "TGMusicPlayerItem.h"
@@ -215,12 +218,8 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         [self.userInfoItem setUser:_user animated:false];
         self.userInfoItem.phoneNumber = _user.phoneNumber.length == 0 ? nil : [TGPhoneUtils formatPhone:_user.phoneNumber forceInternational:true];
         self.userInfoItem.username = _user.userName.length == 0 ? nil : [NSString stringWithFormat:@"@%@", _user.userName];
-        self.userInfoItem.brandedDetailsTextScale = 1.2f;
+        self.userInfoItem.brandedDetailsTextScale = [OGTheme brandedTheme].profileAppearance.detailsTextScale;
 
-        // Saved Music uses the same compact row style as Settings.  The row is
-        // inserted into the first (profile) section only when Telegram returns
-        // at least one visible track, so it appears immediately below the
-        // avatar/name/activity card and before the phone section.
         _profileMusicItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:@"" action:@selector(profileMusicPressed)];
         _profileMusicItem.hideArrow = true;
         _profileMusicItem.deselectAutomatically = true;
@@ -230,7 +229,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             _defaultPhonesSectionInsets.bottom = 0;
             
             UIEdgeInsets actionsSectionInsets = self.actionsSection.insets;
-            actionsSectionInsets.bottom = 44.0f;
+            actionsSectionInsets.bottom = [OGTheme brandedTheme].profileAppearance.withoutActionsBottomInset;
             self.actionsSection.insets = actionsSectionInsets;
         }
         
@@ -280,7 +279,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _startSecretChatItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.StartSecretChat") action:@selector(startSecretChatPressed)];
         _startSecretChatItem.deselectAutomatically = true;
         _startSecretChatItem.iconName = @"chat-left-quote-fill";
-        _startSecretChatItem.titleColor = [TGPresentation brandedIOS6Style] ? [UIColor blackColor] : self.presentation.pallete.collectionMenuAccentColor;
+        _startSecretChatItem.titleColor = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].settingsAppearance.titleColor : self.presentation.pallete.collectionMenuAccentColor;
         
         _normalNotificationsItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.Notifications") variant:nil action:@selector(notificationsPressed)];
         _normalNotificationsItem.deselectAutomatically = true;
@@ -300,9 +299,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _groupsInCommonItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.GroupsInCommon") variant:@"" action:@selector(groupsInCommonPressed)];
         _groupsInCommonItem.iconName = @"person-lines-fill";
         _sharedMediaSection = [[TGCollectionMenuSection alloc] initWithItems:@[_sharedMediaItem, _normalNotificationsItem]];
-        _sharedMediaSection.insets = UIEdgeInsetsMake(22.0f, 0.0f, 0.0f, 0.0f);
+        _sharedMediaSection.insets = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.sharedMediaSectionInsets : UIEdgeInsetsMake(22.0f, 0.0f, 0.0f, 0.0f);
         
-        self.actionsSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 0.0f, 0.0f);
+        self.actionsSection.insets = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.compactSectionInsets : UIEdgeInsetsZero;
         
         _deleteContactItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.DeleteContact") action:@selector(deleteContactPressed)];
         _deleteContactItem.editing = true;
@@ -313,8 +312,14 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _blockUserItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:@"" action:@selector(blockUserPressed)];
         _blockUserItem.deselectAutomatically = true;
         _blockUserItem.titleColor = self.presentation.pallete.collectionMenuDestructiveColor;
+        if ([TGPresentation brandedIOS6Style])
+        {
+            OGSettingsAppearance *settingsAppearance = [OGTheme brandedTheme].settingsAppearance;
+            _blockUserItem.centeredTitle = settingsAppearance.blockButtonTitleCentered;
+            _blockUserItem.showsDisclosureIndicator = settingsAppearance.blockButtonShowsDisclosure;
+        }
         _blockUserSection = [[TGCollectionMenuSection alloc] initWithItems:@[_blockUserItem]];
-        _blockUserSection.insets = UIEdgeInsetsMake(22.0f, 0.0f, 44.0f, 0.0f);
+        _blockUserSection.insets = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.blockSectionInsets : UIEdgeInsetsMake(22.0f, 0.0f, 44.0f, 0.0f);
         
         bool outdated = false;
         _userLink = [TGDatabaseInstance() loadUserLink:_uid outdated:&outdated];
@@ -523,9 +528,13 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
 {
     [super setPresentation:presentation];
     
-    _startSecretChatItem.titleColor = [TGPresentation brandedIOS6Style] ? [UIColor blackColor] : presentation.pallete.collectionMenuAccentColor;
-    _blockUserItem.titleColor = presentation.pallete.collectionMenuDestructiveColor;
-    _deleteContactItem.titleColor = presentation.pallete.collectionMenuDestructiveColor;
+    OGSettingsAppearance *settingsAppearance = [OGTheme brandedTheme].settingsAppearance;
+    _startSecretChatItem.titleColor = [TGPresentation brandedIOS6Style] ? settingsAppearance.titleColor : presentation.pallete.collectionMenuAccentColor;
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    _blockUserItem.titleColor = brandedIOS6Style ? settingsAppearance.destructiveColor : presentation.pallete.collectionMenuDestructiveColor;
+    _blockUserItem.centeredTitle = brandedIOS6Style && settingsAppearance.blockButtonTitleCentered;
+    _blockUserItem.showsDisclosureIndicator = !brandedIOS6Style || settingsAppearance.blockButtonShowsDisclosure;
+    _deleteContactItem.titleColor = brandedIOS6Style ? settingsAppearance.destructiveColor : presentation.pallete.collectionMenuDestructiveColor;
 }
 
 - (void)_resetCollectionView
@@ -579,7 +588,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     bool isContact = _phonebookInfo != nil;
     if (self.navigationItem.rightBarButtonItem == nil)
     {
-        [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:false];
+        [self setRightBarButtonItem:[TGPresentation navigationBarButtonItemWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:false];
     }
     
     NSUInteger usernameSectionIndex = [self indexForSection:self.usernameSection];
@@ -594,10 +603,8 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             bool processAbout = j == 1;
             bool processUsername = j == 0;
             
-            //if (_user.kind == TGUserKindBot || _user.kind == TGUserKindSmartBot) {
                 processAbout = !processAbout;
                 processUsername = !processUsername;
-            //}
             
             if (processAbout && !_editing && _about.length != 0 && ![TGPresentation brandedIOS6Style])
             {
@@ -784,9 +791,10 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 }
             }
 
-            self.phonesSection.insets = UIEdgeInsetsZero;
-            self.usernameSection.insets = UIEdgeInsetsZero;
-            self.actionsSection.insets = UIEdgeInsetsMake(10.0f, 3.0f, 44.0f, 6.0f);
+            OGProfileAppearance *profileAppearance = [OGTheme brandedTheme].profileAppearance;
+            self.phonesSection.insets = profileAppearance.compactSectionInsets;
+            self.usernameSection.insets = profileAppearance.compactSectionInsets;
+            self.actionsSection.insets = profileAppearance.actionsSectionInsets;
         }
         else if (!isCurrentUser)
         {
@@ -906,7 +914,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     
     UIEdgeInsets phonesSectionInsets = _defaultPhonesSectionInsets;
     if (_editing)
-        phonesSectionInsets.top += 32.0f;
+        phonesSectionInsets.top += [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.editingPhonesTopOffset : 32.0f;
     self.phonesSection.insets = phonesSectionInsets;
     
     [self.collectionView reloadData];
@@ -1006,7 +1014,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _editing = true;
 
         [self setLeftBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Cancel") style:UIBarButtonItemStylePlain target:self action:@selector(cancelPressed)] animated:true];
-        [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Done") style:UIBarButtonItemStyleDone target:self action:@selector(donePressed)] animated:true];
+        [self setRightBarButtonItem:[TGPresentation navigationBarButtonItemWithTitle:TGLocalized(@"Common.Done") style:UIBarButtonItemStyleDone target:self action:@selector(donePressed)] animated:true];
         
         [self animateCollectionCrossfade];
         
@@ -1043,7 +1051,7 @@ static UIView *_findBackArrow(UIView *view)
     _editing = false;
     
     [self setLeftBarButtonItem:nil animated:true];
-    [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:true];
+    [self setRightBarButtonItem:[TGPresentation navigationBarButtonItemWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:true];
     
     if (iosMajorVersion() >= 7)
     {
@@ -1152,7 +1160,7 @@ static UIView *_findBackArrow(UIView *view)
         _editing = false;
         
         [self setLeftBarButtonItem:nil animated:true];
-        [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:true];
+        [self setRightBarButtonItem:[TGPresentation navigationBarButtonItemWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:true];
         
         if (iosMajorVersion() >= 7)
         {
@@ -1306,9 +1314,6 @@ static UIView *_findBackArrow(UIView *view)
 - (void)setupCallTooltip
 {
     bool displayed = [[[NSUserDefaults standardUserDefaults] objectForKey:@"TG_displayedProfileCallTooltip_v0"] boolValue];
-//#if defined(INTERNAL_RELEASE)
-//    displayed = false;
-//#endif
     if (displayed)
         return;
     
@@ -1936,15 +1941,6 @@ static UIView *_findBackArrow(UIView *view)
         if (legacyThumbnailUrl.length == 0)
             legacyThumbnailUrl = legacyUrl;
         
-        while (false) TGLog(@"PROFILE avatar.gallery.open uid=%d small=%@ big=%@ fullSmall=%@ fullBig=%@ chosenThumb=%@ chosen=%@ hasImage=%d",
-              (int)_uid,
-              user.photoUrlSmall,
-              user.photoUrlBig,
-              user.photoFullUrlSmall,
-              user.photoFullUrlBig,
-              legacyThumbnailUrl,
-              legacyUrl,
-              avatarView.currentImage != nil ? 1 : 0);
         
         if (user != nil && legacyUrl.length != 0 && avatarView.currentImage != nil)
         {

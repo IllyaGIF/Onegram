@@ -1,4 +1,5 @@
 #import "TGPreviewWebPageItemView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "../submodules/LegacyComponents/WebKit/WebKit.h"
@@ -119,7 +120,7 @@
     TGUIWebViewScrollView(_uiWebView).delegate = self;
     TGUIWebViewScrollView(_uiWebView).showsHorizontalScrollIndicator = false;
     TGUIWebViewScrollView(_uiWebView).showsVerticalScrollIndicator = false;
-    _uiWebView.mediaPlaybackRequiresUserAction = false;
+    OGPlatformConfigureWebViewMediaPlayback(_uiWebView, YES, NO);
     
     [self commonSetupWithWebView:_uiWebView completion:^(NSURLRequest *request)
     {

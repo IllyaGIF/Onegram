@@ -56,11 +56,6 @@
 - (void)photoListRequestSuccess:(TLphotos_Photos *)result
 {
     NSMutableArray *array = [[NSMutableArray alloc] init];
-    while (false) TGLog(@"PROFILE photos.result peer=%lld photos=%d users=%d class=%@",
-          _peerId,
-          (int)result.photos.count,
-          (int)result.users.count,
-          NSStringFromClass([result class]));
     
     [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
     
@@ -89,21 +84,7 @@
                 origin = [TGMediaOriginInfo mediaOriginInfoWithFileReference:photo.file_reference fileReferences:fileReferences userId:(int32_t)self.peerId offset:0];
                 imageAttachment.originInfo = origin;
             }
-            NSString *thumbUrl = [imageAttachment.imageInfo closestImageUrlWithSize:CGSizeMake(160.0f, 160.0f) resultingSize:NULL];
-            NSString *fullUrl = [imageAttachment.imageInfo closestImageUrlWithSize:CGSizeMake(640.0f, 640.0f) resultingSize:NULL];
-            while (false) TGLog(@"PROFILE photos.item peer=%lld photoClass=%@ imageId=%lld access=%lld thumb=%@ full=%@ origin=%d",
-                  _peerId,
-                  NSStringFromClass([photoDesc class]),
-                  imageAttachment.imageId,
-                  imageAttachment.accessHash,
-                  thumbUrl,
-                  fullUrl,
-                  imageAttachment.originInfo != nil ? 1 : 0);
             [array addObject:imageAttachment];
-        }
-        else
-        {
-            while (false) TGLog(@"PROFILE photos.item.skip peer=%lld photoClass=%@", _peerId, NSStringFromClass([photoDesc class]));
         }
     }
     

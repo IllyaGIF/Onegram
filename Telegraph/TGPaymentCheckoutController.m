@@ -34,8 +34,8 @@
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
 #import <LocalAuthentication/LocalAuthentication.h>
-#endif
 #import <PassKit/PassKit.h>
+#endif
 #import "Stripe.h"
 
 #import "TGCurrencyFormatter.h"
@@ -458,12 +458,10 @@ static bool isNativeApplePayProvider(NSString *provider) {
     }
     
     if (_validatedInfo != nil && _validatedInfo.shippingOptions.count != 0 && _currentShippingOption == nil) {
-        //buttonEnabled = false;
     }
     
     bool isApplePay = false;
     if (_paymentMethods == nil || _paymentMethods.selectedIndex == NSNotFound) {
-        //buttonEnabled = false;
     }
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
     else if ([_paymentMethods.methods[_paymentMethods.selectedIndex] isKindOfClass:[TGPaymentMethodApplePay class]]) {
@@ -709,7 +707,6 @@ static bool isNativeApplePayProvider(NSString *provider) {
                                     TGDispatchOnMainThread(^{
                                         __strong TGPaymentCheckoutController *strongSelf = weakSelf;
                                         if (strongSelf != nil) {
-                                            //[strongSelf requestPasswordAndPay:card];
                                         }
                                     });
                                 }
@@ -966,7 +963,7 @@ static bool isNativeApplePayProvider(NSString *provider) {
         STPPaymentConfiguration *configuration = [[STPPaymentConfiguration sharedConfiguration] copy];
         configuration.smsAutofillDisabled = true;
         configuration.publishableKey = publishableKey;
-        configuration.appleMerchantIdentifier = @""; // Configure your own merchant ID for Apple Pay.
+        configuration.appleMerchantIdentifier = @"";
         
         _apiClient = [[STPAPIClient alloc] initWithConfiguration:configuration];
         

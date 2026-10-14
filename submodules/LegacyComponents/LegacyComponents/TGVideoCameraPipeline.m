@@ -4,14 +4,15 @@
 #import "TGImageUtils.h"
 
 #import <libkern/OSAtomic.h>
+#if __has_include(<CoreMedia/CoreMedia.h>)
 #import <CoreMedia/CoreMedia.h>
-#import <ImageIO/ImageIO.h>
-#import <Accelerate/Accelerate.h>
+#endif
 
 #import "TGVideoCameraGLRenderer.h"
 
 #import "TGVideoCameraMovieRecorder.h"
 #import "TGMediaVideoConverter.h"
+#import "../../../OnegramRuntime/OGRuntime.h"
 
 typedef enum {
 	TGVideoCameraRecordingStatusIdle = 0,
@@ -21,6 +22,203 @@ typedef enum {
 } TGVideoCameraRecordingStatus;
 
 const NSInteger TGVideoCameraRetainedBufferCount = 16;
+
+static bool TGVideoCameraPipelineUsesConstrainedProfile(void)
+{
+    return OGRuntimeSingleCoreDevice();
+}
+
+static int32_t TGVideoCameraPipelineFrameRate(void)
+{
+    if (iosMajorVersion() < 5)
+        return 15;
+    return TGVideoCameraPipelineUsesConstrainedProfile() ? 24 : 30;
+}
+
+static bool TGVideoCameraPipelineUsesStagedAudioStartup(void)
+{
+    return iosMajorVersion() < 7;
+}
+
+static NSString *TGVideoCameraPipelineSessionPreset(AVCaptureSession *session)
+{
+    if (iosMajorVersion() < 7)
+    {
+        if ([session canSetSessionPreset:AVCaptureSessionPreset640x480])
+            return AVCaptureSessionPreset640x480;
+        return AVCaptureSessionPresetMedium;
+    }
+    if (TGVideoCameraPipelineUsesConstrainedProfile())
+    {
+        if (&AVCaptureSessionPreset352x288 != NULL && [session canSetSessionPreset:AVCaptureSessionPreset352x288])
+            return AVCaptureSessionPreset352x288;
+        if ([session canSetSessionPreset:AVCaptureSessionPresetMedium])
+            return AVCaptureSessionPresetMedium;
+    }
+    
+    if ([session canSetSessionPreset:AVCaptureSessionPreset640x480])
+        return AVCaptureSessionPreset640x480;
+    return AVCaptureSessionPresetMedium;
+}
+
+static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
+{
+    if (TGVideoCameraPipelineUsesConstrainedProfile())
+        return [TGMediaVideoConversionPresetSettings maximumSizeForPreset:TGMediaVideoConversionPresetVideoMessage].width;
+    return CGFLOAT_MAX;
+}
+
+@protocol TGVideoCameraSessionExecuting <NSObject>
+
+- (void)dispatch:(dispatch_block_t)block;
+- (void)dispatchAsync:(dispatch_block_t)block;
+- (bool)isCurrentQueue;
+
+@end
+
+@interface TGVideoCameraRunLoopExecutor : NSObject <TGVideoCameraSessionExecuting>
+{
+    NSThread *_thread;
+    NSCondition *_condition;
+    NSMutableArray *_tasks;
+    bool _ready;
+    bool _drainScheduled;
+}
+
+- (void)dispatch:(dispatch_block_t)block;
+- (void)dispatchAsync:(dispatch_block_t)block;
+- (bool)isCurrentQueue;
+
+@end
+
+@implementation TGVideoCameraRunLoopExecutor
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _condition = [[NSCondition alloc] init];
+        _tasks = [[NSMutableArray alloc] init];
+        _thread = [[NSThread alloc] initWithTarget:self selector:@selector(threadMain) object:nil];
+        _thread.name = @"org.telegram.VideoCameraPipeline.session";
+        [_condition lock];
+        [_thread start];
+        while (!_ready)
+            [_condition wait];
+        [_condition unlock];
+    }
+    return self;
+}
+
+- (void)threadMain
+{
+    @autoreleasepool
+    {
+        NSRunLoop *runLoop = [NSRunLoop currentRunLoop];
+        NSPort *port = [NSPort port];
+        [runLoop addPort:port forMode:NSDefaultRunLoopMode];
+        [_condition lock];
+        _ready = true;
+        [_condition signal];
+        [_condition unlock];
+        while (true)
+        {
+            @autoreleasepool
+            {
+                [runLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]];
+            }
+        }
+    }
+}
+
+- (bool)isCurrentQueue
+{
+    return [NSThread currentThread] == _thread;
+}
+
+- (void)dispatch:(dispatch_block_t)block
+{
+    if (block == nil)
+        return;
+    if ([self isCurrentQueue])
+        block();
+    else
+        [self dispatchAsync:block];
+}
+
+- (void)dispatchAsync:(dispatch_block_t)block
+{
+    if (block == nil)
+        return;
+    [_condition lock];
+    [_tasks addObject:[block copy]];
+    bool schedule = !_drainScheduled;
+    _drainScheduled = true;
+    [_condition unlock];
+    if (schedule)
+        [self performSelector:@selector(drainTask) onThread:_thread withObject:nil waitUntilDone:false modes:[NSArray arrayWithObject:NSDefaultRunLoopMode]];
+}
+
+- (void)drainTask
+{
+    [_condition lock];
+    dispatch_block_t task = nil;
+    if (_tasks.count != 0)
+    {
+        task = [_tasks objectAtIndex:0];
+        [_tasks removeObjectAtIndex:0];
+    }
+    [_condition unlock];
+    @autoreleasepool
+    {
+        if (task != nil)
+            task();
+    }
+    [_condition lock];
+    bool schedule = _tasks.count != 0;
+    _drainScheduled = schedule;
+    [_condition unlock];
+    if (schedule)
+        [self performSelector:@selector(drainTask) onThread:_thread withObject:nil waitUntilDone:false modes:[NSArray arrayWithObject:NSDefaultRunLoopMode]];
+}
+
+@end
+
+@interface TGVideoCameraDispatchExecutor : NSObject <TGVideoCameraSessionExecuting>
+{
+    SQueue *_queue;
+}
+
+@end
+
+@implementation TGVideoCameraDispatchExecutor
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        _queue = [[SQueue alloc] init];
+    return self;
+}
+
+- (void)dispatch:(dispatch_block_t)block
+{
+    [_queue dispatch:block];
+}
+
+- (void)dispatchAsync:(dispatch_block_t)block
+{
+    if (block != nil)
+        dispatch_async((dispatch_queue_t)[_queue _dispatch_queueRaw], block);
+}
+
+- (bool)isCurrentQueue
+{
+    return [_queue isCurrentQueue];
+}
+
+@end
 
 @interface TGVideoCameraPipeline () <AVCaptureAudioDataOutputSampleBufferDelegate, AVCaptureVideoDataOutputSampleBufferDelegate, TGVideoCameraMovieRecorderDelegate>
 {
@@ -39,6 +237,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	AVCaptureVideoOrientation _videoBufferOrientation;
     AVCaptureDevicePosition _preferredPosition;
 	bool _running;
+    bool _starting;
 	bool _startCaptureSessionOnEnteringForeground;
 	id _applicationWillEnterForegroundObserver;
 	
@@ -62,7 +261,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
     int32_t _repeatingCount;
     
     NSMutableData *_audioBuffer;
-    int16_t _micLevelPeak;
+    int32_t _micLevelPeak;
     int _micLevelPeakCount;
     
     TGMediaVideoConversionPreset _preset;
@@ -84,6 +283,23 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
     id<TGLiveUploadInterface> _liveUploadInterface;
     bool _stopRunningPending;
     void (^_stopRunningCompletion)(void);
+    
+    CFAbsoluteTime _startRunningTime;
+    CFAbsoluteTime _captureSetupTime;
+    bool _receivedFirstVideoFrame;
+    bool _receivedFirstAudioSample;
+    bool _sessionRecoveryAttempted;
+    bool _captureFailureReported;
+    AVCaptureVideoPreviewLayer *_previewLayer;
+    CFAbsoluteTime _statsWindowStart;
+    NSUInteger _statsReceivedFrames;
+    NSUInteger _statsRenderedFrames;
+    NSUInteger _statsDroppedFrames;
+    CFAbsoluteTime _statsRenderTime;
+    bool _previewCallbackPending;
+    bool _videoPipelineFailed;
+    STimer *_startupTimer;
+    NSUInteger _failedRenderFrameCount;
 }
 
 @property (nonatomic, strong) __attribute__((NSObject)) CMFormatDescriptionRef outputVideoFormatDescription;
@@ -91,6 +307,13 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 
 - (bool)stopRecordingOnCameraQueue;
 - (void)finishStoppingCaptureSession;
+- (void)startRecordingWhenFormatsAvailable;
+- (void)startPreparedCaptureSession;
+- (bool)addAudioInputWithError:(NSError **)error;
+- (void)startAudioCaptureAfterVideo;
+- (void)startStartupTimerForPhase:(NSString *)phase;
+- (void)configureVideoOutputPixelFormat;
++ (id<TGVideoCameraSessionExecuting> )cameraQueue;
 
 @end
 
@@ -105,12 +328,15 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
         _preferredPosition = position;
 		
 		_videoDataOutputQueue = dispatch_queue_create("org.telegram.VideoCameraPipeline.video", DISPATCH_QUEUE_SERIAL);
+        _audioDataOutputQueue = dispatch_queue_create("org.telegram.VideoCameraPipeline.audio", DISPATCH_QUEUE_SERIAL);
 		dispatch_set_target_queue(_videoDataOutputQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
 		
-		_renderer = [[TGVideoCameraGLRenderer alloc] init];
 				
 		_delegate = delegate;
 		_delegateCallbackQueue = queue;
+#if !OS_OBJECT_USE_OBJC
+        dispatch_retain(_delegateCallbackQueue);
+#endif
         
         _thumbnails = [[NSMutableDictionary alloc] init];
 	}
@@ -120,33 +346,100 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 - (void)dealloc
 {
 	[self destroyCaptureSession];
+    if (_currentPreviewPixelBuffer != NULL)
+        CFRelease(_currentPreviewPixelBuffer);
+    if (_previousPixelBuffer != NULL)
+        CFRelease(_previousPixelBuffer);
+#if !OS_OBJECT_USE_OBJC
+    dispatch_release(_videoDataOutputQueue);
+    dispatch_release(_audioDataOutputQueue);
+    dispatch_release(_delegateCallbackQueue);
+#endif
 }
 
 - (void)startRunning
 {
     [[TGVideoCameraPipeline cameraQueue] dispatch:^
     {
+        if (_running || _starting || _stopRunningPending || _captureFailureReported)
+            return;
+        _starting = true;
+        _startRunningTime = CFAbsoluteTimeGetCurrent();
+        _receivedFirstVideoFrame = false;
+        _receivedFirstAudioSample = false;
+		_videoPipelineFailed = false;
 		[self setupCaptureSession];
-		
-		if (_captureSession != nil)
+        _captureSetupTime = CFAbsoluteTimeGetCurrent() - _startRunningTime;
+        if (_captureSession == nil)
         {
-			[_captureSession startRunning];
-			_running = true;
-            [self invokeDelegateCallbackAsync:^
-            {
-                [_delegate capturePipelineDidStartRunning:self];
+            _starting = false;
+            return;
+        }
+        if (self.usesNativePreview)
+        {
+            [self invokeDelegateCallbackAsync:^{
+                bool prepared = [_delegate capturePipelineDidPrepareToStartRunning:self];
+                [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+                    if (!prepared)
+                    {
+                        [self stopRunning];
+                        return;
+                    }
+                    [self startPreparedCaptureSession];
+                }];
             }];
-		}
+        }
+        else
+            [self startPreparedCaptureSession];
 	}];
+}
+
+- (void)startPreparedCaptureSession
+{
+    if (!_starting || _captureSession == nil || _stopRunningPending || _captureFailureReported)
+        return;
+    _starting = false;
+    [_captureSession startRunning];
+    _running = _captureSession.running;
+    if (!_running)
+    {
+        [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session could not start."}]];
+        return;
+    }
+    [self startStartupTimerForPhase:TGVideoCameraPipelineUsesStagedAudioStartup() ? @"video" : @"audio-video"];
+}
+
+- (void)startStartupTimerForPhase:(NSString *)phase
+{
+    [_startupTimer invalidate];
+    __weak TGVideoCameraPipeline *weakSelf = self;
+    AVCaptureSession *session = _captureSession;
+    bool videoPhase = [phase isEqualToString:@"video"];
+    NSTimeInterval remainingStartupTime = 10.0;
+    TGLegacyLog(@"VIDEOMESSAGE waiting for formats phase=%@ timeout=%.0fms", phase, remainingStartupTime * 1000.0);
+    _startupTimer = [[STimer alloc] initWithTimeout:remainingStartupTime repeat:false completion:^{
+        [[TGVideoCameraPipeline cameraQueue] dispatchAsync:^{
+            TGVideoCameraPipeline *strongSelf = weakSelf;
+            if (strongSelf != nil && strongSelf->_captureSession == session && strongSelf->_running && !strongSelf->_stopRunningPending && !strongSelf->_captureFailureReported && (videoPhase ? strongSelf.outputVideoFormatDescription == NULL : (strongSelf.outputAudioFormatDescription == NULL || strongSelf.outputVideoFormatDescription == NULL)))
+            {
+                NSString *reason = [NSString stringWithFormat:@"The capture session did not deliver its formats during %@ startup.", phase];
+                [strongSelf handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: reason}]];
+            }
+        }];
+    } nativeQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)];
+    [_startupTimer start];
+}
+
+- (bool)usesNativePreview
+{
+    return iosMajorVersion() < 5 || TGVideoCameraPipelineUsesConstrainedProfile();
 }
 
 - (AVCaptureVideoPreviewLayer *)previewLayer
 {
     @synchronized (self)
     {
-        if (_captureSession == nil)
-            return nil;
-        return [[AVCaptureVideoPreviewLayer alloc] initWithSession:_captureSession];
+        return _previewLayer;
     }
 }
 
@@ -163,6 +456,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
             return;
 
         _stopRunningPending = true;
+        _starting = false;
         _stopRunningCompletion = [completion copy];
         _running = false;
 
@@ -206,28 +500,41 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	if (_captureSession != nil)
 		return;
 	
+    if (_renderer == nil)
+        _renderer = [[TGVideoCameraGLRenderer alloc] init];
 	_captureSession = [[AVCaptureSession alloc] init];	
+    if (iosMajorVersion() >= 7)
+    {
+        SEL useApplicationSession = NSSelectorFromString(@"setUsesApplicationAudioSession:");
+        SEL configureApplicationSession = NSSelectorFromString(@"setAutomaticallyConfiguresApplicationAudioSession:");
+        if ([_captureSession respondsToSelector:useApplicationSession])
+        {
+            void (*setUsesApplicationSession)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[_captureSession methodForSelector:useApplicationSession];
+            setUsesApplicationSession(_captureSession, useApplicationSession, YES);
+        }
+        if ([_captureSession respondsToSelector:configureApplicationSession])
+        {
+            void (*setConfiguresApplicationSession)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[_captureSession methodForSelector:configureApplicationSession];
+            setConfiguresApplicationSession(_captureSession, configureApplicationSession, NO);
+        }
+    }
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(captureSessionNotification:) name:nil object:_captureSession];
+    __weak TGVideoCameraPipeline *weakSelf = self;
 	_applicationWillEnterForegroundObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationWillEnterForegroundNotification object:[[LegacyComponentsGlobals provider] applicationInstance] queue:nil usingBlock:^(__unused NSNotification *note)
     {
-		[self applicationWillEnterForeground];
+		[weakSelf applicationWillEnterForeground];
 	}];
 
-	_audioDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
-    NSError *audioDeviceError = nil;
-	_audioInput = [[AVCaptureDeviceInput alloc] initWithDevice:_audioDevice error:&audioDeviceError];
-	if ([_captureSession canAddInput:_audioInput])
-		[_captureSession addInput:_audioInput];
-	
-	_audioOutput = [[AVCaptureAudioDataOutput alloc] init];
-	_audioDataOutputQueue = dispatch_queue_create("org.telegram.VideoCameraPipeline.audio", DISPATCH_QUEUE_SERIAL);
-	[_audioOutput setSampleBufferDelegate:self queue:_audioDataOutputQueue];
-	
-	if ([_captureSession canAddOutput:_audioOutput])
-		[_captureSession addOutput:_audioOutput];
+    [_captureSession beginConfiguration];
 
-	_audioConnection = TGAVCaptureConnectionWithMediaType(_audioOutput, AVMediaTypeAudio);
+    NSError *audioDeviceError = nil;
+    if (!TGVideoCameraPipelineUsesStagedAudioStartup() && ![self addAudioInputWithError:&audioDeviceError])
+    {
+        [_captureSession commitConfiguration];
+        [self handleNonRecoverableCaptureSessionRuntimeError:audioDeviceError ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorDeviceNotConnected userInfo:nil]];
+        return;
+    }
 
 
     NSArray *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
@@ -246,31 +553,48 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
     
 	NSError *videoDeviceError = nil;
 	_videoInput = [[AVCaptureDeviceInput alloc] initWithDevice:videoDevice error:&videoDeviceError];
-	if ([_captureSession canAddInput:_videoInput])
+	if (_videoInput != nil && [_captureSession canAddInput:_videoInput])
     {
 		[_captureSession addInput:_videoInput];
         _videoDevice = videoDevice;
 	}
 	else
     {
-		[self handleNonRecoverableCaptureSessionRuntimeError:videoDeviceError];
+        [_captureSession commitConfiguration];
+		[self handleNonRecoverableCaptureSessionRuntimeError:videoDeviceError ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorDeviceNotConnected userInfo:nil]];
 		return;
 	}
 	
 	_videoOutput = [[AVCaptureVideoDataOutput alloc] init];
-    _videoOutput.alwaysDiscardsLateVideoFrames = iosMajorVersion() < 5;
-	_videoOutput.videoSettings = @{ (id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA) };
+    _videoOutput.alwaysDiscardsLateVideoFrames = iosMajorVersion() < 5 || TGVideoCameraPipelineUsesConstrainedProfile();
+
 	[_videoOutput setSampleBufferDelegate:self queue:_videoDataOutputQueue];
 	
-	if ([_captureSession canAddOutput:_videoOutput])
-		[_captureSession addOutput:_videoOutput];
+    if (![_captureSession canAddOutput:_videoOutput])
+    {
+        [_captureSession commitConfiguration];
+        [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:nil]];
+        return;
+    }
+    [_captureSession addOutput:_videoOutput];
 	
 	_videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
     
-    if ([_captureSession canSetSessionPreset:AVCaptureSessionPreset640x480])
-        _captureSession.sessionPreset = AVCaptureSessionPreset640x480;
-    else
-        _captureSession.sessionPreset = AVCaptureSessionPresetMedium;
+    _captureSession.sessionPreset = TGVideoCameraPipelineSessionPreset(_captureSession);
+    [_captureSession commitConfiguration];
+    _videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+    _audioConnection = TGAVCaptureConnectionWithMediaType(_audioOutput, AVMediaTypeAudio);
+    if ([_captureSession.outputs containsObject:_videoOutput])
+        [self configureVideoOutputPixelFormat];
+
+    if (self.usesNativePreview)
+    {
+        AVCaptureVideoPreviewLayer *previewLayer = [[AVCaptureVideoPreviewLayer alloc] initWithSession:_captureSession];
+        @synchronized (self)
+        {
+            _previewLayer = previewLayer;
+        }
+    }
     
     [self _configureFPS];
 	
@@ -283,8 +607,24 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	return;
 }
 
+- (void)configureVideoOutputPixelFormat
+{
+    OSType pixelFormat = kCVPixelFormatType_32BGRA;
+    if (iosMajorVersion() >= 5)
+    {
+        NSArray *formats = [_videoOutput availableVideoCVPixelFormatTypes];
+        if ([formats containsObject:@(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)])
+            pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+        else if ([formats containsObject:@(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)])
+            pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+    }
+    _videoOutput.videoSettings = @{ (id)kCVPixelBufferPixelFormatTypeKey : @(pixelFormat) };
+}
+
 - (void)destroyCaptureSession
 {
+    [_startupTimer invalidate];
+    _startupTimer = nil;
 	if (_captureSession)
 	{
 		[[NSNotificationCenter defaultCenter] removeObserver:self name:nil object:_captureSession];
@@ -317,13 +657,21 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
         _videoConnection = nil;
 
 		_captureSession = nil;
+        @synchronized (self)
+        {
+            _previewLayer.session = nil;
+            _previewLayer = nil;
+        }
 	}
 }
 
 - (void)captureSessionNotification:(NSNotification *)notification
 {
-    [[TGVideoCameraPipeline cameraQueue] dispatch:^
+    TGLegacyLog(@"VIDEOMESSAGE session %@ error=%@", notification.name, notification.userInfo[AVCaptureSessionErrorKey]);
+    [[TGVideoCameraPipeline cameraQueue] dispatchAsync:^
     {
+        if (notification.object != _captureSession)
+            return;
 		if ([notification.name isEqualToString:AVCaptureSessionWasInterruptedNotification])
 		{
 			[self captureSessionDidStopRunning];
@@ -347,24 +695,53 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 				[self handleNonRecoverableCaptureSessionRuntimeError:error];
 			}
 		}
-	}];
+    }];
 }
 
-- (void)handleRecoverableCaptureSessionRuntimeError:(NSError *)__unused error
+- (void)handleRecoverableCaptureSessionRuntimeError:(NSError *)error
 {
-	if (_running)
-		[_captureSession startRunning];
+    if (!_running)
+        return;
+    if (_sessionRecoveryAttempted || _recordingStatus != TGVideoCameraRecordingStatusIdle || _stopRunningPending)
+    {
+        [self handleNonRecoverableCaptureSessionRuntimeError:error];
+        return;
+    }
+    _sessionRecoveryAttempted = true;
+    _running = false;
+    [_videoOutput setSampleBufferDelegate:nil queue:NULL];
+    [_audioOutput setSampleBufferDelegate:nil queue:NULL];
+    [_captureSession stopRunning];
+    [self destroyVideoPipeline];
+    dispatch_sync(_audioDataOutputQueue, ^{
+        self.outputAudioFormatDescription = NULL;
+    });
+    [self destroyCaptureSession];
+    [self startRunning];
 }
 
 - (void)handleNonRecoverableCaptureSessionRuntimeError:(NSError *)error
 {
+    if (_captureFailureReported)
+        return;
+    _captureFailureReported = true;
 	_running = false;
+    _starting = false;
+    [_startupTimer invalidate];
+    _startupTimer = nil;
+    [self invokeDelegateCallbackAsync:^{
+        [_delegate capturePipeline:self didStopRunningWithError:error];
+    }];
+    OSSpinLockLock(&_recordLock);
+    _startRecordAfterFormatBuffer = false;
+    OSSpinLockUnlock(&_recordLock);
+    [_videoOutput setSampleBufferDelegate:nil queue:NULL];
+    [_audioOutput setSampleBufferDelegate:nil queue:NULL];
+    [_captureSession stopRunning];
+    [self stopRecording];
+    [self destroyVideoPipeline];
 	[self destroyCaptureSession];
 	
-	[self invokeDelegateCallbackAsync:^
-    {
-		[_delegate capturePipeline:self didStopRunningWithError:error];
-	}];
 }
 
 - (void)captureSessionDidStopRunning
@@ -388,8 +765,17 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 
 - (void)setupVideoPipelineWithInputFormatDescription:(CMFormatDescriptionRef)inputFormatDescription
 {
-	[_renderer prepareForInputWithFormatDescription:inputFormatDescription outputRetainedBufferCountHint:TGVideoCameraRetainedBufferCount];
+	[_renderer prepareForInputWithFormatDescription:inputFormatDescription outputRetainedBufferCountHint:TGVideoCameraPipelineUsesConstrainedProfile() ? 4 : TGVideoCameraRetainedBufferCount maximumOutputSide:TGVideoCameraPipelineMaximumOutputSide()];
+    OSSpinLockLock(&_recordLock);
     self.outputVideoFormatDescription = _renderer.outputFormatDescription;
+    OSSpinLockUnlock(&_recordLock);
+    if (self.outputVideoFormatDescription == NULL && !_videoPipelineFailed)
+    {
+        _videoPipelineFailed = true;
+        [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+            [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorInvalidSourceMedia userInfo:nil]];
+        }];
+    }
 }
 
 - (void)destroyVideoPipeline
@@ -423,7 +809,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 
 - (void)setRenderingEnabled:(bool)renderingEnabled
 {
-	@synchronized (_renderer)
+	@synchronized (self)
     {
 		_renderingEnabled = renderingEnabled;
 	}
@@ -431,7 +817,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 
 - (bool)renderingEnabled
 {
-	@synchronized (_renderer)
+	@synchronized (self)
     {
 		return _renderingEnabled;
 	}
@@ -443,31 +829,49 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	
 	if (captureOutput == _videoOutput)
 	{
+        if (!_receivedFirstVideoFrame)
+        {
+            _receivedFirstVideoFrame = true;
+            CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription);
+            if (TGVideoCameraPipelineUsesStagedAudioStartup())
+            {
+                AVCaptureSession *session = _captureSession;
+                [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+                    if (_captureSession == session && _running && !_stopRunningPending && !_captureFailureReported)
+                        [self startAudioCaptureAfterVideo];
+                }];
+            }
+            [self invokeDelegateCallbackAsync:^{
+                [_delegate capturePipelineDidStartRunning:self];
+            }];
+        }
+        
         bool configuredVideoFormat = self.outputVideoFormatDescription != NULL;
-		if (!configuredVideoFormat)
+		if (!configuredVideoFormat && !_videoPipelineFailed)
 			[self setupVideoPipelineWithInputFormatDescription:formatDescription];
 
         if (self.outputVideoFormatDescription != NULL)
             [self renderVideoSampleBuffer:sampleBuffer];
 
         OSSpinLockLock(&_recordLock);
-        if (_startRecordAfterFormatBuffer && self.outputVideoFormatDescription != NULL && self.outputAudioFormatDescription != NULL)
+        bool waitingForFormats = _startRecordAfterFormatBuffer;
+        OSSpinLockUnlock(&_recordLock);
+        if (waitingForFormats)
         {
-            _startRecordAfterFormatBuffer = false;
-            OSSpinLockUnlock(&_recordLock);
-            TGDispatchOnMainThread(^
-            {
-                [self startRecording:_recordingURL preset:_preset liveUpload:_liveUpload];
-            });
-        }
-        else
-        {
-            OSSpinLockUnlock(&_recordLock);
+            [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+                [self startRecordingWhenFormatsAvailable];
+            }];
         }
 	}
 	else if (captureOutput == _audioOutput)
 	{
-		self.outputAudioFormatDescription = formatDescription;
+        if (!_receivedFirstAudioSample)
+        {
+            _receivedFirstAudioSample = true;
+        }
+		OSSpinLockLock(&_recordLock);
+        self.outputAudioFormatDescription = formatDescription;
+        OSSpinLockUnlock(&_recordLock);
 		
 		@synchronized (self)
         {
@@ -475,41 +879,64 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 				[_recorder appendAudioSampleBuffer:sampleBuffer];
 		}
 
-        CMBlockBufferRef blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer);
-        uint32_t numSamplesInBuffer = (uint32_t)CMSampleBufferGetNumSamples(sampleBuffer);
-        
+        CMBlockBufferRef blockBuffer = NULL;
         AudioBufferList audioBufferList;
-        
-        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &audioBufferList, sizeof(audioBufferList), NULL, NULL, kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuffer );
-        
-        for (uint32_t bufferCount = 0; bufferCount < audioBufferList.mNumberBuffers; bufferCount++)
+        OSStatus audioResult = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &audioBufferList, sizeof(audioBufferList), NULL, NULL, kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &blockBuffer);
+        const AudioStreamBasicDescription *description = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription);
+        if (audioResult == noErr && description != NULL && description->mFormatID == kAudioFormatLinearPCM && description->mBitsPerChannel == 16 && (description->mFormatFlags & kAudioFormatFlagIsSignedInteger))
         {
-            int16_t *samples = (int16_t *)audioBufferList.mBuffers[bufferCount].mData;
-            [self processWaveformPreview:samples count:numSamplesInBuffer];
+            for (uint32_t i = 0; i < audioBufferList.mNumberBuffers; i++)
+                [self processWaveformPreview:audioBufferList.mBuffers[i].mData count:audioBufferList.mBuffers[i].mDataByteSize / sizeof(int16_t)];
         }
-        
-        CFRelease(blockBuffer);
-        
+        if (blockBuffer != NULL)
+            CFRelease(blockBuffer);
+
         OSSpinLockLock(&_recordLock);
-        if (_startRecordAfterFormatBuffer && self.outputVideoFormatDescription != NULL && self.outputAudioFormatDescription != NULL)
+        bool waitingForFormats = _startRecordAfterFormatBuffer;
+        OSSpinLockUnlock(&_recordLock);
+        if (waitingForFormats)
         {
-            _startRecordAfterFormatBuffer = false;
-            OSSpinLockUnlock(&_recordLock);
-            TGDispatchOnMainThread(^
-            {
-                [self startRecording:_recordingURL preset:_preset liveUpload:_liveUpload];
-            });
-        }
-        else
-        {
-            OSSpinLockUnlock(&_recordLock);
+            [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+                [self startRecordingWhenFormatsAvailable];
+            }];
         }
     }
 }
 
+- (void)captureOutput:(AVCaptureOutput *)captureOutput didDropSampleBuffer:(CMSampleBufferRef)__unused sampleBuffer fromConnection:(AVCaptureConnection *)__unused connection
+{
+    if (captureOutput == _videoOutput)
+        _statsDroppedFrames++;
+}
+
+- (void)reportFrameStatisticsWithRenderTime:(CFAbsoluteTime)renderTime rendered:(bool)rendered
+{
+    CFAbsoluteTime currentTime = CFAbsoluteTimeGetCurrent();
+    if (_statsWindowStart < DBL_EPSILON)
+        _statsWindowStart = currentTime;
+    
+    _statsReceivedFrames++;
+    if (rendered)
+    {
+        _statsRenderedFrames++;
+        _statsRenderTime += renderTime;
+    }
+    
+    CFAbsoluteTime windowDuration = currentTime - _statsWindowStart;
+    if (windowDuration < 2.0)
+        return;
+    
+    
+    _statsWindowStart = currentTime;
+    _statsReceivedFrames = 0;
+    _statsRenderedFrames = 0;
+    _statsDroppedFrames = 0;
+    _statsRenderTime = 0.0;
+}
+
 - (void)processWaveformPreview:(int16_t const *)samples count:(int)count {
     for (int i = 0; i < count; i++) {
-        int16_t sample = samples[i];
+        int32_t sample = samples[i];
         if (sample < 0) {
             sample = -sample;
         }
@@ -532,7 +959,8 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 
 - (UIImage *)imageFromImageBuffer:(CVPixelBufferRef)imageBuffer
 {
-    CVPixelBufferLockBaseAddress(imageBuffer, 0);
+    if (imageBuffer == NULL || CVPixelBufferGetPixelFormatType(imageBuffer) != kCVPixelFormatType_32BGRA || CVPixelBufferLockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
+        return nil;
     
     void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
     
@@ -545,12 +973,14 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
     
     CGContextRef context = CGBitmapContextCreate(baseAddress, width, height, 8, bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
     
-    CGImageRef cgImage = CGBitmapContextCreateImage(context);
-    CVPixelBufferUnlockBaseAddress(imageBuffer,0);
-    
-    CGContextRelease(context);
-    CGColorSpaceRelease(colorSpace);
-    
+    CGImageRef cgImage = context != NULL ? CGBitmapContextCreateImage(context) : NULL;
+    CVPixelBufferUnlockBaseAddress(imageBuffer, kCVPixelBufferLock_ReadOnly);
+    if (context != NULL)
+        CGContextRelease(context);
+    if (colorSpace != NULL)
+        CGColorSpaceRelease(colorSpace);
+    if (cgImage == NULL)
+        return nil;
     UIImage *image = [UIImage imageWithCGImage:cgImage];
     CGImageRelease(cgImage);
     
@@ -560,24 +990,42 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 
 - (void)renderVideoSampleBuffer:(CMSampleBufferRef)sampleBuffer
 {
+    if (self.usesNativePreview)
+    {
+        bool recording = false;
+        @synchronized (self)
+        {
+            recording = _recordingStatus == TGVideoCameraRecordingStatusRecording;
+        }
+        
+        if (!recording)
+        {
+            [self reportFrameStatisticsWithRenderTime:0.0 rendered:false];
+            return;
+        }
+    }
+    
 	CVPixelBufferRef renderedPixelBuffer = NULL;
 	CMTime timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    CFAbsoluteTime renderStart = CFAbsoluteTimeGetCurrent();
     
 	@synchronized (_renderer)
 	{
-		if (_renderingEnabled)
+		if (self.renderingEnabled)
         {
             bool repeatingFrames = false;
             @synchronized (self)
             {
-                if (_recorder.paused && _previousPixelBuffer != NULL)
+                if (_recorder.paused)
                 {
                     _recorder.paused = false;
-                    _repeatingCount = 11;
-                    
-                    [_renderer setPreviousPixelBuffer:_previousPixelBuffer];
-                    CFRelease(_previousPixelBuffer);
-                    _previousPixelBuffer = NULL;
+                    if (_previousPixelBuffer != NULL)
+                    {
+                        _repeatingCount = 11;
+                        [_renderer setPreviousPixelBuffer:_previousPixelBuffer];
+                        CFRelease(_previousPixelBuffer);
+                        _previousPixelBuffer = NULL;
+                    }
                 }
                 
                 if (_repeatingCount > 0)
@@ -598,16 +1046,17 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
             
 			CVPixelBufferRef sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
 			renderedPixelBuffer = [_renderer copyRenderedPixelBuffer:sourcePixelBuffer];
+            [self reportFrameStatisticsWithRenderTime:CFAbsoluteTimeGetCurrent() - renderStart rendered:renderedPixelBuffer != NULL];
             
             @synchronized (self)
             {
-                if (_recordingStatus == TGVideoCameraRecordingStatusRecording && _recordingThumbnail == nil)
+                if (_recordingStatus == TGVideoCameraRecordingStatusRecording && renderedPixelBuffer != NULL && _recordingThumbnail == nil)
                 {
-                    UIImage *image = [self imageFromImageBuffer:sourcePixelBuffer];
+                    UIImage *image = [self imageFromImageBuffer:renderedPixelBuffer];
                     _recordingThumbnail = image;
                 }
                 
-                if (_recordingStatus == TGVideoCameraRecordingStatusRecording && !repeatingFrames)
+                if (_recordingStatus == TGVideoCameraRecordingStatusRecording && renderedPixelBuffer != NULL && !repeatingFrames)
                 {
                     NSTimeInterval currentTime = CMTimeGetSeconds(timestamp);
                     if (_previousThumbnailTime < DBL_EPSILON)
@@ -615,7 +1064,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
                         _firstThumbnailTime = currentTime;
                         _previousThumbnailTime = currentTime;
                         
-                        [self storeThumbnailWithSampleBuffer:sampleBuffer time:0.0 mirror:_renderer.mirror];
+                        [self storeThumbnailWithPixelBuffer:renderedPixelBuffer time:0.0];
                     }
                     else
                     {
@@ -624,7 +1073,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
                         
                         if (currentTime - _previousThumbnailTime >= interval)
                         {
-                            [self storeThumbnailWithSampleBuffer:sampleBuffer time:relativeThumbnailTime mirror:_renderer.mirror];
+                            [self storeThumbnailWithPixelBuffer:renderedPixelBuffer time:relativeThumbnailTime];
                             _previousThumbnailTime = currentTime;
                         }
                     }
@@ -651,9 +1100,11 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	
 	if (renderedPixelBuffer)
 	{
+        _failedRenderFrameCount = 0;
 		@synchronized (self)
 		{
-			[self outputPreviewPixelBuffer:renderedPixelBuffer];
+            if (!self.usesNativePreview)
+			    [self outputPreviewPixelBuffer:renderedPixelBuffer];
             
 			if (_recordingStatus == TGVideoCameraRecordingStatusRecording)
 				[_recorder appendVideoPixelBuffer:renderedPixelBuffer withPresentationTime:timestamp];
@@ -664,6 +1115,14 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	else
 	{
 		[self videoPipelineDidRunOutOfBuffers];
+        _failedRenderFrameCount++;
+        if (_failedRenderFrameCount >= (NSUInteger)TGVideoCameraPipelineFrameRate() && !_videoPipelineFailed)
+        {
+            _videoPipelineFailed = true;
+            [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+                [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorInvalidSourceMedia userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture renderer could not produce video frames."}]];
+            }];
+        }
 	}
 }
 
@@ -675,17 +1134,18 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
         _currentPreviewPixelBuffer = NULL;
     }
     
-    if (_previousPixelBuffer != NULL)
-    {
-        _currentPreviewPixelBuffer = previewPixelBuffer;
-        CFRetain(_currentPreviewPixelBuffer);
-    }
+    _currentPreviewPixelBuffer = previewPixelBuffer;
+    CFRetain(_currentPreviewPixelBuffer);
+    if (_previewCallbackPending)
+        return;
+    _previewCallbackPending = true;
     
     [self invokeDelegateCallbackAsync:^
     {
 		CVPixelBufferRef currentPreviewPixelBuffer = NULL;
 		@synchronized (self)
 		{
+            _previewCallbackPending = false;
 			currentPreviewPixelBuffer = _currentPreviewPixelBuffer;
 			if (currentPreviewPixelBuffer != NULL)
             {
@@ -706,9 +1166,8 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	}];
 }
 
-- (void)storeThumbnailWithSampleBuffer:(CMSampleBufferRef)sampleBuffer time:(NSTimeInterval)time mirror:(bool)mirror
+- (void)storeThumbnailWithPixelBuffer:(CVPixelBufferRef)imageBuffer time:(NSTimeInterval)time
 {
-    CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
     size_t width = CVPixelBufferGetWidth(imageBuffer);
     size_t height = CVPixelBufferGetHeight(imageBuffer);
     
@@ -723,21 +1182,15 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
     void *baseAddress = CVPixelBufferGetBaseAddress(imageBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer);
     
-    vImage_Buffer inBuff;
-    inBuff.height = cropHeight;
-    inBuff.width = cropWidth;
-    inBuff.rowBytes = bytesPerRow;
-    
-    unsigned long startpos = cropY * bytesPerRow + 4 * cropX;
-    inBuff.data = baseAddress + startpos;
+    size_t startPosition = cropY * bytesPerRow + 4 * cropX;
+    unsigned char *sourceData = (unsigned char *)baseAddress + startPosition;
     
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreateWithData(NULL, outWidth, outHeight, 8, outWidth * 4, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst, NULL, nil);
     
     unsigned char *outImg = CGBitmapContextGetData(context);
-    vImage_Buffer outBuff = {outImg, outHeight, outWidth, 4 * outWidth};
     
-    bool scaled = TGScaleARGB8888Buffer(inBuff.data, inBuff.width, inBuff.height, inBuff.rowBytes, outBuff.data, outBuff.width, outBuff.height, outBuff.rowBytes, true);
+    bool scaled = TGScaleARGB8888Buffer(sourceData, cropWidth, cropHeight, bytesPerRow, outImg, outWidth, outHeight, outWidth * 4, false);
     if (!scaled)
         TGLegacyLog(@"Video Message thumbnail generation error");
     
@@ -747,14 +1200,36 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
     CGContextRelease(context);
     CGColorSpaceRelease(colorSpace);
     
-    UIImage *image = [UIImage imageWithCGImage:cgImage scale:1.0f orientation:mirror ? UIImageOrientationLeftMirrored : UIImageOrientationRight];
+    UIImage *image = [UIImage imageWithCGImage:cgImage scale:1.0f orientation:UIImageOrientationUp];
     CGImageRelease(cgImage);
     
     _thumbnails[@(time)] = image;
 }
 
+- (void)startRecordingWhenFormatsAvailable
+{
+    OSSpinLockLock(&_recordLock);
+    bool start = _startRecordAfterFormatBuffer && self.outputVideoFormatDescription != NULL && self.outputAudioFormatDescription != NULL;
+    if (start)
+        _startRecordAfterFormatBuffer = false;
+    OSSpinLockUnlock(&_recordLock);
+    if (start)
+    {
+        [self startRecording:_recordingURL preset:_preset liveUpload:_liveUpload];
+    }
+}
+
 - (void)startRecording:(NSURL *)url preset:(TGMediaVideoConversionPreset)preset liveUpload:(bool)liveUpload
 {
+    if (![[TGVideoCameraPipeline cameraQueue] isCurrentQueue])
+    {
+        [[TGVideoCameraPipeline cameraQueue] dispatch:^{
+            [self startRecording:url preset:preset liveUpload:liveUpload];
+        }];
+        return;
+    }
+    if (_stopRunningPending || _captureSession == nil || _videoPipelineFailed)
+        return;
     _recordingURL = url;
     _preset = preset;
     _liveUpload = liveUpload;
@@ -767,6 +1242,8 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
         return;
     }
     OSSpinLockUnlock(&_recordLock);
+    [_startupTimer invalidate];
+    _startupTimer = nil;
     
 	@synchronized (self)
 	{
@@ -780,13 +1257,17 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 	
 	dispatch_queue_t callbackQueue = dispatch_queue_create("org.telegram.VideoCameraPipeline.recorder", DISPATCH_QUEUE_SERIAL);
 	TGVideoCameraMovieRecorder *recorder = [[TGVideoCameraMovieRecorder alloc] initWithURL:_recordingURL delegate:self callbackQueue:callbackQueue];
+#if !OS_OBJECT_USE_OBJC
+    dispatch_release(callbackQueue);
+#endif
 	
     NSDictionary *audioSettings = [TGMediaVideoConversionPresetSettings audioSettingsForPreset:preset];
 	[recorder addAudioTrackWithSourceFormatDescription:self.outputAudioFormatDescription settings:audioSettings];
 
     _videoTransform = [self transformForOrientation:self.orientation];
 
-    CGSize size = [TGMediaVideoConversionPresetSettings maximumSizeForPreset:preset];
+    CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(self.outputVideoFormatDescription);
+    CGSize size = CGSizeMake(dimensions.width, dimensions.height);
     NSDictionary *videoSettings = [TGMediaVideoConversionPresetSettings videoSettingsForPreset:preset dimensions:size];
 	[recorder addVideoTrackWithSourceFormatDescription:self.outputVideoFormatDescription transform:CGAffineTransformIdentity settings:videoSettings];
 	_recorder = recorder;
@@ -907,6 +1388,7 @@ const NSInteger TGVideoCameraRetainedBufferCount = 16;
 {
 	TGVideoCameraRecordingStatus oldStatus = _recordingStatus;
 	_recordingStatus = newStatus;
+    TGLegacyLog(@"VIDEOMESSAGE recording status %d -> %d after %.0fms error=%@", (int)oldStatus, (int)newStatus, (CFAbsoluteTimeGetCurrent() - _startRunningTime) * 1000.0, error);
     
 	if (newStatus != oldStatus)
 	{
@@ -987,18 +1469,12 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
 
 - (void)setCameraPosition:(AVCaptureDevicePosition)position
 {
-    @synchronized (self)
-    {
-        _recorder.paused = true;
-    }
-    
     [[TGVideoCameraPipeline cameraQueue] dispatch:^
     {
-        NSError *error;
-        
-        NSArray *devices = [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo];
+        if (!_running || _stopRunningPending)
+            return;
         AVCaptureDevice *deviceForTargetPosition = nil;
-        for (AVCaptureDevice *device in devices)
+        for (AVCaptureDevice *device in [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo])
         {
             if (device.position == position)
             {
@@ -1006,39 +1482,51 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
                 break;
             }
         }
-        
-        _renderer.mirror = deviceForTargetPosition.position == AVCaptureDevicePositionFront;
-        _renderer.orientation = _orientation;
-        
-        AVCaptureDeviceInput *newVideoInput = [[AVCaptureDeviceInput alloc] initWithDevice:deviceForTargetPosition error:&error];
-        if (newVideoInput != nil)
+        NSError *error = nil;
+        AVCaptureDeviceInput *newVideoInput = deviceForTargetPosition == nil ? nil : [[AVCaptureDeviceInput alloc] initWithDevice:deviceForTargetPosition error:&error];
+        if (newVideoInput == nil)
         {
-            [_captureSession beginConfiguration];
-            
-            [_captureSession removeInput:_videoInput];
-            if ([_captureSession canAddInput:newVideoInput])
-            {
-                [_captureSession addInput:newVideoInput];
-                _videoInput = newVideoInput;
-            }
-            else
-            {
-                [_captureSession addInput:_videoInput];
-            }
-            
-            [_captureSession commitConfiguration];
+            [self handleNonRecoverableCaptureSessionRuntimeError:error ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorDeviceNotConnected userInfo:nil]];
+            return;
         }
-        
-        _videoDevice = deviceForTargetPosition;
-        
+        [_videoOutput setSampleBufferDelegate:nil queue:NULL];
+        [_audioOutput setSampleBufferDelegate:nil queue:NULL];
+        dispatch_sync(_videoDataOutputQueue, ^{});
+        dispatch_sync(_audioDataOutputQueue, ^{});
+        @synchronized (self)
+        {
+            _recorder.paused = true;
+        }
+        [_captureSession beginConfiguration];
+        [_captureSession removeInput:_videoInput];
+        bool added = [_captureSession canAddInput:newVideoInput];
+        if (added)
+        {
+            [_captureSession addInput:newVideoInput];
+            _videoInput = newVideoInput;
+            _videoDevice = deviceForTargetPosition;
+            _captureSession.sessionPreset = TGVideoCameraPipelineSessionPreset(_captureSession);
+        }
+        else
+            [_captureSession addInput:_videoInput];
+        [_captureSession commitConfiguration];
+        if (!added)
+        {
+            [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session rejected the selected camera input."}]];
+            return;
+        }
+        @synchronized (_renderer)
+        {
+            _renderer.mirror = _videoDevice.position == AVCaptureDevicePositionFront;
+            _renderer.orientation = _orientation;
+        }
         _videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
-
         [self _configureFPS];
-        
         [self _enableLowLightBoost];
         [self _enableVideoStabilization];
-        
         _videoBufferOrientation = _videoConnection.videoOrientation;
+        [_videoOutput setSampleBufferDelegate:self queue:_videoDataOutputQueue];
+        [_audioOutput setSampleBufferDelegate:self queue:_audioDataOutputQueue];
     }];
 }
 
@@ -1083,7 +1571,11 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         return;
     
     NSError *error = nil;
-    [device lockForConfiguration:&error];
+    if (![device lockForConfiguration:&error])
+    {
+        TGLegacyLog(@"ERROR: failed to reconfigure camera: %@", error);
+        return;
+    }
     block(device);
     [device unlockForConfiguration];
     
@@ -1091,32 +1583,59 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         TGLegacyLog(@"ERROR: failed to reconfigure camera: %@", error);
 }
 
-- (void)_addAudioInput
+- (bool)addAudioInputWithError:(NSError **)error
 {
-    if (_audioDevice != nil || _audioDataOutputQueue == NULL)
-        return;
-    
+    if (_audioInput != nil && _audioOutput != nil)
+        return true;
     AVCaptureDevice *audioDevice = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
-    
-    NSError *error = nil;
-    if (audioDevice != nil)
+    NSError *inputError = nil;
+    AVCaptureDeviceInput *audioInput = audioDevice == nil ? nil : [[AVCaptureDeviceInput alloc] initWithDevice:audioDevice error:&inputError];
+    if (audioInput == nil || ![_captureSession canAddInput:audioInput])
     {
-        _audioDevice = audioDevice;
-        AVCaptureDeviceInput *audioInput = [AVCaptureDeviceInput deviceInputWithDevice:_audioDevice error:&error];
-        if ([_captureSession canAddInput:audioInput])
-        {
-            [_captureSession addInput:audioInput];
-            _audioInput = audioInput;
-        }
+        if (error != NULL)
+            *error = inputError ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorDeviceNotConnected userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session could not connect its microphone input."}];
+        return false;
     }
-    
+    [_captureSession addInput:audioInput];
     AVCaptureAudioDataOutput *audioOutput = [[AVCaptureAudioDataOutput alloc] init];
-    if ([_captureSession canAddOutput:audioOutput])
+    if (![_captureSession canAddOutput:audioOutput])
     {
-        [audioOutput setSampleBufferDelegate:self queue:_audioDataOutputQueue];
-        [_captureSession addOutput:audioOutput];
-        _audioOutput = audioOutput;
+        [_captureSession removeInput:audioInput];
+        if (error != NULL)
+            *error = [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session rejected its audio data output."}];
+        return false;
     }
+    [_captureSession addOutput:audioOutput];
+    _audioDevice = audioDevice;
+    _audioInput = audioInput;
+    _audioOutput = audioOutput;
+    [audioOutput setSampleBufferDelegate:self queue:_audioDataOutputQueue];
+    return true;
+}
+
+- (void)startAudioCaptureAfterVideo
+{
+    if (!_running || _captureSession == nil || _stopRunningPending || _captureFailureReported || _audioInput != nil)
+        return;
+    [self startStartupTimerForPhase:@"audio"];
+    [_captureSession beginConfiguration];
+    NSError *error = nil;
+    bool added = [self addAudioInputWithError:&error];
+    [_captureSession commitConfiguration];
+    if (!added)
+    {
+        [self handleNonRecoverableCaptureSessionRuntimeError:error];
+        return;
+    }
+    _audioConnection = TGAVCaptureConnectionWithMediaType(_audioOutput, AVMediaTypeAudio);
+    _videoConnection = TGAVCaptureConnectionWithMediaType(_videoOutput, AVMediaTypeVideo);
+    if (_audioConnection == nil || !_audioConnection.enabled)
+    {
+        [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session did not create an enabled microphone connection."}]];
+        return;
+    }
+    [self _configureFPS];
+    _videoBufferOrientation = _videoConnection.videoOrientation;
 }
 
 - (void)_removeAudioInput
@@ -1136,7 +1655,9 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
 
 - (void)_configureFPS
 {
-    CMTime frameDuration = CMTimeMake(1, iosMajorVersion() < 5 ? 15 : 30);
+    if (iosMajorVersion() < 7)
+        return;
+    CMTime frameDuration = CMTimeMake(1, TGVideoCameraPipelineFrameRate());
     bool configuredDevice = false;
 
     if ([_videoDevice respondsToSelector:NSSelectorFromString(@"setActiveVideoMaxFrameDuration:")] && [_videoDevice respondsToSelector:NSSelectorFromString(@"setActiveVideoMinFrameDuration:")])
@@ -1149,6 +1670,14 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         }];
     }
 
+    if (!configuredDevice && [_videoConnection respondsToSelector:@selector(setVideoMinFrameDuration:)] && _videoConnection.supportsVideoMinFrameDuration)
+    {
+        configuredDevice = true;
+        _videoConnection.videoMinFrameDuration = frameDuration;
+        if ([_videoConnection respondsToSelector:@selector(setVideoMaxFrameDuration:)] && _videoConnection.supportsVideoMaxFrameDuration)
+            _videoConnection.videoMaxFrameDuration = kCMTimeInvalid;
+    }
+
     if (!configuredDevice && [_videoOutput respondsToSelector:@selector(setMinFrameDuration:)])
         _videoOutput.minFrameDuration = frameDuration;
 }
@@ -1158,13 +1687,16 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
     return [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo].count > 1;
 }
 
-+ (SQueue *)cameraQueue
++ (id<TGVideoCameraSessionExecuting> )cameraQueue
 {
     static dispatch_once_t onceToken;
-    static SQueue *queue = nil;
+    static id<TGVideoCameraSessionExecuting> queue = nil;
     dispatch_once(&onceToken, ^
     {
-        queue = [[SQueue alloc] init];
+        if (iosMajorVersion() < 7)
+            queue = [[TGVideoCameraRunLoopExecutor alloc] init];
+        else
+            queue = [[TGVideoCameraDispatchExecutor alloc] init];
     });
     
     return queue;

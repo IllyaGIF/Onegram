@@ -2,6 +2,14 @@
 
 @class TGSearchBar;
 
+@protocol TGSearchBarAppearanceProvider <NSObject>
+- (UIImage *)brandedIOS6SearchBarBackgroundImageForSize:(CGSize)size;
+- (UIImage *)brandedIOS6SearchBarFieldImageForSize:(CGSize)size;
+- (UIImage *)brandedIOS6SearchBarIconImage;
+- (UIOffset)brandedIOS6SearchBarIconOffset;
+- (UIOffset)brandedIOS6SearchBarPlaceholderOffset;
+@end
+
 typedef enum {
     TGSearchBarStyleDefault = 0,
     TGSearchBarStyleDark = 1,
@@ -50,6 +58,8 @@ typedef enum {
 @property (nonatomic, copy) void (^clearPrefix)(bool);
 
 @property (nonatomic, assign) UIEdgeInsets safeAreaInset;
+@property (nonatomic, assign) UIEdgeInsets textFieldInsets;
+@property (nonatomic, weak) id<TGSearchBarAppearanceProvider> appearanceProvider;
 
 @property (nonatomic, weak) id<TGSearchBarDelegate> delegate;
 @property (nonatomic) bool highContrast;
@@ -80,6 +90,7 @@ typedef enum {
 @property (nonatomic) bool delayActivity;
 
 - (instancetype)initWithFrame:(CGRect)frame style:(TGSearchBarStyle)style;
+- (instancetype)initWithFrame:(CGRect)frame style:(TGSearchBarStyle)style initialPlaceholder:(NSString *)initialPlaceholder;
 
 - (void)setShowsCancelButton:(bool)showsCancelButton animated:(bool)animated;
 

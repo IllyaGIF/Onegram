@@ -75,7 +75,7 @@
 
 - (NSArray *)keepMediaVariants
 {
-    NSArray *values = @[//@(1 * 60 * 60 * 24),
+    NSArray *values = @[
                         @(1 * 60 * 60 * 24 * 3),
                         @(1 * 60 * 60 * 24 * 7),
                         @(1 * 60 * 60 * 24 * 7 * 4),
@@ -363,10 +363,8 @@
         }];
         if (totalSize > 0) {
             [clearButtonItem setTitle:[[NSString alloc] initWithFormat:TGLocalized(@"Cache.Clear"), [TGStringUtils stringForFileSize:totalSize]]];
-            //[clearButtonItem setDisabled:false];
         } else {
             [clearButtonItem setTitle:TGLocalized(@"Cache.ClearNone")];
-            //[clearButtonItem setDisabled:true];
         }
     };
     

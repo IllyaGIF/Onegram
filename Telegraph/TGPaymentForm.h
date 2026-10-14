@@ -115,9 +115,6 @@
 
 @end
 
-////payments.validatedRequestedInfo flags:# id:flags.0?string url:string webview_only:flags.2?true shipping_options:flags.1?Vector<ShippingOption> = payments.ValidatedRequestedInfo;
-
-//shippingOption id:string title:string prices:Vector<LabeledPrice> = ShippingOption;
 
 @interface TGShippingOption : NSObject
 

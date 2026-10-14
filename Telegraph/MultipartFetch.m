@@ -1,6 +1,4 @@
 #import "MultipartFetch.h"
-#import <UIKit/UIKit.h>
-#import <sys/utsname.h>
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGMediaOriginInfo.h"
 
@@ -16,132 +14,6 @@
 #import "../submodules/MtProtoKit/MTProtoKit/MtProtoKit.h"
 
 #import "TGDownloadMessagesSignal.h"
-
-static bool IOS6PerfLoggingEnabled()
-{
-    return false;
-}
-
-static NSString *IOS6PerfDeviceName(NSString *machine)
-{
-    if ([machine hasPrefix:@"iPad2,1"] || [machine hasPrefix:@"iPad2,2"] || [machine hasPrefix:@"iPad2,3"] || [machine hasPrefix:@"iPad2,4"])
-        return @"iPad 2";
-    if ([machine hasPrefix:@"iPad2,5"] || [machine hasPrefix:@"iPad2,6"] || [machine hasPrefix:@"iPad2,7"])
-        return @"iPad mini";
-    if ([machine hasPrefix:@"iPad3,1"] || [machine hasPrefix:@"iPad3,2"] || [machine hasPrefix:@"iPad3,3"])
-        return @"iPad 3";
-    if ([machine hasPrefix:@"iPad3,4"] || [machine hasPrefix:@"iPad3,5"] || [machine hasPrefix:@"iPad3,6"])
-        return @"iPad 4";
-    if ([machine hasPrefix:@"iPhone4,1"])
-        return @"iPhone 4S";
-    if ([machine hasPrefix:@"iPhone5,1"] || [machine hasPrefix:@"iPhone5,2"])
-        return @"iPhone 5";
-    if ([machine hasPrefix:@"iPhone5,3"] || [machine hasPrefix:@"iPhone5,4"])
-        return @"iPhone 5c";
-    if ([machine hasPrefix:@"iPhone6,1"] || [machine hasPrefix:@"iPhone6,2"])
-        return @"iPhone 5s";
-    if ([machine hasPrefix:@"iPod5,1"])
-        return @"iPod touch 5";
-    return machine ?: @"?";
-}
-
-static NSString *IOS6PerfBuildTag()
-{
-    static NSString *tag = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
-        NSString *build = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?";
-        struct utsname systemInfo;
-        uname(&systemInfo);
-        NSString *machine = [[NSString alloc] initWithUTF8String:systemInfo.machine] ?: @"?";
-        UIDevice *device = [UIDevice currentDevice];
-        tag = [[NSString alloc] initWithFormat:@"version=%@ build=%@ os=%@ %@ device=%@ (%@)", version, build, device.systemName, device.systemVersion, IOS6PerfDeviceName(machine), machine];
-    });
-    return tag;
-}
-
-static NSString *IOS6PerfEscape(NSString *string)
-{
-    if (string == nil)
-        return @"";
-    NSString *escaped = [string stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-    escaped = [escaped stringByReplacingOccurrencesOfString:@"&" withString:@"%26"];
-    escaped = [escaped stringByReplacingOccurrencesOfString:@"+" withString:@"%2B"];
-    escaped = [escaped stringByReplacingOccurrencesOfString:@"=" withString:@"%3D"];
-    return escaped;
-}
-
-static void IOS6PerfReportToBot(NSString *event, NSString *key, NSString *message, NSTimeInterval interval)
-{
-    if (!IOS6PerfLoggingEnabled())
-        return;
-    
-    static NSMutableDictionary *lastReports = nil;
-    static NSLock *reportLock = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        lastReports = [[NSMutableDictionary alloc] init];
-        reportLock = [[NSLock alloc] init];
-    });
-    
-    NSString *reportKey = [NSString stringWithFormat:@"%@:%@", event ?: @"", key ?: message ?: @""];
-    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-    [reportLock lock];
-    NSNumber *last = [lastReports objectForKey:reportKey];
-    if (last != nil && now - [last doubleValue] < interval)
-    {
-        [reportLock unlock];
-        return;
-    }
-    [lastReports setObject:@(now) forKey:reportKey];
-    [reportLock unlock];
-    
-    NSString *bodyString = [NSString stringWithFormat:@"secret=%@&event=%@&message=%@",
-        IOS6PerfEscape(@""),
-        IOS6PerfEscape(event),
-        IOS6PerfEscape([NSString stringWithFormat:@"%@\n%@", IOS6PerfBuildTag(), message ?: @""])];
-    NSData *body = [bodyString dataUsingEncoding:NSUTF8StringEncoding];
-    NSURL *url = [NSURL URLWithString:@""];
-    if (url == nil || body == nil)
-        return;
-    
-    NSMutableURLRequest *request = [[NSMutableURLRequest alloc] initWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:5.0];
-    [request setHTTPMethod:@"POST"];
-    [request setHTTPBody:body];
-    [request setValue:@"application/x-www-form-urlencoded; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
-    [NSURLConnection sendAsynchronousRequest:request queue:[NSOperationQueue mainQueue] completionHandler:nil];
-}
-
-static NSString *IOS6MediaDescribeInputLocation(id location)
-{
-    if (location == nil)
-        return @"nil";
-    NSString *className = NSStringFromClass([location class]);
-    if ([location isKindOfClass:[TLInputFileLocation$inputPhotoFileLocation class]])
-    {
-        TLInputFileLocation$inputPhotoFileLocation *photo = (TLInputFileLocation$inputPhotoFileLocation *)location;
-        return [[NSString alloc] initWithFormat:@"%@ id=%lld hash=%lld fileRef=%d thumb=%@", className, photo.n_id, photo.access_hash, (int)photo.file_reference.length, photo.thumb_size];
-    }
-    else if ([location isKindOfClass:[TLInputFileLocation$inputPeerPhotoFileLocation class]])
-    {
-        TLInputFileLocation$inputPeerPhotoFileLocation *peerPhoto = (TLInputFileLocation$inputPeerPhotoFileLocation *)location;
-        return [[NSString alloc] initWithFormat:@"%@ peer=%lld type=%d hash=%lld photo=%lld big=%d", className, peerPhoto.peer_id, peerPhoto.peer_type, peerPhoto.access_hash, peerPhoto.photo_id, peerPhoto.big ? 1 : 0];
-    }
-    else if ([location isKindOfClass:[TLInputFileLocation$inputDocumentFileLocation class]])
-    {
-        TLInputFileLocation$inputDocumentFileLocation *document = (TLInputFileLocation$inputDocumentFileLocation *)location;
-        return [[NSString alloc] initWithFormat:@"%@ id=%lld hash=%lld fileRef=%d thumb=%@", className, document.n_id, document.access_hash, (int)document.file_reference.length, document.thumb_size];
-    }
-    else if ([location isKindOfClass:[TLInputFileLocation$inputFileLocation class]])
-    {
-        TLInputFileLocation$inputFileLocation *file = (TLInputFileLocation$inputFileLocation *)location;
-        return [[NSString alloc] initWithFormat:@"%@ volume=%lld local=%d secret=%lld fileRef=%d", className, file.volume_id, file.local_id, file.secret, (int)file.file_reference.length];
-    }
-    return className;
-}
 
 @interface MultipartFetchRequestData : NSObject
     
@@ -214,8 +86,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
     SMetaDisposable *_fileReferenceDisposable;
     
     NSDictionary *_cdnFilePartHashes;
-    CFAbsoluteTime _fetchStartedAt;
-    bool _reportedSlowCompletion;
     bool _terminated;
 }
 
@@ -252,10 +122,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
         _reuploadToCdnDisposable = [[SMetaDisposable alloc] init];
         _partHashesDisposable = [[SMetaDisposable alloc] init];
         _fileReferenceDisposable = [[SMetaDisposable alloc] init];
-        _fetchStartedAt = CFAbsoluteTimeGetCurrent();
-        
-        if (IOS6PerfLoggingEnabled())
-            while (false) NSLog(@"PERF mediaFetchStart %@ resource=%@ dc=%d size=%@ range=%lu:%lu tag=%d", IOS6PerfBuildTag(), NSStringFromClass([resource class]), [resource datacenterId], size, (unsigned long)range.location, (unsigned long)range.length, (int)_mediaTypeTag);
         
         _requestData = [[SVariable alloc] init];
         [_requestData set:[[SSignal combineSignals:@[[[TGTelegramNetworking instance] downloadWorkerForDatacenterId:[resource datacenterId] type:_mediaTypeTag], [SSignal single:[resource apiInputLocation]]]] map:^id(NSArray *values) {
@@ -336,11 +202,9 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
     }
     
     if (_completeSize != nil && _committedOffset >= [_completeSize intValue]) {
-        [self maybeLogSlowCompletion];
         _terminated = true;
         _completed();
     } else if ((NSUInteger)_committedOffset >= _range.location + _range.length) {
-        [self maybeLogSlowCompletion];
         _terminated = true;
         _completed();
     } else {
@@ -412,29 +276,10 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
     }
 }
 
-- (void)maybeLogSlowCompletion
-{
-    if (!IOS6PerfLoggingEnabled())
-        return;
-    
-    if (_reportedSlowCompletion)
-        return;
-    
-    CFAbsoluteTime elapsedMs = (CFAbsoluteTimeGetCurrent() - _fetchStartedAt) * 1000.0;
-    if (elapsedMs < 1000.0)
-        return;
-    
-    _reportedSlowCompletion = true;
-    while (false) NSLog(@"PERF mediaFetchCompleteSlow %@ resource=%@ dc=%d committed=%d size=%@ range=%lu:%lu ms=%.1f", IOS6PerfBuildTag(), NSStringFromClass([_resource class]), [_resource datacenterId], _committedOffset, _completeSize, (unsigned long)_range.location, (unsigned long)_range.length, elapsedMs);
-    if (elapsedMs >= 5000.0)
-        IOS6PerfReportToBot(@"perf_media_fetch_slow", [NSString stringWithFormat:@"%@:%d", NSStringFromClass([_resource class]), [_resource datacenterId]], [NSString stringWithFormat:@"resource=%@ dc=%d committed=%d size=%@ range=%lu:%lu ms=%.1f", NSStringFromClass([_resource class]), [_resource datacenterId], _committedOffset, _completeSize, (unsigned long)_range.location, (unsigned long)_range.length, elapsedMs], 300.0);
-}
-    
 - (SSignal *)fetchPart:(int32_t)offset limit:(int32_t)limit {
     __weak MultipartFetchManager *weakSelf = self;
     SQueue *queue = _queue;
     return [[[_requestData signal] mapToSignal:^SSignal *(MultipartFetchRequestData *requestData) {
-        CFAbsoluteTime partStart = CFAbsoluteTimeGetCurrent();
         id requestRpc = nil;
         if ([requestData.data isKindOfClass:[TLInputFileLocation class]]) {
             TLRPCupload_getFile$upload_getFile *getFile = [[TLRPCupload_getFile$upload_getFile alloc] init];
@@ -458,16 +303,9 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
             if (strongSelf != nil) {
                 if ([next isKindOfClass:[TLupload_File$upload_file class]]) {
                     TLupload_File$upload_file *part = next;
-                    CFAbsoluteTime elapsedMs = (CFAbsoluteTimeGetCurrent() - partStart) * 1000.0;
-                    if (IOS6PerfLoggingEnabled() && elapsedMs >= 500.0)
-                        while (false) NSLog(@"PERF mediaPartSlow %@ offset=%d limit=%d bytes=%d ms=%.1f %@", IOS6PerfBuildTag(), offset, limit, (int)part.bytes.length, elapsedMs, IOS6MediaDescribeInputLocation(requestData.data));
-                    if (IOS6PerfLoggingEnabled() && elapsedMs >= 2000.0)
-                        IOS6PerfReportToBot(@"perf_media_part_slow", [NSString stringWithFormat:@"%@:%d:%d", NSStringFromClass([requestData.data class]), [strongSelf->_resource datacenterId], limit], [NSString stringWithFormat:@"offset=%d limit=%d bytes=%d dc=%d ms=%.1f location=%@", offset, limit, (int)part.bytes.length, [strongSelf->_resource datacenterId], elapsedMs, IOS6MediaDescribeInputLocation(requestData.data)], 300.0);
                     return [SSignal single:part.bytes];
                 } else if ([next isKindOfClass:[TLupload_File$upload_fileCdnRedirect class]]) {
                     TLupload_File$upload_fileCdnRedirect *redirect = (TLupload_File$upload_fileCdnRedirect *)next;
-                    if (IOS6PerfLoggingEnabled())
-                        while (false) NSLog(@"PERF mediaCdnRedirect %@ offset=%d dc=%d", IOS6PerfBuildTag(), offset, redirect.dc_id);
                     [strongSelf switchToCdn:[[TGCdnFileData alloc] initWithCdnId:redirect.dc_id token:redirect.file_token encryptionKey:redirect.encryption_key encryptionIv:redirect.encryption_iv]];
                     return [SSignal never];
                 } else if ([next isKindOfClass:[TLupload_CdnFile$upload_cdnFile class]]) {
@@ -478,11 +316,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
                     ivOffset = NSSwapInt(ivOffset);
                     memcpy(encryptionIv.mutableBytes + encryptionIv.length - 4, &ivOffset, 4);
                     NSData *data = MTAesCtrDecrypt(bytes, fileData.encryptionKey, encryptionIv);
-                    CFAbsoluteTime elapsedMs = (CFAbsoluteTimeGetCurrent() - partStart) * 1000.0;
-                    if (IOS6PerfLoggingEnabled() && elapsedMs >= 500.0)
-                        while (false) NSLog(@"PERF mediaPartSlow %@ offset=%d limit=%d bytes=%d cdn=1 ms=%.1f", IOS6PerfBuildTag(), offset, limit, (int)data.length, elapsedMs);
-                    if (IOS6PerfLoggingEnabled() && elapsedMs >= 2000.0)
-                        IOS6PerfReportToBot(@"perf_media_part_slow", [NSString stringWithFormat:@"cdn:%d:%d", [strongSelf->_resource datacenterId], limit], [NSString stringWithFormat:@"offset=%d limit=%d bytes=%d dc=%d cdn=1 ms=%.1f", offset, limit, (int)data.length, [strongSelf->_resource datacenterId], elapsedMs], 300.0);
                     return [SSignal single:data];
                 } else if ([next isKindOfClass:[TLupload_CdnFile$upload_cdnFileReuploadNeeded class]]) {
                     TLupload_CdnFile$upload_cdnFileReuploadNeeded *reupload = (TLupload_CdnFile$upload_cdnFileReuploadNeeded *)next;
@@ -498,8 +331,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
         }] catch:^SSignal *(id error) {
             int32_t errorCode = [[TGTelegramNetworking instance] extractNetworkErrorCode:error];
             NSString *errorText = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
-            if (IOS6PerfLoggingEnabled())
-                while (false) NSLog(@"PERF mediaPartError %@ offset=%d limit=%d code=%d text=%@ location=%@", IOS6PerfBuildTag(), offset, limit, errorCode, errorText, IOS6MediaDescribeInputLocation(requestData.data));
             
             if ([errorText hasPrefix:@"FILE_REFERENCE_"] && errorCode == 400 && [requestData.data isKindOfClass:[TLInputFileLocation class]]) {
                 __strong MultipartFetchManager *strongSelf = weakSelf;
@@ -519,7 +350,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
         return;
     }
     if (originInfo == nil) {
-        while (false) TGLog(@"MEDIA fileRef refresh skipped: missing origin for %@", IOS6MediaDescribeInputLocation(location));
         [self fail];
         return;
     }
@@ -549,11 +379,9 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
                 updatedLocation = fileLocation;
             }
             if (updatedLocation == nil || ([updatedLocation respondsToSelector:@selector(file_reference)] && ((NSData *)[updatedLocation performSelector:@selector(file_reference)]).length == 0)) {
-                while (false) TGLog(@"MEDIA fileRef refresh produced empty reference for %@", IOS6MediaDescribeInputLocation(location));
                 [strongSelf fail];
                 return;
             }
-            while (false) TGLog(@"MEDIA fileRef refreshed %@", IOS6MediaDescribeInputLocation(updatedLocation));
             
             [strongSelf->_requestData set:[[SSignal combineSignals:@[[[TGTelegramNetworking instance] downloadWorkerForDatacenterId:[strongSelf->_resource datacenterId] type:strongSelf->_mediaTypeTag isCdn:false], [SSignal single:updatedLocation]]] map:^id(NSArray *values) {
                 return [[MultipartFetchRequestData alloc] initWithWorker:values[0] data:values[1]];
@@ -564,7 +392,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
         __strong MultipartFetchManager *strongSelf = weakSelf;
         if (strongSelf != nil) {
             strongSelf->_updatedFileReference = false;
-            while (false) TGLog(@"MEDIA fileRef refresh failed for %@", IOS6MediaDescribeInputLocation(location));
             [strongSelf fail];
         }
     } completed:nil]];
@@ -662,7 +489,6 @@ static NSString *IOS6MediaDescribeInputLocation(id location)
 
 SSignal *multipartFetch(id<TelegramCloudMediaResource> resource, NSNumber *size, NSRange range, TGNetworkMediaTypeTag mediaTypeTag) {
     if ([resource datacenterId] <= 0) {
-        while (false) TGLog(@"MEDIA multipart skip invalid dc resource=%@ dc=%d size=%@ range=%lu:%lu tag=%d", NSStringFromClass([resource class]), [resource datacenterId], size, (unsigned long)range.location, (unsigned long)range.length, (int)mediaTypeTag);
         return [SSignal single:[[MediaResourceDataFetchResult alloc] initWithData:[NSData data] complete:true]];
     }
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
@@ -672,9 +498,6 @@ SSignal *multipartFetch(id<TelegramCloudMediaResource> resource, NSNumber *size,
             [subscriber putNext:[[MediaResourceDataFetchResult alloc] initWithData:[NSData data] complete:true]];
             [subscriber putCompletion];
         } failed:^{
-            // Do not leave MediaBox subscribed forever after a failed MTProto
-            // request.  Ending the signal releases its worker and lets a later
-            // visibility/click retry start from the already cached partial file.
             [subscriber putError:[NSError errorWithDomain:@"TGMediaFetch" code:-1 userInfo:nil]];
         }];
         

@@ -4,16 +4,22 @@
 //
 
 
+#if __has_include(<CoreMedia/CoreMedia.h>)
 #import <CoreMedia/CoreMedia.h>
+#endif
 #import "CBCoubLoopCompositionMaker.h"
 #import "CBCoubAsset.h"
 #import "CBConstance.h"
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import "AVAsset+CBExtension.h"
+#endif
 
 #pragma mark -
 #pragma mark CBCoubLoopOperation
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 static AVURLAsset *gDigitalSilenceAsset = nil;
+#endif
 
 @interface CBCoubLoopOperation : NSOperation
 
@@ -21,7 +27,9 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 
 - (void)prepareOperation;
 - (void)makeLoop;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (AVComposition *)makeLoopComposition;
+#endif
 
 - (BOOL)checkAssetURL:(NSURL *)assetURL;
 
@@ -34,7 +42,9 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 @private
 	id<CBCoubAsset> _asset;
 	CBCoubLoopCompositionMaker *_loop;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 	AVAssetExportSession *_exportSession;
+#endif
 
 	NSURL *_assetURL;
 	BOOL _hasExternalAudio;
@@ -72,10 +82,11 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 
 - (void)makeLoop
 {
-	AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:_assetURL options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @YES}];
-//	_loop.videoAsset = avAsset;
-//	[self completeWithError:nil];
-//	return;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    _loop.videoURL = _assetURL;
+    [self completeWithError:nil];
+#else
+	AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:_assetURL options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @(YES)}];
 	if(_asset.audioType == CBCoubAudioTypeInternal)
 	{
 		AVComposition *composition = [self makeLoopComposition];
@@ -83,20 +94,20 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 		{
 			_loop.videoAsset = composition;
 			[self completeWithError:nil];
-		}else{
-
 		}
-			
-	}else{
+	}
+	else
+	{
 		_loop.videoAsset = avAsset;
 		[self completeWithError:nil];
 	}
-		
+#endif
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (AVComposition *)makeLoopComposition
 {
-	AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:_assetURL options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @YES}];
+	AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:_assetURL options:@{AVURLAssetPreferPreciseDurationAndTimingKey : @(YES)}];
 	NSArray *videoTracks = [avAsset tracksWithMediaType:AVMediaTypeVideo];
 	if([videoTracks count] == 0)
 	{
@@ -194,6 +205,7 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 	videoTrack.preferredTransform = originalVideoTrack.preferredTransform;
 	return composition;
 }
+#endif
 
 - (BOOL)checkAssetURL:(NSURL *)assetURL
 {
@@ -214,7 +226,9 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 
 - (void)cancel
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 	[_exportSession cancelExport];
+#endif
 	[super cancel];
 }
 
@@ -222,7 +236,9 @@ static AVURLAsset *gDigitalSilenceAsset = nil;
 {
 	dispatch_async(dispatch_get_main_queue(), ^
 	{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 		[_exportSession cancelExport];
+#endif
 
 		_loop.error = error;
 		[_loop notifyObservers];
@@ -286,7 +302,11 @@ static NSOperationQueue *gOperationQueue = nil;
 
 - (void)cancelPrepareLoop
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    self.videoURL = nil;
+#else
     self.videoAsset = nil;
+#endif
     
 	[_operation cancel];
 	_operation = nil;

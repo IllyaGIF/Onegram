@@ -123,11 +123,9 @@ extern NSString *const TGAuthorizationReadyNotification;
 
 @property (nonatomic) int transportRequestClass;
 
-// Application Credentials
 @property (nonatomic, strong) NSString *apiId;
 @property (nonatomic, strong) NSString *apiHash;
 
-// Session Info
 @property (nonatomic) int clientUserId;
 @property (nonatomic) bool clientIsActivated;
 
@@ -195,6 +193,7 @@ extern NSString *const TGAuthorizationReadyNotification;
 - (NSObject *)doExportLoginTokenWithCompletion:(void (^)(NSData *token, int32_t expires, bool authorized, NSString *errorText))completion;
 - (void)processEncryptedPasscode;
 - (void)processAuthorizedWithUserId:(int)uid clientIsActivated:(bool)clientIsActivated;
+- (void)constrainedStartupDialogListReady;
 - (void)processUnauthorized;
 - (NSObject *)doRequestLogout:(TGLogoutRequestBuilder *)actor;
 
@@ -225,6 +224,9 @@ extern NSString *const TGAuthorizationReadyNotification;
 
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
 - (NSObject *)doRequestDialogsListWithOffset:(TGDialogListRemoteOffset *)offset limit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
+- (NSObject *)ios6RequestPinnedDialogsForFolderId:(int32_t)folderId completion:(void (^)(TLmessages_PeerDialogs *))completion failure:(void (^)(NSError *))failure;
+- (NSObject *)requestDialogsPageWithOffset:(TGDialogListRemoteOffset *)offset inputPeer:(TLInputPeer *)inputPeer limit:(int)limit folderId:(int32_t)folderId completion:(void (^)(TLmessages_Dialogs *, TGDialogListRemoteOffset *, TLInputPeer *, bool))completion failure:(void (^)(NSError *))failure;
+- (NSObject *)doRequestCompleteDialogsListWithLimit:(int)limit folderId:(int32_t)folderId requestArchive:(bool)requestArchive requestBuilder:(TGDialogListRequestBuilder *)requestBuilder;
 - (NSObject *)doSetConversationArchived:(int64_t)conversationId accessHash:(int64_t)accessHash archived:(bool)archived completion:(void (^)(bool success))completion;
 - (void)ios6RefreshArchivePeerIds;
 

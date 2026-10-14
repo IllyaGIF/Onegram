@@ -1,4 +1,5 @@
 #import "TGMenuSheetButtonItemView.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "LegacyComponentsInternal.h"
 #import "TGFont.h"
@@ -37,10 +38,7 @@ const CGFloat TGMenuSheetButtonItemViewHeight = 57.0f;
         _button.highlightBackgroundColor = UIColorRGB(0xebebeb);
         [self _updateForType:type];
         _button.titleLabel.adjustsFontSizeToFitWidth = true;
-        if ([_button.titleLabel respondsToSelector:@selector(setMinimumScaleFactor:)])
-            _button.titleLabel.minimumScaleFactor = 0.7f;
-        else
-            _button.titleLabel.minimumFontSize = _button.titleLabel.font.pointSize * 0.7f;
+        OGPlatformSetLabelMinimumScaleFactor(_button.titleLabel, 0.7f);
         [_button setTitle:title forState:UIControlStateNormal];
         [_button addTarget:self action:@selector(buttonPressed) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_button];

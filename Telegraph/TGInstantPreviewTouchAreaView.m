@@ -91,7 +91,6 @@
 
 - (void)timerEvent
 {
-    TGLog(@"activate %p", self);
     
     [self invalidateTimer];
     

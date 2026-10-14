@@ -3,6 +3,12 @@
 #import <CoreLocation/CoreLocation.h>
 #import <AVFoundation/AVFoundation.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@class AVAudioMix;
+@class AVAssetExportSession;
+@class AVPlayerItem;
+#endif
+
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
 #import <Photos/PHPhotoLibrary.h>
 #import <Photos/PHAsset.h>

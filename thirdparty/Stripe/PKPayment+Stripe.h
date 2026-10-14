@@ -5,9 +5,8 @@
 //  Created by Ben Guo on 7/2/15.
 //
 
-#import <PassKit/PassKit.h>
-
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+#import <PassKit/PassKit.h>
 @interface PKPayment (Stripe)
 
 /// Returns true if the instance is a payment from the simulator.

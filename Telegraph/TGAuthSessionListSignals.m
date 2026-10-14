@@ -4,17 +4,89 @@
 #import "TGUserDataRequestBuilder.h"
 
 #import "TL/TLMetaScheme.h"
+#import "TL/TLBool.h"
 
 #import "TGUser+Telegraph.h"
 
 #import "TGAuthSession.h"
 
+@interface TGAcceptLoginTokenRequest : TLMetaRpc
+@property (nonatomic, strong) NSData *token;
+@end
+
+@implementation TGAcceptLoginTokenRequest
+- (int32_t)TLconstructorSignature { return (int32_t)0xe894ad4d; }
+- (int32_t)TLconstructorName { return -1; }
+- (Class)responseClass { return [TLAuthorization class]; }
+- (int)impliedResponseSignature { return 0; }
+- (int)layerVersion { return 181; }
+- (void)TLserialize:(NSOutputStream *)stream { [stream writeBytes:self.token]; }
+@end
+
 @implementation TGAuthSessionListSignals
+
++ (NSData *)loginTokenFromQRCode:(NSString *)code
+{
+    NSString *prefix = @"tg://login?token=";
+    if (![code hasPrefix:prefix] || code.length > 512)
+        return nil;
+    NSString *encoded = [code substringFromIndex:prefix.length];
+    if (encoded.length == 0)
+        return nil;
+    NSMutableData *result = [[NSMutableData alloc] init];
+    uint32_t accumulator = 0;
+    int bits = 0;
+    NSUInteger padding = 0;
+    NSUInteger symbols = 0;
+    for (NSUInteger index = 0; index < encoded.length; index++)
+    {
+        unichar c = [encoded characterAtIndex:index];
+        if (c == '=')
+        {
+            padding++;
+            if (padding > 2)
+                return nil;
+            continue;
+        }
+        if (padding != 0)
+            return nil;
+        int value;
+        if (c >= 'A' && c <= 'Z') value = c - 'A';
+        else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') value = c - '0' + 52;
+        else if (c == '-') value = 62;
+        else if (c == '_') value = 63;
+        else return nil;
+        symbols++;
+        accumulator = (accumulator << 6) | value;
+        bits += 6;
+        if (bits >= 8)
+        {
+            bits -= 8;
+            uint8_t byte = (accumulator >> bits) & 0xff;
+            [result appendBytes:&byte length:1];
+        }
+    }
+    if (symbols % 4 == 1 || (bits != 0 && (accumulator & ((1u << bits) - 1)) != 0))
+        return nil;
+    if (padding != 0 && (encoded.length % 4 != 0 || padding != (4 - symbols % 4) % 4))
+        return nil;
+    return result.length == 0 ? nil : result;
+}
+
++ (SSignal *)acceptLoginToken:(NSData *)token
+{
+    if (token.length == 0)
+        return [SSignal fail:@"AUTH_TOKEN_INVALID"];
+    TGAcceptLoginTokenRequest *request = [[TGAcceptLoginTokenRequest alloc] init];
+    request.token = token;
+    return [[[TGTelegramNetworking instance] requestSignal:request continueOnServerErrors:false failOnFloodErrors:true] timeout:30.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal fail:@"NETWORK_TIMEOUT"]];
+}
 
 + (SSignal *)authSessionList
 {
     TLRPCaccount_getAuthorizations$account_getAuthorizations *getAuthorizations = [[TLRPCaccount_getAuthorizations$account_getAuthorizations alloc] init];
-    return [[[TGTelegramNetworking instance] requestSignal:getAuthorizations] map:^id(TLaccount_Authorizations *authorizations)
+    return [[[[TGTelegramNetworking instance] requestSignal:getAuthorizations continueOnServerErrors:false failOnFloodErrors:true] timeout:30.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal fail:@"NETWORK_TIMEOUT"]] map:^id(TLaccount_Authorizations *authorizations)
     {
         NSMutableArray *authSessions = [[NSMutableArray alloc] init];
         
@@ -30,19 +102,25 @@
 + (SSignal *)removeAllOtherSessions
 {
     TLRPCauth_resetAuthorizations$auth_resetAuthorizations *resetAuthorizations = [[TLRPCauth_resetAuthorizations$auth_resetAuthorizations alloc] init];
-    return [[[TGTelegramNetworking instance] requestSignal:resetAuthorizations] mapToSignal:^SSignal *(__unused id result)
+    return [[[[TGTelegramNetworking instance] requestSignal:resetAuthorizations continueOnServerErrors:false failOnFloodErrors:true] timeout:30.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal fail:@"NETWORK_TIMEOUT"]] mapToSignal:^SSignal *(TLBool *result)
     {
+        if (![result boolValue])
+            return [SSignal fail:@"SESSION_RESET_FAILED"];
         return [self authSessionList];
     }];
 }
 
 + (SSignal *)removeSession:(TGAuthSession *)session
 {
+    if (session == nil || session.sessionHash == 0 || (session.flags & 1) != 0)
+        return [SSignal fail:@"CURRENT_SESSION"];
     TLRPCaccount_resetAuthorization$account_resetAuthorization *resetAuthorization = [[TLRPCaccount_resetAuthorization$account_resetAuthorization alloc] init];
     resetAuthorization.n_hash = session.sessionHash;
     
-    return [[[TGTelegramNetworking instance] requestSignal:resetAuthorization] mapToSignal:^SSignal *(__unused id result)
+    return [[[[TGTelegramNetworking instance] requestSignal:resetAuthorization continueOnServerErrors:false failOnFloodErrors:true] timeout:30.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal fail:@"NETWORK_TIMEOUT"]] mapToSignal:^SSignal *(TLBool *result)
     {
+        if (![result boolValue])
+            return [SSignal fail:@"SESSION_RESET_FAILED"];
         return [self authSessionList];
     }];
 }

@@ -15,14 +15,7 @@
 
 #import "TGMenuSheetController.h"
 #import "TGSearchBar.h"
-
-#ifndef kCLAuthorizationStatusAuthorizedAlways
-#define kCLAuthorizationStatusAuthorizedAlways kCLAuthorizationStatusAuthorized
-#endif
-#ifndef kCLAuthorizationStatusAuthorizedWhenInUse
-#define kCLAuthorizationStatusAuthorizedWhenInUse kCLAuthorizationStatusAuthorized
-#endif
-#define TG_IOS6_LOCATION_AUTH_COMPAT 1
+#import "OGPlatformLocation.h"
 
 const MKCoordinateSpan TGLocationDefaultSpan = { 0.008, 0.008 };
 const CGFloat TGLocationMapClipHeight = 1600.0f;
@@ -41,7 +34,11 @@ const CGFloat TGLocationMapInset = 100.0f;
     SVariable *_userLocation;
     SPipe *_userLocationPipe;
     
+#if defined(ONEGRAM_ARMV6)
+    UIView *_darkMapOverlayView;
+#else
     MKPolygon *_darkPolygon;
+#endif
     
     void (^_openLiveLocationMenuBlock)(void);
 }
@@ -135,6 +132,13 @@ const CGFloat TGLocationMapInset = 100.0f;
     
     if (self.pallete.searchBarPallete.isDark)
     {
+#if defined(ONEGRAM_ARMV6)
+        _darkMapOverlayView = [[UIView alloc] initWithFrame:_mapView.bounds];
+        _darkMapOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _darkMapOverlayView.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.3f];
+        _darkMapOverlayView.userInteractionEnabled = false;
+        [_mapView addSubview:_darkMapOverlayView];
+#else
         MKMapRect worldRect = MKMapRectWorld;
         MKMapPoint point1 = MKMapRectWorld.origin;
         MKMapPoint point2 = MKMapPointMake(point1.x + worldRect.size.width, point1.y);
@@ -145,6 +149,7 @@ const CGFloat TGLocationMapInset = 100.0f;
         _darkPolygon = [MKPolygon polygonWithPoints:points count:4];
         
         [_mapView addOverlay:_darkPolygon];
+#endif
     }
     
     _optionsView = [[TGLocationOptionsView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 45.0f, 90.0f)];
@@ -395,6 +400,7 @@ const CGFloat TGLocationMapInset = 100.0f;
 }
 #endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (MKOverlayView *)mapView:(MKMapView *)mapView viewForOverlay:(id <MKOverlay>)overlay
 {
     if ([overlay isKindOfClass:[MKPolygon class]])
@@ -406,6 +412,7 @@ const CGFloat TGLocationMapInset = 100.0f;
     
     return nil;
 }
+#endif
 
 - (void)mapView:(MKMapView *)__unused mapView didUpdateUserLocation:(MKUserLocation *)userLocation
 {
@@ -414,14 +421,21 @@ const CGFloat TGLocationMapInset = 100.0f;
     _locationServicesDisabled = false;
     
     if (userLocation.location != nil)
+    {
         _userLocationPipe.sink(userLocation.location);
+#if defined(ONEGRAM_ARMV6)
+        if (_mapView.userTrackingMode != MKUserTrackingModeNone)
+            [_mapView setCenterCoordinate:userLocation.location.coordinate animated:true];
+#endif
+    }
     
     [self updateLocationAvailability];
 }
 
-- (void)mapView:(MKMapView *)__unused mapView didFailToLocateUserWithError:(NSError *)__unused error
+- (void)mapView:(MKMapView *)__unused mapView didFailToLocateUserWithError:(NSError *)error
 {
-    if ([CLLocationManager authorizationStatus] == kCLAuthorizationStatusDenied || [CLLocationManager authorizationStatus] == kCLAuthorizationStatusRestricted)
+    OGPlatformLocationAuthorizationStatus status = OGPlatformLocationAuthorizationStatusCurrent();
+    if ([error code] == kCLErrorDenied || status == OGPlatformLocationAuthorizationStatusDenied || status == OGPlatformLocationAuthorizationStatusRestricted)
     {
         _userLocationPipe.sink(nil);
         _locationServicesDisabled = true;
@@ -439,11 +453,11 @@ const CGFloat TGLocationMapInset = 100.0f;
     return [_userLocation signal];
 }
 
-- (void)locationManager:(CLLocationManager *)manager didChangeAuthorizationStatus:(CLAuthorizationStatus)status
+- (void)locationManager:(CLLocationManager *)__unused manager didChangeAuthorizationStatus:(NSInteger)status
 {
     if (_openLiveLocationMenuBlock != nil)
     {
-        if (status == kCLAuthorizationStatusAuthorizedAlways)
+        if (OGPlatformLocationAuthorizationStatusAllowsAlways(status))
             _openLiveLocationMenuBlock();
         
         _openLiveLocationMenuBlock = nil;
@@ -575,23 +589,21 @@ const CGFloat TGLocationMapInset = 100.0f;
         [[[LegacyComponentsGlobals provider] accessChecker] checkLocationAuthorizationStatusForIntent:TGLocationAccessIntentLiveLocation alertDismissComlpetion:nil];
     };
     
-    if ([CLLocationManager authorizationStatus] != kCLAuthorizationStatusAuthorizedAlways && [CLLocationManager authorizationStatus] != kCLAuthorizationStatusAuthorizedWhenInUse)
+    OGPlatformLocationAuthorizationStatus status = OGPlatformLocationAuthorizationStatusCurrent();
+    if (!OGPlatformLocationAuthorizationStatusAllowsWhenInUse(status))
     {
         errorBlock();
     }
+    else if (OGPlatformLocationAuthorizationStatusAllowsAlways(status))
+    {
+        block();
+    }
     else
     {
-        if ([CLLocationManager authorizationStatus] == kCLAuthorizationStatusAuthorizedAlways)
-        {
-            block();
-        }
+        if (![TGLocationUtils requestAlwaysUserLocationAuthorizationWithLocationManager:_locationManager])
+            errorBlock();
         else
-        {
-            if (![TGLocationUtils requestAlwaysUserLocationAuthorizationWithLocationManager:_locationManager])
-                errorBlock();
-            else
-                _openLiveLocationMenuBlock = [block copy];
-        }
+            _openLiveLocationMenuBlock = [block copy];
     }
 }
 

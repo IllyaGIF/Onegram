@@ -8,22 +8,6 @@
 
 static const float luminanceThreshold = 0.8f;
 
-@interface TGMessageImageViewTimestampLayer : CALayer
-
-@end
-
-@implementation TGMessageImageViewTimestampLayer
-
-- (void)display
-{
-    if ([self needsDisplay])
-    {
-        
-    }
-}
-
-@end
-
 @interface TGMessageImageViewTimestampView ()
 {
     TGStaticBackdropAreaData *_backdropArea;
@@ -61,10 +45,6 @@ static const float luminanceThreshold = 0.8f;
 
 @implementation TGMessageImageViewTimestampView
 
-/*+ (Class)layerClass
-{
-    return [TGMessageImageViewTimestampLayer class];
-}*/
 
 - (instancetype)initWithFrame:(CGRect)frame
 {
@@ -106,7 +86,7 @@ static const float luminanceThreshold = 0.8f;
             CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"opacity"];
             animation.fromValue = @(1.0f);
             animation.toValue = @(0.0f);
-            animation.duration = 5.0;//transitionDuration;
+            animation.duration = 5.0;
             animation.removedOnCompletion = true;
             
             TGAnimationBlockDelegate *animationDelegate = [[TGAnimationBlockDelegate alloc] initWithLayer:transitionLayer];;
@@ -117,8 +97,8 @@ static const float luminanceThreshold = 0.8f;
         }
     }
     
-    CGFloat previousLuminance = 0.0f;//_backdropArea.luminance;
-    CGFloat currentLuminance = 0.0f;//backdropArea.luminance;
+    CGFloat previousLuminance = 0.0f;
+    CGFloat currentLuminance = 0.0f;
     
     if (_backdropArea != backdropArea)
     {
@@ -560,13 +540,6 @@ static const float luminanceThreshold = 0.8f;
     CGContextAddEllipseInRect(context, CGRectMake(backgroundRect.origin.x + backgroundRect.size.width - backgroundRect.size.height, backgroundRect.origin.y, backgroundRect.size.height, backgroundRect.size.height));
     CGContextClip(context);
     
-    /*if (_backdropArea == nil)
-    {
-        CGContextSetFillColorWithColor(context, UIColorRGB(0xaaaaaa).CGColor);
-        CGContextFillRect(context, backgroundRect);
-    }
-    else
-        [_backdropArea drawRelativeToImageRect:CGRectMake(-position.x, -position.y, imageSize.width, imageSize.height)];*/
     
     static UIColor *color = nil;
     static dispatch_once_t onceToken;
@@ -581,7 +554,7 @@ static const float luminanceThreshold = 0.8f;
         CGContextFillRect(context, backgroundRect);
     }
     
-    CGFloat luminance = 0.0f;//_backdropArea.luminance;
+    CGFloat luminance = 0.0f;
     
     CGContextSetBlendMode(context, kCGBlendModeNormal);
     

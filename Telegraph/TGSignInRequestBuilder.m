@@ -100,8 +100,6 @@
         _timer = nil;
     }
     
-    [[TGTelegramNetworking instance] moveToDatacenterId:datacenterId];
-    
     ASHandle *actionHandle = _actionHandle;
     _timer = [[TGTimer alloc] initWithTimeout:15.0 repeat:false completion:^
     {
@@ -109,7 +107,14 @@
     } queue:[ActionStageInstance() globalStageDispatchQueue]];
     [_timer start];
     
-    self.cancelToken = [TGTelegraphInstance doSignIn:_phoneNumber phoneHash:_phoneHash phoneCode:_phoneCode requestBuilder:self];
+    __weak TGSignInRequestBuilder *weakSelf = self;
+    [[TGTelegramNetworking instance] moveToDatacenterId:datacenterId completion:^
+    {
+        __strong TGSignInRequestBuilder *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf.cancelToken = [TGTelegraphInstance doSignIn:strongSelf->_phoneNumber phoneHash:strongSelf->_phoneHash phoneCode:strongSelf->_phoneCode requestBuilder:strongSelf];
+    }];
 }
 
 - (void)cancel

@@ -89,7 +89,6 @@
                 int32_t keyUseCount = [TGDatabaseInstance() currentEncryptionKeyUseCount:_peerId];
                 int32_t maxKeyUseCount = 100;
 #ifdef DEBUG
-                //maxKeyUseCount = 5;
 #endif
                 if (keyUseCount >= maxKeyUseCount)
                 {
@@ -252,7 +251,6 @@
             int32_t outSeqNo = seqOut * 2 + (_isCreator ? 1 : 0);
             [data appendBytes:&outSeqNo length:4];
             
-            TGLog(@"preparing outgoing message request for seqOut: %d, seqIn: %d", seqOut, seqIn);
             
             [data appendData:actionData];
             
@@ -299,7 +297,6 @@
                 TLInputEncryptedFile$inputEncryptedFileUploaded *schemaFileInfo = [[TLInputEncryptedFile$inputEncryptedFileUploaded alloc] init];
                 schemaFileInfo.n_id = fileInfo.n_id;
                 schemaFileInfo.parts = fileInfo.parts;
-                //schemaFileInfo.md5_checksum = fileInfo.md5_checksum;
                 schemaFileInfo.md5_checksum = @"";
                 schemaFileInfo.key_fingerprint = fileInfo.key_fingerprint;
                 
@@ -366,7 +363,6 @@
             int32_t outSeqNo = seqOut * 2 + (_isCreator ? 1 : 0);
             [data appendBytes:&outSeqNo length:4];
             
-            TGLog(@"preparing outgoing message request for (%lld) seqOut: %d, seqIn: %d", _peerId, seqOut, seqIn);
             
             [data appendData:concreteAction.data];
             

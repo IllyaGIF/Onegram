@@ -85,13 +85,11 @@
 {
     _imageModel.parentOffset = itemPosition;
     [_imageModel bindViewToContainer:container viewStorage:viewStorage];
-    //(((TGMessageImageViewContainer *)[_imageModel boundView])).imageView.delegate = self;
 }
 
 - (void)bindViewToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage {
     [super bindViewToContainer:container viewStorage:viewStorage];
     
-    //(((TGMessageImageViewContainer *)[_imageModel boundView])).imageView.delegate = self;
 }
 
 - (void)unbindView:(TGModernViewStorage *)viewStorage {

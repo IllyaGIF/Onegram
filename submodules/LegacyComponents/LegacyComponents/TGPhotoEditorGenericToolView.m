@@ -85,11 +85,8 @@
         _titleLabel.userInteractionEnabled = false;
         [self addSubview:_titleLabel];
         
-        //if (explicit)
-        //{
             _titleLabel.frame = CGRectMake(0.0f, 4.0f, 160.0f, 20.0f);
             _titleLabel.textAlignment = NSTextAlignmentLeft;
-            //_titleLabel.text = editorItem.title;
             
             _titleLabel.textColor = editorItem.stringValue != nil ? [TGPhotoEditorInterfaceAssets editorActiveItemTitleColor] : [TGPhotoEditorInterfaceAssets editorItemTitleColor];
             
@@ -101,7 +98,6 @@
             _valueLabel.textColor = [TGPhotoEditorInterfaceAssets accentColor];
             _valueLabel.userInteractionEnabled = false;
             [self addSubview:_valueLabel];
-        //}
     }
     return self;
 }
@@ -118,8 +114,6 @@
         {
             if (strongSelf->_explicit)
                 [strongSelf setLabelsHidden:true animated:false];
-            //else
-            //    [strongSelf showValue];
             
             if (strongSelf.interactionBegan != nil)
                 strongSelf.interactionBegan();
@@ -139,8 +133,6 @@
         {
             if (strongSelf->_explicit)
                 [strongSelf setLabelsHidden:false animated:true];
-            //else
-            //    [strongSelf scheduleHideValue];
             
             if (strongSelf.interactionEnded != nil)
                 strongSelf.interactionEnded();
@@ -161,9 +153,6 @@
     
     _valueLabel.text = [_editorItem stringValue];
         
-    //if (_showingValue)
-    //    _titleLabel.text = [self _value];
-    //else
     [self updateColor];
 }
 

@@ -10,6 +10,8 @@
 @property (nonatomic, copy) void (^onControllerInsetUpdated)(CGFloat);
 
 - (instancetype)initWithPresentation:(TGPresentation *)presentation;
+- (void)setStartupViewController:(UIViewController *)viewController logicalIndex:(NSUInteger)logicalIndex prepareControllers:(NSArray *(^)(void))prepareControllers;
+- (NSUInteger)logicalSelectedIndex;
 - (void)setPresentation:(TGPresentation *)presentation;
 
 - (void)setIgnoreKeyboardFrameChange:(bool)ignore restoringFocus:(bool)restoringFocus;
@@ -19,6 +21,7 @@
 - (void)setMissedCallsCount:(int)callsCount;
 
 - (void)setCallsHidden:(bool)hidden animated:(bool)animated;
+- (void)setContactsHidden:(bool)hidden animated:(bool)animated;
 
 - (void)localizationUpdated;
 

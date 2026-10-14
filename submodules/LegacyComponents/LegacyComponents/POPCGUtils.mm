@@ -39,19 +39,25 @@ void POPCGColorGetRGBAComponents(CGColorRef color, CGFloat components[])
     components[0] = components[1] = components[2] = colors[0];
     components[3] = colors[1];
   } else {
-    Class ciColorClass = NSClassFromString(@"CIColor");
-    if (ciColorClass != Nil) {
-      CIColor *ciColor = [ciColorClass colorWithCGColor:color];
-      components[0] = ciColor.red;
-      components[1] = ciColor.green;
-      components[2] = ciColor.blue;
-      components[3] = ciColor.alpha;
+    uint8_t pixel[4] = {0, 0, 0, 255};
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixel, 1, 1, 8, 4, colorSpace, kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast);
+    if (context != NULL) {
+      CGContextSetFillColorWithColor(context, color);
+      CGContextFillRect(context, CGRectMake(0.0f, 0.0f, 1.0f, 1.0f));
+      CGFloat alpha = (CGFloat)pixel[3] / 255.0f;
+      components[0] = alpha > 0.0f ? ((CGFloat)pixel[0] / 255.0f) / alpha : 0.0f;
+      components[1] = alpha > 0.0f ? ((CGFloat)pixel[1] / 255.0f) / alpha : 0.0f;
+      components[2] = alpha > 0.0f ? ((CGFloat)pixel[2] / 255.0f) / alpha : 0.0f;
+      components[3] = alpha;
+      CGContextRelease(context);
     } else {
       components[0] = 0.0f;
       components[1] = 0.0f;
       components[2] = 0.0f;
       components[3] = 1.0f;
     }
+    CGColorSpaceRelease(colorSpace);
   }
 }
 

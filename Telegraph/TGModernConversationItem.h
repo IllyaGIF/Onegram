@@ -55,6 +55,7 @@ typedef enum {
 - (void)updateAnimationsEnabled;
 - (void)stopInlineMedia:(int32_t)excludeMid;
 - (void)resumeInlineMedia;
+- (void)activateDeferredInlineMedia;
 - (void)updateGroupedLayout:(TGMessageGroupedLayout *)groupedLayout;
 
 @end

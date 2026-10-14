@@ -5,7 +5,86 @@
 #import "SSignalKitCompat/SSignalKit.h"
 #import "TGPhotoEditorUtils.h"
 
+#if !defined(ONEGRAM_ARMV6)
 #import <AVFoundation/AVFoundation.h>
+#endif
+
+#if defined(ONEGRAM_ARMV6)
+
+@interface PGCameraMovieWriter ()
+{
+    bool _isRecording;
+    bool _liveUpload;
+    CGAffineTransform _videoTransform;
+}
+@end
+
+@implementation PGCameraMovieWriter
+
+- (instancetype)initWithVideoTransform:(CGAffineTransform)videoTransform videoOutputSettings:(NSDictionary *)videoSettings audioOutputSettings:(NSDictionary *)audioSettings
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _videoTransform = videoTransform;
+        (void)videoSettings;
+        (void)audioSettings;
+    }
+    return self;
+}
+
+- (void)startRecording
+{
+    _isRecording = false;
+    if (self.finishedWithMovieAtURL != nil)
+        self.finishedWithMovieAtURL(nil, _videoTransform, CGSizeZero, 0.0, false);
+}
+
+- (void)stopRecordingWithCompletion:(void (^)(void))completion
+{
+    _isRecording = false;
+    if (completion != nil)
+        completion();
+}
+
+- (void)_processSampleBuffer:(CMSampleBufferRef)sampleBuffer
+{
+    (void)sampleBuffer;
+}
+
+- (NSTimeInterval)currentDuration
+{
+    return 0.0;
+}
+
+- (bool)isRecording
+{
+    return _isRecording;
+}
+
+- (bool)liveUpload
+{
+    return _liveUpload;
+}
+
+- (void)setLiveUpload:(bool)liveUpload
+{
+    _liveUpload = liveUpload;
+}
+
++ (NSString *)outputFileType
+{
+    return @"public.mpeg-4";
+}
+
++ (NSString *)tempOutputPath
+{
+    return [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"camvideo_%x.mp4", (int)arc4random()]];
+}
+
+@end
+
+#else
 
 @interface PGCameraMovieWriter ()
 {
@@ -294,3 +373,5 @@
 }
 
 @end
+
+#endif

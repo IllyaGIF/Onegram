@@ -36,6 +36,10 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGAnimationUtils.h"
 
 #import "TGPresentation.h"
+#import "TGRichMessageMediaAttachment.h"
+#import "TGPollMediaAttachment.h"
+#import "TGPollMessageViewModel.h"
+#import "TGRichMessageModernViewModel.h"
 
 typedef enum {
     TGCachedMessageTypeUnknown = 0,
@@ -107,6 +111,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     copyItem->_collapseFlags = _collapseFlags;
     copyItem->_cachedMessageType = _cachedMessageType;
     copyItem->_mediaAvailabilityStatus = _mediaAvailabilityStatus;
+    copyItem->_automaticMediaDownloadChecked = _automaticMediaDownloadChecked;
     copyItem->_groupedMediaOffsetX = _groupedMediaOffsetX;
     copyItem->_groupedMediaOffsetY = _groupedMediaOffsetY;
     
@@ -126,6 +131,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     copyItem->_collapseFlags = _collapseFlags;
     copyItem->_cachedMessageType = _cachedMessageType;
     copyItem->_mediaAvailabilityStatus = _mediaAvailabilityStatus;
+    copyItem->_automaticMediaDownloadChecked = _automaticMediaDownloadChecked;
     copyItem->_groupedMediaOffsetX = _groupedMediaOffsetX;
     copyItem->_groupedMediaOffsetY = _groupedMediaOffsetY;
     
@@ -144,13 +150,12 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     [super bindCell:cell viewStorage:viewStorage];
     
     if (cell != nil)
+    {
         cell->_needsRelativeBoundsUpdateNotifications = _viewModel.needsRelativeBoundsUpdates;
+        cell->_relativeBoundsUpdatePending = cell->_needsRelativeBoundsUpdateNotifications;
+    }
     
     cell.clipsToBounds = !(_positionFlags & TGMessageGroupPositionBottom && _positionFlags & TGMessageGroupPositionRight);
-    //if (!cell.clipsToBounds)
-    //    [cell.superview bringSubviewToFront:cell];
-    //else if (_positionFlags & TGMessageGroupPositionTop && _positionFlags & TGMessageGroupPositionLeft)
-    //    [cell.superview sendSubviewToBack:cell];
     
     [_viewModel bindViewToContainer:[cell contentViewForBinding] viewStorage:viewStorage];
 }
@@ -171,13 +176,12 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         [_viewModel moveViewToContainer:[cell contentViewForBinding]];
         
         if (cell != nil)
+        {
             cell->_needsRelativeBoundsUpdateNotifications = _viewModel.needsRelativeBoundsUpdates;
+            cell->_relativeBoundsUpdatePending = cell->_needsRelativeBoundsUpdateNotifications;
+        }
         
         cell.clipsToBounds = !(_positionFlags & TGMessageGroupPositionBottom && _positionFlags & TGMessageGroupPositionRight);
-        //if (!cell.clipsToBounds)
-        //    [cell.superview bringSubviewToFront:cell];
-        //else if (_positionFlags & TGMessageGroupPositionTop && _positionFlags & TGMessageGroupPositionLeft)
-        //    [cell.superview sendSubviewToBack:cell];
     }
 }
 
@@ -281,6 +285,14 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         }
     }
     
+    if (_viewModel != nil && ([TGPollMediaAttachment pollInMediaAttachments:message.mediaAttachments] != nil) != [_viewModel isKindOfClass:[TGPollMessageViewModel class]]) {
+        if ([self boundCell] != nil) {
+            rebindCell = [self boundCell];
+            [self unbindCell:viewStorage];
+        }
+        _viewModel = nil;
+    }
+    
     _message = message;
     
     if (_viewModel == nil) {
@@ -291,7 +303,6 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         {
             _layoutIsInvalid = false;
             [_viewModel layoutForContainerSize:containerSize];
-            NSLog(@"COMMENTS newest.relayout mid=%d", _message.mid);
         }
 
         if (sizeUpdated) {
@@ -531,11 +542,24 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     
     if (updateCell)
     {
-        if ([self boundCell] != nil)
-            [self boundCell]->_needsRelativeBoundsUpdateNotifications = _viewModel.needsRelativeBoundsUpdates;
+        TGModernCollectionCell *boundCell = [self boundCell];
+        if (boundCell != nil)
+        {
+            boundCell->_needsRelativeBoundsUpdateNotifications = _viewModel.needsRelativeBoundsUpdates;
+            boundCell->_relativeBoundsUpdatePending = boundCell->_needsRelativeBoundsUpdateNotifications;
+        }
     }
     
     return _viewModel;
+}
+
+- (bool)hasValidLayoutForContainerWidth:(CGFloat)containerWidth height:(CGFloat)height
+{
+    if (_viewModel == nil || _layoutIsInvalid || _message.messageLifetime > 0)
+        return false;
+    
+    CGRect frame = _viewModel.frame;
+    return ABS(frame.size.width - containerWidth) < FLT_EPSILON && ABS(frame.size.height - height) < FLT_EPSILON && _viewModel.collapseFlags == _collapseFlags && _viewModel.positionFlags == _positionFlags;
 }
 
 - (CGSize)sizeForContainerSize:(CGSize)containerSize viewStorage:(TGModernViewStorage *)viewStorage
@@ -547,6 +571,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
 {
     if ([updatedItem isKindOfClass:[TGMessageModernConversationItem class]])
     {
+        _automaticMediaDownloadChecked = updatedItem->_automaticMediaDownloadChecked;
         if (_message != updatedItem->_message || force)
         {
             TGMessage *previousMessage = _message;
@@ -587,6 +612,11 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
 - (void)stopInlineMedia:(int32_t)excludeMid
 {
     [_viewModel stopInlineMedia:excludeMid];
+}
+
+- (void)activateDeferredInlineMedia
+{
+    [_viewModel activateDeferredInlineMedia];
 }
 
 - (void)resumeInlineMedia {
@@ -719,10 +749,22 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     if ([property isKindOfClass:[TGMessageDiscussionContentProperty class]])
         discussion = property;
 
-    bool enabled = discussion != nil && discussion.comments && _message.mid > 0;
+    int32_t discussionMessageId = _message.mid;
+    if (_groupedLayout != nil)
+    {
+        [_groupedLayout updateDiscussion:discussion messageId:_message.mid];
+        TGMessageGroupPositionFlags position = [_groupedLayout positionForMessageId:_message.mid];
+        bool primary = (position & TGMessageGroupPositionTop) && (position & TGMessageGroupPositionLeft);
+        discussion = primary ? _groupedLayout.discussion : nil;
+        discussionMessageId = _groupedLayout.discussionMessageId;
+    }
+
+    bool enabled = discussion != nil && discussion.comments && discussionMessageId > 0;
     bool changed = [model setDiscussionCommentsEnabled:enabled
                                                   count:discussion != nil ? discussion.replies : 0
-                                              channelId:discussion != nil ? discussion.channelId : 0];
+                                              channelId:discussion != nil ? discussion.channelId : 0
+                                         recentRepliers:discussion != nil ? discussion.recentRepliers : nil
+                                              messageId:discussionMessageId];
     return changed;
 }
 
@@ -882,6 +924,38 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         TGWebPageMediaAttachment *webPage = nil;
         if (webpageIndex != -1) {
             webPage = message.mediaAttachments[webpageIndex];
+        }
+        
+        for (TGMediaAttachment *attachment in message.mediaAttachments)
+        {
+            if (attachment.type == TGRichMessageMediaAttachmentType && ((TGRichMessageMediaAttachment *)attachment).richMessage != nil)
+            {
+                TGRichMessageModernViewModel *model = [[TGRichMessageModernViewModel alloc] initWithMessage:message richMessage:((TGRichMessageMediaAttachment *)attachment).richMessage authorPeer:useAuthor ? [self currentAuthorPeer] : nil viaUser:viaUser context:_context];
+                if (forwardPeer != nil)
+                    [model setForwardHeader:forwardPeer forwardAuthor:forwardAuthor messageId:forwardMessageId forwardSignature:message.forwardAuthorSignature];
+                if (replyMessage != nil)
+                    [model setReplyHeader:replyMessage peer:replyPeer];
+                if (useAuthor)
+                    [self _setupMessageAuthor:model];
+                model.collapseFlags = _collapseFlags;
+                [model layoutForContainerSize:containerSize];
+                return model;
+            }
+        }
+        
+        TGPollMediaAttachment *pollAttachment = [TGPollMediaAttachment pollInMediaAttachments:message.mediaAttachments];
+        if (pollAttachment != nil)
+        {
+            TGPollMessageViewModel *model = [[TGPollMessageViewModel alloc] initWithMessage:message poll:pollAttachment authorPeer:useAuthor ? [self currentAuthorPeer] : nil viaUser:viaUser context:_context];
+            if (forwardPeer != nil)
+                [model setForwardHeader:forwardPeer forwardAuthor:forwardAuthor messageId:forwardMessageId forwardSignature:message.forwardAuthorSignature];
+            if (replyMessage != nil)
+                [model setReplyHeader:replyMessage peer:replyPeer];
+            if (useAuthor)
+                [self _setupMessageAuthor:model];
+            model.collapseFlags = _collapseFlags;
+            [model layoutForContainerSize:containerSize];
+            return model;
         }
         
         index = -1;
@@ -1449,6 +1523,9 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
 
 - (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y
 {
+    if (ABS(_groupedMediaOffsetX - x) < FLT_EPSILON && ABS(_groupedMediaOffsetY - y) < FLT_EPSILON)
+        return;
+    
     _groupedMediaOffsetX = x;
     _groupedMediaOffsetY = y;
     [_viewModel setGroupedMediaOffsetX:x y:y];
@@ -1465,8 +1542,21 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
     return _viewModel != nil ? [_viewModel groupedMediaOffsetY] : _groupedMediaOffsetY;
 }
 
+- (TGMessageGroupedLayout *)groupedLayout
+{
+    return _groupedLayout;
+}
+
 - (void)updateGroupedLayout:(TGMessageGroupedLayout *)groupedLayout
 {
+    TGMessageGroupPositionFlags positionFlags = groupedLayout != nil ? [groupedLayout positionForMessageId:_message.mid] : TGMessageGroupPositionNone;
+    if (groupedLayout == _groupedLayout && positionFlags == _positionFlags && (_viewModel == nil || (_viewModel.groupedLayout == groupedLayout && _viewModel.positionFlags == positionFlags)))
+    {
+        if ([self _ios6ApplyDiscussionFooterToModel:_viewModel])
+            _layoutIsInvalid = true;
+        return;
+    }
+    
     _groupedLayout = groupedLayout;
     if (groupedLayout != nil)
         _positionFlags = [groupedLayout positionForMessageId:_message.mid];
@@ -1480,6 +1570,7 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
     _viewModel.positionFlags = _positionFlags;
     _viewModel.groupedLayout = groupedLayout;
     [_viewModel setGroupedMediaOffsetX:_groupedMediaOffsetX y:_groupedMediaOffsetY];
+    [self _ios6ApplyDiscussionFooterToModel:_viewModel];
     
     _layoutIsInvalid = true;
 }

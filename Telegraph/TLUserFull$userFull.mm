@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//userFull flags:# blocked:flags.0?true user:User about:flags.1?string link:contacts.Link profile_photo:flags.2?Photo notify_settings:PeerNotifySettings bot_info:flags.3?BotInfo common_chats_count:int = UserFull;
 
 @implementation TLUserFull$userFull
 

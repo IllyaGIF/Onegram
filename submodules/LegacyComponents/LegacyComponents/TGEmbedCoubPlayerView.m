@@ -15,7 +15,11 @@
 #import "PSLMDBKeyValueStore.h"
 #import <QuartzCore/QuartzCore.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
 @interface TGEmbedCoubURLTaskAdapter : NSObject <NSURLConnectionDataDelegate>
+#else
+@interface TGEmbedCoubURLTaskAdapter : NSObject
+#endif
 {
     NSURLConnection *_connection;
 }
@@ -71,6 +75,7 @@
             _videoPath = [[SVariable alloc] init];
             [_videoPath set:[SSignal single:[NSURL fileURLWithPath:videoPath]]];
             
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
             if (thumbnailSignal == nil)
             {
                 [_disposables add:[[[TGMediaAssetImageSignals videoThumbnailForAVAsset:[AVURLAsset assetWithURL:[NSURL fileURLWithPath:videoPath]] size:CGSizeMake(480, 480) timestamp:CMTimeMake(1, 100)] deliverOn:[SQueue mainQueue]] startWithNext:^(id next)
@@ -83,6 +88,7 @@
                         [strongSelf setCoverImage:next];
                 }]];
             }
+#endif
         }
         else if (alternateCachePathSignal != nil)
         {
@@ -105,6 +111,7 @@
                     NSURL *url = [NSURL fileURLWithPath:path];
                     [strongSelf->_videoPath set:[SSignal single:url]];
                     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
                     if (thumbnailSignal == nil)
                     {
                         [strongSelf->_disposables add:[[[TGMediaAssetImageSignals videoThumbnailForAVAsset:[AVURLAsset assetWithURL:url] size:CGSizeMake(480, 480) timestamp:CMTimeMake(1, 100)] deliverOn:[SQueue mainQueue]] startWithNext:^(id next)
@@ -117,6 +124,7 @@
                                 [strongSelf setCoverImage:next];
                         }]];
                     }
+#endif
                 }
                 else
                 {
@@ -172,7 +180,11 @@
     _playerView = [[CBPlayerView alloc] initWithFrame:[self _webView].bounds];
     [[self _webView].superview insertSubview:_playerView aboveSubview:[self _webView]];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    _coubPlayer = [[CBCoubPlayer alloc] initWithVideoLayer:nil];
+#else
     _coubPlayer = [[CBCoubPlayer alloc] initWithVideoLayer:(AVPlayerLayer *)_playerView.videoPlayerView.layer];
+#endif
     _coubPlayer.withoutAudio = false;
     _coubPlayer.delegate = self;
     

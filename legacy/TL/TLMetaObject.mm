@@ -29,22 +29,41 @@ TLMetaObject::~TLMetaObject()
 {
 }
 
+int TLMetaObject::fieldIndexForName(int32_t name)
+{
+    if (fieldNameToIndex.get() != NULL)
+    {
+        std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
+        if (it == fieldNameToIndex->end())
+            return -1;
+        return it->second;
+    }
+
+    int index = 0;
+    for (std::vector<TLMetaField>::iterator it = fields->begin(); it != fields->end(); ++it, ++index)
+    {
+        if (it->name == name)
+            return index;
+    }
+    return -1;
+}
+
 int32_t TLMetaObject::getInt32(int32_t name)
 {
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return 0;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypePrimitiveInt32:
-            return values->at((size_t)it->second).primitive.int32Value;
+            return values->at((size_t)fieldIndex).primitive.int32Value;
         case TLConstructedValueTypePrimitiveInt64:
-            return (int32_t)(values->at((size_t)it->second).primitive.int64Value);
+            return (int32_t)(values->at((size_t)fieldIndex).primitive.int64Value);
         case TLConstructedValueTypePrimitiveDouble:
-            return (int32_t)values->at((size_t)it->second).primitive.doubleValue;
+            return (int32_t)values->at((size_t)fieldIndex).primitive.doubleValue;
         case TLConstructedValueTypePrimitiveBool:
-            return values->at((size_t)it->second).primitive.boolValue ? 1 : 0;
+            return values->at((size_t)fieldIndex).primitive.boolValue ? 1 : 0;
         default:
             break;
     }
@@ -54,20 +73,20 @@ int32_t TLMetaObject::getInt32(int32_t name)
 
 int64_t TLMetaObject::getInt64(int32_t name)
 {
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return 0;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypePrimitiveInt32:
-            return (int64_t)values->at((size_t)it->second).primitive.int32Value;
+            return (int64_t)values->at((size_t)fieldIndex).primitive.int32Value;
         case TLConstructedValueTypePrimitiveInt64:
-            return (values->at((size_t)it->second).primitive.int64Value);
+            return (values->at((size_t)fieldIndex).primitive.int64Value);
         case TLConstructedValueTypePrimitiveDouble:
-            return (int64_t)values->at((size_t)it->second).primitive.doubleValue;
+            return (int64_t)values->at((size_t)fieldIndex).primitive.doubleValue;
         case TLConstructedValueTypePrimitiveBool:
-            return values->at((size_t)it->second).primitive.boolValue ? 1 : 0;
+            return values->at((size_t)fieldIndex).primitive.boolValue ? 1 : 0;
         default:
             break;
     }
@@ -77,20 +96,20 @@ int64_t TLMetaObject::getInt64(int32_t name)
 
 double TLMetaObject::getDouble(int32_t name)
 {
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return 0.0;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypePrimitiveInt32:
-            return (double)values->at((size_t)it->second).primitive.int32Value;
+            return (double)values->at((size_t)fieldIndex).primitive.int32Value;
         case TLConstructedValueTypePrimitiveInt64:
-            return (double)(values->at((size_t)it->second).primitive.int64Value);
+            return (double)(values->at((size_t)fieldIndex).primitive.int64Value);
         case TLConstructedValueTypePrimitiveDouble:
-            return values->at((size_t)it->second).primitive.doubleValue;
+            return values->at((size_t)fieldIndex).primitive.doubleValue;
         case TLConstructedValueTypePrimitiveBool:
-            return values->at((size_t)it->second).primitive.boolValue ? 1 : 0;
+            return values->at((size_t)fieldIndex).primitive.boolValue ? 1 : 0;
         default:
             break;
     }
@@ -100,20 +119,20 @@ double TLMetaObject::getDouble(int32_t name)
 
 bool TLMetaObject::getBool(int32_t name)
 {
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return false;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypePrimitiveInt32:
-            return values->at((size_t)it->second).primitive.int32Value != 0;
+            return values->at((size_t)fieldIndex).primitive.int32Value != 0;
         case TLConstructedValueTypePrimitiveInt64:
-            return values->at((size_t)it->second).primitive.int64Value != 0;
+            return values->at((size_t)fieldIndex).primitive.int64Value != 0;
         case TLConstructedValueTypePrimitiveDouble:
-            return values->at((size_t)it->second).primitive.doubleValue != 0.0;
+            return values->at((size_t)fieldIndex).primitive.doubleValue != 0.0;
         case TLConstructedValueTypePrimitiveBool:
-            return values->at((size_t)it->second).primitive.boolValue;
+            return values->at((size_t)fieldIndex).primitive.boolValue;
         default:
             break;
     }
@@ -125,15 +144,15 @@ NSData *TLMetaObject::getBytes(int32_t name)
 {
     static Class class_NSData = [NSData class];
     
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return nil;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypeBytes:
         {
-            id object = values->at((size_t)it->second).nativeObject;
+            id object = values->at((size_t)fieldIndex).nativeObject;
             if (object != nil && ![object isKindOfClass:class_NSData])
             {
                 TGLog(@"***** Failed to extract bytes from %@", object);
@@ -152,15 +171,15 @@ NSString *TLMetaObject::getString(int32_t name)
 {
     static Class class_NSString = [NSString class];
     
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return nil;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypeString:
         {
-            id object = values->at((size_t)it->second).nativeObject;
+            id object = values->at((size_t)fieldIndex).nativeObject;
             if (object != nil && ![object isKindOfClass:class_NSString])
             {
                 TGLog(@"***** Failed to extract string from %@", object);
@@ -179,15 +198,15 @@ NSArray *TLMetaObject::getArray(int32_t name)
 {
     static Class class_NSArray = [NSArray class];
     
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return nil;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypeVector:
         {
-            id object = values->at((size_t)it->second).nativeObject;
+            id object = values->at((size_t)fieldIndex).nativeObject;
             if (object != nil && ![object isKindOfClass:class_NSArray])
             {
                 TGLog(@"***** Failed to extract array from %@", object);
@@ -204,35 +223,35 @@ NSArray *TLMetaObject::getArray(int32_t name)
 
 id TLMetaObject::getObject(int32_t name)
 {
-    std::tr1::unordered_map<int32_t, int>::iterator it = fieldNameToIndex->find(name);
-    if (it == fieldNameToIndex->end())
+    int fieldIndex = fieldIndexForName(name);
+    if (fieldIndex < 0)
         return nil;
     
-    switch (values->at((size_t)it->second).type)
+    switch (values->at((size_t)fieldIndex).type)
     {
         case TLConstructedValueTypeObject:
         case TLConstructedValueTypeVector:
         case TLConstructedValueTypeString:
         case TLConstructedValueTypeBytes:
         {
-            id object = values->at((size_t)it->second).nativeObject;
+            id object = values->at((size_t)fieldIndex).nativeObject;
             return object;
         }
         case TLConstructedValueTypePrimitiveInt32:
         {
-            return [NSNumber numberWithInt:values->at((size_t)it->second).primitive.int32Value];
+            return [NSNumber numberWithInt:values->at((size_t)fieldIndex).primitive.int32Value];
         }
         case TLConstructedValueTypePrimitiveInt64:
         {
-            return [NSNumber numberWithLongLong:values->at((size_t)it->second).primitive.int64Value];
+            return [NSNumber numberWithLongLong:values->at((size_t)fieldIndex).primitive.int64Value];
         }
         case TLConstructedValueTypePrimitiveDouble:
         {
-            return [NSNumber numberWithDouble:values->at((size_t)it->second).primitive.doubleValue];
+            return [NSNumber numberWithDouble:values->at((size_t)fieldIndex).primitive.doubleValue];
         }
         case TLConstructedValueTypePrimitiveBool:
         {
-            return [NSNumber numberWithBool:values->at((size_t)it->second).primitive.boolValue];
+            return [NSNumber numberWithBool:values->at((size_t)fieldIndex).primitive.boolValue];
         }
         default:
             break;

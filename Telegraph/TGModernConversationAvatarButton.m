@@ -1,4 +1,5 @@
 #import "TGModernConversationAvatarButton.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -7,6 +8,11 @@
 #import "TGAppDelegate.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+
+static const CGFloat TGModernConversationAvatarDefaultSize = 37.0f;
+static const CGFloat TGModernConversationAvatarDefaultRightInset = 3.0f;
+static const CGFloat TGModernConversationAvatarDefaultTopInset = 4.0f;
 
 @interface TGModernConversationAvatarButton ()
 {
@@ -15,6 +21,8 @@
     NSString *_avatarUrl;
     TGLetteredAvatarView *_avatarView;
     UIImageView *_iconView;
+    UIImageView *_brandedOverlayView;
+    UIEdgeInsets _brandedOverlayOutsets;
     
     int64_t _avatarConversationId;
     NSString *_avatarTitle;
@@ -56,6 +64,14 @@
         
         _iconView = [[UIImageView alloc] init];
         [_avatarView addSubview:_iconView];
+        
+        if ([TGPresentation brandedIOS6Style])
+        {
+            _avatarView.layer.cornerRadius = [TGPresentation brandedIOS6ConversationAppearance].avatarCornerRadius;
+            _brandedOverlayView = [[UIImageView alloc] init];
+            _brandedOverlayView.userInteractionEnabled = false;
+            [self addSubview:_brandedOverlayView];
+        }
     }
     return self;
 }
@@ -63,7 +79,7 @@
 - (UIEdgeInsets)alignmentRectInsets
 {
     if (iosMajorVersion() < 11)
-        return [super alignmentRectInsets];
+        return OGPlatformSuperclassViewAlignmentRectInsets(self, [TGModernConversationAvatarButton class]);
     
     return UIEdgeInsetsMake(0.0f, -8.0f, 0.0f, 8.0f);
 }
@@ -73,12 +89,19 @@
     if (iosMajorVersion() >= 11)
         return false;
     
-    return [super translatesAutoresizingMaskIntoConstraints];
+    return OGPlatformSuperclassViewTranslatesAutoresizingMaskIntoConstraints(self, [TGModernConversationAvatarButton class]);
 }
 
 - (CGSize)intrinsicContentSize
 {
     return CGSizeMake(37.0f, 37.0f);
+}
+
+- (CGFloat)avatarSide
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].avatarSize;
+    return TGModernConversationAvatarDefaultSize;
 }
 
 - (void)setPreview:(bool)preview
@@ -165,18 +188,19 @@
 
 - (void)setAvatarUrl:(NSString *)uri
 {
-    UIImage *placeholder = [TGPresentation.current.images avatarPlaceholderWithDiameter:37.0f];
+    CGFloat side = [self avatarSide];
+    UIImage *placeholder = [TGPresentation.current.images avatarPlaceholderWithDiameter:side];
     if (uri.length == 0)
     {
         _avatarUrl = nil;
         
         if (_avatarConversationId < 0)
         {
-            [_avatarView loadGroupPlaceholderWithSize:CGSizeMake(37.0f, 37.0f) conversationId:_avatarConversationId title:_avatarTitle placeholder:placeholder];
+            [_avatarView loadGroupPlaceholderWithSize:CGSizeMake(side, side) conversationId:_avatarConversationId title:_avatarTitle placeholder:placeholder];
         }
         else
         {
-            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(37.0f, 37.0f) uid:(int32_t)_avatarConversationId firstName:_avatarFirstName lastName:_avatarLastName placeholder:placeholder];
+            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(side, side) uid:(int32_t)_avatarConversationId firstName:_avatarFirstName lastName:_avatarLastName placeholder:placeholder];
         }
     }
     else
@@ -204,6 +228,9 @@
         
         [_iconView removeFromSuperview];
         _iconView = nil;
+        
+        [_brandedOverlayView removeFromSuperview];
+        _brandedOverlayView = nil;
     }
     
     UIImage *placeholder = [TGPresentation.current.images avatarPlaceholderWithDiameter:17.0f];
@@ -271,7 +298,15 @@
         
         origin = CGPointMake(rtlOffset + _horizontalOffset, -17 + _verticalOffset);
         
-        _avatarView.frame = CGRectMake(origin.x, origin.y, 37, 37);
+        if ([TGPresentation brandedIOS6Style])
+        {
+            OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+            origin.x += TGModernConversationAvatarDefaultSize + TGModernConversationAvatarDefaultRightInset - appearance.avatarRightInset - appearance.avatarSize;
+            origin.y += appearance.avatarTopInset - TGModernConversationAvatarDefaultTopInset;
+            _avatarView.frame = CGRectMake(origin.x, origin.y, appearance.avatarSize, appearance.avatarSize);
+        }
+        else
+            _avatarView.frame = CGRectMake(origin.x, origin.y, TGModernConversationAvatarDefaultSize, TGModernConversationAvatarDefaultSize);
         
         if (TGAppDelegateInstance.rootController.isRTL) {
             CGRect frame = _avatarView.frame;
@@ -325,6 +360,14 @@
             
             i++;
         }
+    }
+    
+    if (_brandedOverlayView != nil)
+    {
+        CGSize avatarSize = _avatarView.frame.size;
+        if (!CGSizeEqualToSize(_brandedOverlayView.image.size, CGSizeMake(_brandedOverlayOutsets.left + avatarSize.width + _brandedOverlayOutsets.right, _brandedOverlayOutsets.top + avatarSize.height + _brandedOverlayOutsets.bottom)))
+            _brandedOverlayView.image = [TGPresentation brandedIOS6ConversationAvatarOverlayImageForSize:avatarSize outsets:&_brandedOverlayOutsets];
+        _brandedOverlayView.frame = CGRectMake(_avatarView.frame.origin.x - _brandedOverlayOutsets.left, _avatarView.frame.origin.y - _brandedOverlayOutsets.top, _brandedOverlayOutsets.left + avatarSize.width + _brandedOverlayOutsets.right, _brandedOverlayOutsets.top + avatarSize.height + _brandedOverlayOutsets.bottom);
     }
     
     CGSize iconSize = _iconView.image.size;

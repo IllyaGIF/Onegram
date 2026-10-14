@@ -3,6 +3,7 @@
 @class TLReplyMarkup;
 @class TLPeer;
 @class TLMessageFwdHeader;
+@class TGRichMessage;
 
 @interface TLMessage$modernMessage : TLMessage$messageMeta
 
@@ -18,5 +19,12 @@
 @property (nonatomic) int64_t discussion_channel_id;
 @property (nonatomic) int32_t discussion_max_id;
 @property (nonatomic) int32_t discussion_read_max_id;
+@property (nonatomic, strong) NSArray *discussion_recent_repliers;
+
+@property (nonatomic, strong) TGRichMessage *richMessage;
+@property (nonatomic, strong) NSArray *richMessagePhotos;
+@property (nonatomic, strong) NSArray *richMessageDocuments;
+
++ (NSDictionary *)readMessageRepliesFromStream:(NSInputStream *)is error:(__autoreleasing NSError **)error;
 
 @end

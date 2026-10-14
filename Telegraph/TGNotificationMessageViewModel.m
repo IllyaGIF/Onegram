@@ -23,6 +23,7 @@
 #import "TGChannelAdminLogEntry.h"
 
 #import "TGPresentation.h"
+#import "TGCommunitySignals.h"
 
 @interface TGNotificationMessageViewModel () <UIGestureRecognizerDelegate, TGDoubleTapGestureRecognizerDelegate>
 {
@@ -103,7 +104,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             
             if (formatNameRange.location != NSNotFound && authorUid != 0)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                 textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -130,7 +131,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     NSRange formatNameRange = [formatBase rangeOfString:@"%@"];
                     if (formatNameRange.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         
@@ -159,7 +160,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     NSRange formatNameRange = [formatString rangeOfString:@"%@"];
                     if (formatNameRange.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         
                         NSMutableArray *multipleTextCheckingResults = [[NSMutableArray alloc] init];
                         NSMutableArray *multipleAdditionalAttributes = [[NSMutableArray alloc] init];
@@ -222,7 +223,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     NSRange formatNameRange = [formatString rangeOfString:@"%@"];
                     if (formatNameRange.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         
@@ -240,7 +241,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRangeFirst.location != NSNotFound && formatNameRangeSecond.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange rangeFirst = NSMakeRange(formatNameRangeFirst.location, authorName.length);
                         NSRange rangeSecond = NSMakeRange(rangeFirst.length - formatNameRangeFirst.length + formatNameRangeSecond.location, userName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&rangeFirst objCType:@encode(NSRange)], fontAttributes, [[NSValue alloc] initWithBytes:&rangeSecond objCType:@encode(NSRange)], fontAttributes, nil];
@@ -260,7 +261,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange formatNameRange = [formatString rangeOfString:@"%@"];
             if (formatNameRange.location != NSNotFound && authorUid != 0)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                 
@@ -277,7 +278,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange formatNameRange = [formatString rangeOfString:@"%@"];
             if (formatNameRange.location != NSNotFound && authorUid != 0)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                 
@@ -322,6 +323,13 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             actionText = actionMedia.actionData[@"text"];
             break;
         }
+        case TGMessageActionCommunityChanged:
+        {
+            bool broadcast = TGPeerIdIsChannel(message.cid) && !_context.conversation.isChannelGroup;
+            NSString *authorName = [authorPeer isKindOfClass:[TGUser class]] ? authorTitle : nil;
+            actionText = [TGCommunitySignals serviceTextForCommunityAction:actionMedia isChannel:broadcast authorName:authorName];
+            break;
+        }
         case TGMessageActionChannelInviter:
         {
             NSString *formatString = nil;
@@ -350,7 +358,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                 NSRange formatNameRange = [formatString rangeOfString:@"%@"];
                 if (formatNameRange.location != NSNotFound && inviterUid != 0)
                 {
-                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                     NSRange range = NSMakeRange(formatNameRange.location, inviterName.length);
                     additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                     
@@ -400,7 +408,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             
             if (formatNameRange.location != NSNotFound && authorUid != 0)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                 
@@ -429,7 +437,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange formatNameRange = [formatString rangeOfString:@"%@"];
             if (formatNameRange.location != NSNotFound)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
             }
@@ -447,7 +455,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange formatNameRange = [formatString rangeOfString:@"%@"];
             if (formatNameRange.location != NSNotFound)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
             }
@@ -471,7 +479,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     NSRange formatNameRange = [formatString rangeOfString:@"%1$@"];
                     if (formatNameRange.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                     }
@@ -492,7 +500,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     NSRange formatNameRange = [formatString rangeOfString:@"%1$@"];
                     if (formatNameRange.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                     }
@@ -517,7 +525,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                 NSRange formatNameRange = [formatString rangeOfString:@"%1$@"];
                 if (formatNameRange.location != NSNotFound)
                 {
-                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                     NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                     additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                 }
@@ -677,7 +685,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                 if (nameRange.location != NSNotFound) {
                     [formatString replaceCharactersInRange:nameRange withString:authorName];
                     
-                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                     NSRange fixedRange = NSMakeRange(nameRange.location, authorName.length);
                     [addAttributes addObject:[[NSValue alloc] initWithBytes:&fixedRange objCType:@encode(NSRange)]];
                     [addAttributes addObject:fontAttributes];
@@ -692,12 +700,11 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                 if (gameTitleRange.location != NSNotFound) {
                     [formatString replaceCharactersInRange:gameTitleRange withString:gameTitle ?: @""];
                     
-                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                    NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                     NSRange fixedRange = NSMakeRange(gameTitleRange.location, gameTitle.length);
                     [addAttributes addObject:[[NSValue alloc] initWithBytes:&fixedRange objCType:@encode(NSRange)]];
                     [addAttributes addObject:fontAttributes];
                     
-                    //[addTextCheckingResults addObject:[NSTextCheckingResult linkCheckingResultWithRange:fixedRange URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"activate-app://%d", message.mid]]]];
                 }
             }
             
@@ -728,7 +735,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange typeRange = [actionText rangeOfString:type];
             if (typeRange.location != NSNotFound)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&typeRange objCType:@encode(NSRange)], fontAttributes, nil];
             }
             break;
@@ -743,7 +750,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange formatDomainRange = [formatString rangeOfString:@"%@"];
             if (formatDomainRange.location != NSNotFound && domainName.length > 0)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatDomainRange.location, domainName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                 
@@ -819,17 +826,11 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
             NSRange formatNameRange = [formatString rangeOfString:@"%1$@"];
             if (formatNameRange.location != NSNotFound)
             {
-                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                 NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                 additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
             }
             
-//            NSRange valuesRange = [actionText rangeOfString:values];
-//            if (valuesRange.location != NSNotFound)
-//            {
-//                NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
-//                [additionalAttributes arrayByAddingObjectsFromArray:@[[[NSValue alloc] initWithBytes:&valuesRange objCType:@encode(NSRange)], fontAttributes]];
-//            }
         }
             break;
         case TGMessageActionPaymentSent: {
@@ -900,7 +901,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     if (nameRange.location != NSNotFound) {
                         [formatString replaceCharactersInRange:nameRange withString:authorName];
                         
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange fixedRange = NSMakeRange(nameRange.location, authorName.length);
                         [addAttributes addObject:[[NSValue alloc] initWithBytes:&fixedRange objCType:@encode(NSRange)]];
                         [addAttributes addObject:fontAttributes];
@@ -911,7 +912,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     if (amountRange.location != NSNotFound) {
                         [formatString replaceCharactersInRange:amountRange withString:stringAmount];
                         
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange fixedRange = NSMakeRange(amountRange.location, stringAmount.length);
                         [addAttributes addObject:[[NSValue alloc] initWithBytes:&fixedRange objCType:@encode(NSRange)]];
                         [addAttributes addObject:fontAttributes];
@@ -920,7 +921,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     if (titleRange.location != NSNotFound) {
                         [formatString replaceCharactersInRange:titleRange withString:invoiceTitle];
                         
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange fixedRange = NSMakeRange(titleRange.location, invoiceTitle.length);
                         [addAttributes addObject:[[NSValue alloc] initWithBytes:&fixedRange objCType:@encode(NSRange)]];
                         [addAttributes addObject:fontAttributes];
@@ -1020,7 +1021,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRangeFirst.location != NSNotFound && formatNameRangeSecond.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange rangeFirst = NSMakeRange(formatNameRangeFirst.location, authorTitle.length);
                         NSRange rangeSecond = NSMakeRange(rangeFirst.length - formatNameRangeFirst.length + formatNameRangeSecond.location, userName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&rangeFirst objCType:@encode(NSRange)], fontAttributes, [[NSValue alloc] initWithBytes:&rangeSecond objCType:@encode(NSRange)], fontAttributes, nil];
@@ -1131,7 +1132,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRangeFirst.location != NSNotFound && formatNameRangeSecond.location != NSNotFound)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange rangeFirst = NSMakeRange(formatNameRangeFirst.location, authorTitle.length);
                         NSRange rangeSecond = NSMakeRange(rangeFirst.length - formatNameRangeFirst.length + formatNameRangeSecond.location, userName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&rangeFirst objCType:@encode(NSRange)], fontAttributes, [[NSValue alloc] initWithBytes:&rangeSecond objCType:@encode(NSRange)], fontAttributes, nil];
@@ -1155,7 +1156,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1177,7 +1178,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1207,7 +1208,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1227,7 +1228,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1283,7 +1284,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1298,7 +1299,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1318,7 +1319,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1339,7 +1340,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];
@@ -1359,7 +1360,7 @@ static TGUser *findUserInArray(int32_t uid, NSArray *array)
                     
                     if (formatNameRange.location != NSNotFound && authorUid != 0)
                     {
-                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (NSString *)kCTFontAttributeName, nil];
+                        NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageActionTitleBoldFont], (__bridge NSString *)kCTFontAttributeName, nil];
                         NSRange range = NSMakeRange(formatNameRange.location, authorName.length);
                         additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
                         textCheckingResults = [[NSArray alloc] initWithObjects:[NSTextCheckingResult linkCheckingResultWithRange:range URL:[[NSURL alloc] initWithString:[[NSString alloc] initWithFormat:@"tg-user://%d", authorUid]]], nil];

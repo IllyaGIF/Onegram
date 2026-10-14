@@ -1,8 +1,11 @@
+#import "../submodules/LegacyComponents/LegacyComponents/LegacyComponentsGlobals.h"
 #import "TGPlaceholderImageDataSource.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGInterfaceAssets.h"
+#import <math.h>
 
 static TG_SYNCHRONIZED_DEFINE(imageCache) = PTHREAD_MUTEX_INITIALIZER;
 
@@ -13,18 +16,109 @@ typedef struct
 } TGTwoColors;
 
 static const TGTwoColors colors[] = {
-    { .top = 0xff516a, .bottom = 0xff885e }, //red
-    { .top = 0xffa85c, .bottom = 0xffcd6a }, //orange
-    { .top = 0x665fff, .bottom = 0x82b1ff }, //purple
-    { .top = 0x54cb68, .bottom = 0xa0de7e }, //green
-    { .top = 0x28c9b7, .bottom = 0x53edd6 }, //cyan
-    { .top = 0x2a9ef1, .bottom = 0x72d5fd }, //blue
-    { .top = 0xd669ed, .bottom = 0xe0a2f3 }, //pink
+    { .top = 0xff516a, .bottom = 0xff885e },
+    { .top = 0xffa85c, .bottom = 0xffcd6a },
+    { .top = 0x665fff, .bottom = 0x82b1ff },
+    { .top = 0x54cb68, .bottom = 0xa0de7e },
+    { .top = 0x28c9b7, .bottom = 0x53edd6 },
+    { .top = 0x2a9ef1, .bottom = 0x72d5fd },
+    { .top = 0xd669ed, .bottom = 0xe0a2f3 },
 };
+
+
+#if defined(ONEGRAM_ARMV6)
+typedef struct
+{
+    CGContextRef context;
+    void *data;
+    size_t width;
+    size_t height;
+    size_t rowBytes;
+} TGIOS3PlaceholderBitmap;
+
+static bool TGIOS3PlaceholderBegin(CGSize size, TGIOS3PlaceholderBitmap *bitmap)
+{
+    if (bitmap == NULL || !isfinite(size.width) || !isfinite(size.height) || size.width < 1.0f || size.height < 1.0f)
+        return false;
+    memset(bitmap, 0, sizeof(TGIOS3PlaceholderBitmap));
+    size_t width = (size_t)ceilf(size.width);
+    size_t height = (size_t)ceilf(size.height);
+    size_t rowBytes = ((width * 4) + 15) & ~((size_t)15);
+    if (width == 0 || height == 0 || width > 1024 || height > 1024 || height > ((size_t)-1) / rowBytes)
+        return false;
+    void *data = calloc(height, rowBytes);
+    if (data == NULL)
+        return false;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = colorSpace == NULL ? NULL : CGBitmapContextCreate(data, width, height, 8, rowBytes, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host);
+    if (colorSpace != NULL)
+        CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+    {
+        free(data);
+        return false;
+    }
+    CGContextTranslateCTM(context, 0.0f, (CGFloat)height);
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextSetInterpolationQuality(context, kCGInterpolationMedium);
+    bitmap->context = context;
+    bitmap->data = data;
+    bitmap->width = width;
+    bitmap->height = height;
+    bitmap->rowBytes = rowBytes;
+    return true;
+}
+
+static void TGIOS3PlaceholderReleaseData(void *info, __unused const void *data, __unused size_t size)
+{
+    if (info != NULL)
+        free(info);
+}
+
+static UIImage *TGIOS3PlaceholderFinish(TGIOS3PlaceholderBitmap *bitmap)
+{
+    if (bitmap == NULL || bitmap->context == NULL || bitmap->data == NULL)
+        return nil;
+
+    CGContextFlush(bitmap->context);
+    CGContextRelease(bitmap->context);
+    bitmap->context = NULL;
+
+    size_t length = bitmap->rowBytes * bitmap->height;
+    void *data = bitmap->data;
+    CGDataProviderRef provider = CGDataProviderCreateWithData(data, data, length, TGIOS3PlaceholderReleaseData);
+    if (provider == NULL)
+    {
+        free(data);
+        memset(bitmap, 0, sizeof(TGIOS3PlaceholderBitmap));
+        return nil;
+    }
+
+    bitmap->data = NULL;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGImageRef imageRef = colorSpace == NULL ? NULL : CGImageCreate(bitmap->width, bitmap->height, 8, 32, bitmap->rowBytes, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host, provider, NULL, false, kCGRenderingIntentDefault);
+    if (colorSpace != NULL)
+        CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+
+    UIImage *image = imageRef == NULL ? nil : [[UIImage alloc] initWithCGImage:imageRef];
+    if (imageRef != NULL)
+        CGImageRelease(imageRef);
+    memset(bitmap, 0, sizeof(TGIOS3PlaceholderBitmap));
+    return image;
+}
+
+static void TGIOS3PlaceholderDrawImage(CGContextRef context, UIImage *image, CGRect rect)
+{
+    if (context == NULL || image == nil || image.CGImage == NULL)
+        return;
+    CGContextDrawImage(context, rect, image.CGImage);
+}
+#endif
 
 static bool TGClassicIOS6StyleEnabled(void)
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
+    return (TGCurrentInterfaceStyle() != 0);
 }
 
 static UIImage *TGClassicIOS6AvatarResource(NSString *name)
@@ -71,11 +165,19 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
     if (source == nil)
         return nil;
 
+#if defined(ONEGRAM_ARMV6)
+    TGIOS3PlaceholderBitmap bitmap;
+    if (!TGIOS3PlaceholderBegin(size, &bitmap))
+        return source;
+    TGIOS3PlaceholderDrawImage(bitmap.context, source, CGRectMake(0.0f, 0.0f, size.width, size.height));
+    return TGIOS3PlaceholderFinish(&bitmap);
+#else
     UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
     [source drawInRect:CGRectMake(0.0f, 0.0f, size.width, size.height)];
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return image;
+#endif
 }
 
 @implementation TGPlaceholderImageDataSource
@@ -197,6 +299,67 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
         TG_SYNCHRONIZED_END(imageCache);
         return [[TGDataResource alloc] initWithImage:classicPlaceholder decoded:true];
     }
+#if defined(ONEGRAM_ARMV6)
+    if ([type isEqualToString:@"user-avatar"] || [type isEqualToString:@"group-avatar"] || [type isEqualToString:@"saved-messages"])
+    {
+        TGIOS3PlaceholderBitmap bitmap;
+        if (!TGIOS3PlaceholderBegin(size, &bitmap))
+            return nil;
+
+        CGContextRef context = bitmap.context;
+        CGContextBeginPath(context);
+        CGContextAddEllipseInRect(context, CGRectMake(0.0f, 0.0f, size.width, size.height));
+        CGContextClip(context);
+
+        TGTwoColors twoColors;
+        if ([type isEqualToString:@"user-avatar"])
+            twoColors = [self _colorsForUid:[args[@"uid"] intValue]];
+        else if ([type isEqualToString:@"group-avatar"])
+            twoColors = [self _colorsForGroupId:[args[@"cid"] longLongValue]];
+        else
+            twoColors = colors[5];
+
+        CGFloat topComponents[4] = { ((twoColors.top >> 16) & 0xff) / 255.0f, ((twoColors.top >> 8) & 0xff) / 255.0f, (twoColors.top & 0xff) / 255.0f, 1.0f };
+        CGFloat bottomComponents[4] = { ((twoColors.bottom >> 16) & 0xff) / 255.0f, ((twoColors.bottom >> 8) & 0xff) / 255.0f, (twoColors.bottom & 0xff) / 255.0f, 1.0f };
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGColorRef bottomColor = colorSpace == NULL ? NULL : CGColorCreate(colorSpace, bottomComponents);
+        CGColorRef topColor = colorSpace == NULL ? NULL : CGColorCreate(colorSpace, topComponents);
+        const void *gradientColors[2] = { bottomColor, topColor };
+        CFArrayRef colorsArray = bottomColor == NULL || topColor == NULL ? NULL : CFArrayCreate(kCFAllocatorDefault, gradientColors, 2, &kCFTypeArrayCallBacks);
+        CGFloat locations[2] = { 0.0f, 1.0f };
+        CGGradientRef gradient = colorsArray == NULL || colorSpace == NULL ? NULL : CGGradientCreateWithColors(colorSpace, colorsArray, locations);
+        if (gradient != NULL)
+            CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, 0.0f), CGPointMake(0.0f, size.height), 0);
+        if (gradient != NULL)
+            CGGradientRelease(gradient);
+        if (colorsArray != NULL)
+            CFRelease(colorsArray);
+        if (bottomColor != NULL)
+            CGColorRelease(bottomColor);
+        if (topColor != NULL)
+            CGColorRelease(topColor);
+        if (colorSpace != NULL)
+            CGColorSpaceRelease(colorSpace);
+
+        if ([type isEqualToString:@"saved-messages"])
+        {
+            UIImage *icon = TGImageNamed(@"SavedMessagesIcon");
+            CGSize ratios = CGSizeMake(22.0f / 60.0f, 27.0f / 60.0f);
+            CGSize iconSize = CGSizeMake(round(size.width * ratios.width), round(size.height * ratios.height));
+            TGIOS3PlaceholderDrawImage(context, icon, CGRectMake((size.width - iconSize.width) / 2.0f, ceil((size.height - iconSize.height) / 2.0f) + 1.0f, iconSize.width, iconSize.height));
+        }
+
+        UIImage *image = TGIOS3PlaceholderFinish(&bitmap);
+        if (image != nil)
+        {
+            TG_SYNCHRONIZED_BEGIN(imageCache);
+            [TGPlaceholderImageDataSource imageCache][[self cacheKeyForArgs:args]] = image;
+            TG_SYNCHRONIZED_END(imageCache);
+        }
+        return image == nil ? nil : [[TGDataResource alloc] initWithImage:image decoded:true];
+    }
+#endif
+
     if ([type isEqualToString:@"user-avatar"])
     {
         int32_t uid = [args[@"uid"] intValue];

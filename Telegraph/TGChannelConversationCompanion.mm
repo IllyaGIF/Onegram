@@ -1,5 +1,6 @@
 #import "TGChannelConversationCompanion.h"
-#import "IOS6Trace.h"
+#import "../OnegramRuntime/OGRuntime.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -31,6 +32,7 @@
 #import "TGModernViewContext.h"
 
 #import "TGModernConversationActionInputPanel.h"
+#import "TGShareMenu.h"
 
 #import "TGTelegramNetworking.h"
 
@@ -146,6 +148,10 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     bool _loadingHistoryAbove;
     bool _loadingHistoryBelow;
     NSUInteger _ios6RemoteGapGeneration;
+#if defined(ONEGRAM_ARMV6)
+    bool _ios6InitialHistoryLoading;
+    bool _ios6ControllerAppeared;
+#endif
     
     bool _historyAbove;
     bool _historyBelow;
@@ -216,8 +222,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     _ios6LastReadHistoryScheduleTime = now;
     
     TGModernConversationController *controller = self.controller;
-    while (false) TGLog(@"READ channel.appearSchedule reason=%@ peer=%lld group=%d preview=%d canRead=%d unread=%d serviceUnread=%d maxRead=%d maxKnown=%d display=%d",
-        reason, _conversationId, _isGroup ? 1 : 0, self.previewMode ? 1 : 0, [controller canReadHistory] ? 1 : 0, _conversation.unreadCount, _conversation.serviceUnreadCount, _conversation.maxReadMessageId, _conversation.maxKnownMessageId, _displayVariant);
     [self scheduleReadHistory];
 }
 
@@ -534,7 +538,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     if (self != nil) {
         _ios4LifetimeReference = [[TGChannelConversationCompanionReference alloc] init];
         _ios4LifetimeReference.value = self;
-        IOS6Trace(@"FULL channel.init peer=%lld title=%@ access=%lld rawChannel=%d group=%d min=%d kind=%d role=%d unread=%d serviceUnread=%d pts=%d", conversation.conversationId, conversation.chatTitle, conversation.accessHash, (int)TGChannelIdFromPeerId(conversation.conversationId), conversation.isChannelGroup ? 1 : 0, conversation.isMin ? 1 : 0, (int)conversation.kind, (int)conversation.channelRole, conversation.unreadCount, conversation.serviceUnreadCount, conversation.pts);
         _genericInfoDisposables = [[SDisposableSet alloc] init];
         
         _conversation = conversation;
@@ -1014,6 +1017,46 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     }
 }
 
+- (void)_ios6StartManagedStateIfReady {
+#if defined(ONEGRAM_ARMV6)
+    if (![NSThread isMainThread]) {
+        TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+        OGPlatformDispatchOnMainThread(^{
+            TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+            if (strongSelf != nil) {
+                [strongSelf _ios6StartManagedStateIfReady];
+            }
+        });
+        return;
+    }
+    if (!_ios6ControllerAppeared || _ios6InitialHistoryLoading) {
+        return;
+    }
+#endif
+    if (_managedState == nil) {
+        _managedState = [[TGChannelStateSignals updatedChannel:_conversationId] startWithNext:nil];
+    }
+}
+
+- (void)_ios6BeginInitialHistoryLoading {
+#if defined(ONEGRAM_ARMV6)
+    _ios6InitialHistoryLoading = true;
+#endif
+}
+
+- (void)_ios6CompleteInitialHistoryLoading {
+#if defined(ONEGRAM_ARMV6)
+    TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+    OGPlatformDispatchOnMainThread(^{
+        TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+        if (strongSelf != nil) {
+            strongSelf->_ios6InitialHistoryLoading = false;
+            [strongSelf _ios6StartManagedStateIfReady];
+        }
+    });
+#endif
+}
+
 - (void)_controllerDidAppear:(bool)firstTime {
     [super _controllerDidAppear:firstTime];
     [self _ios6ScheduleReadHistoryFromChannelAppear:firstTime ? @"firstAppear" : @"appear"];
@@ -1021,7 +1064,10 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     [self _refreshPinnedMessages];
     
     if (firstTime) {
-        _managedState = [[TGChannelStateSignals updatedChannel:_conversationId] startWithNext:nil];
+#if defined(ONEGRAM_ARMV6)
+        _ios6ControllerAppeared = true;
+#endif
+        [self _ios6StartManagedStateIfReady];
         
         _enableVisibleMessagesProcessing = true;
         
@@ -1151,9 +1197,9 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         if (_mutePanel == nil) {
             TGModernConversationController *controller = self.controller;
             _mutePanel = [[TGModernConversationActionInputPanel alloc] init];
-            [_mutePanel setActionWithTitle:!_isMuted ? TGLocalized(@"Conversation.Mute") : TGLocalized(@"Conversation.Unmute") action:@"toggleMute" color:presentation.pallete.accentColor icon:TGModernConversationActionInputPanelIconNone];
             _mutePanel.companionHandle = self.actionHandle;
             _mutePanel.delegate = controller;
+            [self _updateMutePanel];
         }
         return _mutePanel;
     }
@@ -1161,6 +1207,30 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     return nil;
 }
                
+- (void)_updateMutePanel {
+    [_mutePanel setActionWithTitle:!_isMuted ? TGLocalized(@"Conversation.Mute") : TGLocalized(@"Conversation.Unmute") action:@"toggleMute" color:self.controller.presentation.pallete.accentColor icon:_isMuted ? TGModernConversationActionInputPanelIconUnmute : TGModernConversationActionInputPanelIconMute];
+    [_mutePanel setSecondaryAction:_conversation.username.length != 0 ? @"share" : nil icon:TGModernConversationActionInputPanelIconShare];
+}
+
+- (void)_shareChannel {
+    TGModernConversationController *controller = self.controller;
+    if (controller == nil)
+        return;
+    
+    __weak TGModernConversationController *weakController = controller;
+    __weak TGModernConversationActionInputPanel *weakPanel = _mutePanel;
+    CGRect (^sourceRect)(void) = ^CGRect {
+        __strong TGModernConversationController *strongController = weakController;
+        __strong TGModernConversationActionInputPanel *strongPanel = weakPanel;
+        if (strongController == nil || strongPanel == nil)
+            return CGRectZero;
+        
+        return [strongPanel convertRect:strongPanel.bounds toView:strongController.view];
+    };
+    
+    [TGShareMenu presentChannelShareMenuInParentController:controller conversation:_conversation sourceView:controller.view sourceRect:sourceRect];
+}
+
 - (bool)canPostMessages {
     if (_isGroup) {
         return true;
@@ -1178,7 +1248,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     if ([action isEqualToString:@"ios6OpenComments"]) {
         int32_t messageId = [options[@"mid"] intValue];
         int64_t discussionChannelId = [options[@"discussionChannelId"] longLongValue];
-        NSLog(@"COMMENTS tap source=%lld mid=%d group=%lld", _conversation.conversationId, messageId, discussionChannelId);
         [[TGInterfaceManager instance] navigateToCommentsForChannelConversation:_conversation
                                                                       messageId:messageId
                                                             discussionChannelId:discussionChannelId
@@ -1211,6 +1280,8 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
             [TGAppDelegateInstance.rootController.dialogListController maybeDismissSearchResults];
         } else if ([panelAction isEqualToString:@"toggleMute"]) {
             [self _commitEnableNotifications:_isMuted];
+        } else if ([panelAction isEqualToString:@"share"]) {
+            [self _shareChannel];
         } else if ([panelAction isEqualToString:@"delete"]) {
             TGModernConversationController *controller = self.controller;
             
@@ -1235,7 +1306,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     if (_isMuted != !enable) {
         _isMuted = !enable;
         
-        [_mutePanel setActionWithTitle:!_isMuted ? TGLocalized(@"Conversation.Mute") : TGLocalized(@"Conversation.Unmute") action:@"toggleMute" color:self.controller.presentation.pallete.accentColor icon:TGModernConversationActionInputPanelIconNone];
+        [self _updateMutePanel];
         
         NSNumber *muteUntil = enable ? @0: @(INT32_MAX);
         _groupNotificationSettings[@"muteUntil"] = muteUntil;
@@ -1309,7 +1380,10 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     __block int32_t missingPreloadedAreaAtMessageId = 0;
     __block int32_t messageIdForVisibleHoleDirection = 0;
     __block int32_t earliestUnreadMessageId = 0;
-    NSUInteger initialChannelMessageCount = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone ? 20 : 28;
+    NSUInteger initialChannelMessageCount = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone ? (OGRuntimeSingleCoreDevice() ? 10 : 20) : 28;
+#if defined(ONEGRAM_ARMV6)
+    initialChannelMessageCount = 12;
+#endif
     
     [TGDatabaseInstance() dispatchOnDatabaseThread:^{
         __block TGMessageTransparentSortKey maxSortKey = TGMessageTransparentSortKeyUpperBound(_conversationId);
@@ -1357,8 +1431,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         migrationData = cachedData.migrationData;
         _hasBots = _isGroup && cachedData.botInfos.count != 0;
         
-        if (missingPreloadedAreaAtMessageId != 0) {
-        } else {
+        if (missingPreloadedAreaAtMessageId == 0) {
             [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:maxSortKey count:(int)initialChannelMessageCount important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestAround completion:^(NSArray *messages, bool hasLater) {
                 topMessages = messages;
                 _historyBelow = hasLater;
@@ -1396,22 +1469,30 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         if (topMessages.count < initialChannelMessageCount) {
             int64_t conversationId = _conversationId;
             int64_t accessHash = _accessHash;
-            bool important = _displayVariant == TGChannelDisplayVariantImportant;
+            bool showInitialLoading = topMessages.count == 0;
             TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+            __block bool receivedResult = false;
             
-            IOS6Trace(@"FULL channel.coldTailPreload.start peer=%lld access=%lld local=%d important=%d", conversationId, accessHash, (int)topMessages.count, important ? 1 : 0);
-            [controller setLoadingMessages:true];
+            if (showInitialLoading) {
+                [self _ios6BeginInitialHistoryLoading];
+                [controller setLoadingMessages:true];
+            }
             
-            [[[TGChannelManagementSignals preloadedHistoryTailForPeerId:conversationId accessHash:accessHash] deliverOn:[SQueue mainQueue]] startWithNext:^(NSDictionary *dict) {
+            [[TGChannelManagementSignals preloadedHistoryTailForPeerId:conversationId accessHash:accessHash] startWithNext:^(NSDictionary *dict) {
+                receivedResult = true;
                 TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
                 if (strongSelf == nil) {
                     return;
                 }
                 
                 NSArray *remoteMessages = dict[@"messages"];
-                IOS6Trace(@"FULL channel.coldTailPreload.result peer=%lld remote=%d", conversationId, (int)remoteMessages.count);
                 if (remoteMessages.count == 0) {
-                    [strongSelf.controller setLoadingMessages:false];
+                    if (showInitialLoading) {
+                        [strongSelf _ios6CompleteInitialHistoryLoading];
+                        OGPlatformDispatchOnMainThread(^{
+                            [strongSelf.controller setLoadingMessages:false];
+                        });
+                    }
                     return;
                 }
                 
@@ -1431,12 +1512,24 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                 }];
             } error:^(__unused id error) {
                 TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
-                IOS6Trace(@"FULL channel.coldTailPreload.error peer=%lld error=%@", conversationId, error);
-                [strongSelf.controller setLoadingMessages:false];
-            } completed:nil];
+                if (showInitialLoading) {
+                    [strongSelf _ios6CompleteInitialHistoryLoading];
+                    OGPlatformDispatchOnMainThread(^{
+                        [strongSelf.controller setLoadingMessages:false];
+                    });
+                }
+            } completed:^{
+                if (!receivedResult && showInitialLoading) {
+                    TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+                    [strongSelf _ios6CompleteInitialHistoryLoading];
+                    OGPlatformDispatchOnMainThread(^{
+                        [strongSelf.controller setLoadingMessages:false];
+                    });
+                }
+            }];
         }
         
-        if (_accessHash != 0 && _conversationId < -4294967296LL && topMessages.count != 0) {
+        if (_accessHash != 0 && _conversationId < -4294967296LL && topMessages.count >= initialChannelMessageCount) {
             int64_t conversationId = _conversationId;
             int64_t accessHash = _accessHash;
             NSArray *localTopMessages = [topMessages copy];
@@ -1474,11 +1567,9 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                 }
                 
                 if (deletedMessageIds.count == 0) {
-                    IOS6Trace(@"TRACE channelTailReconcile peer=%lld remote=%d local=%d delete=0", conversationId, (int)remoteMessages.count, (int)localTopMessages.count);
                     return;
                 }
                 
-                IOS6Trace(@"TRACE channelTailReconcile peer=%lld remote=%d local=%d minRemote=%d delete=%@", conversationId, (int)remoteMessages.count, (int)localTopMessages.count, minRemoteMessageId, deletedMessageIds);
                 
                 [TGDatabaseInstance() dispatchOnDatabaseThread:^{
                     [TGDatabaseInstance() addMessagesToChannel:conversationId messages:remoteMessages deleteMessages:deletedMessageIds unimportantGroups:nil addedHoles:nil removedHoles:nil removedUnimportantHoles:nil updatedMessageSortKeys:nil returnGroups:false keepUnreadCounters:false skipFeedUpdate:false changedMessages:^(__unused NSArray *addedMessages, NSArray *removedMessages, NSDictionary *updatedMessages, __unused NSArray *addedUnimportantHoles, __unused NSArray *removedUnimportantHoles) {
@@ -1518,6 +1609,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     [controller setHasBots:_hasBots];
     
     if (missingPreloadedAreaAtMessageId != 0) {
+        [self _ios6BeginInitialHistoryLoading];
         [controller setLoadingMessages:true];
         
         if (_requestingHoleDisposable == nil) {
@@ -1547,8 +1639,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                     [TGModernConversationCompanion dispatchOnMessageQueue:^{
                         TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
                         if (strongSelf != nil) {
-                            /*strongSelf->_displayVariant = TGChannelDisplayVariantImportant;
-                            [TGDatabaseInstance() updateChannelDisplayExpanded:strongSelf->_conversationId displayExpanded:true];*/
                             
                             TGDispatchOnMainThread(^{
                                 TGMessageRange unreadRange = TGMessageRangeEmpty();
@@ -1604,14 +1694,9 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         NSString *secondPart = [self stringForOnlineCount:onlineCount];
         NSString *combinedString = [firstPart stringByAppendingString:secondPart];
         
-        //NSRange range1 = NSMakeRange(firstPart.length, secondPart.length);
-        //NSRange range2 = [combinedString rangeOfString:secondPart];
         
         return combinedString;
         
-        /*NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:[firstPart stringByAppendingString:secondPart]];
-         [attributedString addAttribute:NSForegroundColorAttributeName value:TGAccentColor() range:NSMakeRange(firstPart.length, secondPart.length)];
-         return attributedString;*/
     }
 }
 
@@ -1665,7 +1750,11 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                 }];
             }
             
-            [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:updatedSortKey count:60 important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestAround completion:^(NSArray *messages, bool hasLater) {
+            int reloadMessageCount = 60;
+#if defined(ONEGRAM_ARMV6)
+            reloadMessageCount = 32;
+#endif
+            [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:updatedSortKey count:reloadMessageCount important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestAround completion:^(NSArray *messages, bool hasLater) {
                 [TGModernConversationCompanion dispatchOnMessageQueue:^{
                     _historyAbove = messages.count != 0;
                     _historyBelow = hasLater;
@@ -1679,12 +1768,10 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                         }
                     }
                     
-                    if (atMessageId != 0) {
-                        TGLog(@"Reloading at %d", atMessageId);
-                    }
                     [self _replaceMessages:messages atMessageId:atMessageId peerId:0 expandFrom:-group.maxId jump:jump top:top messageIdForVisibleHoleDirection:messageIdForVisibleHoleDirection scrollBackMessageId:scrollBackMessageId animated:animated];
                     [self _updateControllerHistoryRequestsFlags];
                     
+                    [self _ios6CompleteInitialHistoryLoading];
                     TGDispatchOnMainThread(^{
                         TGModernConversationController *controller = self.controller;
                         [controller setLoadingMessages:false];
@@ -1744,18 +1831,18 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 }
 
 - (NSDictionary *)_optionsForMessageActions {
-    bool postAsChannel = !_isGroup;//[self messageAuthorPeerId] == _conversationId;
+    bool postAsChannel = !_isGroup;
     return @{@"conversationId": @(_conversationId), @"accessHash": @(_accessHash), @"asChannel": @(postAsChannel), @"sendActivity": @(_isGroup), @"notifyMembers": @(_shouldNotifyMembers)};
 }
 
 - (void)_setupOutgoingMessage:(TGMessage *)message {
     [super _setupOutgoingMessage:message];
     
-    if (_isGroup/* || !_postAsChannel*/) {
+    if (_isGroup) {
         message.sortKey = TGMessageSortKeyMake(_conversationId, TGMessageSpaceUnimportant, (int32_t)message.date, message.mid);
     }
     
-    if (!_isGroup && (_adminRights.canPostMessages)/* && _postAsChannel*/) {
+    if (!_isGroup && (_adminRights.canPostMessages)) {
         if (message.viewCount == nil) {
             message.viewCount = [[TGMessageViewCountContentProperty alloc] initWithViewCount:1];
         }
@@ -1796,204 +1883,214 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     }
 }
 
+- (bool)historyAboveMayBeAvailable {
+    return _historyAbove || _migrationHistoryAbove;
+}
+
 - (void)loadMoreMessagesAbove {
-    int count = 100;
-    IOS6Trace(@"FULL channel.loadMoreAbove.call peer=%lld access=%lld historyAbove=%d loading=%d migration=%d migrationAbove=%d items=%d display=%d", _conversationId, _accessHash, _historyAbove ? 1 : 0, _loadingHistoryAbove ? 1 : 0, _migrationData != nil ? 1 : 0, _migrationHistoryAbove ? 1 : 0, (int)_items.count, (int)_displayVariant);
-    
     TGModernConversationController *controller = self.controller;
     [controller setEnableAboveHistoryRequests:false];
     
     [TGModernConversationCompanion dispatchOnMessageQueue:^{
-        if (!_loadingHistoryAbove) {
-            if (_historyAbove) {
-                TGMessageTransparentSortKey maxKey = TGMessageTransparentSortKeyUpperBound(_conversationId);
-                bool migratedFound = false;
-                bool messagesFound = false;
-                int32_t oldestMessageId = 0;
-                int32_t oldestMessageDate = 0;
-                for (TGMessageModernConversationItem *item in _items) {
-                    if (item->_message.cid == _conversationId) {
-                        TGMessageTransparentSortKey itemKey = item->_message.transparentSortKey;
-                        itemKey = TGMessageTransparentSortKeyMake(TGMessageTransparentSortKeyPeerId(itemKey), TGMessageTransparentSortKeyTimestamp(itemKey), TGMessageTransparentSortKeyMid(itemKey) - 1, TGMessageTransparentSortKeySpace(itemKey));
-                        if (TGMessageTransparentSortKeyCompare(maxKey, itemKey) > 0) {
-                            maxKey = itemKey;
-                        }
-                        if (item->_message.mid > 0 && (oldestMessageId == 0 || item->_message.mid < oldestMessageId)) {
-                            oldestMessageId = item->_message.mid;
-                            oldestMessageDate = (int32_t)item->_message.date;
-                        }
-                        messagesFound = true;
-                    } else {
-                        migratedFound = item->_message.cid != 0;
+        [self _requestHistoryAboveIncludingMessages:nil];
+    }];
+}
+
+- (void)_historyItemsPreparedForMessages:(NSArray *)messages intent:(TGModernConversationAddMessageIntent)intent {
+    [super _historyItemsPreparedForMessages:messages intent:intent];
+    if (intent == TGModernConversationAddMessageIntentLoadMoreMessagesAbove && messages.count != 0 && _historyAbove && !_loadingHistoryAbove && [self historyAboveReadAheadAllowed])
+        [self _requestHistoryAboveIncludingMessages:messages];
+}
+
+- (void)_requestHistoryAboveIncludingMessages:(NSArray *)includedMessages {
+    int count = 100;
+    
+    if (!_loadingHistoryAbove) {
+        if (_historyAbove) {
+            __block TGMessageTransparentSortKey maxKey = TGMessageTransparentSortKeyUpperBound(_conversationId);
+            __block bool migratedFound = false;
+            __block bool messagesFound = false;
+            __block int32_t oldestMessageId = 0;
+            __block int32_t oldestMessageDate = 0;
+            int64_t conversationId = _conversationId;
+            void (^considerMessage)(TGMessage *) = ^(TGMessage *message) {
+                if (message.cid == conversationId) {
+                    TGMessageTransparentSortKey itemKey = message.transparentSortKey;
+                    itemKey = TGMessageTransparentSortKeyMake(TGMessageTransparentSortKeyPeerId(itemKey), TGMessageTransparentSortKeyTimestamp(itemKey), TGMessageTransparentSortKeyMid(itemKey) - 1, TGMessageTransparentSortKeySpace(itemKey));
+                    if (TGMessageTransparentSortKeyCompare(maxKey, itemKey) > 0) {
+                        maxKey = itemKey;
                     }
-                }
-                
-                if (!messagesFound && migratedFound) {
-                    self->_loadingHistoryAbove = false;
-                    self->_historyAbove = false;
-                    [self _updateControllerHistoryRequestsFlags];
+                    if (message.mid > 0 && (oldestMessageId == 0 || message.mid < oldestMessageId)) {
+                        oldestMessageId = message.mid;
+                        oldestMessageDate = (int32_t)message.date;
+                    }
+                    messagesFound = true;
                 } else {
-                    TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
-                    _loadingHistoryAbove = true;
-                    [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:maxKey count:count important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestEarlier completion:^(NSArray *messages, __unused bool hasLater) {
-                        IOS6Trace(@"FULL channel.loadMoreAbove.cacheResult peer=%lld count=%d", _conversationId, (int)messages.count);
-                        [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                            TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
-                            if (strongSelf != nil) {
-                                if (messages.count == 0) {
-                                    if (oldestMessageId > 1) {
-                                        IOS6Trace(@"FULL channel.loadMoreAbove.remoteGap peer=%lld oldestMid=%d oldestDate=%d", strongSelf->_conversationId, oldestMessageId, oldestMessageDate);
-                                        TGMessageHole *remoteHole = [[TGMessageHole alloc] initWithMinId:1 minTimestamp:1 maxId:oldestMessageId - 1 maxTimestamp:oldestMessageDate];
-                                        if (strongSelf->_requestingHoleDisposable == nil) {
-                                            strongSelf->_requestingHoleDisposable = [[SMetaDisposable alloc] init];
-                                        }
-                                        int64_t conversationId = strongSelf->_conversationId;
-                                        int32_t displayVariant = strongSelf->_displayVariant;
-                                        int64_t accessHash = strongSelf->_accessHash;
-                                        NSUInteger remoteGapGeneration = ++strongSelf->_ios6RemoteGapGeneration;
-                                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                                            [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                                                TGChannelConversationCompanion *timeoutStrongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
-                                                if (timeoutStrongSelf != nil && timeoutStrongSelf->_ios6RemoteGapGeneration == remoteGapGeneration && timeoutStrongSelf->_loadingHistoryAbove) {
-                                                    IOS6Trace(@"FULL channel.loadMoreAbove.remoteGapTimeout peer=%lld oldestMid=%d generation=%d", conversationId, oldestMessageId, (int)remoteGapGeneration);
-                                                    [timeoutStrongSelf->_requestingHoleDisposable setDisposable:nil];
-                                                    timeoutStrongSelf->_requestingHoleDisposable = nil;
-                                                    timeoutStrongSelf->_loadingHistoryAbove = false;
-                                                    timeoutStrongSelf->_historyAbove = false;
-                                                    [timeoutStrongSelf _updateControllerHistoryRequestsFlags];
-                                                }
-                                            }];
-                                        });
-                                        [strongSelf->_requestingHoleDisposable setDisposable:[[TGChannelManagementSignals channelMessageHoleForPeerId:conversationId accessHash:accessHash hole:remoteHole direction:TGChannelHistoryHoleDirectionEarlier important:displayVariant == TGChannelDisplayVariantImportant] startWithNext:^(NSDictionary *dict) {
-                                            IOS6Trace(@"FULL channel.loadMoreAbove.remoteGapResult peer=%lld messages=%d unimportantGroups=%d hole=%@", conversationId, (int)((NSArray *)dict[@"messages"]).count, (int)((NSArray *)dict[@"unimportantGroups"]).count, dict[@"hole"]);
-                                            NSArray *removedImportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
-                                            NSArray *removedUnimportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
-                                            
-                                            [TGDatabaseInstance() addMessagesToChannel:conversationId messages:dict[@"messages"] deleteMessages:nil unimportantGroups:dict[@"unimportantGroups"] addedHoles:nil removedHoles:removedImportantHoles removedUnimportantHoles:removedUnimportantHoles updatedMessageSortKeys:nil returnGroups:displayVariant == TGChannelDisplayVariantImportant keepUnreadCounters:false skipFeedUpdate:false changedMessages:^(NSArray *addedMessages, NSArray *removedMessages, NSDictionary *updatedMessages, NSArray *addedUnimportantHoles, NSArray *removedUnimportantHoles) {
-                                                [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                                                    TGChannelConversationCompanion *remoteStrongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
-                                                    if (remoteStrongSelf != nil) {
-                                                        if (remoteStrongSelf->_ios6RemoteGapGeneration != remoteGapGeneration) {
-                                                            IOS6Trace(@"FULL channel.loadMoreAbove.remoteGapStale peer=%lld generation=%d current=%d", conversationId, (int)remoteGapGeneration, (int)remoteStrongSelf->_ios6RemoteGapGeneration);
-                                                            return;
-                                                        }
-                                                        remoteStrongSelf->_requestingHoleDisposable = nil;
-                                                        NSMutableArray *resultRemovedMessages = [[NSMutableArray alloc] init];
-                                                        [resultRemovedMessages addObjectsFromArray:removedMessages];
-                                                        if (remoteStrongSelf->_displayVariant == TGChannelDisplayVariantAll) {
-                                                            [resultRemovedMessages addObjectsFromArray:removedUnimportantHoles];
-                                                        }
-                                                        
-                                                        NSMutableArray *resultAddedMessages = [[NSMutableArray alloc] init];
-                                                        [resultAddedMessages addObjectsFromArray:addedMessages];
-                                                        if (remoteStrongSelf->_displayVariant == TGChannelDisplayVariantAll) {
-                                                            [resultAddedMessages addObjectsFromArray:addedUnimportantHoles];
-                                                        }
-                                                        
-                                                        remoteStrongSelf->_loadingHistoryAbove = false;
-                                                        remoteStrongSelf->_historyAbove = resultAddedMessages.count != 0;
-                                                        if (resultAddedMessages.count != 0 || resultRemovedMessages.count != 0) {
-                                                            [remoteStrongSelf _addMessages:resultAddedMessages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove deletedMessages:resultRemovedMessages];
-                                                        }
-                                                        [remoteStrongSelf _updateMessages:updatedMessages];
-                                                        [remoteStrongSelf _updateControllerHistoryRequestsFlags];
-                                                    }
-                                                }];
-                                            }];
-                                        } error:^(__unused id error) {
-                                            IOS6Trace(@"FULL channel.loadMoreAbove.remoteGapError peer=%lld error=%@", conversationId, error);
+                    migratedFound = message.cid != 0;
+                }
+            };
+            for (TGMessageModernConversationItem *item in _items) {
+                considerMessage(item->_message);
+            }
+            for (TGMessage *message in includedMessages) {
+                considerMessage(message);
+            }
+            
+            if (!messagesFound && migratedFound) {
+                self->_loadingHistoryAbove = false;
+                self->_historyAbove = false;
+                [self _updateControllerHistoryRequestsFlags];
+            } else {
+                TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+                _loadingHistoryAbove = true;
+                [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:maxKey count:count important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestEarlier completion:^(NSArray *messages, __unused bool hasLater) {
+                    [TGModernConversationCompanion dispatchOnMessageQueue:^{
+                        TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+                        if (strongSelf != nil) {
+                            if (messages.count == 0) {
+                                if (oldestMessageId > 1) {
+                                    TGMessageHole *remoteHole = [[TGMessageHole alloc] initWithMinId:1 minTimestamp:1 maxId:oldestMessageId - 1 maxTimestamp:oldestMessageDate];
+                                    if (strongSelf->_requestingHoleDisposable == nil) {
+                                        strongSelf->_requestingHoleDisposable = [[SMetaDisposable alloc] init];
+                                    }
+                                    int64_t conversationId = strongSelf->_conversationId;
+                                    int32_t displayVariant = strongSelf->_displayVariant;
+                                    int64_t accessHash = strongSelf->_accessHash;
+                                    NSUInteger remoteGapGeneration = ++strongSelf->_ios6RemoteGapGeneration;
+                                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(12.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                                        [TGModernConversationCompanion dispatchOnMessageQueue:^{
+                                            TGChannelConversationCompanion *timeoutStrongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+                                            if (timeoutStrongSelf != nil && timeoutStrongSelf->_ios6RemoteGapGeneration == remoteGapGeneration && timeoutStrongSelf->_loadingHistoryAbove) {
+                                                [timeoutStrongSelf->_requestingHoleDisposable setDisposable:nil];
+                                                timeoutStrongSelf->_requestingHoleDisposable = nil;
+                                                timeoutStrongSelf->_loadingHistoryAbove = false;
+                                                timeoutStrongSelf->_historyAbove = false;
+                                                [timeoutStrongSelf _updateControllerHistoryRequestsFlags];
+                                            }
+                                        }];
+                                    });
+                                    [strongSelf->_requestingHoleDisposable setDisposable:[[TGChannelManagementSignals channelMessageHoleForPeerId:conversationId accessHash:accessHash hole:remoteHole direction:TGChannelHistoryHoleDirectionEarlier important:displayVariant == TGChannelDisplayVariantImportant] startWithNext:^(NSDictionary *dict) {
+                                        NSArray *removedImportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
+                                        NSArray *removedUnimportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
+                                        
+                                        [TGDatabaseInstance() addMessagesToChannel:conversationId messages:dict[@"messages"] deleteMessages:nil unimportantGroups:dict[@"unimportantGroups"] addedHoles:nil removedHoles:removedImportantHoles removedUnimportantHoles:removedUnimportantHoles updatedMessageSortKeys:nil returnGroups:displayVariant == TGChannelDisplayVariantImportant keepUnreadCounters:false skipFeedUpdate:false changedMessages:^(NSArray *addedMessages, NSArray *removedMessages, NSDictionary *updatedMessages, NSArray *addedUnimportantHoles, NSArray *removedUnimportantHoles) {
                                             [TGModernConversationCompanion dispatchOnMessageQueue:^{
                                                 TGChannelConversationCompanion *remoteStrongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
                                                 if (remoteStrongSelf != nil) {
                                                     if (remoteStrongSelf->_ios6RemoteGapGeneration != remoteGapGeneration) {
-                                                        IOS6Trace(@"FULL channel.loadMoreAbove.remoteGapErrorStale peer=%lld generation=%d current=%d", conversationId, (int)remoteGapGeneration, (int)remoteStrongSelf->_ios6RemoteGapGeneration);
                                                         return;
                                                     }
                                                     remoteStrongSelf->_requestingHoleDisposable = nil;
+                                                    NSMutableArray *resultRemovedMessages = [[NSMutableArray alloc] init];
+                                                    [resultRemovedMessages addObjectsFromArray:removedMessages];
+                                                    if (remoteStrongSelf->_displayVariant == TGChannelDisplayVariantAll) {
+                                                        [resultRemovedMessages addObjectsFromArray:removedUnimportantHoles];
+                                                    }
+                                                    
+                                                    NSMutableArray *resultAddedMessages = [[NSMutableArray alloc] init];
+                                                    [resultAddedMessages addObjectsFromArray:addedMessages];
+                                                    if (remoteStrongSelf->_displayVariant == TGChannelDisplayVariantAll) {
+                                                        [resultAddedMessages addObjectsFromArray:addedUnimportantHoles];
+                                                    }
+                                                    
                                                     remoteStrongSelf->_loadingHistoryAbove = false;
-                                                    remoteStrongSelf->_historyAbove = false;
+                                                    remoteStrongSelf->_historyAbove = resultAddedMessages.count != 0;
+                                                    if (resultAddedMessages.count != 0 || resultRemovedMessages.count != 0) {
+                                                        [remoteStrongSelf _addMessages:resultAddedMessages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove deletedMessages:resultRemovedMessages];
+                                                    }
+                                                    [remoteStrongSelf _updateMessages:updatedMessages];
                                                     [remoteStrongSelf _updateControllerHistoryRequestsFlags];
                                                 }
                                             }];
-                                        } completed:nil]];
-                                        return;
-                                    } else {
-                                        strongSelf->_loadingHistoryAbove = false;
-                                        strongSelf->_historyAbove = false;
-                                    }
+                                        }];
+                                    } error:^(__unused id error) {
+                                        [TGModernConversationCompanion dispatchOnMessageQueue:^{
+                                            TGChannelConversationCompanion *remoteStrongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+                                            if (remoteStrongSelf != nil) {
+                                                if (remoteStrongSelf->_ios6RemoteGapGeneration != remoteGapGeneration) {
+                                                    return;
+                                                }
+                                                remoteStrongSelf->_requestingHoleDisposable = nil;
+                                                remoteStrongSelf->_loadingHistoryAbove = false;
+                                                remoteStrongSelf->_historyAbove = false;
+                                                [remoteStrongSelf _updateControllerHistoryRequestsFlags];
+                                            }
+                                        }];
+                                    } completed:nil]];
+                                    return;
                                 } else {
                                     strongSelf->_loadingHistoryAbove = false;
-                                    strongSelf->_historyAbove = true;
+                                    strongSelf->_historyAbove = false;
                                 }
-                                if (messages.count != 0) {
-                                    [strongSelf _addMessages:messages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
-                                }
-                                [strongSelf _updateControllerHistoryRequestsFlags];
-                            }
-                        }];
-                    }];
-                }
-            } else if (_migrationData != nil && _migrationHistoryAbove) {
-                TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
-                _loadingHistoryAbove = true;
-                
-                int32_t maxTimestamp = INT32_MAX;
-                int32_t maxMid = _migrationData.maxMessageId;
-                
-                for (TGMessageModernConversationItem *item in _items) {
-                    maxTimestamp = MIN(maxTimestamp, (int32_t)item->_message.date);
-                    if (item->_message.cid == _conversationId || item->_message.cid == 0) {
-                    } else {
-                        maxMid = MIN(maxMid, item->_message.mid - migratedMessageIdOffset);
-                    }
-                }
-                
-                [TGDatabaseInstance() loadMessagesFromConversation:_migrationData.peerId maxMid:maxMid maxDate:maxTimestamp maxLocalMid:0 atMessageId:0 limit:count extraUnread:false completion:^(NSArray *messages, __unused bool historyExistsBelow) {
-                    int peerMinMid = [TGDatabaseInstance() loadPeerMinMid:_migrationData.peerId];
-                    
-                    [TGModernConversationCompanion dispatchOnMessageQueue:^{
-                        TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
-                        if (strongSelf != nil) {
-                            bool cachedMessagesAbove = false;
-                            if (messages.count != 0) {
-                                cachedMessagesAbove = true;
-                            }
-                            
-                            NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
-                            
-                            for (TGMessage *message in messages) {
-                                if (message.mid < TGMessageLocalMidBaseline) {
-                                    message.mid += migratedMessageIdOffset;
-                                    [updatedMessages addObject:message];
-                                }
-                            }
-                            
-                            if (messages.count != 0) {
-                                [strongSelf _addMessages:updatedMessages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
-                            }
-                            
-                            if (cachedMessagesAbove || peerMinMid != 0) {
-                                strongSelf->_loadingHistoryAbove = false;
-                                strongSelf->_migrationHistoryAbove = cachedMessagesAbove;
-                                
-                                [strongSelf _updateControllerHistoryRequestsFlags];
                             } else {
-                                NSMutableDictionary *options = [[NSMutableDictionary alloc] initWithDictionary:@{@"maxMid": @(maxMid), @"offset": @(0)}];
-                                
-                                options[@"conversationId"] = @(_migrationData.peerId);
-                                
-                                [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/conversations/(%lld)/asyncHistory/(%d)", _migrationData.peerId, maxMid] options:options watcher:strongSelf];
-                                IOS6Trace(@"FULL channel.loadMoreAbove.migrationRemote peer=%lld migrationPeer=%lld maxMid=%d", strongSelf->_conversationId, strongSelf->_migrationData.peerId, maxMid);
+                                strongSelf->_loadingHistoryAbove = false;
+                                strongSelf->_historyAbove = true;
                             }
+                            if (messages.count != 0) {
+                                [strongSelf _addMessages:messages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
+                            }
+                            [strongSelf _updateControllerHistoryRequestsFlags];
                         }
                     }];
                 }];
             }
-        } else {
-            IOS6Trace(@"FULL channel.loadMoreAbove.skip peer=%lld loading=%d historyAbove=%d", _conversationId, _loadingHistoryAbove ? 1 : 0, _historyAbove ? 1 : 0);
-            [self _updateControllerHistoryRequestsFlags];
+        } else if (_migrationData != nil && _migrationHistoryAbove) {
+            TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
+            _loadingHistoryAbove = true;
+            
+            int32_t maxTimestamp = INT32_MAX;
+            int32_t maxMid = _migrationData.maxMessageId;
+            
+            for (TGMessageModernConversationItem *item in _items) {
+                maxTimestamp = MIN(maxTimestamp, (int32_t)item->_message.date);
+                if (!(item->_message.cid == _conversationId || item->_message.cid == 0)) {
+                    maxMid = MIN(maxMid, item->_message.mid - migratedMessageIdOffset);
+                }
+            }
+            
+            [TGDatabaseInstance() loadMessagesFromConversation:_migrationData.peerId maxMid:maxMid maxDate:maxTimestamp maxLocalMid:0 atMessageId:0 limit:count extraUnread:false completion:^(NSArray *messages, __unused bool historyExistsBelow) {
+                int peerMinMid = [TGDatabaseInstance() loadPeerMinMid:_migrationData.peerId];
+                
+                [TGModernConversationCompanion dispatchOnMessageQueue:^{
+                    TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
+                    if (strongSelf != nil) {
+                        bool cachedMessagesAbove = false;
+                        if (messages.count != 0) {
+                            cachedMessagesAbove = true;
+                        }
+                        
+                        NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
+                        
+                        for (TGMessage *message in messages) {
+                            if (message.mid < TGMessageLocalMidBaseline) {
+                                message.mid += migratedMessageIdOffset;
+                                [updatedMessages addObject:message];
+                            }
+                        }
+                        
+                        if (messages.count != 0) {
+                            [strongSelf _addMessages:updatedMessages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
+                        }
+                        
+                        if (cachedMessagesAbove || peerMinMid != 0) {
+                            strongSelf->_loadingHistoryAbove = false;
+                            strongSelf->_migrationHistoryAbove = cachedMessagesAbove;
+                            
+                            [strongSelf _updateControllerHistoryRequestsFlags];
+                        } else {
+                            NSMutableDictionary *options = [[NSMutableDictionary alloc] initWithDictionary:@{@"maxMid": @(maxMid), @"offset": @(0)}];
+                            
+                            options[@"conversationId"] = @(_migrationData.peerId);
+                            
+                            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/conversations/(%lld)/asyncHistory/(%d)", _migrationData.peerId, maxMid] options:options watcher:strongSelf];
+                        }
+                    }
+                }];
+            }];
         }
-    }];
+    } else {
+        [self _updateControllerHistoryRequestsFlags];
+    }
 }
 
 - (void)loadMoreMessagesBelow {
@@ -2001,7 +2098,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 #ifdef DEBUG
     count = 10;
 #endif
-    IOS6Trace(@"FULL channel.loadMoreBelow.call peer=%lld access=%lld historyBelow=%d loading=%d items=%d display=%d", _conversationId, _accessHash, _historyBelow ? 1 : 0, _loadingHistoryBelow ? 1 : 0, (int)_items.count, (int)_displayVariant);
     
     TGModernConversationController *controller = self.controller;
     [controller setEnableBelowHistoryRequests:false];
@@ -2020,7 +2116,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                 TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
                 _loadingHistoryBelow = true;
                 [TGDatabaseInstance() channelMessages:_conversationId maxTransparentSortKey:minKey count:count important:_displayVariant == TGChannelDisplayVariantImportant mode:TGChannelHistoryRequestLater completion:^(NSArray *messages, __unused bool hasLater) {
-                    IOS6Trace(@"FULL channel.loadMoreBelow.cacheResult peer=%lld count=%d", _conversationId, (int)messages.count);
                     [TGModernConversationCompanion dispatchOnMessageQueue:^{
                         TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
                         if (strongSelf != nil) {
@@ -2039,7 +2134,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                 }];
             }
         } else {
-            IOS6Trace(@"FULL channel.loadMoreBelow.skip peer=%lld loading=%d historyBelow=%d", _conversationId, _loadingHistoryBelow ? 1 : 0, _historyBelow ? 1 : 0);
             [self _updateControllerHistoryRequestsFlags];
         }
     }];
@@ -2054,12 +2148,9 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     int64_t conversationId = _conversationId;
     int32_t displayVariant = _displayVariant;
     
-    TGLog(@"request hole %d ... %d, %s", hole.hole.minId, hole.hole.maxId, hole.direction == TGVisibleMessageHoleDirectionEarlier ? "earlier" : "later");
-    IOS6Trace(@"FULL channel.hole.request peer=%lld access=%lld min=%d max=%d dir=%@ important=%d", _conversationId, _accessHash, hole.hole.minId, hole.hole.maxId, hole.direction == TGVisibleMessageHoleDirectionEarlier ? @"earlier" : @"later", _displayVariant == TGChannelDisplayVariantImportant ? 1 : 0);
     
     TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
     [_requestingHoleDisposable setDisposable:[[TGChannelManagementSignals channelMessageHoleForPeerId:_conversationId accessHash:_accessHash hole:hole.hole direction:hole.direction == TGVisibleMessageHoleDirectionEarlier ? TGChannelHistoryHoleDirectionEarlier : TGChannelHistoryHoleDirectionLater important:_displayVariant == TGChannelDisplayVariantImportant] startWithNext:^(NSDictionary *dict) {
-        IOS6Trace(@"FULL channel.hole.result peer=%lld messages=%d unimportantGroups=%d hole=%@", conversationId, (int)((NSArray *)dict[@"messages"]).count, (int)((NSArray *)dict[@"unimportantGroups"]).count, dict[@"hole"]);
         
         NSArray *removedImportantHoles = nil;
         NSArray *removedUnimportantHoles = nil;
@@ -2210,13 +2301,12 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     else
         _isMuted = true;
     
-    [_mutePanel setActionWithTitle:!_isMuted ? TGLocalized(@"Conversation.Mute") : TGLocalized(@"Conversation.Unmute") action:@"toggleMute" color:self.controller.presentation.pallete.accentColor icon:TGModernConversationActionInputPanelIconNone];
+    [self _updateMutePanel];
     
     [self _updateChannelMute];
 }
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result {
-    IOS6Trace(@"FULL channel.actorCompleted peer=%lld status=%d path=%@ result=%@", _conversationId, status, path, NSStringFromClass([result class]));
     if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 2]])
     {
         TGDispatchOnMainThread(^
@@ -2239,7 +2329,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     } else if ([path rangeOfString:@"/asyncHistory/"].location != NSNotFound) {
         [TGModernConversationCompanion dispatchOnMessageQueue:^{
             NSArray *messages = result;
-            IOS6Trace(@"FULL channel.actorCompleted.asyncHistory peer=%lld path=%@ messages=%d", _conversationId, path, (int)messages.count);
             
             NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
             
@@ -2275,8 +2364,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         });
     }
 
-    if ([path rangeOfString:[[NSString alloc] initWithFormat:@"%lld", _conversationId]].location != NSNotFound || [path hasPrefix:@"/tg/peerSettings/"])
-        IOS6Trace(@"FULL channel.resource peer=%lld path=%@ resource=%@ args=%@", _conversationId, path, NSStringFromClass([resource class]), arguments);
     if ([path isEqualToString:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/typing", _conversationId]])
     {
         NSDictionary *userActivities = ((SGraphObjectNode *)resource).object;
@@ -2291,9 +2378,10 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         _signaturesEnabled = conversation.signaturesEnabled;
         
         TGDispatchOnMainThread(^{
-            bool importantFlagsUpdated = !TGObjectCompare(_adminRights, conversation.channelAdminRights) || !TGObjectCompare(_bannedRights, conversation.channelBannedRights) || _kind != conversation.kind || _isForbidden != conversation.kickedFromChat;
+            bool importantFlagsUpdated = _isCreator != (conversation.channelRole == TGChannelRoleCreator) || !TGObjectCompare(_adminRights, conversation.channelAdminRights) || !TGObjectCompare(_bannedRights, conversation.channelBannedRights) || _kind != conversation.kind || _isForbidden != conversation.kickedFromChat;
             
             _kind = conversation.kind;
+            _isCreator = conversation.channelRole == TGChannelRoleCreator;
             _adminRights = conversation.channelAdminRights;
             _bannedRights = conversation.channelBannedRights;
             
@@ -2315,6 +2403,8 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                     [controller setIsAlwaysBroadcasting:true];
                 }
             }
+            
+            [self _updateMutePanel];
             
             if (importantFlagsUpdated) {
                 [self _updateJoinPanel];
@@ -2712,8 +2802,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                         TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
                         if (strongSelf != nil) {
                             if (TGMessageTransparentSortKeySpace(sortKey) == TGMessageSpaceUnimportant && strongSelf->_displayVariant != TGChannelDisplayVariantAll) {
-                                /*strongSelf->_displayVariant = TGChannelDisplayVariantAll;
-                                [TGDatabaseInstance() updateChannelDisplayExpanded:strongSelf->_conversationId displayExpanded:true];*/
                             }
                             [strongSelf reloadVariantAtSortKey:sortKey group:nil jump:true top:false messageIdForVisibleHoleDirection:TGMessageTransparentSortKeyMid(sortKey) scrollBackMessageId:scrollBackMessageId animated:true];
                         }
@@ -2743,130 +2831,68 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 
 - (UIView *)_conversationHeader
 {
-    /*if (_isGroup)
-    {
-        if (_migratedChannelHeaderView == nil)
-        {
-            _migratedChannelHeaderView = [[TGMigratedChannelConversationHeaderView alloc] initWithContext:self.viewContext title:_conversation.chatTitle];
-            [_migratedChannelHeaderView sizeToFit];
-        }
-        return _migratedChannelHeaderView;
-    }*/
     return nil;
 }
 
 - (SSignal *)userListForMention:(NSString *)mention canBeContextBot:(bool)canBeContextBot includeSelf:(bool)includeSelf
-{   
-    NSMutableArray *visibleUserIds = [[NSMutableArray alloc] init];
-    
-    TGModernConversationController *controller = self.controller;
-    for (TGMessageModernConversationItem *item in [controller _items])
-    {
-        int32_t uid = (int32_t)(item->_message.fromUid);
-        if (![visibleUserIds containsObject:@(uid)]) {
-            [visibleUserIds addObject:@(uid)];
+{
+    bool isGroup = _isGroup;
+    int64_t conversationId = _conversationId;
+    NSArray *recentUserIds = isGroup ? [self recentMentionUserIds] : @[];
+    SSignal *remoteMemberIds = [SSignal single:@[]];
+    if (isGroup) {
+        TLChannelParticipantsFilter *filter = nil;
+        if (mention.length == 0) {
+            filter = [[TLChannelParticipantsFilter$channelParticipantsRecent alloc] init];
+        } else {
+            TLChannelParticipantsFilter$channelParticipantsSearch *searchFilter = [[TLChannelParticipantsFilter$channelParticipantsSearch alloc] init];
+            searchFilter.q = mention;
+            filter = searchFilter;
         }
-    }
-    
-    SSignal *remoteMembersSignal = [[TGChannelManagementSignals channelMembers:_conversationId accessHash:_accessHash offset:0 count:32] mapToSignal:^SSignal *(NSDictionary *dict) {
-        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
-            [TGDatabaseInstance() updateChannelCachedData:_conversationId block:^TGCachedConversationData *(TGCachedConversationData *data) {
-                if (data == nil) {
-                    data = [[TGCachedConversationData alloc] init];
-                }
-                
-                NSMutableArray *sortedMemberDatas = [[NSMutableArray alloc] init];
+        SSignal *request = [[TGChannelManagementSignals channelMembers:conversationId accessHash:_accessHash filter:filter offset:0 count:200] mapToSignal:^SSignal *(NSDictionary *dict) {
+            return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
+                NSMutableArray *userIds = [[NSMutableArray alloc] init];
+                NSMutableArray *members = [[NSMutableArray alloc] init];
                 NSDictionary *memberDatas = dict[@"memberDatas"];
                 for (TGUser *user in dict[@"users"]) {
+                    [userIds addObject:@(user.uid)];
                     TGCachedConversationMember *member = memberDatas[@(user.uid)];
                     if (member != nil) {
-                        [sortedMemberDatas addObject:member];
+                        [members addObject:member];
                     }
                 }
-                
-                return [data updateGeneralMembers:sortedMemberDatas];
+                if (mention.length == 0 && dict[@"users"] != nil) {
+                    [TGDatabaseInstance() updateChannelCachedData:conversationId block:^TGCachedConversationData *(TGCachedConversationData *data) {
+                        if (data == nil) {
+                            data = [[TGCachedConversationData alloc] init];
+                        }
+                        return [data updateGeneralMembers:members];
+                    }];
+                }
+                return userIds;
             }];
-            
+        }];
+        if (mention.length != 0) {
+            request = [[[SSignal complete] delay:0.2 onQueue:[SQueue mainQueue]] then:request];
+        }
+        remoteMemberIds = [remoteMemberIds then:[request catch:^SSignal *(__unused id error) {
             return [SSignal complete];
-        }] switchToLatest];
-    }];
-    
-    bool isGroup = _isGroup;
-    
-    SSignal *recentBotUids = canBeContextBot ? [TGRecentContextBotsSignal recentBots] : [SSignal single:@[]];
-    
-    return [[[SSignal mergeSignals:@[[SSignal combineSignals:@[[TGDatabaseInstance() channelCachedData:_conversationId], recentBotUids]], remoteMembersSignal]] mapToSignal:^SSignal *(NSArray *combinedResult) {
-        
-        TGCachedConversationData *cachedData = combinedResult[0];
-        
-        NSMutableSet *existingUsers = [[NSMutableSet alloc] init];
-        if (!includeSelf) {
-            [existingUsers addObject:@(TGTelegraphInstance.clientUserId)];
+        }]];
+    }
+    SSignal *contextBots = canBeContextBot ? [TGRecentContextBotsSignal recentBots] : [SSignal single:@[]];
+    SSignal *cachedMembers = isGroup ? [[TGDatabaseInstance() channelCachedData:conversationId] map:^id(TGCachedConversationData *data) {
+        return data == nil ? [[TGCachedConversationData alloc] init] : data;
+    }] : [SSignal single:[[TGCachedConversationData alloc] init]];
+    return [[[SSignal combineSignals:@[cachedMembers, contextBots, remoteMemberIds]] mapToSignal:^SSignal *(NSArray *result) {
+        TGCachedConversationData *cachedData = result[0];
+        NSMutableArray *memberUserIds = [[NSMutableArray alloc] init];
+        for (TGCachedConversationMember *member in cachedData.generalMembers) {
+            [memberUserIds addObject:@(member.uid)];
         }
-        
-        NSMutableArray *contextBots = [[NSMutableArray alloc] init];
-        NSString *normalizedMention = [mention lowercaseString];
-        for (NSNumber *nUserId in combinedResult[1]) {
-            if (![existingUsers containsObject:nUserId]) {
-                [existingUsers addObject:nUserId];
-                
-                TGUser *user = [TGDatabaseInstance() loadUser:[nUserId intValue]];
-                if (user != nil && (normalizedMention.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedMention] || [[user.firstName lowercaseString] hasPrefix:normalizedMention] || [[user.lastName lowercaseString] hasPrefix:normalizedMention])) {
-                    if (user.isContextBot) {
-                        [contextBots addObject:user];
-                    }
-                }
-            }
-        }
-        
-        NSMutableDictionary *userDict = [[NSMutableDictionary alloc] init];
-        for (TGCachedConversationMember *member in cachedData.generalMembers)
-        {
-            TGUser *user = [TGDatabaseInstance() loadUser:member.uid];
-            if (user != nil && (includeSelf || user.uid != TGTelegraphInstance.clientUserId) && (normalizedMention.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedMention] || [[user.firstName lowercaseString] hasPrefix:normalizedMention] || [[user.lastName lowercaseString] hasPrefix:normalizedMention]))
-            {
-                if (![existingUsers containsObject:@(user.uid)]) {
-                    [existingUsers addObject:@(user.uid)];
-                    userDict[@(user.uid)] = user;
-                }
-            }
-        }
-        
-        NSArray *sortedContextBots = contextBots;
-        
-        NSMutableArray *sortedUserList = [[NSMutableArray alloc] init];
-        
-        [sortedUserList addObjectsFromArray:sortedContextBots];
-        
-        if (isGroup) {
-            for (NSNumber *nUid in visibleUserIds)
-            {
-                int32_t uid = [nUid intValue];
-                TGUser *user = userDict[@(uid)];
-                if (user == nil) {
-                    TGUser *candidateUser = [TGDatabaseInstance() loadUser:uid];
-                    if (candidateUser != nil && (includeSelf || candidateUser.uid != TGTelegraphInstance.clientUserId) && (normalizedMention.length == 0 || [[candidateUser.userName lowercaseString] hasPrefix:normalizedMention] || [[candidateUser.firstName lowercaseString] hasPrefix:normalizedMention] || [[candidateUser.lastName lowercaseString] hasPrefix:normalizedMention])) {
-                        user = candidateUser;
-                    }
-                }
-                
-                if (user != nil && ![existingUsers containsObject:@(user.uid)]) {
-                    [existingUsers addObject:@(user.uid)];
-                    [sortedUserList addObject:user];
-                    [userDict removeObjectForKey:@(uid)];
-                    if (userDict.count == 0)
-                        break;
-                }
-            }
-            
-            NSArray *sortedRemainingUsers = [[userDict allValues] sortedArrayUsingComparator:^NSComparisonResult(TGUser *user1, TGUser *user2) {
-                return [user1.displayName compare:user2.displayName];
-            }];
-            
-            [sortedUserList addObjectsFromArray:sortedRemainingUsers];
-        }
-        
-        return [SSignal single:sortedUserList];
+        [memberUserIds addObjectsFromArray:result[2]];
+        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
+            return [TGModernConversationCompanion mentionUsersForQuery:mention memberUserIds:memberUserIds recentUserIds:recentUserIds contextBotIds:result[1] includeSelf:includeSelf];
+        }];
     }] deliverOn:[SQueue mainQueue]];
 }
 
@@ -2922,7 +2948,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
 
 - (void)setInvalidatedPts:(int32_t)invalidatedPts {
 #ifdef DEBUG
-    //invalidatedPts = 102;
 #endif
     
     [TGModernConversationCompanion dispatchOnMessageQueue:^{
@@ -2961,7 +2986,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                     if (item->_message.pts < _invalidatedPts) {
                         int32_t messagePts = MAX(1, item->_message.pts);
                         minPts = minPts == 1 ? messagePts : MIN(messagePts, minPts);
-                        //TGLog(@"enqueue item %p (mid %d) to pts %d", item, item->_message.mid, item->_message.pts);
                         
                         TLMessageRange$messageRange *lastRange = invalidatedMessageRanges.lastObject;
                         if (lastRange == nil) {
@@ -2991,9 +3015,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
         
         if (invalidatedMessageRanges.count != 0) {
             TGLog(@"Will invalidate message ranges to pts %d:", _invalidatedPts);
-            for (TLMessageRange *range in invalidatedMessageRanges) {
-                TGLog(@"    %d ... %d (pts %d)", range.min_id, range.max_id, minPts);
-            }
             
             _updatingInvalidatedMessages = true;
             
@@ -3003,7 +3024,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
             
             TGChannelConversationCompanionReference *ios4Reference = _ios4LifetimeReference;
             int32_t validPts = _invalidatedPts;
-            int64_t validationPeerId = _conversationId;
             [_updatingInvalidatedMessagesDisposable setDisposable:[[TGChannelStateSignals validateMessageRanges:_conversationId pts:minPts validPts:validPts messageRanges:invalidatedMessageRanges] startWithNext:nil completed:^{
                 [TGModernConversationCompanion dispatchOnMessageQueue:^{
                     TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
@@ -3034,7 +3054,6 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
             item = [item deepCopy];
             item->_message.pts = pts;
             [((NSMutableArray *)_items) replaceObjectAtIndex:i withObject:item];
-            //TGLog(@"update %p (mid %d) to pts %d", item, item->_message.mid, pts);
         }
     }
 }

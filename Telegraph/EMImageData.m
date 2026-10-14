@@ -6,11 +6,15 @@ static void EMImageDataRelease(void *info, const void *data, size_t size)
 {
     if (info != NULL)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        __unused NSMutableData *data = (__bridge_transfer NSMutableData *)info;
+#else
         NSPurgeableData *data = (__bridge_transfer NSPurgeableData *)info;
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^
         {
             [data endContentAccess];
         });
+#endif
     }
 }
 
@@ -20,7 +24,11 @@ typedef struct {
 
 @interface EMImageData ()
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSMutableData *_data;
+#else
     NSPurgeableData *_data;
+#endif
     NSUInteger _bytesPerRow;
     EMImagePixelSize _pixelSize;
     
@@ -41,13 +49,19 @@ typedef struct {
         
         _pixelSize = (EMImagePixelSize){.width = (NSUInteger)size.width, .height = (NSUInteger)size.height};
         _bytesPerRow = ((4 * (int)_pixelSize.width) + 15) & (~15);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        _data = [[NSMutableData alloc] initWithLength:_bytesPerRow * _pixelSize.height];
+#else
         _data = [[NSPurgeableData alloc] initWithLength:_bytesPerRow * _pixelSize.height];
+#endif
         generator([_data mutableBytes], _bytesPerRow);
         
         if (image)
            *image = [self _createImage];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         else
             [_data endContentAccess];
+#endif
     }
     return self;
 }
@@ -58,15 +72,23 @@ typedef struct {
 
 - (bool)isDiscarded
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    return false;
+#else
     return [_data isContentDiscarded];
+#endif
 }
 
 - (UIImage *)image
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    return [self _createImage];
+#else
     if ([_data beginContentAccess])
         return [self _createImage];
     
     return nil;
+#endif
 }
 
 - (UIImage *)_createImage

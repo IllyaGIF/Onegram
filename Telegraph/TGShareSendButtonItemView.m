@@ -275,7 +275,6 @@
     _commentView.frame = CGRectMake(16.0f, 16.0f, self.frame.size.width - 16.0f * 2, _commentView.frame.size.height);
     _sendButton.frame = CGRectMake(0.0f, self.frame.size.height - TGMenuSheetButtonItemViewHeight, self.frame.size.width, TGMenuSheetButtonItemViewHeight);
     _actionButton.frame = _sendButton.frame;
-    //_topActionButton.frame = CGRectMake(0.0f, self.frame.size.height - 2.0f * TGMenuSheetButtonItemViewHeight, self.frame.size.width, TGMenuSheetButtonItemViewHeight);
     _separator.frame = CGRectMake(0.0f, TGMenuSheetButtonItemViewHeight, self.frame.size.width, _separator.frame.size.height);
 }
 

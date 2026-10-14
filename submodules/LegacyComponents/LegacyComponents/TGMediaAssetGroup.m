@@ -38,8 +38,6 @@
         if (_backingFetchResult == nil)
         {
             PHFetchOptions *options = [[PHFetchOptions alloc] init];
-            //if (_assetType != TGMediaPickerAssetAnyType)
-            //    options.predicate = [NSPredicate predicateWithFormat:@"mediaType = %i", [TGMediaAssetsLibrary _assetMediaTypeForAssetType:_assetType]];
             
             _backingFetchResult = [PHAsset fetchAssetsInAssetCollection:_backingAssetCollection options:options];
         }
@@ -49,9 +47,13 @@
 
 - (instancetype)initWithALAssetsGroup:(ALAssetsGroup *)assetsGroup
 {
+#if defined(ONEGRAM_ARMV6)
+    return [self initWithALAssetsGroup:assetsGroup subtype:TGMediaAssetGroupSubtypeRegular];
+#else
     bool isCameraRoll = ([[assetsGroup valueForProperty:ALAssetsGroupPropertyType] integerValue] == ALAssetsGroupSavedPhotos);
     TGMediaAssetGroupSubtype subtype = isCameraRoll ? TGMediaAssetGroupSubtypeCameraRoll : TGMediaAssetGroupSubtypeNone;
     return [self initWithALAssetsGroup:assetsGroup subtype:subtype];
+#endif
 }
 
 - (instancetype)initWithALAssetsGroup:(ALAssetsGroup *)assetsGroup subtype:(TGMediaAssetGroupSubtype)subtype
@@ -61,7 +63,8 @@
     {
         _backingAssetsGroup = assetsGroup;
         _subtype = subtype;
-        
+
+#if !defined(ONEGRAM_ARMV6)
         if (subtype == TGMediaAssetGroupSubtypeVideos)
         {
             _title = TGLocalized(@"MediaPicker.Videos");
@@ -96,6 +99,7 @@
         }];
         
         _latestAssets = latestAssets;
+#endif
     }
     return self;
 }
@@ -104,8 +108,10 @@
 {
     if (self.backingAssetCollection != nil)
         return self.backingAssetCollection.localIdentifier;
+#if !defined(ONEGRAM_ARMV6)
     else if (_backingAssetsGroup != nil)
         return [self.backingAssetsGroup valueForProperty:ALAssetsGroupPropertyPersistentID];
+#endif
     
     return _identifier;
 }
@@ -116,8 +122,10 @@
         return _title;
     if (_backingAssetCollection != nil)
         return _backingAssetCollection.localizedTitle;
+#if !defined(ONEGRAM_ARMV6)
     if (_backingAssetsGroup != nil)
         return [_backingAssetsGroup valueForProperty:ALAssetsGroupPropertyName];
+#endif
     
     return nil;
 }

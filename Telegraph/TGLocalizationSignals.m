@@ -236,8 +236,10 @@
                 dict[string.key] = ((TLLangPackString$langPackString *)string).value;
             }
         }
+        if (dict.count == 0 && next.version == current.version)
+            return;
+        TGLocalization *currentLocalization = [current mergedWith:dict version:next.version];
         TGDispatchOnMainThread(^{
-            TGLocalization *currentLocalization = [current mergedWith:dict version:next.version];
             setCurrentNativeLocalization(currentLocalization, false);
             [TGAppDelegateInstance resetLocalization];
         });
@@ -272,13 +274,9 @@
             dict[string.key] = ((TLLangPackString$langPackString *)string).value;
         }
     }
-    TGLocalization *localization = [[TGLocalization alloc] initWithVersion:next.version code:next.lang_code dict:dict isActive:true];
+    TGLocalization *localization = replace ? [[TGLocalization alloc] initWithVersion:next.version code:next.lang_code dict:dict isActive:true] : [currentNativeLocalization() mergedWith:dict version:next.version];
     TGDispatchOnMainThread(^{
-        if (replace) {
-            setCurrentNativeLocalization(localization, false);
-        } else {
-            setCurrentNativeLocalization([currentNativeLocalization() mergedWith:dict version:localization.version], false);
-        }
+        setCurrentNativeLocalization(localization, false);
         [TGAppDelegateInstance resetLocalization];
     });
 }

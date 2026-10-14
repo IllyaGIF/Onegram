@@ -20,7 +20,6 @@
     
     TGModernGalleryController *galleryController = [[TGModernGalleryController alloc] initWithContext:windowContext];
     galleryController.adjustsStatusBarVisibility = true;
-    //galleryController.hasFadeOutTransition = true;
     
     id<TGModernGalleryEditableItem> galleryItem = nil;
     if (item.isVideo)
@@ -31,7 +30,6 @@
     
     TGMediaPickerGalleryModel *model = [[TGMediaPickerGalleryModel alloc] initWithContext:windowContext items:@[galleryItem] focusItem:galleryItem selectionContext:nil editingContext:editingContext hasCaptions:true allowCaptionEntities:true hasTimer:false onlyCrop:false inhibitDocumentCaptions:false hasSelectionPanel:false hasCamera:false recipientName:recipientName];
     model.controller = galleryController;
-    //model.suggestionContext = self.suggestionContext;
     
     model.willFinishEditingItem = ^(id<TGMediaEditableItem> editableItem, id<TGMediaEditAdjustments> adjustments, id representation, bool hasChanges)
     {

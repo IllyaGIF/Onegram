@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messages.botCallbackAnswerMeta flags:# alert:flags.1?true message:flags.0?string url:flags.2?string has_url:flags.3?true cache_time:int = messages.BotCallbackAnswer;
 
 @implementation TLmessages_BotCallbackAnswer$botCallbackAnswer
 

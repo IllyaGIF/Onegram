@@ -746,7 +746,11 @@ static UIView *TGCameraFlashSnapshotView(UIView *view)
 
 + (CGSize)_sizeForModeButtonWithTitle:(NSAttributedString *)title
 {
+#if defined(ONEGRAM_ARMV6)
+    CGSize size = [[title string] sizeWithFont:[TGCameraInterfaceAssets normalFontOfSize:13]];
+#else
     CGSize size = title.size;
+#endif
     CGFloat width = CGCeil(size.width);
     
     if (iosMajorVersion() < 7)

@@ -12,7 +12,10 @@
 
 typedef enum {
     TGModernConversationActionInputPanelIconNone,
-    TGModernConversationActionInputPanelIconJoin
+    TGModernConversationActionInputPanelIconJoin,
+    TGModernConversationActionInputPanelIconMute,
+    TGModernConversationActionInputPanelIconUnmute,
+    TGModernConversationActionInputPanelIconShare
 } TGModernConversationActionInputPanelIcon;
 
 @interface TGModernConversationActionInputPanel : TGModernConversationInputPanel
@@ -22,6 +25,7 @@ typedef enum {
 - (void)setActionWithTitle:(NSString *)title action:(NSString *)action;
 - (void)setActionWithTitle:(NSString *)title action:(NSString *)action color:(UIColor *)color;
 - (void)setActionWithTitle:(NSString *)title action:(NSString *)action color:(UIColor *)color icon:(TGModernConversationActionInputPanelIcon)icon;
+- (void)setSecondaryAction:(NSString *)action icon:(TGModernConversationActionInputPanelIcon)icon;
 - (void)setActivity:(bool)activity;
 
 @end

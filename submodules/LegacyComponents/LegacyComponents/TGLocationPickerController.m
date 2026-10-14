@@ -8,6 +8,7 @@
 #import <MapKit/MapKit.h>
 
 #import "TGLocationUtils.h"
+#import "OGPlatformLocation.h"
 
 #import "TGLocationSignals.h"
 
@@ -221,7 +222,12 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
     if (![self _updateControllerInset:false])
         [self controllerInsetUpdated:UIEdgeInsetsZero];
     
-    TGLocationPickerAnnotation *annotation = [[TGLocationPickerAnnotation alloc] initWithCoordinate:kCLLocationCoordinate2DInvalid];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    CLLocationCoordinate2D initialCoordinate = kCLLocationCoordinate2DInvalid;
+#else
+    CLLocationCoordinate2D initialCoordinate = {DBL_MAX, DBL_MAX};
+#endif
+    TGLocationPickerAnnotation *annotation = [[TGLocationPickerAnnotation alloc] initWithCoordinate:initialCoordinate];
     annotation.peer = self.peer;
     
     _ownLocationView = [[TGLocationPinAnnotationView alloc] initWithAnnotation:annotation];
@@ -318,7 +324,7 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
     {
         [[[LegacyComponentsGlobals provider] accessChecker] checkLocationAuthorizationStatusForIntent:TGLocationAccessIntentSend alertDismissComlpetion:^
         {
-            if ([CLLocationManager authorizationStatus] != kCLAuthorizationStatusAuthorizedWhenInUse)
+            if (!OGPlatformLocationAuthorizationAllowsWhenInUse())
                 [self switchToFullscreen];
         }];
     }
@@ -379,6 +385,7 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
     
     if (_fullScreenMapSpan != nil)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
         if (iosMajorVersion() >= 6)
         {
             span = _fullScreenMapSpan.MKCoordinateSpanValue;
@@ -387,6 +394,9 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
         {
             [_fullScreenMapSpan getValue:&span];
         }
+#else
+        [_fullScreenMapSpan getValue:&span];
+#endif
     }
     [self setMapCenterCoordinate:_mapView.userLocation.location.coordinate span:span offset:TGLocationPickerPinOffset animated:true];
 }
@@ -712,6 +722,7 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
             _mapView.manipulationEnabled = true;
             
             _mapViewWrapper.clipsToBounds = true;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
             if (iosMajorVersion() >= 6)
             {
                 _fullScreenMapSpan = [NSValue valueWithMKCoordinateSpan:_mapView.region.span];
@@ -721,6 +732,10 @@ const CGPoint TGLocationPickerPinOffset = { 0.0f, 33.0f };
                 MKCoordinateSpan span = _mapView.region.span;
                 _fullScreenMapSpan = [NSValue value:&span withObjCType:@encode(MKCoordinateSpan)];
             }
+#else
+            MKCoordinateSpan span = _mapView.region.span;
+            _fullScreenMapSpan = [NSValue value:&span withObjCType:@encode(MKCoordinateSpan)];
+#endif
         }
     };
     

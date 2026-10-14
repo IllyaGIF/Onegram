@@ -29,6 +29,7 @@
     TGDocumentMediaAttachment *_document;
     
     bool _activatedMedia;
+    bool _mediaActivationDeferred;
     
     bool _boundToContainer;
 }
@@ -213,6 +214,7 @@
 
 - (void)stopInlineMedia:(int32_t)__unused excludeMid
 {
+    _mediaActivationDeferred = false;
     bool wasActivated = _activatedMedia;
     _activatedMedia = false;
     
@@ -231,6 +233,15 @@
     }
 }
 
+- (void)activateDeferredInlineMedia
+{
+    if (!_mediaActivationDeferred)
+        return;
+    _mediaActivationDeferred = false;
+    if (_boundToContainer && _context.autoplayAnimations && _mediaIsAvailable && !_activatedMedia)
+        [self activateMediaPlayback];
+}
+
 - (CGSize)minimumImageSizeForMessage:(TGMessage *)__unused message
 {
     return CGSizeMake(130, 130);
@@ -242,7 +253,10 @@
     _boundToContainer = true;
     
     if (_context.autoplayAnimations && _mediaIsAvailable) {
-        [self activateMediaPlayback];
+        if (_context.inlineMediaActivationDeferred)
+            _mediaActivationDeferred = true;
+        else
+            [self activateMediaPlayback];
     }
 }
 
@@ -255,6 +269,7 @@
 - (void)unbindView:(TGModernViewStorage *)viewStorage
 {
     _boundToContainer = false;
+    _mediaActivationDeferred = false;
     
     [((TGMessageImageViewContainer *)self.imageModel.boundView).imageView setVideoPathSignal:nil];
     _activatedMedia = false;

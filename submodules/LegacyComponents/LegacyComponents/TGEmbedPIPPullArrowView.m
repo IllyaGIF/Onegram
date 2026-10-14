@@ -17,8 +17,8 @@
     self = [super initWithFrame:frame];
     if (self != nil)
     {
-        self.layer.rasterizationScale = TGScreenScaling();
-        self.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(self.layer, true);
         if ([self.layer respondsToSelector:NSSelectorFromString(@"setAllowsEdgeAntialiasing:")])
             if ([self.layer respondsToSelector:NSSelectorFromString(@"setAllowsEdgeAntialiasing:")])
                 [self.layer setValue:@true forKey:@"allowsEdgeAntialiasing"];

@@ -82,9 +82,6 @@
             break;
             
         case TGMediaOriginTypeMessage:
-            // This string is passed through thumbnail URIs. On 32-bit iOS,
-            // integerValue truncates modern channel peer ids, which prevents a
-            // FILE_REFERENCE refresh for media received from other clients.
             info->_cid = @([keyComponents[1] longLongValue]);
             info->_mid = @([keyComponents[2] intValue]);
             break;
@@ -105,7 +102,7 @@
             
         case TGMediaOriginTypeWebpage:
         {
-            NSString *url = (__bridge_transfer NSString *)CFURLCreateStringByReplacingPercentEscapesUsingEncoding(NULL, (CFStringRef)keyComponents[1], CFSTR(""), kCFStringEncodingUTF8);
+            NSString *url = (__bridge_transfer NSString *)CFURLCreateStringByReplacingPercentEscapesUsingEncoding(NULL, (__bridge CFStringRef)keyComponents[1], CFSTR(""), kCFStringEncodingUTF8);
             info->_webpageUrl = url;
         }
             break;

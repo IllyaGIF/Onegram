@@ -186,7 +186,7 @@
         for (UIView *view in self.superview.subviews)
         {
             index++;
-            if ([view isKindOfClass:UITableViewCellClass] || [view isKindOfClass:UISearchBarClass])// || ((int)view.frame.size.height) == 25)
+            if ([view isKindOfClass:UITableViewCellClass] || [view isKindOfClass:UISearchBarClass])
             {
                 maxCellIndex = index;
                 

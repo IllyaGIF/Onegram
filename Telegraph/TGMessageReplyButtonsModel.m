@@ -95,7 +95,6 @@
     button.presentation = _context.presentation;
     button.backgroundImage = _context.presentation.images.chatReplyButtonBackgroundImage;
     button.highlightedBackgroundImage = _context.presentation.images.chatReplyButtonHighlightedBackgroundImage;
-    //button.modernHighlight = true;
     button.title = title;
     button.titleColor = _context.presentation.pallete.chatReplyButtonIconColor;
     button.font = TGMediumSystemFontOfSize(16.0f);
@@ -175,14 +174,6 @@
     
     contentSize.height = insets.top + insets.bottom + _replyMarkup.rows.count * buttonSize.height + MAX((int)_replyMarkup.rows.count - 1, 0) * rowSpacing;
     
-    /*if (contentSize.height < self.frame.size.height)
-    {
-        CGFloat spacingHeight = 0.0f;
-        CGFloat availableHeight = self.frame.size.height - contentSize.height - spacingHeight;
-        buttonSize.height += CGFloor(availableHeight / _replyMarkup.rows.count);
-        
-        contentSize.height = insets.top + insets.bottom + _replyMarkup.rows.count * buttonSize.height + MAX((int)_replyMarkup.rows.count - 1, 0) * rowSpacing;
-    }*/
     
     NSInteger buttonIndex = 0;
     NSInteger rowIndex = 0;

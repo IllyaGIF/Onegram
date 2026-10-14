@@ -18,6 +18,7 @@ typedef UIImage *(^TGCacheJpegDecodingBlock)(NSData *data);
 @property (nonatomic) int thumbnailBackgroundBaseline;
 
 @property (nonatomic) int dataMemoryLimit;
+@property (nonatomic) int avatarMemoryLimit;
 @property (nonatomic) int dataMemoryEvictionInterval;
 
 @property (nonatomic) int memoryWarningBaseline;
@@ -37,6 +38,7 @@ typedef UIImage *(^TGCacheJpegDecodingBlock)(NSData *data);
 - (void)cacheImage:(UIImage *)image withData:(NSData *)data url:(NSString *)url availability:(int)availability;
 - (void)cacheImage:(UIImage *)image withData:(NSData *)data url:(NSString *)url availability:(int)availability completion:(void (^)(void))completion;
 - (UIImage *)cachedImage:(NSString *)url availability:(int)availability;
+- (NSData *)cachedDataForUrl:(NSString *)url;
 - (void)removeFromMemoryCache:(NSString *)url matchEnd:(bool)matchEnd;
 - (NSString *)pathForCachedData:(NSString *)url;
 
@@ -51,5 +53,9 @@ typedef UIImage *(^TGCacheJpegDecodingBlock)(NSData *data);
 - (void)clearCache:(int)availability;
 - (NSArray *)storeMemoryCache;
 - (void)restoreMemoryCache:(NSArray *)urlArray;
+
+- (bool)isRenderedAvatarKey:(NSString *)url;
+- (void)loadRenderedAvatar:(NSString *)url completion:(void (^)(UIImage *image))completion;
+- (void)prefetchRenderedAvatar:(NSString *)url completion:(void (^)(UIImage *image))completion;
 
 @end

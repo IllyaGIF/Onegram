@@ -16,7 +16,12 @@
 #import "TGMenuSheetCollectionView.h"
 
 #import "TGObserverProxy.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <UIKit/UIGestureRecognizerSubclass.h>
+#endif
+#endif
 #import <objc/runtime.h>
 
 const CGFloat TGMenuSheetPadMenuWidth = 375.0f;
@@ -168,19 +173,12 @@ typedef enum
 
     if (TGIsPad())
     {
-        if (self.barButtonItem != nil)
-        {
-            [actionSheet showFromBarButtonItem:self.barButtonItem animated:true];
-        }
-        else
-        {
-            CGRect sourceRect = sourceView != nil ? sourceView.bounds : presentationView.bounds;
-            if (self.sourceRect != nil)
-                sourceRect = self.sourceRect();
-            if (CGRectIsEmpty(sourceRect))
-                sourceRect = CGRectMake(CGRectGetMidX(presentationView.bounds), CGRectGetMidY(presentationView.bounds), 1.0f, 1.0f);
-            [actionSheet showFromRect:sourceRect inView:(sourceView ?: presentationView) animated:true];
-        }
+        CGRect sourceRect = sourceView != nil ? sourceView.bounds : presentationView.bounds;
+        if (self.sourceRect != nil)
+            sourceRect = self.sourceRect();
+        if (CGRectIsEmpty(sourceRect))
+            sourceRect = CGRectMake(CGRectGetMidX(presentationView.bounds), CGRectGetMidY(presentationView.bounds), 1.0f, 1.0f);
+        OGPlatformPresentActionSheet(actionSheet, self.barButtonItem, sourceView ?: presentationView, sourceRect, presentationView, true);
     }
     else
     {
@@ -657,8 +655,7 @@ typedef enum
         [self _updateLegacyPopoverContentSizeAnimated:false];
         
         UIColor *backgroundColor = self.pallete != nil ? self.pallete.backgroundColor : [UIColor whiteColor];
-        if ([_popoverController respondsToSelector:@selector(setBackgroundColor:)])
-            _popoverController.backgroundColor = _dark ? UIColorRGB(0x161616) : backgroundColor;
+        OGPlatformSetPopoverBackgroundColor(_popoverController, _dark ? UIColorRGB(0x161616) : backgroundColor);
         
         if (self.barButtonItem != nil)
         {
@@ -1295,10 +1292,9 @@ typedef enum
 {
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [self.view convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, self.view);
 
-    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (self.view.frame.size.height - keyboardFrame.origin.y);
+    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (self.view.bounds.size.height - keyboardFrame.origin.y);
     keyboardHeight = MAX(keyboardHeight, 0.0f);
     
     if (self.followsKeyboard)

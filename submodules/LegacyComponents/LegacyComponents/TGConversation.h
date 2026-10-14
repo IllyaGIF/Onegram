@@ -33,8 +33,6 @@ typedef enum {
     TGConversationFlagIsMin = (1 << 13),
     TGConversationFlagCanNotSetUsername = (1 << 14),
     TGConversationFlagIsForum = (1 << 15),
-    // Distinguishes a real non-forum channel from an old cached conversation
-    // that predates forum support in this client.
     TGConversationFlagForumKnown = (1 << 16)
 } TGConversationFlags;
 
@@ -82,8 +80,7 @@ static inline uint8_t TGConversationSortKeyKind(TGConversationSortKey key) {
 }
 
 static inline TGConversationSortKey TGConversationSortKeyUpdateKind(TGConversationSortKey key, uint8_t kind) {
-    TGConversationSortKey updatedKey;
-    memcpy(updatedKey.key, key.key, 8);
+    TGConversationSortKey updatedKey = key;
     updatedKey.key[0] = kind;
     return updatedKey;
 }
@@ -188,6 +185,7 @@ typedef enum {
 @property (nonatomic, strong) NSString *about;
 @property (nonatomic, strong) NSString *username;
 @property (nonatomic) int32_t nameColorId;
+@property (nonatomic) int64_t linkedCommunityId;
 
 @property (nonatomic) id additionalProperties;
 
@@ -242,6 +240,7 @@ typedef enum {
 @property (nonatomic) bool isDeleted;
 @property (nonatomic) bool isBroadcast;
 @property (nonatomic) bool isChannel;
+@property (nonatomic, readonly) bool isChannelMember;
 @property (nonatomic) bool isArchived;
 
 @property (nonatomic) bool postAsChannel;

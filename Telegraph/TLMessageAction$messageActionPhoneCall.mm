@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messageActionPhoneCall flags:# call_id:long reason:flags.0?PhoneCallDiscardReason duration:flags.1?int = MessageAction;
 
 @implementation TLMessageAction$messageActionPhoneCall
 

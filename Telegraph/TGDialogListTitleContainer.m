@@ -1,4 +1,5 @@
 #import "TGDialogListTitleContainer.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @implementation TGDialogListTitleContainer
 
@@ -29,7 +30,7 @@
     if (iosMajorVersion() >= 11)
         return false;
     
-    return [super translatesAutoresizingMaskIntoConstraints];
+    return OGPlatformSuperclassViewTranslatesAutoresizingMaskIntoConstraints(self, [TGDialogListTitleContainer class]);
 }
 
 - (void)tapGesture:(UITapGestureRecognizer *)recognizer

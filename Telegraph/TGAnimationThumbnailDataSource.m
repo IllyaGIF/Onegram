@@ -1,4 +1,6 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGAnimationThumbnailDataSource.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -110,6 +112,11 @@ static ASQueue *taskManagementQueue()
         if ([TGAnimationThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
             [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+        }
+        else if (OGPlatformMediaDownloadsRequireUserAction())
+        {
+            if (completion != nil)
+                completion([TGAnimationThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
         }
         else
         {
@@ -233,7 +240,7 @@ static ASQueue *taskManagementQueue()
     
     if (args[@"video-file-name"] != nil) {
         NSString *videoFilePath = [fileDirectory stringByAppendingPathComponent:args[@"video-file-name"]];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:videoFilePath isDirectory:NULL])
+        if ((!OGPlatformMediaDownloadsRequireUserAction() || args[@"local-id"] != nil) && [[NSFileManager defaultManager] fileExistsAtPath:videoFilePath isDirectory:NULL])
             return true;
     }
     
@@ -360,7 +367,6 @@ static ASQueue *taskManagementQueue()
 {
     if (isCancelled && isCancelled())
     {
-        TGLog(@"[TGPhotoMediaPreviewImageDataSource cancelled while loading %@]", uri);
         return nil;
     }
     
@@ -406,23 +412,14 @@ static ASQueue *taskManagementQueue()
         
         UIImage *image = nil;
         
-        if ([[NSFileManager defaultManager] fileExistsAtPath:videoFilePath isDirectory:NULL]) {
+        if ((!OGPlatformMediaDownloadsRequireUserAction() || args[@"local-id"] != nil) && [[NSFileManager defaultManager] fileExistsAtPath:videoFilePath isDirectory:NULL]) {
             if ([videoFilePath pathExtension].length == 0) {
                 [[NSFileManager defaultManager] createSymbolicLinkAtPath:[videoFilePath stringByAppendingPathExtension:@"mov"] withDestinationPath:[videoFilePath pathComponents].lastObject error:nil];
                 videoFilePath = [videoFilePath stringByAppendingPathExtension:@"mov"];
             }
             
-            AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:videoFilePath] options:nil];
-            
-            AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-            imageGenerator.maximumSize = TGIOS6SlowThumbnailDevice() ? CGSizeMake(360, 360) : CGSizeMake(800, 800);
-            imageGenerator.appliesPreferredTrackTransform = true;
-            NSError *imageError = nil;
-            CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(0, asset.duration.timescale) actualTime:NULL error:&imageError];
-            image = [[UIImage alloc] initWithCGImage:imageRef];
-            if (imageRef != NULL) {
-                CGImageRelease(imageRef);
-            }
+            CGSize maximumSize = TGIOS6SlowThumbnailDevice() ? CGSizeMake(360.0f, 360.0f) : CGSizeMake(800.0f, 800.0f);
+            image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:videoFilePath], 0.0, maximumSize);
         }
         
         if (image == nil && [[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL]) {

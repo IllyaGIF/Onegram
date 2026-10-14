@@ -1,6 +1,5 @@
 #import <Foundation/Foundation.h>
 
-//webAuthorization hash:long bot_id:int domain:string browser:string platform:string date_created:int date_active:int ip:string region:string = WebAuthorization;
 
 @class TGUser;
 

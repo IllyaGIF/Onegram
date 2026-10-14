@@ -1,6 +1,12 @@
+#import "LegacyComponentsGlobals.h"
 #import "TGNavigationController.h"
+#import "OGPlatformVersion.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <UIKit/UIGestureRecognizerSubclass.h>
+#endif
+#endif
 
 #import "LegacyComponentsInternal.h"
 #import "TGImageUtils.h"
@@ -13,10 +19,15 @@
 
 #import "TGHacks.h"
 
-#import <QuickLook/QuickLook.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+@interface UINavigationController (TGNavigationControllerModernInitializerDeclaration)
+- (instancetype)initWithNavigationBarClass:(Class)navigationBarClass toolbarClass:(Class)toolbarClass;
+@end
+#endif
 
 @interface TGDelegateProxy : NSObject
 
@@ -24,16 +35,22 @@
 
 @end
 
-@interface TGNavigationPanGestureRecognizer : UIPanGestureRecognizer
-
-@property (nonatomic, readonly) CGFloat _edgeRegionSize;
-
+@interface TGNavigationFullScreenPanMethods : UIPanGestureRecognizer
 @end
 
-@interface TGNavigationGestureDelegateProxy : TGDelegateProxy
+@implementation TGNavigationFullScreenPanMethods
+- (id)recognizerTouchesToIgnoreForEvent:(id)event
+{
+    return nil;
+}
+@end
 
-@property (nonatomic, copy) bool (^shouldBegin)(TGNavigationPanGestureRecognizer *);
-@property (nonatomic, copy) bool (^shouldRecognizeWith)(TGNavigationPanGestureRecognizer *, UIGestureRecognizer *);
+static char TGNavigationFullScreenPanClassKey;
+
+@interface TGNavigationGestureDelegateProxy : TGDelegateProxy <UIGestureRecognizerDelegate>
+
+@property (nonatomic, copy) bool (^shouldBegin)(UIPanGestureRecognizer *);
+@property (nonatomic, copy) bool (^shouldRecognizeWith)(UIPanGestureRecognizer *, UIGestureRecognizer *);
 
 @end
 
@@ -59,6 +76,12 @@
     bool _didFirstLayout;
     bool _legacyBackTransitionInProgress;
     Class _requestedNavigationBarClass;
+    UINavigationBar *_legacyNavigationBar;
+    TGNavigationBarPallete *_legacyNavigationBarPallete;
+    UIView *_legacyMusicPlayerContainer;
+    UIView<TGNavigationBarMusicPlayerView> *_legacyMusicPlayerView;
+    Class _originalInteractivePopGestureRecognizerClass;
+    Class _fullScreenInteractivePopGestureRecognizerClass;
 }
 
 @property (nonatomic) bool wasShowingNavigationBar;
@@ -67,7 +90,61 @@
 
 - (void)layoutNavigationContentView;
 - (void)tgLegacyBackButtonPressed;
+- (void)tgLegacyNavigationBarWillLayout;
+- (void)tgLegacyNavigationBarDidLayout;
+- (void)layoutLegacyMusicPlayer;
+- (void)configureInteractivePopGestureForControllers:(NSArray *)controllers;
 
+@end
+
+static char TGNavigationControllerLegacyOwnerKey;
+static char TGNavigationControllerLegacyOriginalBarClassKey;
+static char TGNavigationControllerLegacyBarClassKey;
+
+@interface TGNavigationControllerLegacyNavigationBar : UINavigationBar
+@end
+
+@implementation TGNavigationControllerLegacyNavigationBar
+- (void)layoutSubviews
+{
+    TGNavigationController *owner = objc_getAssociatedObject(self, &TGNavigationControllerLegacyOwnerKey);
+    [owner tgLegacyNavigationBarWillLayout];
+    Class originalClass = objc_getAssociatedObject(self, &TGNavigationControllerLegacyOriginalBarClassKey);
+    if (originalClass != Nil)
+    {
+        void (*layout)(id, SEL) = (void (*)(id, SEL))class_getMethodImplementation(originalClass, @selector(layoutSubviews));
+        layout(self, @selector(layoutSubviews));
+    }
+    else
+        [super layoutSubviews];
+    [owner tgLegacyNavigationBarDidLayout];
+}
+@end
+
+@interface TGNavigationControllerLegacyTitleLabel : UILabel
+@end
+@implementation TGNavigationControllerLegacyTitleLabel
+@end
+
+static void TGNavigationControllerStyleLegacyItem(UIBarButtonItem *item, TGNavigationBarPallete *pallete);
+
+@interface TGNavigationControllerLegacyItemButton : UIButton
+@property (nonatomic, unsafe_unretained) UIBarButtonItem *item;
+@property (nonatomic, strong) TGNavigationBarPallete *pallete;
+- (void)refresh;
+@end
+@implementation TGNavigationControllerLegacyItemButton
+- (void)refresh
+{
+    TGNavigationControllerStyleLegacyItem(self.item, self.pallete);
+}
+
+- (void)pressed
+{
+    UIBarButtonItem *item = self.item;
+    if (item != nil && item.enabled && item.action != NULL)
+        [[UIApplication sharedApplication] sendAction:item.action to:item.target from:item forEvent:nil];
+}
 @end
 
 @interface TGNavigationControllerLegacyGradientView : UIView
@@ -82,9 +159,52 @@
 
 @end
 
+@interface TGNavigationControllerLegacyBrandedBackgroundView : UIImageView
+{
+    CGSize _renderedSize;
+    TGNavigationBarBackgroundVariant _renderedVariant;
+}
+
+@property (nonatomic) TGNavigationBarBackgroundVariant backgroundVariant;
+
+- (void)updateImage;
+
+@end
+
+@implementation TGNavigationControllerLegacyBrandedBackgroundView
+
+- (void)updateImage
+{
+    CGSize size = self.superview.bounds.size;
+    UIView *navigationBar = self.superview.superview;
+    TGNavigationBarBackgroundVariant variant = [navigationBar isKindOfClass:[TGNavigationBar class]] ? ((TGNavigationBar *)navigationBar).backgroundVariant : _backgroundVariant;
+    if (CGSizeEqualToSize(size, _renderedSize) && variant == _renderedVariant)
+        return;
+
+    _renderedSize = size;
+    _renderedVariant = variant;
+    id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
+    UIImage *image = [provider respondsToSelector:@selector(brandedIOS6NavigationBarBackgroundImageForSize:overflow:variant:)] ? [provider brandedIOS6NavigationBarBackgroundImageForSize:size overflow:0.0f variant:variant] : nil;
+    self.image = image;
+    self.frame = CGRectMake(0.0f, 0.0f, size.width, image != nil ? image.size.height : size.height);
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    [self updateImage];
+}
+
+@end
+
 static bool TGNavigationControllerClassicIOS6Style(void)
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
+    return (TGCurrentInterfaceStyle() != 0);
+}
+
+static bool TGNavigationControllerBrandedIOS6Style(void)
+{
+    return TGCurrentInterfaceStyle() == 2;
 }
 
 static bool TGNavigationControllerClassicDarkPalette(TGNavigationBarPallete *pallete)
@@ -193,6 +313,20 @@ static UIImage *TGNavigationControllerClassicIOS6BackImage(bool highlighted, TGN
     return [image stretchableImageWithLeftCapWidth:(NSInteger)leftCap topCapHeight:0];
 }
 
+static const NSInteger TGNavigationControllerLegacyBackgroundTag = 0x54474e41;
+static const NSInteger TGNavigationControllerLegacySeparatorTag = 0x54474e42;
+static const NSInteger TGNavigationControllerLegacyGradientTag = 0x54474e43;
+static const NSInteger TGNavigationControllerLegacyBrandedTag = 0x54474e44;
+
+static void TGNavigationControllerUpdateLegacyBrandedBackground(UINavigationBar *navigationBar, TGNavigationBarBackgroundVariant variant)
+{
+    UIView *backgroundView = [navigationBar viewWithTag:TGNavigationControllerLegacyBackgroundTag];
+    TGNavigationControllerLegacyBrandedBackgroundView *brandedView = (TGNavigationControllerLegacyBrandedBackgroundView *)[backgroundView viewWithTag:TGNavigationControllerLegacyBrandedTag];
+    brandedView.backgroundVariant = variant;
+    if (!brandedView.hidden)
+        [brandedView updateImage];
+}
+
 static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigationBar, Class navigationBarClass, TGNavigationBarPallete *pallete)
 {
     if ([navigationBar isKindOfClass:[TGNavigationBar class]])
@@ -223,34 +357,40 @@ static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigation
 
     if (iosMajorVersion() < 5)
     {
-        const NSInteger backgroundTag = 0x54474e41;
-        const NSInteger separatorTag = 0x54474e42;
-        const NSInteger gradientTag = 0x54474e43;
-        UIView *backgroundView = [navigationBar viewWithTag:backgroundTag];
+        UIView *backgroundView = [navigationBar viewWithTag:TGNavigationControllerLegacyBackgroundTag];
         if (backgroundView == nil)
         {
             backgroundView = [[UIView alloc] initWithFrame:navigationBar.bounds];
-            backgroundView.tag = backgroundTag;
+            backgroundView.tag = TGNavigationControllerLegacyBackgroundTag;
             backgroundView.userInteractionEnabled = false;
             backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             [navigationBar insertSubview:backgroundView atIndex:0];
 
             TGNavigationControllerLegacyGradientView *gradientView = [[TGNavigationControllerLegacyGradientView alloc] initWithFrame:backgroundView.bounds];
-            gradientView.tag = gradientTag;
+            gradientView.tag = TGNavigationControllerLegacyGradientTag;
             gradientView.userInteractionEnabled = false;
             gradientView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             [backgroundView addSubview:gradientView];
 
+            TGNavigationControllerLegacyBrandedBackgroundView *brandedView = [[TGNavigationControllerLegacyBrandedBackgroundView alloc] initWithFrame:backgroundView.bounds];
+            brandedView.tag = TGNavigationControllerLegacyBrandedTag;
+            brandedView.userInteractionEnabled = false;
+            brandedView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+            brandedView.hidden = true;
+            [backgroundView addSubview:brandedView];
+
             UIView *separatorView = [[UIView alloc] initWithFrame:CGRectZero];
-            separatorView.tag = separatorTag;
+            separatorView.tag = TGNavigationControllerLegacySeparatorTag;
             separatorView.userInteractionEnabled = false;
             separatorView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
             [backgroundView addSubview:separatorView];
         }
 
         backgroundView.frame = navigationBar.bounds;
-        UIView *separatorView = [backgroundView viewWithTag:separatorTag];
-        TGNavigationControllerLegacyGradientView *gradientView = (TGNavigationControllerLegacyGradientView *)[backgroundView viewWithTag:gradientTag];
+        UIView *separatorView = [backgroundView viewWithTag:TGNavigationControllerLegacySeparatorTag];
+        TGNavigationControllerLegacyGradientView *gradientView = (TGNavigationControllerLegacyGradientView *)[backgroundView viewWithTag:TGNavigationControllerLegacyGradientTag];
+        TGNavigationControllerLegacyBrandedBackgroundView *brandedView = (TGNavigationControllerLegacyBrandedBackgroundView *)[backgroundView viewWithTag:TGNavigationControllerLegacyBrandedTag];
+        brandedView.hidden = true;
         gradientView.frame = backgroundView.bounds;
         CGFloat separatorHeight = TGScreenPixel;
         separatorView.frame = CGRectMake(0.0f, MAX(0.0f, backgroundView.bounds.size.height - separatorHeight), backgroundView.bounds.size.width, separatorHeight);
@@ -260,6 +400,7 @@ static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigation
             backgroundView.hidden = false;
             backgroundView.backgroundColor = [UIColor clearColor];
             gradientView.hidden = true;
+            separatorView.hidden = false;
             separatorView.backgroundColor = [UIColor clearColor];
         }
         else if (navigationBarClass == [TGBlackNavigationBar class])
@@ -274,8 +415,13 @@ static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigation
             backgroundView.hidden = false;
             if (classicIOS6Style)
             {
+                bool useBrandedImage = TGNavigationControllerBrandedIOS6Style() && [[LegacyComponentsGlobals provider] respondsToSelector:@selector(brandedIOS6NavigationBarBackgroundImageForSize:overflow:variant:)];
                 backgroundView.backgroundColor = [UIColor clearColor];
-                gradientView.hidden = false;
+                brandedView.hidden = !useBrandedImage;
+                if (useBrandedImage)
+                    [brandedView updateImage];
+                gradientView.hidden = useBrandedImage;
+                separatorView.hidden = useBrandedImage;
                 CAGradientLayer *gradientLayer = (CAGradientLayer *)gradientView.layer;
                 gradientLayer.locations = @[@0.0f, @0.52f, @1.0f];
                 if (classicDarkStyle)
@@ -296,6 +442,7 @@ static void TGNavigationControllerApplyNavigationBar(UINavigationBar *navigation
             {
                 backgroundView.backgroundColor = navigationBarClass == [TGWhiteNavigationBar class] ? [UIColor whiteColor] : (pallete != nil ? pallete.backgroundColor : [UIColor whiteColor]);
                 gradientView.hidden = true;
+                separatorView.hidden = false;
                 separatorView.backgroundColor = pallete != nil ? pallete.separatorColor : UIColorRGB(0xb2b2b2);
             }
         }
@@ -315,6 +462,11 @@ static void TGNavigationControllerApplyLegacyTextStyle(UINavigationBar *navigati
     if (titleView != nil && (view == titleView || [view isDescendantOfView:titleView]))
         return;
 
+    UIView *leftView = navigationBar.topItem.leftBarButtonItem.customView;
+    UIView *rightView = navigationBar.topItem.rightBarButtonItem.customView;
+    if ((leftView != nil && (view == leftView || [view isDescendantOfView:leftView])) || (rightView != nil && (view == rightView || [view isDescendantOfView:rightView])))
+        return;
+
     if ([view isKindOfClass:[UILabel class]])
     {
         UILabel *label = (UILabel *)view;
@@ -322,7 +474,15 @@ static void TGNavigationControllerApplyLegacyTextStyle(UINavigationBar *navigati
         CGFloat centerX = CGRectGetMidX(frame);
         CGFloat width = navigationBar.bounds.size.width;
         bool centered = centerX > width * 0.30f && centerX < width * 0.70f;
-        if (TGNavigationControllerClassicIOS6Style())
+        id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
+        if (TGNavigationControllerClassicIOS6Style() && TGNavigationControllerBrandedIOS6Style() && [provider respondsToSelector:@selector(brandedIOS6NavigationBarTitleFont)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarTitleShadowColor)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonFont)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonShadowColor)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarTitleColor)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonTitleColor)])
+        {
+            label.textColor = centered ? [provider brandedIOS6NavigationBarTitleColor] : [provider brandedIOS6NavigationBarButtonTitleColor];
+            label.shadowColor = centered ? [provider brandedIOS6NavigationBarTitleShadowColor] : [provider brandedIOS6NavigationBarButtonShadowColor];
+            label.shadowOffset = CGSizeMake(0.0f, -1.0f);
+            label.font = centered ? [provider brandedIOS6NavigationBarTitleFont] : [provider brandedIOS6NavigationBarButtonFont];
+        }
+        else if (TGNavigationControllerClassicIOS6Style())
         {
             label.textColor = [UIColor whiteColor];
             label.shadowColor = TGNavigationControllerClassicDarkPalette(pallete) ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f);
@@ -340,6 +500,186 @@ static void TGNavigationControllerApplyLegacyTextStyle(UINavigationBar *navigati
 
     for (UIView *subview in view.subviews)
         TGNavigationControllerApplyLegacyTextStyle(navigationBar, subview, pallete);
+}
+
+static char TGNavigationControllerLegacySystemItemKey;
+
+@interface UIBarButtonItem (TGNavigationControllerLegacySystemItem)
+- (id)tgLegacy_initWithBarButtonSystemItem:(UIBarButtonSystemItem)systemItem target:(id)target action:(SEL)action __attribute__((objc_method_family(init)));
+@end
+
+@implementation UIBarButtonItem (TGNavigationControllerLegacySystemItem)
++ (void)load
+{
+    if (iosMajorVersion() >= 5)
+        return;
+    Method original = class_getInstanceMethod(self, @selector(initWithBarButtonSystemItem:target:action:));
+    Method replacement = class_getInstanceMethod(self, @selector(tgLegacy_initWithBarButtonSystemItem:target:action:));
+    if (original != NULL && replacement != NULL)
+        method_exchangeImplementations(original, replacement);
+    SEL selectors[] = { @selector(setTitle:), @selector(setImage:), @selector(setEnabled:), @selector(setStyle:), @selector(setWidth:) };
+    SEL replacements[] = { @selector(tgLegacy_setTitle:), @selector(tgLegacy_setImage:), @selector(tgLegacy_setEnabled:), @selector(tgLegacy_setStyle:), @selector(tgLegacy_setWidth:) };
+    for (NSUInteger i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++)
+    {
+        Method method = class_getInstanceMethod(self, selectors[i]);
+        Method replacementMethod = class_getInstanceMethod(self, replacements[i]);
+        if (method != NULL && replacementMethod != NULL)
+            method_exchangeImplementations(method, replacementMethod);
+    }
+}
+
+- (id)tgLegacy_initWithBarButtonSystemItem:(UIBarButtonSystemItem)systemItem target:(id)target action:(SEL)action
+{
+    UIBarButtonItem *item = [self tgLegacy_initWithBarButtonSystemItem:systemItem target:target action:action];
+    if (item != nil)
+        objc_setAssociatedObject(item, &TGNavigationControllerLegacySystemItemKey, @(systemItem), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return item;
+}
+
+- (void)tgLegacy_refreshCustomButton
+{
+    if ([self.customView isKindOfClass:[TGNavigationControllerLegacyItemButton class]])
+        [(TGNavigationControllerLegacyItemButton *)self.customView refresh];
+}
+
+- (void)tgLegacy_setTitle:(NSString *)value
+{
+    [self tgLegacy_setTitle:value];
+    [self tgLegacy_refreshCustomButton];
+}
+
+- (void)tgLegacy_setImage:(UIImage *)value
+{
+    [self tgLegacy_setImage:value];
+    [self tgLegacy_refreshCustomButton];
+}
+
+- (void)tgLegacy_setEnabled:(BOOL)value
+{
+    [self tgLegacy_setEnabled:value];
+    [self tgLegacy_refreshCustomButton];
+}
+
+- (void)tgLegacy_setStyle:(UIBarButtonItemStyle)value
+{
+    [self tgLegacy_setStyle:value];
+    [self tgLegacy_refreshCustomButton];
+}
+
+- (void)tgLegacy_setWidth:(CGFloat)value
+{
+    [self tgLegacy_setWidth:value];
+    [self tgLegacy_refreshCustomButton];
+}
+@end
+
+static NSString *TGNavigationControllerLegacySystemTitle(UIBarButtonItem *item)
+{
+    NSNumber *systemItem = objc_getAssociatedObject(item, &TGNavigationControllerLegacySystemItemKey);
+    if (systemItem == nil)
+        return nil;
+    switch ([systemItem intValue])
+    {
+        case UIBarButtonSystemItemDone: return TGLocalized(@"Common.Done");
+        case UIBarButtonSystemItemCancel: return TGLocalized(@"Common.Cancel");
+        case UIBarButtonSystemItemEdit: return TGLocalized(@"Common.Edit");
+        case UIBarButtonSystemItemSave: return TGLocalized(@"Common.Save");
+        case UIBarButtonSystemItemAdd: return @"+";
+        default: return nil;
+    }
+}
+
+static UIImage *TGNavigationControllerLegacySystemImage(UIBarButtonItem *item)
+{
+    NSNumber *systemItem = objc_getAssociatedObject(item, &TGNavigationControllerLegacySystemItemKey);
+    if (systemItem == nil)
+        return nil;
+    switch ([systemItem intValue])
+    {
+        case UIBarButtonSystemItemAdd: return TGImageNamed(@"ModernNavigationAddButtonIcon.png");
+        case UIBarButtonSystemItemSearch: return TGImageNamed(@"NavigationSearchIcon.png");
+        case UIBarButtonSystemItemAction: return TGImageNamed(@"ActionsWhiteIcon.png");
+        case UIBarButtonSystemItemCompose: return TGImageNamed(@"ModernNavigationComposeButtonIcon.png");
+        case UIBarButtonSystemItemTrash: return TGImageNamed(@"ModernConversationActionDelete.png");
+        case UIBarButtonSystemItemPlay: return TGImageNamed(@"MusicPlayerMinimizedPlay.png");
+        case UIBarButtonSystemItemPause: return TGImageNamed(@"MusicPlayerMinimizedPause.png");
+        default: return nil;
+    }
+}
+
+static void TGNavigationControllerStyleLegacyItem(UIBarButtonItem *item, TGNavigationBarPallete *pallete)
+{
+    if (item == nil || pallete == nil)
+        return;
+    if (item.customView != nil && ![item.customView isKindOfClass:[TGNavigationControllerLegacyItemButton class]])
+        return;
+    UIImage *image = item.image ?: TGNavigationControllerLegacySystemImage(item);
+    NSString *title = item.title ?: (image == nil ? TGNavigationControllerLegacySystemTitle(item) : nil);
+    if (item.customView == nil && title.length == 0 && image == nil)
+        return;
+
+    TGNavigationControllerLegacyItemButton *button = (TGNavigationControllerLegacyItemButton *)item.customView;
+    if (button == nil)
+    {
+        button = [[TGNavigationControllerLegacyItemButton alloc] initWithFrame:CGRectZero];
+        button.item = item;
+        [button addTarget:button action:@selector(pressed) forControlEvents:UIControlEventTouchUpInside];
+        item.customView = button;
+    }
+    button.pallete = pallete;
+    button.titleLabel.lineBreakMode = UILineBreakModeTailTruncation;
+    UIFont *font = item.style == UIBarButtonItemStyleDone ? [UIFont boldSystemFontOfSize:16.0f] : [UIFont systemFontOfSize:16.0f];
+    button.titleLabel.font = font;
+    button.titleLabel.shadowColor = nil;
+    [button setTitle:title forState:UIControlStateNormal];
+    [button setTitleColor:pallete.tintColor forState:UIControlStateNormal];
+    [button setTitleColor:[pallete.tintColor colorWithAlphaComponent:0.55f] forState:UIControlStateHighlighted];
+    [button setTitleColor:[pallete.tintColor colorWithAlphaComponent:0.35f] forState:UIControlStateDisabled];
+    [button setImage:image != nil ? TGTintedImage(image, pallete.tintColor) : nil forState:UIControlStateNormal];
+    button.enabled = item.enabled;
+    CGFloat width = item.width > 0.0f ? item.width : MAX(32.0f, [title sizeWithFont:font].width + (image != nil ? image.size.width + 6.0f : 0.0f));
+    button.frame = CGRectMake(0.0f, 0.0f, MIN(150.0f, width), 44.0f);
+}
+
+static void TGNavigationControllerStyleLegacyNavigationItem(UINavigationItem *item, TGNavigationBarPallete *pallete)
+{
+    if (item == nil || pallete == nil)
+        return;
+    if (item.titleView == nil || [item.titleView isKindOfClass:[TGNavigationControllerLegacyTitleLabel class]])
+    {
+        TGNavigationControllerLegacyTitleLabel *label = (TGNavigationControllerLegacyTitleLabel *)item.titleView;
+        if (label == nil && item.title.length != 0)
+        {
+            label = [[TGNavigationControllerLegacyTitleLabel alloc] initWithFrame:CGRectZero];
+            label.backgroundColor = [UIColor clearColor];
+            label.textAlignment = UITextAlignmentCenter;
+            item.titleView = label;
+        }
+        if (label != nil)
+        {
+            id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
+            bool classic = TGNavigationControllerClassicIOS6Style();
+            bool branded = classic && TGNavigationControllerBrandedIOS6Style() && [provider respondsToSelector:@selector(brandedIOS6NavigationBarTitleColor)];
+            label.text = item.title;
+            label.font = branded ? [provider brandedIOS6NavigationBarTitleFont] : [UIFont boldSystemFontOfSize:17.0f];
+            label.textColor = branded ? [provider brandedIOS6NavigationBarTitleColor] : (classic ? [UIColor whiteColor] : pallete.titleColor);
+            label.shadowColor = branded ? [provider brandedIOS6NavigationBarTitleShadowColor] : (classic ? UIColorRGBA(0x1f3446, 0.9f) : nil);
+            label.shadowOffset = classic ? CGSizeMake(0.0f, -1.0f) : CGSizeZero;
+            [label sizeToFit];
+        }
+    }
+    if (!TGNavigationControllerClassicIOS6Style())
+    {
+        TGNavigationControllerStyleLegacyItem(item.leftBarButtonItem, pallete);
+        TGNavigationControllerStyleLegacyItem(item.rightBarButtonItem, pallete);
+    }
+    else
+    {
+        if ([item.leftBarButtonItem.customView isKindOfClass:[TGNavigationControllerLegacyItemButton class]])
+            item.leftBarButtonItem.customView = nil;
+        if ([item.rightBarButtonItem.customView isKindOfClass:[TGNavigationControllerLegacyItemButton class]])
+            item.rightBarButtonItem.customView = nil;
+    }
 }
 
 static NSString *TGNavigationControllerLegacyBackTitle(TGNavigationController *navigationController, UIViewController *viewController)
@@ -368,11 +708,25 @@ static UIBarButtonItem *TGNavigationControllerLegacyBackItem(TGNavigationControl
 
     UIColor *tintColor = pallete != nil ? pallete.tintColor : TGAccentColor();
     bool classicIOS6Style = TGNavigationControllerClassicIOS6Style();
-    UIImage *normalImage = classicIOS6Style ? TGNavigationControllerClassicIOS6BackImage(false, pallete) : TGTintedImage(TGImageNamed(@"NavigationBackButton.png"), tintColor);
-    UIImage *highlightedImage = classicIOS6Style ? TGNavigationControllerClassicIOS6BackImage(true, pallete) : TGTintedImage(TGImageNamed(@"NavigationBackButton_Highlighted.png"), [tintColor colorWithAlphaComponent:0.55f]);
-    UIFont *font = classicIOS6Style ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont systemFontOfSize:16.0f];
+    id<LegacyComponentsGlobalsProvider> provider = [LegacyComponentsGlobals provider];
+    bool brandedIOS6Style = classicIOS6Style && TGNavigationControllerBrandedIOS6Style() && [provider respondsToSelector:@selector(brandedIOS6NavigationBarBackButtonImageForWidth:highlighted:)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonFont)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonShadowColor)] && [provider respondsToSelector:@selector(brandedIOS6NavigationBarButtonTitleColor)];
+    UIFont *font = brandedIOS6Style ? [provider brandedIOS6NavigationBarButtonFont] : (classicIOS6Style ? [UIFont boldSystemFontOfSize:12.0f] : [UIFont systemFontOfSize:16.0f]);
     CGSize titleSize = [title sizeWithFont:font];
-    CGFloat width = classicIOS6Style ? MIN(150.0f, MAX(44.0f, titleSize.width + 25.0f)) : MIN(150.0f, MAX(32.0f, normalImage.size.width + 5.0f + titleSize.width));
+    UIImage *normalImage = nil;
+    UIImage *highlightedImage = nil;
+    CGFloat width = 0.0f;
+    if (classicIOS6Style)
+    {
+        width = MIN(150.0f, MAX(44.0f, titleSize.width + 25.0f));
+        normalImage = brandedIOS6Style ? [provider brandedIOS6NavigationBarBackButtonImageForWidth:width highlighted:false] : TGNavigationControllerClassicIOS6BackImage(false, pallete);
+        highlightedImage = brandedIOS6Style ? [provider brandedIOS6NavigationBarBackButtonImageForWidth:width highlighted:true] : TGNavigationControllerClassicIOS6BackImage(true, pallete);
+    }
+    else
+    {
+        normalImage = TGTintedImage(TGImageNamed(@"NavigationBackButton.png"), tintColor);
+        highlightedImage = TGTintedImage(TGImageNamed(@"NavigationBackButton_Highlighted.png"), [tintColor colorWithAlphaComponent:0.55f]);
+        width = MIN(150.0f, MAX(32.0f, normalImage.size.width + 5.0f + titleSize.width));
+    }
 
     UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
     button.tag = TGNavigationControllerLegacyBackButtonTag;
@@ -384,9 +738,10 @@ static UIBarButtonItem *TGNavigationControllerLegacyBackItem(TGNavigationControl
     {
         [button setBackgroundImage:normalImage forState:UIControlStateNormal];
         [button setBackgroundImage:highlightedImage ?: normalImage forState:UIControlStateHighlighted];
-        [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        [button setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
-        button.titleLabel.shadowColor = TGNavigationControllerClassicDarkPalette(pallete) ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f);
+        UIColor *titleColor = brandedIOS6Style ? [provider brandedIOS6NavigationBarButtonTitleColor] : [UIColor whiteColor];
+        [button setTitleColor:titleColor forState:UIControlStateNormal];
+        [button setTitleColor:titleColor forState:UIControlStateHighlighted];
+        button.titleLabel.shadowColor = brandedIOS6Style ? [provider brandedIOS6NavigationBarButtonShadowColor] : (TGNavigationControllerClassicDarkPalette(pallete) ? UIColorRGBA(0x000000, 0.9f) : UIColorRGBA(0x1f3446, 0.9f));
         button.titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
         button.contentEdgeInsets = UIEdgeInsetsMake(0.0f, 14.0f, 0.0f, 8.0f);
     }
@@ -463,7 +818,7 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
 
 - (instancetype)initWithNavigationBarClass:(Class)navigationBarClass toolbarClass:(Class)toolbarClass
 {
-    if (iosMajorVersion() >= 5)
+    if (iosMajorVersion() >= 5 && [UINavigationController instancesRespondToSelector:@selector(initWithNavigationBarClass:toolbarClass:)])
         self = [super initWithNavigationBarClass:navigationBarClass toolbarClass:toolbarClass];
     else
         self = [super init];
@@ -471,18 +826,37 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
     {
         _requestedNavigationBarClass = navigationBarClass;
         if (iosMajorVersion() < 5)
-            TGNavigationControllerApplyNavigationBar(self.navigationBar, _requestedNavigationBarClass, nil);
+        {
+            UINavigationBar *bar = self.navigationBar;
+            _legacyNavigationBar = bar;
+            Class originalClass = object_getClass(bar);
+            Class legacyClass = objc_getAssociatedObject(originalClass, &TGNavigationControllerLegacyBarClassKey);
+            if (legacyClass == Nil)
+            {
+                legacyClass = freedomMakeClass(originalClass, [TGNavigationControllerLegacyNavigationBar class]);
+                objc_setAssociatedObject(originalClass, &TGNavigationControllerLegacyBarClassKey, legacyClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            objc_setAssociatedObject(bar, &TGNavigationControllerLegacyOriginalBarClassKey, originalClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (class_getInstanceSize(originalClass) == class_getInstanceSize(legacyClass))
+                object_setClass(bar, legacyClass);
+            objc_setAssociatedObject(bar, &TGNavigationControllerLegacyOwnerKey, self, OBJC_ASSOCIATION_ASSIGN);
+            TGNavigationControllerApplyNavigationBar(bar, _requestedNavigationBarClass, nil);
+        }
     }
     return self;
 }
 
 - (void)setNavigationBarPallete:(TGNavigationBarPallete *)pallete
 {
+    _legacyNavigationBarPallete = pallete;
     TGNavigationControllerApplyNavigationBar(self.navigationBar, _requestedNavigationBarClass, pallete);
+    [self.navigationBar setNeedsLayout];
 }
 
 - (void)dealloc
 {
+    if (_legacyNavigationBar != nil)
+        objc_setAssociatedObject(_legacyNavigationBar, &TGNavigationControllerLegacyOwnerKey, nil, OBJC_ASSOCIATION_ASSIGN);
     [_playerStatusDisposable dispose];
     self.delegate = nil;
     [_dimmingTapRecognizer.view removeGestureRecognizer:_dimmingTapRecognizer];
@@ -501,7 +875,14 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
     
     if (iosMajorVersion() >= 8 && !TGIsRTL())
     {
-        object_setClass(self.interactivePopGestureRecognizer, [TGNavigationPanGestureRecognizer class]);
+        _originalInteractivePopGestureRecognizerClass = object_getClass(self.interactivePopGestureRecognizer);
+        _fullScreenInteractivePopGestureRecognizerClass = objc_getAssociatedObject(_originalInteractivePopGestureRecognizerClass, &TGNavigationFullScreenPanClassKey);
+        if (_fullScreenInteractivePopGestureRecognizerClass == Nil)
+        {
+            _fullScreenInteractivePopGestureRecognizerClass = freedomMakeClass(_originalInteractivePopGestureRecognizerClass, [TGNavigationFullScreenPanMethods class]);
+            objc_setAssociatedObject(_originalInteractivePopGestureRecognizerClass, &TGNavigationFullScreenPanClassKey, _fullScreenInteractivePopGestureRecognizerClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        [self configureInteractivePopGestureForControllers:self.viewControllers];
         self.interactivePopGestureRecognizer.delaysTouchesBegan = false;
         self.interactivePopGestureRecognizer.delaysTouchesEnded = true;
         self.interactivePopGestureRecognizer.cancelsTouchesInView = true;
@@ -510,7 +891,7 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
         _gestureDelegate.delegate = self.interactivePopGestureRecognizer.delegate;
         
         __weak TGNavigationController *weakSelf = self;
-        _gestureDelegate.shouldBegin = ^bool(TGNavigationPanGestureRecognizer *gestureRecognizer)
+        _gestureDelegate.shouldBegin = ^bool(UIPanGestureRecognizer *gestureRecognizer)
         {
             __strong TGNavigationController *strongSelf = weakSelf;
             if (strongSelf != nil)
@@ -537,7 +918,7 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
             }
             return false;
         };
-        _gestureDelegate.shouldRecognizeWith = ^bool(TGNavigationPanGestureRecognizer *gestureRecognizer, UIGestureRecognizer *otherGestureRecognizer)
+        _gestureDelegate.shouldRecognizeWith = ^bool(UIPanGestureRecognizer *gestureRecognizer, UIGestureRecognizer *otherGestureRecognizer)
         {
             __strong TGNavigationController *strongSelf = weakSelf;
             if (strongSelf != nil)
@@ -698,6 +1079,7 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
 {
     _animatingControllerPush = false;
     _legacyBackTransitionInProgress = false;
+    [self configureInteractivePopGestureForControllers:self.viewControllers];
 
     if (iosMajorVersion() < 5)
     {
@@ -711,6 +1093,44 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
 - (void)setDisplayPlayer:(bool)displayPlayer
 {
     _displayPlayer = displayPlayer;
+    if (iosMajorVersion() < 5)
+    {
+        [_playerStatusDisposable dispose];
+        _playerStatusDisposable = nil;
+        if (displayPlayer)
+        {
+            __weak TGNavigationController *weakSelf = self;
+            _playerStatusDisposable = [[[TGNavigationBar musicPlayerProvider].musicPlayerIsActive deliverOn:[SQueue mainQueue]] startWithNext:^(NSNumber *active)
+            {
+                TGNavigationController *strongSelf = weakSelf;
+                if (strongSelf == nil)
+                    return;
+                bool isActive = [active boolValue];
+                if (isActive && strongSelf->_currentAdditionalNavigationBarHeight < FLT_EPSILON)
+                    strongSelf->_minimizePlayer = false;
+                if (isActive && strongSelf->_legacyMusicPlayerView == nil)
+                {
+                    strongSelf->_legacyMusicPlayerView = [[TGNavigationBar musicPlayerProvider] makeMusicPlayerView:strongSelf];
+                    strongSelf->_legacyMusicPlayerContainer = [[UIView alloc] init];
+                    strongSelf->_legacyMusicPlayerContainer.clipsToBounds = true;
+                    [strongSelf->_legacyMusicPlayerContainer addSubview:strongSelf->_legacyMusicPlayerView];
+                    [strongSelf.view addSubview:strongSelf->_legacyMusicPlayerContainer];
+                }
+                id<TGNavigationBarMusicPlayerProvider> provider = [TGNavigationBar musicPlayerProvider];
+                CGFloat height = [provider respondsToSelector:@selector(musicPlayerHeight)] ? [provider musicPlayerHeight] : 37.0f;
+                strongSelf->_currentAdditionalNavigationBarHeight = isActive ? (strongSelf->_minimizePlayer ? 2.0f : height) : 0.0f;
+                [strongSelf layoutLegacyMusicPlayer];
+                [strongSelf updatePlayerOnControllers];
+            }];
+        }
+        else
+        {
+            _currentAdditionalNavigationBarHeight = 0.0f;
+            [self layoutLegacyMusicPlayer];
+            [self updatePlayerOnControllers];
+        }
+        return;
+    }
     
     if (_displayPlayer && [self.navigationBar isKindOfClass:[TGNavigationBar class]])
     {
@@ -729,7 +1149,7 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
                     [(TGNavigationBar *)self.navigationBar setMinimizedMusicPlayer:_minimizePlayer];
                 }
                 
-                CGFloat currentAdditionalNavigationBarHeight = !isActive ? 0.0f : (strongSelf->_minimizePlayer ? 2.0f : 37.0f);
+                CGFloat currentAdditionalNavigationBarHeight = !isActive ? 0.0f : (strongSelf->_minimizePlayer ? 2.0f : ((TGNavigationBar *)strongSelf.navigationBar).musicPlayerHeight);
                 if (ABS(strongSelf->_currentAdditionalNavigationBarHeight - currentAdditionalNavigationBarHeight) > FLT_EPSILON)
                 {
                     strongSelf->_currentAdditionalNavigationBarHeight = currentAdditionalNavigationBarHeight;
@@ -754,12 +1174,17 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
         _minimizePlayer = minimizePlayer;
         
         if (_currentAdditionalNavigationBarHeight > FLT_EPSILON)
-            _currentAdditionalNavigationBarHeight = _minimizePlayer ? 2.0f : 37.0f;
+        {
+            id<TGNavigationBarMusicPlayerProvider> provider = [TGNavigationBar musicPlayerProvider];
+            CGFloat legacyHeight = [provider respondsToSelector:@selector(musicPlayerHeight)] ? [provider musicPlayerHeight] : 37.0f;
+            _currentAdditionalNavigationBarHeight = _minimizePlayer ? 2.0f : ([self.navigationBar isKindOfClass:[TGNavigationBar class]] ? ((TGNavigationBar *)self.navigationBar).musicPlayerHeight : legacyHeight);
+        }
         if ([self.navigationBar isKindOfClass:[TGNavigationBar class]])
             [(TGNavigationBar *)self.navigationBar setMinimizedMusicPlayer:_minimizePlayer];
         
         [UIView animateWithDuration:0.25 animations:^
         {
+            [self layoutLegacyMusicPlayer];
             [self updatePlayerOnControllers];
         }];
     }
@@ -911,6 +1336,35 @@ static UIView *findDimmingView(UIView *view)
     }
 }
 
+- (void)tgLegacyNavigationBarWillLayout
+{
+    TGNavigationBarPallete *pallete = _legacyNavigationBarPallete ?: ([[LegacyComponentsGlobals provider] respondsToSelector:@selector(navigationBarPallete)] ? [[LegacyComponentsGlobals provider] navigationBarPallete] : nil);
+    for (UINavigationItem *item in self.navigationBar.items)
+        TGNavigationControllerStyleLegacyNavigationItem(item, pallete);
+}
+
+- (void)tgLegacyNavigationBarDidLayout
+{
+    TGNavigationBarPallete *pallete = _legacyNavigationBarPallete ?: ([[LegacyComponentsGlobals provider] respondsToSelector:@selector(navigationBarPallete)] ? [[LegacyComponentsGlobals provider] navigationBarPallete] : nil);
+    TGNavigationControllerApplyNavigationBar(self.navigationBar, _requestedNavigationBarClass, pallete);
+    TGNavigationControllerApplyLegacyTextStyle(self.navigationBar, self.navigationBar, pallete);
+    [self layoutLegacyMusicPlayer];
+    [self updatePlayerOnControllers];
+}
+
+- (void)layoutLegacyMusicPlayer
+{
+    if (_legacyMusicPlayerContainer == nil)
+        return;
+    CGRect barFrame = [self.navigationBar convertRect:self.navigationBar.bounds toView:self.view];
+    id<TGNavigationBarMusicPlayerProvider> provider = [TGNavigationBar musicPlayerProvider];
+    CGFloat height = [provider respondsToSelector:@selector(musicPlayerHeight)] ? [provider musicPlayerHeight] : 37.0f;
+    _legacyMusicPlayerContainer.frame = CGRectMake(CGRectGetMinX(barFrame), CGRectGetMaxY(barFrame), barFrame.size.width, _currentAdditionalNavigationBarHeight);
+    _legacyMusicPlayerContainer.hidden = !_displayPlayer || _currentAdditionalNavigationBarHeight < FLT_EPSILON || self.navigationBarHidden;
+    _legacyMusicPlayerView.frame = CGRectMake(0.0f, _minimizePlayer ? 2.0f - height : 0.0f, barFrame.size.width, height);
+    [self.view bringSubviewToFront:_legacyMusicPlayerContainer];
+}
+
 - (void)layoutNavigationContentView
 {
     CGSize screenSize = TGScreenSize();
@@ -975,6 +1429,8 @@ static UIView *findDimmingView(UIView *view)
         TGNavigationBarPallete *pallete = [[LegacyComponentsGlobals provider] respondsToSelector:@selector(navigationBarPallete)] ? [[LegacyComponentsGlobals provider] navigationBarPallete] : nil;
         TGNavigationControllerApplyNavigationBar(self.navigationBar, _requestedNavigationBarClass, pallete);
         TGNavigationControllerApplyLegacyTextStyle(self.navigationBar, self.navigationBar, pallete);
+        [self tgLegacyNavigationBarWillLayout];
+        [self layoutLegacyMusicPlayer];
     }
 
     _didFirstLayout = true;
@@ -982,7 +1438,8 @@ static UIView *findDimmingView(UIView *view)
 
 - (void)viewDidLayoutSubviews
 {
-    [super viewDidLayoutSubviews];
+    if (iosMajorVersion() >= 5)
+        [super viewDidLayoutSubviews];
     [self layoutNavigationContentView];
 }
 
@@ -995,6 +1452,25 @@ static UIView *findDimmingView(UIView *view)
 
 - (void)updateControllerLayout:(bool)__unused animated
 {
+}
+
+- (void)updateNavigationBarBackgroundForController:(UIViewController *)viewController
+{
+    TGNavigationBarBackgroundVariant backgroundVariant = TGNavigationBarBackgroundVariantDefault;
+    if ([viewController conformsToProtocol:@protocol(TGViewControllerNavigationBarAppearance)] && [viewController respondsToSelector:@selector(navigationBarBackgroundVariant)])
+        backgroundVariant = [(id<TGViewControllerNavigationBarAppearance>)viewController navigationBarBackgroundVariant];
+
+    if (![self.navigationBar isKindOfClass:[TGNavigationBar class]])
+    {
+        TGNavigationControllerUpdateLegacyBrandedBackground(self.navigationBar, backgroundVariant);
+        return;
+    }
+
+    TGNavigationBar *navigationBar = (TGNavigationBar *)self.navigationBar;
+    if (navigationBar.backgroundVariant == backgroundVariant)
+        return;
+    navigationBar.backgroundVariant = backgroundVariant;
+    TGNavigationControllerUpdateLegacyBrandedBackground(navigationBar, backgroundVariant);
 }
 
 - (void)setupNavigationBarForController:(UIViewController *)viewController animated:(bool)animated
@@ -1023,6 +1499,8 @@ static UIView *findDimmingView(UIView *view)
     {
         [self setNavigationBarHidden:navigationBarShouldBeHidden animated:animated];
     }
+
+    [self updateNavigationBarBackgroundForController:viewController];
     
     if ([[LegacyComponentsGlobals provider] isStatusBarHidden] != statusBarShouldBeHidden)
         [[LegacyComponentsGlobals provider] setStatusBarHidden:statusBarShouldBeHidden withAnimation:animated ? UIStatusBarAnimationFade : UIStatusBarAnimationNone];
@@ -1032,7 +1510,7 @@ static UIView *findDimmingView(UIView *view)
 
 - (UIInterfaceOrientation)interfaceOrientation
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 4)
+    if (iosMajorVersion() <= 4)
         return [UIApplication sharedApplication].statusBarOrientation;
     return [super interfaceOrientation];
 }
@@ -1049,7 +1527,7 @@ static UIView *findDimmingView(UIView *view)
 
 - (BOOL)shouldAutorotate
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] < 6)
+    if (iosMajorVersion() < 6)
         return [self shouldAutorotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation];
 
     if (_restrictLandscape)
@@ -1111,11 +1589,12 @@ static UIView *findDimmingView(UIView *view)
         [(TGNavigationBar *)self.navigationBar setHiddenState:hidden animated:animated];
     
     [super setNavigationBarHidden:hidden animated:animated];
+    [self layoutLegacyMusicPlayer];
 }
 
 - (void)setupPlayerOnControllers:(NSArray *)controllers
 {
-    if ((_displayPlayer || _forceAdditionalNavigationBarHeight) && [[self navigationBar] isKindOfClass:[TGNavigationBar class]])
+    if (iosMajorVersion() < 5 || ((_displayPlayer || _forceAdditionalNavigationBarHeight) && [[self navigationBar] isKindOfClass:[TGNavigationBar class]]))
     {
         for (id maybeController in controllers)
         {
@@ -1124,7 +1603,7 @@ static UIView *findDimmingView(UIView *view)
                 TGViewController *controller = maybeController;
                 [controller setAdditionalNavigationBarHeight:_currentAdditionalNavigationBarHeight];
             }
-            else if (_displayPlayer && [maybeController isKindOfClass:[UITabBarController class]] && [maybeController conformsToProtocol:@protocol(TGNavigationControllerTabsController)])
+            else if ((_displayPlayer || iosMajorVersion() < 5) && [maybeController isKindOfClass:[UITabBarController class]] && [maybeController conformsToProtocol:@protocol(TGNavigationControllerTabsController)])
             {
                 [self setupPlayerOnControllers:((UITabBarController *)maybeController).viewControllers];
             }
@@ -1134,7 +1613,7 @@ static UIView *findDimmingView(UIView *view)
 
 - (void)updatePlayerOnControllers
 {
-    if ((_displayPlayer || _forceAdditionalNavigationBarHeight) && [[self navigationBar] isKindOfClass:[TGNavigationBar class]])
+    if (iosMajorVersion() < 5 || ((_displayPlayer || _forceAdditionalNavigationBarHeight) && [[self navigationBar] isKindOfClass:[TGNavigationBar class]]))
     {
         for (id maybeController in [self viewControllers])
         {
@@ -1142,7 +1621,7 @@ static UIView *findDimmingView(UIView *view)
             {
                 [((TGViewController *)maybeController) setAdditionalNavigationBarHeight:_currentAdditionalNavigationBarHeight];
             }
-            else if (_displayPlayer && [maybeController isKindOfClass:[UITabBarController class]] && [maybeController conformsToProtocol:@protocol(TGNavigationControllerTabsController)])
+            else if ((_displayPlayer || iosMajorVersion() < 5) && [maybeController isKindOfClass:[UITabBarController class]] && [maybeController conformsToProtocol:@protocol(TGNavigationControllerTabsController)])
             {
                 for (id controller in ((UITabBarController *)maybeController).viewControllers)
                 {
@@ -1154,6 +1633,26 @@ static UIView *findDimmingView(UIView *view)
             }
         }
     }
+}
+
+- (void)configureInteractivePopGestureForControllers:(NSArray *)controllers
+{
+    if (_originalInteractivePopGestureRecognizerClass == Nil)
+        return;
+    Class previewClass = NSClassFromString(@"QLPreviewController");
+    bool containsPreview = false;
+    for (UIViewController *controller in controllers)
+    {
+        if (previewClass != Nil && [controller isKindOfClass:previewClass])
+        {
+            containsPreview = true;
+            break;
+        }
+    }
+    Class desiredClass = containsPreview ? _originalInteractivePopGestureRecognizerClass : _fullScreenInteractivePopGestureRecognizerClass;
+    UIGestureRecognizer *recognizer = self.interactivePopGestureRecognizer;
+    if (desiredClass != Nil && object_getClass(recognizer) != desiredClass && class_getInstanceSize(desiredClass) == class_getInstanceSize(_originalInteractivePopGestureRecognizerClass))
+        object_setClass(recognizer, desiredClass);
 }
 
 - (void)pushViewController:(UIViewController *)viewController animated:(BOOL)animated
@@ -1175,6 +1674,7 @@ static UIView *findDimmingView(UIView *view)
         [self setupPlayerOnControllers:@[viewController]];
         [self setupStatusBarOnControllers:@[viewController]];
     }
+    [self configureInteractivePopGestureForControllers:[self.viewControllers arrayByAddingObject:viewController]];
     [super pushViewController:viewController animated:animated];
     _isInControllerTransition = false;
     
@@ -1187,8 +1687,6 @@ static UIView *findDimmingView(UIView *view)
         });
     }
     
-    if (iosMajorVersion() >= 8 && [viewController isKindOfClass:[QLPreviewController class]])
-        object_setClass(self.interactivePopGestureRecognizer, [UIScreenEdgePanGestureRecognizer class]);
 }
 
 - (void)setViewControllers:(NSArray *)viewControllers animated:(BOOL)animated
@@ -1204,6 +1702,7 @@ static UIView *findDimmingView(UIView *view)
     _isInControllerTransition = true;
     [self setupPlayerOnControllers:viewControllers];
     [self setupStatusBarOnControllers:viewControllers];
+    [self configureInteractivePopGestureForControllers:viewControllers];
     [super setViewControllers:viewControllers animated:animated];
     _isInControllerTransition = false;
     
@@ -1284,9 +1783,6 @@ static UIView *findDimmingView(UIView *view)
     _isInPopTransition = true;
     UIViewController *result = [super popViewControllerAnimated:animated];
     _isInPopTransition = false;
-    
-    if (iosMajorVersion() >= 8 && !TGIsRTL() && [self.interactivePopGestureRecognizer isKindOfClass:[UIScreenEdgePanGestureRecognizer class]])
-        object_setClass(self.interactivePopGestureRecognizer, [TGNavigationPanGestureRecognizer class]);
     
     return result;
 }
@@ -1452,24 +1948,9 @@ TGNavigationController *findNavigationController()
 @end
 
 
-@implementation TGNavigationPanGestureRecognizer
-
-- (void)_setEdgeRegionSize:(CGFloat)edgeRegionSize
-{
-    __edgeRegionSize = edgeRegionSize;
-}
-
-- (id)recognizerTouchesToIgnoreForEvent:(id)event
-{
-    return nil;
-}
-
-@end
-
-
 @implementation TGNavigationGestureDelegateProxy
 
-- (BOOL)gestureRecognizerShouldBegin:(TGNavigationPanGestureRecognizer *)gestureRecognizer
+- (BOOL)gestureRecognizerShouldBegin:(UIPanGestureRecognizer *)gestureRecognizer
 {
     bool result = [self.delegate respondsToSelector:@selector(gestureRecognizerShouldBegin:)] && [self.delegate gestureRecognizerShouldBegin:gestureRecognizer];
     if (result && self.shouldBegin != nil)
@@ -1477,7 +1958,7 @@ TGNavigationController *findNavigationController()
     return result;
 }
 
-- (BOOL)gestureRecognizer:(TGNavigationPanGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
+- (BOOL)gestureRecognizer:(UIPanGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
 {
     bool result = [self.delegate respondsToSelector:@selector(gestureRecognizer:shouldRecognizeSimultaneouslyWithGestureRecognizer:)] && [self.delegate gestureRecognizer:gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:otherGestureRecognizer];
     if (!result && self.shouldRecognizeWith != nil)

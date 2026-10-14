@@ -3,8 +3,122 @@
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include <math.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#define NSAttributedString TGIOS3AttributedString
+#define NSMutableAttributedString TGIOS3MutableAttributedString
+@class AVCaptureConnection;
+@class AVCaptureOutput;
+@class AVCaptureInputPort;
+@class AVCaptureDevice;
+@class AVPlayer;
+@class AVAsset;
+@class AVAudioSession;
+@class UIGestureRecognizer;
+@class UIPopoverController;
+typedef NSInteger UIUserInterfaceLayoutDirection;
+#ifndef UIUserInterfaceLayoutDirectionLeftToRight
+#define UIUserInterfaceLayoutDirectionLeftToRight 0
+#define UIUserInterfaceLayoutDirectionRightToLeft 1
+#endif
+typedef NSUInteger UIViewAnimationOptions;
+typedef NSUInteger NSStringDrawingOptions;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+typedef NSUInteger UIPopoverArrowDirection;
+#endif
+typedef NSInteger UIStatusBarAnimation;
+typedef NSInteger AVCaptureVideoOrientation;
+#define UIViewAnimationOptionLayoutSubviews (1 << 0)
+#define UIViewAnimationOptionAllowUserInteraction (1 << 1)
+#define UIViewAnimationOptionBeginFromCurrentState (1 << 2)
+#define UIViewAnimationOptionRepeat (1 << 3)
+#define UIViewAnimationOptionAutoreverse (1 << 4)
+#define UIViewAnimationOptionAllowAnimatedContent (1 << 7)
+#define UIViewAnimationOptionCurveEaseInOut (0 << 16)
+#define UIViewAnimationOptionCurveEaseIn (1 << 16)
+#define UIViewAnimationOptionCurveEaseOut (2 << 16)
+#define UIViewAnimationOptionCurveLinear (3 << 16)
+#define UIViewAnimationOptionTransitionFlipFromLeft (1 << 20)
+#define UIViewAnimationOptionTransitionCrossDissolve (5 << 20)
+#ifndef UIStatusBarAnimationNone
+#define UIStatusBarAnimationNone 0
+#define UIStatusBarAnimationFade 1
+#define UIStatusBarAnimationSlide 2
+#endif
+#ifndef AVCaptureVideoOrientationPortrait
+#define AVCaptureVideoOrientationPortrait 1
+#define AVCaptureVideoOrientationPortraitUpsideDown 2
+#define AVCaptureVideoOrientationLandscapeRight 3
+#define AVCaptureVideoOrientationLandscapeLeft 4
+#endif
+#endif
+
+#if __has_include(<CoreVideo/CoreVideo.h>)
 #import <CoreVideo/CoreVideo.h>
+#else
+#include <stdint.h>
+#include <stdbool.h>
+typedef int32_t CVReturn;
+typedef uint64_t CVOptionFlags;
+typedef struct __CVBuffer *CVBufferRef;
+typedef CVBufferRef CVImageBufferRef;
+typedef CVImageBufferRef CVPixelBufferRef;
+typedef CVImageBufferRef CVOpenGLESTextureRef;
+typedef struct __CVOpenGLESTextureCache *CVOpenGLESTextureCacheRef;
+#endif
+
+#if !__has_include(<CoreMedia/CoreMedia.h>)
+typedef int64_t CMTimeValue;
+typedef int32_t CMTimeScale;
+typedef uint32_t CMTimeFlags;
+typedef int64_t CMTimeEpoch;
+typedef struct {
+    CMTimeValue value;
+    CMTimeScale timescale;
+    CMTimeFlags flags;
+    CMTimeEpoch epoch;
+} CMTime;
+typedef struct {
+    CMTime start;
+    CMTime duration;
+} CMTimeRange;
+typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
+typedef const struct opaqueCMFormatDescription *CMFormatDescriptionRef;
+#ifndef kCMTimeFlags_Valid
+#define kCMTimeFlags_Valid (1U << 0)
+#define kCMTimeFlags_HasBeenRounded (1U << 1)
+#define kCMTimeFlags_PositiveInfinity (1U << 2)
+#define kCMTimeFlags_NegativeInfinity (1U << 3)
+#define kCMTimeFlags_Indefinite (1U << 4)
+#endif
+#ifndef CMTIME_IS_VALID
+#define CMTIME_IS_VALID(time) (((time).flags & kCMTimeFlags_Valid) != 0)
+#endif
+#ifndef CMTIME_IS_POSITIVE_INFINITY
+#define CMTIME_IS_POSITIVE_INFINITY(time) (CMTIME_IS_VALID(time) && (((time).flags & kCMTimeFlags_PositiveInfinity) != 0))
+#endif
+#ifndef CMTIME_IS_NEGATIVE_INFINITY
+#define CMTIME_IS_NEGATIVE_INFINITY(time) (CMTIME_IS_VALID(time) && (((time).flags & kCMTimeFlags_NegativeInfinity) != 0))
+#endif
+#ifndef CMTIME_IS_INDEFINITE
+#define CMTIME_IS_INDEFINITE(time) (CMTIME_IS_VALID(time) && (((time).flags & kCMTimeFlags_Indefinite) != 0))
+#endif
+#ifndef CMTIME_IS_NUMERIC
+#define CMTIME_IS_NUMERIC(time) (CMTIME_IS_VALID(time) && !CMTIME_IS_POSITIVE_INFINITY(time) && !CMTIME_IS_NEGATIVE_INFINITY(time) && !CMTIME_IS_INDEFINITE(time) && (time).timescale != 0)
+#endif
+static const CMTime kCMTimeZero = {0, 1, kCMTimeFlags_Valid, 0};
+static const CMTime kCMTimeInvalid = {0, 0, 0, 0};
+static const CMTime kCMTimeIndefinite = {0, 0, kCMTimeFlags_Valid | kCMTimeFlags_Indefinite, 0};
+static inline CMTime CMTimeMake(CMTimeValue value, CMTimeScale timescale) { CMTime t = {value, timescale, kCMTimeFlags_Valid, 0}; return t; }
+static inline CMTime CMTimeMakeWithSeconds(double seconds, int32_t preferredTimescale) { return CMTimeMake((CMTimeValue)(seconds * preferredTimescale), preferredTimescale); }
+static inline double CMTimeGetSeconds(CMTime time) { return time.timescale == 0 ? 0.0 : (double)time.value / (double)time.timescale; }
+static inline CMTimeRange CMTimeRangeMake(CMTime start, CMTime duration) { CMTimeRange range = {start, duration}; return range; }
+static inline CMTime CMTimeRangeGetEnd(CMTimeRange range) { return CMTimeMakeWithSeconds(CMTimeGetSeconds(range.start) + CMTimeGetSeconds(range.duration), range.start.timescale != 0 ? range.start.timescale : range.duration.timescale); }
+static inline int32_t CMTimeCompare(CMTime a, CMTime b) { double av = CMTimeGetSeconds(a), bv = CMTimeGetSeconds(b); return av < bv ? -1 : (av > bv ? 1 : 0); }
+static inline CMTime CMTimeAdd(CMTime a, CMTime b) { CMTimeScale scale = a.timescale != 0 ? a.timescale : (b.timescale != 0 ? b.timescale : 1); return CMTimeMakeWithSeconds(CMTimeGetSeconds(a) + CMTimeGetSeconds(b), scale); }
+static inline CMTime CMTimeSubtract(CMTime a, CMTime b) { CMTimeScale scale = a.timescale != 0 ? a.timescale : (b.timescale != 0 ? b.timescale : 1); return CMTimeMakeWithSeconds(CMTimeGetSeconds(a) - CMTimeGetSeconds(b), scale); }
+#endif
 #import <OpenGLES/EAGL.h>
 #import <OpenGLES/ES2/gl.h>
 #import <dlfcn.h>
@@ -93,6 +207,30 @@ void *TGDispatchGetSpecificCompat(const void *key);
 #define dispatch_get_specific(key) TGDispatchGetSpecificCompat((key))
 #endif
 #import "../../../thirdparty/PSTCollectionView/PSTCollectionView/PSTCollectionView.h"
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000
+#import "../../../thirdparty/PSTCollectionView/PSTCollectionView/PSTCollectionViewFlowLayout.h"
+typedef PSTCollectionViewScrollDirection UICollectionViewScrollDirection;
+typedef PSTCollectionViewScrollPosition UICollectionViewScrollPosition;
+typedef PSTCollectionElementCategory UICollectionElementCategory;
+#ifndef UICollectionViewScrollDirectionVertical
+#define UICollectionViewScrollDirectionVertical PSTCollectionViewScrollDirectionVertical
+#define UICollectionViewScrollDirectionHorizontal PSTCollectionViewScrollDirectionHorizontal
+#endif
+#ifndef UICollectionElementCategoryCell
+#define UICollectionElementCategoryCell PSTCollectionElementCategoryCell
+#define UICollectionElementCategorySupplementaryView PSTCollectionElementCategorySupplementaryView
+#define UICollectionElementCategoryDecorationView PSTCollectionElementCategoryDecorationView
+#endif
+#ifndef UICollectionViewScrollPositionNone
+#define UICollectionViewScrollPositionNone PSTCollectionViewScrollPositionNone
+#define UICollectionViewScrollPositionTop PSTCollectionViewScrollPositionTop
+#define UICollectionViewScrollPositionCenteredVertically PSTCollectionViewScrollPositionCenteredVertically
+#define UICollectionViewScrollPositionBottom PSTCollectionViewScrollPositionBottom
+#define UICollectionViewScrollPositionLeft PSTCollectionViewScrollPositionLeft
+#define UICollectionViewScrollPositionCenteredHorizontally PSTCollectionViewScrollPositionCenteredHorizontally
+#define UICollectionViewScrollPositionRight PSTCollectionViewScrollPositionRight
+#endif
+#endif
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 #define UIPercentDrivenInteractiveTransition TGIOS6PercentDrivenInteractiveTransition
@@ -158,9 +296,216 @@ void *TGDispatchGetSpecificCompat(const void *key);
 #endif
 
 #import <CoreLocation/CoreLocation.h>
-#import <CoreText/CoreText.h>
-#import <AVFoundation/AVFoundation.h>
+#import <MapKit/MapKit.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+typedef struct {
+    double x;
+    double y;
+} MKMapPoint;
 
+typedef struct {
+    double width;
+    double height;
+} MKMapSize;
+
+typedef struct {
+    MKMapPoint origin;
+    MKMapSize size;
+} MKMapRect;
+
+typedef NSInteger MKUserTrackingMode;
+enum {
+    MKUserTrackingModeNone = 0,
+    MKUserTrackingModeFollow = 1,
+    MKUserTrackingModeFollowWithHeading = 2
+};
+
+static const MKMapRect MKMapRectWorld = {{0.0, 0.0}, {268435456.0, 268435456.0}};
+static const MKMapRect MKMapRectNull = {{INFINITY, INFINITY}, {0.0, 0.0}};
+
+static inline CLLocationCoordinate2D CLLocationCoordinate2DMake(CLLocationDegrees latitude, CLLocationDegrees longitude)
+{
+    CLLocationCoordinate2D coordinate;
+    coordinate.latitude = latitude;
+    coordinate.longitude = longitude;
+    return coordinate;
+}
+
+static inline MKMapPoint MKMapPointMake(double x, double y)
+{
+    MKMapPoint point = {x, y};
+    return point;
+}
+
+static inline MKMapSize MKMapSizeMake(double width, double height)
+{
+    MKMapSize size = {width, height};
+    return size;
+}
+
+static inline MKMapRect MKMapRectMake(double x, double y, double width, double height)
+{
+    MKMapRect rect = {{x, y}, {width, height}};
+    return rect;
+}
+
+static inline BOOL MKMapRectIsNull(MKMapRect rect)
+{
+    return isinf(rect.origin.x) || isinf(rect.origin.y);
+}
+
+static inline MKMapRect MKMapRectUnion(MKMapRect rect1, MKMapRect rect2)
+{
+    if (MKMapRectIsNull(rect1))
+        return rect2;
+    if (MKMapRectIsNull(rect2))
+        return rect1;
+    double minX = MIN(rect1.origin.x, rect2.origin.x);
+    double minY = MIN(rect1.origin.y, rect2.origin.y);
+    double maxX = MAX(rect1.origin.x + rect1.size.width, rect2.origin.x + rect2.size.width);
+    double maxY = MAX(rect1.origin.y + rect1.size.height, rect2.origin.y + rect2.size.height);
+    return MKMapRectMake(minX, minY, maxX - minX, maxY - minY);
+}
+
+static inline BOOL MKMapRectContainsPoint(MKMapRect rect, MKMapPoint point)
+{
+    if (MKMapRectIsNull(rect))
+        return NO;
+    return point.x >= rect.origin.x && point.x <= rect.origin.x + rect.size.width && point.y >= rect.origin.y && point.y <= rect.origin.y + rect.size.height;
+}
+
+static inline MKMapPoint MKMapPointForCoordinate(CLLocationCoordinate2D coordinate)
+{
+    const double world = 268435456.0;
+    double latitude = MAX(-85.05112877980659, MIN(85.05112877980659, coordinate.latitude));
+    double longitude = coordinate.longitude;
+    double x = (longitude + 180.0) / 360.0 * world;
+    double sinLatitude = sin(latitude * M_PI / 180.0);
+    double y = (0.5 - log((1.0 + sinLatitude) / (1.0 - sinLatitude)) / (4.0 * M_PI)) * world;
+    return MKMapPointMake(x, y);
+}
+
+static inline CLLocationCoordinate2D MKCoordinateForMapPoint(MKMapPoint point)
+{
+    const double world = 268435456.0;
+    double longitude = point.x / world * 360.0 - 180.0;
+    double mercator = M_PI - 2.0 * M_PI * point.y / world;
+    double latitude = 180.0 / M_PI * atan(sinh(mercator));
+    CLLocationCoordinate2D coordinate;
+    coordinate.latitude = latitude;
+    coordinate.longitude = longitude;
+    return coordinate;
+}
+
+@interface MKMapView (TGIOS3MapKitCompatibility)
+@property (nonatomic) MKUserTrackingMode userTrackingMode;
+@property (nonatomic, readonly) MKMapRect visibleMapRect;
+- (void)setUserTrackingMode:(MKUserTrackingMode)mode animated:(BOOL)animated;
+- (NSSet *)annotationsInMapRect:(MKMapRect)mapRect;
+- (MKMapRect)mapRectThatFits:(MKMapRect)mapRect edgePadding:(UIEdgeInsets)insets;
+- (void)setVisibleMapRect:(MKMapRect)mapRect animated:(BOOL)animated;
+- (void)setVisibleMapRect:(MKMapRect)mapRect edgePadding:(UIEdgeInsets)insets animated:(BOOL)animated;
+@end
+
+@interface CLLocation (TGIOS3DistanceCompatibility)
+- (CLLocationDistance)distanceFromLocation:(const CLLocation *)location;
+@end
+#endif
+#if __has_include(<CoreText/CoreText.h>)
+#import <CoreText/CoreText.h>
+#define TG_LEGACY_HAS_CORETEXT 1
+#else
+#import "OGPlatformText.h"
+#define TG_LEGACY_HAS_CORETEXT OG_PLATFORM_HAS_CORETEXT
+#endif
+#import <AVFoundation/AVFoundation.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#ifndef AVLayerVideoGravityResize
+#define AVLayerVideoGravityResize kCAGravityResize
+#define AVLayerVideoGravityResizeAspect kCAGravityResizeAspect
+#define AVLayerVideoGravityResizeAspectFill kCAGravityResizeAspectFill
+#endif
+#if !__has_include(<AVFoundation/AVAsset.h>)
+@interface AVAssetTrack : NSObject
+@property (nonatomic, readonly) CGSize naturalSize;
+@property (nonatomic, readonly) CGAffineTransform preferredTransform;
+@property (nonatomic, readonly) CMTimeRange timeRange;
+@property (nonatomic, readonly) float nominalFrameRate;
+@end
+@interface AVAsset : NSObject
+@property (nonatomic, readonly) NSArray *tracks;
+@property (nonatomic, readonly) CMTime duration;
++ (instancetype)assetWithURL:(NSURL *)URL;
+- (NSArray *)tracksWithMediaType:(NSString *)mediaType;
+@end
+@interface AVURLAsset : AVAsset
+@property (nonatomic, readonly, copy) NSURL *URL;
++ (instancetype)URLAssetWithURL:(NSURL *)URL options:(NSDictionary *)options;
+- (instancetype)initWithURL:(NSURL *)URL options:(NSDictionary *)options;
+@end
+#endif
+#if !__has_include(<AVFoundation/AVCaptureSession.h>)
+typedef NSInteger AVCaptureFocusMode;
+typedef NSInteger AVCaptureExposureMode;
+typedef NSInteger AVCaptureDevicePosition;
+typedef NSInteger AVCaptureFlashMode;
+typedef NSInteger AVCaptureTorchMode;
+#ifndef AVCaptureFocusModeLocked
+#define AVCaptureFocusModeLocked 0
+#define AVCaptureFocusModeAutoFocus 1
+#define AVCaptureFocusModeContinuousAutoFocus 2
+#endif
+#ifndef AVCaptureExposureModeLocked
+#define AVCaptureExposureModeLocked 0
+#define AVCaptureExposureModeAutoExpose 1
+#define AVCaptureExposureModeContinuousAutoExposure 2
+#endif
+#ifndef AVCaptureDevicePositionUnspecified
+#define AVCaptureDevicePositionUnspecified 0
+#define AVCaptureDevicePositionBack 1
+#define AVCaptureDevicePositionFront 2
+#endif
+#ifndef AVCaptureFlashModeOff
+#define AVCaptureFlashModeOff 0
+#define AVCaptureFlashModeOn 1
+#define AVCaptureFlashModeAuto 2
+#endif
+#ifndef AVCaptureTorchModeOff
+#define AVCaptureTorchModeOff 0
+#define AVCaptureTorchModeOn 1
+#define AVCaptureTorchModeAuto 2
+#endif
+@class AVCaptureInput;
+@class AVCaptureDeviceInput;
+@class AVCaptureOutput;
+@class AVCaptureConnection;
+@class AVCaptureStillImageOutput;
+@class AVCaptureVideoDataOutput;
+@class AVCaptureAudioDataOutput;
+@class AVCaptureDeviceFormat;
+@class AVCaptureVideoPreviewLayer;
+@class AVFrameRateRange;
+@protocol AVCaptureVideoDataOutputSampleBufferDelegate <NSObject>
+@end
+@protocol AVCaptureAudioDataOutputSampleBufferDelegate <NSObject>
+@end
+@interface AVCaptureSession : NSObject
+@property (nonatomic, copy) NSString *sessionPreset;
+@property (nonatomic, readonly, getter=isRunning) BOOL running;
+- (void)beginConfiguration;
+- (void)commitConfiguration;
+- (BOOL)canAddInput:(AVCaptureInput *)input;
+- (void)addInput:(AVCaptureInput *)input;
+- (void)removeInput:(AVCaptureInput *)input;
+- (BOOL)canAddOutput:(AVCaptureOutput *)output;
+- (void)addOutput:(AVCaptureOutput *)output;
+- (void)removeOutput:(AVCaptureOutput *)output;
+- (void)startRunning;
+- (void)stopRunning;
+@end
+#endif
+#endif
+#if __has_include(<AVFoundation/AVCaptureOutput.h>)
 static inline AVCaptureConnection *TGAVCaptureConnectionWithMediaType(AVCaptureOutput *output, NSString *mediaType)
 {
     for (AVCaptureConnection *connection in output.connections)
@@ -173,6 +518,7 @@ static inline AVCaptureConnection *TGAVCaptureConnectionWithMediaType(AVCaptureO
     }
     return nil;
 }
+#endif
 #ifndef TG_LEGACY_NSARRAY_OBJECT_ACCESS_DECLS
 #define TG_LEGACY_NSARRAY_OBJECT_ACCESS_DECLS
 @interface NSArray (LegacyComponentsObjectAccessDeclarations)
@@ -185,6 +531,56 @@ static inline AVCaptureConnection *TGAVCaptureConnectionWithMediaType(AVCaptureO
 #import "../../../thirdparty/PSTCollectionView/PSTCollectionView/PSTCollectionView.h"
 #import <QuartzCore/QuartzCore.h>
 #import "../WebKit/WebKit.h"
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@interface CALayer (TGLegacyRasterizationDeclarations)
+- (void)setShouldRasterize:(BOOL)shouldRasterize;
+- (void)setRasterizationScale:(CGFloat)rasterizationScale;
+- (void)setContentsScale:(CGFloat)contentsScale;
+@end
+#endif
+
+static inline void TGSetLayerShouldRasterize(CALayer *layer, BOOL shouldRasterize)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    SEL selector = @selector(setShouldRasterize:);
+    if ([layer respondsToSelector:selector])
+    {
+        void (*setter)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[layer methodForSelector:selector];
+        setter(layer, selector, shouldRasterize);
+    }
+#else
+    layer.shouldRasterize = shouldRasterize;
+#endif
+}
+
+static inline void TGSetLayerRasterizationScale(CALayer *layer, CGFloat rasterizationScale)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    SEL selector = @selector(setRasterizationScale:);
+    if ([layer respondsToSelector:selector])
+    {
+        void (*setter)(id, SEL, CGFloat) = (void (*)(id, SEL, CGFloat))[layer methodForSelector:selector];
+        setter(layer, selector, rasterizationScale);
+    }
+#else
+    layer.rasterizationScale = rasterizationScale;
+#endif
+}
+
+static inline void TGSetLayerContentsScale(CALayer *layer, CGFloat contentsScale)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    SEL selector = @selector(setContentsScale:);
+    if ([layer respondsToSelector:selector])
+    {
+        void (*setter)(id, SEL, CGFloat) = (void (*)(id, SEL, CGFloat))[layer methodForSelector:selector];
+        setter(layer, selector, contentsScale);
+    }
+#else
+    layer.contentsScale = contentsScale;
+#endif
+}
 
 
 #ifndef TG_ENABLE_AUDIO_NOTES
@@ -270,15 +666,29 @@ NSURL *TGFileURLWithPathRelativeToURL(NSString *path, NSURL *baseURL);
 int cpuCoreCount();
 extern int TGLocalizedStaticVersion;
 TGLocalization *currentNativeLocalization();
+NSString *currentNativeLocalizationCode();
 TGLocalization *nativeEnglishLocalization(void);
 TGLocalization *currentCustomLocalization();
 void setCurrentCustomLocalization(TGLocalization *localization);
 TGLocalization *effectiveLocalization();
+#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
+#undef TGLog
+#undef TGLogv
 void TGLog(NSString *format, ...);
 void TGLogv(NSString *format, va_list args);
+#else
+#undef TGLog
+#define TGLog(...) ((void)0)
+#define TGLogv(...) ((void)0)
+#endif
 bool TGObjectCompare(id obj1, id obj2);
 bool TGStringCompare(NSString *s1, NSString *s2);
+#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
+#undef TGLegacyLog
 void TGLegacyLog(NSString *format, ...);
+#else
+#define TGLegacyLog(...) ((void)0)
+#endif
 int iosMajorVersion();
 int iosMinorVersion();
 void TGDispatchOnMainThread(dispatch_block_t block);
@@ -894,6 +1304,8 @@ typedef NSUInteger UIKeyModifierFlags;
 - (instancetype)initWithSize:(CGSize)size;
 @end
 @interface UITextView (LegacyComponentsTextKitDeclarations)
+@property (nonatomic, copy) NSAttributedString *attributedText;
+@property (nonatomic) BOOL allowsEditingTextAttributes;
 @property (nonatomic, readonly) NSLayoutManager *layoutManager;
 @property (nonatomic, readonly) NSTextContainer *textContainer;
 @property (nonatomic, readonly) NSTextStorage *textStorage;
@@ -1163,9 +1575,11 @@ typedef NSUInteger UIBackgroundFetchResult;
 @interface UIApplication (TGLegacyRemoteNotificationDeclarations)
 - (void)registerForRemoteNotifications;
 @end
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 @interface UILocalNotification (TGLegacyCategoryDeclarations)
 @property (nonatomic, copy) NSString *category;
 @end
+#endif
 @interface NSUserDefaults (TGLegacySuiteDeclarations)
 - (instancetype)initWithSuiteName:(NSString *)suiteName;
 @end
@@ -1196,17 +1610,21 @@ typedef NSUInteger UIBackgroundFetchResult;
 @interface UIViewController (LegacyComponentsPopoverPresentationDeclarations)
 @property (nonatomic, readonly) UIPopoverPresentationController *popoverPresentationController;
 @end
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 30200
 @interface UIPopoverController (LegacyComponentsPopoverBackgroundDeclarations)
 @property (nonatomic, retain) UIColor *backgroundColor;
 @end
+#endif
 #endif
 
 
 #ifndef TG_LEGACY_MORE_UIKIT_DECLS_FROM_PCH
 #define TG_LEGACY_MORE_UIKIT_DECLS_FROM_PCH
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
 @interface UIActivityViewController (TGLegacyPopoverDeclarations)
 @property (nonatomic, readonly) UIPopoverPresentationController *popoverPresentationController;
 @end
+#endif
 @interface UITableView (TGLegacySeparatorInsetDeclarations)
 @property (nonatomic) UIEdgeInsets separatorInset;
 @end
@@ -1246,16 +1664,22 @@ typedef NSInteger AVAuthorizationStatus;
 #define AVAuthorizationStatusDenied 2
 #define AVAuthorizationStatusAuthorized 3
 #endif
+#if __has_include(<AVFoundation/AVPlayer.h>)
 @interface AVPlayer (LegacyComponentsMutedDeclarations)
 @property (nonatomic, getter=isMuted) BOOL muted;
 @end
+#endif
+#if __has_include(<AVFoundation/AVCaptureDevice.h>)
 @interface AVCaptureDevice (LegacyComponentsAuthorizationDeclarations)
 + (AVAuthorizationStatus)authorizationStatusForMediaType:(NSString *)mediaType;
 + (void)requestAccessForMediaType:(NSString *)mediaType completionHandler:(void (^)(BOOL granted))handler;
 @end
+#endif
+#if __has_include(<AVFoundation/AVAudioSession.h>)
 @interface AVAudioSession (LegacyComponentsRecordPermissionDeclarations)
 - (void)requestRecordPermission:(void (^)(BOOL granted))response;
 @end
+#endif
 #endif
 
 #ifndef AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableWithMultipleForegroundApps
@@ -1272,6 +1696,7 @@ typedef NSInteger AVCaptureSessionInterruptionReason;
 @interface PSUICollectionView (LegacyComponentsTransitionDeclarations)
 - (UICollectionViewTransitionLayout *)startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
 - (void)finishInteractiveTransition;
+- (void)cancelInteractiveTransition;
 @end
 
 #endif

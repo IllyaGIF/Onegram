@@ -16,7 +16,6 @@ static inline void IOS6FeatureProbe(NSString *format, ...)
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
 
-    NSLog(@"FEATURE %@", message);
 #else
     (void)format;
 #endif

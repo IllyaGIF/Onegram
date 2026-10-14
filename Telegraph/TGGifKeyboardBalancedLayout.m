@@ -20,7 +20,6 @@
 
 - (void)clearItemFrames
 {
-    // free all item frame arrays
     if (NULL != _itemFrameSections) {
         for (NSInteger i = 0; i < _numberOfItemFrameSections; i++) {
             CGRect *frames = _itemFrameSections[i];
@@ -58,7 +57,6 @@
 
 - (void)initialize
 {
-    // set to NULL so it is not released by accident in dealloc
     _itemFrameSections = NULL;
     
     self.sectionInset = UIEdgeInsetsMake(10, 10, 10, 10);
@@ -93,15 +91,12 @@
     _itemFrameSections = NULL;
     _numberOfItemFrameSections = 0;
     
-    // first release old item frame sections
     [self clearItemFrames];
     
-    // create new item frame sections
     _numberOfItemFrameSections = [self.collectionView numberOfSections];
     _itemFrameSections = (CGRect **)malloc(sizeof(CGRect *) * _numberOfItemFrameSections);
     
     for (int section = 0; section < [self.collectionView numberOfSections]; section++) {
-        // add new item frames array to sections array
         NSInteger numberOfItemsInSections = [self.collectionView numberOfItemsInSection:section];
         CGRect *itemFrames = (CGRect *)malloc(sizeof(CGRect) * numberOfItemsInSections);
         _itemFrameSections[section] = itemFrames;
@@ -173,15 +168,12 @@
     
     CGSize contentSize = CGSizeZero;
     
-    // first release old item frame sections
     [self clearItemFrames];
     
-    // create new item frame sections
     _numberOfItemFrameSections = [self.collectionView numberOfSections];
     _itemFrameSections = (CGRect **)malloc(sizeof(CGRect *) * _numberOfItemFrameSections);
     
     for (int section = 0; section < [self.collectionView numberOfSections]; section++) {
-        // add new item frames array to sections array
         NSInteger numberOfItemsInSections = [self.collectionView numberOfItemsInSection:section];
         CGRect *itemFrames = (CGRect *)malloc(sizeof(CGRect) * numberOfItemsInSections);
         _itemFrameSections[section] = itemFrames;
@@ -288,7 +280,6 @@
         attributes.frame = [self footerFrameForSection:indexPath.section];
     }
     
-    // If there is no header or footer, we need to return nil to prevent a crash from PSUICollectionView private methods.
     if(CGRectIsEmpty(attributes.frame)) {
         attributes = nil;
     }
@@ -393,7 +384,7 @@
             
             CGSize actualSize = CGSizeZero;
             if (self.scrollDirection == UICollectionViewScrollDirectionVertical) {
-                actualSize = CGSizeMake(CGRound(rowSize / summedRatios * (preferredSize.width / preferredSize.height)), _preferredRowSize /*CGRound(rowSize / summedRatios)*/);
+                actualSize = CGSizeMake(CGRound(rowSize / summedRatios * (preferredSize.width / preferredSize.height)), _preferredRowSize );
             }
             else {
                 actualSize = CGSizeMake(CGRound(rowSize / summedRatios), CGRound(rowSize / summedRatios * (preferredSize.height / preferredSize.width)));
@@ -404,7 +395,6 @@
                 frame.size.width = MAX(1.0f, maxWidth - frame.origin.x);
             }
             
-            // copy frame into frames ptr and increment ptr
            *frames++ = frame;
             
             
@@ -420,12 +410,7 @@
             }
         }
         
-        /**
-        * Check if row actually contains any items before changing offset,
-        * because linear partitioning algorithm might return a row with no items.
-        */
         if ([row count] > 0) {
-            // move offset to next line
             if (self.scrollDirection == UICollectionViewScrollDirectionVertical) {
                 offset = CGPointMake(self.sectionInset.left, offset.y + previousItemSize + self.minimumLineSpacing);
             }

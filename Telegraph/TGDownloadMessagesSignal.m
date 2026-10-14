@@ -1,8 +1,5 @@
 #import "TGDownloadMessagesSignal.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -178,7 +175,6 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
 }
 
 + (SSignal *)mediaStickerpacks:(TGMediaAttachment *)attachment {
-    IOS6_NOOP_LOG(@"MEDIA stickers disabled: skip attached sticker packs for %@", NSStringFromClass([attachment class]));
     return [SSignal single:@[]];
     
     SSignal *request = nil;
@@ -229,17 +225,37 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
     getUnreadMentions.min_id = maxId - 1;
     
     return [[[TGTelegramNetworking instance] requestSignal:getUnreadMentions] mapToSignal:^SSignal *(TLmessages_Messages *result) {
-        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
+        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
             NSMutableArray *messageIds = [[NSMutableArray alloc] init];
             NSMutableArray *messageUpdates = [[NSMutableArray alloc] init];
+            int32_t nextMessageId = maxId;
             for (TLMessage *message in result.messages) {
                 [messageIds addObject:@(message.n_id)];
-                [messageUpdates addObject:[[TGDatabaseUpdateMentionUnread alloc] initWithPeerId:peerId messageId:message.n_id]];
+                if (message.n_id < INT32_MAX)
+                    nextMessageId = MAX(nextMessageId, message.n_id + 1);
             }
-            [TGDatabaseInstance() _addUnreadMensionMessageIds:peerId messageIds:messageIds replaceAfter:maxId <= 1 ? 1 : 0 afterFinal:(int32_t)messageIds.count < limit];
+            NSArray *unseenMessageIds = [TGDatabaseInstance() _addUnreadMensionMessageIds:peerId messageIds:messageIds replaceAfter:maxId <= 1 ? 1 : 0 afterFinal:(int32_t)messageIds.count < limit];
+            for (NSNumber *nMessageId in unseenMessageIds) {
+                [messageUpdates addObject:[[TGDatabaseUpdateMentionUnread alloc] initWithPeerId:peerId messageId:[nMessageId intValue]]];
+            }
             [TGDatabaseInstance() transactionUpdateMessages:messageUpdates updateConversationDatas:nil];
             
-            return messageIds.firstObject;
+            if (unseenMessageIds.count != 0)
+                return @{@"messageId": unseenMessageIds.firstObject};
+            if ((int32_t)messageIds.count >= limit)
+                return @{@"continueAfter": @(nextMessageId)};
+            return @{};
+        }] mapToSignal:^SSignal *(NSDictionary *next) {
+            NSNumber *messageId = next[@"messageId"];
+            if (messageId != nil)
+                return [SSignal single:messageId];
+            NSNumber *continueAfter = next[@"continueAfter"];
+            if (continueAfter != nil) {
+                if ([continueAfter intValue] <= maxId)
+                    return [SSignal fail:nil];
+                return [self loadUnseenMentionMessageId:peerId accessHash:accessHash maxId:[continueAfter intValue]];
+            }
+            return [SSignal single:nil];
         }];
     }];
 }
@@ -332,10 +348,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             if (identifier != 0)
                 updatedInfo = dictionary[@(identifier)];
 
-            // Some old cached attachments were converted from a document to a
-            // video attachment and lost the exact dictionary key. A message
-            // still contains a single primary downloadable media object, so
-            // using the sole refreshed origin is safe in this case.
             if (updatedInfo == nil && dictionary.count == 1)
                 updatedInfo = dictionary.allValues.firstObject;
         }
@@ -355,7 +367,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             SSignal *accessHashSignal = [SSignal defer:^SSignal *{
                 TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:origin.cid.longLongValue];
                 int64_t accessHash = conversation.accessHash;
-                while (false) TGLog(@"MEDIA origin refresh peer=%lld mid=%d accessHash=%lld", origin.cid.longLongValue, origin.mid.intValue, accessHash);
                 return [SSignal single:@(accessHash)];
             }];
             
@@ -366,7 +377,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             {
                 TGMessage *message = messages.firstObject;
                 if (message == nil) {
-                    while (false) TGLog(@"MEDIA origin refresh empty peer=%lld mid=%d", origin.cid.longLongValue, origin.mid.intValue);
                     return [SSignal fail:nil];
                 }
                 

@@ -37,8 +37,18 @@
     int32_t _captionMessageId;
     NSString *_reactionSummary;
     NSString *_chosenReaction;
+    TGMessageDiscussionContentProperty *_discussion;
+    int32_t _discussionMessageId;
 }
 @end
+
+static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMessage *message)
+{
+    id property = message.contentProperties[@"ios6Discussion"];
+    if ([property isKindOfClass:[TGMessageDiscussionContentProperty class]] && ((TGMessageDiscussionContentProperty *)property).comments)
+        return property;
+    return nil;
+}
 
 @implementation TGMessageGroupedLayout
 
@@ -49,9 +59,6 @@
     {
         CGSize maxSize;
         [TGImageMessageViewModel calculateImageSizesForImageSize:CGSizeMake(720.0f, 660.0f) thumbnailSize:NULL renderSize:&maxSize squareAspect:false larger:larger];
-        // The media mask keeps a tiny radius even on inner album corners.
-        // A one-point overlap hides those transparent corner pixels and the
-        // black backing beneath them; the normal presentation stays intact.
         CGFloat spacing = [TGPresentation classicIOS6Style] ? 0.0f : 1.0f;
         
         NSString *proportions = @"";
@@ -414,6 +421,20 @@
         {
             _reactionSummary = [reactionValue copy];
         }
+
+        for (TGMessage *message in messages)
+        {
+            TGMessageDiscussionContentProperty *discussion = TGMessageGroupedLayoutDiscussion(message);
+            if (discussion == nil)
+                continue;
+            if (_discussion == nil || message.mid == _mainMessageId)
+            {
+                _discussion = discussion;
+                _discussionMessageId = message.mid;
+            }
+            if (message.mid == _mainMessageId)
+                break;
+        }
     }
     return self;
 }
@@ -474,6 +495,8 @@
     groupedLayout->_captionMessageId = _captionMessageId;
     groupedLayout->_reactionSummary = [_reactionSummary copy];
     groupedLayout->_chosenReaction = [_chosenReaction copy];
+    groupedLayout->_discussion = _discussion;
+    groupedLayout->_discussionMessageId = _discussionMessageId;
     
     TGMessagePhotoInfo *info = newLayouts[@(previousMessage.mid)];
     if (info != nil)
@@ -482,7 +505,10 @@
         [newLayouts removeObjectForKey:@(previousMessage.mid)];
         if (groupedLayout->_mainMessageId == previousMessage.mid)
             groupedLayout->_mainMessageId = message.mid;
+        if (groupedLayout->_discussionMessageId == previousMessage.mid)
+            groupedLayout->_discussionMessageId = message.mid;
     }
+    [groupedLayout updateDiscussion:TGMessageGroupedLayoutDiscussion(message) messageId:message.mid];
 
     if (previousMessage.mid == _captionMessageId || message.caption.length != 0)
     {
@@ -501,6 +527,25 @@
 
     _reactionSummary = [reactionSummary copy];
     _chosenReaction = [chosenReaction copy];
+}
+
+- (void)updateDiscussion:(TGMessageDiscussionContentProperty *)discussion messageId:(int32_t)messageId
+{
+    if (discussion == nil || !discussion.comments)
+    {
+        if (messageId == _discussionMessageId)
+        {
+            _discussion = nil;
+            _discussionMessageId = 0;
+        }
+        return;
+    }
+
+    if (_discussion == nil || messageId == _discussionMessageId || messageId == _mainMessageId)
+    {
+        _discussion = discussion;
+        _discussionMessageId = messageId;
+    }
 }
 
 @end

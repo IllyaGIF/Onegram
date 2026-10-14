@@ -155,7 +155,7 @@
         if (!isRemote || isCurrent)
         {
             NSError *fileCopyError;
-            [[NSFileManager defaultManager] copyItemAtURL:url toURL:targetURL error:&fileCopyError];
+            [[NSFileManager defaultManager] copyItemAtPath:url.path toPath:targetURL.path error:&fileCopyError];
             [url stopAccessingSecurityScopedResource];
             [subscriber putNext:targetURL];
             [subscriber putCompletion];
@@ -169,7 +169,7 @@
             if (error == nil)
             {
                 NSError *fileCopyError;
-                [[NSFileManager defaultManager] copyItemAtURL:url toURL:targetURL error:&fileCopyError];
+                [[NSFileManager defaultManager] copyItemAtPath:url.path toPath:targetURL.path error:&fileCopyError];
                 [url stopAccessingSecurityScopedResource];
                 [subscriber putNext:targetURL];
                 [subscriber putCompletion];

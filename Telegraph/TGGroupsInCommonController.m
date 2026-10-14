@@ -27,13 +27,6 @@ static NSArray *sortedConversations(NSArray *conversations) {
             [safeConversations addObject:object];
     }
     return safeConversations;
-    /*return [conversations sortedArrayUsingComparator:^NSComparisonResult(TGConversation *lhs, TGConversation *rhs) {
-        if (lhs.chatCreationDate > rhs.chatCreationDate) {
-            return NSOrderedAscending;
-        } else {
-            return NSOrderedDescending;
-        }
-    }];*/
 }
 
 @interface TGGroupsInCommonController () {

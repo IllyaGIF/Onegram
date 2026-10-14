@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGAutoDownloadPreferences.h"
 
 @implementation TGAutoDownloadPreferences
@@ -150,6 +151,9 @@
 
 + (bool)shouldDownload:(TGAutoDownloadMode)mode inChat:(TGAutoDownloadChat)chat networkType:(TGNetworkType)networkType
 {
+    if (OGPlatformMediaDownloadsRequireUserAction())
+        return false;
+
     bool isWiFi = networkType == TGNetworkTypeWiFi;
     bool isCellular = !isWiFi && networkType != TGNetworkTypeNone;
     

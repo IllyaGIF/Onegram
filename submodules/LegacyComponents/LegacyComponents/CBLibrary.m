@@ -123,21 +123,21 @@ NSString *const kCBLibraryCurrentUserID = @"currentUserID";
 			return;
 		}
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+		u_int8_t attrValue = 1;
+		setxattr([mediaDirectoryPath fileSystemRepresentation], "com.apple.MobileBackup", &attrValue, sizeof(attrValue), 0, 0);
+#else
 		if(&NSURLIsExcludedFromBackupKey)
 		{
-			if(![[self mediaDirectory] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&error])
+			if(![[self mediaDirectory] setResourceValue:@(YES) forKey:NSURLIsExcludedFromBackupKey error:&error])
 				NSLog(@"*** Failed to set NSURLIsExcludedFromBackupKey for %@, %@", [self mediaDirectory], error);
-		}else
-		{
-			// Set the Do Not Backup extended attribute, http://developer.apple.com/library/ios/#qa/qa1719/_index.html
-
-
-			u_int8_t attrValue = 1;
-			if(setxattr([mediaDirectoryPath fileSystemRepresentation], "com.apple.MobileBackup", &attrValue, sizeof(attrValue), 0, 0))
-			{
-				//KAObjectLogError(@"setxattr(%@) failed: %s (%d)", mediaDirectoryPath, strerror(errno), errno);
-			}
 		}
+		else
+		{
+			u_int8_t attrValue = 1;
+			setxattr([mediaDirectoryPath fileSystemRepresentation], "com.apple.MobileBackup", &attrValue, sizeof(attrValue), 0, 0);
+		}
+#endif
 	}
 
 

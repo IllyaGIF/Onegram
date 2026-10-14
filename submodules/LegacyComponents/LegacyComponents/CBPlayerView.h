@@ -8,7 +8,9 @@
 
 #import <UIKit/UIKit.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <AVFoundation/AVFoundation.h>
+#endif
 
 #import "CBCoubPlayer.h"
 #import "CBPlayerLayerView.h"

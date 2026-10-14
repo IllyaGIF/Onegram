@@ -19,6 +19,7 @@
 #import "TGReplyHeaderActionModel.h"
 
 #import "TGPresentation.h"
+#import "TGPollMediaAttachment.h"
 
 @interface TGModenConcersationReplyAssociatedPanel ()
 {
@@ -36,6 +37,9 @@
     UIImageView *_imageIconView;
     
     NSString *_defaultTitle;
+    TGMessage *_resolvedAuthorMessage;
+    id _resolvedAuthor;
+    NSString *_resolvedTitle;
     bool _compactMode;
     NSString *_compactPrefix;
 }
@@ -174,6 +178,11 @@
     return _compactPrefix;
 }
 
+- (NSString *)contentText
+{
+    return _contentLabel.text;
+}
+
 - (void)setFrame:(CGRect)frame
 {
     [super setFrame:frame];
@@ -284,8 +293,14 @@
     
     NSString *title = @"";
     id author = nil;
+    bool authorResolved = message != nil && message == _resolvedAuthorMessage;
     
-    if (!isSavedMessages)
+    if (authorResolved)
+    {
+        author = _resolvedAuthor;
+        title = _resolvedTitle;
+    }
+    else if (!isSavedMessages)
     {
         if (TGPeerIdIsChannel(message.cid) && TGMessageSortKeySpace(message.sortKey) == TGMessageSpaceImportant) {
             TGConversation *conversation = [TGDatabaseInstance() loadChannels:@[@(message.cid)]][@(message.cid)];
@@ -338,6 +353,12 @@
                 title = user.displayName;
             }
         }
+    }
+    if (!authorResolved)
+    {
+        _resolvedAuthorMessage = message;
+        _resolvedAuthor = author;
+        _resolvedTitle = title;
     }
     _defaultTitle = title;
     
@@ -465,6 +486,11 @@
         else if ([attachment isKindOfClass:[TGContactMediaAttachment class]])
         {
             text = TGLocalized(@"Message.Contact");
+            textColor = mediaTextColor;
+        }
+        else if ([attachment isKindOfClass:[TGPollMediaAttachment class]])
+        {
+            text = [(TGPollMediaAttachment *)attachment previewText];
             textColor = mediaTextColor;
         }
         else if ([attachment isKindOfClass:[TGActionMediaAttachment class]])

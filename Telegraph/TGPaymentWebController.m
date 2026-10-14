@@ -114,16 +114,6 @@
         UIScrollView *scrollView = TGUIWebViewScrollView(webView);
         scrollView.alwaysBounceVertical = false;
         scrollView.alwaysBounceHorizontal = false;
-        /*id scriptObject = [webView performSelector:NSSelectorFromString(TGEncodeText(@"xjoepxTdsjquPckfdu", -1))];
-         if (scriptObject != nil) {
-         __weak TGWebAppController *weakSelf = self;
-         [scriptObject setValue:[[TGWebAppControllerLegacyInterface alloc] initWithEventReceived:^(id event) {
-         __strong TGWebAppController *strongSelf = weakSelf;
-         if (strongSelf != nil) {
-         TGLog(@"legacy event received: %@", event);
-         }
-         }] forKey:@"TelegramEventProxy"];
-         }*/
         _webView = webView;
         if ([[_url.absoluteString lowercaseString] hasPrefix:@"http://"] || [[_url.absoluteString lowercaseString] hasPrefix:@"https://"]) {
             [webView loadRequest:[NSURLRequest requestWithURL:_url]];

@@ -15,10 +15,6 @@ static inline bool TGPeerIdIsChannel(int64_t peerId) {
     return peerId <= ((int64_t)INT32_MIN) * 2 && peerId > ((int64_t)INT32_MIN) * 3;
 }
 
-static inline int64_t TGPeerIdFromChannelId(int32_t channelId) {
-    return ((int64_t)INT32_MIN) * 2 - ((int64_t)channelId);
-}
-
 static inline int32_t TGChannelIdFromPeerId(int64_t peerId) {
     if (TGPeerIdIsChannel(peerId)) {
         return (int32_t)(((int64_t)INT32_MIN) * 2 - peerId);
@@ -48,9 +44,8 @@ static inline bool TGPeerIdIsUser(int64_t peerId) {
 
 #define BIG_CONSTANT(x) (x)
 
-// Other compilers
 
-#else   // defined(_MSC_VER)
+#else
 
 #define FORCE_INLINE __attribute__((always_inline))
 
@@ -64,19 +59,14 @@ static inline uint32_t rotl32 ( uint32_t x, int8_t r )
 
 #define BIG_CONSTANT(x) (x##LLU)
 
-#endif // !defined(_MSC_VER)
+#endif
 
-//-----------------------------------------------------------------------------
-// Block read - if your platform needs to do endian-swapping or can only
-// handle aligned reads, do the conversion here
 
 static FORCE_INLINE uint32_t getblock ( const uint32_t * p, int i )
 {
     return p[i];
 }
 
-//-----------------------------------------------------------------------------
-// Finalization mix - force all bits of a hash block to avalanche
 
 static FORCE_INLINE uint32_t fmix ( uint32_t h )
 {
@@ -89,9 +79,6 @@ static FORCE_INLINE uint32_t fmix ( uint32_t h )
     return h;
 }
 
-//----------
-
-//-----------------------------------------------------------------------------
 
 static void MurmurHash3_x86_32 ( const void * key, int len,
                                 uint32_t seed, void * out )
@@ -104,8 +91,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
     const uint32_t c1 = 0xcc9e2d51;
     const uint32_t c2 = 0x1b873593;
     
-    //----------
-    // body
     
     const uint32_t * blocks = (const uint32_t *)(data + nblocks*4);
     
@@ -122,8 +107,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
         h1 = h1*5+0xe6546b64;
     }
     
-    //----------
-    // tail
     
     const uint8_t * tail = (const uint8_t*)(data + nblocks*4);
     
@@ -137,8 +120,6 @@ static void MurmurHash3_x86_32 ( const void * key, int len,
             k1 *= c1; k1 = ROTL32(k1,15); k1 *= c2; h1 ^= k1;
     };
     
-    //----------
-    // finalization
     
     h1 ^= len;
     
@@ -216,7 +197,6 @@ int32_t murMurHash32(NSString *string)
             NSString *normalizedQuery = [query lowercaseString];
             NSMutableArray *users = [[NSMutableArray alloc] init];
             
-            //FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid FROM contacts_v29"]];
             
             FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid, first_name, last_name, local_first_name, local_last_name, phone_number, access_hash FROM users_v29 WHERE uid IN (SELECT uid FROM contacts_v29)"]];
             while ([result next]) {

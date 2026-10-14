@@ -55,7 +55,6 @@
     UIView *separatorView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, sectionView.frame.origin.y - (first ? separatorHeight : 0.0f), 10, separatorHeight)];
     separatorView.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     separatorView.backgroundColor = TGSeparatorColor();
-    //[sectionContainer addSubview:separatorView];
     
     UILabel *sectionLabel = [[UILabel alloc] init];
     sectionLabel.tag = 100;

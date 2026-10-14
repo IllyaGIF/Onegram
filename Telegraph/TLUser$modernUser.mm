@@ -260,7 +260,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         }
         else
         {
-            if (signature == (int32_t)0x31774388)
+            if (signature == (int32_t)0x31774388 || signature == (int32_t)0xb1b8cc83)
             {
                 int32_t recentStorySignature = [is readInt32];
                 TLMetaClassStore::constructObject(is, recentStorySignature, environment, nil, error);
@@ -311,8 +311,6 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         [is readInt64];
     if (hasModernFlags2 && (flags2 & (1 << 15)))
         [is readInt64];
-    // In user#31774388 flags2.20 is not a serialized field. Reading a long
-    // here consumed the next constructor and corrupted the enclosing vector.
     if (signature == (int32_t)0xb1b8cc83 && (flags2 & (1 << 21)))
         [is readInt64];
     

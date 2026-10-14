@@ -12,6 +12,7 @@
 #import "STPEmailAddressValidator.h"
 #import "STPCardValidator.h"
 #import "STPLocalizationUtils.h"
+#import "../../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface STPAddressFieldTableViewCell() <STPFormTextFieldDelegate, UIPickerViewDelegate, UIPickerViewDataSource>
 
@@ -132,12 +133,12 @@
             self.textField.preservesContentsOnPaste = NO;
             self.textField.selectionEnabled = NO;
             if (!self.lastInList) {
-                self.textField.inputAccessoryView = self.inputAccessoryToolbar;
+                OGPlatformSetTextFieldInputAccessoryView(self.textField, self.inputAccessoryToolbar);
             }
             break;
         case STPAddressFieldTypeCountry:
             self.textField.keyboardType = UIKeyboardTypeDefault;
-            self.textField.inputView = self.countryPickerView;
+            OGPlatformSetTextFieldInputView(self.textField, self.countryPickerView);
             NSInteger index = [self.countryCodes indexOfObject:self.contents];
             if (index == NSNotFound) {
                 self.textField.text = @"";
@@ -158,7 +159,7 @@
             self.textField.preservesContentsOnPaste = NO;
             self.textField.selectionEnabled = NO;
             if (!self.lastInList) {
-                self.textField.inputAccessoryView = self.inputAccessoryToolbar;
+                OGPlatformSetTextFieldInputAccessoryView(self.textField, self.inputAccessoryToolbar);
             }
             break;
         case STPAddressFieldTypeEmail: 

@@ -2,8 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messageFwdHeader flags:# from_id:flags.0?int date:int channel_id:flags.1?int channel_post:flags.2?int post_author:flags.3?string saved_from_peer:flags.4?Peer saved_from_msg_id:flags.4?int = MessageFwdHeader;
-
 
 @implementation TLMessageFwdHeader$messageFwdHeader
 

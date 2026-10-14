@@ -8,6 +8,8 @@
 + (SSignal *)authSessionList;
 + (SSignal *)removeAllOtherSessions;
 + (SSignal *)removeSession:(TGAuthSession *)session;
++ (NSData *)loginTokenFromQRCode:(NSString *)code;
++ (SSignal *)acceptLoginToken:(NSData *)token;
 
 + (SSignal *)loggedAppsSessionList;
 + (SSignal *)removeAllAppSessions;

@@ -77,11 +77,12 @@
     UIFont *titleSecondFont = (_titleBoldMode & 2) ? _titleBoldFont : _titleFont;
     
     CGSize titleFirstSize = [_titleFirst sizeWithFont:titleFirstFont];
-    if (titleFirstSize.width > size.width - _titleOffset.x - 5 - 14)
-        titleFirstSize.width = size.width - _titleOffset.x - 5 - 14;
+    CGFloat rightInset = _titleRightInset > 0.0f ? _titleRightInset : 8.0f;
+    CGFloat availableWidth = MAX(0.0f, size.width - _titleOffset.x - rightInset);
+    titleFirstSize.width = MIN(titleFirstSize.width, MAX(0.0f, availableWidth - (_titleRightInset <= 0.0f || _titleSecond.length != 0 ? 11.0f : 0.0f)));
     
     CGSize titleSecondSize = [_titleSecond sizeWithFont:titleSecondFont];
-    titleSecondSize.width = MIN(titleSecondSize.width, size.width - (_titleOffset.x + titleFirstSize.width + 4) - 8);
+    titleSecondSize.width = MIN(titleSecondSize.width, MAX(0.0f, availableWidth - titleFirstSize.width - 4.0f));
     
     if (_isDisabled)
     {
@@ -91,7 +92,7 @@
         CGContextSetFillColorWithColor(context, disabledColor.CGColor);
     }
     else
-        CGContextSetFillColorWithColor(context, _presentation.pallete.textColor.CGColor);
+        CGContextSetFillColorWithColor(context, (_titleColor ?: _presentation.pallete.textColor).CGColor);
     
     [_titleFirst drawInRect:CGRectMake(_titleOffset.x, _titleOffset.y, titleFirstSize.width, titleFirstSize.height) withFont:titleFirstFont lineBreakMode:NSLineBreakByTruncatingTail];
     

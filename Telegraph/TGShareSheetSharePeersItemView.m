@@ -26,7 +26,6 @@
     UIView *_buttonSeparator;
     
     TGSearchBar *_searchBar;
-    //TGShareSheetSharePeersCaptionView *_captionView;
     
     PSUICollectionView *_collectionView;
     TGShareSheetSharePeersLayout *_layout;
@@ -75,7 +74,6 @@
         [_button setTitleColor:UIColorRGB(0x8e8e93) forState:UIControlStateDisabled];
         _button.titleLabel.font = TGSystemFontOfSize(20.0f + TGRetinaPixel);
         [_button addTarget:self action:@selector(_buttonPressed) forControlEvents:UIControlEventTouchUpInside];
-        //[_button setHighlightImage:[TGShareSheetView selectionBackgroundWithFirst:false last:true]];
         _button.stretchHighlightImage = true;
         _button.highlighted = false;
         [self addSubview:_button];
@@ -95,14 +93,6 @@
         
         __weak TGShareSheetSharePeersItemView *weakSelf = self;
         
-        /*_captionView = [[TGShareSheetSharePeersCaptionView alloc] init];
-        _captionView.heightChanged = ^(CGFloat height) {
-            __strong TGShareSheetSharePeersItemView *strongSelf = weakSelf;
-            if (strongSelf != nil) {
-                [strongSelf updateCaptionHeight:height];
-            }
-        };
-        [self addSubview:_captionView];*/
         
         _chatList = [[[[TGChatListSignals chatListWithLimit:64] map:^id(NSArray *next) {
             __strong TGShareSheetSharePeersItemView *strongSelf = weakSelf;

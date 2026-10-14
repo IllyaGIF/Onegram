@@ -19,12 +19,14 @@
 @property (nonatomic, copy) void (^toggleGroupConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleReadConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleArchiveConversation)(int64_t, bool);
+@property (nonatomic, copy) void (^openCommunity)(int64_t);
 
 @property (nonatomic, strong) ASHandle *watcherHandle;
 
 @property (nonatomic, strong) TGPresentation *presentation;
 
 @property (nonatomic) intptr_t reuseTag;
+@property (nonatomic, strong) TGConversation *preparedConversation;
 @property (nonatomic) int64_t conversationId;
 
 @property (nonatomic, strong) NSString *titleText;
@@ -78,6 +80,7 @@
 @property (nonatomic) bool isBroadcast;
 @property (nonatomic) bool isChannel;
 @property (nonatomic) bool isChannelGroup;
+@property (nonatomic) int64_t linkedCommunityId;
 
 @property (nonatomic) bool isVerified;
 @property (nonatomic) bool isPremium;
@@ -99,7 +102,10 @@
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier assetsSource:(id<TGDialogListCellAssetsSource>)assetsSource;
 
-+ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium deliveryState:(TGMessageDeliveryState)deliveryState;
++ (CGFloat)communityContentInsetForContainerWidth:(CGFloat)containerWidth;
++ (uint64_t)renderCacheGeneration;
+
++ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium deliveryState:(TGMessageDeliveryState)deliveryState dateText:(NSString *)dateText encrypted:(bool)encrypted showsDeliveryStatus:(bool)showsDeliveryStatus branded:(bool)branded classic:(bool)classic;
 + (NSDictionary *)preparedPreviewForConversationId:(int64_t)conversationId messageText:(NSString *)messageText attachments:(NSArray *)attachments isSavedMessages:(int)isSavedMessages isGroupChat:(bool)isGroupChat isChannel:(bool)isChannel isChannelGroup:(bool)isChannelGroup isEncrypted:(bool)isEncrypted encryptionStatus:(int)encryptionStatus encryptionOutgoing:(bool)encryptionOutgoing encryptionFirstName:(NSString *)encryptionFirstName;
 
 - (void)collectCachedPhotos:(NSMutableDictionary *)dict;
@@ -109,6 +115,7 @@
 - (void)stopAnimations;
 
 - (void)resetView:(bool)keepState;
+- (UIColor *)preferredBackgroundColor;
 
 - (void)dismissEditingControls:(bool)animated;
 
@@ -119,6 +126,10 @@
 - (void)setEditingConrolsExpanded:(bool)expanded animated:(bool)animated;
 - (void)setSwipeActionsEnabled:(bool)enabled;
 - (void)setFastScrolling:(bool)fastScrolling;
+- (void)resumeDeferredContent;
+#if defined(ONEGRAM_DIAGNOSTICS)
+- (NSString *)diagnosticState;
+#endif
 
 - (void)animateHighlight;
 

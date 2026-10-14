@@ -172,8 +172,6 @@
         __weak TGInlineBotsInputPanel *weakSelf = self;
         cell.pressed = ^{
             __strong TGInlineBotsInputPanel *strongSelf = weakSelf;
-            if (strongSelf != nil) {
-            }
         };
         return cell;
     } else if (indexPath.section == 1 || indexPath.section == 2) {
@@ -297,7 +295,6 @@
                         [TGHacks setAnimationDurationFactor:1.0f];
                 }
             } @catch(NSException *e) {
-                TGLog(@"%@", e);
                 
             }
         } else if (_temporaryUser != nil) {
@@ -345,7 +342,6 @@
                         }
                     }
                     
-                    //[_collectionView scrollToItemAtIndexPath:[NSIndexPath indexPathForRow:i inSection:2] atScrollPosition:UICollectionViewScrollPositionNone animated:true];
                     
                     break;
                 }

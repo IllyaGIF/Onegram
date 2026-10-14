@@ -30,25 +30,21 @@
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"constructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"constructorName is not implemented for base type");
     return 0;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
 {
-    TGLog(@"TLbuildFromMetaObject is not implemented for base type");
     return nil;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 
@@ -2435,7 +2431,6 @@
     TLUpdate$updatePhoneCallSignalingData *object = [[TLUpdate$updatePhoneCallSignalingData alloc] init];
     object.phone_call_id = metaObject->getInt64((int32_t)0x5d388b94);
     object.data = metaObject->getBytes((int32_t)0xa361765d);
-    TGLog(@"CALL signaling.update.parse call=%lld dataLen=%d", object.phone_call_id, (int)object.data.length);
     return object;
 }
 
@@ -2900,6 +2895,20 @@
 
 @end
 
+@implementation TLUpdate$updateMessagePollCodex
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0xd64c522b;
+}
+
+- (int32_t)TLconstructorName
+{
+    return -1;
+}
+
+@end
+
 @implementation TLUpdate$updateMessageReactionsCodex
 
 - (int32_t)TLconstructorSignature
@@ -2910,6 +2919,70 @@
 - (int32_t)TLconstructorName
 {
     return -1;
+}
+
+@end
+@implementation TLUpdate$updateNewAuthorization
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0x8951abef;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0xedb1c6b6;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLUpdate$updateNewAuthorization *object = [[TLUpdate$updateNewAuthorization alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
+    object.n_hash = metaObject->getInt64((int32_t)0xc152e470);
+    if (object.flags & (1 << 0))
+    {
+        object.date = metaObject->getInt32((int32_t)0xb76958ba);
+        object.device = metaObject->getString((int32_t)0x8bec2723);
+        object.location = metaObject->getString((int32_t)0x504a1f06);
+    }
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_hash;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xc152e470, value));
+    }
+    if (self.flags & (1 << 0))
+    {
+        {
+            TLConstructedValue value;
+            value.type = TLConstructedValueTypePrimitiveInt32;
+            value.primitive.int32Value = self.date;
+            values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xb76958ba, value));
+        }
+        {
+            TLConstructedValue value;
+            value.type = TLConstructedValueTypeString;
+            value.nativeObject = self.device;
+            values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x8bec2723, value));
+        }
+        {
+            TLConstructedValue value;
+            value.type = TLConstructedValueTypeString;
+            value.nativeObject = self.location;
+            values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x504a1f06, value));
+        }
+    }
 }
 
 @end

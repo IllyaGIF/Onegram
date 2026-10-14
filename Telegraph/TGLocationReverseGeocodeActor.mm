@@ -66,7 +66,6 @@ static NSMutableDictionary *cachedGeocodes()
         return;
     }
     
-    //TGLog(@"%@", dict);
     
     NSArray *results = [TGSchema arrayFromObject:[dict objectForKey:@"results"]];
     if (results == nil)
@@ -169,7 +168,6 @@ static NSMutableDictionary *cachedGeocodes()
     if (districtName == nil)
         districtName = neighborhood;
     
-    TGLog(@"Geo: %@, %@, %@, %@, %@", countryName, stateName, cityName, districtName, streetName);
     
     NSMutableDictionary *components = [[NSMutableDictionary alloc] init];
     if (countryName != nil)

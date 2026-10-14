@@ -12,5 +12,6 @@
 
 - (void)setFirstReponder;
 - (void)clearFirstResponder;
+- (void)setKeyboardHeight:(CGFloat)keyboardHeight;
 
 @end

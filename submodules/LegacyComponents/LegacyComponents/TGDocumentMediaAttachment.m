@@ -343,8 +343,6 @@
 }
 
 - (bool)isAnimated {
-    // Round video messages can carry a legacy animated attribute. They must
-    // still be handled by the round-video player, never by the GIF pipeline.
     if ([self isRoundVideo]) {
         return false;
     }
@@ -419,10 +417,6 @@
         }
     }
 
-    // Builds made before the round-message flag was understood have already
-    // persisted such videos as ordinary documents. Recover the only safe
-    // legacy shape here so those cached messages do not fall through to the
-    // generic "open file" action.
     if (videoAttribute != nil && !hasAnimatedAttribute && !hasStickerAttribute &&
         [_mimeType hasPrefix:@"video/"] && _caption.length == 0 &&
         videoAttribute.duration >= 0 && videoAttribute.duration <= 60 &&

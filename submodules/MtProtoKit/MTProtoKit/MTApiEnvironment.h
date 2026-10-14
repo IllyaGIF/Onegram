@@ -44,6 +44,7 @@
 
 @property (nonatomic, strong, readonly) MTSocksProxySettings *socksProxySettings;
 @property (nonatomic, readonly) bool onegramWebSocketEnabled;
+@property (nonatomic, readonly) bool preferHttpTransport;
 @property (nonatomic, strong, readonly) MTNetworkSettings *networkSettings;
 
 @property (nonatomic, copy) void (^passwordInputHandler)();
@@ -51,6 +52,7 @@
 - (MTApiEnvironment *)withUpdatedLangPackCode:(NSString *)langPackCode;
 - (MTApiEnvironment *)withUpdatedSocksProxySettings:(MTSocksProxySettings *)socksProxySettings;
 - (MTApiEnvironment *)withUpdatedOnegramWebSocketEnabled:(bool)onegramWebSocketEnabled;
+- (MTApiEnvironment *)withUpdatedPreferHttpTransport:(bool)preferHttpTransport;
 - (MTApiEnvironment *)withUpdatedNetworkSettings:(MTNetworkSettings *)networkSettings;
 
 @end

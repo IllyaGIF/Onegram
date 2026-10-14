@@ -39,6 +39,14 @@
 #import "../submodules/MtProtoKit/MTProtoKit/MTProtoKit.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+
+static const CGFloat TGModernConversationInputDefaultFontSize = 17.0f;
+static const CGFloat TGModernConversationInputDefaultFieldHeight = 36.0f;
+static const CGFloat TGModernConversationInputTextVerticalInset = 8.0f;
+static const CGFloat TGModernConversationInputTextHorizontalInset = 5.0f;
+static const CGFloat TGModernConversationInputPlaceholderMargin = 1.0f;
+static const CGFloat TGModernConversationInputModeButtonHeight = 33.0f;
 
 static UIImage *TGClassicIOS6InputPanelImage(NSString *name)
 {
@@ -79,11 +87,11 @@ static CGRect viewFrame(UIView *view)
 
 @implementation TGMessageEditingContext
 
-+ (NSAttributedString *)attributedStringForText:(NSString *)text entities:(NSArray *)entities fontSize:(CGFloat)fontSize {
++ (NSAttributedString *)attributedStringForText:(NSString *)text entities:(NSArray *)entities font:(UIFont *)font {
     if (text == nil) {
         return nil;
     }
-    NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:text attributes:@{NSFontAttributeName: TGSystemFontOfSize(fontSize)}];
+    NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:text attributes:@{NSFontAttributeName: font}];
     for (id entity in entities) {
         if ([entity isKindOfClass:[TGMessageEntityMentionName class]]) {
             TGMessageEntityMentionName *mentionEntity = entity;
@@ -100,14 +108,14 @@ static CGRect viewFrame(UIView *view)
             if ([entity isKindOfClass:[TGMessageEntityBold class]]) {
                 TGMessageEntityBold *boldEntity = entity;
                 @try {
-                    [attributedString addAttributes:@{NSFontAttributeName: TGBoldSystemFontOfSize(fontSize)} range:boldEntity.range];
+                    [attributedString addAttributes:@{NSFontAttributeName: TGBoldSystemFontOfSize(font.pointSize)} range:boldEntity.range];
                 } @catch(NSException *e) {
                     TGLog(@"attributedStringForText exception %@", e);
                 }
             } else if ([entity isKindOfClass:[TGMessageEntityItalic class]]) {
                 TGMessageEntityItalic *italicEntity = entity;
                 @try {
-                    [attributedString addAttributes:@{NSFontAttributeName: TGItalicSystemFontOfSize(fontSize)} range:italicEntity.range];
+                    [attributedString addAttributes:@{NSFontAttributeName: TGItalicSystemFontOfSize(font.pointSize)} range:italicEntity.range];
                 } @catch(NSException *e) {
                     TGLog(@"attributedStringForText exception %@", e);
                 }
@@ -164,6 +172,10 @@ static CGRect viewFrame(UIView *view)
     UIView *_backgroundView;
     CAGradientLayer *_classicIOS6BackgroundGradient;
     UIImageView *_classicIOS6BackgroundImageView;
+    UIImageView *_brandedBackgroundImageView;
+    UIImageView *_brandedFieldImageView;
+    CGSize _brandedBackgroundSize;
+    CGFloat _brandedBackgroundTopOutset;
     
     CGFloat _sendButtonWidth;
     
@@ -252,6 +264,7 @@ static CGRect viewFrame(UIView *view)
     
     id _inputTypeObserver;
     SMetaDisposable *_inputTypeKeyboardUpdateDisposable;
+    SMetaDisposable *_linkParsingDisposable;
     
     bool _collapsed;
 }
@@ -265,7 +278,7 @@ static CGRect viewFrame(UIView *view)
     self = [super initWithFrame:frame];
     if (self)
     {
-        _sendButtonWidth = 45.0f;
+        _sendButtonWidth = [self sendButtonAreaWidth];
         _panelAccessoryView = panelAccessoryView;
         
         _backgroundView = [[UIView alloc] init];
@@ -291,25 +304,25 @@ static CGRect viewFrame(UIView *view)
         [_fieldBackground addSubview:_inputFieldPlaceholder];
         
         CGFloat modeWidth = 29.0f;
-        _stickerModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, 33.0f)];
+        _stickerModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, TGModernConversationInputModeButtonHeight)];
         [_stickerModeButton addTarget:self action:@selector(stickerModeButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         _stickerModeButton.adjustsImageWhenHighlighted = false;
         _stickerModeButton.alpha = 0.0f;
         _stickerModeButton.userInteractionEnabled = false;
         
-        _commandModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, 33.0f)];
+        _commandModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, TGModernConversationInputModeButtonHeight)];
         [_commandModeButton addTarget:self action:@selector(commandModeButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         _commandModeButton.adjustsImageWhenHighlighted = false;
         _commandModeButton.alpha = 0.0f;
         _commandModeButton.userInteractionEnabled = false;
         
-        _slashModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, 33.0f)];
+        _slashModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, TGModernConversationInputModeButtonHeight)];
         [_slashModeButton addTarget:self action:@selector(slashModeButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         _slashModeButton.adjustsImageWhenHighlighted = false;
         _slashModeButton.alpha = 0.0f;
         _slashModeButton.userInteractionEnabled = false;
         
-        _broadcastButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, 33.0f)];
+        _broadcastButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, TGModernConversationInputModeButtonHeight)];
         [_broadcastButton setContentEdgeInsets:UIEdgeInsetsMake(0.0f, -2.0f, 0.0f, -2.0f)];
         [_broadcastButton addTarget:self action:@selector(broadcastButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         _broadcastButton.adjustsImageWhenHighlighted = false;
@@ -331,7 +344,7 @@ static CGRect viewFrame(UIView *view)
         _clearButton.alpha = 0.0f;
         _clearButton.userInteractionEnabled = false;
         
-        _keyboardModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, 33.0f)];
+        _keyboardModeButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, modeWidth, TGModernConversationInputModeButtonHeight)];
         [_keyboardModeButton addTarget:self action:@selector(keyboardModeButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         _keyboardModeButton.adjustsImageWhenHighlighted = false;
         _keyboardModeButton.alpha = 0.0f;
@@ -374,7 +387,7 @@ static CGRect viewFrame(UIView *view)
         [self updateSendButtonVisibility];
         [self updateModeButtonVisibility];
         
-        _stickerPacksDisposable = [[[[TGStickersSignals stickerPacks] startOn:[SQueue concurrentDefaultQueue]] deliverOn:[SQueue mainQueue]] startWithNext:^(__unused NSDictionary *stickerPacks)
+        _stickerPacksDisposable = [[[[[SSignal complete] delay:1.5 onQueue:[SQueue mainQueue]] then:[[TGStickersSignals stickerPacks] startOn:[SQueue concurrentDefaultQueue]]] deliverOn:[SQueue mainQueue]] startWithNext:^(__unused NSDictionary *stickerPacks)
         {
             __strong TGModernConversationInputTextPanel *strongSelf = weakSelf;
             if (strongSelf != nil)
@@ -388,7 +401,8 @@ static CGRect viewFrame(UIView *view)
         
         [self updateButtonIcon];
         
-        if (iosMajorVersion() >= 11) //emoji keyboard height update fix
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000
+        if (iosMajorVersion() >= 11)
         {
             _inputTypeKeyboardUpdateDisposable = [[SMetaDisposable alloc] init];
             _inputTypeObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UITextInputCurrentInputModeDidChangeNotification object:nil queue:nil usingBlock:^(__unused NSNotification *note)
@@ -423,6 +437,7 @@ static CGRect viewFrame(UIView *view)
                 }
             }];
         }
+#endif
     }
     return self;
 }
@@ -431,6 +446,7 @@ static CGRect viewFrame(UIView *view)
 {
     [[NSNotificationCenter defaultCenter] removeObserver:_inputTypeObserver];
     [_stickerPacksDisposable dispose];
+    [_linkParsingDisposable dispose];
     
     [self stopAudioRecordingTimer];
 }
@@ -441,10 +457,37 @@ static CGRect viewFrame(UIView *view)
     
     _micButton.pallete = presentation.micButtonPallete;
     
-    _fieldBackground.image = presentation.images.chatInputFieldImage;
     [_attachButton setImage:presentation.images.chatInputAttachIcon forState:UIControlStateNormal];
     [_sendButton setImage:presentation.images.chatInputSendIcon forState:UIControlStateNormal];
-    if ([TGPresentation classicIOS6Style])
+    bool branded = [TGPresentation brandedIOS6Style];
+    _fieldBackground.image = branded ? nil : presentation.images.chatInputFieldImage;
+    _brandedBackgroundImageView.hidden = !branded;
+    _brandedFieldImageView.hidden = !branded;
+    _stripeView.hidden = branded;
+    if (branded)
+    {
+        if (_brandedBackgroundImageView == nil)
+        {
+            _brandedBackgroundImageView = [[UIImageView alloc] init];
+            _brandedBackgroundImageView.userInteractionEnabled = false;
+            [_backgroundView insertSubview:_brandedBackgroundImageView atIndex:0];
+        }
+        if (_brandedFieldImageView == nil)
+        {
+            _brandedFieldImageView = [[UIImageView alloc] init];
+            _brandedFieldImageView.userInteractionEnabled = false;
+            _brandedFieldImageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [_fieldBackground insertSubview:_brandedFieldImageView atIndex:0];
+        }
+        UIEdgeInsets fieldOutsets = UIEdgeInsetsZero;
+        _brandedFieldImageView.image = [TGPresentation brandedIOS6InputFieldImageWithOutsets:&fieldOutsets];
+        _brandedFieldImageView.frame = CGRectMake(-fieldOutsets.left, -fieldOutsets.top, _fieldBackground.bounds.size.width + fieldOutsets.left + fieldOutsets.right, _fieldBackground.bounds.size.height + fieldOutsets.top + fieldOutsets.bottom);
+        _brandedBackgroundSize = CGSizeZero;
+        _classicIOS6BackgroundGradient.hidden = true;
+        _classicIOS6BackgroundImageView.hidden = true;
+        _backgroundView.backgroundColor = [TGPresentation brandedIOS6ConversationAppearance].inputPanelExtensionColor;
+    }
+    else if ([TGPresentation classicIOS6Style])
     {
         UIImage *toolbarImage = TGClassicIOS6InputPanelImage(@"toolbarbg");
         if (toolbarImage != nil)
@@ -488,7 +531,7 @@ static CGRect viewFrame(UIView *view)
     _recordDurationLabel.textColor = presentation.pallete.textColor;
     _slideToCancelLabel.textColor = presentation.pallete.secondaryTextColor;
     
-    _micButtonIconView.image = self.isVideoMessage ? presentation.images.chatInputVideoMessageIcon : presentation.images.chatInputMicrophoneIcon;
+    _micButtonIconView.image = self.isVideoMessage ? presentation.images.chatInputVideoMessageButtonIcon : presentation.images.chatInputMicrophoneButtonIcon;
     
     [_stickerModeButton setImage:presentation.images.chatInputStickersIcon forState:UIControlStateNormal];
     [_commandModeButton setImage:presentation.images.chatInputBotKeyboardIcon forState:UIControlStateNormal];
@@ -514,7 +557,6 @@ static CGRect viewFrame(UIView *view)
     {
         [UIView performWithoutAnimation:^
         {
-            // Recreating the keyboard on iOS 6 loses the currently selected input language.
             bool shouldFlip = iosMajorVersion() >= 7 && _inputField.internalTextView.isFirstResponder;
             if (shouldFlip)
                 [_inputField.internalTextView resignFirstResponder];
@@ -569,7 +611,7 @@ static CGRect viewFrame(UIView *view)
 - (void)_updatePlaceholderImage:(bool)animated {
     static int localizationVersion = 0;
     static UIColor *color = nil;
-    static CGFloat fontSize = 0;
+    static UIFont *font = nil;
     static UIImage *placeholderImage = nil;
     static UIImage *placeholderCaptionImage = nil;
     static UIImage *placeholderBroadcastImage = nil;
@@ -577,8 +619,9 @@ static CGRect viewFrame(UIView *view)
     
     UIColor *placeholderColor = self.presentation.pallete.chatInputPlaceholderColor;
     CGFloat placeholderFontSize = [self fontSize];
+    UIFont *basePlaceholderFont = [self inputFieldFontOfSize:placeholderFontSize];
     
-    if (placeholderImage == nil || localizationVersion != TGLocalizedStaticVersion || ![color isEqual:placeholderColor] || fontSize != placeholderFontSize)
+    if (placeholderImage == nil || localizationVersion != TGLocalizedStaticVersion || ![color isEqual:placeholderColor] || ![font isEqual:basePlaceholderFont])
     {
         CGFloat inputPanelWidth = TGScreenSize().width;
         if (TGIsPad())
@@ -587,7 +630,7 @@ static CGRect viewFrame(UIView *view)
         CGFloat maxPlaceholderWidth = inputPanelWidth - [self baseButtonWidth] * 2 - [self inputFieldInternalEdgeInsets].left - 70.0f;
         {
             NSString *placeholderText = TGLocalized(@"Conversation.InputTextPlaceholder");
-            UIFont *placeholderFont = TGSystemFontOfSize(placeholderFontSize);
+            UIFont *placeholderFont = basePlaceholderFont;
             CGSize placeholderSize = [placeholderText sizeWithFont:placeholderFont];
             placeholderSize.width += 2.0f;
             placeholderSize.height += 2.0f;
@@ -602,7 +645,7 @@ static CGRect viewFrame(UIView *view)
         
         {
             NSString *placeholderText = TGLocalized(@"Conversation.InputTextCaptionPlaceholder");
-            UIFont *placeholderFont = TGSystemFontOfSize(placeholderFontSize);
+            UIFont *placeholderFont = basePlaceholderFont;
             CGSize placeholderSize = [placeholderText sizeWithFont:placeholderFont];
             placeholderSize.width += 2.0f;
             placeholderSize.height += 2.0f;
@@ -618,11 +661,11 @@ static CGRect viewFrame(UIView *view)
         {
             CGFloat currentFontSize = placeholderFontSize;
             NSString *placeholderBroadcastText = TGLocalized(@"Conversation.InputTextBroadcastPlaceholder");
-            UIFont *placeholderFont = TGSystemFontOfSize(currentFontSize);
+            UIFont *placeholderFont = basePlaceholderFont;
             CGSize placeholderSize = [placeholderBroadcastText sizeWithFont:placeholderFont];
             while (placeholderSize.width > maxPlaceholderWidth) {
                 currentFontSize -= 1.0f;
-                placeholderFont = TGSystemFontOfSize(currentFontSize);
+                placeholderFont = [self inputFieldFontOfSize:currentFontSize];
                 placeholderSize = [placeholderBroadcastText sizeWithFont:placeholderFont];
             }
             placeholderSize.width += 2.0f;
@@ -639,11 +682,11 @@ static CGRect viewFrame(UIView *view)
         {
             CGFloat currentFontSize = placeholderFontSize;
             NSString *placeholderSilentBroadcastText = TGLocalized(@"Conversation.InputTextSilentBroadcastPlaceholder");
-            UIFont *placeholderFont = TGSystemFontOfSize(currentFontSize);
+            UIFont *placeholderFont = basePlaceholderFont;
             CGSize placeholderSize = [placeholderSilentBroadcastText sizeWithFont:placeholderFont];
             while (placeholderSize.width > maxPlaceholderWidth) {
                 currentFontSize -= 1.0f;
-                placeholderFont = TGSystemFontOfSize(currentFontSize);
+                placeholderFont = [self inputFieldFontOfSize:currentFontSize];
                 placeholderSize = [placeholderSilentBroadcastText sizeWithFont:placeholderFont];
             }
             placeholderSize.width += 2.0f;
@@ -659,7 +702,7 @@ static CGRect viewFrame(UIView *view)
         
         localizationVersion = TGLocalizedStaticVersion;
         color = placeholderColor;
-        fontSize = placeholderFontSize;
+        font = basePlaceholderFont;
     }
     
     if (animated) {
@@ -689,7 +732,7 @@ static CGRect viewFrame(UIView *view)
         _inputFieldPlaceholder.image = placeholderImage;
     }
     [_inputFieldPlaceholder sizeToFit];
-    setViewFrame(_inputFieldPlaceholder, CGRectMake([self inputFieldPlaceholderOffset].x, TGScreenPixelFloor((_fieldBackground.frame.size.height - _inputFieldPlaceholder.frame.size.height) / 2.0f), _inputFieldPlaceholder.frame.size.width, _inputFieldPlaceholder.frame.size.height));
+    setViewFrame(_inputFieldPlaceholder, CGRectMake([self inputFieldPlaceholderOffset].x, [self inputFieldPlaceholderOffset].y, _inputFieldPlaceholder.frame.size.width, _inputFieldPlaceholder.frame.size.height));
     if (animated) {
         _inputFieldPlaceholder.alpha = 0.0;
         [UIView animateWithDuration:0.25 animations:^{
@@ -700,7 +743,22 @@ static CGRect viewFrame(UIView *view)
 
 - (CGFloat)fontSize
 {
-    return MAX(TGPresentation.fontSize, 17.0f);
+    CGFloat fontSize = MAX(TGPresentation.fontSize, TGModernConversationInputDefaultFontSize);
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputFieldFont.pointSize + fontSize - TGModernConversationInputDefaultFontSize;
+    return fontSize;
+}
+
+- (UIFont *)inputFieldFont
+{
+    return [self inputFieldFontOfSize:[self fontSize]];
+}
+
+- (UIFont *)inputFieldFontOfSize:(CGFloat)size
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [[TGPresentation brandedIOS6ConversationAppearance].inputFieldFont fontWithSize:size];
+    return TGSystemFontOfSize(size);
 }
 
 - (HPGrowingTextView *)maybeInputField
@@ -723,7 +781,7 @@ static CGRect viewFrame(UIView *view)
         _inputField = [[HPGrowingTextView alloc] initWithKeyCommandController:TGAppDelegateInstance.keyCommandController];
         _inputField.frame = CGRectMake(inputFieldInternalEdgeInsets.left, inputFieldInternalEdgeInsets.top, _inputFieldClippingContainer.frame.size.width - inputFieldInternalEdgeInsets.left, _inputFieldClippingContainer.frame.size.height);
         _inputField.placeholderView = _inputFieldPlaceholder;
-        _inputField.font = TGSystemFontOfSize([self fontSize]);
+        _inputField.font = [self inputFieldFont];
         _inputField.clipsToBounds = true;
         _inputField.backgroundColor = nil;
         _inputField.opaque = false;
@@ -845,8 +903,7 @@ static CGRect viewFrame(UIView *view)
     if (text == nil) {
         return nil;
     }
-    NSString *lowercaseText = [text lowercaseString];
-    if ([lowercaseText rangeOfString:@"http://"].location == NSNotFound && [lowercaseText rangeOfString:@"https://"].location == NSNotFound)
+    if ([text rangeOfString:@"http://" options:NSCaseInsensitiveSearch].location == NSNotFound && [text rangeOfString:@"https://" options:NSCaseInsensitiveSearch].location == NSNotFound)
     {
         return nil;
     }
@@ -859,7 +916,7 @@ static CGRect viewFrame(UIView *view)
                   });
     
     __block NSString *linkCandidate = nil;
-    [[dataDetector matchesInString:text options:0 range:NSMakeRange(0, text.length)] enumerateObjectsUsingBlock:^(NSTextCheckingResult *result, __unused NSUInteger idx, BOOL *stop)
+    [dataDetector enumerateMatchesInString:text options:0 range:NSMakeRange(0, text.length) usingBlock:^(NSTextCheckingResult *result, __unused NSMatchingFlags flags, BOOL *stop)
      {
          NSString *lowercaseScheme = [[result URL].scheme lowercaseString];
          if ([lowercaseScheme isEqualToString:@"http"] || [lowercaseScheme isEqualToString:@"https"])
@@ -873,21 +930,14 @@ static CGRect viewFrame(UIView *view)
     return linkCandidate;
 }
 
-- (void)growingTextViewDidChange:(HPGrowingTextView *)growingTextView afterSetText:(bool)afterSetText afterPastingText:(bool)afterPastingText
+- (void)updateInputQueries:(HPGrowingTextView *)growingTextView
 {
-    if (!afterSetText && ![growingTextView.text isEqualToString:@"@gif "]) {
-        _removeGifTabTextOnDeactivation = false;
-    }
-    
     id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
-    
     NSString *text = growingTextView.text;
     int textLength = (int)text.length;
-    
-    bool hasNonWhitespace = [text hasNonWhitespaceCharacters];
-    
-    NSInteger idx = (NSInteger)_inputField.internalTextView.selectedRange.location;
-    idx--;
+
+    NSInteger idx = (NSInteger)growingTextView.internalTextView.selectedRange.location;
+    idx = growingTextView.internalTextView.selectedRange.length == 0 ? idx - 1 : -1;
     
     NSString *candidateMention = nil;
     bool candidateMentionStartOfLine = false;
@@ -911,7 +961,7 @@ static CGRect viewFrame(UIView *view)
             unichar previousC = 0;
             if (i > 0)
                 previousC = [text characterAtIndex:i - 1];
-            if (c == '@' && (previousC == 0 || ![characterSet characterIsMember:previousC]))
+            if (c == '@' && (previousC == 0 || ![HPGrowingTextView isMentionCharacter:previousC]))
             {
                 if (i == idx) {
                     candidateMention = @"";
@@ -927,7 +977,7 @@ static CGRect viewFrame(UIView *view)
                 break;
             }
             
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'))
+            if (![HPGrowingTextView isMentionCharacter:c])
                 break;
         }
     }
@@ -1074,9 +1124,38 @@ static CGRect viewFrame(UIView *view)
     if ([delegate respondsToSelector:@selector(inputPanelAlphacodeEntered:alphacode:)])
         [delegate inputPanelAlphacodeEntered:self alphacode:candidateAlphacode];
     
-    NSString *linkCandidate = [TGModernConversationInputTextPanel linkCandidateInText:text];
-    if ([delegate respondsToSelector:@selector(inputPanelLinkParsed:link:probablyComplete:)])
-        [delegate inputPanelLinkParsed:self link:linkCandidate probablyComplete:afterPastingText];
+}
+
+- (void)growingTextViewDidChangeSelection:(HPGrowingTextView *)growingTextView
+{
+    [self updateInputQueries:growingTextView];
+}
+
+- (void)growingTextViewDidChange:(HPGrowingTextView *)growingTextView afterSetText:(bool)afterSetText afterPastingText:(bool)afterPastingText
+{
+    if (!afterSetText && ![growingTextView.text isEqualToString:@"@gif "]) {
+        _removeGifTabTextOnDeactivation = false;
+    }
+    
+    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    
+    NSString *text = growingTextView.text;
+    bool hasNonWhitespace = [text hasNonWhitespaceCharacters];
+    
+    [self updateInputQueries:growingTextView];
+
+    if (_linkParsingDisposable == nil)
+        _linkParsingDisposable = [[SMetaDisposable alloc] init];
+    __weak TGModernConversationInputTextPanel *weakSelf = self;
+    SSignal *linkSignal = [[[[[SSignal complete] delay:0.15 onQueue:[SQueue concurrentDefaultQueue]] then:[SSignal single:text ?: @""]] map:^id(NSString *value) {
+        return [TGModernConversationInputTextPanel linkCandidateInText:value] ?: @"";
+    }] deliverOn:[SQueue mainQueue]];
+    [_linkParsingDisposable setDisposable:[linkSignal startWithNext:^(NSString *link) {
+        TGModernConversationInputTextPanel *panel = weakSelf;
+        id<TGModernConversationInputTextPanelDelegate> currentDelegate = (id<TGModernConversationInputTextPanelDelegate>)panel.delegate;
+        if (panel != nil && [currentDelegate respondsToSelector:@selector(inputPanelLinkParsed:link:probablyComplete:)])
+            [currentDelegate inputPanelLinkParsed:panel link:link.length == 0 ? nil : link probablyComplete:afterPastingText];
+    }]];
     
     bool sendButtonEnabled = hasNonWhitespace;
     if ([delegate respondsToSelector:@selector(inputPanelSendShouldBeAlwaysEnabled:)])
@@ -1140,8 +1219,6 @@ static CGRect viewFrame(UIView *view)
     TGModernButton *buttonToHide = customKeyboardVisible ? _stickerModeButton : _keyboardModeButton;
     TGModernButton *buttonToShow = customKeyboardVisible ? _keyboardModeButton : _stickerModeButton;
 
-    // These buttons occupy the same frame.  Keeping the outgoing button alive
-    // during a keyboard transition makes both glyphs visible on older UIKit.
     removeViewAnimation(buttonToHide, @"transform");
     removeViewAnimation(buttonToHide, @"opacity");
     buttonToHide.alpha = 0.0f;
@@ -1530,7 +1607,7 @@ static CGRect viewFrame(UIView *view)
     
     UIColor *overlayColor = self.presentation.pallete.chatInputSendButtonIconColor;
     _micButton.icon = videoMessage ? TGTintedImage(self.presentation.images.chatInputVideoMessageIcon, overlayColor) : TGTintedImage(self.presentation.images.chatInputMicrophoneIcon, overlayColor);
-    _micButtonIconView.image = videoMessage ? self.presentation.images.chatInputVideoMessageIcon : self.presentation.images.chatInputMicrophoneIcon;
+    _micButtonIconView.image = videoMessage ? self.presentation.images.chatInputVideoMessageButtonIcon : self.presentation.images.chatInputMicrophoneButtonIcon;
 }
 
 - (bool)isVideoMessage
@@ -1603,9 +1680,6 @@ static CGRect viewFrame(UIView *view)
             __weak TGModernConversationInputTextPanel *weakSelf = self;
             [delegate inputPanelAudioRecordingStart:self video:false completion:^{
                 TGModernConversationInputTextPanel *strongSelf = weakSelf;
-                if (strongSelf != nil) {
-                    
-                }
             }];
         }
     }
@@ -1819,7 +1893,7 @@ static CGRect viewFrame(UIView *view)
 
 - (bool)micButtonShouldLock
 {
-    return !self.lockImmediately;// && _recording;
+    return !self.lockImmediately;
 }
 
 - (int)_maxNumberOfLinesForSize:(CGSize)size
@@ -1846,11 +1920,23 @@ static CGRect viewFrame(UIView *view)
         [self changeToSize:size keyboardHeight:keyboardHeight duration:0.0 contentAreaHeight:contentAreaHeight safeAreaInset:safeAreaInset];
     }
     
-    [self _adjustForSize:size keyboardHeight:keyboardHeight inputFieldHeight:_inputField == nil ? 36.0f : _inputField.frame.size.height duration:duration animationCurve:animationCurve contentAreaHeight:contentAreaHeight safeAreaInset:safeAreaInset dismissOffset:dismissOffset];
+    [self _adjustForSize:size keyboardHeight:keyboardHeight inputFieldHeight:_inputField == nil ? TGModernConversationInputDefaultFieldHeight : _inputField.frame.size.height duration:duration animationCurve:animationCurve contentAreaHeight:contentAreaHeight safeAreaInset:safeAreaInset dismissOffset:dismissOffset];
+}
+
+- (CGFloat)sendButtonAreaWidth
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputFieldInsets.right;
+    return 45.0f;
 }
 
 - (CGFloat)baseButtonWidth
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+        return appearance.inputPanelPadding.left + appearance.inputButtonSize + appearance.inputPanelPadding.right;
+    }
      CGFloat value = 45.0f;
     if (TGIsPad())
         value += 11.0f;
@@ -1859,6 +1945,8 @@ static CGRect viewFrame(UIView *view)
 
 - (CGFloat)baseHeight
 {
+    if ([TGPresentation brandedIOS6Style])
+        return [TGPresentation brandedIOS6ConversationAppearance].inputPanelHeight;
     CGFloat value = 45.0f;
     switch ((int)[self fontSize])
     {
@@ -1895,6 +1983,11 @@ static CGRect viewFrame(UIView *view)
 
 - (UIEdgeInsets)inputFieldInsets
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        UIEdgeInsets brandedInsets = [TGPresentation brandedIOS6ConversationAppearance].inputFieldInsets;
+        return UIEdgeInsetsMake(brandedInsets.top, brandedInsets.left, brandedInsets.bottom, 0.0f);
+    }
     static UIEdgeInsets insets;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
@@ -1910,6 +2003,11 @@ static CGRect viewFrame(UIView *view)
 
 - (UIEdgeInsets)inputFieldInternalEdgeInsets
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        UIEdgeInsets textInsets = [TGPresentation brandedIOS6ConversationAppearance].inputFieldTextInsets;
+        return UIEdgeInsetsMake(textInsets.top - TGModernConversationInputTextVerticalInset, textInsets.left - TGModernConversationInputTextHorizontalInset, 0.0f, 0.0f);
+    }
     static UIEdgeInsets insets;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
@@ -1922,6 +2020,11 @@ static CGRect viewFrame(UIView *view)
 
 - (CGPoint)inputFieldPlaceholderOffset
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        UIEdgeInsets textInsets = [TGPresentation brandedIOS6ConversationAppearance].inputFieldTextInsets;
+        return CGPointMake(textInsets.left - TGModernConversationInputPlaceholderMargin, textInsets.top - TGModernConversationInputPlaceholderMargin);
+    }
     static CGPoint offset;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
@@ -1935,6 +2038,16 @@ static CGRect viewFrame(UIView *view)
     return offset;
 }
 
+- (CGFloat)inputFieldHeightCompensation
+{
+    if ([TGPresentation brandedIOS6Style])
+    {
+        UIEdgeInsets textInsets = [TGPresentation brandedIOS6ConversationAppearance].inputFieldTextInsets;
+        return TGModernConversationInputTextVerticalInset * 2.0f - textInsets.top - textInsets.bottom;
+    }
+    return 4.0f;
+}
+
 - (CGFloat)heightForInputFieldHeight:(CGFloat)inputFieldHeight
 {
     if (_collapsed)
@@ -1944,7 +2057,7 @@ static CGRect viewFrame(UIView *view)
         inputFieldHeight += 1;
     
     UIEdgeInsets inputFieldInsets = [self inputFieldInsets];
-    CGFloat height = MAX([self baseHeight], inputFieldHeight - 4 + inputFieldInsets.top + inputFieldInsets.bottom);
+    CGFloat height = MAX([self baseHeight], inputFieldHeight - [self inputFieldHeightCompensation] + inputFieldInsets.top + inputFieldInsets.bottom);
     
     return height + [self extendedPanelHeight];
 }
@@ -2013,7 +2126,7 @@ static CGRect viewFrame(UIView *view)
     
     CGRect inputFieldClippingFrame = CGRectMake(inputFieldInsets.left, inputFieldInsets.top, _parentSize.width - inputFieldInsets.left - inputFieldInsets.right - sendAreaInset - _panelAccessoryView.frame.size.width - _safeAreaInset.left - _safeAreaInset.right, 0.0f);
     
-    CGRect inputFieldFrame = CGRectMake(inputFieldInternalEdgeInsets.left, inputFieldInternalEdgeInsets.top, inputFieldClippingFrame.size.width - inputFieldInternalEdgeInsets.left, 0.0f);
+    CGRect inputFieldFrame = CGRectMake(inputFieldInternalEdgeInsets.left, inputFieldInternalEdgeInsets.top, inputFieldClippingFrame.size.width - inputFieldInternalEdgeInsets.left, _inputField.frame.size.height);
     
     setViewFrame(_inputField, inputFieldFrame);
     [_inputField setMaxNumberOfLines:[self _maxNumberOfLinesForSize:_parentSize]];
@@ -2088,7 +2201,7 @@ static CGRect viewFrame(UIView *view)
 - (void)growingTextView:(HPGrowingTextView *)__unused growingTextView willChangeHeight:(CGFloat)height duration:(NSTimeInterval)duration animationCurve:(int)animationCurve
 {
     UIEdgeInsets inputFieldInsets = [self inputFieldInsets];
-    CGFloat inputContainerHeight = MAX([self baseHeight], height - 4 + inputFieldInsets.top + inputFieldInsets.bottom) + [self extendedPanelHeight];
+    CGFloat inputContainerHeight = MAX([self baseHeight], height - [self inputFieldHeightCompensation] + inputFieldInsets.top + inputFieldInsets.bottom) + [self extendedPanelHeight];
     CGFloat customKeyboardHeight = [self customKeyboardHeight];
     
     [self updateCustomKeyboardFrame:inputContainerHeight];
@@ -2107,6 +2220,11 @@ static CGRect viewFrame(UIView *view)
 
 - (CGFloat)modeButtonOffset
 {
+    if ([TGPresentation brandedIOS6Style])
+    {
+        OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+        return [self baseHeight] - appearance.inputFieldInsets.bottom - (appearance.inputFieldHeight + TGModernConversationInputModeButtonHeight) / 2.0f;
+    }
     CGFloat value = 0.0f;
     switch ((int)[self fontSize])
     {
@@ -2133,6 +2251,18 @@ static CGRect viewFrame(UIView *view)
     return value;
 }
 
+- (void)layoutBrandedBackgroundForSize:(CGSize)size
+{
+    if (!CGSizeEqualToSize(_brandedBackgroundSize, size))
+    {
+        CGFloat topOutset = 0.0f;
+        _brandedBackgroundImageView.image = [TGPresentation brandedIOS6InputPanelBackgroundImageForSize:size topOutset:&topOutset];
+        _brandedBackgroundTopOutset = topOutset;
+        _brandedBackgroundSize = size;
+    }
+    _brandedBackgroundImageView.frame = CGRectMake(0.0f, -_brandedBackgroundTopOutset, size.width, size.height + _brandedBackgroundTopOutset);
+}
+
 - (void)updateMainLayout:(CGFloat)globalVerticalOffset
 {
     CGRect frame = self.frame;
@@ -2144,6 +2274,8 @@ static CGRect viewFrame(UIView *view)
         _classicIOS6BackgroundGradient.frame = _backgroundView.bounds;
     if (_classicIOS6BackgroundImageView != nil)
         _classicIOS6BackgroundImageView.frame = _backgroundView.bounds;
+    if (_brandedBackgroundImageView != nil && !_brandedBackgroundImageView.hidden)
+        [self layoutBrandedBackgroundForSize:CGSizeMake(_backgroundView.bounds.size.width, frame.size.height)];
     
     bool displayPanels = [self shouldDisplayPanels];
     
@@ -2166,7 +2298,7 @@ static CGRect viewFrame(UIView *view)
     
     CGFloat modeButtonVerticalOffset = -[self baseHeight] + [self modeButtonOffset];
     setViewFrame(_fieldBackground, CGRectMake(inputFieldInsets.left, globalVerticalOffset + inputFieldInsets.top + [self extendedPanelHeight], frame.size.width - inputFieldInsets.left - inputFieldInsets.right - sendAreaInset, frame.size.height - inputFieldInsets.top - inputFieldInsets.bottom - [self extendedPanelHeight]));
-    setViewFrame(_inputFieldPlaceholder, CGRectMake([self inputFieldPlaceholderOffset].x, TGScreenPixelFloor((_fieldBackground.frame.size.height - _inputFieldPlaceholder.frame.size.height) / 2.0f), _inputFieldPlaceholder.frame.size.width, _inputFieldPlaceholder.frame.size.height));
+    setViewFrame(_inputFieldPlaceholder, CGRectMake([self inputFieldPlaceholderOffset].x, [self inputFieldPlaceholderOffset].y, _inputFieldPlaceholder.frame.size.width, _inputFieldPlaceholder.frame.size.height));
     if (_panelAccessoryView != nil)
     {
         setViewFrame(_panelAccessoryView, CGRectMake(CGRectGetMaxX(_fieldBackground.frame) - _panelAccessoryView.frame.size.width - TGScreenPixel, globalVerticalOffset + frame.size.height + modeButtonVerticalOffset + 1.0f, _panelAccessoryView.frame.size.width, _panelAccessoryView.frame.size.height));
@@ -2206,7 +2338,7 @@ static CGRect viewFrame(UIView *view)
     _micButton.center = CGPointMake(CGRectGetMidX(newMicButtonFrame), globalVerticalOffset + CGRectGetMidY(newMicButtonFrame));
     
     CGRect micButtonFrame = viewFrame(_micButton);
-    CGRect newMicButtonIconViewFrame =  CGRectMake(CGFloor((micButtonFrame.size.width - _micButtonIconView.frame.size.width) / 2.0f), CGFloor((micButtonFrame.size.height - _micButtonIconView.frame.size.height) / 2.0f) + TGScreenPixel, _micButtonIconView.frame.size.width, _micButtonIconView.frame.size.height);
+    CGRect newMicButtonIconViewFrame =  CGRectMake(CGFloor((micButtonFrame.size.width - _micButtonIconView.frame.size.width) / 2.0f), CGFloor((micButtonFrame.size.height - _micButtonIconView.frame.size.height) / 2.0f) + ([TGPresentation brandedIOS6Style] ? 0.0f : TGScreenPixel), _micButtonIconView.frame.size.width, _micButtonIconView.frame.size.height);
     _micButtonIconView.center = CGPointMake(CGRectGetMidX(newMicButtonIconViewFrame), CGRectGetMidY(newMicButtonIconViewFrame));;
     
     if (_slideToCancelLabel != nil)
@@ -2262,7 +2394,6 @@ static CGRect viewFrame(UIView *view)
         _associatedPanel.safeAreaInset = _safeAreaInset;
         if (!CGRectEqualToRect(associatedPanelFrame, _associatedPanel.frame)) {
             _associatedPanel.frame = associatedPanelFrame;
-            //[_associatedPanel layoutSubviews];
         }
     }
     
@@ -2478,7 +2609,7 @@ static CGRect viewFrame(UIView *view)
         [self removeDotAnimation];
         NSTimeInterval durationFactor = MIN(0.4, MAX(1.0, velocity / 1000.0));
         
-        _micButtonIconView.image = self.isVideoMessage ? self.presentation.images.chatInputVideoMessageIcon : self.presentation.images.chatInputMicrophoneIcon;
+        _micButtonIconView.image = self.isVideoMessage ? self.presentation.images.chatInputVideoMessageButtonIcon : self.presentation.images.chatInputMicrophoneButtonIcon;
         
         int options = 0;
         
@@ -2638,7 +2769,7 @@ static CGRect viewFrame(UIView *view)
     _recording = false;
     [self updateSendButtonVisibility:false];
     [_micButton animateOut];
-    _micButtonIconView.image = self.isVideoMessage ? self.presentation.images.chatInputVideoMessageIcon : self.presentation.images.chatInputMicrophoneIcon;
+    _micButtonIconView.image = self.isVideoMessage ? self.presentation.images.chatInputVideoMessageButtonIcon : self.presentation.images.chatInputMicrophoneButtonIcon;
     
     if ([self isVideoMessage])
         _micButton.hidden = true;
@@ -3588,7 +3719,6 @@ static CGRect viewFrame(UIView *view)
         [self setCurrentReplyMarkup:[self currentReplyMarkup]];
         
         bool shouldShowBotKeyboard = replyMarkup != nil && !replyMarkup.isInline && replyMarkup.rows.count != 0 && !replyMarkup.manuallyHidden && (!replyMarkup.hideKeyboardOnActivation || !replyMarkup.alreadyActivated);
-        TGLog(@"BOT inputPanel setReplyMarkup rows=%d inline=%d enable=%d canAuto=%d shouldShow=%d custom=%@", (int)replyMarkup.rows.count, replyMarkup.isInline ? 1 : 0, _enableKeyboard ? 1 : 0, _canShowKeyboardAutomatically ? 1 : 0, shouldShowBotKeyboard ? 1 : 0, NSStringFromClass([_customKeyboardView class]));
         if (shouldShowBotKeyboard && ![_customKeyboardView isKindOfClass:[TGCommandKeyboardView class]])
         {
             _canShowKeyboardAutomatically = true;
@@ -3759,7 +3889,7 @@ static CGRect viewFrame(UIView *view)
                 _contextPlaceholderLabel = [[UILabel alloc] init];
                 _contextPlaceholderLabel.textColor = UIColorRGB(0xbebec0);
                 _contextPlaceholderLabel.backgroundColor = [UIColor clearColor];
-                _contextPlaceholderLabel.font = TGSystemFontOfSize([self fontSize]);
+                _contextPlaceholderLabel.font = [self inputFieldFont];
             }
             
             if (_contextPlaceholderLabel.superview == nil) {
@@ -3812,40 +3942,6 @@ static CGRect viewFrame(UIView *view)
 }
 
 - (void)updateContextBotInputMode {
-    /*if (_contextBotInputMode || _contextBotMode || _mentionTextMode != nil) {
-     if (_inlineBotsPanel == nil) {
-     _inlineBotsPanel = [[TGInlineBotsInputPanel alloc] init];
-     __weak TGModernConversationInputTextPanel *weakSelf = self;
-     _inlineBotsPanel.botSelected = ^(TGUser *user) {
-     __strong TGModernConversationInputTextPanel *strongSelf = weakSelf;
-     if (strongSelf != nil && user != nil) {
-     [strongSelf replaceInlineBot:user.userName];
-     }
-     };
-     [self addSubview:_inlineBotsPanel];
-     [_inlineBotsPanel setCurrentBot:_contextBotMode];
-     
-     [UIView performWithoutAnimation:^{
-     [self layoutSubviews];
-     }];
-     
-     [_inlineBotsPanel animateIn];
-     
-     [self updateInlineBotPanelOffset];
-     [self updateAssociatedPanelInset:true];
-     } else {
-     [_inlineBotsPanel setCurrentBot:_contextBotMode];
-     }
-     } else {
-     if (_inlineBotsPanel != nil) {
-     TGInlineBotsInputPanel *panel = _inlineBotsPanel;
-     _inlineBotsPanel = nil;
-     [panel animateOut:^{
-     [panel removeFromSuperview];
-     }];
-     [self updateAssociatedPanelInset:true];
-     }
-     }*/
 }
 
 - (void)animateRecordingIn {
@@ -3865,7 +3961,7 @@ static CGRect viewFrame(UIView *view)
         _messageEditingContext = messageEditingContext;
         _messageEditingContextInvalidated = false;
         
-        _sendButtonWidth = 45.0f;
+        _sendButtonWidth = [self sendButtonAreaWidth];
         
         if (_messageEditingContext.hasMedia) {
             [_attachButton setImage:self.presentation.images.chatInputAttachEditIcon forState:UIControlStateNormal];
@@ -3883,7 +3979,7 @@ static CGRect viewFrame(UIView *view)
         [self setNeedsLayout];
         [self layoutSubviews];
         
-        [self.inputField setAttributedText:[TGMessageEditingContext attributedStringForText:messageEditingContext.text entities:messageEditingContext.entities fontSize:[self fontSize]] keepFormatting:true animated:animated];
+        [self.inputField setAttributedText:[TGMessageEditingContext attributedStringForText:messageEditingContext.text entities:messageEditingContext.entities font:[self inputFieldFont]] keepFormatting:true animated:animated];
         
         if (messageEditingContext != nil) {
             if (_customKeyboardView != nil) {

@@ -8,13 +8,3 @@
 
 #import <UIKit/UIKit.h>
 
-/*#ifdef __cplusplus
-extern "C" {
-#endif
-
-UIImage *TGJpegTurboDecode(NSData *data);
-    
-#ifdef __cplusplus
-}
-#endif
-*/

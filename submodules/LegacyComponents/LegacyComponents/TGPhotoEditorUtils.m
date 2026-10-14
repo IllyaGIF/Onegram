@@ -4,7 +4,6 @@
 #import "TGImageUtils.h"
 
 #import <AVFoundation/AVFoundation.h>
-#import <Accelerate/Accelerate.h>
 #import <QuartzCore/QuartzCore.h>
 
 const CGSize TGPhotoEditorResultImageMaxSize = { 1280, 1280 };
@@ -128,7 +127,11 @@ UIImage *TGPhotoEditorFitImage(UIImage *image, CGSize maxSize)
     {
         CGImageRef imageRef = TGPhotoLanczosResize(image, fittedImageSize);
         
+#if defined(ONEGRAM_ARMV6)
+        UIImage *resizedImage = [[UIImage alloc] initWithCGImage:imageRef];
+#else
         UIImage *resizedImage = [[UIImage alloc] initWithCGImage:imageRef scale:image.scale orientation:image.imageOrientation];
+#endif
         CGImageRelease(imageRef);
         
         return resizedImage;
@@ -234,7 +237,11 @@ UIImage *TGPhotoEditorVideoCrop(UIImage *inputImage, UIImage *paintingImage, UII
         CGSize referenceSize = useImageSize ? inputImage.size : originalSize;
         CGSize resizedSize = CGSizeMake(referenceSize.width * fittedImageSize.width / rect.size.width, referenceSize.height * fittedImageSize.height / rect.size.height);
         CGImageRef resizedImage = TGPhotoLanczosResize(inputImage, resizedSize);
+#if defined(ONEGRAM_ARMV6)
+        image = [UIImage imageWithCGImage:resizedImage];
+#else
         image = [UIImage imageWithCGImage:resizedImage scale:0.0f orientation:inputImage.imageOrientation];
+#endif
         CGImageRelease(resizedImage);
     }
     else
@@ -443,6 +450,12 @@ UIImageOrientation TGMirrorSidewardOrientation(UIImageOrientation orientation)
 
 UIImageOrientation TGVideoOrientationForAsset(AVAsset *asset, bool *mirrored)
 {
+#if defined(ONEGRAM_ARMV6)
+    (void)asset;
+    if (mirrored != NULL)
+        *mirrored = false;
+    return UIImageOrientationRight;
+#else
     AVAssetTrack *videoTrack = [[asset tracksWithMediaType:AVMediaTypeVideo] firstObject];
     CGAffineTransform t = videoTrack.preferredTransform;
     double videoRotation = atan2((float)t.b, (float)t.a);
@@ -451,10 +464,6 @@ UIImageOrientation TGVideoOrientationForAsset(AVAsset *asset, bool *mirrored)
     {
         CGFloat scaleX = sqrt(t.a * t.a + t.c * t.c);
         CGFloat scaleY = sqrt(t.b * t.b + t.d * t.d);
-        /*UIView *tempView = [[UIView alloc] init];
-        tempView.transform = t;
-        CGSize scale = CGSizeMake([[tempView.layer valueForKeyPath: @"transform.scale.x"] floatValue],
-                                  [[tempView.layer valueForKeyPath: @"transform.scale.y"] floatValue]);*/
         CGSize scale = CGSizeMake(scaleX, scaleY);
         
         *mirrored = (scale.width < 0);
@@ -468,6 +477,7 @@ UIImageOrientation TGVideoOrientationForAsset(AVAsset *asset, bool *mirrored)
         return UIImageOrientationDown;
     else
         return UIImageOrientationRight;
+#endif
 }
 
 UIImageOrientation TGVideoFinalOrientationForOrientation(UIImageOrientation videoOrientation, UIImageOrientation cropOrientation)

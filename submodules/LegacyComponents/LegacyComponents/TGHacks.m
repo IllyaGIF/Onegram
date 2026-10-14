@@ -2,6 +2,7 @@
 
 #import "LegacyComponentsInternal.h"
 #import "TGAnimationBlockDelegate.h"
+#import "TGTransitionLayout.h"
 
 #import "FreedomUIKit.h"
 
@@ -77,32 +78,240 @@ bool TGShareItemsViaLegacyPasteboard(NSArray *items)
     return true;
 }
 
+@interface TGWeakObjectReference : NSObject
+{
+    __weak id _object;
+}
+
+- (instancetype)initWithObject:(id)object;
+- (id)object;
+
+@end
+
+@implementation TGWeakObjectReference
+
+- (instancetype)initWithObject:(id)object
+{
+    self = [super init];
+    if (self != nil)
+        _object = object;
+    return self;
+}
+
+- (id)object
+{
+    return _object;
+}
+
+@end
+
+@interface TGWeakObjectSet : NSObject
+{
+    NSMutableArray *_entries;
+}
+
+@end
+
+@implementation TGWeakObjectSet
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        _entries = [[NSMutableArray alloc] init];
+    return self;
+}
+
+- (void)purge
+{
+    for (NSInteger i = (NSInteger)_entries.count - 1; i >= 0; i--)
+    {
+        TGWeakObjectReference *entry = [_entries objectAtIndex:(NSUInteger)i];
+        if ([entry object] == nil)
+            [_entries removeObjectAtIndex:(NSUInteger)i];
+    }
+}
+
+- (void)addObject:(id)object
+{
+    if (object == nil)
+        return;
+    @synchronized (self)
+    {
+        [self purge];
+        for (TGWeakObjectReference *entry in _entries)
+        {
+            if ([entry object] == object)
+                return;
+        }
+        [_entries addObject:[[TGWeakObjectReference alloc] initWithObject:object]];
+    }
+}
+
+- (void)removeObject:(id)object
+{
+    @synchronized (self)
+    {
+        for (NSInteger i = (NSInteger)_entries.count - 1; i >= 0; i--)
+        {
+            TGWeakObjectReference *entry = [_entries objectAtIndex:(NSUInteger)i];
+            id value = [entry object];
+            if (value == nil || value == object)
+                [_entries removeObjectAtIndex:(NSUInteger)i];
+        }
+    }
+}
+
+- (NSArray *)allObjects
+{
+    @synchronized (self)
+    {
+        [self purge];
+        NSMutableArray *objects = [[NSMutableArray alloc] initWithCapacity:_entries.count];
+        for (TGWeakObjectReference *entry in _entries)
+        {
+            id object = [entry object];
+            if (object != nil)
+                [objects addObject:object];
+        }
+        return objects;
+    }
+}
+
+- (id)anyObject
+{
+    @synchronized (self)
+    {
+        [self purge];
+        for (TGWeakObjectReference *entry in _entries)
+        {
+            id object = [entry object];
+            if (object != nil)
+                return object;
+        }
+        return nil;
+    }
+}
+
+- (NSUInteger)count
+{
+    @synchronized (self)
+    {
+        [self purge];
+        return _entries.count;
+    }
+}
+
+@end
+
+@interface TGWeakValueMap : NSObject
+{
+    NSMutableDictionary *_entries;
+}
+
+@end
+
+@implementation TGWeakValueMap
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        _entries = [[NSMutableDictionary alloc] init];
+    return self;
+}
+
+- (id)objectForKey:(id)key
+{
+    if (key == nil)
+        return nil;
+    @synchronized (self)
+    {
+        TGWeakObjectReference *entry = [_entries objectForKey:key];
+        id object = [entry object];
+        if (entry != nil && object == nil)
+            [_entries removeObjectForKey:key];
+        return object;
+    }
+}
+
+- (void)setObject:(id)object forKey:(id<NSCopying>)key
+{
+    if (key == nil)
+        return;
+    @synchronized (self)
+    {
+        if (object == nil)
+            [_entries removeObjectForKey:key];
+        else
+            [_entries setObject:[[TGWeakObjectReference alloc] initWithObject:object] forKey:key];
+    }
+}
+
+- (void)removeObjectForKey:(id)key
+{
+    if (key == nil)
+        return;
+    @synchronized (self)
+    {
+        [_entries removeObjectForKey:key];
+    }
+}
+
+- (NSDictionary *)dictionaryRepresentation
+{
+    @synchronized (self)
+    {
+        NSMutableDictionary *dictionary = [[NSMutableDictionary alloc] initWithCapacity:_entries.count];
+        NSMutableArray *deadKeys = [[NSMutableArray alloc] init];
+        for (id key in _entries)
+        {
+            TGWeakObjectReference *entry = [_entries objectForKey:key];
+            id object = [entry object];
+            if (object != nil)
+                [dictionary setObject:object forKey:key];
+            else
+                [deadKeys addObject:key];
+        }
+        [_entries removeObjectsForKeys:deadKeys];
+        return dictionary;
+    }
+}
+
+@end
+
 id TGWeakValueMapTable(void)
 {
     if (iosMajorVersion() < 6)
-        return [[NSMutableDictionary alloc] init];
-    
+        return [[TGWeakValueMap alloc] init];
+
     Class mapTableClass = NSClassFromString(@"NSMapTable");
-    if (mapTableClass != Nil)
+    SEL mapSelector = NSSelectorFromString(@"strongToWeakObjectsMapTable");
+    if (mapTableClass != Nil && [mapTableClass respondsToSelector:mapSelector])
     {
-        return [mapTableClass
-                mapTableWithKeyOptions:NSMapTableStrongMemory
-                valueOptions:NSMapTableWeakMemory];
+        id (*function)(id, SEL) = (id (*)(id, SEL))[mapTableClass methodForSelector:mapSelector];
+        if (function != NULL)
+            return function(mapTableClass, mapSelector);
     }
-    
-    return [[NSMutableDictionary alloc] init];
+
+    return [[TGWeakValueMap alloc] init];
 }
 
 id TGWeakObjectHashTable(void)
 {
     if (iosMajorVersion() < 6)
-        return [[NSMutableSet alloc] init];
-    
+        return [[TGWeakObjectSet alloc] init];
+
     Class hashTableClass = NSClassFromString(@"NSHashTable");
-    if (hashTableClass != Nil)
-        return [hashTableClass weakObjectsHashTable];
-    
-    return [[NSMutableSet alloc] init];
+    SEL hashSelector = NSSelectorFromString(@"weakObjectsHashTable");
+    if (hashTableClass != Nil && [hashTableClass respondsToSelector:hashSelector])
+    {
+        id (*function)(id, SEL) = (id (*)(id, SEL))[hashTableClass methodForSelector:hashSelector];
+        if (function != NULL)
+            return function(hashTableClass, hashSelector);
+    }
+
+    return [[TGWeakObjectSet alloc] init];
 }
 
 static void TGInstallCompatibilityInstanceMethod(Class cls, SEL selector, SEL fallbackSelector)
@@ -348,11 +557,15 @@ void SwizzleInstanceMethodWithAnotherClass(Class c1, SEL orig, Class c2, SEL new
 
 void InjectClassMethodFromAnotherClass(Class toClass, Class fromClass, SEL fromSelector, SEL toSeletor)
 {
+    if (class_getClassMethod(toClass, toSeletor) != nil)
+        return;
+
     Method method = class_getClassMethod(fromClass, fromSelector);
     
     if (method != nil)
     {
-        if (!class_addMethod(toClass, toSeletor, method_getImplementation(method), method_getTypeEncoding(method)))
+        Class metaClass = object_getClass((id)toClass);
+        if (metaClass == Nil || !class_addMethod(metaClass, toSeletor, method_getImplementation(method), method_getTypeEncoding(method)))
             NSLog(@"Attempt to add method failed");
     }
     else
@@ -409,11 +622,16 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
     bool animationsWereEnabled = [UIView areAnimationsEnabled];
     [UIView setAnimationsEnabled:false];
     
-    if (actionsWithoutAnimation)
-        actionsWithoutAnimation();
-    
-    [UIView setAnimationsEnabled:animationsWereEnabled];
-    animationDurationFactor = lastDurationFactor;
+    @try
+    {
+        if (actionsWithoutAnimation)
+            actionsWithoutAnimation();
+    }
+    @finally
+    {
+        [UIView setAnimationsEnabled:animationsWereEnabled];
+        animationDurationFactor = lastDurationFactor;
+    }
 }
 
 + (void)TG_performWithoutAnimation_maybeNot:(void (^)(void))actionsWithoutAnimation
@@ -469,6 +687,55 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
 @end
 
 
+typedef struct
+{
+    NSInteger count;
+    CGFloat sourceStart[3];
+    CGFloat sourceLength[3];
+    CGFloat targetStart[3];
+    CGFloat length;
+    NSInteger cap;
+    bool identity;
+} TGIOS4ResizableAxis;
+
+static TGIOS4ResizableAxis TGIOS4ResizableAxisMake(CGFloat leading, CGFloat trailing, CGFloat length)
+{
+    TGIOS4ResizableAxis axis;
+    memset(&axis, 0, sizeof(axis));
+
+    CGFloat leadingCap = length >= 1.0f ? MIN(CGCeil(MAX(0.0f, leading)), length - 1.0f) : 0.0f;
+    CGFloat trailingCap = length >= 1.0f ? MIN(CGCeil(MAX(0.0f, trailing)), length - 1.0f - leadingCap) : 0.0f;
+
+    if (leadingCap < 1.0f && trailingCap < 1.0f)
+    {
+        axis.count = 1;
+        axis.sourceStart[0] = 0.0f;
+        axis.sourceLength[0] = length;
+        axis.targetStart[0] = 0.0f;
+        axis.length = length;
+        axis.cap = 0;
+        axis.identity = true;
+        return axis;
+    }
+
+    CGFloat leadingTarget = leadingCap >= 1.0f ? leadingCap : 1.0f;
+
+    axis.count = 3;
+    axis.sourceStart[0] = leadingCap >= 1.0f ? 0.0f : leadingCap;
+    axis.sourceLength[0] = leadingCap >= 1.0f ? leadingCap : 1.0f;
+    axis.targetStart[0] = 0.0f;
+    axis.sourceStart[1] = leadingCap;
+    axis.sourceLength[1] = 1.0f;
+    axis.targetStart[1] = leadingTarget;
+    axis.sourceStart[2] = length - trailingCap;
+    axis.sourceLength[2] = trailingCap;
+    axis.targetStart[2] = leadingTarget + 1.0f;
+    axis.length = leadingTarget + 1.0f + trailingCap;
+    axis.cap = (NSInteger)leadingTarget;
+    axis.identity = leadingCap >= 1.0f && ABS(axis.length - length) < FLT_EPSILON;
+    return axis;
+}
+
 @interface UIImage (TGIOS4ResizableImageCompatibility)
 - (UIImage *)tg_ios4_resizableImageWithCapInsets:(UIEdgeInsets)capInsets;
 @end
@@ -477,67 +744,43 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
 
 - (UIImage *)tg_ios4_resizableImageWithCapInsets:(UIEdgeInsets)capInsets
 {
-    if (self.CGImage == NULL)
+    CGImageRef cgImage = self.CGImage;
+    CGSize size = self.size;
+    if (cgImage == NULL || size.width <= 0.0f || size.height <= 0.0f)
         return self;
 
-    CGSize sourceSize = self.size;
-    if (sourceSize.width <= 0.0f || sourceSize.height <= 0.0f)
-        return self;
+    TGIOS4ResizableAxis horizontal = TGIOS4ResizableAxisMake(capInsets.left, capInsets.right, size.width);
+    TGIOS4ResizableAxis vertical = TGIOS4ResizableAxisMake(capInsets.top, capInsets.bottom, size.height);
+    if (horizontal.identity && vertical.identity)
+        return [self stretchableImageWithLeftCapWidth:horizontal.cap topCapHeight:vertical.cap];
 
-    CGFloat left = MAX(0.0f, MIN(capInsets.left, sourceSize.width));
-    CGFloat right = MAX(0.0f, MIN(capInsets.right, sourceSize.width - left));
-    CGFloat top = MAX(0.0f, MIN(capInsets.top, sourceSize.height));
-    CGFloat bottom = MAX(0.0f, MIN(capInsets.bottom, sourceSize.height - top));
-
-    CGFloat centerWidth = sourceSize.width - left - right;
-    CGFloat centerHeight = sourceSize.height - top - bottom;
-    if (centerWidth <= 0.0f || centerHeight <= 0.0f)
-        return [self stretchableImageWithLeftCapWidth:(NSInteger)CGFloor(left) topCapHeight:(NSInteger)CGFloor(top)];
-
-    CGFloat scale = self.scale;
-    if (scale <= 0.0f)
-        scale = 1.0f;
-
-    if (centerWidth <= 1.0f && centerHeight <= 1.0f)
-        return [self stretchableImageWithLeftCapWidth:(NSInteger)CGFloor(left) topCapHeight:(NSInteger)CGFloor(top)];
-
-    CGSize templateSize = CGSizeMake(left + right + 1.0f, top + bottom + 1.0f);
-    CGFloat sourceX[4] = {0.0f, left, sourceSize.width - right, sourceSize.width};
-    CGFloat sourceY[4] = {0.0f, top, sourceSize.height - bottom, sourceSize.height};
-    CGFloat targetX[4] = {0.0f, left, left + 1.0f, templateSize.width};
-    CGFloat targetY[4] = {0.0f, top, top + 1.0f, templateSize.height};
-
-    UIGraphicsBeginImageContextWithOptions(templateSize, false, scale);
-    for (int y = 0; y < 3; y++)
+    CGFloat scale = self.scale > FLT_EPSILON ? self.scale : 1.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(horizontal.length, vertical.length), false, scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetInterpolationQuality(context, kCGInterpolationNone);
+    for (NSInteger y = 0; y < vertical.count; y++)
     {
-        for (int x = 0; x < 3; x++)
+        for (NSInteger x = 0; x < horizontal.count; x++)
         {
-            CGRect sourceRect = CGRectMake(sourceX[x], sourceY[y], sourceX[x + 1] - sourceX[x], sourceY[y + 1] - sourceY[y]);
-            CGRect targetRect = CGRectMake(targetX[x], targetY[y], targetX[x + 1] - targetX[x], targetY[y + 1] - targetY[y]);
-            if (sourceRect.size.width <= 0.0f || sourceRect.size.height <= 0.0f || targetRect.size.width <= 0.0f || targetRect.size.height <= 0.0f)
+            CGRect pixelRect = CGRectMake(CGFloor(horizontal.sourceStart[x] * scale + 0.5f), CGFloor(vertical.sourceStart[y] * scale + 0.5f), CGFloor(horizontal.sourceLength[x] * scale + 0.5f), CGFloor(vertical.sourceLength[y] * scale + 0.5f));
+            if (pixelRect.size.width < 1.0f || pixelRect.size.height < 1.0f)
                 continue;
 
-            CGFloat pixelMinX = CGFloor(CGRectGetMinX(sourceRect) * scale);
-            CGFloat pixelMinY = CGFloor(CGRectGetMinY(sourceRect) * scale);
-            CGFloat pixelMaxX = CGCeil(CGRectGetMaxX(sourceRect) * scale);
-            CGFloat pixelMaxY = CGCeil(CGRectGetMaxY(sourceRect) * scale);
-            CGRect pixelRect = CGRectMake(pixelMinX, pixelMinY, MAX(1.0f, pixelMaxX - pixelMinX), MAX(1.0f, pixelMaxY - pixelMinY));
-            CGImageRef sliceRef = CGImageCreateWithImageInRect(self.CGImage, pixelRect);
-            if (sliceRef != NULL)
-            {
-                UIImage *slice = [UIImage imageWithCGImage:sliceRef scale:scale orientation:UIImageOrientationUp];
-                [slice drawInRect:targetRect blendMode:kCGBlendModeCopy alpha:1.0f];
-                CGImageRelease(sliceRef);
-            }
+            CGImageRef sliceRef = CGImageCreateWithImageInRect(cgImage, pixelRect);
+            if (sliceRef == NULL)
+                continue;
+
+            UIImage *slice = [UIImage imageWithCGImage:sliceRef scale:scale orientation:UIImageOrientationUp];
+            [slice drawInRect:CGRectMake(horizontal.targetStart[x], vertical.targetStart[y], pixelRect.size.width / scale, pixelRect.size.height / scale) blendMode:kCGBlendModeCopy alpha:1.0f];
+            CGImageRelease(sliceRef);
         }
     }
-
     UIImage *templateImage = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    if (templateImage == nil)
-        return [self stretchableImageWithLeftCapWidth:(NSInteger)CGFloor(left) topCapHeight:(NSInteger)CGFloor(top)];
 
-    return [templateImage stretchableImageWithLeftCapWidth:(NSInteger)CGFloor(left) topCapHeight:(NSInteger)CGFloor(top)];
+    if (templateImage == nil)
+        return [self stretchableImageWithLeftCapWidth:horizontal.cap topCapHeight:vertical.cap];
+    return [templateImage stretchableImageWithLeftCapWidth:horizontal.cap topCapHeight:vertical.cap];
 }
 
 @end
@@ -555,10 +798,12 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
         TGInstallCompatibilityInstanceMethod([UIView class], @selector(accessibilityIgnoresInvertColors), @selector(tg_ios6_accessibilityIgnoresInvertColors));
         TGInstallCompatibilityClassMethod([UIView class], @selector(animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:), @selector(tg_ios6_animateWithDuration:delay:usingSpringWithDamping:initialSpringVelocity:options:animations:completion:));
     
+#if !defined(ONEGRAM_ARMV6)
         TGInstallCompatibilityInstanceMethod([AVPlayer class], @selector(setMuted:), @selector(tg_ios6_setMuted:));
         TGInstallCompatibilityInstanceMethod([AVPlayer class], @selector(isMuted), @selector(tg_ios6_isMuted));
         TGInstallCompatibilityClassMethod([AVCaptureDevice class], @selector(authorizationStatusForMediaType:), @selector(tg_ios6_authorizationStatusForMediaType:));
         TGInstallCompatibilityClassMethod([AVCaptureDevice class], @selector(requestAccessForMediaType:completionHandler:), @selector(tg_ios6_requestAccessForMediaType:completionHandler:));
+#endif
         TGInstallCompatibilityInstanceMethod([AVAudioSession class], @selector(requestRecordPermission:), @selector(tg_ios6_requestRecordPermission:));
     
         TGInstallCompatibilityInstanceMethod([NSString class], @selector(sizeWithAttributes:), @selector(tg_ios6_sizeWithAttributes:));
@@ -577,6 +822,7 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
     
         TGInstallCompatibilityInstanceMethod([PSUICollectionView class], @selector(startInteractiveTransitionToCollectionViewLayout:completion:), @selector(tg_ios6_startInteractiveTransitionToCollectionViewLayout:completion:));
         TGInstallCompatibilityInstanceMethod([PSUICollectionView class], @selector(finishInteractiveTransition), @selector(tg_ios6_finishInteractiveTransition));
+        TGInstallCompatibilityInstanceMethod([PSUICollectionView class], @selector(cancelInteractiveTransition), @selector(tg_ios6_cancelInteractiveTransition));
     
         TGInstallCompatibilityInstanceMethod([UIScrollView class], @selector(setContentInsetAdjustmentBehavior:), @selector(tg_ios6_setContentInsetAdjustmentBehavior:));
         TGInstallCompatibilityInstanceMethod([UIScrollView class], @selector(contentInsetAdjustmentBehavior), @selector(tg_ios6_contentInsetAdjustmentBehavior));
@@ -639,7 +885,7 @@ void InjectInstanceMethodFromAnotherClass(Class toClass, Class fromClass, SEL fr
     }
     else
     {
-        InjectClassMethodFromAnotherClass(object_getClass([UIView class]), object_getClass([UIView class]), @selector(TG_performWithoutAnimation:), @selector(performWithoutAnimation:));
+        InjectClassMethodFromAnotherClass([UIView class], [UIView class], @selector(TG_performWithoutAnimation:), @selector(performWithoutAnimation:));
         InjectInstanceMethodFromAnotherClass([UIView class], [UIView class], @selector(TG_snapshotViewAfterScreenUpdates:), @selector(snapshotViewAfterScreenUpdates:));
         InjectInstanceMethodFromAnotherClass([UIView class], [UIView class], @selector(TG_resizableSnapshotViewFromRect:afterScreenUpdates:withCapInsets:), @selector(resizableSnapshotViewFromRect:afterScreenUpdates:withCapInsets:));
     }
@@ -914,13 +1160,18 @@ static bool keyboardHidden = true;
     
     dispatch_once(&onceToken, ^
                   {
-                      [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillHideNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(__unused NSNotification *notification)
+#if defined(ONEGRAM_ARMV6)
+                      NSOperationQueue *notificationQueue = nil;
+#else
+                      NSOperationQueue *notificationQueue = [NSOperationQueue mainQueue];
+#endif
+                      [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillHideNotification object:nil queue:notificationQueue usingBlock:^(__unused NSNotification *notification)
                        {
                            if (!freedomUIKitTest3())
                                keyboardHidden = true;
                        }];
                       
-                      [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillShowNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(__unused NSNotification *notification)
+                      [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillShowNotification object:nil queue:notificationQueue usingBlock:^(__unused NSNotification *notification)
                        {
                            keyboardHidden = false;
                        }];
@@ -1097,6 +1348,8 @@ CGFloat TGAnimationSpeedFactor()
 
 @end
 
+#if !defined(ONEGRAM_ARMV6)
+
 @implementation AVPlayer (LegacyComponentsMutedCompatibility)
 
 - (void)tg_ios6_setMuted:(BOOL)__unused muted
@@ -1124,6 +1377,8 @@ CGFloat TGAnimationSpeedFactor()
 }
 
 @end
+
+#endif
 
 @implementation AVAudioSession (LegacyComponentsRecordPermissionCompatibility)
 
@@ -1259,22 +1514,63 @@ CGFloat TGAnimationSpeedFactor()
 @end
 #endif
 
+@protocol TGCollectionViewTransitionLayoutProviding <NSObject>
+- (UICollectionViewTransitionLayout *)collectionView:(PSUICollectionView *)collectionView transitionLayoutForOldLayout:(PSUICollectionViewLayout *)fromLayout newLayout:(PSUICollectionViewLayout *)toLayout;
+@end
+
+static char TGCollectionViewLegacyTransitionStateKey;
+
+@interface PSUICollectionView (LegacyComponentsTransitionCompatibility)
+- (void)tg_ios6_completeInteractiveTransition:(bool)finish;
+@end
+
 @implementation PSUICollectionView (LegacyComponentsTransitionCompatibility)
 
 - (UICollectionViewTransitionLayout *)tg_ios6_startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion
 {
-    UICollectionViewTransitionLayout *transitionLayout = [[UICollectionViewTransitionLayout alloc] initWithCurrentLayout:self.collectionViewLayout nextLayout:layout];
-    
-    [self setCollectionViewLayout:layout animated:false];
-    
+    UICollectionViewTransitionLayout *transitionLayout = nil;
+    id<TGCollectionViewTransitionLayoutProviding> delegate = (id<TGCollectionViewTransitionLayoutProviding>)self.delegate;
+    if ([delegate respondsToSelector:@selector(collectionView:transitionLayoutForOldLayout:newLayout:)])
+        transitionLayout = [delegate collectionView:self transitionLayoutForOldLayout:self.collectionViewLayout newLayout:layout];
+    if (transitionLayout == nil)
+        transitionLayout = [[TGTransitionLayout alloc] initWithCurrentLayout:self.collectionViewLayout nextLayout:layout];
+    NSMutableDictionary *state = [[NSMutableDictionary alloc] init];
+    state[@"layout"] = transitionLayout;
+    state[@"contentOffset"] = [NSValue valueWithCGPoint:self.contentOffset];
     if (completion != nil)
-        completion(true, true);
-    
+        state[@"completion"] = [completion copy];
+    objc_setAssociatedObject(self, &TGCollectionViewLegacyTransitionStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if ([transitionLayout isKindOfClass:[TGTransitionLayout class]])
+        [(TGTransitionLayout *)transitionLayout prepareForLegacyTransitionInCollectionView:self];
+    else
+        [self setCollectionViewLayout:transitionLayout animated:false];
     return transitionLayout;
 }
 
 - (void)tg_ios6_finishInteractiveTransition
 {
+    [self tg_ios6_completeInteractiveTransition:true];
+}
+
+- (void)tg_ios6_cancelInteractiveTransition
+{
+    [self tg_ios6_completeInteractiveTransition:false];
+}
+
+- (void)tg_ios6_completeInteractiveTransition:(bool)finish
+{
+    NSDictionary *state = objc_getAssociatedObject(self, &TGCollectionViewLegacyTransitionStateKey);
+    if (state == nil)
+        return;
+    objc_setAssociatedObject(self, &TGCollectionViewLegacyTransitionStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UICollectionViewTransitionLayout *transitionLayout = state[@"layout"];
+    transitionLayout.transitionProgress = finish ? 1.0f : 0.0f;
+    [self setCollectionViewLayout:finish ? transitionLayout.nextLayout : transitionLayout.currentLayout animated:false];
+    if (!finish)
+        self.contentOffset = [state[@"contentOffset"] CGPointValue];
+    UICollectionViewLayoutInteractiveTransitionCompletion completion = state[@"completion"];
+    if (completion != nil)
+        completion(true, finish);
 }
 
 @end

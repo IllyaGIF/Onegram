@@ -1,14 +1,124 @@
 #import <QuartzCore/QuartzCore.h>
-//
-//  CBVideoPlayer.m
-//  Coub
-//
-//  Created by Pavel Tikhonenko on 12/08/14.
-//  Copyright (c) 2014 Coub. All rights reserved.
-//
-
 #import "CBVideoPlayer.h"
+#import "CBConstance.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#import <MediaPlayer/MediaPlayer.h>
+
+@interface CBVideoPlayer ()
+
+@property (nonatomic, strong) MPMoviePlayerController *moviePlayer;
+@property (nonatomic, strong) NSURL *preparedURL;
+@property (nonatomic, copy) void (^prepairingCompletion)(NSError *error);
+@property (nonatomic, assign) BOOL hasBeenReseted;
+@property (nonatomic, assign) BOOL shouldLoop;
+
+@end
+
+@implementation CBVideoPlayer
+
+- (id)initWithVideoLayer:(CALayer *)__unused layer
+{
+    self = [super init];
+    if (self != nil)
+    {
+        self.status = CBVideoPlayerStatusUnknown;
+        self.hasBeenReseted = YES;
+        self.shouldLoop = NO;
+        self.status = CBVideoPlayerStatusInited;
+    }
+    return self;
+}
+
+- (void)prepareWithURL:(NSURL *)url completion:(void (^)(NSError *error))completion
+{
+    self.prepairingCompletion = completion;
+    self.status = CBVideoPlayerStatusPrepairing;
+    self.preparedURL = url;
+
+    if (url == nil || ([url isFileURL] && ![[NSFileManager defaultManager] fileExistsAtPath:[url path]]))
+    {
+        self.status = CBVideoPlayerStatusFailed;
+        void (^completionBlock)(NSError *) = self.prepairingCompletion;
+        self.prepairingCompletion = nil;
+        if (completionBlock != nil)
+            completionBlock([NSError errorWithDomain:CBCoubLoopErrorDomain code:CBCoubLoopErrorNoSuchFile userInfo:nil]);
+        return;
+    }
+
+    [self resetPlayer];
+    self.moviePlayer = [[MPMoviePlayerController alloc] initWithContentURL:url];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(moviePlaybackDidFinish:) name:MPMoviePlayerPlaybackDidFinishNotification object:self.moviePlayer];
+    self.hasBeenReseted = NO;
+    self.status = CBVideoPlayerStatusReadyToPlay;
+    void (^completionBlock)(NSError *) = self.prepairingCompletion;
+    self.prepairingCompletion = nil;
+    if (completionBlock != nil)
+        completionBlock(nil);
+}
+
+- (void)play
+{
+    self.shouldLoop = YES;
+    [self.moviePlayer play];
+}
+
+- (void)pause
+{
+    self.shouldLoop = NO;
+    SEL selector = NSSelectorFromString(@"pause");
+    if ([self.moviePlayer respondsToSelector:selector])
+    {
+        void (*implementation)(id, SEL) = (void (*)(id, SEL))[self.moviePlayer methodForSelector:selector];
+        if (implementation != NULL)
+        {
+            implementation(self.moviePlayer, selector);
+            return;
+        }
+    }
+    [self.moviePlayer stop];
+}
+
+- (void)stop
+{
+    self.shouldLoop = NO;
+    [self.moviePlayer stop];
+    [self resetPlayer];
+}
+
+- (void)stopPrepairing
+{
+    self.prepairingCompletion = nil;
+}
+
+- (void)resetPlayer
+{
+    if (self.moviePlayer != nil)
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:MPMoviePlayerPlaybackDidFinishNotification object:self.moviePlayer];
+    [self.moviePlayer stop];
+    self.moviePlayer = nil;
+    self.hasBeenReseted = YES;
+    self.shouldLoop = NO;
+}
+
+- (void)moviePlaybackDidFinish:(NSNotification *)notification
+{
+    if ([notification object] != self.moviePlayer || self.hasBeenReseted || !self.shouldLoop)
+        return;
+    [self.moviePlayer play];
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self resetPlayer];
+    self.preparedURL = nil;
+    self.prepairingCompletion = nil;
+}
+
+@end
+
+#else
 static void *kPlayerItemContext = (void *) 1;
 static void *kPlayerStatusContext = (void *) 2;
 
@@ -192,3 +302,5 @@ static void *kPlayerLayerReadyToDisplayContext = (void *) 4;
 	[self resetPlayer];
 }
 @end
+
+#endif

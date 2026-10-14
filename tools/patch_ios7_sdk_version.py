@@ -1,19 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
-"""
-Patch LC_VERSION_MIN_IPHONEOS.sdk in a Mach-O executable to iOS 7.0
-without changing the minimum deployment target.
-
-Why Onegram needs this:
-Xcode 4.6 links against the iOS 6.x SDK.  On iOS 7, UIKit sees that
-SDK version and runs the application in the legacy iOS 6 compatibility
-mode.  The most visible symptom is the iOS 6 keyboard.  Marking only the
-linked SDK field as 7.0 lets iOS 7 use its native UIKit behavior while
-keeping LC_VERSION_MIN_IPHONEOS.version (the deployment target) intact.
-
-Compatible with the system Python 2.7 shipped with OS X Mavericks and
-with Python 3.
-"""
 from __future__ import print_function
 
 import os
@@ -21,7 +6,7 @@ import struct
 import sys
 
 LC_VERSION_MIN_IPHONEOS = 0x25
-TARGET_SDK = (7 << 16)  # 7.0.0
+TARGET_SDK = (7 << 16)
 
 MH_MAGIC = 0xfeedface
 MH_MAGIC_64 = 0xfeedfacf
@@ -86,7 +71,6 @@ def patch_macho(data, base, size, label):
             sdk = struct.unpack_from(endian + "I", data, command_offset + 12)[0]
             old_sdks.append(sdk)
 
-            # Never lower an executable that was genuinely built with a newer SDK.
             if sdk < TARGET_SDK:
                 struct.pack_into(endian + "I", data, command_offset + 12, TARGET_SDK)
                 changed = True
@@ -127,7 +111,6 @@ def patch_file(path):
                 raise ValueError("truncated FAT architecture table")
 
             if is_64:
-                # cpu type/subtype (2x uint32), offset/size (2x uint64), align/reserved.
                 slice_offset = struct.unpack_from(endian + "Q", data, arch_offset + 8)[0]
                 slice_size = struct.unpack_from(endian + "Q", data, arch_offset + 16)[0]
             else:
@@ -145,7 +128,6 @@ def patch_file(path):
         changed = changed or file_changed
 
     if changed:
-        # Modify in place so ownership and executable permissions are preserved.
         with open(path, "r+b") as f:
             f.seek(0)
             f.write(data)

@@ -1,87 +1,195 @@
 #import "TGCache.h"
 
 #import "LegacyComponentsInternal.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "TGImageUtils.h"
+#import "../../../OnegramPlatform/OGMemoryCache.h"
 
 #import <objc/runtime.h>
+#include <stdio.h>
+#include <unistd.h>
 #import <CommonCrypto/CommonDigest.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <ImageIO/ImageIO.h>
+#endif
 
-#import <pthread.h>
+static char TGCacheDiskQueueKey;
 
-#undef TG_SYNCHRONIZED_DEFINE
-#undef TG_SYNCHRONIZED_INIT
-#undef TG_SYNCHRONIZED_BEGIN
-#undef TG_SYNCHRONIZED_END
+static void TGCacheExecuteMemoryBlock(id owner, dispatch_block_t block)
+{
+    @synchronized (owner)
+    {
+        block();
+    }
+}
 
-#define TG_SYNCHRONIZED_DEFINE(lock) pthread_mutex_t TG_SYNCHRONIZED_##lock
-#define TG_SYNCHRONIZED_INIT(lock) pthread_mutex_init(&TG_SYNCHRONIZED_##lock, NULL)
-#define TG_SYNCHRONIZED_BEGIN(lock) pthread_mutex_lock(&TG_SYNCHRONIZED_##lock);
-#define TG_SYNCHRONIZED_END(lock) pthread_mutex_unlock(&TG_SYNCHRONIZED_##lock);
+static NSUInteger TGCacheImageCost(UIImage *image)
+{
+    CGImageRef cgImage = image.CGImage;
+    uint64_t size = cgImage != NULL ? (uint64_t)CGImageGetBytesPerRow(cgImage) * CGImageGetHeight(cgImage) : 0;
+    if (size == 0)
+        size = (uint64_t)ceil(image.size.width * image.scale) * (uint64_t)ceil(image.size.height * image.scale) * 4;
+    return size > NSUIntegerMax ? NSUIntegerMax : (NSUInteger)size;
+}
 
 static NSString *md5String(NSString *string)
 {
-    /*static const char *md5PropertyKey = "MD5Key";
-    NSString *result = objc_getAssociatedObject(string, md5PropertyKey);
-    if (result != nil)
-        return result;*/
     
     const char *ptr = [string UTF8String];
     unsigned char md5Buffer[16];
     CC_MD5(ptr, (CC_LONG)[string lengthOfBytesUsingEncoding:NSUTF8StringEncoding], md5Buffer);
     NSString *output = [[NSString alloc] initWithFormat:@"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x", md5Buffer[0], md5Buffer[1], md5Buffer[2], md5Buffer[3], md5Buffer[4], md5Buffer[5], md5Buffer[6], md5Buffer[7], md5Buffer[8], md5Buffer[9], md5Buffer[10], md5Buffer[11], md5Buffer[12], md5Buffer[13], md5Buffer[14], md5Buffer[15]];
-    //objc_setAssociatedObject(string, md5PropertyKey, output, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return output;
 }
 
-@interface TGCacheRecord : NSObject
-
-@property (nonatomic) NSTimeInterval date;
-@property (nonatomic, strong) id object;
-@property (nonatomic) NSUInteger size;
-
-- (id)initWithObject:(id)object size:(NSUInteger)size;
-
-@end
-
-@implementation TGCacheRecord
-
-@synthesize date = _date;
-@synthesize object = _object;
-@synthesize size = _size;
-
-- (id)initWithObject:(id)object size:(NSUInteger)size
-{
-    self = [super init];
-    if (self != nil)
-    {
-        _object = object;
-        _date = CFAbsoluteTimeGetCurrent();
-        _size = size;
-    }
-    return self;
-}
-
-@end
-
 static NSFileManager *cacheFileManager = nil;
 
-@interface TGCache ()
+static NSString *TGCacheNormalizedKey(NSString *url)
 {
-    TG_SYNCHRONIZED_DEFINE(_dataMemoryCache);
+    if (url.length < 10)
+        return url;
+    NSUInteger bodyLocation = 0;
+    if ([url hasPrefix:@"{filter:"])
+    {
+        NSRange closeRange = [url rangeOfString:@"}"];
+        if (closeRange.location == NSNotFound)
+            return url;
+        bodyLocation = closeRange.location + 1;
+        if ([url rangeOfString:@"peerphoto:" options:NSAnchoredSearch range:NSMakeRange(bodyLocation, url.length - bodyLocation)].location == NSNotFound)
+            return url;
+    }
+    else if (![url hasPrefix:@"peerphoto:"])
+        return url;
+
+    NSString *body = bodyLocation == 0 ? url : [url substringFromIndex:bodyLocation];
+    NSArray *components = [body componentsSeparatedByString:@":"];
+    if (components.count != 7)
+        return url;
+    NSString *normalizedBody = [[NSString alloc] initWithFormat:@"peerphoto:%@:%@:%@:%@", components[2], components[3], components[5], components[6]];
+    return bodyLocation == 0 ? normalizedBody : [[url substringToIndex:bodyLocation] stringByAppendingString:normalizedBody];
 }
 
+static bool TGCacheIsAvatarKey(NSString *key)
+{
+    return [key hasPrefix:@"{filter:"] && [key rangeOfString:@"}peerphoto:"].location != NSNotFound;
+}
+
+typedef struct
+{
+    uint32_t magic;
+    uint32_t width;
+    uint32_t height;
+    uint32_t bytesPerRow;
+    float scale;
+    uint32_t reserved[3];
+} TGCacheRenderedImageHeader;
+
+static const uint32_t TGCacheRenderedImageMagic = 0x4f474131;
+static const size_t TGCacheRenderedImageMaximumSide = 512;
+
+static NSData *TGCacheRenderedImageData(UIImage *image)
+{
+    CGImageRef cgImage = image.CGImage;
+    if (cgImage == NULL || image.imageOrientation != UIImageOrientationUp)
+        return nil;
+    size_t width = CGImageGetWidth(cgImage);
+    size_t height = CGImageGetHeight(cgImage);
+    if (width == 0 || height == 0 || width > TGCacheRenderedImageMaximumSide || height > TGCacheRenderedImageMaximumSide)
+        return nil;
+    size_t bytesPerRow = (width * 4 + 15) & ~(size_t)15;
+
+    TGCacheRenderedImageHeader header;
+    memset(&header, 0, sizeof(header));
+    header.magic = TGCacheRenderedImageMagic;
+    header.width = (uint32_t)width;
+    header.height = (uint32_t)height;
+    header.bytesPerRow = (uint32_t)bytesPerRow;
+    header.scale = image.scale > 0.0f ? (float)image.scale : 1.0f;
+
+    NSMutableData *data = [[NSMutableData alloc] initWithLength:sizeof(header) + bytesPerRow * height];
+    uint8_t *bytes = (uint8_t *)data.mutableBytes;
+    if (bytes == NULL)
+        return nil;
+    memcpy(bytes, &header, sizeof(header));
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(bytes + sizeof(header), width, height, 8, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+        return nil;
+    CGContextSetBlendMode(context, kCGBlendModeCopy);
+    CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, (CGFloat)width, (CGFloat)height), cgImage);
+    CGContextRelease(context);
+    return data;
+}
+
+static void TGCacheReleaseRenderedImageData(void *info, const void *__unused data, size_t __unused size)
+{
+    if (info != NULL)
+        CFRelease(info);
+}
+
+static UIImage *TGCacheImageFromRenderedData(NSData *data)
+{
+    if (data.length < sizeof(TGCacheRenderedImageHeader))
+        return nil;
+    TGCacheRenderedImageHeader header;
+    memcpy(&header, data.bytes, sizeof(header));
+    if (header.magic != TGCacheRenderedImageMagic || header.width == 0 || header.height == 0 || header.width > TGCacheRenderedImageMaximumSide || header.height > TGCacheRenderedImageMaximumSide)
+        return nil;
+    if (header.bytesPerRow < header.width * 4 || !(header.scale >= 1.0f && header.scale <= 4.0f))
+        return nil;
+    size_t pixelLength = (size_t)header.bytesPerRow * header.height;
+    if (data.length != sizeof(header) + pixelLength)
+        return nil;
+
+    CGDataProviderRef provider = CGDataProviderCreateWithData((__bridge_retained void *)data, (const uint8_t *)data.bytes + sizeof(header), pixelLength, TGCacheReleaseRenderedImageData);
+    if (provider == NULL)
+        return nil;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGImageRef cgImage = CGImageCreate(header.width, header.height, 8, 32, header.bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little, provider, NULL, false, kCGRenderingIntentDefault);
+    CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+    if (cgImage == NULL)
+        return nil;
+    UIImage *image = [UIImage imageWithCGImage:cgImage scale:header.scale orientation:UIImageOrientationUp];
+    CGImageRelease(cgImage);
+    return image;
+}
+
+static dispatch_queue_t TGCacheRenderedAvatarQueue(void)
+{
+    static dispatch_queue_t queue = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = dispatch_queue_create("org.onegram.cache.avatar", 0);
+    });
+    return queue;
+}
+
+static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
+{
+    static dispatch_queue_t queue = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = dispatch_queue_create("org.onegram.cache.avatar-prefetch", 0);
+    });
+    return queue;
+}
+
+@interface TGCache ()
+
 @property (nonatomic, strong) NSMutableArray *temporaryCachedImagesSources;
-
-@property (nonatomic, strong) NSMutableDictionary *memoryCache;
-@property (nonatomic) int memoryCacheSize1;
-
-@property (nonatomic, strong) NSMutableDictionary *thumbnailCache;
-@property (nonatomic) int thumbnailCacheSize;
-
-@property (nonatomic, strong) NSMutableDictionary *dataMemoryCache;
-@property (nonatomic) int dataMemoryCacheSize;
+@property (nonatomic, strong) OGMemoryCache *memoryCache;
+@property (nonatomic, strong) OGMemoryCache *thumbnailCache;
+@property (nonatomic, strong) OGMemoryCache *dataMemoryCache;
+@property (nonatomic, strong) OGMemoryCache *avatarMemoryCache;
+@property (nonatomic, strong) NSMutableSet *renderedAvatarStoredKeys;
+@property (nonatomic, strong) NSMutableSet *renderedAvatarMissingKeys;
+@property (nonatomic, strong) NSMutableSet *renderedAvatarPendingPrefetchKeys;
 
 @end
 
@@ -95,6 +203,7 @@ static NSFileManager *cacheFileManager = nil;
     {
         queue = dispatch_queue_create("com.telegraph.diskcache", 0);
         dispatch_set_target_queue(queue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0));
+        dispatch_queue_set_specific(queue, &TGCacheDiskQueueKey, &TGCacheDiskQueueKey, NULL);
         
         if (cacheFileManager == nil)
             cacheFileManager = [[NSFileManager alloc] init];
@@ -104,9 +213,7 @@ static NSFileManager *cacheFileManager = nil;
 
 + (NSFileManager *)diskFileManager
 {
-    if (cacheFileManager == nil)
-        cacheFileManager = [[NSFileManager alloc] init];
-    
+    [self diskCacheQueue];
     return cacheFileManager;
 }
 
@@ -115,14 +222,13 @@ static NSFileManager *cacheFileManager = nil;
     self = [super init];
     if (self != nil)
     {
-        TG_SYNCHRONIZED_INIT(_dataMemoryCache);
-        
         int memorySize = deviceMemorySize();
         if (memorySize <= 512)
         {
             _imageMemoryLimit = 12 * 1024 * 1024;
             _thumbnailMemoryLimit = 1536 * 1024;
             _dataMemoryLimit = 1024 * 1024;
+            _avatarMemoryLimit = 6 * 1024 * 1024;
             _diskLimit = 64 * 1024 * 1024;
             _memoryWarningBaseline = 1536 * 1024;
             _backgroundBaseline = 4 * 1024 * 1024;
@@ -132,6 +238,7 @@ static NSFileManager *cacheFileManager = nil;
             _imageMemoryLimit = 20 * 1024 * 1024;
             _thumbnailMemoryLimit = 3 * 1024 * 1024;
             _dataMemoryLimit = 2 * 1024 * 1024;
+            _avatarMemoryLimit = 10 * 1024 * 1024;
             _diskLimit = 96 * 1024 * 1024;
             _memoryWarningBaseline = 2 * 1024 * 1024;
             _backgroundBaseline = 8 * 1024 * 1024;
@@ -141,6 +248,7 @@ static NSFileManager *cacheFileManager = nil;
             _imageMemoryLimit = 32 * 1024 * 1024;
             _thumbnailMemoryLimit = 5 * 1024 * 1024;
             _dataMemoryLimit = 3 * 1024 * 1024;
+            _avatarMemoryLimit = 16 * 1024 * 1024;
             _diskLimit = 128 * 1024 * 1024;
             _memoryWarningBaseline = 3 * 1024 * 1024;
             _backgroundBaseline = 12 * 1024 * 1024;
@@ -150,6 +258,7 @@ static NSFileManager *cacheFileManager = nil;
             _imageMemoryLimit = 64 * 1024 * 1024;
             _thumbnailMemoryLimit = 8 * 1024 * 1024;
             _dataMemoryLimit = 6 * 1024 * 1024;
+            _avatarMemoryLimit = 24 * 1024 * 1024;
             _diskLimit = 192 * 1024 * 1024;
             _memoryWarningBaseline = 4 * 1024 * 1024;
             _backgroundBaseline = 20 * 1024 * 1024;
@@ -159,10 +268,20 @@ static NSFileManager *cacheFileManager = nil;
             _imageMemoryLimit = 96 * 1024 * 1024;
             _thumbnailMemoryLimit = 12 * 1024 * 1024;
             _dataMemoryLimit = 8 * 1024 * 1024;
+            _avatarMemoryLimit = 32 * 1024 * 1024;
             _diskLimit = 256 * 1024 * 1024;
             _memoryWarningBaseline = 6 * 1024 * 1024;
             _backgroundBaseline = 32 * 1024 * 1024;
         }
+#if defined(ONEGRAM_ARMV6)
+        _imageMemoryLimit = 6 * 1024 * 1024;
+        _thumbnailMemoryLimit = 1536 * 1024;
+        _dataMemoryLimit = 512 * 1024;
+        _avatarMemoryLimit = 3 * 1024 * 1024;
+        _diskLimit = 48 * 1024 * 1024;
+        _memoryWarningBaseline = 512 * 1024;
+        _backgroundBaseline = 2 * 1024 * 1024;
+#endif
         _imageMemoryEvictionInterval = MAX(512 * 1024, _imageMemoryLimit / 8);
         _thumbnailEvictionInterval = MAX(256 * 1024, _thumbnailMemoryLimit / 8);
         _dataMemoryEvictionInterval = MAX(256 * 1024, _dataMemoryLimit / 8);
@@ -170,15 +289,14 @@ static NSFileManager *cacheFileManager = nil;
         
         _temporaryCachedImagesSources = [[NSMutableArray alloc] init];
         
-        _memoryCache = [[NSMutableDictionary alloc] init];
-        self.memoryCacheSize = 0;
-        
-        _thumbnailCache = [[NSMutableDictionary alloc] init];
-        _thumbnailCacheSize = 0;
-        
-        _dataMemoryCache = [[NSMutableDictionary alloc] init];
-        _dataMemoryCacheSize = 0;
-        
+        _memoryCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_imageMemoryLimit];
+        _thumbnailCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_thumbnailMemoryLimit];
+        _dataMemoryCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_dataMemoryLimit];
+        _avatarMemoryCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_avatarMemoryLimit];
+        _renderedAvatarStoredKeys = [[NSMutableSet alloc] init];
+        _renderedAvatarMissingKeys = [[NSMutableSet alloc] init];
+        _renderedAvatarPendingPrefetchKeys = [[NSMutableSet alloc] init];
+
         NSString *cachesPath = [[LegacyComponentsGlobals provider] dataCachePath];
         
         _diskCachePath = cachesPath;
@@ -192,16 +310,6 @@ static NSFileManager *cacheFileManager = nil;
     return self;
 }
 
-- (int)memoryCacheSize
-{
-    return _memoryCacheSize1;
-}
-
-- (void)setMemoryCacheSize:(int)memoryCacheSize
-{
-    _memoryCacheSize1 = memoryCacheSize;
-}
-
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
@@ -210,11 +318,203 @@ static NSFileManager *cacheFileManager = nil;
 - (void)didReceiveMemoryWarning:(NSNotification *)__unused notification
 {
     [self freeMemoryCache:_memoryWarningBaseline];
+    [_avatarMemoryCache trimToCost:(NSUInteger)MAX(0, _avatarMemoryLimit / 4)];
 }
 
 - (void)didEnterBackground:(NSNotification *)__unused notification
 {
     [self freeMemoryCache:_backgroundBaseline];
+    [_avatarMemoryCache trimToCost:(NSUInteger)MAX(0, _avatarMemoryLimit / 2)];
+}
+
+- (NSString *)diskPathForUrl:(NSString *)url
+{
+    NSString *key = TGCacheNormalizedKey(url);
+    NSString *path = [_diskCachePath stringByAppendingPathComponent:md5String(key)];
+    if (key != url)
+    {
+        const char *targetPath = [path fileSystemRepresentation];
+        if (targetPath != NULL && access(targetPath, F_OK) != 0)
+        {
+            const char *legacyPath = [[_diskCachePath stringByAppendingPathComponent:md5String(url)] fileSystemRepresentation];
+            if (legacyPath != NULL)
+                rename(legacyPath, targetPath);
+        }
+    }
+    return path;
+}
+
+- (NSString *)renderedAvatarPathForKey:(NSString *)key
+{
+    return [_diskCachePath stringByAppendingPathComponent:[@"rendered-" stringByAppendingString:md5String(key)]];
+}
+
+- (OGMemoryCache *)memoryCacheForKey:(NSString *)key
+{
+    return TGCacheIsAvatarKey(key) ? _avatarMemoryCache : _memoryCache;
+}
+
+- (bool)isRenderedAvatarKey:(NSString *)url
+{
+    return TGCacheIsAvatarKey(TGCacheNormalizedKey(url));
+}
+
+- (void)storeRenderedAvatarImage:(UIImage *)image key:(NSString *)key
+{
+    if (image == nil || key.length == 0)
+        return;
+    @synchronized (_renderedAvatarStoredKeys)
+    {
+        if ([_renderedAvatarStoredKeys containsObject:key])
+            return;
+        [_renderedAvatarStoredKeys addObject:key];
+        [_renderedAvatarMissingKeys removeObject:key];
+    }
+    dispatch_async(TGCacheRenderedAvatarQueue(), ^
+    {
+        @autoreleasepool
+        {
+            NSString *path = [self renderedAvatarPathForKey:key];
+            const char *filePath = [path fileSystemRepresentation];
+            if (filePath != NULL && access(filePath, F_OK) == 0)
+                return;
+            NSData *data = TGCacheRenderedImageData(image);
+            if (data == nil || ![data writeToFile:path atomically:true])
+            {
+                @synchronized (_renderedAvatarStoredKeys)
+                {
+                    [_renderedAvatarStoredKeys removeObject:key];
+                }
+            }
+        }
+    });
+}
+
+- (UIImage *)readRenderedAvatarForKey:(NSString *)key storeInMemory:(bool)storeInMemory
+{
+    UIImage *image = [_avatarMemoryCache objectForKey:key];
+    if (image != nil)
+        return image;
+    @synchronized (_renderedAvatarStoredKeys)
+    {
+        if ([_renderedAvatarMissingKeys containsObject:key])
+            return nil;
+    }
+
+    NSString *path = [self renderedAvatarPathForKey:key];
+    NSData *data = [[NSData alloc] initWithContentsOfFile:path];
+    image = TGCacheImageFromRenderedData(data);
+    @synchronized (_renderedAvatarStoredKeys)
+    {
+        if (image != nil)
+            [_renderedAvatarStoredKeys addObject:key];
+        else if (![_renderedAvatarStoredKeys containsObject:key])
+            [_renderedAvatarMissingKeys addObject:key];
+    }
+    if (image == nil)
+    {
+        if (data != nil)
+            unlink([path fileSystemRepresentation]);
+        return nil;
+    }
+
+    NSUInteger cost = TGCacheImageCost(image);
+    if (storeInMemory && _avatarMemoryLimit > 0)
+    {
+        _avatarMemoryCache.costLimit = (NSUInteger)_avatarMemoryLimit;
+        [_avatarMemoryCache setObject:image forKey:key cost:cost];
+    }
+    else if (!storeInMemory && _avatarMemoryLimit > 0 && _avatarMemoryCache.totalCost + cost <= (uint64_t)_avatarMemoryLimit * 9 / 10)
+    {
+        _avatarMemoryCache.costLimit = (NSUInteger)_avatarMemoryLimit;
+        [_avatarMemoryCache setObject:image forKey:key cost:cost];
+    }
+    return image;
+}
+
+- (void)loadRenderedAvatar:(NSString *)url completion:(void (^)(UIImage *image))completion
+{
+    if (completion == nil)
+        return;
+    NSString *key = TGCacheNormalizedKey(url);
+    if (!TGCacheIsAvatarKey(key))
+    {
+        completion(nil);
+        return;
+    }
+    UIImage *memoryImage = [_avatarMemoryCache objectForKey:key];
+    if (memoryImage != nil)
+    {
+        completion(memoryImage);
+        return;
+    }
+    @synchronized (_renderedAvatarStoredKeys)
+    {
+        if ([_renderedAvatarMissingKeys containsObject:key])
+        {
+            completion(nil);
+            return;
+        }
+    }
+    dispatch_async(TGCacheRenderedAvatarQueue(), ^
+    {
+        UIImage *image = nil;
+        @autoreleasepool
+        {
+            image = [self readRenderedAvatarForKey:key storeInMemory:true];
+        }
+        completion(image);
+    });
+}
+
+- (void)prefetchRenderedAvatar:(NSString *)url completion:(void (^)(UIImage *image))completion
+{
+    NSString *key = TGCacheNormalizedKey(url);
+    if (!TGCacheIsAvatarKey(key))
+    {
+        if (completion != nil)
+            completion(nil);
+        return;
+    }
+    UIImage *memoryImage = [_avatarMemoryCache objectForKey:key];
+    if (memoryImage != nil)
+    {
+        if (completion != nil)
+            completion(memoryImage);
+        return;
+    }
+    @synchronized (_renderedAvatarStoredKeys)
+    {
+        if ([_renderedAvatarMissingKeys containsObject:key])
+        {
+            if (completion != nil)
+                completion(nil);
+            return;
+        }
+        if (completion == nil)
+        {
+            if ([_renderedAvatarPendingPrefetchKeys containsObject:key])
+                return;
+            [_renderedAvatarPendingPrefetchKeys addObject:key];
+        }
+    }
+    dispatch_async(TGCacheRenderedAvatarPrefetchQueue(), ^
+    {
+        UIImage *image = nil;
+        @autoreleasepool
+        {
+            image = [self readRenderedAvatarForKey:key storeInMemory:false];
+        }
+        if (completion == nil)
+        {
+            @synchronized (_renderedAvatarStoredKeys)
+            {
+                [_renderedAvatarPendingPrefetchKeys removeObject:key];
+            }
+        }
+        else
+            completion(image);
+    });
 }
 
 - (void)addTemporaryCachedImagesSource:(NSDictionary *)source autoremove:(bool)autoremove
@@ -224,16 +524,13 @@ static NSFileManager *cacheFileManager = nil;
         [_temporaryCachedImagesSources addObject:source];
         if (autoremove)
         {
-            dispatch_async(dispatch_get_main_queue(), ^{
+            OGPlatformDispatchAfterCurrentMainRunLoop(^{
                 [self removeTemporaryCachedImageSource:source];
             });
         }
     };
     
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
+    TGCacheExecuteMemoryBlock(self, block);
 }
 
 - (void)removeTemporaryCachedImageSource:(NSDictionary *)source
@@ -243,132 +540,29 @@ static NSFileManager *cacheFileManager = nil;
         [_temporaryCachedImagesSources removeObject:source];
     };
     
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
+    TGCacheExecuteMemoryBlock(self, block);
 }
 
 - (void)freeMemoryCache:(NSUInteger)targetSize
 {
-    dispatch_block_t block = ^
-    {
-        if (self.memoryCacheSize > (int)targetSize)
-        {
-            __unused int sizeBefore = self.memoryCacheSize;
-            NSArray *sortedKeys = [_memoryCache keysSortedByValueUsingComparator:^NSComparisonResult(id obj1, id obj2)
-            {
-                return (((TGCacheRecord *)obj1).date < ((TGCacheRecord *)obj2).date) ? NSOrderedAscending : NSOrderedDescending;
-            }];
-            for (int i = 0; i < (int)sortedKeys.count && self.memoryCacheSize > (int)targetSize; i++)
-            {
-                NSString *key = [sortedKeys objectAtIndex:i];
-                TGCacheRecord *record = [_memoryCache objectForKey:key];
-                self.memoryCacheSize -= (int)record.size;
-                if (self.memoryCacheSize < 0)
-                    self.memoryCacheSize = 0;
-                [_memoryCache removeObjectForKey:key];
-                //TGLegacyLog(@"evict %@", key);
-            }
-            
-            __block int currentCacheSize = 0;
-            [_memoryCache enumerateKeysAndObjectsUsingBlock:^(__unused NSString *key, TGCacheRecord *record, __unused BOOL *stop)
-            {
-                currentCacheSize += record.size;
-            }];
-            
-            self.memoryCacheSize = currentCacheSize;
-            
-            //TGLegacyLog(@"TGCache: freed %d kbytes (cache size: %d kbytes)", (int)((sizeBefore - self.memoryCacheSize) / 1024), (int)(self.memoryCacheSize / 1024));
-        }
-    };
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
+    [_memoryCache trimToCost:targetSize];
 }
 
 - (void)freeThumbnailCache:(NSUInteger)targetSize
 {
-    dispatch_block_t block = ^
-    {
-        if (_thumbnailCacheSize > (int)targetSize)
-        {
-            //int sizeBefore = _thumbnailCacheSize;
-            NSArray *sortedKeys = [_thumbnailCache keysSortedByValueUsingComparator:^NSComparisonResult(id obj1, id obj2)
-            {
-                return (((TGCacheRecord *)obj1).date < ((TGCacheRecord *)obj2).date) ? NSOrderedAscending : NSOrderedDescending;
-            }];
-            for (int i = 0; i < (int)sortedKeys.count && _thumbnailCacheSize > (int)targetSize; i++)
-            {
-                NSString *key = [sortedKeys objectAtIndex:i];
-                TGCacheRecord *record = [_thumbnailCache objectForKey:key];
-                _thumbnailCacheSize -= record.size;
-                if (_thumbnailCacheSize < 0)
-                    _thumbnailCacheSize = 0;
-                [_thumbnailCache removeObjectForKey:key];
-            }
-        }
-    };
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
+    [_thumbnailCache trimToCost:targetSize];
 }
 
-- (void)freeCompressedMemoryCache:(NSUInteger)targetSize reentrant:(bool)reentrant
+- (void)cacheCompressedObject:(NSData *)data url:(NSString *)url
 {
-    if (!reentrant)
-        TG_SYNCHRONIZED_BEGIN(_dataMemoryCache);
+    url = TGCacheNormalizedKey(url);
+    if (_dataMemoryLimit <= 0)
     {
-        if (_dataMemoryCacheSize > (int)targetSize)
-        {
-            __unused int sizeBefore = _dataMemoryCacheSize;
-            NSArray *sortedKeys = [_dataMemoryCache keysSortedByValueUsingComparator:^NSComparisonResult(id obj1, id obj2)
-            {
-                return (((TGCacheRecord *)obj1).date < ((TGCacheRecord *)obj2).date) ? NSOrderedAscending : NSOrderedDescending;
-            }];
-            for (int i = 0; i < (int)sortedKeys.count && _dataMemoryCacheSize > (int)targetSize; i++)
-            {
-                NSString *key = [sortedKeys objectAtIndex:i];
-                TGCacheRecord *record = [_dataMemoryCache objectForKey:key];
-                _dataMemoryCacheSize -= record.size;
-                if (_dataMemoryCacheSize < 0)
-                    _dataMemoryCacheSize = 0;
-                [_dataMemoryCache removeObjectForKey:key];
-            }
-            //TGLegacyLog(@"TGCache (compressed): freed %d kbytes (cache size: %d kbytes)", (int)((sizeBefore - _dataMemoryCacheSize) / 1024), (int)(_dataMemoryCacheSize / 1024));
-        }
+        [_dataMemoryCache removeAllObjects];
+        return;
     }
-    if (!reentrant)
-        TG_SYNCHRONIZED_END(_dataMemoryCache);
-}
-
-- (void)cacheCompressedObject:(NSData *)data url:(NSString *)url reentrant:(bool)reentrant
-{
-    if (!reentrant)
-        TG_SYNCHRONIZED_BEGIN(_dataMemoryCache);
-    
-    TGCacheRecord *cacheRecord = [_dataMemoryCache objectForKey:url];
-    if (cacheRecord != nil)
-    {
-        _dataMemoryCacheSize -= cacheRecord.size;
-        cacheRecord.date = CFAbsoluteTimeGetCurrent();
-        cacheRecord.object = data;
-        cacheRecord.size = data.length;
-        _dataMemoryCacheSize += cacheRecord.size;
-    }
-    else
-    {
-        [_dataMemoryCache setObject:[[TGCacheRecord alloc] initWithObject:data size:data.length] forKey:url];
-        _dataMemoryCacheSize += data.length;
-    }
-    
-    if (_dataMemoryCacheSize >= _dataMemoryLimit + _dataMemoryEvictionInterval)
-        [self freeCompressedMemoryCache:_dataMemoryLimit reentrant:true];
-    
-    if (!reentrant)
-        TG_SYNCHRONIZED_END(_dataMemoryCache);
+    _dataMemoryCache.costLimit = (NSUInteger)_dataMemoryLimit;
+    [_dataMemoryCache setObject:data forKey:url cost:data.length];
 }
 
 - (void)cacheImage:(UIImage *)image withData:(NSData *)data url:(NSString *)url availability:(int)availability
@@ -376,45 +570,29 @@ static NSFileManager *cacheFileManager = nil;
     [self cacheImage:image withData:data url:url availability:availability completion:nil];
 }
 
-- (void)cacheImage:(UIImage *)image withData:(NSData *)data url:(NSString *)url availability:(int)availability completion:(void (^)(void))completion
+- (void)cacheImage:(UIImage *)image withData:(NSData *)data url:(NSString *)rawUrl availability:(int)availability completion:(void (^)(void))completion
 {
-    if (image != nil && (availability & TGCacheMemory))
+    NSString *url = TGCacheNormalizedKey(rawUrl);
+    if (image != nil && (availability & TGCacheMemory) && url != nil)
     {
-        CGImageRef cgImage = image.CGImage;
-        uint64_t byteSize = 0;
-        if (cgImage != NULL)
-            byteSize = (uint64_t)CGImageGetBytesPerRow(cgImage) * (uint64_t)CGImageGetHeight(cgImage);
-        if (byteSize == 0)
+        if (TGCacheIsAvatarKey(url))
         {
-            CGFloat pixelWidth = image.size.width * image.scale;
-            CGFloat pixelHeight = image.size.height * image.scale;
-            byteSize = (uint64_t)ceil(pixelWidth) * (uint64_t)ceil(pixelHeight) * 4ULL;
-        }
-        int size = byteSize > 0x7fffffffULL ? 0x7fffffff : (int)byteSize;
-        dispatch_block_t block = ^
-        {
-            TGCacheRecord *cacheRecord = [_memoryCache objectForKey:url];
-            if (cacheRecord != nil)
-            {
-                self.memoryCacheSize -= (int)cacheRecord.size;
-                cacheRecord.date = CFAbsoluteTimeGetCurrent();
-                cacheRecord.object = image;
-                cacheRecord.size = size;
-                self.memoryCacheSize += size;
-            }
+            if (_avatarMemoryLimit <= 0)
+                [_avatarMemoryCache removeAllObjects];
             else
             {
-                [_memoryCache setObject:[[TGCacheRecord alloc] initWithObject:image size:size] forKey:url];
-                self.memoryCacheSize += size;
+                _avatarMemoryCache.costLimit = (NSUInteger)_avatarMemoryLimit;
+                [_avatarMemoryCache setObject:image forKey:url cost:TGCacheImageCost(image)];
             }
-            
-            if (self.memoryCacheSize >= _imageMemoryLimit + _imageMemoryEvictionInterval)
-                [self freeMemoryCache:_imageMemoryLimit];
-        };
-        if ([NSThread isMainThread])
-            block();
+            [self storeRenderedAvatarImage:image key:url];
+        }
+        else if (_imageMemoryLimit <= 0)
+            [_memoryCache removeAllObjects];
         else
-            dispatch_async(dispatch_get_main_queue(), block);
+        {
+            _memoryCache.costLimit = (NSUInteger)_imageMemoryLimit;
+            [_memoryCache setObject:image forKey:url cost:TGCacheImageCost(image)];
+        }
     }
     
     if ((data != nil || image != nil) && (availability & TGCacheDisk) && url != nil)
@@ -423,9 +601,9 @@ static NSFileManager *cacheFileManager = nil;
         {   
             if (data != nil)
             {
-                [self cacheCompressedObject:data url:url reentrant:false];
+                [self cacheCompressedObject:data url:url];
 
-                [data writeToFile:[_diskCachePath stringByAppendingPathComponent:md5String(url)] atomically:true];
+                [data writeToFile:[self diskPathForUrl:url] atomically:true];
                 
                 if (completion != nil)
                     completion();
@@ -434,42 +612,32 @@ static NSFileManager *cacheFileManager = nil;
     }
 }
 
-- (UIImage *)cachedImage:(NSString *)url availability:(int)availability
+- (UIImage *)cachedImage:(NSString *)rawUrl availability:(int)availability
 {
+    if (rawUrl.length == 0)
+        return nil;
+    NSString *url = TGCacheNormalizedKey(rawUrl);
     UIImage *image = nil;
     
     if (availability & TGCacheMemory)
     {
-        __block UIImage *blockImage = nil;
-        dispatch_block_t block = ^
+        image = [[self memoryCacheForKey:url] objectForKey:url];
+        if (image == nil)
         {
-            TGCacheRecord *cacheRecord = [_memoryCache objectForKey:url];
-            if (cacheRecord != nil)
+            @synchronized (self)
             {
-                cacheRecord.date = CFAbsoluteTimeGetCurrent();
-                blockImage = cacheRecord.object;
-            }
-            else if (_temporaryCachedImagesSources.count != 0)
-            {
-                for (NSDictionary *dict in _temporaryCachedImagesSources)
+                for (NSDictionary *source in _temporaryCachedImagesSources)
                 {
-                    UIImage *image = [dict objectForKey:url];
-                    //TGLegacyLog(@"From temp cache %@", url);
+                    image = [source objectForKey:url];
+                    if (image == nil && url != rawUrl)
+                        image = [source objectForKey:rawUrl];
                     if (image != nil)
-                    {
-                        blockImage = image;
                         break;
-                    }
                 }
             }
-        };
-        if ([NSThread isMainThread])
-            block();
-        else
-            dispatch_sync(dispatch_get_main_queue(), block);
-        image = blockImage;
+        }
     }
-    
+
     if (image != nil)
         return image;
     
@@ -477,80 +645,71 @@ static NSFileManager *cacheFileManager = nil;
     {
         UIImage *dataImage = nil;
         
-        TG_SYNCHRONIZED_BEGIN(_dataMemoryCache);
+        NSData *data = [_dataMemoryCache objectForKey:url];
+        if (data != nil)
         {
-            TGCacheRecord *cacheRecord = [_dataMemoryCache objectForKey:url];
-            if (cacheRecord != nil)
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            dataImage = [[UIImage alloc] initWithData:data];
+#else
+            NSDictionary *options = @{ (__bridge NSString *)kCGImageSourceShouldCache: @YES };
+            CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+            if (source != NULL)
             {
-                cacheRecord.date = CFAbsoluteTimeGetCurrent();
-                
-                if (false)
+                CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+                if (cgImage != NULL)
                 {
-                    dataImage = [[UIImage alloc] initWithData:cacheRecord.object];
+                    dataImage = [[UIImage alloc] initWithCGImage:cgImage];
+                    CGImageRelease(cgImage);
                 }
-                else
-                {
-                    NSDictionary *dict = [NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:(id)kCGImageSourceShouldCache];
-                    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)cacheRecord.object, nil);
-                    if (source != nil)
-                    {
-                        CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, (__bridge CFDictionaryRef)dict);
-                        
-                        dataImage = [[UIImage alloc] initWithCGImage:cgImage];
-                        
-                        CGImageRelease(cgImage);
-                        CFRelease(source);
-                    }
-                }
-                
-                if (dataImage != nil && (availability & TGCacheMemory))
-                    [self cacheImage:dataImage withData:nil url:url availability:TGCacheMemory];
+                CFRelease(source);
             }
+#endif
+            if (dataImage != nil && (availability & TGCacheMemory))
+                [self cacheImage:dataImage withData:nil url:url availability:TGCacheMemory];
         }
-        TG_SYNCHRONIZED_END(_dataMemoryCache);
-        
+
         if (dataImage != nil)
             return dataImage;
         
         __block UIImage *diskImageResult = nil;
-        dispatch_sync([TGCache diskCacheQueue], ^
+        dispatch_block_t readDisk = ^
         {
+            NSURL *realUrl = [[NSURL alloc] initFileURLWithPath:[self diskPathForUrl:rawUrl]];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            UIImage *diskImage = [UIImage imageWithContentsOfFile:[realUrl path]];
+#else
             NSDictionary *dict = [NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:(id)kCGImageSourceShouldCache];
-            
-            NSURL *realUrl = [[NSURL alloc] initFileURLWithPath:[_diskCachePath stringByAppendingPathComponent:md5String(url)]];
             CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)realUrl, NULL);
+            UIImage *diskImage = nil;
             if (source != nil)
             {
                 CGImageRef cgImage = CGImageSourceCreateImageAtIndex(source, 0, (__bridge CFDictionaryRef)dict);
-                
-                UIImage *diskImage = [UIImage imageWithCGImage:cgImage];
-                
-                if (diskImage != nil && (availability & TGCacheMemory))
+                if (cgImage != NULL)
                 {
-                    [self cacheImage:diskImage withData:nil url:url availability:TGCacheMemory];
+                    diskImage = [UIImage imageWithCGImage:cgImage];
+                    CGImageRelease(cgImage);
                 }
-             
-                if (diskImage != nil)
-                {
-                    diskImageResult = diskImage;
-                    
-                    if (diskImage != nil)
-                    {
-                        dispatch_async([TGCache diskCacheQueue], ^
-                        {
-                            NSData *data = [[NSData alloc] initWithContentsOfURL:realUrl];
-                            if (data != nil)
-                            {
-                                [self cacheCompressedObject:data url:url reentrant:false];
-                            }
-                        });
-                    }
-                }
-                
-                CGImageRelease(cgImage);
                 CFRelease(source);
             }
-        });
+#endif
+            if (diskImage != nil && (availability & TGCacheMemory))
+                [self cacheImage:diskImage withData:nil url:url availability:TGCacheMemory];
+            if (diskImage != nil)
+            {
+                diskImageResult = diskImage;
+                dispatch_async([TGCache diskCacheQueue], ^
+                {
+                    NSData *data = [[NSData alloc] initWithContentsOfURL:realUrl];
+                    if (data != nil)
+                        [self cacheCompressedObject:data url:url];
+                });
+            }
+        };
+        [TGCache diskCacheQueue];
+        if (dispatch_get_specific(&TGCacheDiskQueueKey) != NULL)
+            readDisk();
+        else
+            dispatch_sync([TGCache diskCacheQueue], readDisk);
         image = diskImageResult;
         return image;
     }
@@ -558,52 +717,46 @@ static NSFileManager *cacheFileManager = nil;
     return nil;
 }
 
-- (void)removeFromMemoryCache:(NSString *)url matchEnd:(bool)matchEnd
+- (NSData *)cachedDataForUrl:(NSString *)rawUrl
 {
-    if (url == nil)
-        return;
-    
-    dispatch_block_t block = ^
-    {
-        TGCacheRecord *cacheRecord = [_memoryCache objectForKey:url];
-        if (cacheRecord != nil)
-        {
-            self.memoryCacheSize -= (int)cacheRecord.size;
-            if (self.memoryCacheSize < 0)
-                self.memoryCacheSize = 0;
-            [_memoryCache removeObjectForKey:url];
-        }
-        
-        if (matchEnd)
-        {
-            NSMutableArray *removeKeys = [[NSMutableArray alloc] init];
-            
-            [_memoryCache enumerateKeysAndObjectsUsingBlock:^(NSString *key, __unused id obj, __unused BOOL *stop)
-            {
-                if ([key hasSuffix:url])
-                    [removeKeys addObject:key];
-            }];
-            
-            [_memoryCache removeObjectsForKeys:removeKeys];
-        }
-        
-        TGCacheRecord *dataCacheRecord = [_dataMemoryCache objectForKey:url];
-        if (dataCacheRecord != nil)
-        {
-            _dataMemoryCacheSize -= dataCacheRecord.size;
-            if (_dataMemoryCacheSize < 0)
-                _dataMemoryCacheSize = 0;
-            [_dataMemoryCache removeObjectForKey:url];
-        }
-    };
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_sync(dispatch_get_main_queue(), block);
+    if (rawUrl.length == 0)
+        return nil;
+    NSString *url = TGCacheNormalizedKey(rawUrl);
+
+    NSData *data = [_dataMemoryCache objectForKey:url];
+
+    if (data != nil)
+        return data;
+
+    data = [[NSData alloc] initWithContentsOfFile:[self diskPathForUrl:rawUrl]];
+    if (data != nil)
+        [self cacheCompressedObject:data url:url];
+    return data;
 }
 
-- (void)cacheThumbnail:(UIImage *)image url:(NSString *)url
+- (void)removeFromMemoryCache:(NSString *)rawUrl matchEnd:(bool)matchEnd
 {
+    if (rawUrl == nil)
+        return;
+    NSString *url = TGCacheNormalizedKey(rawUrl);
+    
+    if (matchEnd)
+    {
+        BOOL (^predicate)(NSString *) = ^BOOL(NSString *key)
+        {
+            return [key hasSuffix:url];
+        };
+        [_memoryCache removeObjectsMatchingKeyPredicate:predicate];
+        [_avatarMemoryCache removeObjectsMatchingKeyPredicate:predicate];
+    }
+    else
+        [[self memoryCacheForKey:url] removeObjectForKey:url];
+    [_dataMemoryCache removeObjectForKey:url];
+}
+
+- (void)cacheThumbnail:(UIImage *)image url:(NSString *)rawUrl
+{
+    NSString *url = TGCacheNormalizedKey(rawUrl);
     if ([self cachedThumbnail:url] != nil)
         return;
     
@@ -612,7 +765,6 @@ static NSFileManager *cacheFileManager = nil;
         int side = 32;
         if (!TGIsRetina())
             side *= 2;
-        int size = (int)(side * side * 4);
         if (image.size.width > side || image.size.height > side)
         {
             image = TGScaleImage(image, CGSizeMake(side, side));
@@ -620,70 +772,28 @@ static NSFileManager *cacheFileManager = nil;
         else
             return;
         
-        dispatch_block_t block = ^
-        {
-            TGCacheRecord *cacheRecord = [_thumbnailCache objectForKey:url];
-            if (cacheRecord != nil)
-            {
-                _thumbnailCacheSize -= cacheRecord.size;
-                cacheRecord.date = CFAbsoluteTimeGetCurrent();
-                cacheRecord.object = image;
-                cacheRecord.size = size;
-                _thumbnailCacheSize += size;
-            }
-            else
-            {
-                [_thumbnailCache setObject:[[TGCacheRecord alloc] initWithObject:image size:size] forKey:url];
-                _thumbnailCacheSize += size;
-            }
-            
-            //TGLegacyLog(@"Cache thumbnail: %@", url);
-            
-            //TGLegacyLog(@"_thumbnailCacheSize = %d", _thumbnailCacheSize);
-            
-            if (_thumbnailCacheSize >= _thumbnailMemoryLimit + _thumbnailEvictionInterval)
-                [self freeThumbnailCache:_thumbnailMemoryLimit];
-        };
-        if ([NSThread isMainThread])
-            block();
+        if (_thumbnailMemoryLimit <= 0)
+            [_thumbnailCache removeAllObjects];
         else
-            dispatch_async(dispatch_get_main_queue(), block);
+        {
+            _thumbnailCache.costLimit = (NSUInteger)_thumbnailMemoryLimit;
+            [_thumbnailCache setObject:image forKey:url cost:TGCacheImageCost(image)];
+        }
     }
 }
 
 - (UIImage *)cachedThumbnail:(NSString *)url
 {
-    UIImage *image = nil;
-    __block UIImage *blockImage = nil;
-    dispatch_block_t block = ^
-    {
-        TGCacheRecord *cacheRecord = [_thumbnailCache objectForKey:url];
-        if (cacheRecord != nil)
-        {
-            cacheRecord.date = CFAbsoluteTimeGetCurrent();
-            blockImage = cacheRecord.object;
-        }
-        else
-        {
-            //TGLegacyLog(@"Thumbnail not found: %@", url);
-        }
-    };
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
-    image = blockImage;
-    if (image != nil)
-        return image;
-    
-    return nil;
+    if (url.length == 0)
+        return nil;
+    return [_thumbnailCache objectForKey:TGCacheNormalizedKey(url)];
 }
 
 - (void)diskCacheContains:(NSString *)url1 orUrl:(NSString *)url2 completion:(void (^)(bool containsFirst, bool containsSecond))completion
 {   
     dispatch_async([TGCache diskCacheQueue], ^
     {
-        bool cached = [cacheFileManager fileExistsAtPath:[_diskCachePath stringByAppendingPathComponent:md5String(url1)]];
+        bool cached = url1 != nil && [cacheFileManager fileExistsAtPath:[self diskPathForUrl:url1]];
         if (cached)
         {
             if (completion)
@@ -691,7 +801,7 @@ static NSFileManager *cacheFileManager = nil;
         }
         else if (url2 != nil)
         {
-            cached = [cacheFileManager fileExistsAtPath:[_diskCachePath stringByAppendingPathComponent:md5String(url2)]];
+            cached = [cacheFileManager fileExistsAtPath:[self diskPathForUrl:url2]];
             if (completion)
                 completion(false, cached);
         }
@@ -707,48 +817,53 @@ static NSFileManager *cacheFileManager = nil;
 {
     __block bool result = false;
     
-    dispatch_sync([TGCache diskCacheQueue], ^
+    dispatch_block_t check = ^
     {
-        result = [cacheFileManager fileExistsAtPath:[_diskCachePath stringByAppendingPathComponent:md5String(url)]];
-    });
-    
+        result = [cacheFileManager fileExistsAtPath:[self diskPathForUrl:url]];
+    };
+    [TGCache diskCacheQueue];
+    if (dispatch_get_specific(&TGCacheDiskQueueKey) != NULL)
+        check();
+    else
+        dispatch_sync([TGCache diskCacheQueue], check);
+
     return result;
 }
 
 - (void)removeFromDiskCache:(NSString *)url
 {
+    if (url.length == 0)
+        return;
+
+    [_dataMemoryCache removeObjectForKey:TGCacheNormalizedKey(url)];
+
     dispatch_async([TGCache diskCacheQueue], ^
     {
-        [cacheFileManager removeItemAtPath:[_diskCachePath stringByAppendingPathComponent:md5String(url)] error:nil];
+        [cacheFileManager removeItemAtPath:[self diskPathForUrl:url] error:nil];
     });
 }
 
 - (NSString *)pathForCachedData:(NSString *)url
 {
-    return [_diskCachePath stringByAppendingPathComponent:md5String(url)];
+    return [self diskPathForUrl:url];
 }
 
 - (void)changeCacheItemUrl:(NSString *)oldUrl newUrl:(NSString *)newUrl
 {
-    //TGLegacyLog(@"TGCache: rename \"%@\" -> \"%@\"", oldUrl, newUrl);
-    dispatch_block_t block = ^
-    {
-        TGCacheRecord *record = [_memoryCache objectForKey:oldUrl];
-        if (record != nil)
-        {
-            [_memoryCache setObject:record forKey:newUrl];
-            [_memoryCache removeObjectForKey:oldUrl];
-        }
-    };
-    if ([NSThread isMainThread])
-        block();
+    NSString *oldKey = TGCacheNormalizedKey(oldUrl);
+    NSString *newKey = TGCacheNormalizedKey(newUrl);
+    OGMemoryCache *oldMemoryCache = [self memoryCacheForKey:oldKey];
+    OGMemoryCache *newMemoryCache = [self memoryCacheForKey:newKey];
+    if (oldMemoryCache == newMemoryCache)
+        [oldMemoryCache moveObjectForKey:oldKey toKey:newKey];
     else
-        dispatch_async(dispatch_get_main_queue(), block);
-    
+        [oldMemoryCache removeObjectForKey:oldKey];
+    [_dataMemoryCache moveObjectForKey:oldKey toKey:newKey];
+
     dispatch_async([TGCache diskCacheQueue], ^
     {
         NSError *error = nil;
-        [cacheFileManager moveItemAtPath:[_diskCachePath stringByAppendingPathComponent:md5String(oldUrl)] toPath:[_diskCachePath stringByAppendingPathComponent:md5String(newUrl)] error:&error];
+        [cacheFileManager moveItemAtPath:[self diskPathForUrl:oldUrl] toPath:[self diskPathForUrl:newUrl] error:&error];
         if (error != nil)
             TGLegacyLog(@"Failed to move: %@", error);
     });
@@ -756,26 +871,18 @@ static NSFileManager *cacheFileManager = nil;
 
 - (void)moveToCache:(NSString *)fileUrl cacheUrl:(NSString *)cacheUrl
 {
-    TGLegacyLog(@"TGCache: move \"%@\" -> \"%@\"", fileUrl, cacheUrl);
-    dispatch_block_t block = ^
-    {
-        TGCacheRecord *record = [_memoryCache objectForKey:fileUrl];
-        if (record != nil)
-        {
-            [_memoryCache setObject:record forKey:cacheUrl];
-            [_memoryCache removeObjectForKey:fileUrl];
-        }
-    };
-    if ([NSThread isMainThread])
-        block();
+    NSString *cacheKey = TGCacheNormalizedKey(cacheUrl);
+    OGMemoryCache *targetMemoryCache = [self memoryCacheForKey:cacheKey];
+    if (targetMemoryCache == _memoryCache)
+        [_memoryCache moveObjectForKey:fileUrl toKey:cacheKey];
     else
-        dispatch_async(dispatch_get_main_queue(), block);
-    
+        [_memoryCache removeObjectForKey:fileUrl];
+
     dispatch_async([TGCache diskCacheQueue], ^
     {
         NSError *error = nil;
 
-        NSString *targetPath = [_diskCachePath stringByAppendingPathComponent:md5String(cacheUrl)];
+        NSString *targetPath = [self diskPathForUrl:cacheUrl];
         if ([[NSFileManager defaultManager] fileExistsAtPath:targetPath])
             [[NSFileManager defaultManager] removeItemAtPath:targetPath error:NULL];
         
@@ -789,23 +896,18 @@ static NSFileManager *cacheFileManager = nil;
 {
     if (availability & TGCacheMemory)
     {
-        dispatch_block_t block = ^
-        {
-            [_memoryCache removeAllObjects];
-            self.memoryCacheSize = 0;
-        };
-        if ([NSThread isMainThread])
-            block();
-        else
-            dispatch_async(dispatch_get_main_queue(), block);
-        
-        TG_SYNCHRONIZED_BEGIN(_dataMemoryCache);
+        [_memoryCache removeAllObjects];
+        [_thumbnailCache removeAllObjects];
         [_dataMemoryCache removeAllObjects];
-        _dataMemoryCacheSize = 0;
-        TG_SYNCHRONIZED_END(_dataMemoryCache);
+        [_avatarMemoryCache removeAllObjects];
     }
     if (availability & TGCacheDisk)
     {
+        @synchronized (_renderedAvatarStoredKeys)
+        {
+            [_renderedAvatarStoredKeys removeAllObjects];
+            [_renderedAvatarMissingKeys removeAllObjects];
+        }
         dispatch_async([TGCache diskCacheQueue], ^
         {
             NSDirectoryEnumerator* en = [cacheFileManager enumeratorAtPath:_diskCachePath];
@@ -830,31 +932,15 @@ static NSFileManager *cacheFileManager = nil;
 
 - (NSArray *)storeMemoryCache
 {
-    NSMutableArray *array = [[NSMutableArray alloc] init];
-    
-    dispatch_block_t block = ^
-    {
-        [_memoryCache enumerateKeysAndObjectsUsingBlock:^(NSString *key, __unused id obj, __unused BOOL *stop)
-        {
-            [array addObject:key];
-        }];
-    };
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_sync(dispatch_get_main_queue(), block);
-    
-    return array;
+    return [[_memoryCache allKeys] arrayByAddingObjectsFromArray:[_avatarMemoryCache allKeys]];
 }
 
 - (void)restoreMemoryCache:(NSArray *)array
 {
-    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
     for (NSString *url in array)
     {
         [self cachedImage:url availability:TGCacheDisk];
     }
-    TGLegacyLog(@"Cache restored in %f ms", (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
 }
 
 @end

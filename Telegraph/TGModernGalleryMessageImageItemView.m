@@ -167,7 +167,6 @@
         if (strongController == nil)
             return;
         
-        //[strongController dismissAnimated:true manual:true];
         
         if (pack != nil) {
             __strong TGModernGalleryMessageImageItemView *strongSelf = weakSelf;

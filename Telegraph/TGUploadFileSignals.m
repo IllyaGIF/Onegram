@@ -90,7 +90,7 @@
         [helper uploadData:data mediaTypeTag:mediaTypeTag];
         
         return [[SBlockDisposable alloc] initWithBlock:^{
-            [helper description]; // keep reference
+            [helper description];
         }];
     }];
 }
@@ -110,7 +110,7 @@
         [helper uploadSecureData:data mediaTypeTag:mediaTypeTag];
         
         return [[SBlockDisposable alloc] initWithBlock:^{
-            [helper description]; // keep reference
+            [helper description];
         }];
     }];
 }
@@ -127,7 +127,7 @@
         [helper uploadPath:path liveData:liveData mediaTypeTag:mediaTypeTag];
         
         return [[SBlockDisposable alloc] initWithBlock:^{
-            [helper description]; // keep reference
+            [helper description];
         }];
     }];
 }

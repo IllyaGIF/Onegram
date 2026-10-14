@@ -1,0 +1,6 @@
+#import "OGTelegramUserAdapter.h"
+#import "OGTelegramDialogAdapter.h"
+#import "OGTelegramMessageAdapter.h"
+#import "OGTelegramCallAdapter.h"
+#import "OGTelegramMediaAdapter.h"
+#import "OGTelegramGroupAdapter.h"

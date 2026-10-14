@@ -44,22 +44,6 @@
             
             [items addObject:item];
             index++;
-//
-//            if (media.groupedId != 0)
-//            {
-//                NSMutableArray *groupItems = groups[@(media.groupedId)];
-//                if (groupItems == nil)
-//                {
-//                    groupItems = [[NSMutableArray alloc] init];
-//                    groups[@(media.groupedId)] = groupItems;
-//                }
-//
-//                [groupItems addObject:[[TGGenericPeerGalleryGroupItem alloc] initWithItemCollectionItem:item]];
-//                item.groupItems = groupItems;
-//                item.groupedId = media.groupedId;
-//
-//                groupedItems[@(item.index)] = item;
-//            }
         }
         _groupedItems = groupedItems;
         if (centralItem == nil) {

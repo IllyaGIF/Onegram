@@ -1,4 +1,5 @@
 #import "TGEmbedPreviewView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -36,7 +37,7 @@
         _webView = [[UIWebView alloc] initWithFrame:_webViewWrapper.bounds];
         _webView.delegate = self;
         [_webViewWrapper addSubview:_webView];
-        _webView.allowsInlineMediaPlayback = true;
+        OGPlatformConfigureWebViewMediaPlayback(_webView, YES, YES);
         NSURL *url = [NSURL URLWithString:_webPage.embedUrl];
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
         NSString *referer = [[NSString alloc] initWithFormat:@"%@://%@", [url scheme], [url host]];

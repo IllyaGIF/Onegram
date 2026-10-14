@@ -16,6 +16,7 @@
 #include "TGAppDelegate.h"
 
 #import "TGTelegramNetworking.h"
+#import "TGOnegramCoreController.h"
 #import "TGTelegraph.h"
 #import <CoreImage/CoreImage.h>
 
@@ -71,7 +72,8 @@
     UIButton *_switchToDebugButton;
     
     TGModernButton *_alternativeLanguageButton;
-    UIButton *_onegramProxyButton;
+    UIButton *_onegramCoreButton;
+    bool _onegramCoreButtonVisible;
     
     SMetaDisposable *_localizationsDisposable;
     TGSuggestedLocalization *_alternativeLocalizationInfo;
@@ -98,51 +100,6 @@
 
 static NSString *replaceAppTitle(NSString *string, NSString *title) {
     return [string stringByReplacingOccurrencesOfString:@"Telegram" withString:title];
-}
-
-static UIImage *RMOnegramProxyLockImage(bool enabled, bool highlighted)
-{
-    CGSize size = CGSizeMake(32.0f, 32.0f);
-    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-    CGContextRef contextRef = UIGraphicsGetCurrentContext();
-    UIColor *color = enabled ? TGAccentColor() : UIColorRGB(0x7f8c97);
-    if (highlighted)
-        color = [color colorWithAlphaComponent:0.55f];
-
-    CGContextSetStrokeColorWithColor(contextRef, color.CGColor);
-    CGContextSetFillColorWithColor(contextRef, color.CGColor);
-    CGContextSetLineWidth(contextRef, 2.4f);
-    CGContextSetLineCap(contextRef, kCGLineCapRound);
-    CGContextSetLineJoin(contextRef, kCGLineJoinRound);
-
-    if (enabled)
-    {
-        CGContextMoveToPoint(contextRef, 10.0f, 14.5f);
-        CGContextAddLineToPoint(contextRef, 10.0f, 11.5f);
-        CGContextAddCurveToPoint(contextRef, 10.0f, 7.5f, 13.0f, 5.5f, 16.0f, 5.5f);
-        CGContextAddCurveToPoint(contextRef, 19.0f, 5.5f, 21.0f, 7.5f, 21.0f, 9.5f);
-        CGContextStrokePath(contextRef);
-    }
-    else
-    {
-        CGContextMoveToPoint(contextRef, 10.0f, 14.5f);
-        CGContextAddLineToPoint(contextRef, 10.0f, 11.5f);
-        CGContextAddCurveToPoint(contextRef, 10.0f, 7.5f, 12.5f, 5.5f, 16.0f, 5.5f);
-        CGContextAddCurveToPoint(contextRef, 19.5f, 5.5f, 22.0f, 7.5f, 22.0f, 11.5f);
-        CGContextAddLineToPoint(contextRef, 22.0f, 14.5f);
-        CGContextStrokePath(contextRef);
-    }
-
-    UIBezierPath *body = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(7.0f, 13.0f, 18.0f, 14.0f) cornerRadius:3.0f];
-    [body fill];
-
-    CGContextSetFillColorWithColor(contextRef, [UIColor whiteColor].CGColor);
-    CGContextFillEllipseInRect(contextRef, CGRectMake(14.5f, 17.0f, 3.0f, 3.0f));
-    CGContextFillRect(contextRef, CGRectMake(15.25f, 19.0f, 1.5f, 4.0f));
-
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return image;
 }
 
 static NSString *TGIOS6Base64UrlString(NSData *data)
@@ -238,6 +195,36 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     return self;
 }
 
+- (void)ensureLegacyQrWebView
+{
+    if (_qrWebView != nil || _qrContainerView == nil)
+        return;
+
+    _qrWebView = [[UIWebView alloc] init];
+    _qrWebView.backgroundColor = [UIColor whiteColor];
+    _qrWebView.opaque = false;
+    _qrWebView.userInteractionEnabled = false;
+    _qrWebView.hidden = true;
+    _qrWebView.scalesPageToFit = false;
+    UIScrollView *qrScrollView = TGUIWebViewScrollView(_qrWebView);
+    qrScrollView.scrollEnabled = false;
+    qrScrollView.bounces = false;
+    qrScrollView.contentInset = UIEdgeInsetsZero;
+    [_qrContainerView addSubview:_qrWebView];
+}
+
+- (void)releaseLegacyQrWebView
+{
+    if (_qrWebView == nil)
+        return;
+
+    [_qrWebView stopLoading];
+    _qrWebView.delegate = nil;
+    [_qrWebView removeFromSuperview];
+    _qrWebView = nil;
+    _hasQrCode = false;
+}
+
 - (void)loadView
 {
     [super loadView];
@@ -253,17 +240,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     _qrImageView.contentMode = UIViewContentModeCenter;
     [_qrContainerView addSubview:_qrImageView];
 
-    _qrWebView = [[UIWebView alloc] init];
-    _qrWebView.backgroundColor = [UIColor whiteColor];
-    _qrWebView.opaque = false;
-    _qrWebView.userInteractionEnabled = false;
-    _qrWebView.hidden = true;
-    _qrWebView.scalesPageToFit = false;
-    UIScrollView *qrScrollView = TGUIWebViewScrollView(_qrWebView);
-    qrScrollView.scrollEnabled = false;
-    qrScrollView.bounces = false;
-    qrScrollView.contentInset = UIEdgeInsetsZero;
-    [_qrContainerView addSubview:_qrWebView];
+    [self ensureLegacyQrWebView];
 
     _statusLabel = [[UILabel alloc] init];
     _statusLabel.backgroundColor = [UIColor clearColor];
@@ -304,7 +281,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 
     _qrContainerView.frame = CGRectMake(floor((width - qrSize) / 2.0f), qrY, qrSize, qrSize);
     _qrImageView.frame = _qrContainerView.bounds;
-    _qrWebView.frame = _qrContainerView.bounds;
+    if (_qrWebView != nil)
+        _qrWebView.frame = _qrContainerView.bounds;
     _statusLabel.frame = CGRectMake(16.0f, CGRectGetMaxY(_qrContainerView.frame) + 4.0f, width - 32.0f, 20.0f);
 }
 
@@ -365,6 +343,10 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 - (bool)renderLegacyQrLoginToken:(NSData *)token targetSize:(CGFloat)targetSize
 {
     if (token.length == 0)
+        return false;
+
+    [self ensureLegacyQrWebView];
+    if (_qrWebView == nil)
         return false;
 
     NSString *payload = [NSString stringWithFormat:@"tg://login?token=%@", TGIOS6Base64UrlString(token)];
@@ -489,6 +471,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
                     if (!strongSelf->_passwordControllerPresented)
                     {
                         strongSelf->_passwordControllerPresented = true;
+                        [strongSelf releaseLegacyQrWebView];
+                        strongSelf->_qrImageView.image = nil;
                         TGLog(@"IOS6QR password required -> push password controller");
                         TGLoginPasswordController *passwordController = [[TGLoginPasswordController alloc] initForQrLogin];
                         [strongSelf.navigationController pushViewController:passwordController animated:true];
@@ -528,8 +512,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     if (_passwordControllerPresented)
     {
         _passwordControllerPresented = false;
+        _statusLabel.text = TGLocalized(@"Login.QRLoading");
         TGLog(@"IOS6QR returned from password controller");
-        return;
     }
 
     [self refreshQrLoginToken];
@@ -558,6 +542,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:OGOnegramCoreDidChangeNotification object:nil];
     TGIOS6SetQRLoginFlowActive(false);
     if (_loginTokenObserver != nil)
         [[NSNotificationCenter defaultCenter] removeObserver:_loginTokenObserver];
@@ -987,6 +972,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         return;
 
     _displayingQrLogin = true;
+    [self updateOnegramCoreButton];
     [self stopTimer];
     [self freeGL];
 
@@ -1086,29 +1072,33 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [_pageControl setNumberOfPages:6];
     [self.view addSubview:_pageControl];
 
-    _onegramProxyButton = [[UIButton alloc] initWithFrame:CGRectZero];
-    _onegramProxyButton.adjustsImageWhenHighlighted = false;
-    [_onegramProxyButton addTarget:self action:@selector(onegramProxyButtonPressed) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:_onegramProxyButton];
-    [self updateOnegramProxyButton];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramCoreStateChanged:) name:OGOnegramCoreDidChangeNotification object:nil];
+    _onegramCoreButton = [[UIButton alloc] initWithFrame:CGRectZero];
+    _onegramCoreButton.adjustsImageWhenHighlighted = false;
+    [_onegramCoreButton addTarget:self action:@selector(onegramCoreButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:_onegramCoreButton];
+    [self updateOnegramCoreButton];
 }
 
-- (void)updateOnegramProxyButton
+- (void)updateOnegramCoreButton
 {
-    bool enabled = [[TGTelegramNetworking instance] onegramWebSocketProxyEnabled];
-    [_onegramProxyButton setImage:RMOnegramProxyLockImage(enabled, false) forState:UIControlStateNormal];
-    [_onegramProxyButton setImage:RMOnegramProxyLockImage(enabled, true) forState:UIControlStateHighlighted];
-    _onegramProxyButton.accessibilityLabel = @"Onegram Proxy";
-    _onegramProxyButton.accessibilityValue = enabled ? @"On" : @"Off";
+    _onegramCoreButton.hidden = !_onegramCoreButtonVisible || _displayingQrLogin || TGTelegraphInstance.clientUserId != 0;
+    bool enabled = [[TGTelegramNetworking instance] onegramCoreMode] != OGOnegramCoreModeNone;
+    [_onegramCoreButton setImage:[TGOnegramCoreController lockImageEnabled:enabled highlighted:false] forState:UIControlStateNormal];
+    [_onegramCoreButton setImage:[TGOnegramCoreController lockImageEnabled:enabled highlighted:true] forState:UIControlStateHighlighted];
+    _onegramCoreButton.accessibilityLabel = @"Onegram Core";
+    _onegramCoreButton.accessibilityValue = [TGOnegramCoreController statusText];
 }
 
-- (void)onegramProxyButtonPressed
+- (void)onegramCoreButtonPressed
 {
-    TGTelegramNetworking *networking = [TGTelegramNetworking instance];
-    bool enabled = ![networking onegramWebSocketProxyEnabled];
-    [networking setOnegramWebSocketProxyEnabled:enabled];
-    [self updateOnegramProxyButton];
-    TGLog(@"ONEGRAM_PROXY intro_toggle enabled=%d", enabled ? 1 : 0);
+    if (_onegramCoreButton.hidden) return;
+    [TGOnegramCoreController presentFromViewController:self];
+}
+
+- (void)onegramCoreStateChanged:(NSNotification *)notification
+{
+    [self updateOnegramCoreButton];
 }
 
 - (BOOL)shouldAutorotate
@@ -1129,8 +1119,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 
 - (DeviceScreen)deviceScreen
 {
-    CGSize viewSize = self.view.frame.size;
-    int max = (int)MAX(viewSize.width, viewSize.height);
+    CGSize screenSize = [UIScreen mainScreen].bounds.size;
+    int max = (int)MAX(screenSize.width, screenSize.height);
     
     DeviceScreen deviceScreen = Inch55;
     
@@ -1278,12 +1268,14 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         startButtonY += languageButtonSpread;
     }
     
-    _pageControl.frame = CGRectMake(0, pageControlY, self.view.bounds.size.width, 7);
-    _onegramProxyButton.frame = CGRectMake(self.view.bounds.size.width - 52.0f, statusBarHeight + 4.0f, 44.0f, 44.0f);
+    _onegramCoreButton.frame = CGRectMake(self.view.bounds.size.width - 52.0f, statusBarHeight + 4.0f, 44.0f, 44.0f);
     _glkView.frame = CGRectChangedOriginY(_glkView.frame, glViewY - statusBarHeight);
     
     [_startButton sizeToFit];
     _startButton.frame = CGRectMake(CGFloor((self.view.bounds.size.width - _startButton.frame.size.width) / 2.0f), self.view.bounds.size.height - startButtonY - statusBarHeight, _startButton.frame.size.width, 48.0f);
+    if (deviceScreen == Inch35)
+        pageControlY = MIN(pageControlY, CGRectGetMinY(_startButton.frame) - 24.0f);
+    _pageControl.frame = CGRectMake(0, pageControlY, self.view.bounds.size.width, 7);
     [_startButton addTarget:self action:@selector(startButtonPress) forControlEvents:UIControlEventTouchUpInside];
     
     _alternativeLanguageButton.frame = CGRectMake(CGFloor((self.view.bounds.size.width - _alternativeLanguageButton.frame.size.width) / 2.0f), CGRectGetMaxY(_startButton.frame) + languageButtonOffset, _alternativeLanguageButton.frame.size.width, _alternativeLanguageButton.frame.size.height);
@@ -1302,7 +1294,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 {
     [super viewWillAppear:animated];
     [self.navigationController setNavigationBarHidden:true animated:false];
-    [self updateOnegramProxyButton];
+    _onegramCoreButtonVisible = true;
+    [self updateOnegramCoreButton];
     [self layoutIntroViews];
 
     if (_displayingQrLogin)
@@ -1315,8 +1308,15 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     {
         _displayedStillLogo = true;
         
-        _stillLogoView = [[UIImageView alloc] initWithImage:TGImageNamed(@"telegram_logo_still.png")];
-        _stillLogoView.contentMode = UIViewContentModeCenter;
+        UIImage *stillLogoImage = TGImageNamed(@"telegram_logo_still.png");
+        if (stillLogoImage == nil)
+        {
+            NSString *logoPath = [[NSBundle mainBundle] pathForResource:@"TourLogo@2x" ofType:@"png" inDirectory:@"Tour.bundle"];
+            if (logoPath.length != 0)
+                stillLogoImage = [UIImage imageWithContentsOfFile:logoPath];
+        }
+        _stillLogoView = [[UIImageView alloc] initWithImage:stillLogoImage];
+        _stillLogoView.contentMode = UIViewContentModeScaleAspectFit;
         _stillLogoView.bounds = CGRectMake(0, 0, 200, 200);
         
         UIInterfaceOrientation isVertical = (self.view.bounds.size.height / self.view.bounds.size.width > 1.0f);
@@ -1358,6 +1358,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         CGFloat logoSize = 200.0f;
         if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
             logoSize *= 1.2f;
+        else if ([self deviceScreen] == Inch35 && NSClassFromString(@"GLKView") == Nil)
+            logoSize = 132.0f;
         _stillLogoView.frame = CGRectMake(CGFloor((self.view.bounds.size.width - logoSize) / 2.0f), glViewY - statusBarHeight, logoSize, logoSize);
         [self.view addSubview:_stillLogoView];
     }
@@ -1385,6 +1387,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 - (void)viewWillDisappear:(BOOL)animated
 {
     [super viewWillDisappear:animated];
+    _onegramCoreButtonVisible = false;
+    _onegramCoreButton.hidden = true;
     [self.navigationController setNavigationBarHidden:false animated:false];
 }
 
@@ -1423,7 +1427,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     if (_qrLoginEnabled)
     {
         TGLog(@"IOS6QR push separate QR controller");
-        TGIOS6QRLoginController *qrController = [[TGIOS6QRLoginController alloc] init];
+        UIViewController *qrController = TGCreateLoginQRController();
         [self.navigationController pushViewController:qrController animated:true];
         return;
     }

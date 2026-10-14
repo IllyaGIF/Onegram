@@ -23,6 +23,15 @@ static NSString *modernPeerPhotoUrl(int32_t dcId, int32_t peerType, int64_t peer
     return [[NSString alloc] initWithFormat:@"peerphoto:%d:%d:%lld:%lld:%lld:%d", dcId, peerType, peerId, accessHash, photoId, big ? 1 : 0];
 }
 
+static void OnegramCacheStrippedConversationAvatar(id photo, NSString *url)
+{
+    if (photo == nil || url.length == 0)
+        return;
+    UIImage *image = objc_getAssociatedObject(photo, NSSelectorFromString(@"onegramStrippedAvatar"));
+    if (image != nil)
+        [TGRemoteImageView cacheStrippedPlaceholderImage:image forUrl:url];
+}
+
 static SEL TGIOS6ApiChannelIdSelector(void)
 {
     return NSSelectorFromString(@"tg_ios6_apiChannelId");
@@ -149,7 +158,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
                     self.chatPhotoSmall = modernPeerPhotoUrl(concretePhoto.dc_id, 2, apiChatId, 0, concretePhoto.photo_id, false);
                     self.chatPhotoMedium = nil;
                     self.chatPhotoBig = modernPeerPhotoUrl(concretePhoto.dc_id, 2, apiChatId, 0, concretePhoto.photo_id, true);
-                    // High-volume success path.
+                    OnegramCacheStrippedConversationAvatar(concretePhoto, self.chatPhotoSmall);
                 }
                 else
                 {
@@ -194,6 +203,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.accessHash = channel.access_hash;
             self.chatTitle = channel.title;
             self.nameColorId = channel.name_color_id;
+            self.linkedCommunityId = channel.linked_community_id;
             if ([channel.photo isKindOfClass:[TLChatPhoto$chatPhoto class]])
             {
                 TLChatPhoto$chatPhoto *concretePhoto = (TLChatPhoto$chatPhoto *)channel.photo;
@@ -202,7 +212,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
                     self.chatPhotoSmall = modernPeerPhotoUrl(concretePhoto.dc_id, 3, apiChannelId, channel.access_hash, concretePhoto.photo_id, false);
                     self.chatPhotoMedium = nil;
                     self.chatPhotoBig = modernPeerPhotoUrl(concretePhoto.dc_id, 3, apiChannelId, channel.access_hash, concretePhoto.photo_id, true);
-                    // High-volume success path.
+                    OnegramCacheStrippedConversationAvatar(concretePhoto, self.chatPhotoSmall);
                 }
                 else
                 {
@@ -223,11 +233,14 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.unimportantSortKey = TGConversationSortKeyMake(self.kind, channel.date, 0);
             self.variantSortKey = TGConversationSortKeyMake(self.kind, channel.date, 0);
             self.chatIsAdmin = channel.flags & (1 << 0);
+            if (channel.admin_rights != nil) {
+                self.channelAdminRights = [[TGChannelAdminRights alloc] initWithTL:channel.admin_rights];
+            }
             if (channel.flags & (1 << 0)) {
                 self.channelRole = TGChannelRoleCreator;
-            } else if (channel.flags & (1 << 3)) {
+            } else if (self.channelAdminRights.canPostMessages) {
                 self.channelRole = TGChannelRolePublisher;
-            } else if (channel.flags & (1 << 4)) {
+            } else if (channel.admin_rights != nil) {
                 self.channelRole = TGChannelRoleModerator;
             }
             self.username = channel.username;
@@ -238,10 +251,6 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.isVerified = channel.flags & (1 << 7);
             self.isChannelGroup = channel.flags & (1 << 8);
 
-            // A Channel object received from Telegram is authoritative for the
-            // forum bit. Keep a separate "known" bit because old database
-            // rows have no TGConversationFlagIsForum bit at all, and otherwise
-            // "old/unknown" is indistinguishable from "known non-forum".
             self.flags |= TGConversationFlagForumKnown;
             if (channel.flags & (1 << 30))
                 self.flags |= TGConversationFlagIsForum;
@@ -260,11 +269,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.hasExplicitContent = false;
             self.restrictionReason = nil;
             
-            self.kind = (self.leftChat || self.kickedFromChat) ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
-            
-            if (channel.admin_rights != nil) {
-                self.channelAdminRights = [[TGChannelAdminRights alloc] initWithTL:channel.admin_rights];
-            }
+            self.kind = (self.isMin || self.leftChat || self.kickedFromChat) ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
             
             if (channel.banned_rights != nil) {
                 self.channelBannedRights = [[TGChannelBannedRights alloc] initWithTL:channel.banned_rights];

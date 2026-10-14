@@ -1,0 +1,3 @@
+#ifndef ONEGRAM_OS_CROSS_ENDIAN_H
+#define ONEGRAM_OS_CROSS_ENDIAN_H
+#endif

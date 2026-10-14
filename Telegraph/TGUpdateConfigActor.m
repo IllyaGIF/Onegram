@@ -252,7 +252,6 @@ static bool sharedExperimentalPasscodeBlurDisabledInitialized = false;
     [TGDatabaseInstance() setCustomProperty:@"maxPinnedChats" value:[NSData dataWithBytes:&maxPinnedChats length:4]];
     
     if (phoneCallsEnabled != previousPhoneCallsEnabled) {
-        TGLog(@"phoneCallsEnabled changed to %d", phoneCallsEnabled);
         
         [TGDatabaseInstance() clearCachedUserLinks];
         
@@ -308,20 +307,8 @@ static bool sharedExperimentalPasscodeBlurDisabledInitialized = false;
     [TGDatabaseInstance() setCustomProperty:@"messageLengthMax" value:[NSData dataWithBytes:&messageLengthMax length:4]];
     
     [TGDatabaseInstance() setCustomProperty:@"meUrlPrefix" value:[config.me_url_prefix dataUsingEncoding:NSUTF8StringEncoding]];
-    
-    //[TGApplicationFeatures setLargeGroupMemberCountLimit:(NSUInteger)config.chat_big_size];
-    
-    /*NSMutableArray *features = [[NSMutableArray alloc] init];
-    for (TLDisabledFeature *disabledFeature in config.disabled_features)
-    {
-        TGApplicationFeatureDescription *feature = [[TGApplicationFeatureDescription alloc] initWithIdentifier:disabledFeature.feature enabled:false disabledMessage:disabledFeature.n_description];
-        [features addObject:feature];
-    }
-    
-    [TGApplicationFeatures rawUpdate:features];
-    
-    configInvalidationDate = config.expires;*/
- 
+
+
     _configReceived = true;
     [self _maybeComplete];
 }

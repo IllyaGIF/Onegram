@@ -21,6 +21,8 @@ typedef enum {
     bool _partialMode;
 }
 
+@property (nonatomic) bool voiceMessage;
+
 - (instancetype)initWithType:(TGTextMessageBackgroundType)type context:(TGModernViewContext *)context;
 - (void)setPartialMode:(bool)partialMode;
 

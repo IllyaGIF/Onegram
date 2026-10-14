@@ -117,6 +117,7 @@
                        channelId:(int64_t)channelId
                            maxId:(int32_t)maxId
                        readMaxId:(int32_t)readMaxId
+                  recentRepliers:(NSArray *)recentRepliers
 {
     self = [super init];
     if (self != nil)
@@ -126,17 +127,26 @@
         _channelId = channelId;
         _maxId = maxId;
         _readMaxId = readMaxId;
+        _recentRepliers = [recentRepliers copy] ?: @[];
     }
     return self;
 }
 
 - (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder
 {
+    NSData *repliersData = [coder decodeDataCorCKey:"rr"];
+    NSMutableArray *recentRepliers = [[NSMutableArray alloc] init];
+    NSUInteger count = repliersData.length / sizeof(int64_t);
+    int64_t const *peerIds = (int64_t const *)repliersData.bytes;
+    for (NSUInteger i = 0; i < count; i++)
+        [recentRepliers addObject:@(peerIds[i])];
+
     return [self initWithComments:[coder decodeInt32ForCKey:"dc"] != 0
                           replies:[coder decodeInt32ForCKey:"dr"]
                         channelId:[coder decodeInt64ForCKey:"di"]
                             maxId:[coder decodeInt32ForCKey:"dm"]
-                        readMaxId:[coder decodeInt32ForCKey:"dd"]];
+                        readMaxId:[coder decodeInt32ForCKey:"dd"]
+                   recentRepliers:recentRepliers];
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder
@@ -146,6 +156,13 @@
     [coder encodeInt64:_channelId forCKey:"di"];
     [coder encodeInt32:_maxId forCKey:"dm"];
     [coder encodeInt32:_readMaxId forCKey:"dd"];
+    NSMutableData *repliersData = [[NSMutableData alloc] initWithCapacity:_recentRepliers.count * sizeof(int64_t)];
+    for (NSNumber *peerId in _recentRepliers)
+    {
+        int64_t value = [peerId longLongValue];
+        [repliersData appendBytes:&value length:sizeof(value)];
+    }
+    [coder encodeData:repliersData forCKey:"rr"];
 }
 
 @end

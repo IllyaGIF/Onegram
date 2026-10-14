@@ -36,8 +36,9 @@
 #import "TGAppDelegate.h"
 
 #import <AddressBook/AddressBook.h>
-#import <MessageUI/MessageUI.h>
-#import <MessageUI/MFMessageComposeViewController.h>
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import <QuartzCore/QuartzCore.h>
 
@@ -72,6 +73,10 @@
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "../OnegramUI/Core/OGContactListAppearance.h"
+#import "../OnegramUI/Core/OGSearchBarAppearance.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Chrome/OGNavigationTitleView.h"
 
 #pragma mark -
 
@@ -283,11 +288,15 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 
 #pragma mark -
 
-@interface TGContactsController () <UITableViewDelegate, UITableViewDataSource, UISearchDisplayDelegate, MFMessageComposeViewControllerDelegate, TGTokenFieldViewDelegate, TGSearchDisplayMixinDelegate, TGCreateContactControllerDelegate, TGKeyCommandResponder>
+@interface TGContactsController () <UITableViewDelegate, UITableViewDataSource, UISearchDisplayDelegate, TGTokenFieldViewDelegate, TGSearchDisplayMixinDelegate, TGCreateContactControllerDelegate, TGKeyCommandResponder, TGSearchBarAppearanceProvider>
 {
     std::vector<std::tr1::shared_ptr<TGContactListSection> > _sectionList;
     
     std::map<int, TGUser *> _selectedUsers;
+    
+    UIColor *_brandedSectionHeaderBackgroundColor;
+    OGNavigationTitleView *_brandedTitleView;
+    bool _editingContacts;
     
     std::set<int> _disabledUserIds;
     
@@ -295,6 +304,8 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     UIView *_navigationBarBackgroundView;
     
     bool _updateContactListOnShow;
+    bool _requestedRemoteContactsFallback;
+    bool _onegramObserversInstalled;
     
     TGUser *_selfUser;
 }
@@ -304,7 +315,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 @property (nonatomic, strong) UIBarButtonItem *addButtonItem;
 @property (nonatomic, strong) UIBarButtonItem *inviteButtonItem;
 
-@property (nonatomic, strong) MFMessageComposeViewController *messageComposer;
+@property (nonatomic, strong) id messageComposer;
 
 @property (nonatomic, strong) TGSearchBar *searchBar;
 @property (nonatomic, strong) TGSearchDisplayMixin *searchMixin;
@@ -351,6 +362,8 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 
 @property (nonatomic) CGFloat draggingStartOffset;
 
+- (void)onegramEnsureObserversInstalled;
+
 @end
 
 @implementation TGContactsController
@@ -362,8 +375,6 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     {
         self.ignoreKeyboardWhenAdjustingScrollViewInsets = true;
         
-        _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
-        
         _contactListVersion = -1;
         _phonebookVersion = -1;
         
@@ -371,19 +382,10 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         
         _reusableSectionHeaders = [[NSArray alloc] initWithObjects:[[NSMutableArray alloc] init], [[NSMutableArray alloc] init], nil];
         
-        [ActionStageInstance() watchForPath:@"/tg/phonebookAccessStatus" watcher:self];
-        
-        [ActionStageInstance() watchForPath:@"/as/updateRelativeTimestamps" watcher:self];
-        
-        [ActionStageInstance() watchForPath:@"/tg/userdatachanges" watcher:self];
-        [ActionStageInstance() watchForPath:@"/tg/userpresencechanges" watcher:self];
-        if ((_contactsMode & TGContactsModeRegistered))
-            [ActionStageInstance() watchForPath:@"/tg/contactlist" watcher:self];
-        if (_contactsMode & TGContactsModePhonebook)
-            [ActionStageInstance() watchForPath:@"/tg/phonebook" watcher:self];
-        
         if ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose)
             _multipleSelectionEnabled = true;
+
+        [self onegramEnsureObserversInstalled];
     }
     return self;
 }
@@ -391,11 +393,29 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 - (void)dealloc
 {
     [_actionHandle reset];
-    [ActionStageInstance() removeWatcher:self];
+    if (_onegramObserversInstalled)
+        [ActionStageInstance() removeWatcher:self];
     
     _tokenFieldView.delegate = nil;
     
     [self doUnloadView];
+}
+
+- (void)onegramEnsureObserversInstalled
+{
+    if (_onegramObserversInstalled)
+        return;
+
+    _onegramObserversInstalled = true;
+    _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
+    [ActionStageInstance() watchForPath:@"/tg/phonebookAccessStatus" watcher:self];
+    [ActionStageInstance() watchForPath:@"/as/updateRelativeTimestamps" watcher:self];
+    [ActionStageInstance() watchForPath:@"/tg/userdatachanges" watcher:self];
+    [ActionStageInstance() watchForPath:@"/tg/userpresencechanges" watcher:self];
+    if (_contactsMode & TGContactsModeRegistered)
+        [ActionStageInstance() watchForPath:@"/tg/contactlist" watcher:self];
+    if (_contactsMode & TGContactsModePhonebook)
+        [ActionStageInstance() watchForPath:@"/tg/phonebook" watcher:self];
 }
 
 - (void)setLoginStyle:(bool)loginStyle
@@ -404,18 +424,87 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     self.style = loginStyle ? TGViewControllerStyleBlack : TGViewControllerStyleDefault;
 }
 
+- (OGContactListAppearance *)brandedContactListAppearance
+{
+    if (![TGPresentation brandedIOS6Style] || (_contactsMode & TGContactsModeMainContacts) != TGContactsModeMainContacts)
+        return nil;
+    return [TGPresentation brandedIOS6ContactListAppearance];
+}
+
+- (UIColor *)brandedSectionHeaderBackgroundColor
+{
+    if (_brandedSectionHeaderBackgroundColor == nil)
+    {
+        OGContactListAppearance *appearance = [self brandedContactListAppearance];
+        UIImage *image = appearance.sectionHeaderSurfaceStyle != nil ? self.presentation.images.contactBrandedSectionHeaderImage : nil;
+        _brandedSectionHeaderBackgroundColor = image != nil ? [UIColor colorWithPatternImage:image] : self.presentation.pallete.sectionHeaderBackgroundColor;
+    }
+    return _brandedSectionHeaderBackgroundColor;
+}
+
+- (UIImage *)brandedIOS6SearchBarBackgroundImageForSize:(CGSize)size
+{
+    return [TGPresentation brandedIOS6ContactSearchBarBackgroundImageForSize:size];
+}
+
+- (UIImage *)brandedIOS6SearchBarFieldImageForSize:(CGSize)size
+{
+    return [TGPresentation brandedIOS6ContactSearchBarFieldImageForSize:size];
+}
+
+- (UIImage *)brandedIOS6SearchBarIconImage
+{
+    return [TGPresentation brandedIOS6ContactSearchBarIconImage];
+}
+
+- (UIOffset)brandedIOS6SearchBarIconOffset
+{
+    return [self brandedContactListAppearance].searchBarAppearance.iconOffset;
+}
+
+- (UIOffset)brandedIOS6SearchBarPlaceholderOffset
+{
+    return [self brandedContactListAppearance].searchBarAppearance.placeholderOffset;
+}
+
+- (void)updateBrandedTitleView
+{
+    if (_brandedTitleView == nil)
+        return;
+    _brandedTitleView.theme = [OGTheme brandedTheme];
+    [_brandedTitleView sizeToFit];
+}
+
+- (void)updateSectionIndexAppearance
+{
+    OGContactListAppearance *appearance = [self brandedContactListAppearance];
+    OGPlatformSetTableViewSectionIndexColor(_tableView, appearance.indexColor ?: self.presentation.pallete.accentColor);
+    if (appearance != nil)
+    {
+        OGPlatformSetTableViewSectionIndexBackgroundColor(_tableView, [UIColor clearColor]);
+        OGPlatformSetTableViewSectionIndexTrackingBackgroundColor(_tableView, appearance.indexTrackingBackgroundColor);
+    }
+}
+
 - (void)setPresentation:(TGPresentation *)presentation
 {
     _presentation = presentation;
+    _brandedSectionHeaderBackgroundColor = nil;
+
+    if (![self isViewLoaded])
+        return;
+
+    [self updateBrandedTitleView];
+    [self updateSectionHeadersAppearance];
+
+    UIColor *listBackgroundColor = [self brandedContactListAppearance].rowBackgroundColor ?: self.presentation.pallete.backgroundColor;
+    self.view.backgroundColor = listBackgroundColor;
+    _tableView.backgroundColor = listBackgroundColor;
+    [self updateSectionIndexAppearance];
     
-    if ([self isViewLoaded])
-        self.view.backgroundColor = self.presentation.pallete.backgroundColor;
-    _tableView.backgroundColor = self.presentation.pallete.backgroundColor;
-    if ([_tableView respondsToSelector:@selector(setSectionIndexColor:)])
-        _tableView.sectionIndexColor = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts ? UIColorRGB(0x6f7883) : presentation.pallete.accentColor;
-    
-    _headerBackgroundView.backgroundColor = self.presentation.pallete.backgroundColor;
-    [_searchBar setPallete:presentation.searchBarPallete];
+    _headerBackgroundView.backgroundColor = listBackgroundColor;
+    _searchBar.appearanceProvider = [self brandedContactListAppearance] != nil ? self : nil;
+    [_searchBar setPallete:[self brandedContactListAppearance] != nil ? presentation.contactSearchBarPallete : presentation.searchBarPallete];
     
     _searchTableView.layer.backgroundColor = self.presentation.pallete.backgroundColor.CGColor;
     _searchTableViewBackground.backgroundColor = self.presentation.pallete.backgroundColor;
@@ -425,7 +514,11 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     for (UITableViewCell *cell in _tableView.visibleCells)
     {
         if ([cell isKindOfClass:[TGContactCell class]])
-            [(TGContactCell *)cell setPresentation:presentation];
+        {
+            TGContactCell *contactCell = (TGContactCell *)cell;
+            contactCell.contactListAppearance = [self brandedContactListAppearance];
+            contactCell.presentation = presentation;
+        }
         else if ([cell isKindOfClass:[TGFlatActionCell class]])
             [(TGFlatActionCell *)cell setPresentation:presentation];
     }
@@ -433,7 +526,11 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     for (UITableViewCell *cell in _searchMixin.searchResultsTableView.visibleCells)
     {
         if ([cell isKindOfClass:[TGContactCell class]])
-            [(TGContactCell *)cell setPresentation:presentation];
+        {
+            TGContactCell *contactCell = (TGContactCell *)cell;
+            contactCell.contactListAppearance = [self brandedContactListAppearance];
+            contactCell.presentation = presentation;
+        }
         else if ([cell isKindOfClass:[TGFlatActionCell class]])
             [(TGFlatActionCell *)cell setPresentation:presentation];
     }
@@ -454,8 +551,12 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         if (_phonebookAccessOverlay != nil)
             return nil;
         
-        if ([TGPresentation brandedIOS6Style])
-            return nil;
+        if ([self brandedContactListAppearance] != nil)
+        {
+            if (!_editingContacts && [self brandedContactListAppearance].navigationSurfaceStyle != nil)
+                return nil;
+            return [TGPresentation brandedIOS6BarButtonItemWithTitle:(_editingContacts ? TGLocalized(@"Common.Done") : TGLocalized(@"Common.Edit")) target:self action:@selector(editContactsButtonPressed)];
+        }
         
         if (_addButtonItem == nil)
         {
@@ -505,6 +606,17 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     return UIBarStyleDefault;
 }
 
+- (TGNavigationBarBackgroundVariant)navigationBarBackgroundVariant
+{
+    return [self brandedContactListAppearance] != nil ? TGNavigationBarBackgroundVariantContacts : TGNavigationBarBackgroundVariantDefault;
+}
+
+- (void)contactsTitleLongPressed:(UILongPressGestureRecognizer *)recognizer
+{
+    if (recognizer.state == UIGestureRecognizerStateBegan && !_searchMixin.isActive)
+        [self setContactsEditing:!_editingContacts animated:true];
+}
+
 - (void)scrollToTopRequested
 {
     [(TGListsTableView *)_tableView scrollToTop];
@@ -516,31 +628,42 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     
     NSString *navigationTitle = _customTitle != nil ? _customTitle : TGLocalized(@"Contacts.Title");
     self.titleText = navigationTitle;
-    if ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
+    if ([self brandedContactListAppearance] != nil)
     {
-        UILabel *titleLabel = [[UILabel alloc] init];
-        titleLabel.backgroundColor = [UIColor clearColor];
-        titleLabel.font = TGBoldSystemFontOfSize(20.0f);
-        titleLabel.textColor = [UIColor whiteColor];
-        titleLabel.shadowColor = UIColorRGBA(0x000000, 0.55f);
-        titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
-        titleLabel.text = navigationTitle;
-        [titleLabel sizeToFit];
-        [self setTitleView:titleLabel];
+        _brandedTitleView = [[OGNavigationTitleView alloc] initWithFrame:CGRectZero];
+        _brandedTitleView.title = navigationTitle;
+        [self updateBrandedTitleView];
+        _brandedTitleView.userInteractionEnabled = true;
+        _brandedTitleView.isAccessibilityElement = true;
+        _brandedTitleView.accessibilityLabel = navigationTitle;
+        _brandedTitleView.accessibilityHint = TGLocalized(@"Common.Edit");
+        _brandedTitleView.accessibilityTraits = UIAccessibilityTraitButton;
+        __weak TGContactsController *weakSelf = self;
+        _brandedTitleView.accessibilityActivation = ^BOOL
+        {
+            TGContactsController *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf.searchMixin.isActive)
+                return NO;
+            [strongSelf editContactsButtonPressed];
+            return YES;
+        };
+        [_brandedTitleView addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(contactsTitleLongPressed:)]];
+        [self setTitleView:_brandedTitleView];
     }
     
     CGSize viewSize = self.view.frame.size;
     
     [self setRightBarButtonItem:[self controllerRightBarButtonItem] animated:false];
     
-    self.view.backgroundColor = self.presentation.pallete.backgroundColor;
+    UIColor *listBackgroundColor = [self brandedContactListAppearance].rowBackgroundColor ?: self.presentation.pallete.backgroundColor;
+    self.view.backgroundColor = listBackgroundColor;
     
     _headerBackgroundView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, self.view.frame.size.width, self.controllerInset.top)];
-    _headerBackgroundView.backgroundColor = self.presentation.pallete.backgroundColor;
+    _headerBackgroundView.backgroundColor = listBackgroundColor;
     [self.view addSubview:_headerBackgroundView];
     
     _tableView = [[TGListsTableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
-    _tableView.backgroundColor = self.presentation.pallete.backgroundColor;
+    _tableView.backgroundColor = listBackgroundColor;
     ((TGListsTableView *)_tableView).mayHaveIndex = [self displaysIndices];
     if (iosMajorVersion() >= 11)
         _tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
@@ -548,16 +671,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     [(TGActionTableView *)_tableView hackHeaderSize];
     
     _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    if ([_tableView respondsToSelector:@selector(setSectionIndexColor:)])
-        _tableView.sectionIndexColor = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts ? UIColorRGB(0x6f7883) : self.presentation.pallete.accentColor;
-    if ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
-    {
-        SEL sectionIndexBackgroundColorSelector = NSSelectorFromString(@"setSectionIndexBackgroundColor:");
-        if ([_tableView respondsToSelector:sectionIndexBackgroundColorSelector])
-            ((void (*)(id, SEL, id))objc_msgSend)(_tableView, sectionIndexBackgroundColorSelector, [UIColor clearColor]);
-        if ([_tableView respondsToSelector:@selector(setSectionIndexTrackingBackgroundColor:)])
-            _tableView.sectionIndexTrackingBackgroundColor = UIColorRGB(0xf4f4f4);
-    }
+    [self updateSectionIndexAppearance];
     _tableView.delegate = self;
     _tableView.dataSource = self;
     _tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
@@ -569,7 +683,9 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     if (!(_contactsMode & TGContactsModeSearchDisabled))
     {
         _searchBar = [[TGSearchBar alloc] initWithFrame:CGRectMake(0, 0, viewSize.width, [TGSearchBar searchBarBaseHeight]) style:((_contactsMode & TGContactsModeMainContacts) && TGIsPad()) ? TGSearchBarStyleLightPlain : TGSearchBarStyleLightPlain];
-        [_searchBar setPallete:self.presentation.searchBarPallete];
+        _searchBar.appearanceProvider = [self brandedContactListAppearance] != nil ? self : nil;
+        [_searchBar setPallete:[self brandedContactListAppearance] != nil ? self.presentation.contactSearchBarPallete : self.presentation.searchBarPallete];
+        _searchBar.textFieldInsets = [self brandedContactListAppearance].searchFieldInsets;
         
         [(TGListsTableView *)_tableView adjustBehaviour];
         
@@ -696,10 +812,9 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         [_searchMixin controllerInsetUpdated:self.controllerInset];
     
     _tokenFieldView.safeAreaInset = self.controllerSafeAreaInset;
-    if ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts)
-        _searchBar.safeAreaInset = UIEdgeInsetsMake(self.controllerSafeAreaInset.top, self.controllerSafeAreaInset.left, self.controllerSafeAreaInset.bottom, self.controllerSafeAreaInset.right + 24.0f);
-    else
-        _searchBar.safeAreaInset = self.controllerSafeAreaInset;
+    UIEdgeInsets searchBarSafeAreaInset = self.controllerSafeAreaInset;
+    searchBarSafeAreaInset.right += [self brandedContactListAppearance].searchIndexInset;
+    _searchBar.safeAreaInset = searchBarSafeAreaInset;
     [self updateSafeAreaInset];
     
     CGFloat indexOffset = self.controllerSafeAreaInset.right > FLT_EPSILON ? (self.interfaceOrientation == UIInterfaceOrientationLandscapeLeft ? self.controllerSafeAreaInset.right - 10.0f : 0.0f) : 0.0f;
@@ -876,7 +991,6 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     [TGContactListRequestBuilder clearCache];
     
     _sectionList.clear();
-    //_sectionHeaders = nil;
     [_tableView reloadData];
     
     [ActionStageInstance() dispatchOnStageQueue:^
@@ -910,6 +1024,8 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 
 - (void)viewWillAppear:(BOOL)animated
 {
+    OGRuntimeCompleteStartupPhase(@"contacts");
+    [self onegramEnsureObserversInstalled];
     _appearAnimation = true;
     
     [super viewWillAppear:animated];
@@ -921,7 +1037,9 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 
         if (_contactsMode & TGContactsModeRegistered)
         {
-            cachedContacts = [TGContactListRequestBuilder synchronousContactList];
+            cachedContacts = [TGContactListRequestBuilder cachedContactList];
+            if (cachedContacts == nil && !OGPlatformUsesConstrainedBackgroundExecution())
+                cachedContacts = [TGContactListRequestBuilder synchronousContactList];
             cachedPhonebook = [TGContactListRequestBuilder cachedPhonebook];
         }
         else if (_contactsMode & TGContactsModePhonebook)
@@ -961,6 +1079,17 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         
         _onceLoaded = true;
     }
+
+    if (OGPlatformUsesConstrainedBackgroundExecution() &&
+        (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts &&
+        (_contactsMode & TGContactsModeRegistered) != 0 &&
+        _currentContactList.count == 0 &&
+        !_requestedRemoteContactsFallback)
+    {
+        _requestedRemoteContactsFallback = true;
+        [TGContactListRequestBuilder dispatchNewContactList];
+        [ActionStageInstance() requestActor:@"/tg/synchronizeContacts/(loadRemote)" options:@{@"forceFull": @true} watcher:self];
+    }
     
     if ([_tableView indexPathForSelectedRow] != nil)
         [_tableView deselectRowAtIndexPath:[_tableView indexPathForSelectedRow] animated:animated];
@@ -975,10 +1104,6 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     
     if ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose)
     {   
-        //_tokenFieldView.frame = CGRectMake(0, [self tokenFieldOffset], self.view.frame.size.width, [_tokenFieldView preferredHeight]);
-        //[_tokenFieldView layoutSubviews];
-        //_tokenFieldView.frame = CGRectMake(0, [self tokenFieldOffset] + ([_tokenFieldView searchIsActive] ? (44 - [_tokenFieldView preferredHeight]) : 0), self.view.frame.size.width, [_tokenFieldView preferredHeight]);
-        //[self updateTableFrame:false collapseSearch:false];
     }
     
     [self updatePhonebookAccessLayout:self.interfaceOrientation];
@@ -1116,7 +1241,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
             _searchTableViewBackground.alpha = 1.0f;
             
             _tokenFieldView.scrollView.scrollEnabled = false;
-            tokenFieldFrame.origin.y = [self tokenFieldOffset];// + 44 - tokenFieldFrame.size.height;
+            tokenFieldFrame.origin.y = [self tokenFieldOffset];
         }
         
         if (!CGRectEqualToRect(tokenFieldFrame, _tokenFieldView.frame))
@@ -1163,7 +1288,6 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 {
     [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
     
-    //CGSize screenSize = [TGViewController screenSizeForInterfaceOrientation:toInterfaceOrientation];
     
     if ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose)
     {    
@@ -1173,7 +1297,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         [UIView setAnimationsEnabled:false];
         [_tokenFieldView layoutSubviews];
         [UIView setAnimationsEnabled:true];
-        _tokenFieldView.frame = CGRectMake(0, [self tokenFieldOffset]/* + ([_tokenFieldView searchIsActive] ? (44 - [_tokenFieldView preferredHeight]) : 0)*/, self.view.frame.size.width, [_tokenFieldView preferredHeight]);
+        _tokenFieldView.frame = CGRectMake(0, [self tokenFieldOffset], self.view.frame.size.width, [_tokenFieldView preferredHeight]);
         [self updateTableFrame:false collapseSearch:false];
     }
     
@@ -1259,7 +1383,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
             [UIView animateWithDuration:0.2 animations:^
             {
                 _inviteContainer.frame = CGRectMake(0, self.view.frame.size.height - _inviteContainer.frame.size.height, self.view.frame.size.width, _inviteContainer.frame.size.height);
-                
+
                 [self updateTableFrame:false collapseSearch:false];
             }];
         }
@@ -1283,7 +1407,6 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
             }
         }
     }
-    //_inviteButtonItem.title = [self selectedContactsCount] == [self contactsCount] ? TGLocalized(@"Contacts.DeselectAll") : TGLocalized(@"Contacts.SelectAll");
 }
 
 - (void)updateSelectionControls:(bool)animated
@@ -1319,7 +1442,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         
         if (section >= 0 && section < (int)_sectionList.size() && _sectionList[section]->letter != nil)
         {
-            UIView *header = [self generateSectionHeader:_sectionList[section]->letter first:section == 0 && (!(_contactsMode & TGContactsModeSearchDisabled) || (_contactsMode & TGContactsModeCompose) == TGContactsModeCompose) wide:false];
+            UIView *header = [self generateSectionHeader:_sectionList[section]->letter first:[self sectionHeaderFollowsSearchBar:section] wide:false];
             header.tag = 1000 + section;
             return header;
         }
@@ -1346,6 +1469,11 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     return nil;
 }
 
+- (bool)sectionHeaderFollowsSearchBar:(NSInteger)section
+{
+    return section == 0 && (!(_contactsMode & TGContactsModeSearchDisabled) || (_contactsMode & TGContactsModeCompose) == TGContactsModeCompose);
+}
+
 - (void)updateSafeAreaInset
 {
     UIEdgeInsets safeAreaInset = self.controllerSafeAreaInset;
@@ -1355,7 +1483,9 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         if (view.tag >= 1000)
         {
             UIView *sectionLabel = [view viewWithTag:100];
-            sectionLabel.frame = CGRectMake(12.0f + safeAreaInset.left, sectionLabel.frame.origin.y, sectionLabel.frame.size.width, sectionLabel.frame.size.height);
+            OGContactListAppearance *brandedAppearance = [self brandedContactListAppearance];
+            CGFloat titleLeftInset = brandedAppearance != nil ? brandedAppearance.sectionTitleLeftInset : 12.0f;
+            sectionLabel.frame = CGRectMake(titleLeftInset + safeAreaInset.left, sectionLabel.frame.origin.y, sectionLabel.frame.size.width, sectionLabel.frame.size.height);
         }
     }
 }
@@ -1375,28 +1505,20 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         }
     }
     
-    bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
-    CGFloat headerHeight = brandedMainContacts ? 23.0f : 27.0f;
-    CGFloat sectionViewOriginY = brandedMainContacts ? 0.0f : (first ? 0.0f : -1.0f);
-    CGFloat sectionViewHeight = brandedMainContacts ? headerHeight : (first ? 10.0f : 11.0f);
-    
     if (sectionContainer == nil)
     {
-        sectionContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, headerHeight)];
+        sectionContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
         
         sectionContainer.clipsToBounds = false;
         sectionContainer.opaque = false;
         
-        UIView *sectionView = [[UIView alloc] initWithFrame:CGRectMake(0, sectionViewOriginY, 10, sectionViewHeight)];
+        UIView *sectionView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
         sectionView.tag = 10;
         sectionView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        sectionView.backgroundColor = brandedMainContacts ? UIColorRGB(0xd7d7d7) : self.presentation.pallete.sectionHeaderBackgroundColor;
         [sectionContainer addSubview:sectionView];
         
         UILabel *sectionLabel = [[UILabel alloc] init];
         sectionLabel.tag = 100;
-        sectionLabel.backgroundColor = sectionView.backgroundColor;
-        sectionLabel.textColor = brandedMainContacts ? [UIColor blackColor] : self.presentation.pallete.sectionHeaderTextColor;
         sectionLabel.numberOfLines = 1;
         
         [sectionContainer addSubview:sectionLabel];
@@ -1404,30 +1526,61 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         [reusableList addObject:sectionContainer];
     }
     
-    sectionContainer.frame = CGRectMake(0, 0, 10, headerHeight);
-    UIView *sectionView = [sectionContainer viewWithTag:10];
-    sectionView.frame = CGRectMake(0, sectionViewOriginY, sectionContainer.frame.size.width, sectionViewHeight);
-    sectionView.backgroundColor = brandedMainContacts ? UIColorRGB(0xd7d7d7) : self.presentation.pallete.sectionHeaderBackgroundColor;
-    
-    UILabel *sectionLabel = (UILabel *)[sectionContainer viewWithTag:100];
-    sectionLabel.font = brandedMainContacts ? TGBoldSystemFontOfSize(18.0f) : TGBoldSystemFontOfSize(12.0f);
-    sectionLabel.text = brandedMainContacts ? title : [title uppercaseString];
-    sectionLabel.textColor = brandedMainContacts ? [UIColor blackColor] : self.presentation.pallete.sectionHeaderTextColor;
-    sectionLabel.backgroundColor = sectionView.backgroundColor;
-    [sectionLabel sizeToFit];
-    
-    sectionLabel.frame = CGRectMake((brandedMainContacts ? 12.0f : 14.0f) + self.controllerSafeAreaInset.left, brandedMainContacts ? 1.0f : 6.0f, sectionLabel.frame.size.width, sectionLabel.frame.size.height);
+    [self configureSectionHeader:sectionContainer title:title first:first];
     
     return sectionContainer;
+}
+
+- (void)configureSectionHeader:(UIView *)sectionContainer title:(NSString *)title first:(bool)first
+{
+    OGContactListAppearance *brandedAppearance = [self brandedContactListAppearance];
+    bool brandedMainContacts = brandedAppearance != nil;
+    CGFloat headerHeight = brandedMainContacts ? brandedAppearance.sectionHeaderHeight : 27.0f;
+    CGFloat searchBarOverlap = brandedMainContacts && first ? brandedAppearance.searchBarOverlap : 0.0f;
+    CGFloat sectionViewOriginY = brandedMainContacts ? -searchBarOverlap : (first ? 0.0f : -1.0f);
+    CGFloat sectionViewHeight = brandedMainContacts ? headerHeight : (first ? 10.0f : 11.0f);
+    UIColor *sectionBackgroundColor = brandedMainContacts ? [self brandedSectionHeaderBackgroundColor] : self.presentation.pallete.sectionHeaderBackgroundColor;
+    UIColor *sectionTitleColor = brandedAppearance.sectionTitleColor ?: self.presentation.pallete.sectionHeaderTextColor;
+    
+    sectionContainer.frame = CGRectMake(sectionContainer.frame.origin.x, sectionContainer.frame.origin.y, sectionContainer.frame.size.width, headerHeight - searchBarOverlap);
+    sectionContainer.clipsToBounds = searchBarOverlap > FLT_EPSILON;
+    UIView *sectionView = [sectionContainer viewWithTag:10];
+    sectionView.frame = CGRectMake(0, sectionViewOriginY, sectionContainer.frame.size.width, sectionViewHeight);
+    sectionView.backgroundColor = sectionBackgroundColor;
+    
+    UILabel *sectionLabel = (UILabel *)[sectionContainer viewWithTag:100];
+    sectionLabel.font = brandedMainContacts ? brandedAppearance.sectionTitleFont : TGBoldSystemFontOfSize(12.0f);
+    sectionLabel.text = brandedMainContacts ? title : [title uppercaseString];
+    sectionLabel.textColor = sectionTitleColor;
+    sectionLabel.shadowColor = brandedAppearance.sectionTitleShadowColor;
+    sectionLabel.shadowOffset = brandedAppearance.sectionTitleShadowColor != nil ? brandedAppearance.sectionTitleShadowOffset : CGSizeZero;
+    sectionLabel.backgroundColor = brandedMainContacts ? [UIColor clearColor] : sectionBackgroundColor;
+    [sectionLabel sizeToFit];
+    
+    CGFloat titleLeftInset = brandedMainContacts ? brandedAppearance.sectionTitleLeftInset : 14.0f;
+    CGFloat titleOriginY = brandedMainContacts ? (headerHeight - searchBarOverlap - brandedAppearance.sectionTitleBottomInset - sectionLabel.frame.size.height) : 6.0f;
+    sectionLabel.frame = CGRectMake(titleLeftInset + self.controllerSafeAreaInset.left, titleOriginY, sectionLabel.frame.size.width, sectionLabel.frame.size.height);
+}
+
+- (void)updateSectionHeadersAppearance
+{
+    [_reusableSectionHeaders enumerateObjectsUsingBlock:^(NSArray *reusableList, NSUInteger index, __unused BOOL *stop)
+    {
+        for (UIView *sectionContainer in reusableList)
+        {
+            UILabel *sectionLabel = (UILabel *)[sectionContainer viewWithTag:100];
+            [self configureSectionHeader:sectionContainer title:sectionLabel.text first:index == 0];
+        }
+    }];
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
 {
     if (tableView == _tableView)
     {
-        bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
-        if (brandedMainContacts && section >= 0 && section < (int)_sectionList.size() && _sectionList[section]->letter != nil)
-            return 23.0f;
+        OGContactListAppearance *brandedAppearance = [self brandedContactListAppearance];
+        if (brandedAppearance != nil && section >= 0 && section < (int)_sectionList.size() && _sectionList[section]->letter != nil)
+            return brandedAppearance.sectionHeaderHeight - ([self sectionHeaderFollowsSearchBar:section] ? brandedAppearance.searchBarOverlap : 0.0f);
         if (((_contactsMode & TGContactsModeManualFirstSection) || ((_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite)) && section == 0)
             return 0.0f;
         
@@ -1467,18 +1620,16 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
         if ((_contactsMode & TGContactsModeManualFirstSection) && indexPath.section == 0)
             return [self itemHeightForFirstSection];
         
-//        if (((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts) && indexPath.section == 0 && indexPath.row == 0) {
-//            return 80.0f;
-//        }
         
-        bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
+        OGContactListAppearance *brandedAppearance = [self brandedContactListAppearance];
+        CGFloat rowHeight = brandedAppearance != nil ? brandedAppearance.rowHeight : 48.0f;
         if ((((_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption)) && indexPath.section == 0)
-            return TGIsPad() ? 55 : (brandedMainContacts ? 44.0f : 48.0f);
+            return TGIsPad() ? 55 : rowHeight;
         
         if ((_contactsMode & TGContactsModeInvite) == TGContactsModeInvite)
             return 51;
         
-        return TGIsPad() ? 55.0f : (brandedMainContacts ? 44.0f : 48.0f);
+        return TGIsPad() ? 55.0f : rowHeight;
     }
     
     return 48.0f;
@@ -1568,6 +1719,7 @@ static void adjustCellForSelectionEnabled(TGContactCell *contactCell, bool selec
 static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int currentSortOrder, bool animated, std::map<int, TGUser *> const &selectedUsers, bool showMessageBadge, bool isDisabled, bool isSearch, bool isGlobalSearch, NSString *searchString, TGPresentation *presentation)
 {
     bool brandedMainContacts = showMessageBadge && [TGPresentation brandedIOS6Style];
+    contactCell.contactListAppearance = brandedMainContacts ? [TGPresentation brandedIOS6ContactListAppearance] : nil;
     contactCell.hideAvatar = brandedMainContacts || user.uid <= 0;
     contactCell.itemId = user.uid;
     contactCell.user = user;
@@ -1610,6 +1762,9 @@ static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int curr
             [contactCell setBoldMode:1];
     }
     
+    if (brandedMainContacts && contactCell.contactListAppearance.rowTitleColor != nil)
+        [contactCell setBoldMode:(currentSortOrder & TGContactListSortOrderDisplayFirstFirst) ? 2 : 1];
+
     bool subtitleActive = false;
     
     if (isGlobalSearch || (searchString.length != 0 && isSearch && [user.userName.lowercaseString hasPrefix:[searchString lowercaseString]]))
@@ -1688,7 +1843,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (void)updateRelativeTimestamps
 {
-    if (_contactsMode & TGContactsModeModalInvite)
+    if ((_contactsMode & TGContactsModeModalInvite) || [self brandedContactListAppearance] != nil)
         return;
 
     for (id cell in _tableView.visibleCells)
@@ -1717,7 +1872,6 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    //TGLog(@"Cell for row");
     
     TGUser *user = nil;
     bool isGlobalSearch = false;
@@ -1835,6 +1989,8 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         
         adjustCellForSelectionEnabled(contactCell, cellSelectionEnabled, false);
         
+        contactCell.separatorHidden = tableView == _tableView && [self separatorHiddenForRowAtIndexPath:indexPath];
+        
         adjustCellForUser(contactCell, user, _currentSortOrder, false, _selectedUsers, (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts, _disabledUserIds.find(user.uid) != _disabledUserIds.end(), isSearch, isGlobalSearch, _uiSearchString, self.presentation);
         
         return contactCell;
@@ -1848,6 +2004,18 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         loadingCell.selectionStyle = UITableViewCellSelectionStyleNone;
     }
     return loadingCell;
+}
+
+- (bool)separatorHiddenForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    if (![self brandedContactListAppearance].hidesSeparatorAboveSectionHeader)
+        return false;
+    NSInteger section = indexPath.section;
+    if (section < 0 || section + 1 >= (NSInteger)_sectionList.size())
+        return false;
+    if (indexPath.row != (NSInteger)_sectionList[section]->items.size() - 1)
+        return false;
+    return _sectionList[section + 1]->letter != nil;
 }
 
 - (void)didSelectRowInFirstSection:(NSInteger)__unused row
@@ -2088,6 +2256,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (void)searchMixinWillActivate:(bool)animated
 {
+    [self setContactsEditing:false animated:animated];
     _tableView.scrollEnabled = false;
     [self _setIndexViewHidden:true animated:animated];
     [self setNavigationBarHidden:true animated:animated];
@@ -2113,7 +2282,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     {
         if ((_contactsMode & TGContactsModeInvite) == TGContactsModeInvite)
         {
-            self.searchString = [[queryString stringByReplacingOccurrencesOfString:@" +" withString:@" " options:NSRegularExpressionSearch range:NSMakeRange(0, queryString.length)] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            self.searchString = [[[NSRegularExpression regularExpressionWithPattern:@" +" options:0 error:NULL] stringByReplacingMatchesInString:queryString options:0 range:NSMakeRange(0, queryString.length) withTemplate:@" "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             if (self.searchString.length == 0)
             {
                 dispatch_async(dispatch_get_main_queue(), ^
@@ -2177,7 +2346,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
                 });
             }
             
-            NSString *searchString = [[queryString stringByReplacingOccurrencesOfString:@" +" withString:@" " options:NSRegularExpressionSearch range:NSMakeRange(0, queryString.length)] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            NSString *searchString = [[[NSRegularExpression regularExpressionWithPattern:@" +" options:0 error:NULL] stringByReplacingMatchesInString:queryString options:0 range:NSMakeRange(0, queryString.length) withTemplate:@" "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
             self.searchString = searchString;
             if (self.searchString.length == 0)
             {
@@ -2615,6 +2784,111 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }
 }
 
+- (void)editContactsButtonPressed
+{
+    [self setContactsEditing:!_editingContacts animated:true];
+}
+
+- (void)setContactsEditing:(bool)editing animated:(bool)animated
+{
+    if (_editingContacts == editing)
+        return;
+    
+    _editingContacts = editing;
+    [_tableView setEditing:editing animated:animated];
+    [self setRightBarButtonItem:[self controllerRightBarButtonItem] animated:false];
+}
+
+- (TGUser *)deletableContactAtIndexPath:(NSIndexPath *)indexPath
+{
+    if ([self brandedContactListAppearance] == nil)
+        return nil;
+    if (indexPath.section < 0 || indexPath.section >= (NSInteger)_sectionList.size())
+        return nil;
+    
+    std::vector<TGUser *> const &items = _sectionList[indexPath.section]->items;
+    if (indexPath.row < 0 || indexPath.row >= (NSInteger)items.size())
+        return nil;
+    
+    TGUser *user = items[indexPath.row];
+    if (user.uid <= 0 || user.uid == TGTelegraphInstance.clientUserId || user.phoneNumber.length == 0)
+        return nil;
+    return user;
+}
+
+- (void)deleteContact:(TGUser *)user
+{
+    int uid = user.uid;
+    NSString *phoneNumber = user.phoneNumber;
+    __weak TGContactsController *weakSelf = self;
+    
+    [ActionStageInstance() dispatchOnStageQueue:^
+    {
+        if ([TGSynchronizeContactsManager instance].phonebookAccessStatus != TGPhonebookAccessStatusEnabled)
+        {
+            TGDispatchOnMainThread(^
+            {
+                [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Contacts.AccessDeniedError") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+            });
+            return;
+        }
+        
+        static int actionId = 0;
+        int nativeId = [TGDatabaseInstance() phonebookContactByPhoneId:phoneMatchHash(phoneNumber)].nativeId;
+        if (nativeId != 0)
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%d,%d,breakLinkLocal)", uid, actionId++] options:@{@"uid": @(uid), @"nativeId": @(nativeId)} watcher:TGTelegraphInstance];
+        else
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%d,%d,breakLink)", uid, actionId++] options:@{@"uid": @(uid)} watcher:TGTelegraphInstance];
+        
+        TGDispatchOnMainThread(^
+        {
+            [weakSelf removeContactRowWithUid:uid];
+        });
+    }];
+}
+
+- (void)removeContactRowWithUid:(int)uid
+{
+    for (NSInteger section = 0; section < (NSInteger)_sectionList.size(); section++)
+    {
+        std::vector<TGUser *> &items = _sectionList[section]->items;
+        for (NSInteger row = 0; row < (NSInteger)items.size(); row++)
+        {
+            if (items[row].uid != uid)
+                continue;
+            
+            items.erase(items.begin() + row);
+            if (items.empty())
+            {
+                _sectionList.erase(_sectionList.begin() + section);
+                [_tableView beginUpdates];
+                [_tableView deleteSections:[NSIndexSet indexSetWithIndex:section] withRowAnimation:UITableViewRowAnimationFade];
+                if ([self sectionHeaderFollowsSearchBar:section] && section < (NSInteger)_sectionList.size())
+                    [_tableView reloadSections:[NSIndexSet indexSetWithIndex:section + 1] withRowAnimation:UITableViewRowAnimationNone];
+                [_tableView endUpdates];
+            }
+            else
+            {
+                [_tableView deleteRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:row inSection:section]] withRowAnimation:UITableViewRowAnimationFade];
+            }
+            [self updateVisibleContactSeparators];
+            return;
+        }
+    }
+}
+
+- (void)updateVisibleContactSeparators
+{
+    for (UITableViewCell *cell in _tableView.visibleCells)
+    {
+        if (![cell isKindOfClass:[TGContactCell class]])
+            continue;
+        NSIndexPath *indexPath = [_tableView indexPathForCell:cell];
+        if (indexPath != nil)
+            ((TGContactCell *)cell).separatorHidden = [self separatorHiddenForRowAtIndexPath:indexPath];
+    }
+}
+
 - (void)addButtonPressed
 {
     TGCreateContactController *createContactController = [[TGCreateContactController alloc] init];
@@ -2661,23 +2935,22 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
         if (!TGShareItemsViaLegacyPasteboard(@[body]))
         {
-            UIActivityViewController *activityController = [[UIActivityViewController alloc] initWithActivityItems:@[body] applicationActivities:nil];
-            [self presentViewController:activityController animated:true completion:nil];
+            UIView *sourceView = nil;
+            CGRect sourceRect = CGRectZero;
             if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
             {
-                activityController.popoverPresentationController.sourceView = self.view;
-
-                CGRect rect = self.view.bounds;
+                sourceView = self.view;
+                sourceRect = self.view.bounds;
                 for (UITableViewCell *cell in _tableView.visibleCells)
                 {
                     if ([cell isKindOfClass:[TGFlatActionCell class]] && ((TGFlatActionCell *)cell).mode == TGFlatActionCellModeShareApp)
                     {
-                        rect = [_tableView convertRect:cell.frame toView:self.view];
+                        sourceRect = [_tableView convertRect:cell.frame toView:self.view];
                         break;
                     }
                 }
-                activityController.popoverPresentationController.sourceRect = rect;
             }
+            OGPlatformPresentActivityItems(self, @[body], sourceView, sourceRect, nil, UIPopoverArrowDirectionAny, nil);
         }
         
         [_tableView deselectRowAtIndexPath:[_tableView indexPathForSelectedRow] animated:true];
@@ -2747,43 +3020,41 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         if (recipients.count == 0)
             return;
         
-        if ([MFMessageComposeViewController canSendText])
+        if (OGPlatformCanSendTextMessage())
         {
             void (^block)(void) = ^
             {
-                _messageComposer = [[MFMessageComposeViewController alloc] init];
-                
+                NSString *url = [TGContactsController downloadLink];
+                NSString *body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), url];
+                if (selectedUsers.count == 1)
+                {
+                    TGUser *user = selectedUsers.firstObject;
+                    int importers = [user.customProperties[@"importers"] intValue];
+                    
+                    if (importers > 1)
+                    {
+                        NSString *formatPrefix = [TGStringUtils integerValueFormat:@"InviteText.ContactsCount_" value:importers];
+                        NSString *plus = @"";
+                        if (importers >= 1000)
+                            plus = @"+";
+                        
+                        body = [[NSString alloc] initWithFormat:TGLocalized(formatPrefix), [[NSString alloc] initWithFormat:@"%d%@", importers, plus], url];
+                    }
+                    else
+                    {
+                        body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), url];
+                    }
+                }
+
+                _messageComposer = OGPlatformCreateTextMessageComposer(self, recipients, body);
                 if (_messageComposer != nil)
                 {
-                    _messageComposer.recipients = recipients;
-                    _messageComposer.messageComposeDelegate = self;
-                    
-                    NSString *url = [TGContactsController downloadLink];
-                    NSString *body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), url];
-                    if (selectedUsers.count == 1)
-                    {
-                        TGUser *user = selectedUsers.firstObject;
-                        int importers = [user.customProperties[@"importers"] intValue];
-                        
-                        if (importers > 1)
-                        {
-                            NSString *formatPrefix = [TGStringUtils integerValueFormat:@"InviteText.ContactsCount_" value:importers];
-                            NSString *plus = @"";
-                            if (importers >= 1000)
-                                plus = @"+";
-                            
-                            body = [[NSString alloc] initWithFormat:TGLocalized(formatPrefix), [[NSString alloc] initWithFormat:@"%d%@", importers, plus], url];
-                        }
-                        else
-                        {
-                            body = [NSString stringWithFormat:TGLocalized(@"InviteText.SingleContact"), url];
-                        }
-                    }
-                    
-                    _messageComposer.body = body;
-                    
                     [self presentViewController:_messageComposer animated:true completion:nil];
                     [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleBlackOpaque];
+                }
+                else
+                {
+                    OGPlatformOpenTextMessage(recipients);
                 }
             };
             
@@ -2802,25 +3073,25 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }
 }
 
-- (void)messageComposeViewController:(MFMessageComposeViewController *)__unused controller didFinishWithResult:(MessageComposeResult)result
+- (void)messageComposeViewController:(id)controller didFinishWithResult:(NSInteger)result
 {
     _messageComposer = nil;
     
-    bool dismiss = result == MessageComposeResultSent && (_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite && (_contactsMode & TGContactsModeModalInviteWithBack) != TGContactsModeModalInviteWithBack;
+    bool dismiss = result == OGPlatformMessageComposeResultSent && (_contactsMode & TGContactsModeModalInvite) == TGContactsModeModalInvite && (_contactsMode & TGContactsModeModalInviteWithBack) != TGContactsModeModalInviteWithBack;
     
     if (!dismiss)
         [self dismissViewControllerAnimated:true completion:nil];
     
-    if (result == MessageComposeResultFailed)
+    if (result == OGPlatformMessageComposeResultFailed)
     {
         [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Contacts.FailedToSendInvitesMessage") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
     }
-    else if (result == MessageComposeResultSent)
+    else if (result == OGPlatformMessageComposeResultSent)
     {
         @try
         {
             static int inviteAction = 0;
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:controller.body, @"text", controller.recipients, @"phones", nil] watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:OGPlatformTextMessageComposerBody(controller), @"text", OGPlatformTextMessageComposerRecipients(controller), @"phones", nil] watcher:TGTelegraphInstance];
         }
         @catch (NSException *exception)
         {
@@ -3091,6 +3362,12 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             _contactListVersion = version;
             _currentContactList = [resultDict objectForKey:@"contacts"];
             _currentInviteesList = [resultDict objectForKey:@"invitees"];
+
+            if (OGPlatformUsesConstrainedBackgroundExecution() && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts && _currentContactList.count == 0 && !_requestedRemoteContactsFallback)
+            {
+                _requestedRemoteContactsFallback = true;
+                [ActionStageInstance() requestActor:@"/tg/synchronizeContacts/(loadRemote)" options:@{@"forceFull": @true} watcher:self];
+            }
             
             if (!_updateContactListSheduled)
             {
@@ -3127,6 +3404,10 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
                 });
             }
         }
+    }
+    else if ([path isEqualToString:@"/tg/synchronizeContacts/(loadRemote)"])
+    {
+        _requestedRemoteContactsFallback = false;
     }
     else if ([path isEqualToString:_currentSearchPath])
     {
@@ -3218,12 +3499,11 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (bool)displaysIndices
 {
-    return ((_contactsMode & TGContactsModeCalls) == TGContactsModeCalls) || ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) || (_contactsMode & TGContactsModeCombineSections) || ([TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts);
+    return ((_contactsMode & TGContactsModeCalls) == TGContactsModeCalls) || ((_contactsMode & TGContactsModeCompose) == TGContactsModeCompose) || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) || (_contactsMode & TGContactsModeCombineSections) || [self brandedContactListAppearance].showsSectionIndex;
 }
 
 - (void)updateContactList
 {
-    //TGLog(@"Updating contact list view");
     
     bool brandedMainContacts = [TGPresentation brandedIOS6Style] && (_contactsMode & TGContactsModeMainContacts) == TGContactsModeMainContacts;
     int sortOrder = [[TGSynchronizeContactsManager instance] sortOrder];
@@ -3814,8 +4094,11 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     [_tableView reloadData];
 }
 
-- (BOOL)tableView:(UITableView *)__unused tableView canEditRowAtIndexPath:(NSIndexPath *)__unused indexPath
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
+    if (tableView == _tableView && _editingContacts)
+        return [self deletableContactAtIndexPath:indexPath] != nil;
+    
     if (indexPath.section == 0)
     {
         return (_contactsMode & TGContactsModeManualFirstSection) ? true : false;
@@ -3824,8 +4107,11 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     return false;
 }
 
-- (UITableViewCellEditingStyle)tableView:(UITableView *)__unused tableView editingStyleForRowAtIndexPath:(NSIndexPath *)__unused indexPath
+- (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath
 {
+    if (tableView == _tableView && _editingContacts)
+        return [self deletableContactAtIndexPath:indexPath] != nil ? UITableViewCellEditingStyleDelete : UITableViewCellEditingStyleNone;
+    
     if (indexPath.section == 0)
     {
         return (_contactsMode & TGContactsModeManualFirstSection) ? UITableViewCellEditingStyleDelete : UITableViewCellEditingStyleNone;
@@ -3834,12 +4120,25 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     return UITableViewCellEditingStyleNone;
 }
 
-- (void)tableView:(UITableView *)__unused tableView commitEditingStyle:(UITableViewCellEditingStyle)__unused editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath
+- (void)tableView:(UITableView *)tableView commitEditingStyle:(UITableViewCellEditingStyle)editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if ((_contactsMode & TGContactsModeManualFirstSection) && indexPath.section == 0)
     {
         [self commitDeleteItemInFirstSection:indexPath.row];
+        return;
     }
+    
+    if (tableView == _tableView && editingStyle == UITableViewCellEditingStyleDelete)
+    {
+        TGUser *user = [self deletableContactAtIndexPath:indexPath];
+        if (user != nil)
+            [self deleteContact:user];
+    }
+}
+
+- (NSString *)tableView:(UITableView *)__unused tableView titleForDeleteConfirmationButtonForRowAtIndexPath:(NSIndexPath *)__unused indexPath
+{
+    return TGLocalized(@"Common.Delete");
 }
 
 - (void)commitDeleteItemInFirstSection:(NSInteger)__unused row

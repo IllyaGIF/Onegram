@@ -1,4 +1,5 @@
 #import "TGSharedMediaController.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -1202,7 +1203,6 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
     {
         if (!self.transitionCoordinator.isCancelled && self.presentedViewController == nil)
         {
-            //_segmentedControl.alpha = 0.0f;
             _navbarExtensionView.transform = CGAffineTransformMakeTranslation(0.0f, -_navbarExtensionView.frame.size.height);
         }
         
@@ -1386,13 +1386,13 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
     _navbarExtensionView.backgroundColor = whiteColor;
     _navbarExtensionMaskView.image = maskImage;
     
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setBackgroundImage:presentation.images.segmentedControlHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setDividerImage:presentation.images.segmentedControlDividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-    [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
-    [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlBackgroundImage, UIControlStateNormal, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlHighlightedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlDividerImage(_segmentedControl, presentation.images.segmentedControlDividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
+    OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateNormal);
+    OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateSelected);
     
     _stripeView.backgroundColor = presentation.pallete.barSeparatorColor;
 }
@@ -2625,7 +2625,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
                 __strong TGSharedMediaController *strongSelf = weakSelf;
                 if (strongSelf != nil)
                 {
-                    NSString *messageText = nil;//[[NSString alloc] initWithFormat:TGLocalized([TGStringUtils integerValueFormat:@"SharedMedia.DeleteItemsConfirmation_" value:strongSelf->_selectedMessageIds.count]), [[NSString alloc] initWithFormat:@"%d", (int)strongSelf->_selectedMessageIds.count]];
+                    NSString *messageText = nil;
                     
                     [[[TGCustomActionSheet alloc] initWithTitle:messageText actions:@[
                         [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Delete") action:@"delete" type:TGActionSheetActionTypeDestructive],
@@ -2848,18 +2848,18 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
             return;
         }
 
-        UIActivityViewController *activityController = [[UIActivityViewController alloc] initWithActivityItems:next applicationActivities:nil];
-        [strongSelf presentViewController:activityController animated:true completion:^{
+        UIView *sourceView = nil;
+        CGRect sourceRect = CGRectZero;
+        if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
+        {
+            sourceView = strongSelf.view;
+            sourceRect = strongSelf.view.bounds;
+        }
+        OGPlatformPresentActivityItems(strongSelf, next, sourceView, sourceRect, nil, 0, ^{
             __strong TGSharedMediaController *strongSelf = weakSelf;
             if (strongSelf != nil)
                 [strongSelf cancelPressed];
-        }];
-        if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
-        {
-            activityController.popoverPresentationController.sourceView = strongSelf.view;
-            activityController.popoverPresentationController.sourceRect = strongSelf.view.bounds;
-            activityController.popoverPresentationController.permittedArrowDirections = 0;
-        }
+        });
         [progressWindow dismiss:true];
     }];
 }
@@ -3747,14 +3747,6 @@ static id mediaIdForItem(id<TGSharedMediaItem> item)
     [controller setItemViews:@[ viewItem, cancelItem ]];
 
     
-//    controller.sourceRect = ^
-//    {
-//        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
-//        if (strongSelf == nil)
-//            return CGRectZero;
-//        
-//        return [strongSelf sourceRectForPhoneItem:item];
-//    };
     [controller presentInViewController:self sourceView:self.view animated:true];
 }
 

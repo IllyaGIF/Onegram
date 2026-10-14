@@ -101,8 +101,6 @@
     _alternativeImageLabel.textColor = presentation.pallete.accentContrastColor;
     _separatorView.backgroundColor = presentation.pallete.separatorColor;
     _titleLabel.textColor = presentation.pallete.textColor;
-    //_descriptionLabel.textColor = presentation.pallete.secondaryTextColor;
-    //_progressView.backgroundColor = presentation.pallete.accentColor;
     self.selectedBackgroundView.backgroundColor = presentation.pallete.selectionColor;
 }
 

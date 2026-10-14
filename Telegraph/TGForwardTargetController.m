@@ -1,4 +1,5 @@
 #import "TGForwardTargetController.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -442,16 +443,16 @@
         [_toolbarContainerView addSubview:stripeView];
         
         _segmentedControl = [[UISegmentedControl alloc] initWithItems:@[TGLocalized(@"DialogList.TabTitle"), TGLocalized(@"Contacts.TabTitle")]];
-        [_segmentedControl setBackgroundImage:presentation.images.segmentedControlBackgroundImage forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setBackgroundImage:presentation.images.segmentedControlSelectedImage forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setBackgroundImage:presentation.images.segmentedControlHighlightedImage forState:UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
-        [_segmentedControl setDividerImage:presentation.images.segmentedControlDividerImage forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlBackgroundImage, UIControlStateNormal, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlSelectedImage, UIControlStateSelected | UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlBackgroundImage(_segmentedControl, presentation.images.segmentedControlHighlightedImage, UIControlStateHighlighted, UIBarMetricsDefault);
+        OGPlatformSetSegmentedControlDividerImage(_segmentedControl, presentation.images.segmentedControlDividerImage, UIControlStateNormal, UIControlStateNormal, UIBarMetricsDefault);
         _segmentedControl.frame = CGRectMake(CGFloor((_toolbarContainerView.frame.size.width - 182.0f) / 2), 8, 182.0f, 29.0f);
         _segmentedControl.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin;
         
-        [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
-        [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+        OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:presentation.pallete.navigationButtonColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateNormal);
+        OGPlatformSetSegmentedControlTitleTextAttributes(_segmentedControl, @{UITextAttributeTextColor:presentation.pallete.accentContrastColor, UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)}, UIControlStateSelected);
         
         [_segmentedControl setSelectedSegmentIndex:0];
         [_segmentedControl addTarget:self action:@selector(segmentedControlChanged) forControlEvents:UIControlEventValueChanged];
@@ -551,16 +552,6 @@
     }
 }
 
-/*- (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
-{
-    [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
-    
-    _toolbarContainerView.frame = CGRectMake(0, self.view.frame.size.height - 44, self.view.frame.size.width, 44);
-    if (_currentViewController != nil)
-    {
-        [_currentViewController.view setFrame:CGRectMake(0, 0, self.view.frame.size.width, self.view.frame.size.height - _toolbarContainerView.frame.size.height)];
-    }
-}*/
 
 #pragma mark -
 
@@ -808,7 +799,7 @@
                     @"forwardMessages": [NSArray arrayWithArray:_forwardMessages],
                     @"sendFiles": _documentFileDescs
                 }];
-                actions[@"ios6ForceForumTopicPicker"] = @YES;
+                actions[@"ios6ForceForumTopicPicker"] = @(YES);
                 [[TGInterfaceManager instance] navigateToConversationWithId:conversation.conversationId conversation:conversation performActions:actions animated:false];
             }
         }
@@ -897,10 +888,7 @@
                 if (self.completeGroups != nil)
                     dict[@"completeGroups"] = self.completeGroups;
 
-                // Forwarding to a forum group must ask for a topic instead of
-                // silently sending into the general topic. TGInterfaceManager
-                // consumes this internal routing flag only for forum groups.
-                dict[@"ios6ForceForumTopicPicker"] = @YES;
+                dict[@"ios6ForceForumTopicPicker"] = @(YES);
                 
                 [[TGInterfaceManager instance] navigateToConversationWithId:conversation.conversationId conversation:conversation performActions:dict atMessage:nil clearStack:true openKeyboard:[_shareLink[@"replace"] boolValue]canOpenKeyboardWhileInTransition:false animated:true];
             }

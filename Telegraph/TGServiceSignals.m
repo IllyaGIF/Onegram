@@ -39,9 +39,6 @@
 
 + (SSignal *)appChangelogMessages:(NSString *)previousVersion {
     TLRPChelp_getAppChangelog$help_getAppChangelog *getAppChangelog = [[TLRPChelp_getAppChangelog$help_getAppChangelog alloc] init];
-    /*NSString *versionString = [[NSString alloc] initWithFormat:@"%@ (%@)", [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"], [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleVersion"]];
-    getAppChangelog.app_version = versionString;
-    getAppChangelog.lang_code = [[NSLocale preferredLanguages] objectAtIndex:0];*/
     getAppChangelog.prev_app_version = previousVersion;
     
     return [[[TGTelegramNetworking instance] requestSignal:getAppChangelog] map:^id(TLUpdates *result) {

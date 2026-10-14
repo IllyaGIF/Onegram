@@ -8,11 +8,6 @@
 @class MTTcpConnection;
 @class MTNetworkUsageCalculationInfo;
 
-/*!
- MTTcpConnection delegate protocol
- 
- Note: messages could be sent to the receiver from an arbitrary thread, do not make assumtions.
- */
 
 @protocol MTTcpConnectionDelegate <NSObject>
 

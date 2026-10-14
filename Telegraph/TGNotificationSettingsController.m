@@ -189,8 +189,6 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
         [self.menuSections addSection:inAppNotificationsSection];
         
         _joinedContacts = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"NotificationSettings.ContactJoined") isOn:true];
-        //TGCollectionMenuSection *contactsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_joinedContacts]];
-        //[self.menuSections addSection:contactsSection];
 
         TGButtonCollectionItem *resetItem = [[TGButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Notifications.ResetAllNotifications") action:@selector(resetAllNotifications)];
         resetItem.titleColor = TGPresentation.current.pallete.collectionMenuDestructiveColor;
@@ -591,7 +589,6 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             int muteUntil = switchItem.isOn ? 0 : INT_MAX;
             _channelNotificationSettings[@"muteUntil"] = @(muteUntil);
 
-            TGLog(@"NOTIFY channels.switch enabled=%d muteUntil=%d", switchItem.isOn ? 1 : 0, muteUntil);
 
             static int actionId = 0;
             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%d)/(pc%d)", INT_MAX - 4, actionId++] options:@{
@@ -648,7 +645,6 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
                 else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%d", INT_MAX - 4]])
                 {
                     _channelNotificationSettings = [notificationSettings mutableCopy];
-                    TGLog(@"NOTIFY channels.loaded muteUntil=%@", _channelNotificationSettings[@"muteUntil"]);
                     [self _updateItems:false];
                 }
             });

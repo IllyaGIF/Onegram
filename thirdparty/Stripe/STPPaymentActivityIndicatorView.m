@@ -28,9 +28,13 @@
         layer.backgroundColor = [UIColor clearColor].CGColor;
         layer.fillColor = [UIColor clearColor].CGColor;
         layer.strokeColor = self.tintColor.CGColor;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         layer.strokeStart = 0;
+#endif
         layer.lineCap = @"round";
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         layer.strokeEnd = 0.75f;
+#endif
         layer.lineWidth = 2.0f;
         _indicatorLayer = layer;
         [self.layer addSublayer:layer];
@@ -50,8 +54,16 @@
     CGRect bounds = self.bounds;
     bounds.size.width = MIN(bounds.size.width, bounds.size.height);
     bounds.size.height = bounds.size.width;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     UIBezierPath *path = [UIBezierPath bezierPathWithOvalInRect:bounds];
     self.indicatorLayer.path = path.CGPath;
+#else
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGFloat radius = MAX(0.0f, bounds.size.width / 2.0f - self.indicatorLayer.lineWidth / 2.0f);
+    CGPathAddArc(path, NULL, CGRectGetMidX(bounds), CGRectGetMidY(bounds), radius, (CGFloat)-M_PI_2, (CGFloat)M_PI, false);
+    self.indicatorLayer.path = path;
+    CGPathRelease(path);
+#endif
 }
 
 - (void)setHidesWhenStopped:(BOOL)hidesWhenStopped {

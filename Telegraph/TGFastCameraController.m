@@ -1,4 +1,5 @@
 #import "TGFastCameraController.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -417,19 +418,13 @@ NSString *const TGFastCameraUseRearCameraKey = @"fastCameraUseRear_v1";
     
     [[UIApplication sharedApplication] setIdleTimerDisabled:false];
     
-    AVURLAsset *asset = [AVURLAsset assetWithURL:url];
-    AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-    generator.appliesPreferredTrackTransform = true;
-    generator.maximumSize = CGSizeMake(640.0f, 640.0f);
-    CGImageRef imageRef = [generator copyCGImageAtTime:kCMTimeZero actualTime:NULL error:NULL];
-    UIImage *thumbnailImage = [[UIImage alloc] initWithCGImage:imageRef];
-    CGImageRelease(imageRef);
+    UIImage *thumbnailImage = OGPlatformVideoThumbnailAtURL(url, 0.0, CGSizeMake(640.0f, 640.0f));
     
     __weak TGFastCameraController *weakSelf = self;
     
     TGCameraCapturedVideo *capturedVideo = [[TGCameraCapturedVideo alloc] initWithURL:url];
     
-    TGMediaPickerGalleryVideoItem *videoItem = [[TGMediaPickerGalleryVideoItem alloc] initWithAsset:capturedVideo]; //[[TGMediaPickerGalleryVideoItem alloc] initWithFileURL:url dimensions:dimensions duration:duration];
+    TGMediaPickerGalleryVideoItem *videoItem = [[TGMediaPickerGalleryVideoItem alloc] initWithAsset:capturedVideo];
     videoItem.editingContext = _editingContext;
     videoItem.immediateThumbnailImage = thumbnailImage;
     
@@ -501,7 +496,11 @@ NSString *const TGFastCameraUseRearCameraKey = @"fastCameraUseRear_v1";
         SSignal *thumbnailSignal = [SSignal single:thumbnailImage];
         if (adjustments.trimStartValue > FLT_EPSILON)
         {
+#if defined(ONEGRAM_ARMV6)
+            thumbnailSignal = [SSignal single:OGPlatformVideoThumbnailAtURL(url, adjustments.trimStartValue, dimensions)];
+#else
             thumbnailSignal = [TGMediaAssetImageSignals videoThumbnailForAVAsset:[AVURLAsset URLAssetWithURL:url options:nil] size:dimensions timestamp:CMTimeMakeWithSeconds(adjustments.trimStartValue, NSEC_PER_SEC)];
+#endif
         }
         if ([adjustments cropAppliedForAvatar:false] || adjustments.hasPainting)
         {
@@ -718,7 +717,7 @@ NSString *const TGFastCameraUseRearCameraKey = @"fastCameraUseRear_v1";
         {
             TGCameraPreviewView *previewView = strongSelf->_previewView;
             if (previewView != nil)
-           *mirrored = previewView.captureConnection.videoMirrored;
+           *mirrored = OGPlatformCaptureConnectionIsVideoMirrored(previewView.captureConnection);
         }
         
         return [TGCameraController _interfaceOrientationForDeviceOrientation:strongSelf->_camera.deviceAngleSampler.deviceOrientation];

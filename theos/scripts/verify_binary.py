@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import sys
-"""Inspect the completed application and optionally compare a known build."""
 import argparse
 import os
 import json
@@ -38,8 +37,8 @@ def main():
     arch=os.environ.get('ONEGRAM_ARCH','armv7')
     if 'Non-fat file:' not in actual['lipo-info'] or 'architecture: '+arch not in actual['lipo-info']:
         raise SystemExit('Expected a thin '+arch+' executable')
-    minimum=r'7\.0' if arch=='arm64' else r'4\.3'
-    sdk=r'11\.2' if arch=='arm64' else r'7\.0'
+    minimum={'armv6':r'3\.1\.3','armv7':r'4\.3','arm64':r'7\.0'}[arch]
+    sdk={'armv6':r'3\.1\.3','armv7':r'7\.0','arm64':r'11\.2'}[arch]
     if not re.search(r'LC_VERSION_MIN_IPHONEOS\s+cmdsize 16\s+version '+minimum+r'\s+sdk '+sdk,actual['otool-l']):
         raise SystemExit('Deployment or SDK marker differs from legacy Xcode output')
     if arch == 'arm64':

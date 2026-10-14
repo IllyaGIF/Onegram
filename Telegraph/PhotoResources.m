@@ -15,9 +15,13 @@
 #import "TransformImageView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageBlur.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
+#if !defined(ONEGRAM_ARMV6)
 #import <ImageIO/ImageIO.h>
 #import <AVFoundation/AVFoundation.h>
+#endif
 
 #import "TGAppDelegate.h"
 #import "TGTelegramNetworking.h"
@@ -48,7 +52,6 @@ static id<MediaResource> imageUrlResource(NSString *url, int fileSize, NSString 
                 int64_t accessHash = [[components objectAtIndex:4] longLongValue];
                 int64_t photoId = [[components objectAtIndex:5] longLongValue];
                 bool big = [[components objectAtIndex:6] intValue] != 0;
-                while (false) TGLog(@"MEDIA peerPhotoResource dc=%d type=%d peer=%lld photo=%lld big=%d", datacenterId, peerType, peerId, photoId, big ? 1 : 0);
                 return [[CloudPeerPhotoMediaResource alloc] initWithDatacenterId:datacenterId peerId:peerId accessHash:accessHash photoId:photoId peerType:peerType big:big mediaType:@(TGNetworkMediaTypeTagImage) identifier:identifier];
             }
         }
@@ -61,7 +64,6 @@ static id<MediaResource> imageUrlResource(NSString *url, int fileSize, NSString 
                 int32_t parsedFileSize = [[components objectAtIndex:4] intValue];
                 NSString *thumbSize = [components objectAtIndex:5];
                 NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-                while (false) TGLog(@"MEDIA photoResource dc=%d id=%lld thumb=%@ size=%d fileRef=%d", datacenterId, fileId, thumbSize, parsedFileSize, (int)fileReference.length);
                 return [[CloudPhotoMediaResource alloc] initWithDatacenterId:datacenterId fileId:fileId accessHash:accessHash fileReference:fileReference thumbSize:thumbSize size:parsedFileSize == 0 ? nil : @(parsedFileSize) mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
             }
         }
@@ -74,7 +76,6 @@ static id<MediaResource> imageUrlResource(NSString *url, int fileSize, NSString 
                 int32_t parsedFileSize = [[components objectAtIndex:4] intValue];
                 NSString *thumbSize = [components objectAtIndex:5];
                 NSData *fileReference = [NSData dataWithHexString:[components objectAtIndex:6]];
-                while (false) TGLog(@"MEDIA documentThumbResource dc=%d id=%lld thumb=%@ size=%d fileRef=%d", datacenterId, fileId, thumbSize, parsedFileSize, (int)fileReference.length);
                 return [[CloudDocumentMediaResource alloc] initWithDatacenterId:datacenterId fileId:fileId accessHash:accessHash fileReference:fileReference thumbSize:thumbSize size:parsedFileSize == 0 ? nil : @(parsedFileSize) mediaType:@(TGNetworkMediaTypeTagImage) originInfo:originInfo identifier:identifier];
             }
         }
@@ -133,7 +134,6 @@ id<MediaResource> videoFullSizeResource(TGVideoMediaAttachment *video) {
         int64_t accessHash = [[urlComponents objectAtIndex:2] longLongValue];
         int32_t datacenterId = [[urlComponents objectAtIndex:3] intValue];
         int32_t fileSize = [[urlComponents objectAtIndex:4] intValue];
-        while (false) TGLog(@"MEDIA video full resource id=%lld dc=%d size=%d originRef=%d", videoId, datacenterId, fileSize, video.originInfo.fileReference.length != 0 ? 1 : 0);
         
         return [[CloudDocumentMediaResource alloc] initWithDatacenterId:datacenterId fileId:videoId accessHash:accessHash fileReference:nil thumbSize:nil size:fileSize == 0 ? nil : @(fileSize) mediaType:@(TGNetworkMediaTypeTagVideo) originInfo:video.originInfo identifier:video.videoId];
     } else {
@@ -392,6 +392,10 @@ SSignal *imageMediaTransform(MediaBox *mediaBox, TGImageMediaAttachment *image, 
             
             UIImage *fullSizeImage = nil;
             if (datas.fullSize != nil && datas.complete) {
+#if defined(ONEGRAM_ARMV6)
+                CGFloat maximumPixelSize = MAX(fittedSize.width * context.scale, fittedSize.height * context.scale);
+                fullSizeImage = OGPlatformThumbnailFromImageData(datas.fullSize, CGSizeMake(maximumPixelSize, maximumPixelSize));
+#else
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
                 [options setObject:@(MAX(fittedSize.width * context.scale, fittedSize.height * context.scale)) forKey:(__bridge id)kCGImageSourceThumbnailMaxPixelSize];
                 [options setObject:@true forKey:(__bridge id)kCGImageSourceCreateThumbnailFromImageAlways];
@@ -411,10 +415,14 @@ SSignal *imageMediaTransform(MediaBox *mediaBox, TGImageMediaAttachment *image, 
                         }
                     }
                 }
+#endif
             }
             
             UIImage *thumbnailImage = nil;
             if (datas.fullSize == nil && datas.thumbnail != nil) {
+#if defined(ONEGRAM_ARMV6)
+                thumbnailImage = OGPlatformImageFromData(datas.thumbnail);
+#else
                 CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)datas.thumbnail, nil);
                 if (imageSource != nil) {
                     CGImageRef cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil);
@@ -424,6 +432,7 @@ SSignal *imageMediaTransform(MediaBox *mediaBox, TGImageMediaAttachment *image, 
                         CFRelease(cgImage);
                     }
                 }
+#endif
             }
             
             UIImage *blurredThumbnailImage = nil;
@@ -441,8 +450,6 @@ SSignal *imageMediaTransform(MediaBox *mediaBox, TGImageMediaAttachment *image, 
             
             [context withFlippedContext:^(CGContextRef context) {
                 if (arguments.cornerRadius > FLT_EPSILON) {
-                    //CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
-                    //CGContextFillRect(context, CGRectMake(0.0f, 0.0f, arguments.boundingSize.width, arguments.boundingSize.height));
                     
                     CGContextBeginPath(context);
                     CGRect rect = CGRectMake(0.0f, 0.0f, arguments.boundingSize.width, arguments.boundingSize.height);
@@ -453,8 +460,6 @@ SSignal *imageMediaTransform(MediaBox *mediaBox, TGImageMediaAttachment *image, 
                 
                 CGContextSetBlendMode(context, kCGBlendModeCopy);
                 if (!CGSizeEqualToSize(arguments.boundingSize, arguments.imageSize)) {
-                    //CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
-                    //CGContextFillRect(context, CGRectMake(0.0f, 0.0f, arguments.boundingSize.width, arguments.boundingSize.height));
                 }
                 
                 if (blurredThumbnailImage != nil) {
@@ -482,6 +487,9 @@ SSignal *videoMediaTransform(MediaBox *mediaBox, TGVideoMediaAttachment *video) 
         DrawingContext *(^transform)(TransformImageArguments *) = ^DrawingContext *(TransformImageArguments *arguments) {
             UIImage *fullSizeImage = nil;
             if (datas.fullSizePath != nil) {
+#if defined(ONEGRAM_ARMV6)
+                fullSizeImage = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:datas.fullSizePath], 0.0, CGSizeMake(800.0f, 800.0f));
+#else
                 AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:datas.fullSizePath] options:nil];
                 AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
                 imageGenerator.maximumSize = CGSizeMake(800.0f, 800.0f);
@@ -491,10 +499,14 @@ SSignal *videoMediaTransform(MediaBox *mediaBox, TGVideoMediaAttachment *video) 
                     fullSizeImage = [[UIImage alloc] initWithCGImage:cgImage];
                     CGImageRelease(cgImage);
                 }
+#endif
             }
             
             UIImage *thumbnailImage = nil;
             if (fullSizeImage == nil && datas.thumbnail != nil) {
+#if defined(ONEGRAM_ARMV6)
+                thumbnailImage = OGPlatformImageFromData(datas.thumbnail);
+#else
                 CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)datas.thumbnail, nil);
                 if (imageSource != nil) {
                     CGImageRef cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil);
@@ -504,6 +516,7 @@ SSignal *videoMediaTransform(MediaBox *mediaBox, TGVideoMediaAttachment *video) 
                         CFRelease(cgImage);
                     }
                 }
+#endif
             }
             
             UIImage *blurredThumbnailImage = nil;
@@ -559,7 +572,6 @@ SSignal *videoMediaTransform(MediaBox *mediaBox, TGVideoMediaAttachment *video) 
 }
 
 
-
 SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thumbnail) {
     return [secureMediaDatas(mediaBox, file, thumbnail) map:^id(ImageResourceDatas *datas) {
         DrawingContext *(^transform)(TransformImageArguments *) = ^DrawingContext *(TransformImageArguments *arguments) {
@@ -569,6 +581,7 @@ SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thu
             CGSize fittedSize = TGScaleToFill(arguments.imageSize, boundingSize);
             CGRect fittedRect = CGRectMake((boundingSize.width - fittedSize.width) / 2.0f, (boundingSize.height - fittedSize.height) / 2.0f, fittedSize.width, fittedSize.height);
             
+#if !defined(ONEGRAM_ARMV6)
             CGSize (^imageSizeForSource)(CGImageSourceRef) = ^CGSize(CGImageSourceRef imageSource)
             {
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];;
@@ -582,12 +595,17 @@ SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thu
                 }
                 return CGSizeZero;
             };
+#endif
             
             UIImage *fullSizeImage = nil;
             CGSize fullImageSize = CGSizeZero;
             if (datas.fullSize != nil && datas.complete) {
+#if defined(ONEGRAM_ARMV6)
+                fullImageSize = OGPlatformImagePixelSizeFromData(datas.fullSize);
+#else
                 CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)datas.fullSize, nil);
                 fullImageSize = imageSizeForSource(imageSource);
+#endif
                 if (fullImageSize.width > FLT_EPSILON) {
                     if (boundingSize.width > FLT_EPSILON) {
                         fittedSize = TGScaleToFit(fullImageSize, boundingSize);
@@ -602,6 +620,10 @@ SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thu
                 
                 context = [[DrawingContext alloc] initWithSize:boundingSize scale:0.0f clear:true];
                 
+#if defined(ONEGRAM_ARMV6)
+                CGFloat maximumPixelSize = MAX(fittedSize.width * context.scale, fittedSize.height * context.scale);
+                fullSizeImage = OGPlatformThumbnailFromImageData(datas.fullSize, CGSizeMake(maximumPixelSize, maximumPixelSize));
+#else
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
                 [options setObject:@(MAX(fittedSize.width * context.scale, fittedSize.height * context.scale)) forKey:(__bridge id)kCGImageSourceThumbnailMaxPixelSize];
                 [options setObject:@true forKey:(__bridge id)kCGImageSourceCreateThumbnailFromImageAlways];
@@ -621,13 +643,17 @@ SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thu
                         }
                     }
                 }
+#endif
             }
             
             UIImage *thumbnailImage = nil;
             if (datas.fullSize == nil && datas.thumbnail != nil) {
+#if defined(ONEGRAM_ARMV6)
+                fullImageSize = OGPlatformImagePixelSizeFromData(datas.thumbnail);
+#else
                 CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)datas.thumbnail, nil);
-                
                 fullImageSize = imageSizeForSource(imageSource);
+#endif
                 if (fullImageSize.width > FLT_EPSILON) {
                     if (boundingSize.width > FLT_EPSILON) {
                         fittedSize = TGScaleToFit(fullImageSize, boundingSize);
@@ -640,6 +666,9 @@ SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thu
                     fittedRect = CGRectMake(0.0f, 0.0f, fittedSize.width, fittedSize.height);
                 }
                 
+#if defined(ONEGRAM_ARMV6)
+                thumbnailImage = OGPlatformImageFromData(datas.thumbnail);
+#else
                 if (imageSource != nil) {
                     CGImageRef cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil);
                     CFRelease(imageSource);
@@ -648,6 +677,7 @@ SSignal *secureMediaTransform(MediaBox *mediaBox, TGPassportFile *file, bool thu
                         CFRelease(cgImage);
                     }
                 }
+#endif
             }
             
             if (context == nil)

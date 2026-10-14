@@ -1,3 +1,4 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGPhotoThumbnailDataSource.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -109,10 +110,18 @@ static UIImage *TGPhotoThumbnailImageFromData(NSData *data)
 {
     if (data.length == 0 || !TGPhotoThumbnailJPEGDataIsStructurallyValid(data))
         return nil;
-    UIImage *image = [[UIImage alloc] initWithData:data];
-    if (image == nil || image.CGImage == NULL)
-        return nil;
-    return image;
+    TGImageRenderingLock();
+    @try
+    {
+        UIImage *image = [[UIImage alloc] initWithData:data];
+        if (image == nil || image.CGImage == NULL)
+            return nil;
+        return image;
+    }
+    @finally
+    {
+        TGImageRenderingUnlock();
+    }
 }
 
 static UIImage *TGPhotoThumbnailImageFromFile(NSString *path)
@@ -182,6 +191,11 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
         if ([TGPhotoThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
             [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+        }
+        else if (OGPlatformMediaDownloadsRequireUserAction())
+        {
+            if (completion != nil)
+                completion([TGPhotoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
         }
         else
         {
@@ -534,7 +548,6 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
 {
     if (isCancelled && isCancelled())
     {
-        TGLog(@"[TGPhotoMediaPreviewImageDataSource cancelled while loading %@]", uri);
         return nil;
     }
     
@@ -544,7 +557,7 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
     {
         return nil;
     }
-    
+
     static NSString *filesDirectory = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
@@ -649,13 +662,7 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
             const float cacheFactor = 1.0f;
             CGSize cachedImageSize = CGSizeMake(CGCeil(size.width * cacheFactor), CGCeil(size.height * cacheFactor));
             CGSize cachedRenderSize = CGSizeMake(CGCeil(renderSize.width * cacheFactor), CGCeil(renderSize.height * cacheFactor));
-            UIGraphicsBeginImageContextWithOptions(cachedImageSize, true, 0.0f);
-            
-            CGRect imageRect = CGRectMake((cachedImageSize.width - cachedRenderSize.width) / 2.0f, (cachedImageSize.height - cachedRenderSize.height) / 2.0f, cachedRenderSize.width, cachedRenderSize.height);
-            [image drawInRect:imageRect blendMode:kCGBlendModeCopy alpha:1.0f];
-            
-            thumbnailSourceImage = UIGraphicsGetImageFromCurrentImageContext();
-            UIGraphicsEndImageContext();
+            thumbnailSourceImage = TGScaleAndRoundCornersWithOffset(image, cachedRenderSize, CGPointZero, cachedImageSize, 0, nil, true, nil);
             
             if (thumbnailSourceImage != nil && !lowQualityThumbnail)
             {
@@ -665,13 +672,7 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
     }
     else
     {
-        UIGraphicsBeginImageContextWithOptions(thumbnailSourceImage.size, true, thumbnailSourceImage.scale);
-        
-        CGRect imageRect = CGRectMake(0.0f, 0.0f, thumbnailSourceImage.size.width, thumbnailSourceImage.size.height);
-        [thumbnailSourceImage drawInRect:imageRect blendMode:kCGBlendModeCopy alpha:1.0f];
-        
-        thumbnailSourceImage = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
+        thumbnailSourceImage = TGScaleImageToPixelSize(thumbnailSourceImage, CGSizeMake(thumbnailSourceImage.size.width * thumbnailSourceImage.scale, thumbnailSourceImage.size.height * thumbnailSourceImage.scale));
     }
     
     bool isFlat = [args[@"flat"] boolValue];
@@ -687,29 +688,37 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
         uint32_t averageColorValue = [averageColor intValue];
         uint32_t *averageColorPtr = needsAverageColor ? &averageColorValue : NULL;
         
-        if ([args[@"secret"] boolValue])
+        TGImageRenderingLock();
+        @try
         {
-            if (isFlat && cornerRadius != 0)
-                thumbnailImage = TGSecretBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
+            if ([args[@"secret"] boolValue])
+            {
+                if (isFlat && cornerRadius != 0)
+                    thumbnailImage = TGSecretBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
+                else
+                    thumbnailImage = TGSecretBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
+            }
             else
-                thumbnailImage = TGSecretBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
+            {
+                if (lowQualityThumbnail)
+                {
+                    if (isFlat && cornerRadius != 0)
+                        thumbnailImage = TGBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
+                    else
+                        thumbnailImage = TGBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
+                }
+                else
+                {
+                    if (isFlat && cornerRadius != 0)
+                        thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, 0, position);
+                    else
+                        thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
+                }
+            }
         }
-        else
+        @finally
         {
-            if (lowQualityThumbnail)
-            {
-                if (isFlat && cornerRadius != 0)
-                    thumbnailImage = TGBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
-                else
-                    thumbnailImage = TGBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
-            }
-            else
-            {
-                if (isFlat && cornerRadius != 0)
-                    thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, 0, position);
-                else
-                    thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
-            }
+            TGImageRenderingUnlock();
         }
         
         if (thumbnailImage != nil)
@@ -718,7 +727,6 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
             if (!lowQualityThumbnail && TGScreenScaling() < 3.0f)
                 [[TGMediaStoreContext instance] setMediaImageForKey:uri image:thumbnailImage attributes:nil];
             
-            //TGLog(@"[TGPhotoMediaPreviewImageDataSource loaded %@ in %f/%f ms]", uri, (CFAbsoluteTimeGetCurrent() - time1) * 1000.0, (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
             
             NSDictionary *imageAttachments = [thumbnailImage attachmentsDictionary];
             
@@ -732,10 +740,18 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
                 if (!alreadyCached || (cachedLowQualityThumbnail && !lowQualityThumbnail))
                 {
                     UIImage *cachedImage = nil;
-                    if (isFlat && cornerRadius > 0)
-                        cachedImage = TGReducedAttachmentWithCornerRadiusImage(thumbnailImage, size, !isFlat, cornerRadius, position);
-                    else
-                        cachedImage = TGReducedAttachmentImage(thumbnailImage, size, !isFlat, position);
+                    TGImageRenderingLock();
+                    @try
+                    {
+                        if (isFlat && cornerRadius > 0)
+                            cachedImage = TGReducedAttachmentWithCornerRadiusImage(thumbnailImage, size, !isFlat, cornerRadius, position);
+                        else
+                            cachedImage = TGReducedAttachmentImage(thumbnailImage, size, !isFlat, position);
+                    }
+                    @finally
+                    {
+                        TGImageRenderingUnlock();
+                    }
                     [cachedImage setAttachmentsFromDictionary:imageAttachments];
                     
                     if (cachedImage != nil)

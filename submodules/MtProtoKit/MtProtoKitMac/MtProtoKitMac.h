@@ -8,10 +8,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-//! Project version number for MtProtoKitMac.
 FOUNDATION_EXPORT double MtProtoKitMacVersionNumber;
 
-//! Project version string for MtProtoKitMac.
 FOUNDATION_EXPORT const unsigned char MtProtoKitMacVersionString[];
 
 #ifndef MtProtoKitMacFramework

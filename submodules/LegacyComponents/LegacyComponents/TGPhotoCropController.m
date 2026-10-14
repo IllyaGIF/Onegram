@@ -158,7 +158,6 @@ NSString * const TGPhotoCropOriginalAspectRatio = @"original";
     _rotateButton.hitTestEdgeInsets = UIEdgeInsetsMake(-10, -10, -10, -10);
     [_rotateButton addTarget:self action:@selector(rotate) forControlEvents:UIControlEventTouchUpInside];
     [_rotateButton setImage:TGComponentsImageNamed(@"PhotoEditorRotateIcon") forState:UIControlStateNormal];
-    //[_buttonsWrapperView addSubview:_rotateButton];
     
     _mirrorButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
     _mirrorButton.exclusiveTouch = true;
@@ -166,7 +165,6 @@ NSString * const TGPhotoCropOriginalAspectRatio = @"original";
     _mirrorButton.hitTestEdgeInsets = UIEdgeInsetsMake(-10, -10, -10, -10);
     [_mirrorButton addTarget:self action:@selector(mirror) forControlEvents:UIControlEventTouchUpInside];
     [_mirrorButton setImage:TGComponentsImageNamed(@"PhotoEditorMirrorIcon") forState:UIControlStateNormal];
-    //[_buttonsWrapperView addSubview:_mirrorButton];
     
     _aspectRatioButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0, 0, 36, 36)];
     _aspectRatioButton.exclusiveTouch = true;
@@ -176,7 +174,6 @@ NSString * const TGPhotoCropOriginalAspectRatio = @"original";
     [_aspectRatioButton setImage:TGComponentsImageNamed(@"PhotoEditorAspectRatioIcon") forState:UIControlStateNormal];
     [_aspectRatioButton setImage:aspectRatioHighlightedImage forState:UIControlStateSelected];
     [_aspectRatioButton setImage:aspectRatioHighlightedImage forState:UIControlStateSelected | UIControlStateHighlighted];
-    //[_buttonsWrapperView addSubview:_aspectRatioButton];
     
     NSString *resetButtonTitle = TGLocalized(@"PhotoEditor.CropReset");
     _resetButton = [[TGModernButton alloc] init];
@@ -785,7 +782,9 @@ NSString * const TGPhotoCropOriginalAspectRatio = @"original";
 
 - (void)viewWillLayoutSubviews
 {
+#if !defined(ONEGRAM_ARMV6)
     [super viewWillLayoutSubviews];
+#endif
     
     [self updateLayout:[[LegacyComponentsGlobals provider] applicationStatusBarOrientation]];
 }

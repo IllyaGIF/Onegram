@@ -1,3 +1,4 @@
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 #import "TGViewController.h"
 
 #import "LegacyComponentsInternal.h"
@@ -10,6 +11,7 @@
 #import "TGOverlayControllerWindow.h"
 
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 
 #import "TGHacks.h"
 
@@ -37,10 +39,15 @@ void TGPresentViewController(UIViewController *presentingController, UIViewContr
 
     if (completion != nil)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         [CATransaction begin];
         [CATransaction setCompletionBlock:completion];
         [presentingController presentModalViewController:viewController animated:animated];
         [CATransaction commit];
+#else
+        [presentingController presentModalViewController:viewController animated:animated];
+        completion();
+#endif
     }
     else
     {
@@ -99,10 +106,15 @@ void TGDismissViewController(UIViewController *controller, BOOL animated, void (
 
     if (completion != nil)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         [CATransaction begin];
         [CATransaction setCompletionBlock:completion];
         [dismissingController dismissModalViewControllerAnimated:animated];
         [CATransaction commit];
+#else
+        [dismissingController dismissModalViewControllerAnimated:animated];
+        completion();
+#endif
     }
     else
     {
@@ -619,7 +631,7 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
     if (![TGViewController autorotationAllowed])
         return;
 
-    if ([[UIDevice currentDevice].systemVersion intValue] >= 5)
+    if (iosMajorVersion() >= 5)
     {
         [UIViewController attemptRotationToDeviceOrientation];
         return;
@@ -644,7 +656,7 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
 
 - (UIInterfaceOrientation)interfaceOrientation
 {
-    if ([[UIDevice currentDevice].systemVersion intValue] <= 4)
+    if (iosMajorVersion() <= 4)
         return [UIApplication sharedApplication].statusBarOrientation;
     return [super interfaceOrientation];
 }
@@ -912,6 +924,31 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
     return [TGViewController autorotationAllowed];
 }
 
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations
+{
+    Method method = class_getInstanceMethod([UIViewController class], _cmd);
+    if (method != NULL)
+    {
+        UIInterfaceOrientationMask (*function)(id, SEL) = (UIInterfaceOrientationMask (*)(id, SEL))method_getImplementation(method);
+        if (function != NULL)
+            return function(self, _cmd);
+    }
+    return UIInterfaceOrientationMaskAllButUpsideDown;
+}
+
+- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation
+{
+    Method method = class_getInstanceMethod([UIViewController class], _cmd);
+    if (method != NULL)
+    {
+        UIInterfaceOrientation (*function)(id, SEL) = (UIInterfaceOrientation (*)(id, SEL))method_getImplementation(method);
+        if (function != NULL)
+            return function(self, _cmd);
+    }
+    UIInterfaceOrientation orientation = [[UIApplication sharedApplication] statusBarOrientation];
+    return orientation == UIInterfaceOrientationUnknown ? UIInterfaceOrientationPortrait : orientation;
+}
+
 - (void)loadView
 {
     [super loadView];
@@ -953,7 +990,6 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
     }
     _viewControllerIsAnimatingAppearanceTransition = true;
     _viewControllerIsAppearing = true;
-    //_viewControllerHasEverAppeared = true;
     
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad && iosMajorVersion() < 7)
     {
@@ -1086,7 +1122,6 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
 
 - (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)fromInterfaceOrientation
 {
-    //TGLegacyLog(@"Did rotate");
     _viewControllerIsChangingInterfaceOrientation = false;
     _currentSizeChangeDuration = 0.0;
     
@@ -1173,7 +1208,7 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
     {
         CGFloat statusBarHeight = [self _currentStatusBarHeight];
         
-        CGRect keyboardFrame = [[[notification userInfo] objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue];
+        CGRect keyboardFrame = OGPlatformKeyboardEndFrame(notification);
         CGFloat keyboardHeight = MIN(keyboardFrame.size.height, keyboardFrame.size.width);
         double duration = ([[[notification userInfo] objectForKey:UIKeyboardAnimationDurationUserInfoKey] doubleValue]);
         

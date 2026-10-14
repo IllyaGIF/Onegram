@@ -1,8 +1,5 @@
 #import "TGStickerKeyboardView.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -65,33 +62,6 @@ typedef enum {
     TGStickerKeyboardViewModeTrendingFirst,
     TGStickerKeyboardViewModeTrendingLast
 } TGStickerKeyboardViewMode;
-
-static NSString *TGIOS6StickerPackReferenceDescription(id reference)
-{
-    if ([reference isKindOfClass:[TGStickerPackIdReference class]])
-    {
-        TGStickerPackIdReference *idReference = (TGStickerPackIdReference *)reference;
-        return [NSString stringWithFormat:@"id:%lld short:%@", (long long)idReference.packId, idReference.shortName];
-    }
-    if ([reference isKindOfClass:[TGStickerPackShortnameReference class]])
-        return [NSString stringWithFormat:@"short:%@", ((TGStickerPackShortnameReference *)reference).shortName];
-    return [NSString stringWithFormat:@"%@:%@", NSStringFromClass([reference class]), reference];
-}
-
-static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *document)
-{
-    if (document == nil)
-        return @"(nil)";
-    return [NSString stringWithFormat:@"doc=%lld access=%lld dc=%d size=%d mime=%@ sticker=%d animated=%d pack={%@}",
-        (long long)document.documentId,
-        (long long)document.accessHash,
-        document.datacenterId,
-        document.size,
-        document.mimeType,
-        document.isSticker ? 1 : 0,
-        document.isAnimated ? 1 : 0,
-        TGIOS6StickerPackReferenceDescription(document.stickerPackReference)];
-}
 
 @interface TGStickerKeyboardCollectionView : PSUICollectionView
 
@@ -754,12 +724,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
         NSDictionary *recentResult = combinedResult[2];
         NSArray *recentDocuments = recentResult[@"documents"];
         NSArray *favoriteDocuments = combinedResult[3];
-        IOS6_NOOP_LOG(@"STICKER keyboard.combined rawPacks=%d featured=%d recent=%d favorite=%d gifs=%d",
-            (int)rawPacks.count,
-            (int)featuredPacks.count,
-            (int)recentDocuments.count,
-            (int)favoriteDocuments.count,
-            (int)gifs.count);
    
         NSMutableArray *filteredPacks = [[NSMutableArray alloc] init];
         NSMutableDictionary *packIdMap = [[NSMutableDictionary alloc] init];
@@ -831,12 +795,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
         TGStickerPack *groupStickerPack = (TGStickerPack *)groupStickersInfo[@"stickerPack"];
         TGStickerPackIdReference *groupStickerPackReference = [groupStickerPack.packReference isKindOfClass:[TGStickerPackIdReference class]] ? groupStickerPack.packReference : nil;
         NSArray *groupStickers = [groupStickerPack documents];
-        IOS6_NOOP_LOG(@"STICKER keyboard.filtered packs=%d recent=%d favorite=%d group=%d groupRef=%@",
-            (int)reversed.count,
-            (int)reversedRecentStickers.count,
-            (int)reversedFavoriteStickers.count,
-            (int)groupStickers.count,
-            TGIOS6StickerPackReferenceDescription(groupStickerPackReference));
         
         __strong TGStickerKeyboardView *strongSelf = weakSelf;
         if (strongSelf != nil) {
@@ -920,14 +878,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
                     strongSelf->_recentStickersOriginal = reversedRecentStickers;
                     updatedRecentStickers = strongSelf->_recentStickersSorted;
                 }
-                IOS6_NOOP_LOG(@"STICKER keyboard.set packs=%d recent=%d favorite=%d group=%d peer=%lld admin=%d groupUnpinned=%d",
-                    (int)reversed.count,
-                    (int)updatedRecentStickers.count,
-                    (int)reversedFavoriteStickers.count,
-                    (int)groupStickers.count,
-                    (long long)strongSelf->_peerId,
-                    strongSelf->_isGroupAdmin ? 1 : 0,
-                    strongSelf->_groupStickersUnpinned ? 1 : 0);
                 [strongSelf setStickerPacks:reversed recentStickers:updatedRecentStickers favoriteStickers:reversedFavoriteStickers groupStickers:groupStickers];
             }
             
@@ -963,7 +913,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
             }
             
             if (![strongSelf->_trendingStickerPacks isEqualToArray:trendingPacks]) {
-                IOS6_NOOP_LOG(@"STICKER keyboard.trending packs=%d installed=%d unread=%d", (int)trendingPacks.count, (int)installedPacks.count, (int)unreadPacks.count);
                 [strongSelf setTrendingStickerPacks:trendingPacks];
             }
             
@@ -1719,7 +1668,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
             TGDocumentMediaAttachment *document = [self gifAtIndexPath:indexPath];
             if (document == nil)
                 return;
-            IOS6_NOOP_LOG(@"STICKER keyboard.selectGif section=%d row=%d %@", (int)indexPath.section, (int)indexPath.row, TGIOS6StickerDocumentDescription(document));
             _gifSelected(document);
         }
     } else if (collectionView == _trendingCollectionView) {
@@ -1743,7 +1691,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
                 TGDocumentMediaAttachment *document = pack.documents[indexPath.item];
                 if (document == nil)
                     return;
-                IOS6_NOOP_LOG(@"STICKER keyboard.selectSearch section=%d row=%d %@", (int)indexPath.section, (int)indexPath.item, TGIOS6StickerDocumentDescription(document));
                 if (_stickerSelected)
                     _stickerSelected(document);
                 
@@ -1771,7 +1718,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
             TGDocumentMediaAttachment *document = [self documentAtIndexPath:indexPath];
             if (document == nil)
                 return;
-            IOS6_NOOP_LOG(@"STICKER keyboard.select section=%d row=%d %@", (int)indexPath.section, (int)indexPath.item, TGIOS6StickerDocumentDescription(document));
             if (_stickerSelected)
                 _stickerSelected(document);
         }
@@ -3018,10 +2964,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
 }
 
 - (void)installStickerPack:(TGStickerPack *)stickerPack {
-    IOS6_NOOP_LOG(@"STICKER keyboard.installPack title=%@ docs=%d ref=%@",
-        stickerPack.title,
-        (int)stickerPack.documents.count,
-        TGIOS6StickerPackReferenceDescription(stickerPack.packReference));
     bool scrollToNewPack = false;
     if (_searchActive) {
         [self searchBarCancelButtonClicked:(UISearchBar *)_searchBar];
@@ -3038,7 +2980,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
             [progressWindow dismiss:true];
         });
     }] startWithNext:^(NSArray *archivedPacks) {
-        IOS6_NOOP_LOG(@"STICKER keyboard.installPack.done title=%@ archived=%d", stickerPack.title, (int)archivedPacks.count);
         __strong TGViewController *parentController = weakParentController;
         if (parentController != nil) {
             if (archivedPacks.count != 0) {
@@ -3063,11 +3004,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
 
 - (void)viewPack:(TGStickerPack *)stickerPack sticker:(TGDocumentMediaAttachment *)sticker recent:(bool)recent
 {
-    IOS6_NOOP_LOG(@"STICKER keyboard.viewPack title=%@ docs=%d recent=%d sticker=%@",
-        stickerPack.title,
-        (int)stickerPack.documents.count,
-        recent ? 1 : 0,
-        TGIOS6StickerDocumentDescription(sticker));
     if (stickerPack == nil || !recent)
     {
         [self previewStickerPack:stickerPack sticker:sticker];
@@ -3085,12 +3021,6 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
 
 - (void)previewStickerPack:(TGStickerPack *)stickerPack sticker:(TGDocumentMediaAttachment *)sticker {
     TGViewController *parentViewController = _parentViewController;
-    IOS6_NOOP_LOG(@"STICKER keyboard.previewPack title=%@ docs=%d packRef=%@ sticker=%@ parent=%@",
-        stickerPack.title,
-        (int)stickerPack.documents.count,
-        TGIOS6StickerPackReferenceDescription(stickerPack.packReference),
-        TGIOS6StickerDocumentDescription(sticker),
-        parentViewController);
     
     __weak TGStickerKeyboardView *weakSelf = self;
 
@@ -3117,9 +3047,7 @@ static NSString *TGIOS6StickerDocumentDescription(TGDocumentMediaAttachment *doc
     }
     
     id<TGStickerPackReference> packReference = stickerPack == nil ? sticker.stickerPackReference : nil;
-    IOS6_NOOP_LOG(@"STICKER keyboard.previewPack.present menuPackRef=%@ expanded=%d search=%d", TGIOS6StickerPackReferenceDescription(packReference), _expanded ? 1 : 0, _searchActive ? 1 : 0);
     [TGStickersMenu presentWithParentController:parentViewController packReference:packReference stickerPack:stickerPack showShareAction:false sendSticker:^(TGDocumentMediaAttachment *document) {
-        IOS6_NOOP_LOG(@"STICKER keyboard.previewPack.send %@", TGIOS6StickerDocumentDescription(document));
         __strong TGStickerKeyboardView *strongSelf = weakSelf;
         if (strongSelf != nil) {
             if (strongSelf.stickerSelected) {

@@ -9,6 +9,8 @@
 #import "TGModernLetteredAvatarViewModel.h"
 
 #import "TGModernLetteredAvatarView.h"
+#import "../../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
+#import "../../submodules/LegacyComponents/LegacyComponents/TGCache.h"
 #import "TGPresentation.h"
 
 @interface TGModernLetteredAvatarViewModel ()
@@ -48,6 +50,16 @@
     return [TGModernLetteredAvatarView class];
 }
 
+- (void)_prepareLetters
+{
+    if (_avatarUri.length != 0 || [NSThread isMainThread])
+        return;
+    if (_uid != 0 || _groupId == 0)
+        [TGLetteredAvatarView prepareLettersForFirstName:_firstName lastName:_lastName fontSize:_fontSize height:_size.height];
+    else
+        [TGLetteredAvatarView prepareLettersForTitle:_title fontSize:_fontSize height:_size.height];
+}
+
 - (void)_updateViewStateIdentifier
 {
     if (_avatarUri.length != 0)
@@ -85,13 +97,18 @@
 
 - (void)setFontSize:(CGFloat)fontSize
 {
+    bool changed = ABS(_fontSize - fontSize) > FLT_EPSILON;
     _fontSize = fontSize;
     [(TGModernLetteredAvatarView *)self.boundView setSingleFontSize:_fontSize doubleFontSize:_fontSize useBoldFont:false];
+    if (changed && (_firstName.length != 0 || _lastName.length != 0 || _title.length != 0))
+        [self _prepareLetters];
 }
 
 - (void)setAvatarUri:(NSString *)avatarUri
 {
     _avatarUri = avatarUri;
+    if (_avatarUri.length != 0 && _filter.length != 0)
+        [[TGRemoteImageView sharedCache] prefetchRenderedAvatar:[TGRemoteImageView cacheKeyForUrl:_avatarUri filter:_filter] completion:nil];
     
     _firstName = nil;
     _lastName = nil;
@@ -115,6 +132,8 @@
     _uid = uid;
     _groupId = 0;
     
+    [self _prepareLetters];
+    
     TGModernLetteredAvatarView *view = (TGModernLetteredAvatarView *)[self boundView];
     if (view != nil)
     {
@@ -133,6 +152,8 @@
     _title = title;
     _uid = 0;
     _groupId = groupId;
+    
+    [self _prepareLetters];
     
     TGModernLetteredAvatarView *view = (TGModernLetteredAvatarView *)[self boundView];
     if (view != nil)

@@ -102,7 +102,7 @@
     {
         [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
         [os writeInt32:1];
-        [os writeInt32:(int32_t)0x1b2286b8]; // reactionEmoji
+        [os writeInt32:(int32_t)0x1b2286b8];
         [os writeString:_reaction];
     }
 }
@@ -143,6 +143,126 @@
 - (void)TLserialize:(NSOutputStream *)os
 {
     [os writeInt32:_hashValue];
+}
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    return nil;
+}
+
+@end
+
+static void TLRPCWritePollTextWithEntities(NSOutputStream *os, NSString *text)
+{
+    [os writeInt32:(int32_t)0x751f3146];
+    [os writeString:text ?: @""];
+    [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
+    [os writeInt32:0];
+}
+
+static void TLRPCWritePoll(NSOutputStream *os, TLCodexPollValue *poll)
+{
+    int32_t flags = poll.flags;
+    if (poll.countries.count == 0)
+        flags &= ~(1 << 12);
+    [os writeInt32:(int32_t)0x966e2dbf];
+    [os writeInt64:poll.pollId];
+    [os writeInt32:flags];
+    TLRPCWritePollTextWithEntities(os, poll.question);
+    [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
+    [os writeInt32:(int32_t)poll.answers.count];
+    for (TLCodexPollAnswerValue *answer in poll.answers)
+    {
+        [os writeInt32:(int32_t)0x4b7d786a];
+        [os writeInt32:0];
+        TLRPCWritePollTextWithEntities(os, answer.text);
+        [os writeBytes:answer.option ?: [NSData data]];
+    }
+    if (flags & (1 << 4))
+        [os writeInt32:poll.closePeriod];
+    if (flags & (1 << 5))
+        [os writeInt32:poll.closeDate];
+    if (flags & (1 << 12))
+    {
+        [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
+        [os writeInt32:(int32_t)poll.countries.count];
+        for (NSString *country in poll.countries)
+            [os writeString:country];
+    }
+    [os writeInt64:poll.pollHash];
+}
+
+@implementation TLRPCmessages_sendVote_manual
+
+- (int32_t)TLconstructorSignature { return (int32_t)0x10ea6184; }
+- (int32_t)TLconstructorName { return -1; }
+- (Class)responseClass { return [TLUpdates class]; }
+- (int)impliedResponseSignature { return 0; }
+- (int)layerVersion { return 26; }
+
+- (void)TLserialize:(NSOutputStream *)os
+{
+    TLMetaClassStore::serializeObject(os, _peer, true);
+    [os writeInt32:_msg_id];
+    [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
+    [os writeInt32:(int32_t)_options.count];
+    for (NSData *option in _options)
+        [os writeBytes:option];
+}
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    return nil;
+}
+
+@end
+
+@implementation TLRPCmessages_getPollResults_manual
+
+- (int32_t)TLconstructorSignature { return (int32_t)0xeda3e33b; }
+- (int32_t)TLconstructorName { return -1; }
+- (Class)responseClass { return [TLUpdates class]; }
+- (int)impliedResponseSignature { return 0; }
+- (int)layerVersion { return 26; }
+
+- (void)TLserialize:(NSOutputStream *)os
+{
+    TLMetaClassStore::serializeObject(os, _peer, true);
+    [os writeInt32:_msg_id];
+    [os writeInt64:_poll_hash];
+}
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    return nil;
+}
+
+@end
+
+@implementation TLRPCmessages_editMessagePoll_manual
+
+- (int32_t)TLconstructorSignature { return (int32_t)0xb106e66c; }
+- (int32_t)TLconstructorName { return -1; }
+- (Class)responseClass { return [TLUpdates class]; }
+- (int)impliedResponseSignature { return 0; }
+- (int)layerVersion { return 26; }
+
+- (void)TLserialize:(NSOutputStream *)os
+{
+    [os writeInt32:(1 << 14)];
+    TLMetaClassStore::serializeObject(os, _peer, true);
+    [os writeInt32:_msg_id];
+    int32_t mediaFlags = _correct_answers.count != 0 ? (1 << 0) : 0;
+    [os writeInt32:(int32_t)0x883a4108];
+    [os writeInt32:mediaFlags];
+    TLRPCWritePoll(os, _poll);
+    if (mediaFlags & (1 << 0))
+    {
+        [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
+        [os writeInt32:(int32_t)_correct_answers.count];
+        for (NSNumber *index in _correct_answers)
+            [os writeInt32:[index intValue]];
+    }
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error

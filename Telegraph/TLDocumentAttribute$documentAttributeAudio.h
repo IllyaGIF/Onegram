@@ -1,6 +1,5 @@
 #import "TLDocumentAttribute.h"
 
-//documentAttributeAudio flags:# is_voice:flags.10?true duration:int title:flags.0?string performer:flags.1?string waveform:flags.2?bytes = DocumentAttribute;
 
 @interface TLDocumentAttribute$documentAttributeAudio : TLDocumentAttribute
 

@@ -1,6 +1,9 @@
 #import "TGPhonebookSignals.h"
 
 #import <AddressBook/AddressBook.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000
+typedef void (^ABAddressBookRequestAccessCompletionHandler)(bool granted, CFErrorRef error);
+#endif
 #import <libkern/OSAtomic.h>
 
 #import "TGPhonebookRecord.h"
@@ -192,8 +195,6 @@ static ABAddressBookRef TGAddressBookCreateCompat(CFErrorRef *error)
                 __strong TGAddressBook *strongAddressBook = weakAddressBook;
                 if (strongAddressBook != nil)
                     [subscriber putNext:strongAddressBook];
-                else
-                    TGLog(@"(TGAddressBook instance deallocated before returning to subscriber)");
                 [subscriber putCompletion];
             }
             else
@@ -202,7 +203,7 @@ static ABAddressBookRef TGAddressBookCreateCompat(CFErrorRef *error)
         
         return [[SBlockDisposable alloc] initWithBlock:^
         {
-            [addressBook description]; // hold reference
+            [addressBook description];
         }];
     }];
 }

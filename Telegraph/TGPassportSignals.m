@@ -33,6 +33,77 @@
 #import "TGTwoStepConfigSignal.h"
 #import "TGUserDataRequestBuilder.h"
 #import "TGUploadFileSignals.h"
+
+static void TGPassportMGF1(const uint8_t *seed, size_t seedLength, uint8_t *mask, size_t maskLength)
+{
+    uint32_t counter = 0;
+    size_t offset = 0;
+    while (offset < maskLength)
+    {
+        uint8_t encodedCounter[4] = {
+            (uint8_t)(counter >> 24),
+            (uint8_t)(counter >> 16),
+            (uint8_t)(counter >> 8),
+            (uint8_t)counter
+        };
+        uint8_t digest[CC_SHA1_DIGEST_LENGTH];
+        CC_SHA1_CTX context;
+        CC_SHA1_Init(&context);
+        CC_SHA1_Update(&context, seed, (CC_LONG)seedLength);
+        CC_SHA1_Update(&context, encodedCounter, sizeof(encodedCounter));
+        CC_SHA1_Final(digest, &context);
+        size_t length = MIN(sizeof(digest), maskLength - offset);
+        memcpy(mask + offset, digest, length);
+        offset += length;
+        counter++;
+    }
+}
+
+static OSStatus TGPassportRSAEncryptOAEP(SecKeyRef key, NSData *data, uint8_t *output, size_t *outputLength)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    return SecKeyEncrypt(key, kSecPaddingOAEP, data.bytes, data.length, output, outputLength);
+#else
+    if (key == nil || output == NULL || outputLength == NULL)
+        return errSecParam;
+
+    size_t blockSize = SecKeyGetBlockSize(key);
+    const size_t hashLength = CC_SHA1_DIGEST_LENGTH;
+    if (*outputLength < blockSize || data.length > blockSize - hashLength * 2 - 2)
+        return errSecParam;
+
+    uint8_t *encoded = calloc(blockSize, 1);
+    uint8_t *mask = malloc(blockSize);
+    if (encoded == NULL || mask == NULL)
+    {
+        free(encoded);
+        free(mask);
+        return errSecAllocate;
+    }
+
+    size_t databaseLength = blockSize - hashLength - 1;
+    uint8_t *seed = encoded + 1;
+    uint8_t *database = encoded + 1 + hashLength;
+    CC_SHA1("", 0, database);
+    database[databaseLength - data.length - 1] = 1;
+    memcpy(database + databaseLength - data.length, data.bytes, data.length);
+    arc4random_buf(seed, hashLength);
+
+    TGPassportMGF1(seed, hashLength, mask, databaseLength);
+    for (size_t i = 0; i < databaseLength; i++)
+        database[i] ^= mask[i];
+    TGPassportMGF1(database, databaseLength, mask, hashLength);
+    for (size_t i = 0; i < hashLength; i++)
+        seed[i] ^= mask[i];
+
+    OSStatus status = SecKeyEncrypt(key, kSecPaddingNone, encoded, blockSize, output, outputLength);
+    memset(encoded, 0, blockSize);
+    memset(mask, 0, blockSize);
+    free(encoded);
+    free(mask);
+    return status;
+#endif
+}
 #import "TGServiceSignals.h"
 
 @implementation TGPassportSignals
@@ -148,9 +219,17 @@ static SPipe *passportPipe;
     NSData *encryptedData = [self encrypted:true data:paddedData hash:credentialsHash secret:credentialsSecret];
     
     SecKeyRef key = [self addPublicKey:publicKey];
+    if (key == nil)
+        return [SSignal fail:nil];
     size_t cipherBufferSize = SecKeyGetBlockSize(key);
     uint8_t *cipherBuffer = malloc(cipherBufferSize);
-    SecKeyEncrypt(key, kSecPaddingOAEP, credentialsSecret.bytes, credentialsSecret.length, &cipherBuffer[0], &cipherBufferSize);
+    OSStatus encryptionStatus = cipherBuffer == NULL ? errSecAllocate : TGPassportRSAEncryptOAEP(key, credentialsSecret, cipherBuffer, &cipherBufferSize);
+    CFRelease(key);
+    if (encryptionStatus != errSecSuccess)
+    {
+        free(cipherBuffer);
+        return [SSignal fail:nil];
+    }
     
     NSData *encryptedCredentialsSecret = [NSData dataWithBytesNoCopy:cipherBuffer length:cipherBufferSize freeWhenDone:true];
     
@@ -916,7 +995,6 @@ static SPipe *passportPipe;
 }
 
 + (NSData *)stripPublicKeyHeader:(NSData *)d_key{
-    // Skip ASN.1 public key header
     if (d_key == nil) return(nil);
     
     unsigned long len = [d_key length];
@@ -933,7 +1011,6 @@ static SPipe *passportPipe;
     if (c_key[idx] == 0x02)
         return d_key;
     
-    // PKCS #1 rsaEncryption szOID_RSA_RSA
     static unsigned char seqiod[] =
     { 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00 };
     if (memcmp(&c_key[idx], seqiod, 15)) return(nil);
@@ -947,7 +1024,6 @@ static SPipe *passportPipe;
     
     if (c_key[idx++] != '\0') return(nil);
     
-    // Now make a new NSData from this buffer
     return([NSData dataWithBytes:&c_key[idx] length:len - idx]);
 }
 

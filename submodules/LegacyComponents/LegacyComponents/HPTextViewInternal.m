@@ -1,50 +1,34 @@
 #import "HPTextViewInternal.h"
 
 #import "LegacyComponentsInternal.h"
-#import "TGHacks.h"
+#import "OGPlatformText.h"
 #import "FreedomUIKit.h"
 
 #import "HPGrowingTextView.h"
-
-#import <objc/runtime.h>
-#import <objc/message.h>
 
 #import <MobileCoreServices/MobileCoreServices.h>
 
 #import "TGKeyCommandController.h"
 
+static CGPoint HPTextViewClampedContentOffset(CGPoint offset, CGSize contentSize, CGSize viewportSize, UIEdgeInsets insets)
+{
+    CGFloat minimumX = -insets.left;
+    CGFloat minimumY = -insets.top;
+    CGFloat maximumX = MAX(minimumX, contentSize.width - viewportSize.width + insets.right);
+    CGFloat maximumY = MAX(minimumY, contentSize.height - viewportSize.height + insets.bottom);
+    offset.x = isfinite(offset.x) ? MAX(minimumX, MIN(maximumX, offset.x)) : minimumX;
+    offset.y = isfinite(offset.y) ? MAX(minimumY, MIN(maximumY, offset.y)) : minimumY;
+    return offset;
+}
+
 @interface HPTextViewInternal () {
     __weak TGKeyCommandController *_keyCommandController;
+    bool _ensuringSelectionVisible;
 }
 
 @end
 
 @implementation HPTextViewInternal
-
-- (NSTextContainer *)textContainer
-{
-    return nil;
-}
-
-- (NSTextStorage *)textStorage
-{
-    return nil;
-}
-
-- (NSLayoutManager *)layoutManager
-{
-    return nil;
-}
-
-- (UIEdgeInsets)textContainerInset
-{
-    return self.contentInset;
-}
-
-- (void)setTextContainerInset:(UIEdgeInsets)textContainerInset
-{
-    self.contentInset = textContainerInset;
-}
 
 - (instancetype)initWithKeyCommandController:(TGKeyCommandController *)keyCommandController {
     self = [super initWithFrame:CGRectZero];
@@ -54,21 +38,9 @@
     return self;
 }
 
-+ (void)addTextViewMethods
-{
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        InjectInstanceMethodFromAnotherClass([HPTextViewInternal class], [HPTextViewInternal class], @selector(textViewAdjustScrollRange:animated:), NSSelectorFromString(TGEncodeText(@"`tdspmmSbohfUpWjtjcmf;bojnbufe;", -1)));
-    });
-}
-
 - (void)setText:(NSString *)text
 {
     BOOL originalValue = self.scrollEnabled;
-    //If one of GrowingTextView's superviews is a scrollView, and self.scrollEnabled == NO,
-    //setting the text programatically will cause UIKit to search upwards until it finds a scrollView with scrollEnabled==yes
-    //then scroll it erratically. Setting scrollEnabled temporarily to YES prevents this.
     [self setScrollEnabled:YES];
     [super setText:text];
     [self setScrollEnabled:originalValue];
@@ -76,9 +48,6 @@
 
 - (void)setAttributedText:(NSAttributedString *)attributedText {
     BOOL originalValue = self.scrollEnabled;
-    //If one of GrowingTextView's superviews is a scrollView, and self.scrollEnabled == NO,
-    //setting the text programatically will cause UIKit to search upwards until it finds a scrollView with scrollEnabled==yes
-    //then scroll it erratically. Setting scrollEnabled temporarily to YES prevents this.
     [self setScrollEnabled:YES];
     if (iosMajorVersion() < 6)
         [super setText:attributedText.string];
@@ -92,34 +61,18 @@
     [super setScrollEnabled:isScrollable];
 }
 
-- (void)textViewAdjustScrollRange:(NSRange)range animated:(BOOL)animated
+- (void)scrollRectToVisible:(CGRect)rect animated:(BOOL)animated
 {
-    static SEL selector = NULL;
-    static void (*impl)(id, SEL, NSRange, BOOL) = NULL;
-    
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        Method method = class_getInstanceMethod([UITextView class], selector);
-        if (method != NULL)
-            impl = (void (*)(id, SEL, NSRange, BOOL))method_getImplementation(method);
-    });
-    
-    animated = false;
-    
-    if (impl != NULL)
-        impl(self, selector, range, animated);
-}
-
-- (void)scrollRectToVisible:(CGRect)__unused rect animated:(BOOL)__unused animated
-{
-    
+    if (!_freezeContentOffset)
+        [super scrollRectToVisible:rect animated:_disableContentOffsetAnimation ? false : animated];
 }
 
 - (void)setContentOffset:(CGPoint)contentOffset animated:(BOOL)animated
 {
     if (_freezeContentOffset)
         return;
+    if (_ensuringSelectionVisible)
+        contentOffset = HPTextViewClampedContentOffset(contentOffset, self.contentSize, self.bounds.size, self.contentInset);
     
     [super setContentOffset:contentOffset animated:_disableContentOffsetAnimation ? false : animated];
 }
@@ -133,32 +86,42 @@
 {
     if (_freezeContentOffset)
         return;
+    if (_ensuringSelectionVisible)
+        s = HPTextViewClampedContentOffset(s, self.contentSize, self.bounds.size, self.contentInset);
     	
 	[super setContentOffset:s];
 }
 
 - (void)textViewEnsureSelectionVisible
 {
-    if (![self isFirstResponder])
+    if (![self isFirstResponder] || _freezeContentOffset || _ensuringSelectionVisible || self.tracking || self.dragging || self.decelerating || self.bounds.size.width <= 0.0f || self.bounds.size.height <= 0.0f)
         return;
 
-    NSRange range = self.selectedRange;
-    NSUInteger length = self.text.length;
-    if (range.location == NSNotFound)
-        return;
-    if (range.location > length)
-        range.location = length;
-    if (range.length > length - range.location)
-        range.length = length - range.location;
-
-    [super scrollRangeToVisible:range];
-}
-
-- (void)setContentSize:(CGSize)contentSize
-{
-    [super setContentSize:contentSize];
- 
-    [self textViewEnsureSelectionVisible];
+    _ensuringSelectionVisible = true;
+    bool disableContentOffsetAnimation = _disableContentOffsetAnimation;
+    _disableContentOffsetAnimation = true;
+    [self layoutIfNeeded];
+    if (self.text.length == 0) {
+        [super setContentOffset:CGPointMake(-self.contentInset.left, -self.contentInset.top) animated:false];
+    } else if (iosMajorVersion() >= 7) {
+        UITextRange *selection = self.selectedTextRange;
+        if (selection != nil) {
+            CGRect caret = [self caretRectForPosition:selection.end];
+            if (!CGRectIsNull(caret) && !CGRectIsInfinite(caret) && !isnan(caret.origin.x) && !isnan(caret.origin.y))
+                [super scrollRectToVisible:CGRectInset(caret, -2.0f, -4.0f) animated:false];
+        }
+    } else {
+        NSRange range = self.selectedRange;
+        NSUInteger length = self.text.length;
+        if (range.location != NSNotFound) {
+            range.location = MIN(range.location, length);
+            range.length = MIN(range.length, length - range.location);
+            [super scrollRangeToVisible:range];
+        }
+    }
+    [self setContentOffset:self.contentOffset animated:false];
+    _disableContentOffsetAnimation = disableContentOffsetAnimation;
+    _ensuringSelectionVisible = false;
 }
 
 - (BOOL)canBecomeFirstResponder

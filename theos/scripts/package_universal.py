@@ -8,7 +8,7 @@ import shlex
 import shutil
 import subprocess
 import zipfile
-
+from build_identity import write_build_identity
 
 def main():
     parser = argparse.ArgumentParser()
@@ -29,6 +29,9 @@ def main():
     legacy_info = plistlib.loads((legacy / 'Info.plist').read_bytes())
     modern_info = plistlib.loads((modern / 'Info.plist').read_bytes())
     modern_info['MinimumOSVersion'] = legacy_info['MinimumOSVersion']
+    for key in ('OGOnegramBuildIdentifier', 'OGOnegramBuildArchitecture'):
+        legacy_info.pop(key, None)
+        modern_info.pop(key, None)
     if legacy_info != modern_info:
         raise SystemExit('Architecture application metadata differs')
     output = root / 'build/universal'
@@ -38,6 +41,7 @@ def main():
     shutil.copytree(legacy, app)
     lipo = str(args.toolchain / 'bin/lipo')
     subprocess.run([lipo, '-create', str(legacy / 'Telegram'), str(modern / 'Telegram'), '-output', str(app / 'Telegram')], check=True)
+    write_build_identity(app, 'armv7+arm64')
     subprocess.run(shlex.split(args.ldid) + ['-S' + str(root / 'generated/signing.entitlements'), str(app / 'Telegram')], check=True)
     subprocess.run([lipo, str(app / 'Telegram'), '-verify_arch', 'armv7', 'arm64'], check=True)
     subprocess.run([lipo, '-info', str(app / 'Telegram')], check=True)

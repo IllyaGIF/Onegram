@@ -118,7 +118,7 @@
     arc4random_buf(&randomId, sizeof(randomId));
     NSString *imagePathComponent = [[NSString alloc] initWithFormat:@"%" PRIx64 ".bin", randomId];
     NSString *filePath = [uploadDirectory stringByAppendingPathComponent:imagePathComponent];
-    [[NSFileManager defaultManager] copyItemAtURL:[NSURL URLWithString:storedFilePath] toURL:[NSURL URLWithString:[@"file://" stringByAppendingString:filePath]] error:nil];
+    [[NSFileManager defaultManager] copyItemAtPath:[[NSURL URLWithString:storedFilePath] path] toPath:filePath error:nil];
     
     return [@"file://" stringByAppendingString:filePath];
 }

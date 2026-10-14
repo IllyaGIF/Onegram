@@ -84,8 +84,6 @@
 
 - (void)unbindView
 {
-    //((TGUsernameCollectionItemView *)self.boundView).usernameChanged = nil;
-    //((TGUsernameCollectionItemView *)self.boundView).returnPressed = nil;
     
     [super unbindView];
 }

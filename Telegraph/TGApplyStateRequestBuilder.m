@@ -31,14 +31,8 @@
     int unreadCount = [[options objectForKey:@"unreadCount"] intValue];
     int qts = [[options objectForKey:@"qts"] intValue];
     
-    if (pts != 0)
-        TGLog(@"pts: %d", pts);
     
-    if (seq != 0)
-        TGLog(@"seq: %d", seq);
     
-    if (qts != 0)
-        TGLog(@"qts: %d", qts);
     
     [[TGDatabase instance] applyPts:pts date:date seq:seq qts:qts unreadCount:unreadCount];
     

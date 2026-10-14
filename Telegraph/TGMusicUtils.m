@@ -1,6 +1,8 @@
 #import "TGMusicUtils.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <AVFoundation/AVFoundation.h>
+#endif
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 @interface TGMusicID3ArtworkReader : NSObject
@@ -15,7 +17,8 @@
 {
     if (completion == nil)
         return;
-    
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
     if (asset == nil)
     {
@@ -74,6 +77,18 @@
             }
         }
     }];
+#else
+    UIImage *image = [TGMusicID3ArtworkReader albumArtworkForURL:url];
+    if (image != nil)
+    {
+        CGSize screenSize = TGScreenSize();
+        CGFloat screenSide = MIN(screenSize.width, screenSize.height);
+        CGFloat scale = TGIsRetina() ? 1.7f : 1.0f;
+        CGSize pixelSize = CGSizeMake(screenSide * scale, screenSide * scale);
+        image = TGScaleImageToPixelSize(image, TGFitSize(CGSizeMake(image.size.width * image.scale, image.size.height * image.scale), pixelSize));
+    }
+    completion(image);
+#endif
 }
 
 @end

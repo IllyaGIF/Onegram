@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 73
- */
 
 @class Secret73_DecryptedMessageAction;
 @class Secret73_DecryptedMessageAction_decryptedMessageActionSetMessageTTL;
@@ -89,9 +86,6 @@
 
 @end
 
-/*
- * Types 73
- */
 
 @interface Secret73_DecryptedMessageAction : NSObject
 
@@ -545,10 +539,6 @@
 
 @end
 
-
-/*
- * Functions 73
- */
 
 @interface Secret73: NSObject
 

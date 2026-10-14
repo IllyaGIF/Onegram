@@ -1,6 +1,5 @@
 #import "TGChannelManagementSignals.h"
 
-#import "IOS6Trace.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "../submodules/LegacyComponents/SSignalKitCompat/SMulticastSignalManager.h"
@@ -11,6 +10,7 @@
 #import "TLUpdates+TG.h"
 #import "TGDatabase.h"
 #import "TGTelegraph.h"
+#import "TGCommon.h"
 
 #import "TGConversation+Telegraph.h"
 #import "TGMessage+Telegraph.h"
@@ -36,6 +36,8 @@
 #import "TGStickersSignals.h"
 
 #import "TLRPCmessages_editMessage.h"
+#import "TGIOS6MessageViewsRpc.h"
+#import "TGDatabaseUpdateMessage.h"
 
 #import "TLUpdate$updateChannelTooLong.h"
 
@@ -130,19 +132,24 @@ static void TGIOS6StoreChannelHistoryChats(NSArray *chats)
         [TGDatabaseInstance() updateChannels:channels];
 }
 
-static SSignal *TGQueuedChannelPollSignal(TGQueuedPeerPoll *poll) {
-    return [[TGChannelStateSignals pollOnce:poll.peerId] mapToSignal:^SSignal *(NSNumber *result) {
-        NSTimeInterval timeout = [result doubleValue];
-        if (timeout < 0.0) {
-            return [[[SSignal complete] delay:-timeout onQueue:[SQueue concurrentDefaultQueue]] then:[SSignal defer:^SSignal *{
-                return TGQueuedChannelPollSignal(poll);
-            }]];
-        }
-        return [SSignal complete];
-    }];
+@implementation TGChannelManagementSignals
+
++ (TLInputChannel *)inputChannelForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash
+{
+    int64_t channelId = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    if (channelId == 0)
+        return nil;
+
+    TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
+    inputChannel.channel_id = channelId;
+    inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
+    return inputChannel;
 }
 
-@implementation TGChannelManagementSignals
++ (void)storeChannelChats:(NSArray *)chats
+{
+    TGIOS6StoreChannelHistoryChats(chats);
+}
 
 + (SSignal *)makeChannelWithTitle:(NSString *)title about:(NSString *)about group:(bool)group
 {
@@ -289,20 +296,12 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             }
         }
         
-        // History must not wait for auxiliary reply lookups. A deleted or
-        // inaccessible reply target can otherwise hold the entire initial
-        // channel page forever, leaving only the dialog's top message visible.
-        // Reply targets already present in this page were linked above; missing
-        // targets can be resolved later without blocking the conversation.
-        if (unresolvedReplyCount != 0)
-            IOS6Trace(@"HISTORY replyLookupDeferred peer=%lld messages=%d replies=%d", peerId, (int)messages.count, (int)unresolvedReplyCount);
         return [SSignal single:messages];
     }];
 }
 
 + (SSignal *)preloadedHistoryForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash aroundMessageId:(int32_t)messageId {
     int32_t limit = 64;
-    IOS6Trace(@"TRACE channelHistoryAround start peer=%lld hash=%lld around=%d limit=%d", peerId, accessHash, messageId, limit);
     
     return [[TGDatabaseInstance() modifyChannel:peerId block:^id(__unused int32_t pts) {
         __block bool messageExists = false;
@@ -324,7 +323,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             }];
             
             if (!hasHoles) {
-                IOS6Trace(@"TRACE channelHistoryAround cacheHit peer=%lld around=%d hasHoles=0", peerId, messageId);
                 return [SSignal single:@{}];
             }
         }
@@ -335,7 +333,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         if (inputChannel.access_hash == 0)
         {
-            IOS6Trace(@"HISTORY aroundMissingAccessHash peer=%lld channel=%lld originalHash=%lld", peerId, inputChannel.channel_id, accessHash);
             return [SSignal single:@{}];
         }
         getHistory.peer = inputChannel;
@@ -344,12 +341,10 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         getHistory.offset_id = messageId;
         getHistory.add_offset = -limit / 2;
         getHistory.limit = limit;
-        IOS6Trace(@"TRACE channelHistoryAround request peer=%lld channel=%lld hash=%lld min=%d max=%d offset=%d add=%d limit=%d", peerId, inputChannel.channel_id, inputChannel.access_hash, getHistory.min_id, getHistory.max_id, getHistory.offset_id, getHistory.add_offset, getHistory.limit);
         
         return [[[[TGTelegramNetworking instance] requestSignal:getHistory] mapToSignal:^SSignal *(TLmessages_Messages *messages) {
             [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
             TGIOS6StoreChannelHistoryChats(messages.chats);
-            IOS6Trace(@"TRACE channelHistoryAround success peer=%lld messages=%d chats=%d users=%d response=%@", peerId, (int)messages.messages.count, (int)messages.chats.count, (int)messages.users.count, NSStringFromClass([messages class]));
             
             int32_t pts = 0;
             NSArray *collapsed = nil;
@@ -357,6 +352,8 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                 TLmessages_Messages$modernChannelMessages *concreteMessages = (TLmessages_Messages$modernChannelMessages *)messages;
                 pts = concreteMessages.pts;
                 collapsed = concreteMessages.collapsed;
+            } else if ([messages isKindOfClass:[TLmessages_Messages$messages_channelMessages class]]) {
+                pts = ((TLmessages_Messages$messages_channelMessages *)messages).pts;
             }
             
             int32_t minParsedId = 0;
@@ -387,7 +384,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                 return [SSignal single:@{@"messages": parsedMessages, @"hole": closedHole}];
             }];
         }] catch:^SSignal *(id error) {
-            IOS6Trace(@"TRACE channelHistoryAround error peer=%lld channel=%lld hash=%lld error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, error);
             return [SSignal single:@{}];
         }];
     }] switchToLatest];
@@ -395,7 +391,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 
 + (SSignal *)preloadedHistoryTailForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash {
     int32_t limit = 64;
-    IOS6Trace(@"TRACE channelHistoryTail start peer=%lld hash=%lld limit=%d", peerId, accessHash, limit);
+#if defined(ONEGRAM_ARMV6)
+    limit = 24;
+#endif
     
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^{
         __block bool hasHoles = false;
@@ -411,20 +409,15 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         }];
         
         bool forceRemoteTailRefresh = TGIOS6ChannelPeerIdIsModernRawChannel(peerId, accessHash);
-        // One locally delivered message is not proof that channel history is
-        // complete. Sparse caches must be refreshed from the server.
         if (existingCount >= 20 && !hasHoles && !forceRemoteTailRefresh) {
-            IOS6Trace(@"TRACE channelHistoryTail cacheHit peer=%lld existing=%d hasHoles=0", peerId, existingCount);
             return [SSignal single:@{}];
         }
-        IOS6Trace(@"TRACE channelHistoryTail remoteRequired peer=%lld existing=%d hasHoles=%d forceModern=%d", peerId, existingCount, hasHoles ? 1 : 0, forceRemoteTailRefresh ? 1 : 0);
         TLRPCmessages_getHistory$messages_getHistory *getHistory = [[TLRPCmessages_getHistory$messages_getHistory alloc] init];
         TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
         inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         if (inputChannel.access_hash == 0)
         {
-            IOS6Trace(@"HISTORY tailMissingAccessHash peer=%lld channel=%lld originalHash=%lld", peerId, inputChannel.channel_id, accessHash);
             return [SSignal single:@{}];
         }
         getHistory.peer = inputChannel;
@@ -433,18 +426,18 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         getHistory.offset_id = 0;
         getHistory.add_offset = 0;
         getHistory.limit = limit;
-        IOS6Trace(@"TRACE channelHistoryTail request peer=%lld channel=%lld hash=%lld min=%d max=%d offset=%d add=%d limit=%d", peerId, inputChannel.channel_id, inputChannel.access_hash, getHistory.min_id, getHistory.max_id, getHistory.offset_id, getHistory.add_offset, getHistory.limit);
         
         return [[[[TGTelegramNetworking instance] requestSignal:getHistory] mapToSignal:^SSignal *(TLmessages_Messages *messages) {
             [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
             TGIOS6StoreChannelHistoryChats(messages.chats);
-            IOS6Trace(@"TRACE channelHistoryTail success peer=%lld messages=%d chats=%d users=%d response=%@", peerId, (int)messages.messages.count, (int)messages.chats.count, (int)messages.users.count, NSStringFromClass([messages class]));
             int32_t pts = 0;
             NSArray *collapsed = nil;
             if ([messages isKindOfClass:[TLmessages_Messages$modernChannelMessages class]]) {
                 TLmessages_Messages$modernChannelMessages *concreteMessages = (TLmessages_Messages$modernChannelMessages *)messages;
                 pts = concreteMessages.pts;
                 collapsed = concreteMessages.collapsed;
+            } else if ([messages isKindOfClass:[TLmessages_Messages$messages_channelMessages class]]) {
+                pts = ((TLmessages_Messages$messages_channelMessages *)messages).pts;
             }
             
             int32_t minParsedId = 0;
@@ -468,28 +461,28 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                     }
                 }
             }
-            IOS6Trace(@"TRACE channelHistoryTail parsed peer=%lld parsed=%d minMid=%d maxMid=%d minDate=%d maxDate=%d pts=%d", peerId, (int)parsedMessages.count, minParsedId, maxParsedId, minParsedDate, maxParsedDate, pts);
-            return [[self messagesWithDownloadedReplyMessages:peerId accessHash:accessHash messages:parsedMessages] mapToSignal:^SSignal *(NSArray *parsedMessages) {
+            SSignal *readyMessages = nil;
+#if defined(ONEGRAM_ARMV6)
+            readyMessages = [SSignal single:parsedMessages];
+#else
+            readyMessages = [self messagesWithDownloadedReplyMessages:peerId accessHash:accessHash messages:parsedMessages];
+#endif
+            return [readyMessages mapToSignal:^SSignal *(NSArray *readyParsedMessages) {
                 TGMessageHole *closedHole = [[TGMessageHole alloc] initWithMinId:minParsedId minTimestamp:minParsedDate maxId:maxParsedId maxTimestamp:maxParsedDate];
-                
-                return [SSignal single:@{@"messages": parsedMessages, @"hole": closedHole}];
+                return [SSignal single:@{@"messages": readyParsedMessages, @"hole": closedHole}];
             }];
         }] catch:^SSignal *(id error) {
-            IOS6Trace(@"TRACE channelHistoryTail error peer=%lld channel=%lld hash=%lld error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, error);
             return [SSignal single:@{}];
         }];
     }] switchToLatest];
 }
 
 + (SSignal *)preloadedChannelAtMessage:(int64_t)peerId messageId:(int32_t)messageId {
-    IOS6Trace(@"TRACE preloadedChannelAtMessage start peer=%lld messageId=%d", peerId, messageId);
     SSignal *channelSignal = [[[[TGDatabaseInstance() existingChannel:peerId] take:1] timeout:5.0 onQueue:[SQueue concurrentDefaultQueue] orSignal:[SSignal fail:nil]] catch:^SSignal *(id error) {
-        IOS6Trace(@"TRACE preloadedChannelAtMessage missing peer=%lld messageId=%d error=%@", peerId, messageId, error);
         return [SSignal fail:error];
     }];
     
     return [channelSignal mapToSignal:^SSignal *(TGConversation *conversation) {
-        IOS6Trace(@"TRACE preloadedChannelAtMessage found peer=%lld messageId=%d hash=%lld isGroup=%d ptsPath=check", peerId, messageId, conversation.accessHash, conversation.isChannelGroup ? 1 : 0);
         if (messageId == 0) {
             SSignal *historySignal = [[self preloadedHistoryTailForPeerId:peerId accessHash:conversation.accessHash] mapToSignal:^SSignal *(NSDictionary *dict) {
                 return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^{
@@ -545,9 +538,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)channelMessageHoleForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash hole:(TGMessageHole *)hole direction:(TGChannelHistoryHoleDirection)direction important:(bool)important {
     
     int32_t limit = 100;
-    IOS6Trace(@"TRACE channelHole start peer=%lld hash=%lld min=%d max=%d direction=%d important=%d", peerId, accessHash, hole.minId, hole.maxId, (int)direction, important ? 1 : 0);
 #ifdef DEBUG
-    //limit = 2;
 #endif
     
     id request = nil;
@@ -557,7 +548,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     if (inputChannel.access_hash == 0)
     {
-        IOS6Trace(@"HISTORY holeMissingAccessHash peer=%lld channel=%lld originalHash=%lld", peerId, inputChannel.channel_id, accessHash);
         return [SSignal single:@{}];
     }
     getHistory.peer = inputChannel;
@@ -576,18 +566,18 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     }
     
     request = getHistory;
-    IOS6Trace(@"TRACE channelHole request peer=%lld modernRaw=%d channel=%lld hash=%lld min=%d max=%d offset=%d add=%d limit=%d", peerId, TGIOS6ChannelPeerIdIsModernRawChannel(peerId, accessHash) ? 1 : 0, inputChannel.channel_id, inputChannel.access_hash, getHistory.min_id, getHistory.max_id, getHistory.offset_id, getHistory.add_offset, getHistory.limit);
     
     return [[[[[TGTelegramNetworking instance] requestSignal:request] mapToSignal:^SSignal *(TLmessages_Messages *messages) {
         [TGUserDataRequestBuilder executeUserDataUpdate:messages.users];
         TGIOS6StoreChannelHistoryChats(messages.chats);
-        IOS6Trace(@"TRACE channelHole success peer=%lld messages=%d chats=%d users=%d response=%@", peerId, (int)messages.messages.count, (int)messages.chats.count, (int)messages.users.count, NSStringFromClass([messages class]));
         int32_t pts = 0;
         NSArray *collapsed = nil;
         if ([messages isKindOfClass:[TLmessages_Messages$modernChannelMessages class]]) {
             TLmessages_Messages$modernChannelMessages *concreteMessages = (TLmessages_Messages$modernChannelMessages *)messages;
             pts = concreteMessages.pts;
             collapsed = concreteMessages.collapsed;
+        } else if ([messages isKindOfClass:[TLmessages_Messages$messages_channelMessages class]]) {
+            pts = ((TLmessages_Messages$messages_channelMessages *)messages).pts;
         }
         
         int32_t minParsedId = 0;
@@ -648,7 +638,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             closedHole = [[TGMessageHole alloc] initWithMinId:0 minTimestamp:0 maxId:0 maxTimestamp:0];
         return [SSignal single:@{@"messages": parsedMessages ?: @[], @"hole": closedHole, @"unimportantGroups": unimportantGroups ?: @[], @"pts": @(pts)}];
     }] catch:^SSignal *(id error) {
-        IOS6Trace(@"TRACE channelHole error peer=%lld channel=%lld hash=%lld error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, error);
         TGMessageHole *fallbackHole = hole ?: [[TGMessageHole alloc] initWithMinId:0 minTimestamp:0 maxId:0 maxTimestamp:0];
         return [SSignal single:@{@"messages": @[], @"hole": fallbackHole, @"unimportantGroups": @[], @"pts": @(0)}];
     }] mapToSignal:^SSignal *(NSDictionary *next) {
@@ -797,7 +786,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)readChannelMessages {
     return [[TGDatabaseInstance() enqueuedReadChannelMessages] mapToQueue:^SSignal *(TGQueuedReadChannelMessages *queued) {
         bool isChannel = TGIOS6ChannelPeerIdIsModernChannel(queued.peerId, queued.accessHash);
-        while (false) TGLog(@"READ rpc.prepare peer=%lld channel=%d maxId=%d unread=%d access=%lld", queued.peerId, isChannel ? 1 : 0, queued.maxId, queued.unread ? 1 : 0, queued.accessHash);
         if (queued.unread) {
             TLRPCmessages_markDialogUnread *markDialogUnread = [[TLRPCmessages_markDialogUnread alloc] init];
             TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:queued.peerId accessHash:queued.accessHash];
@@ -809,11 +797,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             markDialogUnread.flags = (1 << 0);
             
             return [[[[TGTelegramNetworking instance] requestSignal:markDialogUnread] mapToSignal:^SSignal *(id result) {
-                while (false) TGLog(@"READ rpc.markUnread.ok peer=%lld result=%@", queued.peerId, NSStringFromClass([result class]));
                 [TGDatabaseInstance() confirmChannelHistoryRead:queued];
                 return [SSignal complete];
             }] catch:^SSignal *(id error) {
-                while (false) TGLog(@"READ rpc.markUnread.error peer=%lld error=%@", queued.peerId, error);
                 [TGDatabaseInstance() confirmChannelHistoryRead:queued];
                 return [SSignal complete];
             }];
@@ -827,11 +813,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             readChannelHistory.max_id = queued.maxId;
             
             return [[[[TGTelegramNetworking instance] requestSignal:readChannelHistory] mapToSignal:^SSignal *(id result) {
-                while (false) TGLog(@"READ rpc.channel.ok peer=%lld maxId=%d result=%@", queued.peerId, queued.maxId, NSStringFromClass([result class]));
                 [TGDatabaseInstance() confirmChannelHistoryRead:queued];
                 return [SSignal complete];
             }] catch:^SSignal *(id error) {
-                while (false) TGLog(@"READ rpc.channel.error peer=%lld maxId=%d error=%@", queued.peerId, queued.maxId, error);
                 [TGDatabaseInstance() confirmChannelHistoryRead:queued];
                 return [SSignal complete];
             }];
@@ -844,11 +828,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             readHistory.max_id = queued.maxId;
             
             return [[[[TGTelegramNetworking instance] requestSignal:readHistory] mapToSignal:^SSignal *(id result) {
-                while (false) TGLog(@"READ rpc.messages.ok peer=%lld maxId=%d result=%@", queued.peerId, queued.maxId, NSStringFromClass([result class]));
                 [TGDatabaseInstance() confirmChannelHistoryRead:queued];
                 return [SSignal complete];
             }] catch:^SSignal *(id error) {
-                while (false) TGLog(@"READ rpc.messages.error peer=%lld maxId=%d error=%@", queued.peerId, queued.maxId, error);
                 [TGDatabaseInstance() confirmChannelHistoryRead:queued];
                 return [SSignal complete];
             }];
@@ -1221,7 +1203,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         
         return [SSignal complete];
     }] catch:^SSignal *(id error) {
-        IOS6Trace(@"TRACE channelExtendedInfo error peer=%lld channel=%lld hash=%lld updateUnread=%d error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, updateUnread ? 1 : 0, error);
         NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
         if ([errorType isEqual:@"CHANNEL_INVALID"] || [errorType isEqual:@"PEER_ID_INVALID"] || [errorType isEqual:@"CHAT_ID_INVALID"]) {
             return [SSignal complete];
@@ -1249,32 +1230,15 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 }
 
 + (SSignal *)updatedPeerMessageViews:(int64_t)peerId accessHash:(int64_t)accessHash messageIds:(NSArray *)messageIds {
-    TLRPCmessages_getMessagesViews$messages_getMessagesViews *getMessageViews = [[TLRPCmessages_getMessagesViews$messages_getMessagesViews alloc] init];
-    if (TGPeerIdIsChannel(peerId)) {
-        TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
-        inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
-        getMessageViews.peer = inputChannel;
-    } else {
-        getMessageViews.peer = [[TLInputPeer$inputPeerEmpty alloc] init];
-    }
-    getMessageViews.n_id = messageIds;
-    
-    return [[[TGTelegramNetworking instance] requestSignal:getMessageViews] mapToSignal:^SSignal *(NSArray *viewCounts) {
-        NSMutableDictionary *messageIdToViewCount = [[NSMutableDictionary alloc] init];
-        NSUInteger count = MIN(messageIds.count, viewCounts.count);
-        for (NSUInteger i = 0; i < count; i++) {
-            messageIdToViewCount[messageIds[i]] = viewCounts[i];
-        }
-        return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
-            [TGDatabaseInstance() updateMessageViews:peerId messageIdToViews:messageIdToViewCount];
-            return [SSignal single:messageIdToViewCount];
-        }] switchToLatest];
-    }];
+    return [self _ios6MessageViews:peerId accessHash:accessHash messageIds:messageIds increment:false];
 }
 
 + (SSignal *)consumeMessages:(int64_t)peerId accessHash:(int64_t)accessHash messageIds:(NSArray *)messageIds {
-    TLRPCmessages_getMessagesViews$messages_getMessagesViews *getMessageViews = [[TLRPCmessages_getMessagesViews$messages_getMessagesViews alloc] init];
+    return [self _ios6MessageViews:peerId accessHash:accessHash messageIds:messageIds increment:true];
+}
+
++ (SSignal *)_ios6MessageViews:(int64_t)peerId accessHash:(int64_t)accessHash messageIds:(NSArray *)messageIds increment:(bool)increment {
+    TGIOS6MessageViewsRpc *getMessageViews = [[TGIOS6MessageViewsRpc alloc] init];
     if (TGPeerIdIsChannel(peerId)) {
         TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
         inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
@@ -1283,17 +1247,51 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     } else {
         getMessageViews.peer = [[TLInputPeer$inputPeerEmpty alloc] init];
     }
-    getMessageViews.increment = true;
-    getMessageViews.n_id = messageIds;
+    getMessageViews.messageIds = messageIds;
+    getMessageViews.increment = increment;
     
-    return [[[TGTelegramNetworking instance] requestSignal:getMessageViews] mapToSignal:^SSignal *(NSArray *viewCounts) {
+    return [[[TGTelegramNetworking instance] requestSignal:getMessageViews] mapToSignal:^SSignal *(NSDictionary *response) {
+        NSArray *views = [response isKindOfClass:[NSDictionary class]] ? response[@"views"] : nil;
+        if (![views isKindOfClass:[NSArray class]])
+            return [SSignal single:@{}];
+        
+        [TGUserDataRequestBuilder executeUserDataUpdate:response[@"users"]];
+        TGIOS6StoreChannelHistoryChats(response[@"chats"]);
+        
         return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
+            NSUInteger count = MIN(messageIds.count, views.count);
             NSMutableDictionary *messageIdToViewCount = [[NSMutableDictionary alloc] init];
-            NSUInteger count = MIN(messageIds.count, viewCounts.count);
             for (NSUInteger i = 0; i < count; i++) {
-                messageIdToViewCount[messageIds[i]] = viewCounts[i];
+                NSNumber *viewCount = views[i][@"views"];
+                if (viewCount != nil)
+                    messageIdToViewCount[messageIds[i]] = viewCount;
             }
             [TGDatabaseInstance() updateMessageViews:peerId messageIdToViews:messageIdToViewCount];
+            
+            NSMutableArray *messageUpdates = [[NSMutableArray alloc] init];
+            for (NSUInteger i = 0; i < count; i++) {
+                NSDictionary *replies = views[i][@"replies"];
+                if (![replies[@"comments"] boolValue])
+                    continue;
+                
+                int32_t messageId = [messageIds[i] intValue];
+                TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
+                if (message == nil)
+                    continue;
+                
+                TGMessageDiscussionContentProperty *discussion = [[TGMessageDiscussionContentProperty alloc] initWithComments:true replies:[replies[@"replies"] intValue] channelId:[replies[@"channelId"] longLongValue] maxId:[replies[@"maxId"] intValue] readMaxId:[replies[@"readMaxId"] intValue] recentRepliers:replies[@"recentRepliers"]];
+                TGMessageDiscussionContentProperty *currentDiscussion = message.contentProperties[@"ios6Discussion"];
+                if ([currentDiscussion isKindOfClass:[TGMessageDiscussionContentProperty class]] && currentDiscussion.comments == discussion.comments && currentDiscussion.replies == discussion.replies && currentDiscussion.channelId == discussion.channelId && currentDiscussion.maxId == discussion.maxId && currentDiscussion.readMaxId == discussion.readMaxId && TGObjectCompare(currentDiscussion.recentRepliers, discussion.recentRepliers))
+                    continue;
+                
+                NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:message.contentProperties ?: @{}];
+                properties[@"ios6Discussion"] = discussion;
+                message.contentProperties = properties;
+                [messageUpdates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:peerId messageId:messageId message:message dispatchEdited:true]];
+            }
+            if (messageUpdates.count != 0)
+                [TGDatabaseInstance() transactionUpdateMessages:messageUpdates updateConversationDatas:nil];
+            
             return [SSignal single:messageIdToViewCount];
         }] switchToLatest];
     }];
@@ -1503,7 +1501,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         if (cachedData == nil) {
             return [[[TGChannelManagementSignals updateChannelExtendedInfo:peerId accessHash:accessHash updateUnread:false] then:[[TGDatabaseInstance() channelCachedData:peerId] take:1]] map:^id(TGCachedConversationData *nextCachedData) {
                 if (nextCachedData == nil) {
-                    IOS6Trace(@"TRACE channelInviter empty cachedData peer=%lld hash=%lld", peerId, accessHash);
                     return [[TGCachedConversationData alloc] init];
                 }
                 return nextCachedData;
@@ -1882,7 +1879,8 @@ static int32_t hashForAdminIds(NSArray *contactIds) {
 
 + (SSignal *)pollQueuedChannels {
     return [[TGDatabaseInstance() enqueuedChannelPolls] mapToSignal:^SSignal *(TGQueuedPeerPoll *poll) {
-        return TGQueuedChannelPollSignal(poll);
+        [TGChannelStateSignals requestChannelPoll:poll.peerId];
+        return [SSignal complete];
     }];
 }
 

@@ -6,6 +6,7 @@
 #import <MapKit/MapKit.h>
 
 #import "TGApplication.h"
+#import "../OnegramPlatform/OGPlatformLocation.h"
 
 NSString *const TGOpenInLocationDirectionsKey = @"directions";
 
@@ -136,31 +137,7 @@ NSString *const TGOpenInLocationDirectionsKey = @"directions";
     bool directions = [self.userInfo[TGOpenInLocationDirectionsKey] boolValue];
     
     CLLocationCoordinate2D coordinate = [TGOpenInLocationItem coordinateForLocation:location];
-    if (iosMajorVersion() < 6)
-    {
-        NSString *urlString = nil;
-        if (directions)
-            urlString = [NSString stringWithFormat:@"http://maps.google.com/maps?saddr=Current%%20Location&daddr=%f,%f", coordinate.latitude, coordinate.longitude];
-        else
-            urlString = [NSString stringWithFormat:@"http://maps.google.com/maps?q=%f,%f", coordinate.latitude, coordinate.longitude];
-        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:urlString]];
-        return;
-    }
-
-    MKPlacemark *placemark = [[MKPlacemark alloc] initWithCoordinate:coordinate addressDictionary:nil];
-    MKMapItem *mapItem = [[MKMapItem alloc] initWithPlacemark:placemark];
-    //[mapItem setName:locationName];
-    
-    if (directions)
-    {
-        NSDictionary *options = @{ MKLaunchOptionsDirectionsModeKey : MKLaunchOptionsDirectionsModeDriving };
-        MKMapItem *currentLocationMapItem = [MKMapItem mapItemForCurrentLocation];
-        [MKMapItem openMapsWithItems:@[ currentLocationMapItem, mapItem ] launchOptions:options];
-    }
-    else
-    {
-        [mapItem openInMapsWithLaunchOptions:nil];
-    }
+    OGPlatformOpenMaps(coordinate.latitude, coordinate.longitude, directions);
 }
 
 + (bool)isAvailable

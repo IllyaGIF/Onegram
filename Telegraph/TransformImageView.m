@@ -88,9 +88,6 @@
         __strong TransformImageView *strongSelf = weakSelf;
         if (strongSelf != nil) {
             strongSelf->_imageSize = next.size;
-            /*if strongSelf.alphaTransitionOnFirstUpdate && strongSelf.contents == nil {
-                strongSelf.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.15)
-            }*/
             strongSelf.layer.contents = (__bridge id)[next CGImage];
             if (strongSelf != nil) {
                 if (strongSelf->_imageUpdated) {

@@ -10,7 +10,12 @@ TGLocalization *legacyEffectiveLocalization();
 NSString *TGLocalized(NSString *s);
 bool TGObjectCompare(id obj1, id obj2);
 bool TGStringCompare(NSString *s1, NSString *s2);
+#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
+#undef TGLegacyLog
 void TGLegacyLog(NSString *format, ...);
+#else
+#define TGLegacyLog(...) ((void)0)
+#endif
 int iosMajorVersion();
 int iosMinorVersion();
     

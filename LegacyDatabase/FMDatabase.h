@@ -42,6 +42,7 @@
     BOOL                _shouldCacheStatements;
     BOOL                _isExecutingStatement;
     BOOL                _inTransaction;
+    NSUInteger          _nestedTransactionDepth;
     int                 _busyRetryTimeout;
     
     NSMutableDictionary *_cachedStatements;
@@ -100,6 +101,7 @@
 - (BOOL)beginTransaction;
 - (BOOL)beginDeferredTransaction;
 - (BOOL)inTransaction;
+- (BOOL)commitOutstandingTransaction;
 - (BOOL)shouldCacheStatements;
 - (void)setShouldCacheStatements:(BOOL)value;
 - (void)setSoftShouldCacheStatements:(BOOL)value;

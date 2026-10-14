@@ -1,4 +1,5 @@
 #import "TGEmbedPlayerView.h"
+#import "OGPlatformUIKit.h"
 
 #import "LegacyComponentsInternal.h"
 #import "TGHacks.h"
@@ -532,7 +533,7 @@
 - (void)setupUIWebView
 {
     _uiWebView = [[UIWebView alloc] initWithFrame:CGRectZero];
-    _uiWebView.mediaPlaybackRequiresUserAction = false;
+    OGPlatformConfigureWebViewMediaPlayback(_uiWebView, YES, NO);
     _uiWebView.delegate = self;
     TGUIWebViewScrollView(_uiWebView).scrollEnabled = false;
     
@@ -919,14 +920,6 @@
         playerViewClasses = @
         [
          [TGEmbedYoutubePlayerView class],
-         /*[TGEmbedVimeoPlayerView class],
-         [TGEmbedCoubPlayerView class],
-         [TGEmbedVKPlayerView class],
-         [TGEmbedVinePlayerView class],
-         [TGEmbedInstagramPlayerView class],
-         [TGEmbedSoundCloudPlayerView class],
-         [TGEmbedTwitchPlayerView class],
-         [TGEmbedVideoPlayerView class]*/
          ];
     });
     

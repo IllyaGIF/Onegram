@@ -1,5 +1,4 @@
 #import "TGConversationHistoryRequestActor.h"
-#import "IOS6Trace.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
@@ -81,8 +80,6 @@
     
     bool extraUnread = _loadUnread && _loadAtMessageId == 0 && [self.path hasSuffix:@"/(up0)"];
     
-    IOS6Trace(@"FULL history.execute path=%@ peer=%lld maxMid=%d maxDate=%d maxLocal=%d offset=%d limit=%d down=%d unread=%d at=%d encrypted=%d broadcast=%d clear=%d options=%@",
-        self.path, conversationId, maxMid, maxDate, maxLocalMid, offset, limit, [options[@"downwards"] boolValue] ? 1 : 0, _loadUnread ? 1 : 0, _loadAtMessageId, [options[@"isEncrypted"] boolValue] ? 1 : 0, [options[@"isBroadcast"] boolValue] ? 1 : 0, clearExisting ? 1 : 0, options);
     if ([options[@"downwards"] boolValue])
     {
         [TGDatabaseInstance() loadMessagesFromConversationDownwards:conversationId minMid:maxMid minLocalMid:maxLocalMid minDate:maxDate limit:limit completion:^(NSArray *messages)
@@ -145,27 +142,8 @@
                 
                 bool sequenceContainsHoles = minMessageId <= requestMaxMid && [TGDatabaseInstance() conversationContainsHole:conversationId minMessageId:minMessageId maxMessageId:requestMaxMid];
                 bool suspiciousStaleHistoryEnd = peerMinMid == 1 && messages.count <= 1 && conversationId < 0 && !isEncrypted && !isBroadcast;
-                IOS6Trace(@"TRACE localHistory peer=%lld maxMid=%d requestMax=%d count=%d min=%d max=%d holes=%d forceTop=%d userTop=%d negativeUserTop=%d offset=%d down=%d peerMin=%d staleEnd=%d", conversationId, maxMid, requestMaxMid, (int)messages.count, minMessageId == INT_MAX ? 0 : minMessageId, maxMessageId, sequenceContainsHoles ? 1 : 0, forceRemoteTopRefresh ? 1 : 0, isUserPeerTopRefresh ? 1 : 0, isNegativeModernUser ? 1 : 0, offset, [options[@"downwards"] boolValue] ? 1 : 0, peerMinMid, suspiciousStaleHistoryEnd ? 1 : 0);
-                IOS6Trace(@"FULL history.local peer=%lld maxMid=%d requestMax=%d count=%d min=%d max=%d holes=%d forceTop=%d userTop=%d negativeUserTop=%d offset=%d down=%d peerMin=%d staleEnd=%d existsBelow=%d",
-                    conversationId, maxMid, requestMaxMid, (int)messages.count, minMessageId == INT_MAX ? 0 : minMessageId, maxMessageId, sequenceContainsHoles ? 1 : 0, forceRemoteTopRefresh ? 1 : 0, isUserPeerTopRefresh ? 1 : 0, isNegativeModernUser ? 1 : 0, offset, [options[@"downwards"] boolValue] ? 1 : 0, peerMinMid, suspiciousStaleHistoryEnd ? 1 : 0, historyExistsBelow ? 1 : 0);
                 if (((messages.count != 0 && !suspiciousStaleHistoryEnd) || (peerMinMid != 0 && !suspiciousStaleHistoryEnd) || [options[@"isEncrypted"] boolValue] || [options[@"isBroadcast"] boolValue]) && !sequenceContainsHoles && !forceRemoteTopRefresh)
                 {
-                    /*bool loadedUnread = _loadUnread;
-                    if (loadedUnread && !historyExistsBelow)
-                    {
-                        bool hasRead = false;
-                        for (TGMessage *message in messages)
-                        {
-                            if (!message.outgoing || !message.unread)
-                            {
-                                hasRead = true;
-                                break;
-                            }
-                        }
-                        
-                        if (!hasRead)
-                            loadedUnread = false;
-                    }*/
                     
                     [ActionStageInstance() actionCompleted:self.path result:@{
                         @"messages": messages,
@@ -182,8 +160,6 @@
                         remoteMaxMid = 0;
                         remoteFetchReason = @"emptyBasicChatLatest";
                     }
-                    IOS6Trace(@"TRACE localHistory remoteFetch peer=%lld maxMid=%d remoteMaxMid=%d reason=%@", conversationId, maxMid, remoteMaxMid, remoteFetchReason);
-                    IOS6Trace(@"FULL history.remoteFetch peer=%lld maxMid=%d remoteMaxMid=%d reason=%@", conversationId, maxMid, remoteMaxMid, remoteFetchReason);
                     [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/conversations/(%lld)/asyncHistory/(%d)", conversationId, remoteMaxMid] options:options watcher:self];
                 }
             }];
@@ -195,7 +171,6 @@
 {
     if ([path hasPrefix:@"/tg/conversations/"])
     {
-        IOS6Trace(@"FULL history.actorCompleted ownPath=%@ childPath=%@ status=%d result=%@", self.path, path, resultCode, NSStringFromClass([result class]));
         if (resultCode == ASStatusSuccess)
             [ActionStageInstance() actionCompleted:self.path result:[[NSDictionary alloc] initWithObjectsAndKeys:result, @"messages", [[NSNumber alloc] initWithBool:false], @"remote", nil]];
         else

@@ -1,8 +1,5 @@
 #include "TLMetaConstructor.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "NSInputStream+TL.h"
 #import "NSOutputStream+TL.h"
@@ -11,17 +8,34 @@
 
 #import "TLObject.h"
 
+#include <pthread.h>
+#include <set>
+
+static bool TLMetaConstructorShouldReportUnsupportedName(int32_t name)
+{
+    static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    static std::set<int32_t> *reportedNames = NULL;
+    pthread_mutex_lock(&mutex);
+    if (reportedNames == NULL)
+        reportedNames = new std::set<int32_t>();
+    bool inserted = reportedNames->insert(name).second;
+    pthread_mutex_unlock(&mutex);
+    return inserted;
+}
+
 TLMetaConstructor::TLMetaConstructor(int32_t name_, int32_t signature_, std::tr1::shared_ptr<std::vector<TLMetaField> > fields_, std::tr1::shared_ptr<TLMetaType> resultType_) :
     name(name_), signature(signature_), fields(fields_), resultType(resultType_)
 {
-    fieldNameToIndex = std::tr1::shared_ptr<std::tr1::unordered_map<int32_t, int> >(new std::tr1::unordered_map<int32_t, int>());
-    
-    std::vector<TLMetaField>::iterator fieldsEnd = fields->end();
-    int index = -1;
-    for (std::vector<TLMetaField>::iterator it = fields->begin(); it != fieldsEnd; it++)
+    if (fields->size() > 8)
     {
-        index++;
-        fieldNameToIndex->insert(std::pair<int32_t, int>(it->name, index));
+        fieldNameToIndex = std::tr1::shared_ptr<std::tr1::unordered_map<int32_t, int> >(new std::tr1::unordered_map<int32_t, int>());
+        std::vector<TLMetaField>::iterator fieldsEnd = fields->end();
+        int index = -1;
+        for (std::vector<TLMetaField>::iterator it = fields->begin(); it != fieldsEnd; it++)
+        {
+            index++;
+            fieldNameToIndex->insert(std::pair<int32_t, int>(it->name, index));
+        }
     }
 }
 
@@ -65,13 +79,6 @@ TLConstructedValue TLMetaConstructor::construct(NSInputStream *is, id<TLSerializ
         if (signature == TL_UNIVERSAL_VECTOR_CONSTRUCTOR && it->type.unboxedConstructorSignature != 0)
             signature = it->type.unboxedConstructorSignature;
         
-        if (this->signature == (int32_t)0xec82e140 &&
-            it->name == (int32_t)0x77bcd691)
-        {
-            TGLog(@"TL WIRE phone_phoneCall.phone_call sig=%08x boxed=%d",
-                  (unsigned int)signature,
-                  it->type.boxed ? 1 : 0);
-        }
         
         TLConstructedValue value =
         TLMetaClassStore::constructValue(is,
@@ -91,26 +98,17 @@ TLConstructedValue TLMetaConstructor::construct(NSInputStream *is, id<TLSerializ
     id<TLObject> objectClass = TLMetaClassStore::getObjectClass(name);
     if (objectClass == nil)
     {
-        if (error != NULL)
-        {
-            NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
-            [userInfo setValue:[NSString stringWithFormat:@"Object with name %.8x not found", name] forKey:NSLocalizedDescriptionKey];
-            *error = [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:userInfo];
-        }
-        return TLConstructedValue();
+        if (TLMetaConstructorShouldReportUnsupportedName(name))
+            TGLog(@"TL SKIP unsupported object ctorSig=%08x ctorName=%08x", (unsigned int)this->signature, (unsigned int)this->name);
+        TLConstructedValue skippedValue;
+        skippedValue.type = TLConstructedValueTypeObject;
+        return skippedValue;
     }
     
     TLConstructedValue result;
     result.type = TLConstructedValueTypeObject;
     std::tr1::shared_ptr<TLMetaObject> metaObject(new TLMetaObject(fields, fieldNameToIndex, values));
 result.nativeObject = [objectClass TLbuildFromMetaObject:metaObject];
-    if (result.nativeObject == nil)
-    {
-        TGLog(@"TL NIL class=%@ ctorSig=%08x ctorName=%08x",
-              NSStringFromClass([objectClass class]),
-              (unsigned int)this->signature,
-              (unsigned int)this->name);
-    }
 return result;
 }
 
@@ -1078,7 +1076,6 @@ void TLMetaConstructor::serialize(NSOutputStream *os, id object_)
         if (fieldIt == fieldValues.end())
         {
             [object TLconstructorSignature];
-            IOS6_NOOP_LOG(@"***** Field %.8x not found, writing empty value instead", it->name);
             writeValueWithType(os, TLConstructedValue(), it->type);
         }
         else

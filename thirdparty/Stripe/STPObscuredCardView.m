@@ -10,6 +10,7 @@
 #import "STPImageLibrary.h"
 #import "STPImageLibrary+Private.h"
 #import "STPLocalizationUtils.h"
+#import "../../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface STPObscuredCardView()<UITextFieldDelegate>
 
@@ -135,9 +136,9 @@
 
 - (void)setInputAccessoryView:(UIView *)inputAccessoryView {
     _inputAccessoryView = inputAccessoryView;
-    self.last4Field.inputAccessoryView = inputAccessoryView;
-    self.expField.inputAccessoryView = inputAccessoryView;
-    self.cvcField.inputAccessoryView = inputAccessoryView;
+    OGPlatformSetTextFieldInputAccessoryView(self.last4Field, inputAccessoryView);
+    OGPlatformSetTextFieldInputAccessoryView(self.expField, inputAccessoryView);
+    OGPlatformSetTextFieldInputAccessoryView(self.cvcField, inputAccessoryView);
 }
 
 - (BOOL)becomeFirstResponder {

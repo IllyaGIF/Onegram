@@ -287,12 +287,6 @@ typedef enum {
         
         [self setConversationsToDelete:_conversationsToDelete force:true];
         
-        /*NSUInteger index = [self indexForSection:_linkPrivateSection];
-        if (index != NSNotFound) {
-            [self.menuSections deleteSection:index];
-            [self.menuSections insertSection:_linkPublicSection atIndex:index];
-            [self.collectionView reloadData];
-        }*/
         
         NSIndexPath *indexPath = [self indexPathForItem:_publicItem];
         [self.collectionView selectItemAtIndexPath:indexPath animated:false scrollPosition:UICollectionViewScrollPositionNone];

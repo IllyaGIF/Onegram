@@ -83,6 +83,10 @@ NSInteger TGMediaAssetGroupComparator(TGMediaAssetGroup *group1, TGMediaAssetGro
 - (SSignal *)_legacyAssetsOfAssetGroup:(TGMediaAssetGroup *)assetGroup reversed:(bool)reversed
 {
     NSParameterAssert(assetGroup);
+#if defined(ONEGRAM_ARMV6)
+    TGMediaAssetFetchResult *mediaFetchResult = [[TGMediaAssetFetchResult alloc] init];
+    return [SSignal single:mediaFetchResult];
+#else
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
         TGMediaAssetFetchResult *mediaFetchResult = [[TGMediaAssetFetchResult alloc] init];
@@ -102,6 +106,7 @@ NSInteger TGMediaAssetGroupComparator(TGMediaAssetGroup *group1, TGMediaAssetGro
         
         return nil;
     }] startOn:_queue];
+#endif
 }
 
 #pragma mark - 

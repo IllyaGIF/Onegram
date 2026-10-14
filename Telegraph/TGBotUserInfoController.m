@@ -578,7 +578,6 @@
 
 - (void)_updateSharedMediaCount
 {
-    //_sharedMediaItem.variant = _sharedMediaCount == 0 ? TGLocalized(@"GroupInfo.SharedMediaNone") : ( TGIsLocaleArabic() ? [TGStringUtils stringWithLocalizedNumber:_sharedMediaCount] : [[NSString alloc] initWithFormat:@"%d", _sharedMediaCount]);
     _sharedMediaItem.variant = @"";
 }
 
@@ -1334,7 +1333,6 @@ static UIView *_findBackArrow(UIView *view)
             }];
             
         } else {
-            int32_t uid = _uid;
             [[[[TGGroupManagementSignals inviteUserWithId:_uid toGroupWithId:TGGroupIdFromPeerId(conversation.conversationId)] deliverOn:[SQueue mainQueue]] onDispose:^
             {
                 [progressWindow dismiss:true];

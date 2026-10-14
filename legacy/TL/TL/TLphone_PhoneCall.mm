@@ -10,13 +10,11 @@
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"constructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"constructorName is not implemented for base type");
     return 0;
 }
 
@@ -25,13 +23,11 @@
     TLphone_PhoneCall$phone_phoneCall *object = [[TLphone_PhoneCall$phone_phoneCall alloc] init];
     object.phone_call = metaObject->getObject((int32_t)0x77bcd691);
     object.users = metaObject->getArray((int32_t)0x933e5ff3) ?: @[];
-    TGLog(@"CALL phone_phoneCall.baseFallback phone_call=%@ users=%d", object.phone_call, (int)object.users.count);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 
@@ -55,7 +51,6 @@
     TLphone_PhoneCall$phone_phoneCall *object = [[TLphone_PhoneCall$phone_phoneCall alloc] init];
     object.phone_call = metaObject->getObject((int32_t)0x77bcd691);
     object.users = metaObject->getArray((int32_t)0x933e5ff3);
-    TGLog(@"CALL phone_phoneCall.parsed phone_call=%@ users=%d", object.phone_call, (int)object.users.count);
     return object;
 }
 

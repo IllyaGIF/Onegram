@@ -46,23 +46,23 @@ FAUXPAS_IGNORED_IN_FILE(APIAvailability)
         if (addressValues != NULL) {
             if (ABMultiValueGetCount(addressValues) > 0) {
                 CFDictionaryRef dict = ABMultiValueCopyValueAtIndex(addressValues, 0);
-                NSString *line1 = CFDictionaryGetValue(dict, kABPersonAddressStreetKey);
+                NSString *line1 = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressStreetKey);
                 if (line1) {
                     params[@"address_line1"] = line1;
                 }
-                NSString *city = CFDictionaryGetValue(dict, kABPersonAddressCityKey);
+                NSString *city = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressCityKey);
                 if (city) {
                     params[@"address_city"] = city;
                 }
-                NSString *state = CFDictionaryGetValue(dict, kABPersonAddressStateKey);
+                NSString *state = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressStateKey);
                 if (state) {
                     params[@"address_state"] = state;
                 }
-                NSString *zip = CFDictionaryGetValue(dict, kABPersonAddressZIPKey);
+                NSString *zip = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressZIPKey);
                 if (zip) {
                     params[@"address_zip"] = zip;
                 }
-                NSString *country = CFDictionaryGetValue(dict, kABPersonAddressCountryKey);
+                NSString *country = (__bridge NSString *)CFDictionaryGetValue(dict, kABPersonAddressCountryKey);
                 if (country) {
                     params[@"address_country"] = country;
                 }

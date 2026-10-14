@@ -27,12 +27,27 @@
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder
 {
-    return [self initWithSize:[aDecoder decodeCGSizeForKey:@"size"]];
+    CGFloat width = (CGFloat)[aDecoder decodeDoubleForKey:@"sizeWidth"];
+    CGFloat height = (CGFloat)[aDecoder decodeDoubleForKey:@"sizeHeight"];
+    if (width == 0.0f && height == 0.0f)
+    {
+        @try
+        {
+            CGSize legacySize = [aDecoder decodeCGSizeForKey:@"size"];
+            width = legacySize.width;
+            height = legacySize.height;
+        }
+        @catch (__unused NSException *exception)
+        {
+        }
+    }
+    return [self initWithSize:CGSizeMake(width, height)];
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder
 {
-    [aCoder encodeCGSize:_size forKey:@"size"];
+    [aCoder encodeDouble:_size.width forKey:@"sizeWidth"];
+    [aCoder encodeDouble:_size.height forKey:@"sizeHeight"];
 }
 
 - (BOOL)isEqual:(id)object

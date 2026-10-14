@@ -163,14 +163,11 @@ typedef enum {
     [upperBound appendBytes:&afterKeyspace length:1];
     PSData upperBoundKey = {.data = (void *)upperBound.bytes, .length = upperBound.length};
     
-    TGLegacyLog(@"-----------------------------");
     [readerWriter enumerateKeysAndValuesBetweenLowerBoundKey:&lowerBoundKey upperBoundKey:&upperBoundKey options:PSKeyValueReaderEnumerationUpperBoundExclusive withBlock:^(__unused PSConstData *key, PSConstData *value, __unused bool *stop)
     {
         NSData *originalKey = [[NSData alloc] initWithBytes:value->data + 4 length:value->length - 4];
         NSString *filePath = [self _filePathForKey:originalKey];
-        TGLegacyLog(@"%@", filePath);
     }];
-    TGLegacyLog(@"-----------------------------");
 }
 
 - (void)_evictValuesOfTotalSize:(NSUInteger)totalSize removedSize:(NSUInteger *)removedSize readerWriter:(id<PSKeyValueReader,PSKeyValueWriter>)readerWriter
@@ -197,7 +194,6 @@ typedef enum {
         {
             int32_t sortingValue = 0;
             memcpy(&sortingValue, key->data + 1 + 4, 4);
-            //TGLegacyLog(@"removing %d", sortingValue);
         }
         
         [keysToRemove addObject:[[NSData alloc] initWithBytes:key->data length:key->length]];
@@ -211,7 +207,6 @@ typedef enum {
         NSData *originalKey = [[NSData alloc] initWithBytes:value->data + 4 length:value->length - 4];
         NSString *filePath = [self _filePathForKey:originalKey];
         
-        //TGLegacyLog(@"remove %d %@", (int)size, filePath);
         
         NSMutableData *primaryKeyData = [[NSMutableData alloc] init];
         int8_t keyspace = TGModernCacheKeyspaceLastUsageByPath;
@@ -303,7 +298,6 @@ typedef enum {
 {
     [_queue dispatch:^
     {
-        //TGLegacyLog(@"store %d %@", (int)value.length, [self _filePathForKey:key]);
         
         [_keyValueStore readWriteInTransaction:^(id<PSKeyValueReader,PSKeyValueWriter> readerWriter)
         {
@@ -327,7 +321,6 @@ typedef enum {
 
             [self _updateLastAccessDateForKey:key size:value.length readerWriter:readerWriter];
             
-            //[self _dumpState:readerWriter];
         }];
     }];
 }
@@ -351,10 +344,6 @@ typedef enum {
                     [self _updateLastAccessDateForKey:key size:data.length readerWriter:readerWriter];
                 }
             }];
-        }
-        else
-        {
-            //TGLegacyLog(@"no data for %@", [self _filePathForKey:key]);
         }
         
         if (completion)

@@ -37,13 +37,6 @@
         _titleLabel.numberOfLines = 0;
         [self.contentView addSubview:_titleLabel];
         
-        /*_textLabel = [[UILabel alloc] init];
-        _textLabel.textColor = [UIColor blackColor];
-        _textLabel.backgroundColor = [UIColor clearColor];
-        _textLabel.font = TGSystemFontOfSize(15);
-        _textLabel.lineBreakMode = NSLineBreakByWordWrapping;
-        _textLabel.numberOfLines = 0;
-        [self addSubview:_textLabel];*/
         
         _textContentView = [[UIImageView alloc] init];
         _textContentView.userInteractionEnabled = true;
@@ -247,9 +240,9 @@
     
     NSMutableArray *attributes = [[NSMutableArray alloc] init];
 
-    NSArray *emAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[self italicFont], (NSString *)kCTFontAttributeName, nil];
-    NSArray *strongAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[self mediumFont], (NSString *)kCTFontAttributeName, nil];
-    NSArray *aAttributes = [[NSArray alloc] initWithObjects:(__bridge id)TGAccentColor().CGColor, (NSString *)kCTForegroundColorAttributeName, nil];
+    NSArray *emAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[self italicFont], (__bridge NSString *)kCTFontAttributeName, nil];
+    NSArray *strongAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[self mediumFont], (__bridge NSString *)kCTFontAttributeName, nil];
+    NSArray *aAttributes = [[NSArray alloc] initWithObjects:(__bridge id)TGAccentColor().CGColor, (__bridge NSString *)kCTForegroundColorAttributeName, nil];
     
     for (NSValue *nRange in emRanges)
     {

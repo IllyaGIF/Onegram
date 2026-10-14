@@ -17,15 +17,19 @@
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder
 {
-    return [self initWithImageUrl:[aDecoder decodeObjectForKey:@"imageUrl"] imageSize:[aDecoder decodeCGSizeForKey:@"imageSize"] previewUrl:[aDecoder decodeObjectForKey:@"previewUrl"] previewSize:[aDecoder decodeCGSizeForKey:@"previewSize"]];
+    CGSize imageSize = CGSizeMake((CGFloat)[aDecoder decodeDoubleForKey:@"imageWidth"], (CGFloat)[aDecoder decodeDoubleForKey:@"imageHeight"]);
+    CGSize previewSize = CGSizeMake((CGFloat)[aDecoder decodeDoubleForKey:@"previewWidth"], (CGFloat)[aDecoder decodeDoubleForKey:@"previewHeight"]);
+    return [self initWithImageUrl:[aDecoder decodeObjectForKey:@"imageUrl"] imageSize:imageSize previewUrl:[aDecoder decodeObjectForKey:@"previewUrl"] previewSize:previewSize];
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder
 {
     [aCoder encodeObject:_imageUrl == nil ? @"" : _imageUrl forKey:@"imageUrl"];
-    [aCoder encodeCGSize:_imageSize forKey:@"imageSize"];
+    [aCoder encodeDouble:_imageSize.width forKey:@"imageWidth"];
+    [aCoder encodeDouble:_imageSize.height forKey:@"imageHeight"];
     [aCoder encodeObject:_previewUrl == nil ? @"" : _previewUrl forKey:@"previewUrl"];
-    [aCoder encodeCGSize:_previewSize forKey:@"previewSize"];
+    [aCoder encodeDouble:_previewSize.width forKey:@"previewWidth"];
+    [aCoder encodeDouble:_previewSize.height forKey:@"previewHeight"];
 }
 
 - (BOOL)isEqual:(id)object

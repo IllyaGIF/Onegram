@@ -46,7 +46,6 @@ const CGFloat TGPhotoBrushSettingsItemHeight = 44.0f;
         _interfaceOrientation = UIInterfaceOrientationPortrait;
         
         _backgroundView = [[UIImageView alloc] init];
-        //_backgroundView.alpha = 0.98f;
         [self addSubview:_backgroundView];
         
         NSMutableArray *brushViews = [[NSMutableArray alloc] init];
@@ -93,8 +92,8 @@ const CGFloat TGPhotoBrushSettingsItemHeight = 44.0f;
 {
     self.alpha = 0.0f;
 
-    self.layer.rasterizationScale = TGScreenScaling();
-    self.layer.shouldRasterize = true;
+    TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
+    TGSetLayerShouldRasterize(self.layer, true);
     
     [self _setupBrushPreviews];
     
@@ -103,14 +102,13 @@ const CGFloat TGPhotoBrushSettingsItemHeight = 44.0f;
         self.alpha = 1.0f;
     } completion:^(__unused BOOL finished)
     {
-        //self.layer.shouldRasterize = false;
     }];
 }
 
 - (void)dismissWithCompletion:(void (^)(void))completion
 {
-    self.layer.rasterizationScale = TGScreenScaling();
-    self.layer.shouldRasterize = true;
+    TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
+    TGSetLayerShouldRasterize(self.layer, true);
     
     [UIView animateWithDuration:0.15 animations:^
     {

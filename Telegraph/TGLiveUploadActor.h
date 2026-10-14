@@ -13,6 +13,11 @@
 
 @interface TGLiveUploadActor : TGActor
 
++ (TGLiveUploadActor *)liveUploadActorForPath:(NSString *)path;
++ (void)updateSize:(NSUInteger)availableSize forActorPath:(NSString *)path;
++ (TGLiveUploadActorData *)finishRestOfFile:(NSUInteger)finalSize forActorPath:(NSString *)path;
++ (TGLiveUploadActorData *)finishRestOfFileWithHeader:(NSData *)header finalSize:(NSUInteger)finalSize forActorPath:(NSString *)path;
+
 - (void)updateSize:(NSUInteger)availableSize;
 - (TGLiveUploadActorData *)finishRestOfFile:(NSUInteger)finalSize;
 - (TGLiveUploadActorData *)finishRestOfFileWithHeader:(NSData *)header finalSize:(NSUInteger)finalSize;

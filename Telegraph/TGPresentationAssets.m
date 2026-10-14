@@ -1,4 +1,6 @@
+#import "../submodules/LegacyComponents/LegacyComponents/LegacyComponentsGlobals.h"
 #import "TGPresentationAssets.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "TGPresentation.h"
@@ -10,7 +12,7 @@
 
 static bool TGClassicIOS6StyleEnabled(void)
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:@"TGClassicIOS6Style"];
+    return (TGCurrentInterfaceStyle() != 0);
 }
 
 
@@ -25,47 +27,12 @@ static UIImage *TGClassicIOS6ResourceImage(NSString *name)
     return image;
 }
 
-static UIImage *TGBrandedIOS6OutgoingBubbleImage(UIImage *source)
-{
-    if (source == nil)
-        return nil;
-
-    CGSize size = source.size;
-    CGRect rect = CGRectMake(0.0f, 0.0f, size.width, size.height);
-    UIGraphicsBeginImageContextWithOptions(size, false, source.scale);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    [source drawInRect:rect];
-    CGContextSetBlendMode(context, kCGBlendModeColor);
-    CGContextSetFillColorWithColor(context, UIColorRGB(0x98c7ff).CGColor);
-    CGContextFillRect(context, rect);
-    [source drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
-
-    CGFloat shadowHeight = MIN(14.0f, size.height);
-    CGFloat shadowTop = size.height - shadowHeight;
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGFloat components[] = {
-        1.0f, 1.0f, 1.0f, 0.0f,
-        1.0f, 1.0f, 1.0f, 1.0f
-    };
-    CGFloat locations[] = {0.0f, 1.0f};
-    CGGradientRef gradient = CGGradientCreateWithColorComponents(colorSpace, components, locations, 2);
-    CGContextSetBlendMode(context, kCGBlendModeSoftLight);
-    CGContextDrawLinearGradient(context, gradient, CGPointMake(0.0f, shadowTop), CGPointMake(0.0f, size.height), 0);
-    CGGradientRelease(gradient);
-    CGColorSpaceRelease(colorSpace);
-    [source drawInRect:rect blendMode:kCGBlendModeDestinationIn alpha:1.0f];
-
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return image;
-}
-
 static UIImage *TGBrandedIOS6DeliveryTagImage(NSString *timeText, bool incoming, bool read)
 {
     if (timeText.length == 0)
         return nil;
 
-    UIFont *font = [UIFont fontWithName:@"HelveticaNeue" size:11.0f];
+    UIFont *font = TGSystemFontOfSize(11.0f);
     if (font == nil)
         font = TGSystemFontOfSize(11.0f);
 
@@ -213,8 +180,6 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
         return nil;
     }
 
-    // Match UIKit's point coordinate system without initializing its global
-    // image-context stack during the application's launch watchdog window.
     CGContextTranslateCTM(context, 0.0f, (CGFloat)pixelHeight);
     CGContextScaleCTM(context, scale, -scale);
     CGContextSetShouldAntialias(context, true);
@@ -251,6 +216,31 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
     free(bitmapData);
 
     return image;
+}
+
+static const CGFloat TGInputPanelIconLineWidth = 5.0f / 3.0f;
+
+static UIImage *TGInputPanelGlyphImage(CGSize iconSize, CGFloat scale, void (^draw)(CGContextRef context))
+{
+    CGSize size = CGSizeMake(CGCeil(iconSize.width * scale), CGCeil(iconSize.height * scale));
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextTranslateCTM(context, (size.width - iconSize.width * scale) / 2.0f, (size.height - iconSize.height * scale) / 2.0f);
+    CGContextScaleCTM(context, scale, scale);
+    draw(context);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
+static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, CGFloat lineWidth)
+{
+    CGContextScaleCTM(context, 0.3333f, 0.3333f);
+    CGContextSetLineWidth(context, lineWidth * 3.0f);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    CGContextSetStrokeColorWithColor(context, color.CGColor);
+    TGDrawSvgPath(context, @"M28,51.8059701 L42.5672395,66.3732097 C42.6826007,66.4885708 42.8628212,66.4857542 42.9771136,66.3587627 L73,33 U");
 }
 
 @implementation TGPresentationAssets
@@ -551,9 +541,9 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(diameter, diameter), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
 
-    CGPoint center = CGPointMake(diameter / 2.0f, diameter / 2.0f);
     CGFloat outerRadius = diameter / 2.0f - 0.5f;
     CGFloat innerRadius = outerRadius * 0.47f;
+    CGPoint center = CGPointMake(diameter / 2.0f, diameter / 2.0f + outerRadius * (1.0f - cosf((CGFloat)M_PI / 5.0f)) / 2.0f);
 
     UIBezierPath *starPath = [UIBezierPath bezierPath];
     for (NSInteger i = 0; i < 10; i++)
@@ -758,31 +748,31 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
 
 + (UIImage *)chatEditDeleteIcon:(UIColor *)color
 {
-    NSString *code = @"M39.0015,9 L39.0015,6 C39.0015,2.6865 36.315,0 33.0015,0 L21.0015,0 C17.688,0 15.0015,2.6865 15.0015,6 L15.0015,9 L0,9 L0,12 L3.375,12 L7.4985,70.5 C7.4985,70.5 8.442,75 11.9985,75 L25.4985,75 L28.4985,75 L41.9985,75 C45.5565,75 46.5,70.5 46.5,70.5 L50.5005,12 L54,12 L54,9 L39.0015,9 L39.0015,9 Z";
-    
-    NSString *innerCode = @"M18.0015,6 C18.0015,4.3425 19.3455,3 21.0015,3 L33.0015,3 C34.6575,3 36.0015,4.344 36.0015,6 L36.0015,9 L18.0015,9 L18.0015,6 L18.0015,6 Z M43.5015,68.9985 C43.2495,71.3175 42,71.9985 42,71.9985 L28.5,71.9985 L25.5,71.9985 L12,71.9985 C12,71.9985 10.752,71.3175 10.5,68.9985 C10.2495,66.6795 6.375,11.9985 6.375,11.9985 L47.3745,11.9985 C47.376,11.9985 43.752,66.6795 43.5015,68.9985 L43.5015,68.9985 Z";
-    
-    NSString *linesCode = @"M39.0015,18 L36.0015,18 L34.5015,66 L37.5015,66 L39.0015,18 Z M19.5015,66 L18.0015,18 L15,18 L16.5,66 L19.5015,66 Z M25.5,18 L28.5,18 L28.5,66 L25.5,66 L25.5,18 Z";
-    
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(18, 25), false, 0.0f);
-    
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(28.0f, 28.0f), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetFillColorWithColor(context, color.CGColor);
     CGContextSetStrokeColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, code);
-    
-    CGContextSetBlendMode(context, kCGBlendModeClear);
-    CGContextSetFillColorWithColor(context, [UIColor clearColor].CGColor);
-    TGDrawSvgPath(context, innerCode);
-    
-    CGContextSetBlendMode(context, kCGBlendModeNormal);
-    CGContextSetFillColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, linesCode);
-    
+    CGContextSetLineWidth(context, 2.0f);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextMoveToPoint(context, 4.0f, 7.0f);
+    CGContextAddLineToPoint(context, 24.0f, 7.0f);
+    CGContextMoveToPoint(context, 10.0f, 7.0f);
+    CGContextAddLineToPoint(context, 10.0f, 4.0f);
+    CGContextAddLineToPoint(context, 18.0f, 4.0f);
+    CGContextAddLineToPoint(context, 18.0f, 7.0f);
+    CGContextMoveToPoint(context, 6.0f, 7.0f);
+    CGContextAddLineToPoint(context, 7.5f, 23.0f);
+    CGContextAddQuadCurveToPoint(context, 7.7f, 25.0f, 9.5f, 25.0f);
+    CGContextAddLineToPoint(context, 18.5f, 25.0f);
+    CGContextAddQuadCurveToPoint(context, 20.3f, 25.0f, 20.5f, 23.0f);
+    CGContextAddLineToPoint(context, 22.0f, 7.0f);
+    CGContextMoveToPoint(context, 11.0f, 11.0f);
+    CGContextAddLineToPoint(context, 11.5f, 21.0f);
+    CGContextMoveToPoint(context, 17.0f, 11.0f);
+    CGContextAddLineToPoint(context, 16.5f, 21.0f);
+    CGContextStrokePath(context);
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    
     return image;
 }
 
@@ -843,61 +833,85 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
     return [self _muteUnmuteIcon:false color:color];
 }
 
-+ (UIImage *)chatEditPinIcon:(UIColor *)color
++ (UIImage *)_chatEditPinIcon:(bool)unpin color:(UIColor *)color
 {
-    NSString *code = @"M45.7904491,0.0606601718 C46.6859491,0.0606601718 47.5296991,0.384660172 48.1341991,0.998160172 L70.0018398,23.1001759 C70.6588398,23.7616759 71.0128398,24.6988009 70.9393398,25.6783009 C70.8418398,27.0133009 70.0033398,28.3550509 68.6893398,29.3345509 L51.1580898,41.2876759 C53.1650898,49.3411759 50.8232148,57.8443009 44.9237148,63.7408009 C44.6297148,64.0348009 44.2295898,64.2095509 43.8455898,64.2095509 C43.4615898,64.2095509 43.1068398,64.0801759 42.8143398,63.7876759 L7.21232414,28.1856602 C6.93032414,27.9036602 6.79044914,27.5050352 6.79044914,27.1075352 C6.79044914,26.7100352 6.93032414,26.3567852 7.21232414,26.0762852 C11.6793241,21.6092852 17.6286991,19.1387852 23.9466991,19.1387852 C25.7871991,19.1387852 27.5976991,19.3266602 29.3841991,19.7481602 L41.8060741,2.31066017 C42.9085741,0.885660172 44.3819491,0.0606601718 45.7904491,0.0606601718 Z M18.6148945,43.8069805 L27.1461445,52.3851055 L2.61948052,70.4898945 C2.34648052,70.7073945 2.00898052,70.8180195 1.68198052,70.8180195 C1.29648052,70.8180195 0.894855515,70.6871445 0.603855515,70.3961445 C0.0653555153,69.8591445 0.0376055153,68.9775195 0.510105515,68.3805195 L18.6148945,43.8069805 Z";
-    
-    NSString *innerCode = @"M10.4385304,27.1692257 L43.8089702,60.5396656 C48.2093318,55.4701442 49.8834924,48.5793907 48.247121,42.0131138 L47.7419263,39.9859164 L49.4680794,38.8089938 L66.8963766,26.9292893 C67.5607162,26.4340682 67.9184305,25.855193 67.9477504,25.4538171 C67.9554285,25.3514951 67.9236195,25.2649162 67.8692423,25.2101588 L45.9972624,3.10374825 C45.9800997,3.08633007 45.9152382,3.06066017 45.7904491,3.06066017 C45.3756316,3.06066017 44.7431757,3.41699786 44.2494916,4.0512667 L30.6577436,23.1310035 L28.6953049,22.6679932 C27.1858018,22.3118468 25.6124554,22.1387852 23.9466991,22.1387852 C18.9356843,22.1387852 14.1973723,23.9129562 10.4385304,27.1692257 Z M22.5677792,52.0358966 L18.9547618,48.4030275 L8.77661164,62.2160899 L22.5677792,52.0358966 Z";
-    
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(24, 26), false, 0.0f);
-    
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(28.0f, 28.0f), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(context, 0.0f, 2.0f);
-    
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetFillColorWithColor(context, color.CGColor);
     CGContextSetStrokeColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, code);
-    
-    CGContextSetBlendMode(context, kCGBlendModeClear);
-    CGContextSetFillColorWithColor(context, [UIColor clearColor].CGColor);
-    TGDrawSvgPath(context, innerCode);
-    
+    CGContextSetLineWidth(context, 2.0f);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextSaveGState(context);
+    CGContextTranslateCTM(context, 14.0f, 14.0f);
+    CGContextRotateCTM(context, M_PI_4);
+    CGContextTranslateCTM(context, -14.0f, -14.0f);
+    CGContextMoveToPoint(context, 9.0f, 4.0f);
+    CGContextAddLineToPoint(context, 19.0f, 4.0f);
+    CGContextMoveToPoint(context, 10.0f, 4.0f);
+    CGContextAddLineToPoint(context, 10.0f, 12.0f);
+    CGContextAddCurveToPoint(context, 10.0f, 14.5f, 7.0f, 14.5f, 7.0f, 18.0f);
+    CGContextAddLineToPoint(context, 21.0f, 18.0f);
+    CGContextAddCurveToPoint(context, 21.0f, 14.5f, 18.0f, 14.5f, 18.0f, 12.0f);
+    CGContextAddLineToPoint(context, 18.0f, 4.0f);
+    CGContextMoveToPoint(context, 14.0f, 18.0f);
+    CGContextAddLineToPoint(context, 14.0f, 25.0f);
+    CGContextStrokePath(context);
+    CGContextRestoreGState(context);
+    if (unpin)
+    {
+        CGContextSetBlendMode(context, kCGBlendModeClear);
+        CGContextSetLineWidth(context, 5.0f);
+        CGContextMoveToPoint(context, 3.0f, 3.0f);
+        CGContextAddLineToPoint(context, 25.0f, 25.0f);
+        CGContextStrokePath(context);
+        CGContextSetBlendMode(context, kCGBlendModeNormal);
+        CGContextSetLineWidth(context, 2.0f);
+        CGContextMoveToPoint(context, 3.0f, 3.0f);
+        CGContextAddLineToPoint(context, 25.0f, 25.0f);
+        CGContextStrokePath(context);
+    }
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    
     return image;
+}
+
++ (UIImage *)chatEditPinIcon:(UIColor *)color
+{
+    return [self _chatEditPinIcon:false color:color];
 }
 
 + (UIImage *)chatEditUnpinIcon:(UIColor *)color
 {
-    NSString *code = @"M45.7904491,0.0606601718 C46.6859491,0.0606601718 47.5296991,0.384660172 48.1341991,0.998160172 L70.0018398,23.1001759 C70.6588398,23.7616759 71.0128398,24.6988009 70.9393398,25.6783009 C70.8418398,27.0133009 70.0033398,28.3550509 68.6893398,29.3345509 L51.1580898,41.2876759 C53.1650898,49.3411759 50.8232148,57.8443009 44.9237148,63.7408009 C44.6297148,64.0348009 44.2295898,64.2095509 43.8455898,64.2095509 C43.4615898,64.2095509 43.1068398,64.0801759 42.8143398,63.7876759 L7.21232414,28.1856602 C6.93032414,27.9036602 6.79044914,27.5050352 6.79044914,27.1075352 C6.79044914,26.7100352 6.93032414,26.3567852 7.21232414,26.0762852 C11.6793241,21.6092852 17.6286991,19.1387852 23.9466991,19.1387852 C25.7871991,19.1387852 27.5976991,19.3266602 29.3841991,19.7481602 L41.8060741,2.31066017 C42.9085741,0.885660172 44.3819491,0.0606601718 45.7904491,0.0606601718 Z M18.6148945,43.8069805 L27.1461445,52.3851055 L2.61948052,70.4898945 C2.34648052,70.7073945 2.00898052,70.8180195 1.68198052,70.8180195 C1.29648052,70.8180195 0.894855515,70.6871445 0.603855515,70.3961445 C0.0653555153,69.8591445 0.0376055153,68.9775195 0.510105515,68.3805195 L18.6148945,43.8069805 Z";
-    
-    NSString *innerCode = @"M10.4385304,27.1692257 L43.8089702,60.5396656 C48.2093318,55.4701442 49.8834924,48.5793907 48.247121,42.0131138 L47.7419263,39.9859164 L49.4680794,38.8089938 L66.8963766,26.9292893 C67.5607162,26.4340682 67.9184305,25.855193 67.9477504,25.4538171 C67.9554285,25.3514951 67.9236195,25.2649162 67.8692423,25.2101588 L45.9972624,3.10374825 C45.9800997,3.08633007 45.9152382,3.06066017 45.7904491,3.06066017 C45.3756316,3.06066017 44.7431757,3.41699786 44.2494916,4.0512667 L30.6577436,23.1310035 L28.6953049,22.6679932 C27.1858018,22.3118468 25.6124554,22.1387852 23.9466991,22.1387852 C18.9356843,22.1387852 14.1973723,23.9129562 10.4385304,27.1692257 Z M22.5677792,52.0358966 L18.9547618,48.4030275 L8.77661164,62.2160899 L22.5677792,52.0358966 Z M7.82842712,2.17157288 L72.3284271,66.6715729 C76.0996633,70.442809 70.442809,76.0996633 66.6715729,72.3284271 L2.17157288,7.82842712 C-1.59966329,4.05719096 4.05719096,-1.59966329 7.82842712,2.17157288 Z";
-    
-    NSString *lineCode = @"M4.06066017,1.93933983 L68.5606602,66.4393398 C69.9748737,67.8535534 67.8535534,69.9748737 66.4393398,68.5606602 L1.93933983,4.06066017 C0.525126266,2.64644661 2.64644661,0.525126266 4.06066017,1.93933983 Z";
-    
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(24, 26), false, 0.0f);
-    
+    return [self _chatEditPinIcon:true color:color];
+}
+
++ (UIImage *)chatEditCommunityIcon:(UIColor *)color
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(28.0f, 28.0f), false, 0.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(context, 0.0f, 2.0f);
-    
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetFillColorWithColor(context, color.CGColor);
     CGContextSetStrokeColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, code);
-    
-    CGContextSetBlendMode(context, kCGBlendModeClear);
-    CGContextSetFillColorWithColor(context, [UIColor clearColor].CGColor);
-    TGDrawSvgPath(context, innerCode);
-    
-    CGContextSetBlendMode(context, kCGBlendModeNormal);
-    CGContextSetFillColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, lineCode);
-    
+    CGContextSetLineWidth(context, 2.0f);
+    CGContextSetLineCap(context, kCGLineCapRound);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextStrokeEllipseInRect(context, CGRectMake(10.5f, 3.5f, 7.0f, 7.0f));
+    CGContextStrokeEllipseInRect(context, CGRectMake(2.5f, 7.0f, 5.0f, 5.0f));
+    CGContextStrokeEllipseInRect(context, CGRectMake(20.5f, 7.0f, 5.0f, 5.0f));
+    CGContextMoveToPoint(context, 7.0f, 24.0f);
+    CGContextAddLineToPoint(context, 7.0f, 21.0f);
+    CGContextAddCurveToPoint(context, 7.0f, 13.0f, 21.0f, 13.0f, 21.0f, 21.0f);
+    CGContextAddLineToPoint(context, 21.0f, 24.0f);
+    CGContextClosePath(context);
+    CGContextMoveToPoint(context, 4.0f, 21.0f);
+    CGContextAddLineToPoint(context, 2.0f, 21.0f);
+    CGContextAddLineToPoint(context, 2.0f, 18.5f);
+    CGContextAddCurveToPoint(context, 2.0f, 15.0f, 4.5f, 13.5f, 7.0f, 15.0f);
+    CGContextMoveToPoint(context, 24.0f, 21.0f);
+    CGContextAddLineToPoint(context, 26.0f, 21.0f);
+    CGContextAddLineToPoint(context, 26.0f, 18.5f);
+    CGContextAddCurveToPoint(context, 26.0f, 15.0f, 23.5f, 13.5f, 21.0f, 15.0f);
+    CGContextStrokePath(context);
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    
     return image;
 }
 
@@ -908,8 +922,6 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
     CGContextRef context = UIGraphicsGetCurrentContext();
     CGContextTranslateCTM(context, 0.0f, 2.0f);
     
-    //CGContextSetFillColorWithColor(context, [UIColor redColor].CGColor);
-    //CGCo
     
     CGContextScaleCTM(context, 0.3333f, 0.3333f);
     CGContextSetStrokeColorWithColor(context, color.CGColor);
@@ -1162,7 +1174,26 @@ static UIImage *TGChatsLockBitmapImage(CGSize size, UIColor *color, bool top, bo
 
 + (UIImage *)brandedIOS6DeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read
 {
-    return TGBrandedIOS6DeliveryTagImage(timeText, incoming, read);
+    if (timeText.length == 0)
+        return nil;
+
+    static NSCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 256;
+    });
+
+    NSString *key = [[NSString alloc] initWithFormat:@"%@|%d|%d", timeText, incoming ? 1 : 0, read ? 1 : 0];
+    UIImage *image = [cache objectForKey:key];
+    if (image == nil)
+    {
+        image = TGBrandedIOS6DeliveryTagImage(timeText, incoming, read);
+        if (image != nil)
+            [cache setObject:image forKey:key];
+    }
+    return image;
 }
 
 static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incoming, bool read)
@@ -1170,7 +1201,7 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     if (timeText.length == 0)
         return nil;
 
-    UIFont *font = [UIFont fontWithName:@"HelveticaNeue" size:11.0f];
+    UIFont *font = TGSystemFontOfSize(11.0f);
     if (font == nil)
         font = TGSystemFontOfSize(11.0f);
 
@@ -1247,9 +1278,7 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
         if (classicImage != nil)
         {
             UIImage *adaptedImage = classicImage;
-            if ([TGPresentation brandedIOS6Style] && outgoing)
-                adaptedImage = TGBrandedIOS6OutgoingBubbleImage(classicImage);
-            else if ([TGPresentation classicIOS6UsesPaletteAdaptedAssets])
+            if ([TGPresentation classicIOS6UsesPaletteAdaptedAssets])
                 adaptedImage = [TGPresentation classicIOS6ThemedImage:classicImage tintColor:color alpha:0.85f];
             return [adaptedImage stretchableImageWithLeftCapWidth:outgoing ? 18 : 25 topCapHeight:15];
         }
@@ -1753,10 +1782,18 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
 
 + (UIImage *)chatMessageViewsIcon:(UIColor *)color
 {
+    return [self chatMessageViewsIconWithTemplate:TGImageNamed(@"MessageInlineViewCountIconMedia.png") color:color];
+}
+
++ (UIImage *)chatMessageViewsIconWithTemplate:(UIImage *)templateImage color:(UIColor *)color
+{
+    if (templateImage == nil)
+        return nil;
+    
     CGFloat alpha = 1.0f;
     TGColorGetRGBA(color, NULL, NULL, NULL, &alpha);
     
-    UIImage *tintedImage = TGTintedImage(TGImageNamed(@"MessageInlineViewCountIconMedia.png"), [color colorWithAlphaComponent:1.0f]);
+    UIImage *tintedImage = TGTintedImage(templateImage, [color colorWithAlphaComponent:1.0f]);
     if (alpha > 1.0f - FLT_EPSILON)
     {
         return tintedImage;
@@ -1838,6 +1875,37 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     return image;
 }
 
++ (UIImage *)chatScrollButtonWithFillColor:(UIColor *)fillColor glyphColor:(UIColor *)glyphColor lineWidth:(CGFloat)lineWidth mentions:(bool)mentions
+{
+    CGSize size = CGSizeMake(38.0f, 38.0f);
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(context, fillColor.CGColor);
+    CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, size.width, size.height));
+
+    if (mentions)
+    {
+        UIImage *icon = TGTintedImage(TGImageNamed(@"ChatNavigateToUnseenMentionsIcon.png"), glyphColor);
+        [icon drawAtPoint:CGPointMake(CGFloor((size.width - icon.size.width) / 2.0f), CGFloor((size.height - icon.size.height) / 2.0f))];
+    }
+    else
+    {
+        CGContextSetLineWidth(context, lineWidth);
+        CGContextSetStrokeColorWithColor(context, glyphColor.CGColor);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetLineJoin(context, kCGLineJoinRound);
+        CGContextBeginPath(context);
+        CGContextMoveToPoint(context, 13.75f, 17.5f);
+        CGContextAddLineToPoint(context, 19.0f, 23.0f);
+        CGContextAddLineToPoint(context, 24.25f, 17.5f);
+        CGContextStrokePath(context);
+    }
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
 + (UIImage *)chatDeleteIcon:(UIColor *)color
 {
     return TGTintedImage(TGImageNamed(@"ModernConversationActionDelete.png"), color);
@@ -1886,39 +1954,39 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
 
 + (UIImage *)inputPanelAttachIcon:(UIColor *)color accentColor:(UIColor *)accentColor
 {
-    NSString *code = @"M63.5084258,47.1736444 L46.1818644,64.3732581 C42.6551823,67.874101 42.6501313,73.5450748 46.1843277,77.0533769 L46.0546538,76.9246531 C49.5826963,80.4268464 55.3002588,80.4293526 58.8309565,76.9245234 L82.1903763,53.7362527 C88.4607317,47.5118387 88.4555115,37.414888 82.8995295,31.8996133 L82.8995295,31.8996133 L82.7705247,31.7715537 C76.4976538,25.5446426 66.3304974,25.541489 60.060003,31.766041 L36.7280964,54.9270001 C27.9458841,63.6448672 27.9414991,77.7749696 36.7272423,86.4963418 L36.5419919,86.3124486 C45.3237325,95.0298475 59.5643416,95.0272721 68.336344,86.3195401 L85.6397976,69.1428648 U";
-    
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(30, 30), false, 0.0f);
-    
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(context, -5.0f, -5.0f);
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetLineWidth(context, 5.0f);
-    CGContextSetLineCap(context, kCGLineCapRound);
-    CGContextSetStrokeColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, code);
-    
-    if (accentColor != nil)
+    return [self inputPanelAttachGlyph:color accentColor:accentColor scale:1.0f lineWidth:TGInputPanelIconLineWidth];
+}
+
++ (UIImage *)inputPanelAttachGlyph:(UIColor *)color accentColor:(UIColor *)accentColor scale:(CGFloat)scale lineWidth:(CGFloat)lineWidth
+{
+    return TGInputPanelGlyphImage(CGSizeMake(30.0f, 30.0f), scale, ^(CGContextRef context)
     {
-        CGContextTranslateCTM(context, 51.0f, 45.0f);
-        code = @"M17,12.5706686 L17,0 L30.8544849,13.8544849 C38.5953555,17.2617212 44,24.9996994 44,34 C44,46.1502645 34.1502645,56 22,56 C9.8497355,56 0,46.1502645 0,34 C0,23.5696354 7.25858699,14.8346046 17,12.5706686 Z";
-        CGContextSetBlendMode(context, kCGBlendModeClear);
+        NSString *code = @"M63.5084258,47.1736444 L46.1818644,64.3732581 C42.6551823,67.874101 42.6501313,73.5450748 46.1843277,77.0533769 L46.0546538,76.9246531 C49.5826963,80.4268464 55.3002588,80.4293526 58.8309565,76.9245234 L82.1903763,53.7362527 C88.4607317,47.5118387 88.4555115,37.414888 82.8995295,31.8996133 L82.8995295,31.8996133 L82.7705247,31.7715537 C76.4976538,25.5446426 66.3304974,25.541489 60.060003,31.766041 L36.7280964,54.9270001 C27.9458841,63.6448672 27.9414991,77.7749696 36.7272423,86.4963418 L36.5419919,86.3124486 C45.3237325,95.0298475 59.5643416,95.0272721 68.336344,86.3195401 L85.6397976,69.1428648 U";
+        
+        CGContextTranslateCTM(context, -5.0f, -5.0f);
+        CGContextScaleCTM(context, 0.3333f, 0.3333f);
+        CGContextSetLineWidth(context, lineWidth * 3.0f / scale);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetStrokeColorWithColor(context, color.CGColor);
         TGDrawSvgPath(context, code);
         
-        CGContextSetBlendMode(context, kCGBlendModeNormal);
-        CGContextSetStrokeColorWithColor(context, accentColor.CGColor);
-        code = @"M36,34 C36,36.9179632 35.1072962,39.6274244 33.5800985,41.8701734 C31.0605447,45.5702359 26.8140232,48 22,48 C14.2680135,48 8,41.7319865 8,34 C8,26.2680135 15,20 22,20 U";
-        TGDrawSvgPath(context, code);
-        
-        CGContextSetFillColorWithColor(context, accentColor.CGColor);
-        code = @"M22,12 L22,28 L30,20 Z";
-        TGDrawSvgPath(context, code);
-    }
-    
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    
-    return image;
+        if (accentColor != nil)
+        {
+            CGContextTranslateCTM(context, 51.0f, 45.0f);
+            code = @"M17,12.5706686 L17,0 L30.8544849,13.8544849 C38.5953555,17.2617212 44,24.9996994 44,34 C44,46.1502645 34.1502645,56 22,56 C9.8497355,56 0,46.1502645 0,34 C0,23.5696354 7.25858699,14.8346046 17,12.5706686 Z";
+            CGContextSetBlendMode(context, kCGBlendModeClear);
+            TGDrawSvgPath(context, code);
+            
+            CGContextSetBlendMode(context, kCGBlendModeNormal);
+            CGContextSetStrokeColorWithColor(context, accentColor.CGColor);
+            code = @"M36,34 C36,36.9179632 35.1072962,39.6274244 33.5800985,41.8701734 C31.0605447,45.5702359 26.8140232,48 22,48 C14.2680135,48 8,41.7319865 8,34 C8,26.2680135 15,20 22,20 U";
+            TGDrawSvgPath(context, code);
+            
+            CGContextSetFillColorWithColor(context, accentColor.CGColor);
+            code = @"M22,12 L22,28 L30,20 Z";
+            TGDrawSvgPath(context, code);
+        }
+    });
 }
 
 + (UIImage *)inputPanelSendIcon:(UIColor *)backgroundColor color:(UIColor *)color
@@ -1944,79 +2012,89 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     return image;
 }
 
++ (UIImage *)inputPanelSendGlyph:(UIColor *)color scale:(CGFloat)scale
+{
+    return TGInputPanelGlyphImage(CGSizeMake(33.0f, 33.0f), scale, ^(CGContextRef context)
+    {
+        CGContextScaleCTM(context, 0.3333f, 0.3333f);
+        CGContextSetFillColorWithColor(context, color.CGColor);
+        TGDrawSvgPath(context, @"M80,20 L20,47 L46,54 L53,80 Z");
+    });
+}
+
 + (UIImage *)inputPanelConfirmIcon:(UIColor *)backgroundColor color:(UIColor *)color
 {
-    NSString *code = @"M28,51.8059701 L42.5672395,66.3732097 C42.6826007,66.4885708 42.8628212,66.4857542 42.9771136,66.3587627 L73,33 U";
-    
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(33, 33), false, 0.0f);
     
     CGContextRef context = UIGraphicsGetCurrentContext();
     CGContextSetFillColorWithColor(context, backgroundColor.CGColor);
     CGContextFillEllipseInRect(context, CGRectMake(0.0f, 0.0f, 33.0f, 33.0f));
-    
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetLineWidth(context, 6.0f);
-    CGContextSetLineCap(context, kCGLineCapRound);
-    CGContextSetFillColorWithColor(context, color.CGColor);
-    CGContextSetStrokeColorWithColor(context, color.CGColor);
-    TGDrawSvgPath(context, code);
+    TGDrawInputPanelConfirmGlyph(context, color, 2.0f);
     
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     
     return image;
+}
+
++ (UIImage *)inputPanelConfirmGlyph:(UIColor *)color scale:(CGFloat)scale lineWidth:(CGFloat)lineWidth
+{
+    return TGInputPanelGlyphImage(CGSizeMake(33.0f, 33.0f), scale, ^(CGContextRef context)
+    {
+        TGDrawInputPanelConfirmGlyph(context, color, lineWidth / scale);
+    });
 }
 
 + (UIImage *)inputPanelMicrophoneIcon:(UIColor *)color
 {
-    NSString *arcCode = @"M34.9964878,61 C35,73 45,85 60,85 C75,85 85,73 85,61 U";
-    
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(30, 30), false, 0.0f);
-    
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextTranslateCTM(context, -5.0f, -5.0f);
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetLineWidth(context, 5.0f);
-    CGContextSetLineCap(context, kCGLineCapRound);
-    CGContextSetStrokeColorWithColor(context, color.CGColor);
-    CGContextSetFillColorWithColor(context, color.CGColor);
-    
-    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(47.5f, 26.5f, 25.0f, 46.0f) cornerRadius:12.5f];
-    CGContextAddPath(context, path.CGPath);
-    CGContextStrokePath(context);
+    return [self inputPanelMicrophoneGlyph:color scale:1.0f lineWidth:TGInputPanelIconLineWidth];
+}
 
-    path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(57.5f, 85.0f, 5.0f, 14.0f) cornerRadius:2.5f];
-    CGContextAddPath(context, path.CGPath);
-    CGContextFillPath(context);
-    
-    TGDrawSvgPath(context, arcCode);
-    
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    
-    return image;
++ (UIImage *)inputPanelMicrophoneGlyph:(UIColor *)color scale:(CGFloat)scale lineWidth:(CGFloat)lineWidth
+{
+    return TGInputPanelGlyphImage(CGSizeMake(30.0f, 30.0f), scale, ^(CGContextRef context)
+    {
+        NSString *arcCode = @"M34.9964878,61 C35,73 45,85 60,85 C75,85 85,73 85,61 U";
+        
+        CGContextTranslateCTM(context, -5.0f, -5.0f);
+        CGContextScaleCTM(context, 0.3333f, 0.3333f);
+        CGContextSetLineWidth(context, lineWidth * 3.0f / scale);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetStrokeColorWithColor(context, color.CGColor);
+        CGContextSetFillColorWithColor(context, color.CGColor);
+        
+        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(47.5f, 26.5f, 25.0f, 46.0f) cornerRadius:12.5f];
+        CGContextAddPath(context, path.CGPath);
+        CGContextStrokePath(context);
+        
+        path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(57.5f, 85.0f, 5.0f, 14.0f) cornerRadius:2.5f];
+        CGContextAddPath(context, path.CGPath);
+        CGContextFillPath(context);
+        
+        TGDrawSvgPath(context, arcCode);
+    });
 }
 
 + (UIImage *)inputPanelVideoMessageIcon:(UIColor *)color
 {
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(30, 30), false, 0.0f);
-    
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextScaleCTM(context, 0.3333f, 0.3333f);
-    CGContextSetLineWidth(context, 5.0f);
-    CGContextSetLineCap(context, kCGLineCapRound);
-    CGContextSetStrokeColorWithColor(context, color.CGColor);
-    
-    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(12.5f, 12.5f, 65.0f, 65.0f) cornerRadius:20.5f];
-    CGContextAddPath(context, path.CGPath);
-    CGContextStrokePath(context);
-    
-    CGContextStrokeEllipseInRect(context, CGRectMake(29.5f, 29.5f, 31.0f, 31.0f));
-    
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    
-    return image;
+    return [self inputPanelVideoMessageGlyph:color scale:1.0f lineWidth:TGInputPanelIconLineWidth];
+}
+
++ (UIImage *)inputPanelVideoMessageGlyph:(UIColor *)color scale:(CGFloat)scale lineWidth:(CGFloat)lineWidth
+{
+    return TGInputPanelGlyphImage(CGSizeMake(30.0f, 30.0f), scale, ^(CGContextRef context)
+    {
+        CGContextScaleCTM(context, 0.3333f, 0.3333f);
+        CGContextSetLineWidth(context, lineWidth * 3.0f / scale);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetStrokeColorWithColor(context, color.CGColor);
+        
+        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(12.5f, 12.5f, 65.0f, 65.0f) cornerRadius:20.5f];
+        CGContextAddPath(context, path.CGPath);
+        CGContextStrokePath(context);
+        
+        CGContextStrokeEllipseInRect(context, CGRectMake(29.5f, 29.5f, 31.0f, 31.0f));
+    });
 }
 
 + (UIImage *)inputPanelArrowIcon:(UIColor *)color
@@ -2495,7 +2573,6 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     
     CGContextRef context = UIGraphicsGetCurrentContext();
     CGContextScaleCTM(context, 0.333333f, 0.333333f);
-    //CGContextTranslateCTM(context, 62.0f, 72.0f);
     CGContextSetLineWidth(context, 12.0f);
     CGContextSetStrokeColorWithColor(context, color.CGColor);
     TGDrawSvgPath(context, code);
@@ -2546,6 +2623,27 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     UIImage *image = [UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:10.0f topCapHeight:0.0f];
     UIGraphicsEndImageContext();
     
+    return image;
+}
+
++ (UIImage *)avatarPlaceholderWithSide:(CGFloat)side cornerRadius:(CGFloat)cornerRadius color:(UIColor *)color border:(CGFloat)border borderColor:(UIColor *)borderColor
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.0f, 0.0f, side, side) cornerRadius:cornerRadius] fill];
+
+    if (border > FLT_EPSILON)
+    {
+        CGContextSetStrokeColorWithColor(context, borderColor.CGColor);
+        UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(border / 2.0f, border / 2.0f, side - border, side - border) cornerRadius:MAX(0.0f, cornerRadius - border / 2.0f)];
+        path.lineWidth = border;
+        [path stroke];
+    }
+
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
     return image;
 }
 
@@ -2673,6 +2771,19 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     UIGraphicsEndImageContext();
     
     return [image resizableImageWithCapInsets:UIEdgeInsetsMake(8.0f, 8.0f, 8.0f, 8.0f)];
+}
+
++ (UIImage *)actionPanelJoinIcon:(UIColor *)color
+{
+    CGFloat side = 18.0f;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    CGContextFillRect(context, CGRectMake(side / 2.0f - 0.5f, 0.0f, 1.5f, side));
+    CGContextFillRect(context, CGRectMake(0.0f, side / 2.0f - 0.5f, side, 1.5f));
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
 }
 
 @end

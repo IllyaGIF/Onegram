@@ -3,6 +3,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 static UIImage *TGClassicIOS6UnreadHeaderBackgroundImage(void)
 {
@@ -44,6 +45,26 @@ static UIColor *TGClassicIOS6UnreadHeaderTextColor(void)
     return UIColorRGB(0x43576b);
 }
 
+static OGConversationAppearance *TGBrandedUnreadHeaderAppearance(void)
+{
+    if (![TGPresentation brandedIOS6Style])
+        return nil;
+    OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+    return appearance.unreadHeaderSurfaceStyle != nil ? appearance : nil;
+}
+
+static CGRect TGBrandedUnreadHeaderBackgroundFrame(OGConversationAppearance *appearance, CGSize containerSize)
+{
+    CGFloat inset = appearance.backgroundCardHorizontalInset;
+    return CGRectMake(inset, (containerSize.height - appearance.unreadHeaderHeight) / 2.0f, MAX(0.0f, containerSize.width - inset * 2.0f), appearance.unreadHeaderHeight);
+}
+
+static CGFloat TGBrandedUnreadHeaderTextY(OGConversationAppearance *appearance, CGSize containerSize, CGFloat textHeight)
+{
+    CGRect backgroundFrame = TGBrandedUnreadHeaderBackgroundFrame(appearance, containerSize);
+    return CGFloor(backgroundFrame.origin.y + (backgroundFrame.size.height - textHeight) / 2.0f + appearance.unreadHeaderTextVerticalOffset);
+}
+
 @interface TGModernUnreadHeaderView ()
 {
     UIImageView *_backgroundView;
@@ -59,6 +80,25 @@ static UIColor *TGClassicIOS6UnreadHeaderTextColor(void)
 
 + (void)drawHeaderForContainerWidth:(CGFloat)containerWidth inContext:(CGContextRef)context andBindBackgroundToContainer:(UIView *)backgroundContainer atPosition:(CGPoint)position presentation:(TGPresentation *)presentation
 {
+    OGConversationAppearance *brandedAppearance = TGBrandedUnreadHeaderAppearance();
+    if (brandedAppearance != nil)
+    {
+        CGSize brandedContainerSize = CGSizeMake(containerWidth, 31.0f);
+        CGRect brandedBackgroundFrame = TGBrandedUnreadHeaderBackgroundFrame(brandedAppearance, brandedContainerSize);
+        UIImageView *brandedBackgroundView = [[UIImageView alloc] initWithImage:[TGPresentation brandedIOS6UnreadHeaderImageForWidth:brandedBackgroundFrame.size.width]];
+        brandedBackgroundView.frame = CGRectOffset(brandedBackgroundFrame, position.x, position.y);
+        [backgroundContainer addSubview:brandedBackgroundView];
+
+        NSString *brandedText = TGLocalized(@"Conversation.UnreadMessages");
+        CGSize brandedTextSize = [brandedText sizeWithFont:brandedAppearance.unreadHeaderFont];
+        CGContextSaveGState(context);
+        CGContextSetShadowWithColor(context, brandedAppearance.unreadHeaderTextShadowOffset, 0.5f, brandedAppearance.unreadHeaderTextShadowColor.CGColor);
+        CGContextSetFillColorWithColor(context, brandedAppearance.unreadHeaderTextColor.CGColor);
+        [brandedText drawAtPoint:CGPointMake(CGFloor((containerWidth - brandedTextSize.width) / 2.0f), TGBrandedUnreadHeaderTextY(brandedAppearance, brandedContainerSize, brandedTextSize.height)) withFont:brandedAppearance.unreadHeaderFont];
+        CGContextRestoreGState(context);
+        return;
+    }
+
     bool classicIOS6Style = [TGPresentation classicIOS6Style];
     UIImage *backgroundImage = classicIOS6Style ? TGClassicIOS6UnreadHeaderBackgroundImage() : presentation.images.chatUnreadBackground;
     UIImageView *backgroundImageView = [[UIImageView alloc] initWithImage:backgroundImage];
@@ -109,8 +149,24 @@ static UIColor *TGClassicIOS6UnreadHeaderTextColor(void)
         _labelView.transform = CGAffineTransformMakeRotation((CGFloat)M_PI);
         [_labelView sizeToFit];
         [self addSubview:_labelView];
+
+        [self applyBrandedStyle];
     }
     return self;
+}
+
+- (void)applyBrandedStyle
+{
+    OGConversationAppearance *appearance = TGBrandedUnreadHeaderAppearance();
+    if (appearance == nil)
+        return;
+    _backgroundView.image = nil;
+    _labelView.textColor = appearance.unreadHeaderTextColor;
+    _labelView.font = appearance.unreadHeaderFont;
+    _labelView.shadowColor = appearance.unreadHeaderTextShadowColor;
+    _labelView.shadowOffset = appearance.unreadHeaderTextShadowOffset;
+    [_labelView sizeToFit];
+    [self setNeedsLayout];
 }
 - (void)setPresentation:(TGPresentation *)presentation
 {
@@ -121,6 +177,7 @@ static UIColor *TGClassicIOS6UnreadHeaderTextColor(void)
     _labelView.shadowColor = classicIOS6Style ? UIColorRGBA(0xffffff, 0.9f) : [UIColor clearColor];
     _labelView.shadowOffset = classicIOS6Style ? CGSizeMake(0.0f, 1.0f) : CGSizeZero;
     [_labelView sizeToFit];
+    [self applyBrandedStyle];
 }
 
 - (void)willBecomeRecycled
@@ -133,6 +190,19 @@ static UIColor *TGClassicIOS6UnreadHeaderTextColor(void)
 
 - (void)layoutSubviews
 {
+    OGConversationAppearance *brandedAppearance = TGBrandedUnreadHeaderAppearance();
+    if (brandedAppearance != nil)
+    {
+        CGRect backgroundFrame = TGBrandedUnreadHeaderBackgroundFrame(brandedAppearance, self.frame.size);
+        if (_backgroundView.image == nil || ABS(_backgroundView.image.size.width - backgroundFrame.size.width) > FLT_EPSILON)
+            _backgroundView.image = [TGPresentation brandedIOS6UnreadHeaderImageForWidth:backgroundFrame.size.width];
+        _backgroundView.frame = backgroundFrame;
+        CGRect brandedLabelFrame = _labelView.frame;
+        brandedLabelFrame.origin = CGPointMake(CGFloor((self.frame.size.width - brandedLabelFrame.size.width) / 2.0f), self.frame.size.height - TGBrandedUnreadHeaderTextY(brandedAppearance, self.frame.size, brandedLabelFrame.size.height) - brandedLabelFrame.size.height);
+        _labelView.frame = brandedLabelFrame;
+        return;
+    }
+
     _backgroundView.frame = CGRectMake(0.0f, 3.0f, self.frame.size.width, 25.0f);
     CGRect labelFrame = _labelView.frame;
     labelFrame.origin = CGPointMake(CGFloor((self.frame.size.width - labelFrame.size.width) / 2.0f), 7.0f + TGRetinaPixel);

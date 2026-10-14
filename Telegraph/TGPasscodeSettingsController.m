@@ -375,7 +375,6 @@
                         [progressWindow dismissWithSuccess];
                         
                         [TGAppDelegateInstance setupShortcutItems];
-                        // Make a newly configured passcode take effect now.
                         [TGAppDelegateInstance setIsManuallyLocked:true];
                         [strongSelf dismissViewControllerAnimated:true completion:^
                         {
@@ -396,8 +395,6 @@
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
     {
-        //navigationController.presentationStyle = TGNavigationControllerPresentationStyleInFormSheet;
-        //navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
     }
     else
         navigationController.restrictLandscape = true;
@@ -454,8 +451,6 @@
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
     {
-        //navigationController.presentationStyle = TGNavigationControllerPresentationStyleInFormSheet;
-        //navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
     }
     else
         navigationController.restrictLandscape = true;
@@ -512,8 +507,6 @@
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
     {
-        //navigationController.presentationStyle = TGNavigationControllerPresentationStyleInFormSheet;
-        //navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
     }
     else
         navigationController.restrictLandscape = true;
@@ -622,8 +615,6 @@
         TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
         if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
         {
-            //navigationController.presentationStyle = TGNavigationControllerPresentationStyleInFormSheet;
-            //navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
         }
         else
             navigationController.restrictLandscape = true;

@@ -1,13 +1,16 @@
 #import "ATQueue.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 
-//#import <ReactiveCocoa/ReactiveCocoa.h>
 
 static const char *AMQueueSpecific = "AMQueueSpecific";
+static char AMDefaultQueueIdentity;
+static char AMBackgroundQueueIdentity;
 
 @interface ATQueue ()
 {
     dispatch_queue_t _nativeQueue;
     bool _isMainQueue;
+    void *_queueSpecific;
     
     int32_t _noop;
 }
@@ -48,7 +51,7 @@ static const char *AMQueueSpecific = "AMQueueSpecific";
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[ATQueue alloc] initWithNativeQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)];
+        queue = [[ATQueue alloc] initWithNativeQueue:OGPlatformBackgroundQueue()];
     });
     
     return queue;
@@ -60,7 +63,7 @@ static const char *AMQueueSpecific = "AMQueueSpecific";
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[ATQueue alloc] initWithNativeQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0)];
+        queue = [[ATQueue alloc] initWithNativeQueue:OGPlatformBackgroundLowQueue()];
     });
     
     return queue;
@@ -79,10 +82,10 @@ static int32_t numQueues = 0;
     if (self != nil)
     {
         _nativeQueue = dispatch_queue_create([name UTF8String], DISPATCH_QUEUE_SERIAL);
-        dispatch_queue_set_specific(_nativeQueue, AMQueueSpecific, (__bridge void *)self, NULL);
+        _queueSpecific = (__bridge void *)self;
+        dispatch_queue_set_specific(_nativeQueue, AMQueueSpecific, _queueSpecific, NULL);
         
         numQueues++;
-        TGLog(@"ATQueue count = %d", numQueues);
     }
     return self;
 }
@@ -107,7 +110,8 @@ static int32_t numQueues = 0;
                 break;
         }
         dispatch_set_target_queue(_nativeQueue, dispatch_get_global_queue(targetQueueIdentifier, 0));
-        dispatch_queue_set_specific(_nativeQueue, AMQueueSpecific, (__bridge void *)self, NULL);
+        _queueSpecific = (__bridge void *)self;
+        dispatch_queue_set_specific(_nativeQueue, AMQueueSpecific, _queueSpecific, NULL);
     }
     return self;
 }
@@ -122,6 +126,11 @@ static int32_t numQueues = 0;
 #else
         _nativeQueue = queue;
 #endif
+        if (OGPlatformUsesConstrainedBackgroundExecution() && (queue == OGPlatformBackgroundQueue() || queue == OGPlatformBackgroundLowQueue()))
+        {
+            _queueSpecific = queue == OGPlatformBackgroundQueue() ? &AMDefaultQueueIdentity : &AMBackgroundQueueIdentity;
+            dispatch_queue_set_specific(queue, AMQueueSpecific, _queueSpecific, NULL);
+        }
     }
     return self;
 }
@@ -147,9 +156,21 @@ static int32_t numQueues = 0;
     __block ATQueue *strongSelf = self;
     dispatch_block_t blockWithSelf = ^
     {
-        block();
-        [strongSelf noop];
-        strongSelf = nil;
+        if (OGPlatformUsesConstrainedBackgroundExecution() && ![NSThread isMainThread])
+        {
+            @autoreleasepool
+            {
+                block();
+                [strongSelf noop];
+                strongSelf = nil;
+            }
+        }
+        else
+        {
+            block();
+            [strongSelf noop];
+            strongSelf = nil;
+        }
     };
     
     if (_isMainQueue)
@@ -163,7 +184,7 @@ static int32_t numQueues = 0;
     }
     else
     {
-        if (dispatch_get_specific(AMQueueSpecific) == (__bridge void *)self)
+        if (_queueSpecific != NULL && dispatch_get_specific(AMQueueSpecific) == _queueSpecific)
             block();
         else if (synchronous)
             dispatch_sync(_nativeQueue, blockWithSelf);

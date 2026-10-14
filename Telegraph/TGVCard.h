@@ -5,6 +5,12 @@ FOUNDATION_EXPORT NSData *TGVCardDataFromPerson(ABRecordRef person);
 FOUNDATION_EXPORT NSString *TGVCardStringFromPerson(ABRecordRef person);
 FOUNDATION_EXPORT ABRecordRef TGVCardCreatePersonFromData(NSData *data);
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+#define TGVCardSocialProfileProperty kABPersonSocialProfileProperty
+#else
+#define TGVCardSocialProfileProperty ((ABPropertyID)-1)
+#endif
+
 @interface TGVCardValue : NSObject
 
 @property (nonatomic, readonly) int64_t uniqueId;

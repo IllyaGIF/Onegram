@@ -33,6 +33,7 @@
  **********************************************************************************/
 
 #import "STKAudioPlayer.h"
+#import "OGPlatformUIKit.h"
 #import "AudioToolbox/AudioToolbox.h"
 #import "STKHTTPDataSource.h"
 #import "STKAutoRecoveringHTTPDataSource.h"
@@ -330,12 +331,14 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 		.componentManufacturer = kAudioUnitManufacturer_Apple
 	};
     
+#if !defined(ONEGRAM_ARMV6)
 	nbandUnitDescription = (AudioComponentDescription)
 	{
 		.componentType = kAudioUnitType_Effect,
 		.componentSubType = kAudioUnitSubType_NBandEQ,
 		.componentManufacturer=kAudioUnitManufacturer_Apple
 	};
+#endif
 }
 -(STKAudioPlayerOptions) options
 {
@@ -469,7 +472,11 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
         options = optionsIn;
 		
 		self->volume = 1.0;
+#if defined(ONEGRAM_ARMV6)
+        self->equalizerEnabled = NO;
+#else
         self->equalizerEnabled = optionsIn.equalizerBandFrequencies[0] != 0;
+#endif
 
         PopulateOptionsWithDefault(&options);
         
@@ -583,20 +590,20 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 -(void) startSystemBackgroundTask
 {
 /*#if TARGET_OS_IPHONE
-	__block UIBackgroundTaskIdentifier backgroundTaskId = UIBackgroundTaskInvalid;
+	__block OGPlatformBackgroundTaskIdentifier backgroundTaskId = OGPlatformBackgroundTaskInvalid;
 	
-	backgroundTaskId = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^
+	backgroundTaskId = OGPlatformBeginBackgroundTask([UIApplication sharedApplication], ^
 	{
-		[[UIApplication sharedApplication] endBackgroundTask:backgroundTaskId];
-		backgroundTaskId = UIBackgroundTaskInvalid;
-	}];
+		OGPlatformEndBackgroundTask([UIApplication sharedApplication], backgroundTaskId);
+		backgroundTaskId = OGPlatformBackgroundTaskInvalid;
+	});
 	
 	stopBackBackgroundTaskBlock = [^
 	{
-		if (backgroundTaskId != UIBackgroundTaskInvalid)
+		if (backgroundTaskId != OGPlatformBackgroundTaskInvalid)
 		{
-			[[UIApplication sharedApplication] endBackgroundTask:backgroundTaskId];
-			backgroundTaskId = UIBackgroundTaskInvalid;
+			OGPlatformEndBackgroundTask([UIApplication sharedApplication], backgroundTaskId);
+			backgroundTaskId = OGPlatformBackgroundTaskInvalid;
 		}
 	} copy];
 #endif*/
@@ -1362,7 +1369,11 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 	@autoreleasepool
 	{
 		playbackThreadRunLoop = [NSRunLoop currentRunLoop];
+#if defined(ONEGRAM_ARMV6)
+        [NSThread setThreadPriority:1.0];
+#else
 		NSThread.currentThread.threadPriority = 1;
+#endif
 		
 		[threadStartedLock lockWhenCondition:0];
         [threadStartedLock unlockWithCondition:1];
@@ -1968,32 +1979,34 @@ static BOOL GetHardwareCodecClassDesc(UInt32 formatId, AudioClassDescription* cl
 
 -(void) createEqUnit
 {
-#if TARGET_OS_MAC && MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_9
+#if defined(ONEGRAM_ARMV6)
+    return;
+#elif TARGET_OS_MAC && MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_9
     return;
 #else
 	OSStatus status;
-    
+
 	if (self->options.equalizerBandFrequencies[0] == 0)
     {
 		return;
 	}
-	
+
 	CHECK_STATUS_AND_RETURN(AUGraphAddNode(audioGraph, &nbandUnitDescription, &eqNode));
 	CHECK_STATUS_AND_RETURN(AUGraphNodeInfo(audioGraph, eqNode, NULL, &eqUnit));
 	CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(eqUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFramesPerSlice, sizeof(maxFramesPerSlice)));
-	
+
 	while (self->options.equalizerBandFrequencies[eqBandCount] != 0)
 	{
 		eqBandCount++;
 	}
-	
+
 	CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(eqUnit, kAUNBandEQProperty_NumberOfBands, kAudioUnitScope_Global, 0, &eqBandCount, sizeof(eqBandCount)));
-	
+
 	for (int i = 0; i < eqBandCount; i++)
 	{
 		CHECK_STATUS_AND_RETURN(AudioUnitSetParameter(eqUnit, kAUNBandEQParam_Frequency + i, kAudioUnitScope_Global, 0, (AudioUnitParameterValue)self->options.equalizerBandFrequencies[i], 0));
 	}
-	
+
 	for (int i = 0; i < eqBandCount; i++)
 	{
 		CHECK_STATUS_AND_RETURN(AudioUnitSetParameter(eqUnit, kAUNBandEQParam_BypassBand + i, kAudioUnitScope_Global, 0, (AudioUnitParameterValue)0, 0));
@@ -2003,14 +2016,20 @@ static BOOL GetHardwareCodecClassDesc(UInt32 formatId, AudioClassDescription* cl
 
 -(void) setGain:(float)gain forEqualizerBand:(int)bandIndex
 {
+#if defined(ONEGRAM_ARMV6)
+    (void)gain;
+    (void)bandIndex;
+    return;
+#else
 	if (!eqUnit)
 	{
 		return;
 	}
-    
+
     OSStatus status;
-	
+
 	CHECK_STATUS_AND_RETURN(AudioUnitSetParameter(eqUnit, kAUNBandEQParam_Gain + bandIndex, kAudioUnitScope_Global, 0, gain, 0));
+#endif
 }
 
 -(AUNode) createConverterNode:(AudioStreamBasicDescription)srcFormat desFormat:(AudioStreamBasicDescription)desFormat
@@ -3145,12 +3164,21 @@ static OSStatus OutputRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*
 
 -(BOOL) equalizerEnabled
 {
+#if defined(ONEGRAM_ARMV6)
+    return NO;
+#else
     return self->equalizerEnabled;
+#endif
 }
 
 -(void) setEqualizerEnabled:(BOOL)value
 {
+#if defined(ONEGRAM_ARMV6)
+    (void)value;
+    self->equalizerEnabled = NO;
+#else
     self->equalizerEnabled = value;
+#endif
 }
 
 

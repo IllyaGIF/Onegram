@@ -167,16 +167,15 @@
         
         rc = sqlite3_step([_statement statement]);
         
-        if (SQLITE_BUSY == rc || SQLITE_LOCKED == rc) {
+        if (SQLITE_LOCKED == rc) {
+            NSLog(@"Error calling sqlite3_step (%d: %s) rs", rc, sqlite3_errmsg([_parentDB sqliteHandle]));
+            sqlite3_reset([_statement statement]);
+            break;
+        }
+        else if (SQLITE_BUSY == rc) {
             // this will happen if the db is locked, like if we are doing an update or insert.
             // in that case, retry the step... and maybe wait just 10 milliseconds.
             retry = YES;
-            if (SQLITE_LOCKED == rc) {
-                rc = sqlite3_reset([_statement statement]);
-                if (rc != SQLITE_LOCKED) {
-                    NSLog(@"Unexpected result from sqlite3_reset (%d) rs", rc);
-                }
-            }
             usleep(20);
             
             if ([_parentDB busyRetryTimeout] && (numberOfRetries++ > [_parentDB busyRetryTimeout])) {
@@ -224,9 +223,15 @@
         [self setupColumnNames];
     }
     
+    NSNumber *n = [_columnNameToIndexMap objectForKey:columnName];
+    
+    if (n) {
+        return [n intValue];
+    }
+    
     columnName = [columnName lowercaseString];
     
-    NSNumber *n = [_columnNameToIndexMap objectForKey:columnName];
+    n = [_columnNameToIndexMap objectForKey:columnName];
     
     if (n) {
         return [n intValue];

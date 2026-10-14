@@ -11,7 +11,7 @@
 {
     TLMsgsAck$msgs_ack_manual *result = [[TLMsgsAck$msgs_ack_manual alloc] init];
     
-    [is readInt32]; // Vector
+    [is readInt32];
     
     int32_t count = [is readInt32];
     NSMutableArray *vector = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];

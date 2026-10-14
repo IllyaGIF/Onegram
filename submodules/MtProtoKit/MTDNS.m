@@ -1,4 +1,5 @@
 #import "MTDNS.h"
+#import "thirdparty/AFNetworking/AFJSONUtilities.h"
 
 #if defined(MtProtoKitDynamicFramework)
 #   import <MTProtoKitDynamic/MTSignal.h>
@@ -106,7 +107,11 @@
         NSDictionary *headers = @{@"Host": @"dns.google.com"};
         
         return [[[MTHttpRequestOperation dataForHttpUrl:[NSURL URLWithString:[NSString stringWithFormat:@"https://google.com/resolve?name=%@", hostname]] headers:headers] mapToSignal:^MTSignal *(NSData *data) {
+#if ONEGRAM_ARMV6
+            NSDictionary *dict = AFJSONDecode(data, NULL);
+#else
             NSDictionary *dict = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+#endif
             if ([dict respondsToSelector:@selector(objectForKey:)]) {
                 NSArray *answer = dict[@"Answer"];
                 if ([answer respondsToSelector:@selector(objectAtIndex:)]) {

@@ -6,6 +6,7 @@
 #import "TGImageUtils.h"
 #import "TGColor.h"
 #import <QuartzCore/QuartzCore.h>
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 
 typedef enum {
     TGMessageImageViewOverlayViewTypeNone = 0,
@@ -1163,14 +1164,14 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
         _contentLayer = [[TGMessageImageViewOverlayLayer alloc] init];
         _contentLayer.radius = 50.0f;
         _contentLayer.frame = CGRectMake(0.0f, 0.0f, 50.0f, 50.0f);
-        _contentLayer.contentsScale = [UIScreen mainScreen].scale;
+        OGPlatformSetLayerContentsScale(_contentLayer, [UIScreen mainScreen].scale);
         [self.layer addSublayer:_contentLayer];
         
         _progressLayer = [[TGMessageImageViewOverlayLayer alloc] init];
         _progressLayer.radius = 50.0f;
         _progressLayer.frame = CGRectMake(0.0f, 0.0f, 50.0f, 50.0f);
         _progressLayer.anchorPoint = CGPointMake(0.5f, 0.5f);
-        _progressLayer.contentsScale = [UIScreen mainScreen].scale;
+        OGPlatformSetLayerContentsScale(_progressLayer, [UIScreen mainScreen].scale);
         _progressLayer.hidden = true;
         [self.layer addSublayer:_progressLayer];
     }

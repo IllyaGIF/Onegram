@@ -36,6 +36,7 @@
     bool _timestampUnlimitedWidth;
     NSTimeInterval _completeDuration;
     bool _blurless;
+    bool _needsReload;
     TGPresentation *_presentation;
 }
 
@@ -88,13 +89,14 @@
     [((TGMessageImageViewContainer *)self.boundView).imageView setExpectExtendedEdges:_expectExtendedEdges];
     [((TGMessageImageViewContainer *)self.boundView).imageView setFlexibleTimestamp:_flexibleTimestamp];
     
-    bool shouldLoad = !TGStringCompare(self.viewStateIdentifier, self.boundView.viewStateIdentifier);
+    bool shouldLoad = _needsReload || !TGStringCompare(self.viewStateIdentifier, self.boundView.viewStateIdentifier);
     
     if (iosMajorVersion() < 6 && [_uri hasPrefix:@"map-thumbnail://"])
         shouldLoad = true;
     
     if (shouldLoad)
     {
+        _needsReload = false;
         [((TGMessageImageViewContainer *)self.boundView).imageView loadUri:_uri withOptions:@{
                             TGImageViewOptionKeepCurrentImageAsPlaceholder: @false,
                                               TGImageViewOptionSynchronous: @false
@@ -127,7 +129,6 @@
     [((TGMessageImageViewContainer *)self.boundView).imageView setCompletionBlock:_completionBlock];
     [((TGMessageImageViewContainer *)self.boundView).imageView setProgressBlock:_progressBlock];
     
-    //((TGMessageImageViewContainer *)self.boundView).imageView.alpha = _mediaVisible ? 1.0f : 0.0f;
     ((TGMessageImageViewContainer *)self.boundView).alpha = _mediaVisible ? 1.0f : 0.0f;
 }
 
@@ -156,7 +157,6 @@
 {
     _mediaVisible = mediaVisible;
     
-    //((TGMessageImageViewContainer *)self.boundView).imageView.alpha = _mediaVisible ? 1.0f : 0.0f;
     ((TGMessageImageViewContainer *)self.boundView).alpha = _mediaVisible ? 1.0f : 0.0f;
 }
 
@@ -168,9 +168,6 @@
         [self _updateViewStateIdentifier];
         
         [((TGMessageImageViewContainer *)self.boundView).imageView loadUri:_uri withOptions:@{
-            // A changed URI can belong to another reused message view. Keeping
-            // its current bitmap here copies the previous media preview into
-            // every item whose own thumbnail is still loading.
             TGImageViewOptionKeepCurrentImageAsPlaceholder: @false,
             TGImageViewOptionSynchronous: @false
         }];
@@ -347,6 +344,11 @@
 
 - (void)reloadImage:(bool)synchronous
 {
+    _needsReload = true;
+    if (self.boundView == nil)
+        return;
+    _needsReload = false;
+
     [((TGMessageImageViewContainer *)self.boundView).imageView loadUri:_uri withOptions:@{
         TGImageViewOptionKeepCurrentImageAsPlaceholder: @true,
         TGImageViewOptionSynchronous: @(synchronous)

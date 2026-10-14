@@ -185,9 +185,16 @@ NSArray * AFQueryStringComponentsFromKeyAndValue(NSString *key, id value) {
 NSArray * AFQueryStringComponentsFromKeyAndDictionaryValue(NSString *key, NSDictionary *value){
     NSMutableArray *mutableQueryStringComponents = [NSMutableArray array];
     
+#if ONEGRAM_ARMV6
+    for (id nestedKey in value) {
+        id nestedValue = [value objectForKey:nestedKey];
+        [mutableQueryStringComponents addObjectsFromArray:AFQueryStringComponentsFromKeyAndValue((key ? [NSString stringWithFormat:@"%@[%@]", key, nestedKey] : nestedKey), nestedValue)];
+    }
+#else
     [value enumerateKeysAndObjectsUsingBlock:^(id nestedKey, id nestedValue, __unused BOOL *stop) {
         [mutableQueryStringComponents addObjectsFromArray:AFQueryStringComponentsFromKeyAndValue((key ? [NSString stringWithFormat:@"%@[%@]", key, nestedKey] : nestedKey), nestedValue)];
     }];
+#endif
     
     return mutableQueryStringComponents;
 }
@@ -195,9 +202,15 @@ NSArray * AFQueryStringComponentsFromKeyAndDictionaryValue(NSString *key, NSDict
 NSArray * AFQueryStringComponentsFromKeyAndArrayValue(NSString *key, NSArray *value) {
     NSMutableArray *mutableQueryStringComponents = [NSMutableArray array];
     
+#if ONEGRAM_ARMV6
+    for (id nestedValue in value) {
+        [mutableQueryStringComponents addObjectsFromArray:AFQueryStringComponentsFromKeyAndValue([NSString stringWithFormat:@"%@[]", key], nestedValue)];
+    }
+#else
     [value enumerateObjectsUsingBlock:^(id nestedValue, __unused NSUInteger idx, __unused BOOL *stop) {
         [mutableQueryStringComponents addObjectsFromArray:AFQueryStringComponentsFromKeyAndValue([NSString stringWithFormat:@"%@[]", key], nestedValue)];
     }];
+#endif
     
     return mutableQueryStringComponents;
 }
@@ -217,10 +230,17 @@ static NSString * AFPropertyListStringFromParameters(NSDictionary *parameters) {
     NSString *propertyListString = nil;
     NSError *error = nil;
     
+#if ONEGRAM_ARMV6
+    NSData *propertyListData = [NSPropertyListSerialization dataFromPropertyList:parameters format:NSPropertyListXMLFormat_v1_0 errorDescription:NULL];
+    if (propertyListData != nil) {
+        propertyListString = [[[NSString alloc] initWithData:propertyListData encoding:NSUTF8StringEncoding] autorelease];
+    }
+#else
     NSData *propertyListData = [NSPropertyListSerialization dataWithPropertyList:parameters format:NSPropertyListXMLFormat_v1_0 options:0 error:&error];
     if (!error) {
         propertyListString = [[[NSString alloc] initWithData:propertyListData encoding:NSUTF8StringEncoding] autorelease];
     }
+#endif
     
     return propertyListString;
 }

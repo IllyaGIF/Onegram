@@ -1,6 +1,8 @@
 #import "MTContext.h"
 
 #import <inttypes.h>
+#import <CoreFoundation/CoreFoundation.h>
+#include <pthread.h>
 
 #import "MTLogging.h"
 #import "MTTimer.h"
@@ -70,6 +72,7 @@
     int64_t _uniqueId;
     
     NSTimeInterval _globalTimeDifference;
+    pthread_mutex_t _globalTimeDifferenceLock;
     
     NSMutableDictionary *_datacenterSeedAddressSetById;
     
@@ -137,6 +140,7 @@
     {
         arc4random_buf(&_uniqueId, sizeof(_uniqueId));
         
+        pthread_mutex_init(&_globalTimeDifferenceLock, NULL);
         _serialization = serialization;
         _apiEnvironment = apiEnvironment;
         _isTestingEnvironment = isTestingEnvironment;
@@ -171,8 +175,6 @@
         _fetchPublicKeysActions = [[NSMutableDictionary alloc] init];
         
         _cleanupSessionInfoDisposables = [[MTDisposableSet alloc] init];
-        
-        [self updatePeriodicTasks];
     }
     return self;
 }
@@ -180,6 +182,7 @@
 - (void)dealloc
 {
     [self cleanup];
+    pthread_mutex_destroy(&_globalTimeDifferenceLock);
 }
 
 + (MTQueue *)contextQueue
@@ -268,15 +271,27 @@
         {
             NSNumber *nGlobalTimeDifference = [keychain objectForKey:@"globalTimeDifference" group:@"temp"];
             if (nGlobalTimeDifference != nil)
-                _globalTimeDifference = [nGlobalTimeDifference doubleValue];
+            {
+                NSTimeInterval difference = [nGlobalTimeDifference doubleValue];
+                pthread_mutex_lock(&_globalTimeDifferenceLock);
+                _globalTimeDifference = difference;
+                pthread_mutex_unlock(&_globalTimeDifferenceLock);
+            }
             
             NSDictionary *datacenterAddressSetById = [keychain objectForKey:@"datacenterAddressSetById" group:@"persistent"];
             if (datacenterAddressSetById != nil)
                 _datacenterAddressSetById = [[NSMutableDictionary alloc] initWithDictionary:datacenterAddressSetById];
             
+#if ONEGRAM_ARMV6
+            for (NSNumber *nDatacenterId in _apiEnvironment.datacenterAddressOverrides) {
+                MTDatacenterAddress *address = [_apiEnvironment.datacenterAddressOverrides objectForKey:nDatacenterId];
+                _datacenterAddressSetById[nDatacenterId] = [[MTDatacenterAddressSet alloc] initWithAddressList:@[address]];
+            }
+#else
             [_apiEnvironment.datacenterAddressOverrides enumerateKeysAndObjectsUsingBlock:^(NSNumber *nDatacenterId, MTDatacenterAddress *address, __unused BOOL *stop) {
                 _datacenterAddressSetById[nDatacenterId] = [[MTDatacenterAddressSet alloc] initWithAddressList:@[address]];
             }];
+#endif
             
             NSDictionary *datacenterGenericTransportSchemeById = [keychain objectForKey:@"datacenterGenericTransportSchemeById" group:@"persistent"];
             if (datacenterGenericTransportSchemeById != nil)
@@ -347,16 +362,14 @@
 
 - (NSTimeInterval)globalTime
 {
-    return [[NSDate date] timeIntervalSince1970] + [self globalTimeDifference];
+    return CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970 + [self globalTimeDifference];
 }
 
 - (NSTimeInterval)globalTimeDifference
 {
-    __block NSTimeInterval result = 0.0;
-    [[MTContext contextQueue] dispatchOnQueue:^
-    {
-        result = _globalTimeDifference;
-    } synchronous:true];
+    pthread_mutex_lock(&_globalTimeDifferenceLock);
+    NSTimeInterval result = _globalTimeDifference;
+    pthread_mutex_unlock(&_globalTimeDifferenceLock);
     
     return result;
 }
@@ -370,13 +383,12 @@
 {
     [[MTContext contextQueue] dispatchOnQueue:^
     {
+        pthread_mutex_lock(&_globalTimeDifferenceLock);
         _globalTimeDifference = globalTimeDifference;
+        pthread_mutex_unlock(&_globalTimeDifferenceLock);
         
-        if (MTLogEnabled()) {
-            MTLog(@"[MTContext#%p: global time difference changed: %.1fs]", (__bridge void *)self, globalTimeDifference);
-        }
         
-        [_keychain setObject:@(_globalTimeDifference) forKey:@"globalTimeDifference" group:@"temp"];
+        [_keychain setObject:@(globalTimeDifference) forKey:@"globalTimeDifference" group:@"temp"];
     }];
 }
 
@@ -394,9 +406,6 @@
     {
         if (addressSet != nil && datacenterId != 0)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTContext#%p: address set updated for %d]", (__bridge void *)self, datacenterId);
-            }
             
             bool updateSchemes = forceUpdateSchemes;
             
@@ -486,9 +495,6 @@
         
         if (updated)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTContext#%p: added address %@ for datacenter %d]", (__bridge void *)self, address, datacenterId);
-            }
             
             _datacenterAddressSetById[@(datacenterId)] = addressSet;
             [_keychain setObject:_datacenterAddressSetById forKey:@"datacenterAddressSetById" group:@"persistent"];
@@ -510,9 +516,6 @@
     {
         if (authInfo != nil && datacenterId != 0)
         {
-            if (MTLogEnabled()) {
-                MTLog(@"[MTContext#%p: auth info updated for %d]", (__bridge void *)self, datacenterId);
-            }
             
             _datacenterAuthInfoById[@(datacenterId)] = authInfo;
             [_keychain setObject:_datacenterAuthInfoById forKey:@"datacenterAuthInfoById" group:@"persistent"];
@@ -602,9 +605,6 @@
             
             if (currentScheme != nil && (previousScheme == nil || ![previousScheme isEqualToScheme:currentScheme]))
             {
-                if (MTLogEnabled()) {
-                    MTLog(@"[MTContext#%p: %@ transport scheme updated for %d: %@]", (__bridge void *)self, media ? @"media" : @"generic", datacenterId, transportScheme);
-                }
                 
                 for (id<MTContextChangeListener> listener in currentListeners)
                 {
@@ -716,10 +716,14 @@
         }
     } synchronous:true];
     
+#if ONEGRAM_ARMV6
+    return [[datacenterIds allObjects] sortedArrayUsingSelector:@selector(compare:)];
+#else
     return [[datacenterIds allObjects] sortedArrayUsingComparator:^NSComparisonResult(NSNumber *n1, NSNumber *n2)
     {
         return [n1 compare:n2];
     }];
+#endif
 }
 
 - (void)enumerateAddressSetsForDatacenters:(void (^)(NSInteger datacenterId, MTDatacenterAddressSet *addressSet, BOOL *stop))block
@@ -731,6 +735,28 @@
         
         NSMutableSet *processedDatacenterIds = [[NSMutableSet alloc] init];
         
+#if ONEGRAM_ARMV6
+        BOOL stop = NO;
+        for (NSNumber *nDatacenterId in _datacenterAddressSetById)
+        {
+            MTDatacenterAddressSet *addressSet = [_datacenterAddressSetById objectForKey:nDatacenterId];
+            [processedDatacenterIds addObject:nDatacenterId];
+            block([nDatacenterId integerValue], addressSet, &stop);
+            if (stop)
+                break;
+        }
+        stop = NO;
+        for (NSNumber *nDatacenterId in _datacenterSeedAddressSetById)
+        {
+            MTDatacenterAddressSet *addressSet = [_datacenterSeedAddressSetById objectForKey:nDatacenterId];
+            if (![processedDatacenterIds containsObject:nDatacenterId])
+            {
+                block([nDatacenterId integerValue], addressSet, &stop);
+                if (stop)
+                    break;
+            }
+        }
+#else
         [_datacenterAddressSetById enumerateKeysAndObjectsUsingBlock:^(NSNumber *nDatacenterId, MTDatacenterAddressSet *addressSet, BOOL *stop)
         {
             [processedDatacenterIds addObject:nDatacenterId];
@@ -742,6 +768,7 @@
             if (![processedDatacenterIds containsObject:nDatacenterId])
                 block([nDatacenterId integerValue], addressSet, stop);
         }];
+#endif
     } synchronous:true];
 }
 
@@ -785,7 +812,12 @@
                 }
             }
             
-            if (candidate.transportClass == [MTHttpTransport class]) {
+            bool preferHttpTransport = _apiEnvironment.preferHttpTransport && !isProxy;
+            if (preferHttpTransport) {
+                if (candidate.transportClass != [MTHttpTransport class]) {
+                    candidate = nil;
+                }
+            } else if (candidate.transportClass == [MTHttpTransport class]) {
                 candidate = nil;
             }
             
@@ -795,7 +827,7 @@
                 result = [self defaultTransportSchemeForDatacenterWithId:datacenterId media:media isProxy:isProxy];
             }
             
-            if (result != nil && ![result isOptimal]) {
+            if (result != nil && ![result isOptimal] && !preferHttpTransport) {
                 if (isProxy) {
                     result = [self defaultTransportSchemeForDatacenterWithId:datacenterId media:media isProxy:isProxy];
                 } else {
@@ -814,14 +846,6 @@
     [[MTContext contextQueue] dispatchOnQueue:^
     {
         result = _datacenterAuthInfoById[@(datacenterId)];
-/*#ifdef DEBUG
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^{
-            if (result.tempAuthKey != nil) {
-                result = [result withUpdatedTempAuthKey:[[MTDatacenterAuthKey alloc] initWithAuthKey:result.tempAuthKey.authKey authKeyId:12345 notBound:result.tempAuthKey.notBound]];
-            }
-        });
-#endif*/
     } synchronous:true];
     
     return result;
@@ -941,7 +965,15 @@
         }
         
         if (selectedAddress != nil) {
-            result = [[MTTransportScheme alloc] initWithTransportClass:[MTTcpTransport class] address:selectedAddress media:media];
+            Class transportClass = [MTTcpTransport class];
+            MTDatacenterAddress *transportAddress = selectedAddress;
+            if (_apiEnvironment.preferHttpTransport && !isProxy && !selectedAddress.restrictToTcp && selectedAddress.secret == nil && ![selectedAddress isIpv6]) {
+                transportClass = [MTHttpTransport class];
+                if (selectedAddress.port != 80) {
+                    transportAddress = [[MTDatacenterAddress alloc] initWithIp:selectedAddress.ip port:80 preferForMedia:selectedAddress.preferForMedia restrictToTcp:false cdn:selectedAddress.cdn preferForProxy:selectedAddress.preferForProxy secret:nil];
+                }
+            }
+            result = [[MTTransportScheme alloc] initWithTransportClass:transportClass address:transportAddress media:media];
         } else {
             [self addressSetForDatacenterWithIdRequired:datacenterId];
         }
@@ -962,6 +994,13 @@
 {
     [[MTContext contextQueue] dispatchOnQueue:^
     {
+        if (_apiEnvironment.preferHttpTransport && !isProxy) {
+            MTTransportScheme *transportScheme = [self defaultTransportSchemeForDatacenterWithId:datacenterId media:media isProxy:false];
+            if (transportScheme != nil) {
+                [self updateTransportSchemeForDatacenterWithId:datacenterId transportScheme:transportScheme media:media isProxy:false];
+            }
+            return;
+        }
         if (_transportSchemeDisposableByDatacenterId == nil)
             _transportSchemeDisposableByDatacenterId = [[NSMutableDictionary alloc] init];
         id<MTDisposable> disposable = _transportSchemeDisposableByDatacenterId[@(datacenterId)];
@@ -1009,9 +1048,6 @@
                 }
             }] startWithNext:^(id next)
             {
-                if (MTLogEnabled()) {
-                    MTLog(@"scheme: %@", next);
-                }
                 __strong MTContext *strongSelf = weakSelf;
                 if (strongSelf != nil)
                 {
@@ -1266,20 +1302,5 @@
     }];
 }
 
-- (void)updatePeriodicTasks
-{
-    [[MTContext contextQueue] dispatchOnQueue:^
-    {
-        int64_t saltsRequiredAtLeastUntilMessageId = (int64_t)(([self globalTime] + 24 * 60.0 * 60.0) * 4294967296);
-        
-        [_datacenterAuthInfoById enumerateKeysAndObjectsUsingBlock:^(NSNumber *nDatacenterId, MTDatacenterAuthInfo *authInfo, __unused BOOL *stop)
-        {
-            if ([authInfo authSaltForMessageId:saltsRequiredAtLeastUntilMessageId == 0])
-            {
-#warning TODO
-            }
-        }];
-    }];
-}
 
 @end

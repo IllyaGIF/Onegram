@@ -54,14 +54,6 @@
                     }
                 }
             }
-//            else if ((userLink & TGUserLinkKnown) && !(userLink & TGUserLinkMyContact))
-//            {
-//                if ([TGDatabaseInstance() uidIsRemoteContact:uid])
-//                {
-//                    static int actionId = 0;
-//                    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%d,breakLink)", actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithInt:uid], @"uid", nil] watcher:TGTelegraphInstance];
-//                }
-//            }
         }
     }
 }
@@ -72,10 +64,15 @@
     
     NSMutableArray *updateUsers = [[NSMutableArray alloc] init];
     NSMutableArray *updateUserChanges = [[NSMutableArray alloc] init];
+
+    NSMutableArray *userIds = [[NSMutableArray alloc] initWithCapacity:userObjects.count];
+    for (TGUser *user in userObjects)
+        [userIds addObject:@(user.uid)];
+    NSDictionary *originalUsers = [[TGDatabase instance] loadUsersForUserIds:userIds];
     
     for (TGUser *user in userObjects)
     {
-        TGUser *originalUser = [[TGDatabase instance] loadUser:user.uid];
+        TGUser *originalUser = originalUsers[@(user.uid)];
         
         int difference = [originalUser differenceFromUser:user];
         if (originalUser == nil || difference != 0)
@@ -105,9 +102,6 @@
                     updatedUser.phoneNumber = originalUser.phoneNumber;
                     updatedUser.phonebookFirstName = originalUser.phonebookFirstName;
                     updatedUser.phonebookLastName = originalUser.phonebookLastName;
-                    // Minimal users do not carry the full premium emoji state.
-                    // Do not let a lightweight dialog/history update erase the
-                    // status that was fetched from the complete self user.
                     updatedUser.isPremium = originalUser.isPremium;
                     updatedUser.emojiStatusDocumentId = originalUser.emojiStatusDocumentId;
                     if (updatedUser.modernUserId == 0)
@@ -157,7 +151,6 @@
     {
         [TGUserDataRequestBuilder executeUserDataUpdate:downloadedUserData];
         
-        // In this case the actor was explicitly invoked, thus we don't need to call nodeRetrieved
     }
     else
     {

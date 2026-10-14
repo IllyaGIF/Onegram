@@ -103,4 +103,56 @@
 
 @end
 
+@interface TLCodexPollAnswerValue : NSObject <TLObject>
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) NSString *text;
+@property (nonatomic, retain) NSData *option;
+@property (nonatomic, retain) id media;
+@property (nonatomic, retain) id addedBy;
+@property (nonatomic) int32_t date;
+
+@end
+
+@interface TLCodexPollValue : NSObject <TLObject>
+
+@property (nonatomic) int64_t pollId;
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) NSString *question;
+@property (nonatomic, retain) NSArray *answers;
+@property (nonatomic) int32_t closePeriod;
+@property (nonatomic) int32_t closeDate;
+@property (nonatomic, retain) NSArray *countries;
+@property (nonatomic) int64_t pollHash;
+
+@end
+
+@interface TLCodexPollAnswerVotersValue : NSObject <TLObject>
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) NSData *option;
+@property (nonatomic) int32_t voters;
+@property (nonatomic, retain) NSArray *recentVoters;
+
+@end
+
+@interface TLCodexPollResultsValue : NSObject <TLObject>
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) NSArray *results;
+@property (nonatomic) int32_t totalVoters;
+@property (nonatomic, retain) NSArray *recentVoters;
+@property (nonatomic, retain) NSString *solution;
+@property (nonatomic, retain) NSArray *solutionEntities;
+@property (nonatomic, retain) id solutionMedia;
+
+@end
+
+@interface TLMessageMedia$messageMediaPollCodex : TLMessageMedia
+
+@property (nonatomic, retain) TLCodexPollValue *poll;
+@property (nonatomic, retain) TLCodexPollResultsValue *results;
+
+@end
+
 #endif

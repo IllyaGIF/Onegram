@@ -218,6 +218,12 @@ static void TGStickerCompleteLoadTask()
         {
             [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
         }
+        else if ([[TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerImageDataSource uriPrefix].length]][@"cacheOnly"] boolValue])
+        {
+            if (completion != nil)
+                completion([TGStickerImageDataSource resultForUnavailableImage]);
+            [previewTask completeQueueSlot];
+        }
         else
         {
             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerImageDataSource uriPrefix].length]];
@@ -403,7 +409,6 @@ static void TGStickerCompleteLoadTask()
 {
     if (isCancelled && isCancelled())
     {
-        TGLog(@"[TGPhotoMediaPreviewImageDataSource cancelled while loading %@]", uri);
         return nil;
     }
     
@@ -447,10 +452,7 @@ static void TGStickerCompleteLoadTask()
             image = [UIImage convertFromGZippedData:cachedFilePath size:size];
         }
         
-        if (image != nil)
-        {
-        }
-        else
+        if (image == nil)
         {
             if ([[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL])
             {

@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//channelForbidden#289da732 flags:# broadcast:flags.5?true megagroup:flags.8?true id:int access_hash:long title:string until_date:flags.16?int = Chat;
 
 @implementation TLChat$channelForbidden
 

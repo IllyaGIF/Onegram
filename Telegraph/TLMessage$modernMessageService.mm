@@ -7,7 +7,6 @@
 #import "TLUser$modernUser.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
-//messageService flags:# out:flags.1?true mentioned:flags.4?true media_unread:flags.5?true silent:flags.13?true post:flags.14?true id:int from_id:flags.8?int to_id:Peer date:int action:MessageAction = Message;
 
 static id<TLObject> TGModernServiceReadObject(NSInputStream *is, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
@@ -81,7 +80,6 @@ static TLPeer *TGModernServiceReadPeerCompat(NSInputStream *is, id<TLSerializati
     
     int32_t highPeerId = [is readInt32];
     int64_t rawPeerId = (((int64_t)highPeerId) << 32) | ((uint32_t)signature);
-    TGLog(@"MSG legacy service raw peer_id64=%lld low=%d high=%d", rawPeerId, signature, highPeerId);
     if (rawPeerId < 0)
     {
         TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
@@ -133,7 +131,6 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
     }
     else if (signature > 0 && signature < 10000000)
     {
-        TGLog(@"MSG legacy service reply_to_msg_id=%d", signature);
         return signature;
     }
     

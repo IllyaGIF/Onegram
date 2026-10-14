@@ -36,9 +36,9 @@
     change->_fetchResultBeforeChanges = [[TGMediaAssetFetchResult alloc] initWithPHFetchResult:changeDetails.fetchResultBeforeChanges reversed:reversed];
     change->_fetchResultAfterChanges = [[TGMediaAssetFetchResult alloc] initWithPHFetchResult:changeDetails.fetchResultAfterChanges reversed:reversed];
     change->_hasIncrementalChanges = changeDetails.hasIncrementalChanges;
-    change->_removedIndexes = [self transponedIndexSet:changeDetails.removedIndexes reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:0 insertedCount:0]; //changeDetails.removedIndexes;
-    change->_insertedIndexes = [self transponedIndexSet:changeDetails.insertedIndexes reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:changeDetails.removedIndexes.count insertedCount:changeDetails.insertedIndexes.count]; //changeDetails.insertedIndexes;
-    change->_updatedIndexes = [self transponedIndexSet:changeDetails.changedIndexes reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:changeDetails.removedIndexes.count insertedCount:changeDetails.insertedIndexes.count]; //changeDetails.changedIndexes;
+    change->_removedIndexes = [self transponedIndexSet:changeDetails.removedIndexes reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:0 insertedCount:0];
+    change->_insertedIndexes = [self transponedIndexSet:changeDetails.insertedIndexes reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:changeDetails.removedIndexes.count insertedCount:changeDetails.insertedIndexes.count];
+    change->_updatedIndexes = [self transponedIndexSet:changeDetails.changedIndexes reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:changeDetails.removedIndexes.count insertedCount:changeDetails.insertedIndexes.count];
     change->_hasMoves = changeDetails.hasMoves;
     
     if (changeDetails.hasMoves)
@@ -47,7 +47,7 @@
         [changeDetails enumerateMovesWithBlock:^(NSUInteger fromIndex, NSUInteger toIndex)
         {
             TGMediaAssetFetchResultChangeMovePair *move = [[TGMediaAssetFetchResultChangeMovePair alloc] init];
-            move.from = [self transponedIndex:fromIndex reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:change->_removedIndexes.count insertedCount:change->_insertedIndexes.count]; //fromIndex;
+            move.from = [self transponedIndex:fromIndex reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:change->_removedIndexes.count insertedCount:change->_insertedIndexes.count];
             move.to = [self transponedIndex:toIndex reversed:reversed initialCount:changeDetails.fetchResultBeforeChanges.count removedCount:change->_removedIndexes.count insertedCount:change->_insertedIndexes.count];
             [moves addObject:move];
         }];

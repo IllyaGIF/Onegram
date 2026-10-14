@@ -8,6 +8,7 @@
 
 #import "STPSwitchTableViewCell.h"
 #import "STPColorUtils.h"
+#import "../../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface STPSwitchTableViewCell()
 
@@ -58,12 +59,12 @@
                                                     color2:self.theme.secondaryBackgroundColor];
     // Thumb tint color changes the shadow's tint as well, so we only want to set it when the switch is off-white anyway.
     if (![thumbTintColor isEqual:[UIColor whiteColor]]) {
-        self.switchView.thumbTintColor = thumbTintColor;
+        OGPlatformSetSwitchThumbTintColor(self.switchView, thumbTintColor);
     }
     self.backgroundColor = [UIColor clearColor];
 	self.switchView.tintColor = self.theme.tertiaryBackgroundColor;
 	self.switchView.backgroundColor = self.theme.tertiaryBackgroundColor;
-    self.switchView.onTintColor = self.theme.accentColor;
+    OGPlatformSetSwitchColors(self.switchView, self.theme.accentColor, self.theme.tertiaryBackgroundColor);
     self.captionLabel.font = self.theme.font;
     self.contentView.backgroundColor = self.theme.secondaryBackgroundColor;
 	self.captionLabel.textColor = self.theme.primaryForegroundColor;

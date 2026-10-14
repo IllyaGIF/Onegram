@@ -15,10 +15,18 @@
     
     UIView *_controlsWrapper;
     UILabel *_bitrateLabel;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     UIStepper *_bitrateStepper;
+#else
+    UISlider *_bitrateStepper;
+#endif
     
     UILabel *_packetLossLabel;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     UIStepper *_packetLossStepper;
+#else
+    UISlider *_packetLossStepper;
+#endif
     
     UILabel *_p2pLabel;
     UISwitch *_p2pSwitch;
@@ -53,7 +61,6 @@
         [_debugSettingsButton sizeToFit];
         _debugSettingsButton.frame = CGRectMake(ceil((self.frame.size.width - _debugSettingsButton.frame.size.width) / 2.0f), self.frame.size.height - _debugSettingsButton.frame.size.height - 20.0f, _debugSettingsButton.frame.size.width, _debugSettingsButton.frame.size.height);
         [_debugSettingsButton addTarget:self action:@selector(debugSettingsPressed) forControlEvents:UIControlEventTouchUpInside];
-        //[self addSubview:_debugSettingsButton];
         
         _debugSettingsView = [[UIView alloc] initWithFrame:self.bounds];
         _debugSettingsView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -68,11 +75,17 @@
         _bitrateLabel.frame = CGRectMake(0, 6, 180, 25);
         [_controlsWrapper addSubview:_bitrateLabel];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         _bitrateStepper = [[UIStepper alloc] init];
+#else
+        _bitrateStepper = [[UISlider alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 94.0f, 23.0f)];
+#endif
         _bitrateStepper.minimumValue = 8;
         _bitrateStepper.maximumValue = 32;
         _bitrateStepper.value = 25;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         _bitrateStepper.stepValue = 1;
+#endif
         _bitrateStepper.frame = CGRectMake(_controlsWrapper.frame.size.width - _bitrateStepper.frame.size.width, 0, _bitrateStepper.frame.size.width, _bitrateStepper.frame.size.height);
         [_bitrateStepper addTarget:self action:@selector(bitrateChanged:) forControlEvents:UIControlEventValueChanged];
         [_controlsWrapper addSubview:_bitrateStepper];
@@ -82,11 +95,17 @@
         _packetLossLabel.frame = CGRectMake(0, 42, 180, 25);
         [_controlsWrapper addSubview:_packetLossLabel];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         _packetLossStepper = [[UIStepper alloc] init];
+#else
+        _packetLossStepper = [[UISlider alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 94.0f, 23.0f)];
+#endif
         _packetLossStepper.minimumValue = 0;
         _packetLossStepper.maximumValue = 100;
         _packetLossStepper.value = 0;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         _packetLossStepper.stepValue = 5;
+#endif
         _packetLossStepper.frame = CGRectMake(_controlsWrapper.frame.size.width - _packetLossStepper.frame.size.width, _bitrateStepper.frame.size.height + 10, _packetLossStepper.frame.size.width, _packetLossStepper.frame.size.height);
         [_packetLossStepper addTarget:self action:@selector(packetLossChanged:) forControlEvents:UIControlEventValueChanged];
         [_controlsWrapper addSubview:_packetLossStepper];
@@ -124,17 +143,23 @@
     return self;
 }
 
-- (void)bitrateChanged:(UIStepper *)__unused sender
+- (void)bitrateChanged:(id)__unused sender
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+    _bitrateStepper.value = roundf(_bitrateStepper.value);
+#endif
     [self _updateValues];
 }
 
-- (void)packetLossChanged:(UIStepper *)__unused sender
+- (void)packetLossChanged:(id)__unused sender
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 50000
+    _packetLossStepper.value = roundf(_packetLossStepper.value / 5.0f) * 5.0f;
+#endif
     [self _updateValues];
 }
 
-- (void)p2pChanged:(UIStepper *)__unused sender
+- (void)p2pChanged:(UISwitch *)__unused sender
 {
     [self _updateValues];
 }

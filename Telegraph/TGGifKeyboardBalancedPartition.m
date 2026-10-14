@@ -9,17 +9,14 @@
     NSInteger k = numPartitions;
     NSInteger n = [sequence count];
     
-    // allocate a table buffer of n * k integers
     NSInteger tableSize = sizeof(NSInteger) * n * k;
     NSInteger *tmpTable = (NSInteger *)malloc(tableSize);
     memset(tmpTable, 0, tableSize);
     
-    // allocate a solution buffer of (n - 1) * (k - 1) integers
     NSInteger solutionSize = sizeof(NSInteger) * (n - 1) * (k - 1);
     NSInteger *solution = (NSInteger *)malloc(solutionSize);
     memset(solution, 0, solutionSize);
     
-    // fill table with initial values
     for (NSInteger i = 0; i < n; i++) {
         NSInteger offset = i? NH_LP_TABLE_LOOKUP(tmpTable, i - 1, 0, k) : 0;
         NH_LP_TABLE_LOOKUP(tmpTable, i, 0, k) = [sequence[i] integerValue] + offset;
@@ -29,7 +26,6 @@
         NH_LP_TABLE_LOOKUP(tmpTable, 0, j, k) = [sequence[0] integerValue];
     }
     
-    // calculate the costs and fill the solution buffer
     for (NSInteger i = 1; i < n; i++) {
         for (NSInteger j = 1; j < k; j++) {
             NSInteger currentMin = 0;
@@ -51,7 +47,6 @@
         }
     }
     
-    // free the tmp table, we don't need it anymore
     free(tmpTable);
     
     return solution;
@@ -76,7 +71,6 @@
         return @[sequence];
     }
     
-    // get the solution table
     NSInteger *solution = [self linearPartitionTable:sequence numPartitions:numberOfPartitions];
     NSInteger solutionRowSize = numberOfPartitions - 1;
     
@@ -100,7 +94,6 @@
         k = k - 1;
     }
     
-    // free the solution table because we don't need it anymore
     free(solution);
     
     NSMutableArray *currentAnswer = [NSMutableArray array];

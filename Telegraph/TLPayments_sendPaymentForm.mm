@@ -30,7 +30,6 @@
     return 64;
 }
 
-//payments.sendPaymentForm flags:# msg_id:int requested_info_id:flags.0?string shipping_option_id:flags.1?string credentials:InputPaymentCredentials = payments.PaymentResult;
 
 - (void)TLserialize:(NSOutputStream *)os
 {

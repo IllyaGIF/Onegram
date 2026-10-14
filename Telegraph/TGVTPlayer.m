@@ -1,3 +1,4 @@
+#if !defined(ONEGRAM_ARMV6)
 #import "TGVTPlayer.h"
 
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
@@ -147,7 +148,6 @@ static int32_t nextSessionId = 0;
 
 - (void)pollFrames:(NSUInteger)count {
     [_queue dispatch:^{
-        //TGLog(@"poll %x %d", self, (int)count);
         
         if (!_initialized) {
             _initialized = true;
@@ -194,8 +194,7 @@ static int32_t nextSessionId = 0;
         if (_decompressionSession != NULL) {
             NSInteger remainingCount = (NSInteger)count;
             NSInteger decodedFrames = 0;
-            CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
-            while (_assetReader.status == AVAssetReaderStatusReading && remainingCount-- > 0/* && _requestedFrames <= (NSInteger)highWaterLimit*/) {
+            while (_assetReader.status == AVAssetReaderStatusReading && remainingCount-- > 0) {
                 CMSampleBufferRef sampleBuffer = [_videoTrackOutput copyNextSampleBuffer];
                 if (sampleBuffer != NULL) {
                     _requestedFrames++;
@@ -209,14 +208,12 @@ static int32_t nextSessionId = 0;
                     break;
                 }
             }
-            TGLog(@"Decoded %d in %f ms", (int)decodedFrames, (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
             
             if (_assetReader.status == AVAssetReaderStatusFailed) {
                 TGLog(@"(TGVTPlayer copyNextSampleBuffer error: %@)", _assetReader.error);
             } else if (_assetReader.status == AVAssetReaderStatusCompleted) {
                 [_assetReader cancelReading];
                 
-                //VTDecompressionSessionWaitForAsynchronousFrames(_decompressionSession);
                 VTDecompressionSessionInvalidate(_decompressionSession);
                 CFRelease(_decompressionSession);
                 _decompressionSession = nil;
@@ -238,7 +235,6 @@ static int32_t nextSessionId = 0;
             if (frame != nil) {
                 frame->_presentationTime += _referencePresentationTime;
             }
-            //TGLog(@"frame %x", self);
             _nextFrame(frame, false);
         }
     }];
@@ -248,7 +244,6 @@ static int32_t nextSessionId = 0;
 
 static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCon, __unused void *sourceFrameRefCon, OSStatus status, __unused VTDecodeInfoFlags infoFlags, CVImageBufferRef imageBuffer, CMTime presentationTimestamp, CMTime presentationDuration) {
     if (status != noErr) {
-        //Console.WriteLine ("Error decompresssing frame at time: {0:#.###} error: {1} infoFlags: {2}", (float)presentationTimeStamp.Value / presentationTimeStamp.TimeScale, (int)status, flags);
         return;
     }
     
@@ -346,7 +341,6 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
                 }
             }
         }];
-        TGLog(@"session %x", _session);
         [self _displayFrame];
     }
 }
@@ -385,10 +379,7 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
 }
 
 - (void)_requestFrames:(NSUInteger)count {
-    //if (_requestedFrameCount < (NSInteger)highWaterLimit) {
-    //    _requestedFrameCount += count;
         [_session pollFrames:count];
-    //}
 }
 
 - (void)stop {
@@ -399,3 +390,4 @@ static void TGVTPlayerDecompressionOutputCallback(void *decompressionOutputRefCo
 }
 
 @end
+#endif

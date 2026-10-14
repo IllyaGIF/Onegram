@@ -2,7 +2,11 @@
 
 #import "UIImage+ImageEffects.h"
 
+#import "../../OnegramPlatform/OGPlatformGraphics.h"
+
+#if !defined(ONEGRAM_ARMV6)
 #import <Accelerate/Accelerate.h>
+#endif
 #import <float.h>
 
 
@@ -53,7 +57,6 @@
 
 - (UIImage *)applyBlurWithRadius:(CGFloat)blurRadius tintColor:(UIColor *)tintColor saturationDeltaFactor:(CGFloat)saturationDeltaFactor maskImage:(UIImage *)maskImage
 {
-    // Check pre-conditions.
     if (self.size.width < 1 || self.size.height < 1) {
         NSLog (@"*** error: invalid size: (%.2f x %.2f). Both dimensions must be >= 1: %@", self.size.width, self.size.height, self);
         return nil;
@@ -79,7 +82,11 @@
         CGContextTranslateCTM(effectInContext, 0, -self.size.height);
         CGContextDrawImage(effectInContext, imageRect, self.CGImage);
 
+#if defined(ONEGRAM_ARMV6)
+        OGPlatformARGB8888Buffer effectInBuffer;
+#else
         vImage_Buffer effectInBuffer;
+#endif
         effectInBuffer.data     = CGBitmapContextGetData(effectInContext);
         effectInBuffer.width    = CGBitmapContextGetWidth(effectInContext);
         effectInBuffer.height   = CGBitmapContextGetHeight(effectInContext);
@@ -87,33 +94,31 @@
     
         UIGraphicsBeginImageContextWithOptions(self.size, NO, [[UIScreen mainScreen] scale]);
         CGContextRef effectOutContext = UIGraphicsGetCurrentContext();
+#if defined(ONEGRAM_ARMV6)
+        OGPlatformARGB8888Buffer effectOutBuffer;
+#else
         vImage_Buffer effectOutBuffer;
+#endif
         effectOutBuffer.data     = CGBitmapContextGetData(effectOutContext);
         effectOutBuffer.width    = CGBitmapContextGetWidth(effectOutContext);
         effectOutBuffer.height   = CGBitmapContextGetHeight(effectOutContext);
         effectOutBuffer.rowBytes = CGBitmapContextGetBytesPerRow(effectOutContext);
 
         if (hasBlur) {
-            // A description of how to compute the box kernel width from the Gaussian
-            // radius (aka standard deviation) appears in the SVG spec:
-            // http://www.w3.org/TR/SVG/filters.html#feGaussianBlurElement
-            // 
-            // For larger values of 's' (s >= 2.0), an approximation can be used: Three
-            // successive box-blurs build a piece-wise quadratic convolution kernel, which
-            // approximates the Gaussian kernel to within roughly 3%.
-            //
-            // let d = floor(s * 3*sqrt(2*pi)/4 + 0.5)
-            // 
-            // ... if d is odd, use three box-blurs of size 'd', centered on the output pixel.
-            // 
             CGFloat inputRadius = blurRadius * [[UIScreen mainScreen] scale];
             NSUInteger radius = (NSUInteger)(CGFloor(inputRadius * 3.0f * ((CGFloat)sqrt(2 * M_PI)) / 4 + 0.5f));
             if (radius % 2 != 1) {
-                radius += 1; // force radius to be odd so that the three box-blur methodology works.
+                radius += 1;
             }
+#if defined(ONEGRAM_ARMV6)
+            OGPlatformBoxConvolveARGB8888(&effectInBuffer, &effectOutBuffer, radius, radius);
+            OGPlatformBoxConvolveARGB8888(&effectOutBuffer, &effectInBuffer, radius, radius);
+            OGPlatformBoxConvolveARGB8888(&effectInBuffer, &effectOutBuffer, radius, radius);
+#else
             vImageBoxConvolve_ARGB8888(&effectInBuffer, &effectOutBuffer, NULL, 0, 0, (uint32_t)radius, (uint32_t)radius, 0, kvImageEdgeExtend);
             vImageBoxConvolve_ARGB8888(&effectOutBuffer, &effectInBuffer, NULL, 0, 0, (uint32_t)radius, (uint32_t)radius, 0, kvImageEdgeExtend);
             vImageBoxConvolve_ARGB8888(&effectInBuffer, &effectOutBuffer, NULL, 0, 0, (uint32_t)radius, (uint32_t)radius, 0, kvImageEdgeExtend);
+#endif
         }
         BOOL effectImageBuffersAreSwapped = NO;
         if (hasSaturationChange) {
@@ -131,11 +136,19 @@
                 saturationMatrix[i] = (int16_t)CGRound(floatingPointSaturationMatrix[i] * divisor);
             }
             if (hasBlur) {
+#if defined(ONEGRAM_ARMV6)
+                OGPlatformSaturateBGRA8888(&effectOutBuffer, &effectInBuffer, saturationDeltaFactor);
+#else
                 vImageMatrixMultiply_ARGB8888(&effectOutBuffer, &effectInBuffer, saturationMatrix, divisor, NULL, NULL, kvImageNoFlags);
+#endif
                 effectImageBuffersAreSwapped = YES;
             }
             else {
+#if defined(ONEGRAM_ARMV6)
+                OGPlatformSaturateBGRA8888(&effectInBuffer, &effectOutBuffer, saturationDeltaFactor);
+#else
                 vImageMatrixMultiply_ARGB8888(&effectInBuffer, &effectOutBuffer, saturationMatrix, divisor, NULL, NULL, kvImageNoFlags);
+#endif
             }
         }
         if (!effectImageBuffersAreSwapped)
@@ -147,16 +160,13 @@
         UIGraphicsEndImageContext();
     }
 
-    // Set up output context.
     UIGraphicsBeginImageContextWithOptions(self.size, NO, [[UIScreen mainScreen] scale]);
     CGContextRef outputContext = UIGraphicsGetCurrentContext();
     CGContextScaleCTM(outputContext, 1.0, -1.0);
     CGContextTranslateCTM(outputContext, 0, -self.size.height);
 
-    // Draw base image.
     CGContextDrawImage(outputContext, imageRect, self.CGImage);
 
-    // Draw effect image.
     if (hasBlur) {
         CGContextSaveGState(outputContext);
         if (maskImage) {
@@ -166,7 +176,6 @@
         CGContextRestoreGState(outputContext);
     }
 
-    // Add in color tint.
     if (tintColor) {
         CGContextSaveGState(outputContext);
         CGContextSetFillColorWithColor(outputContext, tintColor.CGColor);
@@ -174,7 +183,6 @@
         CGContextRestoreGState(outputContext);
     }
 
-    // Output image is ready.
     UIImage *outputImage = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
 

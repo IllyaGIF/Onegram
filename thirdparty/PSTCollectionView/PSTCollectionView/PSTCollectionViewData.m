@@ -10,6 +10,7 @@
 
 @interface PSTCollectionViewData () {
     CGRect _validLayoutRect;
+    NSUInteger _invalidationCount;
 
     NSInteger _numItems;
     NSInteger _numSections;
@@ -73,6 +74,7 @@
 #pragma mark - Public
 
 - (void)invalidate {
+    _invalidationCount++;
     _collectionViewDataFlags.itemCountsAreValid = NO;
     _collectionViewDataFlags.layoutIsPrepared = NO;
     _validLayoutRect = CGRectNull;  // don't set CGRectZero in case of _contentSize=CGSizeZero
@@ -90,12 +92,26 @@
     if (!CGRectEqualToRect(_validLayoutRect, rect)) {
         _validLayoutRect = rect;
         // we only want cell layoutAttributes & supplementaryView layoutAttributes
+#if ONEGRAM_ARMV6
+        NSArray *layoutAttributes = [self.layout layoutAttributesForElementsInRect:rect];
+        NSMutableArray *filteredLayoutAttributes = [NSMutableArray arrayWithCapacity:[layoutAttributes count]];
+        for (PSTCollectionViewLayoutAttributes *evaluatedObject in layoutAttributes) {
+            if ([evaluatedObject isKindOfClass:PSTCollectionViewLayoutAttributes.class] &&
+                    ([evaluatedObject isCell] ||
+                            [evaluatedObject isSupplementaryView] ||
+                            [evaluatedObject isDecorationView])) {
+                [filteredLayoutAttributes addObject:evaluatedObject];
+            }
+        }
+        self.cachedLayoutAttributes = filteredLayoutAttributes;
+#else
         self.cachedLayoutAttributes = [[self.layout layoutAttributesForElementsInRect:rect] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(PSTCollectionViewLayoutAttributes *evaluatedObject, NSDictionary *bindings) {
             return ([evaluatedObject isKindOfClass:PSTCollectionViewLayoutAttributes.class] &&
                     ([evaluatedObject isCell] ||
                             [evaluatedObject isSupplementaryView] ||
                             [evaluatedObject isDecorationView]));
         }]];
+#endif
     }
 }
 
@@ -164,6 +180,10 @@
 - (NSUInteger)globalIndexForItemAtIndexPath:(NSIndexPath *)indexPath {
     NSInteger offset = [self numberOfItemsBeforeSection:indexPath.section] + indexPath.item;
     return (NSUInteger)offset;
+}
+
+- (NSUInteger)invalidationCount {
+    return _invalidationCount;
 }
 
 - (BOOL)layoutIsPrepared {

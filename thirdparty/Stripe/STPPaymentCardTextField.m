@@ -14,6 +14,7 @@
 #import "STPFormTextField.h"
 #import "STPImageLibrary.h"
 #import "STPWeakStrongMacros.h"
+#import "../../OnegramPlatform/OGPlatformUIKit.h"
 
 #define FAUXPAS_IGNORED_IN_METHOD(...)
 
@@ -32,7 +33,7 @@
 
 @property(nonatomic, readwrite, strong)STPPaymentCardTextFieldViewModel *viewModel;
 
-@property(nonatomic, readonly, unsafe_unretained)UITextField *currentFirstResponderField;
+@property(nonatomic, readonly, unsafe_unretained)STPFormTextField *currentFirstResponderField;
 
 @property(nonatomic, assign)BOOL numberFieldShrunk;
 
@@ -315,9 +316,8 @@ CGFloat const STPPaymentCardTextFieldDefaultPadding = 13;
 - (void)setInputAccessoryView:(UIView *)inputAccessoryView {
     _inputAccessoryView = inputAccessoryView;
     
-    for (STPFormTextField *field in [self allFields]) {
-        field.inputAccessoryView = inputAccessoryView;
-    }
+    for (STPFormTextField *field in [self allFields])
+        OGPlatformSetTextFieldInputAccessoryView(field, inputAccessoryView);
 }
 
 #pragma mark UIControl

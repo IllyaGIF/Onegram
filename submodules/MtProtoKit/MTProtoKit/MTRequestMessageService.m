@@ -1,6 +1,8 @@
 
 
 #import "MTRequestMessageService.h"
+#import "../../../OnegramRuntime/OGRuntime.h"
+#import "../../../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "MTLogging.h"
 #import "MTTime.h"
@@ -26,23 +28,6 @@
 #import "MTRpcError.h"
 #import "MTDropRpcResultMessage.h"
 
-static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
-{
-    if (data.length == 0)
-        return @"";
-    
-    const unsigned char *bytes = data.bytes;
-    NSUInteger length = MIN(data.length, limit);
-    NSMutableString *string = [[NSMutableString alloc] initWithCapacity:length * 2];
-    for (NSUInteger i = 0; i < length; i++)
-        [string appendFormat:@"%02x", bytes[i]];
-    
-    if (data.length > limit)
-        [string appendFormat:@"...(+%lu)", (unsigned long)(data.length - limit)];
-    
-    return string;
-}
-
 @interface MTRequestMessageService ()
 {
     MTContext *_context;
@@ -56,11 +41,37 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
     
     MTTimer *_requestsServiceTimer;
     MTContextBlockChangeListener *_contextChangeListener;
+    NSMutableDictionary *_floodWaitUntilByMethod;
 }
 
 @end
 
+static NSString *MTRequestFloodWaitKey(MTRequest *request)
+{
+    id metadata = request.metadata;
+    if (metadata == nil)
+        return @"";
+    return NSStringFromClass([metadata class]);
+}
+
 @implementation MTRequestMessageService
+
+- (CFAbsoluteTime)_floodWaitUntilForRequest:(MTRequest *)request currentTime:(CFAbsoluteTime)currentTime
+{
+    if (_floodWaitUntilByMethod.count == 0)
+        return 0.0;
+    NSString *key = MTRequestFloodWaitKey(request);
+    NSNumber *value = _floodWaitUntilByMethod[key];
+    if (value == nil)
+        return 0.0;
+    CFAbsoluteTime until = [value doubleValue];
+    if (until <= currentTime + DBL_EPSILON)
+    {
+        [_floodWaitUntilByMethod removeObjectForKey:key];
+        return 0.0;
+    }
+    return until;
+}
 
 - (void)_installContextChangeListener
 {
@@ -99,6 +110,7 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
         
         _requests = [[NSMutableArray alloc] init];
         _dropReponseContexts = [[NSMutableArray alloc] init];
+        _floodWaitUntilByMethod = [[NSMutableDictionary alloc] init];
     }
     return self;
 }
@@ -126,7 +138,10 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
         if (![_requests containsObject:request])
         {
             [_requests addObject:request];
-            [mtProto requestTransportTransaction];
+            if ([self _floodWaitUntilForRequest:request currentTime:MTAbsoluteSystemTime()] > 0.0)
+                [self updateRequestsTimer];
+            else
+                [mtProto requestTransportTransaction];
         }
     }];
 }
@@ -156,11 +171,6 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                     anyNewDropRequests = true;
                 }
                 
-                if (request.requestContext.messageId != 0) {
-                    if (MTLogEnabled()) {
-                        MTLog(@"[MTRequestMessageService#%p drop %" PRId64 "]", (__bridge void *)self, request.requestContext.messageId);
-                    }
-                }
                 
                 request.requestContext = nil;
                 [_requests removeObjectAtIndex:(NSUInteger)index];
@@ -235,6 +245,16 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
         
         for (MTRequest *request in _requests)
         {
+            if (request.requestContext == nil)
+            {
+                CFAbsoluteTime floodWaitUntil = [self _floodWaitUntilForRequest:request currentTime:currentTime];
+                if (floodWaitUntil > currentTime)
+                {
+                    needTimer = true;
+                    minWaitTime = MIN(minWaitTime, floodWaitUntil - currentTime);
+                    continue;
+                }
+            }
             if (request.errorContext != nil)
             {
                 if (request.requestContext == nil)
@@ -347,21 +367,16 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
     {
         MTBuffer *buffer = [[MTBuffer alloc] init];
         
-        // invokeWithLayer
         [buffer appendInt32:(int32_t)0xda9b0d0d];
         [buffer appendInt32:(int32_t)[_serialization currentLayer]];
         
-        //initConnection#785188b8 {X:Type} flags:# api_id:int device_model:string system_version:string app_version:string system_lang_code:string lang_pack:string lang_code:string proxy:flags.0?InputClientProxy query:!X = X;
-        
-        //inputClientProxy address:string port:int = InputClientProxy;
-
         int32_t flags = 0;
         if (_apiEnvironment.socksProxySettings.secret != nil) {
             flags |= (1 << 0);
         }
         
         
-        [buffer appendInt32:(int32_t)0x785188b8];
+        [buffer appendInt32:(int32_t)0xc1cd5ea9];
         [buffer appendInt32:flags];
         [buffer appendInt32:(int32_t)_apiEnvironment.apiId];
         [buffer appendTLString:_apiEnvironment.deviceModel];
@@ -404,9 +419,11 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                 {
                     if (anotherRequest.requestContext != nil)
                     {
+#if defined(ONEGRAM_DIAGNOSTICS)
+                        OGPlatformDiagnosticLog(@"SENDSTATE dependency rpc=%@ after=%@ afterMsg=%lld afterDelivered=%d afterSent=%d", MTRequestFloodWaitKey(request), MTRequestFloodWaitKey(anotherRequest), anotherRequest.requestContext.messageId, anotherRequest.requestContext.delivered ? 1 : 0, anotherRequest.requestContext.transactionId != nil ? 1 : 0);
+#endif
                         MTBuffer *buffer = [[MTBuffer alloc] init];
                         
-                        // invokeAfterMsg
                         [buffer appendInt32:(int32_t)0xcb9f372d];
                         [buffer appendInt64:anotherRequest.requestContext.messageId];
                         [buffer appendBytes:currentData.bytes length:currentData.length];
@@ -437,6 +454,9 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
     for (MTRequest *request in _requests)
     {
         if (request.dependsOnPasswordEntry && [_context isPasswordInputRequiredForDatacenterWithId:mtProto.datacenterId])
+            continue;
+        
+        if (request.requestContext == nil && [self _floodWaitUntilForRequest:request currentTime:currentTime] > currentTime)
             continue;
         
         if (request.errorContext != nil)
@@ -547,6 +567,10 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                     MTPreparedMessage *preparedMessage = messageInternalIdToPreparedMessage[messageInternalId];
                     if (preparedMessage != nil && messageInternalIdToTransactionId[messageInternalId] != nil)
                     {
+#if defined(ONEGRAM_DIAGNOSTICS)
+                        if (request.shouldDependOnRequest != nil)
+                            OGPlatformDiagnosticLog(@"SENDSTATE transmitted rpc=%@ msg=%lld pending=%d", MTRequestFloodWaitKey(request), preparedMessage.messageId, (int)_requests.count);
+#endif
                         MTRequestContext *requestContext = [[MTRequestContext alloc] initWithMessageId:preparedMessage.messageId messageSeqNo:preparedMessage.seqNo transactionId:messageInternalIdToTransactionId[messageInternalId] quickAckId:(int32_t)[messageInternalIdToQuickAckId[messageInternalId] intValue]];
                         requestContext.willInitializeApi = requestsWillInitializeApi;
                         request.requestContext = requestContext;
@@ -602,52 +626,45 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                 if (request.requestContext != nil && request.requestContext.messageId == rpcResultMessage.requestMessageId)
                 {
                     requestFound = true;
+#if defined(ONEGRAM_DIAGNOSTICS)
+                    if (request.shouldDependOnRequest != nil)
+                        OGPlatformDiagnosticLog(@"SENDSTATE result rpc=%@ msg=%lld", MTRequestFloodWaitKey(request), rpcResultMessage.requestMessageId);
+#endif
                     
                     bool restartRequest = false;
                     
                     id rpcResult = nil;
                     MTRpcError *rpcError = nil;
+                    bool responseParsingFailed = false;
                     
                     if ([maybeInternalMessage isKindOfClass:[MTRpcError class]])
                         rpcError = maybeInternalMessage;
                     else
                     {
                         NSData *unwrappedData = [MTInternalMessageParser unwrapMessage:rpcResultMessage.data];
+                        if (unwrappedData.length > 32768 && (OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice()) && ![NSThread isMainThread])
+                            OGRuntimeCooperateWithInteraction();
                         rpcResult = request.responseParser(unwrappedData);
                         if (rpcResult == nil)
                         {
+                            responseParsingFailed = true;
                             rpcError = [[MTRpcError alloc] initWithErrorCode:500 errorDescription:@"TL_PARSING_ERROR"];
                         }
                     }
                     
-                    if (rpcResult != nil)
-                    {
-                        if (MTLogEnabled()) {
-                            MTLog(@"[MTRequestMessageService#%p response for %" PRId64 " is %@]", self, request.requestContext.messageId, rpcResult);
-                        }
-                    }
-                    else
+
+                    if (rpcResult == nil)
                     {
                         bool expectedPasswordState = rpcError.errorCode == 401 &&
                             [rpcError.errorDescription rangeOfString:@"SESSION_PASSWORD_NEEDED"].location != NSNotFound;
                         if (expectedPasswordState)
                         {
-                            // This is an authentication state transition, not
-                            // a transport/application failure. The login flow
-                            // will present the 2FA password screen.
-                            NSLog(@"AUTH authState messageId=%" PRId64 " code=%d description=%@",
+                            OGPlatformDiagnosticLog(@"AUTH authState messageId=%" PRId64 " code=%d description=%@",
                                   request.requestContext.messageId, (int)rpcError.errorCode, rpcError.errorDescription);
-                            if (MTLogEnabled()) {
-                                MTLog(@"[MTRequestMessageService#%p response for %" PRId64 " is auth state: %d: %@]",
-                                      self, request.requestContext.messageId, (int)rpcError.errorCode, rpcError.errorDescription);
-                            }
                         }
                         else
                         {
-                            NSLog(@"AUTH rpcError messageId=%" PRId64 " code=%d description=%@", request.requestContext.messageId, (int)rpcError.errorCode, rpcError.errorDescription);
-                            if (MTLogEnabled()) {
-                                MTLog(@"[MTRequestMessageService#%p response for %" PRId64 " is error: %d: %@]", self, request.requestContext.messageId, (int)rpcError.errorCode, rpcError.errorDescription);
-                            }
+                            OGPlatformDiagnosticLog(@"AUTH rpcError messageId=%" PRId64 " code=%d description=%@", request.requestContext.messageId, (int)rpcError.errorCode, rpcError.errorDescription);
                         }
                     }
                     
@@ -695,7 +712,7 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                                 }
                             }
                         }
-                        else if (rpcError.errorCode == -500 || rpcError.errorCode == 500)
+                        else if ((rpcError.errorCode == -500 || rpcError.errorCode == 500) && !responseParsingFailed)
                         {
                             if (request.errorContext == nil)
                                 request.errorContext = [[MTRequestErrorContext alloc] init];
@@ -722,6 +739,11 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                                 if ([scanner scanInt:&errorWaitTime])
                                 {
                                     request.errorContext.floodWaitSeconds = errorWaitTime;
+                                    NSString *floodWaitKey = MTRequestFloodWaitKey(request);
+                                    CFAbsoluteTime floodWaitUntil = MTAbsoluteSystemTime() + (CFAbsoluteTime)errorWaitTime;
+                                    NSNumber *previousFloodWaitUntil = _floodWaitUntilByMethod[floodWaitKey];
+                                    if (previousFloodWaitUntil == nil || [previousFloodWaitUntil doubleValue] < floodWaitUntil)
+                                        _floodWaitUntilByMethod[floodWaitKey] = @(floodWaitUntil);
                                     
                                     if (request.shouldContinueExecutionWithErrorContext != nil)
                                     {
@@ -753,16 +775,11 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                             }];
                         }
                         
-//#warning TODO other service errors
                     }
                     
                     request.requestContext = nil;
                     
-                    if (restartRequest)
-                    {
-                        
-                    }
-                    else
+                    if (!restartRequest)
                     {
                         void (^completed)(id result, NSTimeInterval completionTimestamp, id error) = [request.completed copy];
                         [_requests removeObjectAtIndex:(NSUInteger)index];
@@ -776,9 +793,6 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
             }
             
             if (!requestFound) {
-                if (MTLogEnabled()) {
-                    MTLog(@"[MTRequestMessageService#%p response %" PRId64 " didn't match any request]", self, message.messageId);
-                }
             }
             else if (_requests.count == 0)
             {
@@ -897,8 +911,6 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
                 request.requestContext.responseMessageId = responseMessageId;
                 return true;
             } else {
-                MTLog(@"[MTRequestMessageService#%p will not request message %" PRId64 " (transaction was not completed)]", (__bridge void *)self, messageId);
-                MTLog(@"[MTRequestMessageService#%p but today it will]", (__bridge void *)self);
                 return true;
             }
         }
@@ -984,31 +996,5 @@ static NSString *MTDebugHexString(NSData *data, NSUInteger limit)
         [mtProto requestTransportTransaction];
 }
 
-/*- (int32_t)possibleSignatureForResult:(int64_t)messageId found:(bool *)found
-{
-    for (MTRequest *request in _requests)
-    {
-        if (request.requestContext != nil && request.requestContext.messageId == messageId)
-        {
-            if (found != NULL)
-               *found = true;
-            
-            return [_serialization rpcRequestBodyResponseSignature:request.body];
-        }
-    }
-    
-    for (MTDropResponseContext *dropContext in _dropReponseContexts)
-    {
-        if (dropContext.messageId == messageId)
-        {
-            if (found != NULL)
-               *found = true;
-            
-            return 0;
-        }
-    }
-    
-    return 0;
-}*/
 
 @end

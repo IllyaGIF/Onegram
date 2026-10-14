@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Install the pinned LLVM 3.2 compiler required by the unmodified legacy core."""
 import hashlib
 import os
 import subprocess
@@ -14,8 +13,9 @@ DIRECTORY='clang+llvm-3.2-x86_64-linux-ubuntu-12.04'
 def main():
     root=OUT/'toolchains'
     compiler=root/DIRECTORY/'bin/clang++'
+    c_compiler=root/DIRECTORY/'bin/clang'
     marker=root/DIRECTORY/'.archive.sha256'
-    if compiler.is_file() and marker.exists() and marker.read_text().strip()==SHA256:return
+    if compiler.is_file() and c_compiler.is_file() and marker.exists() and marker.read_text().strip()==SHA256:return
     if os.uname().sysname!='Linux' or os.uname().machine!='x86_64':
         raise SystemExit('Set CORE_CXX to a compatible legacy compiler on this host')
     root.mkdir(parents=True,exist_ok=True)

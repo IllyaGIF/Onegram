@@ -6306,7 +6306,7 @@ std::vector<Replacement> Replacements;
 std::map<utf16char, std::vector<const Replacement*>> ReplacementsMap;
 std::map<internal::checksum, const Replacement*> ReplacementsHash;
 
-} // namespace
+}
 
 void InitReplacements() {
 	if (!Replacements.empty()) {
@@ -6366,6 +6366,6 @@ utf16string GetReplacementEmoji(utf16string replacement) {
 	return (it == ReplacementsHash.end()) ? utf16string() : it->second->emoji;
 }
 
-} // namespace internal
-} // namespace Emoji
-} // namespace Ui
+}
+}
+}

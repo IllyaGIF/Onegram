@@ -40,6 +40,28 @@
     [self boundView].backgroundColor = _color;
 }
 
+static void TGModernColorViewModelDrawOperation(CGContextRef context, TGModernDrawingOperation *operation)
+{
+    CGContextSetFillColorWithColor(context, operation.color.CGColor);
+    if (operation.value > FLT_EPSILON) {
+        CGContextAddPath(context, [UIBezierPath bezierPathWithRoundedRect:operation.rect cornerRadius:operation.value].CGPath);
+        CGContextFillPath(context);
+    } else {
+        CGContextFillRect(context, operation.rect);
+    }
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (![self drawsInContextWithImplementationOfClass:[TGModernColorViewModel class]])
+        return false;
+    if (![self recordBaseDrawing:recording])
+        return false;
+    if (!self.skipDrawInContext && _color != nil && self.alpha > FLT_EPSILON)
+        [recording addOperationWithFunction:&TGModernColorViewModelDrawOperation rect:self.bounds object:nil secondaryObject:nil color:_color size:CGSizeZero value:_cornerRadius flags:0];
+    return true;
+}
+
 - (void)drawInContext:(CGContextRef)context
 {
     [super drawInContext:context];

@@ -1,0 +1,5 @@
+https://github.com/dlbeer/quirc
+Version: 1.2
+Commit: 542848dd6b9b0eaa9587bbf25b9bc67bd8a71fca
+Source comments are preserved in LICENSE where they contain copyright notices.
+The C implementation is otherwise unchanged.

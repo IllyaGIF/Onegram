@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Compare current Xcode inputs, persisted manifest, and actual Theos FILES."""
 import json
 import hashlib
 import shlex
@@ -36,6 +35,9 @@ def audit():
         source_line=next(line for line in files if line.startswith(saved['instance']+'_FILES ='))
         actual = [(ROOT/'theos'/p).resolve() for p in shlex.split(source_line.split('=',1)[1])]
         wanted = [actual_path(ROOT/e['path']).resolve() for e in expected['sources']]
+        if sys.platform == "darwin":
+            actual = [Path(str(p).lower()) for p in actual]
+            wanted = [Path(str(p).lower()) for p in wanted]
         if actual != wanted:
             errors.append('Theos FILES differs: '+target['name'])
             counts['sources']+=len(set(wanted)-set(actual))

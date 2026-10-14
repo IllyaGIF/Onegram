@@ -571,6 +571,9 @@
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+#if defined(ONEGRAM_ARMV6)
+    [self updateLayout:[[LegacyComponentsGlobals provider] applicationStatusBarOrientation]];
+#endif
     
     [self transitionIn];
 }
@@ -1066,13 +1069,18 @@
 - (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
 {
     [super willRotateToInterfaceOrientation:toInterfaceOrientation duration:duration];
+#if defined(ONEGRAM_ARMV6)
+    [self updateLayout:toInterfaceOrientation];
+#endif
     
     [_imageView pop_removeAllAnimations];
 }
 
 - (void)viewWillLayoutSubviews
 {
+#if !defined(ONEGRAM_ARMV6)
     [super viewWillLayoutSubviews];
+#endif
     
     [self updateLayout:[[LegacyComponentsGlobals provider] applicationStatusBarOrientation]];
 }

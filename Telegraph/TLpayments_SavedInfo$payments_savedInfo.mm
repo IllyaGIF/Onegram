@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//payments.savedInfo flags:# saved_info:flags.0?PaymentRequestedInfo has_saved_credentials:flags.1?true = payments.SavedInfo;
 
 @implementation TLpayments_SavedInfo$payments_savedInfo
 

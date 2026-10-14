@@ -1,6 +1,10 @@
 #import "TGModernGalleryZoomableScrollViewSwipeGestureRecognizer.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <UIKit/UIGestureRecognizerSubclass.h>
+#endif
+#endif
 
 @interface TGModernGalleryZoomableScrollViewSwipeGestureRecognizer ()
 {
@@ -87,7 +91,6 @@
 
 - (void)touchesEnded:(NSSet *)__unused touches withEvent:(UIEvent *)__unused event
 {
-    //TGLegacyLog(@"touches ended");
     
     _swipeVelocity = [self velocityInView:self.view].y;
     

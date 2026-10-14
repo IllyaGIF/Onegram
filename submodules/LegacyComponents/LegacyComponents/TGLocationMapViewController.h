@@ -63,6 +63,8 @@
 
 - (void)updateInsets;
 - (void)updateMapHeightAnimated:(bool)animated;
+- (void)tableView:(UITableView *)tableView didHighlightRowAtIndexPath:(NSIndexPath *)indexPath;
+- (void)tableView:(UITableView *)tableView didUnhighlightRowAtIndexPath:(NSIndexPath *)indexPath;
 
 - (CGFloat)visibleContentHeight;
 - (CGFloat)mapHeight;

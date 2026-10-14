@@ -1,3 +1,4 @@
+#import "../../../OnegramPlatform/OGPlatformMedia.h"
 #import "TGModernGalleryController.h"
 
 #import "LegacyComponentsInternal.h"
@@ -134,8 +135,19 @@
 
 - (BOOL)shouldAutorotate
 {
+#if defined(ONEGRAM_ARMV6)
+    return (_view == nil || [_view shouldAutorotate]) && ([_model _shouldAutorotate]);
+#else
     return [super shouldAutorotate] && (_view == nil || [_view shouldAutorotate]) && ([_model _shouldAutorotate]);
+#endif
 }
+
+#if defined(ONEGRAM_ARMV6)
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)__unused interfaceOrientation
+{
+    return [self shouldAutorotate];
+}
+#endif
 
 - (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation duration:(NSTimeInterval)duration
 {
@@ -419,7 +431,6 @@
 {
     _showInterface = showInterface;
     
-    //_view.userInteractionEnabled = showInterface;
     
     _statusBarStyle = _showInterface ? UIStatusBarStyleLightContent : _defaultStatusBarStyle;
 }
@@ -800,12 +811,10 @@ static CGRect adjustFrameForOriginalSubframe(CGRect originalFrame, CGRect origin
             frame = CGRectApplyAffineTransform(frame, transform);
         }
         
-        //TGLegacyLog(@"%f: %@", rotation, currentView);
         
         if ([currentView.superview isKindOfClass:[UIWindow class]])
             sourceWindowRotation = rotation;
         
-        //frame = CGRectApplyAffineTransform(frame, transform);
         
         currentView = currentView.superview;
     }
@@ -832,10 +841,6 @@ static CGRect adjustFrameForOriginalSubframe(CGRect originalFrame, CGRect origin
     
     frame = adjustFrameForOriginalSubframe(toView.frame, toSubframe, frame);
     
-    /*frame.origin.x = CGFloor(frame.origin.x);
-    frame.origin.y = CGFloor(frame.origin.y);
-    frame.size.width = CGFloor(frame.size.width);
-    frame.size.height = CGFloor(frame.size.height);*/
     
     if (outRotationZ != NULL)
         *outRotationZ = 0.0f;
@@ -1461,7 +1466,7 @@ static CGFloat transformRotation(CGAffineTransform transform)
         rightmostVisibleItemIndex = (NSUInteger)CGFloor((bounds.origin.x + bounds.size.width - 1.0f) / itemWidth);
     NSUInteger rightmostTrulyVisibleItemIndex = rightmostVisibleItemIndex;
     
-    if (_preloadVisibleItemViews)
+    if (_preloadVisibleItemViews && !OGPlatformMediaDownloadsRequireUserAction())
     {
         if (leftmostVisibleItemIndex >= 1)
             leftmostVisibleItemIndex = leftmostVisibleItemIndex - 1;
@@ -1667,7 +1672,6 @@ static CGFloat transformRotation(CGAffineTransform transform)
     for (NSUInteger i = 0; i < visibleViewCount; i++)
     {
         TGModernGalleryItemView *itemView = _visibleItemViews[i];
-        //[itemView setIsVisible:itemView.index >= leftmostTrulyVisibleItemIndex && itemView.index <= rightmostTrulyVisibleItemIndex];
         [itemView setIsCurrent:itemView.index == [self currentItemIndex]];
     }
 }

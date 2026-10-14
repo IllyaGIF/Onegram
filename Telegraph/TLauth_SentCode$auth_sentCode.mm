@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//auth.sentCode flags:# type:auth.SentCodeType phone_code_hash:string phone_registered:flags.0?true next_type:flags.1?auth.CodeType timeout:flags.2?int = auth.SentCode;
 
 @implementation TLauth_SentCode$auth_sentCode
 

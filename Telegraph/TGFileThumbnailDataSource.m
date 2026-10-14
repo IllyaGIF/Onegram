@@ -1,4 +1,6 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGFileThumbnailDataSource.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -16,8 +18,156 @@
 #import "TGMediaStoreContext.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <math.h>
 
 #import "TGAppDelegate.h"
+
+
+#if defined(ONEGRAM_ARMV6)
+typedef struct
+{
+    CGContextRef context;
+    void *data;
+    size_t width;
+    size_t height;
+    size_t rowBytes;
+} TGFileThumbnailArmv6Bitmap;
+
+static bool TGFileThumbnailArmv6CreateBitmap(CGSize size, TGFileThumbnailArmv6Bitmap *bitmap)
+{
+    if (bitmap == NULL || !isfinite(size.width) || !isfinite(size.height) || size.width < 1.0f || size.height < 1.0f)
+        return false;
+    memset(bitmap, 0, sizeof(TGFileThumbnailArmv6Bitmap));
+    size_t width = (size_t)MAX(1.0f, ceilf(size.width));
+    size_t height = (size_t)MAX(1.0f, ceilf(size.height));
+    if (width > 2048 || height > 2048 || width > ((size_t)-1) / 4)
+        return false;
+    size_t rowBytes = ((width * 4) + 15) & ~((size_t)15);
+    if (height > ((size_t)-1) / rowBytes)
+        return false;
+    void *data = calloc(height, rowBytes);
+    if (data == NULL)
+        return false;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (colorSpace == NULL)
+    {
+        free(data);
+        return false;
+    }
+    CGContextRef context = CGBitmapContextCreate(data, width, height, 8, rowBytes, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+    {
+        free(data);
+        return false;
+    }
+    CGContextTranslateCTM(context, 0.0f, (CGFloat)height);
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextSetInterpolationQuality(context, kCGInterpolationMedium);
+    bitmap->context = context;
+    bitmap->data = data;
+    bitmap->width = width;
+    bitmap->height = height;
+    bitmap->rowBytes = rowBytes;
+    return true;
+}
+
+static void TGFileThumbnailArmv6ReleaseBitmap(void *info, __unused const void *data, __unused size_t size)
+{
+    if (info != NULL)
+        free(info);
+}
+
+static UIImage *TGFileThumbnailArmv6FinishBitmap(TGFileThumbnailArmv6Bitmap *bitmap)
+{
+    if (bitmap == NULL || bitmap->context == NULL || bitmap->data == NULL)
+        return nil;
+    CGContextFlush(bitmap->context);
+    CGContextRelease(bitmap->context);
+    bitmap->context = NULL;
+    size_t length = bitmap->rowBytes * bitmap->height;
+    void *data = bitmap->data;
+    CGDataProviderRef provider = CGDataProviderCreateWithData(data, data, length, TGFileThumbnailArmv6ReleaseBitmap);
+    if (provider == NULL)
+    {
+        free(data);
+        memset(bitmap, 0, sizeof(TGFileThumbnailArmv6Bitmap));
+        return nil;
+    }
+    bitmap->data = NULL;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGImageRef imageRef = colorSpace == NULL ? NULL : CGImageCreate(bitmap->width, bitmap->height, 8, 32, bitmap->rowBytes, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host, provider, NULL, false, kCGRenderingIntentDefault);
+    if (colorSpace != NULL)
+        CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+    UIImage *image = imageRef == NULL ? nil : [[UIImage alloc] initWithCGImage:imageRef];
+    if (imageRef != NULL)
+        CGImageRelease(imageRef);
+    memset(bitmap, 0, sizeof(TGFileThumbnailArmv6Bitmap));
+    return image;
+}
+
+static void TGFileThumbnailArmv6DrawImage(CGContextRef context, UIImage *image, CGRect rect)
+{
+    if (context == NULL || image == nil || image.CGImage == NULL || CGRectIsEmpty(rect))
+        return;
+    CGContextSaveGState(context);
+    CGFloat width = rect.size.width;
+    CGFloat height = rect.size.height;
+    CGContextTranslateCTM(context, CGRectGetMidX(rect), CGRectGetMidY(rect));
+    CGRect drawRect = CGRectMake(-width * 0.5f, -height * 0.5f, width, height);
+    switch (image.imageOrientation)
+    {
+        case UIImageOrientationDown:
+            CGContextRotateCTM(context, (CGFloat)M_PI);
+            break;
+        case UIImageOrientationLeft:
+            CGContextRotateCTM(context, -(CGFloat)M_PI_2);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationRight:
+            CGContextRotateCTM(context, (CGFloat)M_PI_2);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationUpMirrored:
+            CGContextScaleCTM(context, -1.0f, 1.0f);
+            break;
+        case UIImageOrientationDownMirrored:
+            CGContextScaleCTM(context, 1.0f, -1.0f);
+            break;
+        case UIImageOrientationLeftMirrored:
+            CGContextRotateCTM(context, -(CGFloat)M_PI_2);
+            CGContextScaleCTM(context, -1.0f, 1.0f);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationRightMirrored:
+            CGContextRotateCTM(context, (CGFloat)M_PI_2);
+            CGContextScaleCTM(context, -1.0f, 1.0f);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationUp:
+        default:
+            break;
+    }
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextDrawImage(context, drawRect, image.CGImage);
+    CGContextRestoreGState(context);
+}
+
+static UIImage *TGFileThumbnailArmv6Render(UIImage *image, CGSize size, CGRect imageRect, bool whiteBackground)
+{
+    TGFileThumbnailArmv6Bitmap bitmap;
+    if (!TGFileThumbnailArmv6CreateBitmap(size, &bitmap))
+        return nil;
+    if (whiteBackground)
+    {
+        CGContextSetRGBFillColor(bitmap.context, 1.0f, 1.0f, 1.0f, 1.0f);
+        CGContextFillRect(bitmap.context, CGRectMake(0.0f, 0.0f, size.width, size.height));
+    }
+    TGFileThumbnailArmv6DrawImage(bitmap.context, image, imageRect);
+    return TGFileThumbnailArmv6FinishBitmap(&bitmap);
+}
+#endif
 
 static TGWorkerPool *workerPool()
 {
@@ -86,6 +236,11 @@ static ASQueue *taskManagementQueue()
         if ([TGFileThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
             [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+        }
+        else if (OGPlatformMediaDownloadsRequireUserAction())
+        {
+            if (completion != nil)
+                completion([TGFileThumbnailDataSource resultForUnavailableImage]);
         }
         else
         {
@@ -333,23 +488,13 @@ static ASQueue *taskManagementQueue()
         
         UIImage *image = nil;
         
-        if (videoFilePath != nil && [[NSFileManager defaultManager] fileExistsAtPath:videoFilePath isDirectory:NULL]) {
+        if ((!OGPlatformMediaDownloadsRequireUserAction() || args[@"local-id"] != nil) && videoFilePath != nil && [[NSFileManager defaultManager] fileExistsAtPath:videoFilePath isDirectory:NULL]) {
             if ([videoFilePath pathExtension].length == 0) {
                 [[NSFileManager defaultManager] createSymbolicLinkAtPath:[videoFilePath stringByAppendingPathExtension:@"mov"] withDestinationPath:[videoFilePath pathComponents].lastObject error:nil];
                 videoFilePath = [videoFilePath stringByAppendingPathExtension:@"mov"];
             }
             
-            AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:videoFilePath] options:nil];
-            
-            AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-            imageGenerator.maximumSize = CGSizeMake(800, 800);
-            imageGenerator.appliesPreferredTrackTransform = true;
-            NSError *imageError = nil;
-            CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(0, asset.duration.timescale) actualTime:NULL error:&imageError];
-            image = [[UIImage alloc] initWithCGImage:imageRef];
-            if (imageRef != NULL) {
-                CGImageRelease(imageRef);
-            }
+            image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:videoFilePath], 0.0, CGSizeMake(800.0f, 800.0f));
         }
         
         if (image == nil && [[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL])
@@ -411,16 +556,21 @@ static ASQueue *taskManagementQueue()
             const float cacheFactor = 0.85f;
             CGSize cachedImageSize = CGSizeMake(CGCeil(size.width * cacheFactor), CGCeil(size.height * cacheFactor));
             CGSize cachedRenderSize = CGSizeMake(CGCeil(renderSize.width * cacheFactor), CGCeil(renderSize.height * cacheFactor));
+            CGRect imageRect = CGRectMake((cachedImageSize.width - cachedRenderSize.width) / 2.0f, (cachedImageSize.height - cachedRenderSize.height) / 2.0f, cachedRenderSize.width, cachedRenderSize.height);
+#if defined(ONEGRAM_ARMV6)
+            thumbnailSourceImage = TGFileThumbnailArmv6Render(image, cachedImageSize, imageRect, true);
+#else
             UIGraphicsBeginImageContextWithOptions(cachedImageSize, true, 2.0f);
             CGContextRef context = UIGraphicsGetCurrentContext();
-            CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
-            CGContextFillRect(context, CGRectMake(0.0f, 0.0f, cachedImageSize.width, cachedImageSize.height));
-            
-            CGRect imageRect = CGRectMake((cachedImageSize.width - cachedRenderSize.width) / 2.0f, (cachedImageSize.height - cachedRenderSize.height) / 2.0f, cachedRenderSize.width, cachedRenderSize.height);
-            [image drawInRect:imageRect blendMode:kCGBlendModeNormal alpha:1.0f];
-            
-            thumbnailSourceImage = UIGraphicsGetImageFromCurrentImageContext();
+            if (context != NULL)
+            {
+                CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
+                CGContextFillRect(context, CGRectMake(0.0f, 0.0f, cachedImageSize.width, cachedImageSize.height));
+                [image drawInRect:imageRect blendMode:kCGBlendModeNormal alpha:1.0f];
+                thumbnailSourceImage = UIGraphicsGetImageFromCurrentImageContext();
+            }
             UIGraphicsEndImageContext();
+#endif
             
             if (thumbnailSourceImage != nil && !lowQualityThumbnail)
             {
@@ -431,13 +581,19 @@ static ASQueue *taskManagementQueue()
     }
     else
     {
-        UIGraphicsBeginImageContextWithOptions(size, true, 2.0f);
-        
         CGRect imageRect = CGRectMake(0.0f, 0.0f, size.width, size.height);
-        [thumbnailSourceImage drawInRect:imageRect blendMode:kCGBlendModeCopy alpha:1.0f];
-        
-        thumbnailSourceImage = UIGraphicsGetImageFromCurrentImageContext();
+#if defined(ONEGRAM_ARMV6)
+        thumbnailSourceImage = TGFileThumbnailArmv6Render(thumbnailSourceImage, size, imageRect, false);
+#else
+        UIGraphicsBeginImageContextWithOptions(size, true, 2.0f);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        if (context != NULL)
+        {
+            [thumbnailSourceImage drawInRect:imageRect blendMode:kCGBlendModeCopy alpha:1.0f];
+            thumbnailSourceImage = UIGraphicsGetImageFromCurrentImageContext();
+        }
         UIGraphicsEndImageContext();
+#endif
     }
     
     bool isRounded = [args[@"rounded"] boolValue];

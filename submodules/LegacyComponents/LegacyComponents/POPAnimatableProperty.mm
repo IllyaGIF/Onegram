@@ -434,6 +434,7 @@ static POPStaticAnimatablePropertyState _staticStates[] =
     kPOPThresholdRotation
   },
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
   {kPOPLayerShadowColor,
     ^(CALayer *obj, CGFloat values[]) {
         POPCGColorGetRGBAComponents(obj.shadowColor, values);
@@ -476,9 +477,9 @@ static POPStaticAnimatablePropertyState _staticStates[] =
     },
     kPOPThresholdRadius
   },
+#endif
 
-  /* CAShapeLayer */
-
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
   {kPOPShapeLayerStrokeStart,
     ^(CAShapeLayer *obj, CGFloat values[]) {
       values[0] = obj.strokeStart;
@@ -498,6 +499,7 @@ static POPStaticAnimatablePropertyState _staticStates[] =
     },
     0.01
   },
+#endif
 
   {kPOPShapeLayerStrokeColor,
     ^(CAShapeLayer *obj, CGFloat values[]) {
@@ -533,6 +535,7 @@ static POPStaticAnimatablePropertyState _staticStates[] =
     0.01
   },
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
   {kPOPLayoutConstraintConstant,
     ^(NSLayoutConstraint *obj, CGFloat values[]) {
       values[0] = obj.constant;
@@ -542,6 +545,7 @@ static POPStaticAnimatablePropertyState _staticStates[] =
     },
     0.01
   },
+#endif
 #if SCENEKIT_SDK_AVAILABLE
 
   /* SceneKit */

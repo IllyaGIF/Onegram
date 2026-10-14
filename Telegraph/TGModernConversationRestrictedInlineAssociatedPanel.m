@@ -144,26 +144,6 @@
     _label.frame = CGRectMake(CGFloor((self.bounds.size.width - labelSize.width) / 2.0f), CGFloor((self.bounds.size.height - labelSize.height) / 2.0f), labelSize.width, labelSize.height);
 }
 
-/*- (void)animateIn {
-    [self layoutSubviews];
-    
-    CGFloat offset = [self preferredHeight];
-    CGRect bounds = self.bounds;
-    self.bounds = CGRectOffset(self.bounds, 0.0f, offset);
-    [UIView animateWithDuration:0.3 delay:0.0 options:7 << 16 animations:^{
-        self.bounds = bounds;
-    } completion:nil];
-}
-
-- (void)animateOut:(void (^)())completion {
-    _animatingOut = true;
-    CGFloat offset = [self preferredHeight];
-    [UIView animateWithDuration:0.15 delay:0.0 options:0 animations:^{
-        self.bounds = CGRectOffset(self.bounds, 0.0f, offset);
-    } completion:^(__unused BOOL finished) {
-        completion();
-    }];
-}*/
 
 - (void)setBarInset:(CGFloat)barInset animated:(bool)animated {
     if (ABS(barInset - self.barInset) > FLT_EPSILON) {

@@ -24,6 +24,10 @@
 #import "TGStickerItemPreviewView.h"
 #import <QuartzCore/QuartzCore.h>
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
+#endif
+
 const CGFloat TGPhotoStickersPreloadInset = 160.0f;
 const CGFloat TGPhotoStickersViewMargin = 19.0f;
 
@@ -137,6 +141,9 @@ typedef enum {
             [_cancelButton sizeToFit];
             [_wrapperView addSubview:_cancelButton];
             
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            OGPlatformApplyLegacySegmentedControlStyle(_segmentedControl, UIColorRGB(0xafb2b1));
+#else
             [_segmentedControl setBackgroundImage:TGTintedImage(TGComponentsImageNamed(@"ModernSegmentedControlBackground.png"), UIColorRGB(0xafb2b1)) forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
             [_segmentedControl setBackgroundImage:TGTintedImage(TGComponentsImageNamed(@"ModernSegmentedControlSelected.png"), UIColorRGB(0xafb2b1)) forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
             [_segmentedControl setBackgroundImage:TGTintedImage(TGComponentsImageNamed(@"ModernSegmentedControlSelected.png"), UIColorRGB(0xafb2b1)) forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
@@ -144,9 +151,13 @@ typedef enum {
             [_segmentedControl setDividerImage:TGTintedImage(TGComponentsImageNamed(@"ModernSegmentedControlDivider.png"), UIColorRGB(0xafb2b1)) forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
             [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor: UIColorRGB(0xafb2b1), UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
             [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor: [UIColor blackColor], UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+#endif
         }
         else
         {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            OGPlatformApplyLegacySegmentedControlStyle(_segmentedControl, TGAccentColor());
+#else
             [_segmentedControl setBackgroundImage:TGComponentsImageNamed(@"ModernSegmentedControlBackground.png") forState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
             [_segmentedControl setBackgroundImage:TGComponentsImageNamed(@"ModernSegmentedControlSelected.png") forState:UIControlStateSelected barMetrics:UIBarMetricsDefault];
             [_segmentedControl setBackgroundImage:TGComponentsImageNamed(@"ModernSegmentedControlSelected.png") forState:UIControlStateSelected | UIControlStateHighlighted barMetrics:UIBarMetricsDefault];
@@ -154,6 +165,7 @@ typedef enum {
             [_segmentedControl setDividerImage:TGComponentsImageNamed(@"ModernSegmentedControlDivider.png") forLeftSegmentState:UIControlStateNormal rightSegmentState:UIControlStateNormal barMetrics:UIBarMetricsDefault];
             [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor: TGAccentColor(), UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateNormal];
             [_segmentedControl setTitleTextAttributes:@{UITextAttributeTextColor: [UIColor whiteColor], UITextAttributeTextShadowColor: [UIColor clearColor], UITextAttributeFont: TGSystemFontOfSize(13)} forState:UIControlStateSelected];
+#endif
         }
         
         [_segmentedControl insertSegmentWithTitle:TGLocalized(@"Paint.Masks") atIndex:0 animated:false];
@@ -175,7 +187,6 @@ typedef enum {
         CGFloat thickness = TGScreenPixel;
         _separatorView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 0.0f, thickness)];
         _separatorView.backgroundColor = UIColorRGB(0xafb2b1);
-        //[_wrapperView addSubview:_separatorView];
         
         _collectionWrapperView = [[UIView alloc] init];
         _collectionWrapperView.clipsToBounds = true;
@@ -548,15 +559,15 @@ typedef enum {
     {
         self.alpha = 0.0f;
         
-        self.layer.rasterizationScale = TGScreenScaling();
-        self.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(self.layer, true);
         
         [UIView animateWithDuration:0.2 animations:^
         {
             self.alpha = 1.0f;
         } completion:^(__unused BOOL finished)
         {
-            self.layer.shouldRasterize = false;
+            TGSetLayerShouldRasterize(self.layer, false);
         }];
     }
 }
@@ -584,8 +595,8 @@ typedef enum {
     }
     else
     {
-        self.layer.rasterizationScale = TGScreenScaling();
-        self.layer.shouldRasterize = true;
+        TGSetLayerRasterizationScale(self.layer, TGScreenScaling());
+        TGSetLayerShouldRasterize(self.layer, true);
         
         [UIView animateWithDuration:0.2 animations:^
         {

@@ -11,7 +11,11 @@
 
 @interface TGNativeAudioPlayer : TGAudioPlayer
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 @property (nonatomic, readonly) AVPlayer *player;
+#else
+@property (nonatomic, readonly) AVAudioPlayer *player;
+#endif
 
 - (instancetype)initWithPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession;
 

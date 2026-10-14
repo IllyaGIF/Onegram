@@ -54,8 +54,10 @@
 
 - (void)commonInit
 {
+#if !defined(ONEGRAM_ARMV6)
     if ([self respondsToSelector:@selector(setContentScaleFactor:)])
         self.contentScaleFactor = [[UIScreen mainScreen] scale];
+#endif
     
     self.enabled = true;
     
@@ -64,7 +66,7 @@
 
     CAEAGLLayer *eaglLayer = (CAEAGLLayer *)self.layer;
     eaglLayer.opaque = true;
-    eaglLayer.drawableProperties = @{ kEAGLDrawablePropertyRetainedBacking: @NO,
+    eaglLayer.drawableProperties = @{ kEAGLDrawablePropertyRetainedBacking: @(NO),
                                       kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8 };
     
     runSynchronouslyOnVideoProcessingQueue(^
@@ -100,7 +102,6 @@
         glEnableVertexAttribArray(displayTextureCoordinateAttribute);
         
         [self setBackgroundColorRed:0.0 green:0.0 blue:0.0 alpha:1.0];
-//        _fillMode = kGPUImageFillModePreserveAspectRatio;
         [self createDisplayFramebuffer];
     });
 }
@@ -363,6 +364,9 @@
 
 - (CGSize)maximumOutputSize
 {
+#if defined(ONEGRAM_ARMV6)
+    return self.bounds.size;
+#else
     if ([self respondsToSelector:@selector(setContentScaleFactor:)])
     {
         CGSize pointSize = self.bounds.size;
@@ -372,6 +376,7 @@
     {
         return self.bounds.size;
     }
+#endif
 }
 
 - (void)endProcessing

@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//botInlineMediaResult flags:# id:string type:string photo:flags.0?Photo document:flags.1?Document title:flags.2?string description:flags.3?string send_message:BotInlineMessage = BotInlineResult;
 
 @implementation TLBotInlineResult$botInlineMediaResult
 

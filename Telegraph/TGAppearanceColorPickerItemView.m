@@ -74,14 +74,14 @@
     {
         colors = @
         [
-         UIColorRGB(0xf83b4c), // red
-         UIColorRGB(0xff7519), // orange
-         UIColorRGB(0xeba239), // yellow
-         UIColorRGB(0x29b327), // green
-         UIColorRGB(0x00c2ed), // light blue
-         UIColorRGB(0x007ee5), // blue
-         UIColorRGB(0x7748ff), // purple
-         UIColorRGB(0xff5da2)  // pink
+         UIColorRGB(0xf83b4c),
+         UIColorRGB(0xff7519),
+         UIColorRGB(0xeba239),
+         UIColorRGB(0x29b327),
+         UIColorRGB(0x00c2ed),
+         UIColorRGB(0x007ee5),
+         UIColorRGB(0x7748ff),
+         UIColorRGB(0xff5da2)
         ];
     });
     return colors;

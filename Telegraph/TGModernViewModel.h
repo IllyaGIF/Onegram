@@ -12,6 +12,58 @@
 
 @protocol TGModernView;
 
+@class TGModernDrawingOperation;
+
+typedef void (*TGModernDrawingFunction)(CGContextRef context, TGModernDrawingOperation *operation);
+
+@interface TGModernDrawingOperation : NSObject
+
+@property (nonatomic, readonly) TGModernDrawingFunction function;
+@property (nonatomic, readonly) CGPoint origin;
+@property (nonatomic, readonly) CGRect rect;
+@property (nonatomic, strong, readonly) id object;
+@property (nonatomic, strong, readonly) id secondaryObject;
+@property (nonatomic, strong, readonly) UIColor *color;
+@property (nonatomic, readonly) CGSize size;
+@property (nonatomic, readonly) CGFloat value;
+@property (nonatomic, readonly) int flags;
+
+@end
+
+@interface TGModernDrawingRecording : NSObject
+
+- (void)pushOffset:(CGPoint)offset;
+- (void)popOffset:(CGPoint)offset;
+- (void)addOperationWithFunction:(TGModernDrawingFunction)function rect:(CGRect)rect object:(id)object secondaryObject:(id)secondaryObject color:(UIColor *)color size:(CGSize)size value:(CGFloat)value flags:(int)flags;
+
+- (bool)isEqualToRecording:(TGModernDrawingRecording *)other;
+- (void)drawInContext:(CGContextRef)context;
+
+@end
+
+#if defined(ONEGRAM_DIAGNOSTICS)
+#ifdef __cplusplus
+extern "C" {
+#endif
+Class TGModernDrawingRecordingTakeFailedClass(void);
+void TGModernViewModelBindTraceBegin(void);
+NSString *TGModernViewModelBindTraceEnd(Class rootClass, CFAbsoluteTime rootDuration);
+void TGModernViewModelBindTraceAddPhase(const char *phase, CFAbsoluteTime duration);
+bool TGModernViewModelBindTraceActive(void);
+#ifdef __cplusplus
+}
+#endif
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+id TGModernViewModelAcquireGestureRecognizer(UIView *view, const void *poolKey, Class recognizerClass, id target, SEL action);
+void TGModernViewModelRelinquishGestureRecognizer(UIGestureRecognizer *recognizer, const void *poolKey, id target, SEL action);
+#ifdef __cplusplus
+}
+#endif
+
 @interface TGModernViewModel : NSObject
 {
     @private
@@ -50,6 +102,7 @@
 
 - (Class)viewClass;
 - (UIView<TGModernView> *)_dequeueView:(TGModernViewStorage *)viewStorage;
+- (UIView<TGModernView> *)_dequeueView:(TGModernViewStorage *)viewStorage preferredSuperview:(UIView *)preferredSuperview;
 
 - (UIView<TGModernView> *)boundView;
 - (void)bindViewToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage;
@@ -60,6 +113,11 @@
 
 - (void)drawInContext:(CGContextRef)context;
 - (void)drawSubmodelsInContext:(CGContextRef)context;
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording;
+- (bool)recordBaseDrawing:(TGModernDrawingRecording *)recording;
+- (bool)recordSubmodelsDrawing:(TGModernDrawingRecording *)recording;
+- (bool)drawsInContextWithImplementationOfClass:(Class)implementingClass;
 
 - (void)sizeToFit;
 - (CGRect)bounds;

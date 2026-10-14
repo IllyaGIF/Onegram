@@ -2,7 +2,11 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#import <MediaPlayer/MediaPlayer.h>
+#else
 #import <AVFoundation/AVFoundation.h>
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
 
@@ -62,6 +66,11 @@
     
     SMetaDisposable *_currentAudioSession;
     bool _autoplayAfterDownload;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSTimeInterval _legacyPlaybackPosition;
+    NSDate *_legacyPlaybackStartDate;
+    bool _legacyIgnoringFinish;
+#endif
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -176,8 +185,12 @@
             __strong TGModernGalleryVideoItemView *strongSelf = weakSelf;
             if (strongSelf != nil)
             {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+                [strongSelf seekToPlaybackPosition:strongSelf->_duration * position];
+#else
                 NSTimeInterval positionSeconds = CMTimeGetSeconds(strongSelf.player.currentItem.duration) * position;
                 [strongSelf.player.currentItem seekToTime:CMTimeMake((int64_t)(positionSeconds * 1000.0), 1000.0)];
+#endif
             }
         };
         _scrubbingInterfaceView.scrubbingCancelled = ^
@@ -194,8 +207,12 @@
             __strong TGModernGalleryVideoItemView *strongSelf = weakSelf;
             if (strongSelf != nil)
             {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+                [strongSelf seekToPlaybackPosition:strongSelf->_duration * position];
+#else
                 NSTimeInterval positionSeconds = CMTimeGetSeconds(strongSelf.player.currentItem.duration) * position;
                 [strongSelf.player.currentItem seekToTime:CMTimeMake((int64_t)(positionSeconds * 1000.0), 1000.0)];
+#endif
                 
                 [strongSelf setIsScrubbing:false];
                 [strongSelf play];
@@ -298,9 +315,15 @@
     if (_player != nil)
     {
         _didPlayToEndObserver = nil;
-        
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        _legacyIgnoringFinish = true;
+        [_player stop];
+        _legacyPlaybackPosition = 0.0;
+        _legacyPlaybackStartDate = nil;
+#else
         [_player pause];
         [_player replaceCurrentItemWithPlayerItem:nil];
+#endif
         _player = nil;
     }
     
@@ -331,6 +354,7 @@
 
 - (void)stopForOutTransition
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (_player != nil && _videoView != nil && iosMajorVersion() >= 8)
     {
         [_player pause];
@@ -338,6 +362,7 @@
         UIView *snapshotView = [_videoView snapshotViewAfterScreenUpdates:false];
         [_videoView.superview insertSubview:snapshotView aboveSubview:_videoView];
     }
+#endif
     
     [_actionButton removeFromSuperview];
     [self stop];
@@ -619,9 +644,16 @@
                     }]];
                 }];
                 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+                _legacyPlaybackPosition = 0.0;
+                _legacyIgnoringFinish = false;
+                _player = [[MPMoviePlayerController alloc] initWithContentURL:[NSURL fileURLWithPath:videoPath]];
+                _player.movieControlMode = MPMovieControlModeDefault;
+                _player.scalingMode = MPMovieScalingModeAspectFit;
+                _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+#else
                 _player = [[AVPlayer alloc] initWithURL:[NSURL fileURLWithPath:videoPath]];
                 _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
-                
                 _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:[_player currentItem]];
                 
                 if (_videoView != nil)
@@ -639,11 +671,14 @@
                 _videoView.playerLayer.opaque = false;
                 _videoView.playerLayer.backgroundColor = nil;
                 [_playerView addSubview:_videoView];
-                
                 _videoView.alpha = 0.0f;
                 _videoFlickerTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(videoFlickerTimerEvent) interval:0.1 repeat:false];
+#endif
                 
                 self.isPlaying = true;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+                _legacyPlaybackStartDate = [NSDate date];
+#endif
                 [_player play];
                 
                 _positionTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(positionTimerEvent) interval:0.25 repeat:true];
@@ -659,6 +694,11 @@
         else
         {
             self.isPlaying = true;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+            _legacyIgnoringFinish = false;
+            _player.initialPlaybackTime = _legacyPlaybackPosition;
+            _legacyPlaybackStartDate = [NSDate date];
+#endif
             [_player play];
             
             _positionTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(positionTimerEvent) interval:0.25 repeat:true];
@@ -679,10 +719,49 @@
         [self defaultFooterView].hidden = hidden;
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (NSTimeInterval)currentPlaybackPosition
+{
+    NSTimeInterval position = _legacyPlaybackPosition;
+    if (_legacyPlaybackStartDate != nil && self.isPlaying)
+        position += -[_legacyPlaybackStartDate timeIntervalSinceNow];
+    if (_duration > DBL_EPSILON)
+        position = MIN(position, _duration);
+    return MAX(0.0, position);
+}
+
+- (void)seekToPlaybackPosition:(NSTimeInterval)position
+{
+    if (_duration > DBL_EPSILON)
+        position = MIN(position, _duration);
+    _legacyPlaybackPosition = MAX(0.0, position);
+    if (_player == nil)
+        return;
+
+    bool resume = self.isPlaying;
+    _legacyIgnoringFinish = true;
+    [_player stop];
+    _player.initialPlaybackTime = _legacyPlaybackPosition;
+    if (resume)
+    {
+        _legacyIgnoringFinish = false;
+        _legacyPlaybackStartDate = [NSDate date];
+        [_player play];
+    }
+}
+#endif
+
 - (void)pausePressed
 {
     self.isPlaying = false;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    _legacyPlaybackPosition = [self currentPlaybackPosition];
+    _legacyPlaybackStartDate = nil;
+    _legacyIgnoringFinish = true;
+    [_player stop];
+#else
     [_player pause];
+#endif
     
     [_positionTimer invalidate];
     _positionTimer = nil;
@@ -694,31 +773,54 @@
 
 - (void)backwardPressed
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [self seekToPlaybackPosition:MAX(0.0, [self currentPlaybackPosition] - 15.0)];
+#else
     NSTimeInterval positionSeconds = MAX(0.0, CMTimeGetSeconds(self.player.currentItem.currentTime) - 15.0);
     [self.player.currentItem seekToTime:CMTimeMake((int64_t)(positionSeconds * 1000.0), 1000.0)];
+#endif
 }
 
 - (void)forwardPressed
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [self seekToPlaybackPosition:MIN(_duration, [self currentPlaybackPosition] + 15.0)];
+#else
     NSTimeInterval positionSeconds = MIN(CMTimeGetSeconds(self.player.currentItem.duration), CMTimeGetSeconds(self.player.currentItem.currentTime) + 15.0);
     [self.player.currentItem seekToTime:CMTimeMake((int64_t)(positionSeconds * 1000.0), 1000.0)];
+#endif
 }
 
 - (void)playerItemDidPlayToEndTime:(NSNotification *)notification
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (_legacyIgnoringFinish)
+        return;
+#endif
     _currentLoopCount++;
     
     if ([self shouldLoopVideo:_currentLoopCount])
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        _legacyPlaybackPosition = 0.0;
+        _legacyPlaybackStartDate = [NSDate date];
+        _player.initialPlaybackTime = 0.0;
+        [_player play];
+#else
         AVPlayerItem *p = [notification object];
         [p seekToTime:kCMTimeZero];
+#endif
     }
     else
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        _legacyPlaybackPosition = 0.0;
+        _legacyPlaybackStartDate = nil;
+#else
         [_player pause];
-        
         AVPlayerItem *p = [notification object];
         [p seekToTime:kCMTimeZero];
+#endif
         
         [_positionTimer invalidate];
         _positionTimer = nil;
@@ -783,12 +885,6 @@
 {
     return angle;
     
-    /*CGFloat n = (int)(angle / (CGFloat)M_2_PI);
-    if (angle < 0)
-        angle += n * M_2_PI;
-    else
-        angle -= n * M_2_PI;
-    return angle;*/
 }
 
 - (void)rotationGesture:(UIRotationGestureRecognizer *)recognizer
@@ -854,10 +950,15 @@
 - (void)updatePosition:(bool)animated forceZero:(bool)forceZero
 {
     NSTimeInterval duration = _duration;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSTimeInterval currentTime = forceZero ? 0.0 : [self currentPlaybackPosition];
+#else
     NSTimeInterval actualDuration = CMTimeGetSeconds(_player.currentItem.duration);
     if (actualDuration > 0.1f)
         duration = actualDuration;
-    [_scrubbingInterfaceView setDuration:duration currentTime:forceZero ? 0.0 : CMTimeGetSeconds(_player.currentItem.currentTime) isPlaying:_isPlaying isPlayable:_player != nil animated:animated];
+    NSTimeInterval currentTime = forceZero ? 0.0 : CMTimeGetSeconds(_player.currentItem.currentTime);
+#endif
+    [_scrubbingInterfaceView setDuration:duration currentTime:currentTime isPlaying:_isPlaying isPlayable:_player != nil animated:animated];
 }
 
 - (void)doubleTapGesture:(TGDoubleTapGestureRecognizer *)recognizer

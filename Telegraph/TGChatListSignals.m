@@ -121,7 +121,6 @@
                 TGConversation *newConversation = [conversation copy];
                 if (!newConversation.isDeleted)
                 {
-                    //[self initializeDialogListData:newConversation customUser:nil selfUser:selfUser];
                 }
                 
                 [_list replaceObjectAtIndex:[conversationIndex unsignedIntegerValue] withObject:newConversation];
@@ -145,7 +144,6 @@
             TGConversation *newConversation = [conversation copy];
             if (!newConversation.isDeleted)
             {
-                //[self initializeDialogListData:newConversation customUser:nil selfUser:selfUser];
                 
                 [_list addObject:newConversation];
             }

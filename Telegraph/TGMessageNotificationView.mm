@@ -17,6 +17,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGLetteredAvatarView.h"
 
 #import "TGNotificationMessageLabel.h"
+#import "TGPollMediaAttachment.h"
 
 @interface TGMessageNotificationView ()
 
@@ -254,6 +255,12 @@
                 attachmentFound = true;
                 break;
             }
+            else if (attachment.type == TGPollMediaAttachmentType)
+            {
+                messageText = [(TGPollMediaAttachment *)attachment previewText];
+                attachmentFound = true;
+                break;
+            }
             else if (attachment.type == TGDocumentMediaAttachmentType)
             {
                 TGDocumentMediaAttachment *documentAttachment = (TGDocumentMediaAttachment *)attachment;
@@ -307,10 +314,6 @@
         }
     }
     
-    /*if (attachmentFound)
-        _messageLabel.textColor = UIColorRGB(0x0779d0);
-    else
-        _messageLabel.textColor = [UIColor blackColor];*/
     
     _messageLabel.text = messageText;
     
@@ -326,7 +329,6 @@
         else
             _titleLabel.text = _titleText;
         
-        //_titleLabel.textColor = [[TGInterfaceAssets instance] userColor:_authorUid];
         
         _titleLabel.frame = CGRectMake(64, 4 + retinaPixel, self.bounds.size.width - 8 - 32 - 70, 18);
         

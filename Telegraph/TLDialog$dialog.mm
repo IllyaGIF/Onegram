@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//dialog flags:# pinned:flags.2?true peer:Peer top_message:int read_inbox_max_id:int read_outbox_max_id:int unread_count:int unread_mentions_count:int notify_settings:PeerNotifySettings pts:flags.0?int draft:flags.1?DraftMessage = Dialog;
 
 @implementation TLDialog$dialog
 

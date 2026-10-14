@@ -21,6 +21,7 @@ typedef enum {
     TGDialogListCellEditingControlsUnread = 1 << 11,
     TGDialogListCellEditingControlsArchive = 1 << 12,
     TGDialogListCellEditingControlsUnarchive = 1 << 13,
+    TGDialogListCellEditingControlsCommunity = 1 << 14,
 } TGDialogListCellEditingControlButton;
 
 @interface TGDialogListCellEditingControls : UIView
@@ -35,6 +36,7 @@ typedef enum {
 @property (nonatomic, copy) void (^toggleGrouped)(bool);
 @property (nonatomic, copy) void (^toggleRead)(bool);
 @property (nonatomic, copy) void (^toggleArchived)(bool);
+@property (nonatomic, copy) void (^openCommunity)();
 @property (nonatomic, copy) void (^expandedUpdated)(bool);
 
 - (void)setLeftButtonTypes:(NSArray *)leftButtonTypes rightButtonTypes:(NSArray *)rightButtonTypes;
@@ -42,6 +44,7 @@ typedef enum {
 - (bool)isExpanded;
 - (void)setExpandable:(bool)expandable;
 - (void)setSwipeGesturesEnabled:(bool)enabled;
+- (void)setCommunitySwipeEnabled:(bool)enabled;
 - (void)setLabelOnly:(bool)labelOnly;
 - (void)setSmallLabels:(bool)smallLabels;
 - (void)setOffsetLabels:(bool)offsetLabels;

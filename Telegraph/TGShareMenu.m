@@ -17,9 +17,12 @@
 #import "TGDialogListController.h"
 
 #import "TGLegacyComponentsContext.h"
+#import "TGSendMessageSignals.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
 @interface TGDocumentInteractionControllerHandle : NSObject <UIDocumentInteractionControllerDelegate>
 {
     UIDocumentInteractionController *_controller;
@@ -29,8 +32,36 @@
 - (instancetype)initWithController:(UIDocumentInteractionController *)controller;
 
 @end
+#endif
 
 @implementation TGShareMenu
+
++ (TGMenuSheetController *)presentChannelShareMenuInParentController:(TGViewController *)parentController conversation:(TGConversation *)conversation sourceView:(UIView *)sourceView sourceRect:(CGRect (^)(void))sourceRect
+{
+    if (conversation.username.length == 0)
+        return nil;
+    
+    NSString *linkString = [NSString stringWithFormat:@"https://t.me/%@", conversation.username];
+    NSString *externalString = linkString;
+    if (conversation.about.length > 0)
+    {
+        NSString *aboutText = conversation.about;
+        if (aboutText.length > 200)
+            aboutText = [[aboutText substringToIndex:200] stringByAppendingString:@"..."];
+        
+        externalString = [NSString stringWithFormat:@"%@ %@", aboutText, linkString];
+    }
+    
+    return [self presentInParentController:parentController menuController:nil buttonTitle:TGLocalized(@"ShareMenu.CopyShareLink") buttonAction:^
+    {
+        [[UIPasteboard generalPasteboard] setString:linkString];
+    } shareAction:^(NSArray *peerIds, NSString *caption)
+    {
+        [[TGShareSignals shareText:linkString toPeerIds:peerIds caption:caption] startWithNext:nil];
+        
+        [[[TGProgressWindow alloc] init] dismissWithSuccess];
+    } externalShareItemSignal:[SSignal single:externalString] sourceView:sourceView sourceRect:sourceRect barButtonItem:nil];
+}
 
 + (TGMenuSheetController *)presentInParentController:(TGViewController *)parentController menuController:(TGMenuSheetController *)menuController buttonTitle:(NSString *)buttonTitle buttonAction:(void (^)(void))buttonAction shareAction:(void (^)(NSArray *peerIds, NSString *caption))shareAction externalShareItemSignal:(id)externalShareItemSignal sourceView:(UIView *)sourceView sourceRect:(CGRect (^)(void))sourceRect barButtonItem:(UIBarButtonItem *)barButtonItem
 {
@@ -47,6 +78,7 @@
             if (next == nil)
                 return;
             
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
             if ([next isKindOfClass:[NSURL class]] && [(NSURL *)next isFileURL])
             {
                 UIDocumentInteractionController *interactionController = [UIDocumentInteractionController interactionControllerWithURL:next];
@@ -58,6 +90,7 @@
                 __unused id handle = [[TGDocumentInteractionControllerHandle alloc] initWithController:interactionController];
             }
             else
+#endif
             {
                 if (TGShareItemsViaLegacyPasteboard(@[next]))
                 {
@@ -65,24 +98,21 @@
                     return;
                 }
 
-                UIActivityViewController *activityController = [[UIActivityViewController alloc] initWithActivityItems:@[next] applicationActivities:nil];
-                [viewController presentViewController:activityController animated:true completion:nil];
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
+                UIView *activitySourceView = nil;
+                CGRect activitySourceRect = CGRectZero;
+                UIBarButtonItem *activityBarButtonItem = nil;
                 if (iosMajorVersion() >= 8 && TGAppDelegateInstance.rootController.currentSizeClass == UIUserInterfaceSizeClassRegular && (sourceView != nil || barButtonItem != nil))
                 {
                     if (barButtonItem != nil)
-                    {
-                        activityController.popoverPresentationController.barButtonItem = barButtonItem;
-                    }
+                        activityBarButtonItem = barButtonItem;
                     else
                     {
-                        activityController.popoverPresentationController.sourceView = sourceView;
+                        activitySourceView = sourceView;
                         if (sourceRect != nil)
-                            activityController.popoverPresentationController.sourceRect = sourceRect();
+                            activitySourceRect = sourceRect();
                     }
-                    activityController.popoverPresentationController.permittedArrowDirections = UIPopoverArrowDirectionAny;
                 }
-#endif
+                OGPlatformPresentActivityItems(viewController, @[next], activitySourceView, activitySourceRect, activityBarButtonItem, UIPopoverArrowDirectionAny, nil);
             }
             
             [progressWindow dismiss:true];
@@ -277,6 +307,7 @@
 @end
 
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
 @implementation TGDocumentInteractionControllerHandle
 
 - (instancetype)initWithController:(UIDocumentInteractionController *)controller
@@ -308,3 +339,4 @@
 }
 
 @end
+#endif

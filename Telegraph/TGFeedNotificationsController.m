@@ -33,12 +33,7 @@
         self.title = TGLocalized(@"Feed.Notifications.Title");
         
         _allItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Feed.Notifications.MuteAll") isOn:false];
-//        TGCollectionMenuSection *allSection = [[TGCollectionMenuSection alloc] initWithItems:@[_allItem]];
     
-//        UIEdgeInsets topSectionInsets = allSection.insets;
-//        topSectionInsets.top = 32.0f;
-//        allSection.insets = topSectionInsets;
-//        [self.menuSections addSection:allSection];
         
         NSArray *channels = [[TGDatabaseInstance() loadChannels:[feed.channelIds allObjects]] allValues];
         channels = [channels sortedArrayUsingComparator:^NSComparisonResult(TGConversation *obj1, TGConversation *obj2)

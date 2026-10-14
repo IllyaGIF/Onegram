@@ -1,10 +1,3 @@
-//
-//  TGKeychainImport.m
-//  Telegraph
-//
-//  Created by Peter on 17/02/14.
-//
-//
 
 #import "TGKeychainImport.h"
 
@@ -22,12 +15,15 @@
 + (NSMutableDictionary *)getKeychainQuery
 {
     NSString *service = @"com.telegraph.Telegraph";
-    return [NSMutableDictionary dictionaryWithObjectsAndKeys:
+    NSMutableDictionary *query = [NSMutableDictionary dictionaryWithObjectsAndKeys:
             (__bridge id)kSecClassGenericPassword, (__bridge id)kSecClass,
             service, (__bridge id)kSecAttrService,
             service, (__bridge id)kSecAttrAccount,
-            (__bridge id)kSecAttrAccessibleAfterFirstUnlock, (__bridge id)kSecAttrAccessible,
             nil];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    [query setObject:(__bridge id)kSecAttrAccessibleAfterFirstUnlock forKey:(__bridge id)kSecAttrAccessible];
+#endif
+    return query;
 }
 
 + (int64_t)clientKeychainId

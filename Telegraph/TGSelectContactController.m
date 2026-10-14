@@ -117,7 +117,6 @@
             }
             
 #if TARGET_IPHONE_SIMULATOR
-            //self.usersSelectedLimit = 10;
 #endif
             
             if (createEncrypted || call) {

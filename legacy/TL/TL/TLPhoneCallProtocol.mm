@@ -9,13 +9,11 @@
 
 - (int32_t)TLconstructorSignature
 {
-    TGLog(@"constructorSignature is not implemented for base type");
     return 0;
 }
 
 - (int32_t)TLconstructorName
 {
-    TGLog(@"constructorName is not implemented for base type");
     return 0;
 }
 
@@ -26,13 +24,11 @@
     object.min_layer = metaObject->getInt32((int32_t)0xda47b9a9);
     object.max_layer = metaObject->getInt32((int32_t)0x721a222a);
     object.library_versions = metaObject->getArray((int32_t)0x4dd20b3d) ?: @[];
-    TGLog(@"CALL protocol.baseFallback min=%d max=%d versions=%d", object.min_layer, object.max_layer, (int)object.library_versions.count);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
 {
-    TGLog(@"TLfillFieldsWithValues is not implemented for base type");
 }
 
 

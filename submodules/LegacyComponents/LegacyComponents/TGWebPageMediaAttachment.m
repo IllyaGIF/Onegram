@@ -35,7 +35,25 @@
         _photo = [aDecoder decodeObjectForKey:@"photo"];
         _embedUrl = [aDecoder decodeObjectForKey:@"embedUrl"];
         _embedType = [aDecoder decodeObjectForKey:@"embedType"];
-        _embedSize = [[aDecoder decodeObjectForKey:@"embedSize"] CGSizeValue];
+        CGFloat embedWidth = (CGFloat)[aDecoder decodeDoubleForKey:@"embedWidth"];
+        CGFloat embedHeight = (CGFloat)[aDecoder decodeDoubleForKey:@"embedHeight"];
+        if (embedWidth == 0.0f && embedHeight == 0.0f)
+        {
+            @try
+            {
+                id legacyEmbedSize = [aDecoder decodeObjectForKey:@"embedSize"];
+                if ([legacyEmbedSize respondsToSelector:@selector(CGSizeValue)])
+                {
+                    CGSize size = [legacyEmbedSize CGSizeValue];
+                    embedWidth = size.width;
+                    embedHeight = size.height;
+                }
+            }
+            @catch (__unused NSException *exception)
+            {
+            }
+        }
+        _embedSize = CGSizeMake(embedWidth, embedHeight);
         _duration = [aDecoder decodeObjectForKey:@"duration"];
         _author = [aDecoder decodeObjectForKey:@"author"];
         _document = [aDecoder decodeObjectForKey:@"document"];
@@ -69,7 +87,8 @@
         [aCoder encodeObject:_embedUrl forKey:@"embedUrl"];
     if (_embedType != nil)
         [aCoder encodeObject:_embedType forKey:@"embedType"];
-    [aCoder encodeObject:[NSValue valueWithCGSize:_embedSize] forKey:@"embedSize"];
+    [aCoder encodeDouble:_embedSize.width forKey:@"embedWidth"];
+    [aCoder encodeDouble:_embedSize.height forKey:@"embedHeight"];
     if (_duration != nil)
         [aCoder encodeObject:_duration forKey:@"duration"];
     if (_author != nil)

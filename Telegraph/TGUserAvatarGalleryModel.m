@@ -180,14 +180,8 @@
             legacyThumbnailUrl = legacyUrl;
         if (legacyUrl.length == 0)
         {
-            while (false) TGLog(@"PROFILE avatar.gallery.skip imageId=%lld noUrl", imageMedia.imageId);
             continue;
         }
-        while (false) TGLog(@"PROFILE avatar.gallery.item imageId=%lld thumb=%@ url=%@ origin=%d",
-              imageMedia.imageId,
-              legacyThumbnailUrl,
-              legacyUrl,
-              imageMedia.originInfo != nil ? 1 : 0);
         bool isCurrent = false;
         
         if (index == 0)
@@ -210,8 +204,6 @@
     
     if (updatedItems.count != 0)
         [self _replaceItems:updatedItems focusingOnItem:focusOnFirst ? updatedItems.firstObject : nil];
-    else
-        while (false) TGLog(@"PROFILE avatar.gallery.keepCurrent emptyLoadedList peer=%lld", _peerId);
 }
 
 - (void)_commitDeletedGroupItem:(TGUserAvatarGalleryItem *)item
@@ -246,12 +238,7 @@
         {
             if (status == ASStatusSuccess && ((NSArray *)result).count != 0)
             {   
-                while (false) TGLog(@"PROFILE avatar.gallery.loaded peer=%lld count=%d", _peerId, (int)((NSArray *)result).count);
                 [self _replaceItemsFromImageMediaList:result focusOnFirst:true];
-            }
-            else
-            {
-                while (false) TGLog(@"PROFILE avatar.gallery.loaded.empty peer=%lld status=%d", _peerId, status);
             }
         });
     }

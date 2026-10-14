@@ -1,7 +1,6 @@
 #import "TLUpdates$updateShortSentMessage.h"
 #import "TLMetaClassStore.h"
 
-//updateShortSentMessage flags:# id:int pts:int pts_count:int date:int media:flags.9?MessageMedia entities:flags.7?Vector<MessageEntity> = Updates;
 
 @implementation TLUpdates$updateShortSentMessage
 

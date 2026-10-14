@@ -41,6 +41,8 @@ typedef enum {
     CMTime _timeOffset;
     
     bool _wasPaused;
+    NSUInteger _pendingVideoBufferCount;
+    NSUInteger _pendingAudioBufferCount;
 }
 @end
 
@@ -57,6 +59,9 @@ typedef enum {
 		_url = URL;
 		_delegate = delegate;
 		_delegateCallbackQueue = queue;
+#if !OS_OBJECT_USE_OBJC
+        dispatch_retain(_delegateCallbackQueue);
+#endif
 	}
 	return self;
 }
@@ -108,7 +113,7 @@ typedef enum {
 		[self transitionToStatus:TGMovieRecorderStatusPreparingToRecord error:nil];
 	}
 	
-	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^
+	dispatch_async(_writingQueue, ^
     {
 		@autoreleasepool
 		{
@@ -132,13 +137,13 @@ typedef enum {
 			if (error == nil && succeed)
             {
 				if (![_assetWriter startWriting])
-					error = _assetWriter.error;
+					error = _assetWriter.error ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:nil];
 			}
 			
 			@synchronized (self)
 			{
 				if (error || !succeed)
-					[self transitionToStatus:TGMovieRecorderStatusFailed error:error];
+					[self transitionToStatus:TGMovieRecorderStatusFailed error:error ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture encoder rejected its output settings."}]];
 				else
 					[self transitionToStatus:TGMovieRecorderStatusRecording error:nil];
 			}
@@ -232,6 +237,10 @@ typedef enum {
 
 - (void)dealloc
 {    
+#if !OS_OBJECT_USE_OBJC
+    dispatch_release(_writingQueue);
+    dispatch_release(_delegateCallbackQueue);
+#endif
 	if (_audioTrackSourceFormatDescription)
 		CFRelease(_audioTrackSourceFormatDescription);
 	
@@ -247,114 +256,143 @@ typedef enum {
         if (_paused)
             _wasPaused = true;
     }
+    if (paused)
+        dispatch_sync(_writingQueue, ^{});
 }
 
 - (CMSampleBufferRef)adjustTimeOfSample:(CMSampleBufferRef)sample byOffset:(CMTime)offset
 {
-    CMItemCount count;
-    CMSampleBufferGetSampleTimingInfoArray(sample, 0, nil, &count);
-    CMSampleTimingInfo *pInfo = malloc(sizeof(CMSampleTimingInfo) * count);
-    CMSampleBufferGetSampleTimingInfoArray(sample, count, pInfo, &count);
-    for (CMItemCount i = 0; i < count; i++)
+    CMItemCount count = 0;
+    if (CMSampleBufferGetSampleTimingInfoArray(sample, 0, NULL, &count) != noErr || count <= 0)
+        return NULL;
+    CMSampleTimingInfo *timings = malloc(sizeof(CMSampleTimingInfo) * count);
+    if (timings == NULL)
+        return NULL;
+    OSStatus result = CMSampleBufferGetSampleTimingInfoArray(sample, count, timings, &count);
+    if (result == noErr)
     {
-        pInfo[i].decodeTimeStamp = CMTimeSubtract(pInfo[i].decodeTimeStamp, offset);
-        pInfo[i].presentationTimeStamp = CMTimeSubtract(pInfo[i].presentationTimeStamp, offset);
+        for (CMItemCount i = 0; i < count; i++)
+        {
+            timings[i].decodeTimeStamp = CMTimeSubtract(timings[i].decodeTimeStamp, offset);
+            timings[i].presentationTimeStamp = CMTimeSubtract(timings[i].presentationTimeStamp, offset);
+        }
     }
-    CMSampleBufferRef sout;
-    CMSampleBufferCreateCopyWithNewTiming(nil, sample, count, pInfo, &sout);
-    free(pInfo);
-    return sout;
+    CMSampleBufferRef adjusted = NULL;
+    if (result == noErr)
+        CMSampleBufferCreateCopyWithNewTiming(kCFAllocatorDefault, sample, count, timings, &adjusted);
+    free(timings);
+    return adjusted;
 }
 
 - (void)appendSampleBuffer:(CMSampleBufferRef)sampleBuffer ofMediaType:(NSString *)mediaType
 {
-	if (sampleBuffer == NULL)
-		return;
-	
-	@synchronized (self)
+    if (sampleBuffer == NULL)
+        return;
+    bool video = [mediaType isEqualToString:AVMediaTypeVideo];
+    @synchronized (self)
     {
-		if (_status < TGMovieRecorderStatusRecording || (mediaType == AVMediaTypeAudio && !_haveStartedSession))
-			return;
-	}
-    
-    CMTime timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-	
-	CFRetain(sampleBuffer);
-	dispatch_async(_writingQueue, ^
-    {
-        CMSampleBufferRef buffer = sampleBuffer;
-        
-		@autoreleasepool
-		{
-			@synchronized (self)
-			{
-				if (_status > TGMovieRecorderStatusFinishingWaiting)
-                {
-					CFRelease(sampleBuffer);
-					return;
-				}
-			}
-			
-			if (!_haveStartedSession)
+        if (_status != TGMovieRecorderStatusRecording || _paused || (!video && !_haveStartedSession))
+            return;
+        if (video)
+        {
+            if (_pendingVideoBufferCount >= 4)
+                return;
+            _pendingVideoBufferCount++;
+        }
+        else
+        {
+            if (_pendingAudioBufferCount >= 64)
             {
-				[_assetWriter startSessionAtSourceTime:CMSampleBufferGetPresentationTimeStamp(sampleBuffer)];
-				_haveStartedSession = true;
-                
-                _startTimeStamp = timestamp;
-			}
-            
-			AVAssetWriterInput *input = (mediaType == AVMediaTypeVideo) ? _videoInput : _audioInput;
-            @synchronized (self)
+                [self transitionToStatus:TGMovieRecorderStatusFailed error:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorOutOfMemory userInfo:nil]];
+                return;
+            }
+            _pendingAudioBufferCount++;
+        }
+        CFRetain(sampleBuffer);
+        dispatch_async(_writingQueue, ^
+        {
+            @autoreleasepool
             {
-                if (_wasPaused)
+                CMSampleBufferRef buffer = sampleBuffer;
+                @try
                 {
-                    if (input == _videoInput)
-                        return;
-                    
-                    _wasPaused = false;
-                    
-                    CMTime pts = CMSampleBufferGetPresentationTimeStamp(buffer);
-                    CMTime last = _lastAudioTimeStamp;
-                    if (last.flags & kCMTimeFlags_Valid)
+                    @synchronized (self)
                     {
-                        CMTime offset = CMTimeSubtract(pts, last);
-                        if (_timeOffset.value == 0)
-                            _timeOffset = offset;
-                        else
-                            _timeOffset = CMTimeAdd(_timeOffset, offset);
+                        if (_status > TGMovieRecorderStatusFinishingWaiting || _paused)
+                            return;
+                        if (_wasPaused)
+                        {
+                            if (video)
+                                return;
+                            CMTime pts = CMSampleBufferGetPresentationTimeStamp(buffer);
+                            if (_lastAudioTimeStamp.flags & kCMTimeFlags_Valid)
+                            {
+                                CMTime previousTimestamp = _timeOffset.flags & kCMTimeFlags_Valid ? CMTimeAdd(_lastAudioTimeStamp, _timeOffset) : _lastAudioTimeStamp;
+                                CMTime gap = CMTimeSubtract(pts, previousTimestamp);
+                                if (CMTimeGetSeconds(gap) > 0.0)
+                                    _timeOffset = _timeOffset.flags & kCMTimeFlags_Valid ? CMTimeAdd(_timeOffset, gap) : gap;
+                            }
+                            _wasPaused = false;
+                        }
                     }
-                    _lastAudioTimeStamp.flags = 0;
+                    if (_timeOffset.flags & kCMTimeFlags_Valid)
+                    {
+                        CMSampleBufferRef adjusted = [self adjustTimeOfSample:buffer byOffset:_timeOffset];
+                        if (adjusted == NULL)
+                        {
+                            @synchronized (self)
+                            {
+                                [self transitionToStatus:TGMovieRecorderStatusFailed error:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorInvalidSourceMedia userInfo:nil]];
+                            }
+                            return;
+                        }
+                        CFRelease(buffer);
+                        buffer = adjusted;
+                    }
+                    CMTime timestamp = CMSampleBufferGetPresentationTimeStamp(buffer);
+                    if (!_haveStartedSession)
+                    {
+                        [_assetWriter startSessionAtSourceTime:timestamp];
+                        @synchronized (self)
+                        {
+                            _startTimeStamp = timestamp;
+                            _haveStartedSession = true;
+                        }
+                    }
+                    AVAssetWriterInput *input = video ? _videoInput : _audioInput;
+                    if (input.readyForMoreMediaData)
+                    {
+                        if (![input appendSampleBuffer:buffer])
+                        {
+                            @synchronized (self)
+                            {
+                                [self transitionToStatus:TGMovieRecorderStatusFailed error:_assetWriter.error ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:nil]];
+                            }
+                        }
+                        else if (!video)
+                        {
+                            CMTime duration = CMSampleBufferGetDuration(buffer);
+                            @synchronized (self)
+                            {
+                                _lastAudioTimeStamp = duration.value > 0 ? CMTimeAdd(timestamp, duration) : timestamp;
+                            }
+                        }
+                    }
+                }
+                @finally
+                {
+                    CFRelease(buffer);
+                    @synchronized (self)
+                    {
+                        if (video)
+                            _pendingVideoBufferCount--;
+                        else
+                            _pendingAudioBufferCount--;
+                    }
                 }
             }
-            
-            if (_timeOffset.value > 0 && input == _videoInput)
-            {
-                buffer = [self adjustTimeOfSample:buffer byOffset:_timeOffset];
-                CFRelease(sampleBuffer);
-            }
-            
-            CMTime pts = CMSampleBufferGetPresentationTimeStamp(buffer);
-            CMTime duration = CMSampleBufferGetDuration(buffer);
-            if (duration.value > 0)
-                pts = CMTimeAdd(pts, duration);
-            
-            if (input == _audioInput)
-                _lastAudioTimeStamp = pts;
-            
-			if (input.readyForMoreMediaData)
-			{
-				if (![input appendSampleBuffer:buffer])
-                {
-					NSError *error = _assetWriter.error;
-					@synchronized (self)
-                    {
-						[self transitionToStatus:TGMovieRecorderStatusFailed error:error];
-					}
-				}
-			}
-			CFRelease(buffer);
-        }
-	});
+        });
+    }
 }
 
 - (void)transitionToStatus:(TGMovieRecorderStatus)newStatus error:(NSError *)error
@@ -476,7 +514,12 @@ typedef enum {
 
 - (NSTimeInterval)videoDuration
 {
-    return CMTimeGetSeconds(CMTimeSubtract(_lastAudioTimeStamp, _startTimeStamp));
+    @synchronized (self)
+    {
+        if (!_haveStartedSession || !(_lastAudioTimeStamp.flags & kCMTimeFlags_Valid))
+            return 0.0;
+        return MAX(0.0, CMTimeGetSeconds(CMTimeSubtract(_lastAudioTimeStamp, _startTimeStamp)));
+    }
 }
 
 @end

@@ -8,7 +8,11 @@
 
 #import <UIKit/UIKit.h>
 
+#if __has_include(<CoreText/CoreText.h>)
 #import <CoreText/CoreText.h>
+#else
+#import "OGPlatformText.h"
+#endif
 
 #ifdef __cplusplus
 #include <vector>
@@ -92,13 +96,50 @@ typedef enum {
     TGReusableLabelLayoutHighlightLinks = 2,
     TGReusableLabelTruncateInTheMiddle = 16,
     TGReusableLabelLayoutHighlightCommands = 32,
-    TGReusableLabelLayoutOffsetLastLine = 64
+    TGReusableLabelLayoutOffsetLastLine = 64,
+    TGReusableLabelLayoutForegroundFromContext = 128,
+    TGReusableLabelLayoutBoundedTail = 256
 } TGReusableLabelLayout;
+
+extern NSString *const TGReusableLabelEmojiImagesLoadedNotification;
+#ifdef __cplusplus
+extern "C" {
+#endif
+void TGReusableLabelResetMissedEmoji(void);
+bool TGReusableLabelMissedEmoji(void);
+#ifdef __cplusplus
+}
+#endif
+
+extern NSString *const TGReusableLabelRunDecorationAttributeName;
+
+@interface TGReusableLabelRunDecoration : NSObject
+
+@property (nonatomic, strong) UIColor *backgroundColor;
+@property (nonatomic, strong) UIColor *backgroundBorderColor;
+@property (nonatomic) CGFloat backgroundCornerRadius;
+@property (nonatomic) CGFloat backgroundHorizontalOutset;
+@property (nonatomic, strong) UIColor *strikethroughColor;
+@property (nonatomic, strong) UIColor *underlineColor;
+@property (nonatomic, strong) UIColor *coverColor;
+@property (nonatomic, copy) void (^drawContent)(CGContextRef context, CGRect rect);
+
+@end
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+CTRunDelegateRef TGReusableLabelCreateAttachmentRunDelegate(CGFloat ascent, CGFloat descent, CGFloat width);
+CGFloat TGReusableLabelFirstBaselineOffset(CTFontRef font);
+#ifdef __cplusplus
+}
+#endif
 
 @interface TGReusableLabelLayoutData : NSObject
 
 @property (nonatomic) CGSize size;
 @property (nonatomic, readonly) CGFloat drawingWidth;
+@property (nonatomic, readonly) bool hasCustomDrawing;
 
 - (NSString *)linkAtPoint:(CGPoint)point topRegion:(CGRect *)topRegion middleRegion:(CGRect *)middleRegion bottomRegion:(CGRect *)bottomRegion hiddenLink:(bool *)hiddenLink linkText:(__autoreleasing NSString **)linkText;
 - (void)enumerateSearchRegionsForString:(NSString *)string withBlock:(void (^)(CGRect))block;

@@ -9,5 +9,6 @@
 @property (nonatomic, copy) void (^customDismissBlock)();
 
 - (void)dismiss;
+- (void)viewWillLayoutSubviews;
 
 @end

@@ -6,6 +6,14 @@ uniform sampler2D previousTexture;
 uniform mediump float opacity;
 uniform mediump float aspectRatio;
 uniform mediump float noMirror;
+uniform sampler2D chromaTexture;
+uniform sampler2D previousChromaTexture;
+uniform mediump float isNV12;
+uniform mediump float previousIsNV12;
+uniform mediump mat3 colorConversion;
+uniform mediump mat3 previousColorConversion;
+uniform mediump vec3 colorOffset;
+uniform mediump vec3 previousColorOffset;
 
 void main()
 {
@@ -15,6 +23,16 @@ void main()
     vec4 white = vec4(1.0, 1.0, 1.0, 1.0);
     vec4 color = texture2D(texture, texcoord);
     vec4 previousColor = texture2D(previousTexture, prevTexcoord);
+    if (isNV12 > 0.5)
+    {
+        vec3 yuv = vec3(color.r, texture2D(chromaTexture, texcoord).ra);
+        color = vec4(clamp(colorConversion * (yuv + colorOffset), 0.0, 1.0), 1.0);
+    }
+    if (previousIsNV12 > 0.5)
+    {
+        vec3 yuv = vec3(previousColor.r, texture2D(previousChromaTexture, prevTexcoord).ra);
+        previousColor = vec4(clamp(previousColorConversion * (yuv + previousColorOffset), 0.0, 1.0), 1.0);
+    }
     
     color.rgb = mix(color.rgb, previousColor.rgb, opacity);
     

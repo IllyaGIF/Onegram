@@ -7,6 +7,18 @@
 
 static SPipe *TGAudioSessionRouteChangePipe = nil;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+static void TGLegacyAudioSessionSetMode(TGAudioSessionType type)
+{
+    if (iosMajorVersion() < 5)
+        return;
+    UInt32 mode = type == TGAudioSessionTypeCall ? kAudioSessionMode_VoiceChat : kAudioSessionMode_Default;
+    OSStatus status = AudioSessionSetProperty(kAudioSessionProperty_Mode, sizeof(mode), &mode);
+    if (status != noErr)
+        TGLog(@"(TGAudioSessionManager legacy mode error %d)", (int)status);
+}
+#endif
+
 static void TGLegacyAudioSessionInterruptionListener(void *clientData, UInt32 interruptionState);
 static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionPropertyID propertyId, UInt32 propertySize, const void *propertyValue);
 
@@ -82,6 +94,7 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     NSMutableArray *_currentInterruptedArray;
     
     bool _isInterrupting;
+    NSUInteger _notificationSoundSuppressionCount;
 }
 
 - (OSStatus)initializeLegacyAudioSession;
@@ -113,12 +126,14 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
         pthread_mutex_init(&_mutex, &attributes);
         pthread_mutexattr_destroy(&attributes);
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
         if (iosMajorVersion() >= 6)
         {
             [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioSessionInterruption:) name:AVAudioSessionInterruptionNotification object:[AVAudioSession sharedInstance]];
             [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioSessionRouteChanged:) name:AVAudioSessionRouteChangeNotification object:[AVAudioSession sharedInstance]];
         }
         else
+#endif
         {
             OSStatus status = [self initializeLegacyAudioSession];
             if (status != noErr)
@@ -144,11 +159,13 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
 
 - (void)dealloc
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     if (iosMajorVersion() >= 6)
     {
         [[NSNotificationCenter defaultCenter] removeObserver:self];
     }
     else
+#endif
     {
         AudioSessionRemovePropertyListenerWithUserData(kAudioSessionProperty_AudioRouteChange, TGLegacyAudioSessionRouteListener, (__bridge void *)self);
     }
@@ -172,6 +189,26 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     }
     
     return AVAudioSessionCategoryPlayback;
+}
+
+- (id<SDisposable>)suppressNotificationSounds
+{
+    pthread_mutex_lock(&_mutex);
+    _notificationSoundSuppressionCount++;
+    pthread_mutex_unlock(&_mutex);
+    return [[SBlockDisposable alloc] initWithBlock:^{
+        pthread_mutex_lock(&_mutex);
+        _notificationSoundSuppressionCount--;
+        pthread_mutex_unlock(&_mutex);
+    }];
+}
+
+- (bool)notificationSoundsSuppressed
+{
+    pthread_mutex_lock(&_mutex);
+    bool suppressed = _notificationSoundSuppressionCount != 0;
+    pthread_mutex_unlock(&_mutex);
+    return suppressed;
 }
 
 - (id<SDisposable>)requestSessionWithType:(TGAudioSessionType)type interrupted:(void (^)())interrupted
@@ -214,12 +251,6 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                     
                     NSError *error = nil;
                     
-                    TGLog(@"(TGAudioSessionManager setting category %d active overriding port: %d)",
-                          (int)type,
-                          ((type == TGAudioSessionTypePlayAndRecordHeadphones ||
-                            type == TGAudioSessionTypePlayMusic ||
-                            type == TGAudioSessionTypePlayVideo ||
-                            type == TGAudioSessionTypePlayEmbedVideo)) ? 1 : 0);
                     
                     bool shouldUseSpeaker = !(type == TGAudioSessionTypePlayAndRecordHeadphones ||
                                               type == TGAudioSessionTypePlayMusic ||
@@ -227,6 +258,7 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                                               type == TGAudioSessionTypePlayEmbedVideo ||
                                               type == TGAudioSessionTypeCall);
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
                     if (iosMajorVersion() >= 6)
                     {
                         AVAudioSession *session = [AVAudioSession sharedInstance];
@@ -270,7 +302,6 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                             Float64 actualRate = 0.0;
                             UInt32 actualRateSize = sizeof(actualRate);
                             OSStatus actualRateStatus = AudioSessionGetProperty(kAudioSessionProperty_CurrentHardwareSampleRate, &actualRateSize, &actualRate);
-                            TGLog(@"LAT audioSession active preferred=%.4f actual=%.4f rate=%.0f rateStatus=%d", 0.010, [session IOBufferDuration], actualRate, (int)actualRateStatus);
                         }
 
                         error = nil;
@@ -279,19 +310,22 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                             TGLog(@"(TGAudioSessionManager override port error %@)", error);
                     }
                     else
+#endif
                     {
                         OSStatus status = [self initializeLegacyAudioSession];
                         if (status != noErr)
                             TGLog(@"(TGAudioSessionManager legacy initialize error %d)", (int)status);
 
                         UInt32 category = (type == TGAudioSessionTypePlayAndRecord || type == TGAudioSessionTypePlayAndRecordHeadphones || type == TGAudioSessionTypeCall) ? kAudioSessionCategory_PlayAndRecord : kAudioSessionCategory_MediaPlayback;
-                        TGLog(@"AUDIO category.begin type=%d category=%u", (int)type, (unsigned int)category);
                         status = AudioSessionSetProperty(kAudioSessionProperty_AudioCategory, sizeof(category), &category);
                         if (status == kAudioSessionNotInitialized && [self initializeLegacyAudioSession] == noErr)
                             status = AudioSessionSetProperty(kAudioSessionProperty_AudioCategory, sizeof(category), &category);
-                        TGLog(@"AUDIO category.end type=%d status=%d", (int)type, (int)status);
                         if (status != noErr)
                             TGLog(@"(TGAudioSessionManager legacy category error %d)", (int)status);
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+                        TGLegacyAudioSessionSetMode(type);
+#endif
 
                         if (type == TGAudioSessionTypeCall)
                         {
@@ -306,14 +340,12 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                                 TGLog(@"LAT audioSession preferredBuffer legacyError %d", (int)preferredStatus);
                         }
 
-                        TGLog(@"AUDIO active.begin type=%d", (int)type);
                         status = AudioSessionSetActive(true);
                         if (status == kAudioSessionNotInitialized && [self initializeLegacyAudioSession] == noErr)
                         {
                             AudioSessionSetProperty(kAudioSessionProperty_AudioCategory, sizeof(category), &category);
                             status = AudioSessionSetActive(true);
                         }
-                        TGLog(@"AUDIO active.end type=%d status=%d", (int)type, (int)status);
                         if (status != noErr)
                             TGLog(@"(TGAudioSessionManager legacy active error %d)", (int)status);
 
@@ -401,8 +433,8 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
         _currentActive = false;
         _currentType = TGAudioSessionTypePlayMusic;
         
-        TGLog(@"(TGAudioSessionManager setting inactive)");
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
         if (iosMajorVersion() >= 6)
         {
             NSError *error = nil;
@@ -427,6 +459,7 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                 TGLog(@"(TGAudioSessionManager setting inactive error %@)", error);
         }
         else
+#endif
         {
             if (previousType == TGAudioSessionTypePlayAndRecord || previousType == TGAudioSessionTypePlayAndRecordHeadphones || previousType == TGAudioSessionTypeCall)
             {
@@ -435,6 +468,9 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
             }
             UInt32 category = kAudioSessionCategory_MediaPlayback;
             AudioSessionSetProperty(kAudioSessionProperty_AudioCategory, sizeof(category), &category);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+            TGLegacyAudioSessionSetMode(TGAudioSessionTypePlayMusic);
+#endif
             OSStatus status = AudioSessionSetActive(false);
             if (status != noErr)
                 TGLog(@"(TGAudioSessionManager legacy inactive error %d)", (int)status);
@@ -464,8 +500,8 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
             _currentActive = false;
             _currentType = TGAudioSessionTypePlayMusic;
             
-            TGLog(@"(TGAudioSessionManager setting inactive)");
             
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
             if (iosMajorVersion() >= 6)
             {
                 NSError *error = nil;
@@ -487,9 +523,10 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                 error = nil;
                 [session setActive:false withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:&error];
                 if (error != nil && !([error.domain isEqualToString:@"NSOSStatusErrorDomain"] && error.code == (NSInteger)0x21616374))
-                    TGLog(@"(TGAudioSessionManager setting inactive error %@)", error);
+                TGLog(@"(TGAudioSessionManager setting inactive error %@)", error);
             }
             else
+#endif
             {
                 if (previousType == TGAudioSessionTypePlayAndRecord || previousType == TGAudioSessionTypePlayAndRecordHeadphones || previousType == TGAudioSessionTypeCall)
                 {
@@ -498,6 +535,9 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                 }
                 UInt32 category = kAudioSessionCategory_MediaPlayback;
                 AudioSessionSetProperty(kAudioSessionProperty_AudioCategory, sizeof(category), &category);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+                TGLegacyAudioSessionSetMode(TGAudioSessionTypePlayMusic);
+#endif
                 OSStatus status = AudioSessionSetActive(false);
                 if (status != noErr)
                     TGLog(@"(TGAudioSessionManager legacy inactive error %d)", (int)status);
@@ -561,8 +601,9 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     [self legacyAudioSessionInterruption:[interruptionState unsignedIntValue]];
 }
 
-- (void)audioSessionInterruption:(NSNotification *)notification
+- (void)audioSessionInterruption:(NSNotification *)__unused notification
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     if (iosMajorVersion() < 6)
         return;
     
@@ -573,6 +614,7 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     {
         [self cancelCurrentSession:true];
     }
+#endif
 }
 
 - (void)applyRoute:(TGAudioRoute *)route
@@ -580,6 +622,14 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     if (route == nil)
         return;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000
+    UInt32 value = [route.uid isEqualToString:@"speaker"] ? kAudioSessionOverrideAudioRoute_Speaker : kAudioSessionOverrideAudioRoute_None;
+    OSStatus status = AudioSessionSetProperty(kAudioSessionProperty_OverrideAudioRoute, sizeof(value), &value);
+    if (status != noErr)
+        TGLog(@"(TGAudioSessionManager legacy apply route error %d)", (int)status);
+    [self emitRouteChange];
+    return;
+#else
     if (iosMajorVersion() < 6)
     {
         UInt32 value = [route.uid isEqualToString:@"speaker"] ? kAudioSessionOverrideAudioRoute_Speaker : kAudioSessionOverrideAudioRoute_None;
@@ -633,9 +683,10 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     }
 
     if (error != nil)
-        TGLog(@"(TGAudioSessionManager apply route error %@)", error);
+    TGLog(@"(TGAudioSessionManager apply route error %@)", error);
 
     [self emitRouteChange];
+#endif
 }
 
 @end
@@ -719,6 +770,7 @@ static NSString *deviceModel = nil;
     return route;
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 + (instancetype)routeWithDescription:(AVAudioSessionPortDescription *)description
 {
     TGAudioRoute *route = [[TGAudioRoute alloc] init];
@@ -752,5 +804,6 @@ static NSString *deviceModel = nil;
     
     return bluetoothTypes;
 }
+#endif
 
 @end

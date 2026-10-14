@@ -346,8 +346,6 @@
             [delegate searchMixin:self hasChangedSearchQuery:searchText withScope:(int)_searchBar.selectedScopeButtonIndex];
         }
         
-        //if (searchText.length == 0)
-        //    [self setSearchResultsTableViewHidden:false];
     }
 }
 

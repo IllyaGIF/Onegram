@@ -1,5 +1,7 @@
 #import "TGUser+Telegraph.h"
 
+#import <objc/runtime.h>
+
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGSchema.h"
@@ -26,10 +28,17 @@ static NSString *OnegramTelegramSupportAvatarUri(void)
     return @"placeholder://?type=telegram-support&w=412&h=412";
 }
 
+static void OnegramCacheStrippedAvatar(id photo, NSString *url)
+{
+    if (photo == nil || url.length == 0)
+        return;
+    UIImage *image = objc_getAssociatedObject(photo, NSSelectorFromString(@"onegramStrippedAvatar"));
+    if (image != nil)
+        [TGRemoteImageView cacheStrippedPlaceholderImage:image forUrl:url];
+}
+
 void extractUserPhoto(TLUserProfilePhoto *photo, TGUser *target)
 {
-    // The official Telegram service account keeps a bundled, deterministic
-    // avatar so it is still recognizable when old MTProto photo loading fails.
     if (target.uid == 42777)
     {
         NSString *avatarUri = OnegramTelegramSupportAvatarUri();
@@ -47,7 +56,7 @@ void extractUserPhoto(TLUserProfilePhoto *photo, TGUser *target)
             target.photoUrlSmall = modernPeerPhotoUrl(profilePhoto.dc_id, 1, target.uid, target.phoneNumberHash, profilePhoto.photo_id, false);
             target.photoUrlMedium = nil;
             target.photoUrlBig = modernPeerPhotoUrl(profilePhoto.dc_id, 1, target.uid, target.phoneNumberHash, profilePhoto.photo_id, true);
-            // High-volume success path.
+            OnegramCacheStrippedAvatar(profilePhoto, target.photoUrlSmall);
             return;
         }
         target.photoUrlSmall = extractFileUrl(profilePhoto.photo_small);
@@ -193,6 +202,7 @@ int extractUserLinkFromUpdate(TLUpdate$updateContactLink *linkUpdate)
 	                    self.photoUrlSmall = modernPeerPhotoUrl(profilePhoto.dc_id, 1, peerPhotoUserId, self.phoneNumberHash, profilePhoto.photo_id, false);
 	                    self.photoUrlMedium = nil;
 	                    self.photoUrlBig = modernPeerPhotoUrl(profilePhoto.dc_id, 1, peerPhotoUserId, self.phoneNumberHash, profilePhoto.photo_id, true);
+	                    OnegramCacheStrippedAvatar(profilePhoto, self.photoUrlSmall);
 	                }
 	            }
 	            self.presence = extractUserPresence(concreteUser.status);

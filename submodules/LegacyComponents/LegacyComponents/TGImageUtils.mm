@@ -2,10 +2,17 @@
 
 #import "LegacyComponentsInternal.h"
 
+#import "../../../OnegramPlatform/OGPlatformGraphics.h"
+#import "../../../OnegramPlatform/OGMemoryCache.h"
+#if !defined(ONEGRAM_ARMV6)
 #import <Accelerate/Accelerate.h>
+#endif
 #import <CommonCrypto/CommonCrypto.h>
+#if !defined(ONEGRAM_ARMV6)
 #import <ImageIO/ImageIO.h>
+#endif
 #import <math.h>
+#import <pthread.h>
 
 #import <libkern/OSAtomic.h>
 #import <map>
@@ -13,6 +20,55 @@
 #import <objc/runtime.h>
 
 static bool retinaInitialized = false;
+
+#if defined(ONEGRAM_ARMV6)
+static pthread_mutex_t TGImageRenderingMutex;
+
+static void TGInitializeImageRenderingMutex(void)
+{
+    pthread_mutexattr_t attributes;
+    pthread_mutexattr_init(&attributes);
+    pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&TGImageRenderingMutex, &attributes);
+    pthread_mutexattr_destroy(&attributes);
+}
+#endif
+
+void TGImageRenderingLock(void)
+{
+#if defined(ONEGRAM_ARMV6)
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        TGInitializeImageRenderingMutex();
+    });
+    pthread_mutex_lock(&TGImageRenderingMutex);
+#endif
+}
+
+void TGImageRenderingUnlock(void)
+{
+#if defined(ONEGRAM_ARMV6)
+    pthread_mutex_unlock(&TGImageRenderingMutex);
+#endif
+}
+
+#if defined(ONEGRAM_ARMV6)
+class TGImageRenderingGuard
+{
+public:
+    TGImageRenderingGuard()
+    {
+        TGImageRenderingLock();
+    }
+
+    ~TGImageRenderingGuard()
+    {
+        TGImageRenderingUnlock();
+    }
+};
+#endif
+
 static bool isRetina()
 {
     static bool retina = false;
@@ -36,15 +92,15 @@ bool TGScaleARGB8888Buffer(const void *sourceData, size_t sourceWidth, size_t so
         return false;
 
     CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host;
-    CGContextRef sourceContext = CGBitmapContextCreate((void *)sourceData, sourceWidth, sourceHeight, 8, sourceRowBytes, colorSpace, bitmapInfo);
-    if (sourceContext == NULL)
+    CGDataProviderRef sourceProvider = CGDataProviderCreateWithData(NULL, sourceData, sourceRowBytes * (sourceHeight - 1) + sourceWidth * 4, NULL);
+    if (sourceProvider == NULL)
     {
         CGColorSpaceRelease(colorSpace);
         return false;
     }
 
-    CGImageRef sourceImage = CGBitmapContextCreateImage(sourceContext);
-    CGContextRelease(sourceContext);
+    CGImageRef sourceImage = CGImageCreate(sourceWidth, sourceHeight, 8, 32, sourceRowBytes, colorSpace, bitmapInfo, sourceProvider, NULL, false, kCGRenderingIntentDefault);
+    CGDataProviderRelease(sourceProvider);
     if (sourceImage == NULL)
     {
         CGColorSpaceRelease(colorSpace);
@@ -89,6 +145,173 @@ static void addRoundedRectToPath(CGContextRef context, CGRect rect, float ovalWi
     CGContextRestoreGState(context);
 }
 
+#if defined(ONEGRAM_ARMV6)
+typedef struct
+{
+    CGContextRef context;
+    void *data;
+    size_t width;
+    size_t height;
+    size_t rowBytes;
+} TGArmv6BitmapContext;
+
+static bool TGArmv6CreateBitmapContext(CGSize size, TGArmv6BitmapContext *result)
+{
+    if (result == NULL || !isfinite(size.width) || !isfinite(size.height) || size.width < 1.0f || size.height < 1.0f)
+        return false;
+
+    memset(result, 0, sizeof(TGArmv6BitmapContext));
+    size_t width = (size_t)MAX(1.0f, ceilf(size.width));
+    size_t height = (size_t)MAX(1.0f, ceilf(size.height));
+    if (width > 4096 || height > 4096 || width > ((size_t)-1) / 4)
+        return false;
+
+    size_t rowBytes = ((width * 4) + 15) & ~((size_t)15);
+    if (height > ((size_t)-1) / rowBytes)
+        return false;
+
+    void *data = calloc(height, rowBytes);
+    if (data == NULL)
+        return false;
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (colorSpace == NULL)
+    {
+        free(data);
+        return false;
+    }
+
+    CGContextRef context = CGBitmapContextCreate(data, width, height, 8, rowBytes, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+    {
+        free(data);
+        return false;
+    }
+
+    CGContextTranslateCTM(context, 0.0f, (CGFloat)height);
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextSetInterpolationQuality(context, kCGInterpolationMedium);
+
+    result->context = context;
+    result->data = data;
+    result->width = width;
+    result->height = height;
+    result->rowBytes = rowBytes;
+    return true;
+}
+
+static void TGArmv6ReleaseBitmapData(void *info, __unused const void *data, __unused size_t size)
+{
+    if (info != NULL)
+        free(info);
+}
+
+static UIImage *TGArmv6FinishBitmapContext(TGArmv6BitmapContext *bitmap)
+{
+    if (bitmap == NULL || bitmap->context == NULL || bitmap->data == NULL)
+        return nil;
+
+    CGContextFlush(bitmap->context);
+    CGContextRelease(bitmap->context);
+    bitmap->context = NULL;
+
+    size_t length = bitmap->rowBytes * bitmap->height;
+    void *data = bitmap->data;
+    CGDataProviderRef provider = CGDataProviderCreateWithData(data, data, length, TGArmv6ReleaseBitmapData);
+    if (provider == NULL)
+    {
+        free(data);
+        memset(bitmap, 0, sizeof(TGArmv6BitmapContext));
+        return nil;
+    }
+
+    bitmap->data = NULL;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGImageRef imageRef = colorSpace == NULL ? NULL : CGImageCreate(bitmap->width, bitmap->height, 8, 32, bitmap->rowBytes, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host, provider, NULL, false, kCGRenderingIntentDefault);
+    if (colorSpace != NULL)
+        CGColorSpaceRelease(colorSpace);
+    CGDataProviderRelease(provider);
+
+    UIImage *image = imageRef == NULL ? nil : [[UIImage alloc] initWithCGImage:imageRef];
+    if (imageRef != NULL)
+        CGImageRelease(imageRef);
+    memset(bitmap, 0, sizeof(TGArmv6BitmapContext));
+    return image;
+}
+
+UIImage *TGArmv6RenderImage(CGSize size, void (^draw)(CGContextRef context))
+{
+    if (draw == nil)
+        return nil;
+    TGImageRenderingGuard renderingGuard;
+    TGArmv6BitmapContext bitmap;
+    if (!TGArmv6CreateBitmapContext(size, &bitmap))
+        return nil;
+    @try
+    {
+        draw(bitmap.context);
+    }
+    @catch (NSException *exception)
+    {
+        CGContextRelease(bitmap.context);
+        free(bitmap.data);
+        @throw exception;
+    }
+    return TGArmv6FinishBitmapContext(&bitmap);
+}
+
+void TGArmv6DrawImage(CGContextRef context, UIImage *image, CGRect rect)
+{
+    if (context == NULL || image == nil || image.CGImage == NULL || CGRectIsEmpty(rect))
+        return;
+
+    CGContextSaveGState(context);
+    CGFloat width = rect.size.width;
+    CGFloat height = rect.size.height;
+    CGContextTranslateCTM(context, CGRectGetMidX(rect), CGRectGetMidY(rect));
+    CGRect drawRect = CGRectMake(-width * 0.5f, -height * 0.5f, width, height);
+
+    switch (image.imageOrientation)
+    {
+        case UIImageOrientationDown:
+            CGContextRotateCTM(context, (CGFloat)M_PI);
+            break;
+        case UIImageOrientationLeft:
+            CGContextRotateCTM(context, -(CGFloat)M_PI_2);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationRight:
+            CGContextRotateCTM(context, (CGFloat)M_PI_2);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationUpMirrored:
+            CGContextScaleCTM(context, -1.0f, 1.0f);
+            break;
+        case UIImageOrientationDownMirrored:
+            CGContextScaleCTM(context, 1.0f, -1.0f);
+            break;
+        case UIImageOrientationLeftMirrored:
+            CGContextRotateCTM(context, -(CGFloat)M_PI_2);
+            CGContextScaleCTM(context, -1.0f, 1.0f);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationRightMirrored:
+            CGContextRotateCTM(context, (CGFloat)M_PI_2);
+            CGContextScaleCTM(context, -1.0f, 1.0f);
+            drawRect = CGRectMake(-height * 0.5f, -width * 0.5f, height, width);
+            break;
+        case UIImageOrientationUp:
+        default:
+            break;
+    }
+
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextDrawImage(context, drawRect, image.CGImage);
+    CGContextRestoreGState(context);
+}
+#endif
+
 UIImage *TGScaleImage(UIImage *image, CGSize size)
 {
     return TGScaleAndRoundCornersWithOffset(image, size, CGPointZero, size, 0, nil, true, nil);
@@ -106,25 +329,82 @@ UIImage *TGScaleAndRoundCornersWithOffset(UIImage *image, CGSize size, CGPoint o
 
 UIImage *TGScaleAndRoundCornersWithOffsetAndFlags(UIImage *image, CGSize size, CGPoint offset, CGSize imageSize, int radius, UIImage *overlay, bool opaque, UIColor *backgroundColor, int flags)
 {
+#if defined(ONEGRAM_ARMV6)
+    TGImageRenderingGuard renderingGuard;
+#endif
     if (CGSizeEqualToSize(imageSize, CGSizeZero))
         imageSize = size;
     
     CGFloat scale = 1.0f;
     if (isRetina())
     {
-        scale = TGScreenScaling(); //2.0f;
+        scale = TGScreenScaling();
         size.width *= scale;
         size.height *= scale;
         imageSize.width *= scale;
         imageSize.height *= scale;
         radius *= scale;
     }
-    
+
+#if defined(ONEGRAM_ARMV6)
+    if (image == nil || image.CGImage == NULL)
+        return nil;
+
+    TGArmv6BitmapContext bitmap;
+    if (!TGArmv6CreateBitmapContext(imageSize, &bitmap))
+        return nil;
+
+    CGContextRef context = bitmap.context;
+    if (flags & TGScaleImageScaleSharper)
+        CGContextSetInterpolationQuality(context, kCGInterpolationLow);
+
+    if (overlay != nil)
+        CGContextSaveGState(context);
+
+    if (backgroundColor != nil)
+    {
+        CGContextSetFillColorWithColor(context, backgroundColor.CGColor);
+        CGContextFillRect(context, CGRectMake(0, 0, imageSize.width, imageSize.height));
+    }
+    else if (opaque)
+    {
+        CGContextSetRGBFillColor(context, 1.0f, 1.0f, 1.0f, 1.0f);
+        CGContextFillRect(context, CGRectMake(0, 0, imageSize.width, imageSize.height));
+    }
+
+    if (radius > 0)
+    {
+        CGContextBeginPath(context);
+        CGRect rect = (flags & TGScaleImageRoundCornersByOuterBounds) ? CGRectMake(offset.x * scale, offset.y * scale, imageSize.width, imageSize.height) : CGRectMake(offset.x * scale, offset.y * scale, size.width, size.height);
+        addRoundedRectToPath(context, rect, radius, radius);
+        CGContextClosePath(context);
+        CGContextClip(context);
+    }
+
+    CGPoint actualOffset = CGPointEqualToPoint(offset, CGPointZero) ? CGPointMake((int)((imageSize.width - size.width) / 2), (int)((imageSize.height - size.height) / 2)) : CGPointMake(offset.x * scale, offset.y * scale);
+    if (flags & TGScaleImageFlipVerical)
+    {
+        CGContextTranslateCTM(context, actualOffset.x + size.width / 2, actualOffset.y + size.height / 2);
+        CGContextScaleCTM(context, 1.0f, -1.0f);
+        CGContextTranslateCTM(context, -actualOffset.x - size.width / 2, -actualOffset.y - size.height / 2);
+    }
+    CGContextSetBlendMode(context, kCGBlendModeCopy);
+    TGArmv6DrawImage(context, image, CGRectMake(actualOffset.x, actualOffset.y, size.width, size.height));
+
+    if (overlay != nil)
+    {
+        CGContextRestoreGState(context);
+        CGContextSetBlendMode(context, kCGBlendModeNormal);
+        if (flags & TGScaleImageScaleOverlay)
+            TGArmv6DrawImage(context, overlay, CGRectMake(0, 0, imageSize.width, imageSize.height));
+        else
+            TGArmv6DrawImage(context, overlay, CGRectMake(0, 0, overlay.size.width * scale, overlay.size.height * scale));
+    }
+
+    return TGArmv6FinishBitmapContext(&bitmap);
+#else
     UIGraphicsBeginImageContextWithOptions(imageSize, opaque, 1.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
-    
-    //if (flags & TGScaleImageScaleSharper)
-    //    CGContextSetInterpolationQuality(context, kCGInterpolationLow);
     
     if (overlay != nil)
         CGContextSaveGState(context);
@@ -180,14 +460,74 @@ UIImage *TGScaleAndRoundCornersWithOffsetAndFlags(UIImage *image, CGSize size, C
     UIGraphicsEndImageContext();
     
     return result;
+#endif
 }
 
 UIImage *TGScaleAndBlurImage(NSData *data, __unused CGSize size, __autoreleasing NSData **blurredData)
 {
-    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+#if defined(ONEGRAM_ARMV6)
+    UIImage *image = [[UIImage alloc] initWithData:data];
+    if (image == nil || image.CGImage == NULL)
+        return nil;
+
+    size_t width = CGImageGetWidth(image.CGImage);
+    size_t height = CGImageGetHeight(image.CGImage);
+    if (width == 0 || height == 0)
+        return image;
+
+    size_t rowBytes = ((width * 4) + 15) & ~((size_t)15);
+    uint8_t *sourceData = (uint8_t *)calloc(height, rowBytes);
+    uint8_t *destinationData = (uint8_t *)calloc(height, rowBytes);
+    if (sourceData == NULL || destinationData == NULL)
+    {
+        free(sourceData);
+        free(destinationData);
+        return image;
+    }
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host;
+    CGContextRef sourceContext = CGBitmapContextCreate(sourceData, width, height, 8, rowBytes, colorSpace, bitmapInfo);
+    if (sourceContext == NULL)
+    {
+        CGColorSpaceRelease(colorSpace);
+        free(sourceData);
+        free(destinationData);
+        return image;
+    }
+
+    CGContextSetBlendMode(sourceContext, kCGBlendModeCopy);
+    CGContextDrawImage(sourceContext, CGRectMake(0.0f, 0.0f, width, height), image.CGImage);
+
+    OGPlatformARGB8888Buffer sourceBuffer = { sourceData, width, height, rowBytes };
+    OGPlatformARGB8888Buffer destinationBuffer = { destinationData, width, height, rowBytes };
+    size_t boxSize = 5;
+    BOOL firstPass = OGPlatformBoxConvolveARGB8888(&sourceBuffer, &destinationBuffer, boxSize, boxSize);
+    BOOL secondPass = firstPass && OGPlatformBoxConvolveARGB8888(&destinationBuffer, &sourceBuffer, boxSize, boxSize);
+
+    UIImage *returnImage = image;
+    if (secondPass)
+    {
+        CGImageRef imageRef = CGBitmapContextCreateImage(sourceContext);
+        if (imageRef != NULL)
+        {
+            returnImage = [UIImage imageWithCGImage:imageRef];
+            CGImageRelease(imageRef);
+        }
+    }
+
+    CGContextRelease(sourceContext);
+    CGColorSpaceRelease(colorSpace);
+    free(sourceData);
+    free(destinationData);
+
+    if (blurredData != NULL)
+        *blurredData = UIImageJPEGRepresentation(returnImage, 0.6f);
+
+    return returnImage;
+#else
     
     UIImage *image = [[UIImage alloc] initWithData:data];
-    //image = TGScaleImageToPixelSize(image, CGSizeMake(128, 128));
     
     float blur = 0.05f;
     int boxSize = (int)(blur * 100);
@@ -257,7 +597,6 @@ UIImage *TGScaleAndBlurImage(NSData *data, __unused CGSize size, __autoreleasing
     CGImageRef imageRef = CGBitmapContextCreateImage (ctx);
     UIImage *returnImage = [UIImage imageWithCGImage:imageRef];
     
-    //clean up
     CGContextRelease(ctx);
     CGColorSpaceRelease(colorSpace);
     
@@ -269,32 +608,29 @@ UIImage *TGScaleAndBlurImage(NSData *data, __unused CGSize size, __autoreleasing
     if (blurredData != NULL)
         *blurredData = UIImageJPEGRepresentation(returnImage, 0.6f);
     
-    TGLegacyLog(@"Blur time: %f ms", (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
     
     return returnImage;
-}
-
-static void matrixMul(CGFloat *a, CGFloat *b, CGFloat *result)
-{
-	for (int i = 0; i != 4; ++i)
-	{
- 		for (int j = 0; j != 4; ++j)
-		{
-			CGFloat sum = 0;
-			for (int k = 0; k != 4; ++k)
-			{
-				sum += a[i + k * 4] * b[k + j * 4];
-			}
-			result[i + j * 4] = sum;
-		}
-	}
+#endif
 }
 
 UIImage *TGScaleImageToPixelSize(UIImage *image, CGSize size)
 {
+#if defined(ONEGRAM_ARMV6)
+    TGImageRenderingGuard renderingGuard;
+#endif
     if (image == nil || !isfinite(size.width) || !isfinite(size.height) || size.width < 1.0f || size.height < 1.0f)
         return nil;
 
+#if defined(ONEGRAM_ARMV6)
+    if (image.CGImage == NULL)
+        return nil;
+    TGArmv6BitmapContext bitmap;
+    if (!TGArmv6CreateBitmapContext(size, &bitmap))
+        return nil;
+    CGContextSetBlendMode(bitmap.context, kCGBlendModeCopy);
+    TGArmv6DrawImage(bitmap.context, image, CGRectMake(0, 0, size.width, size.height));
+    return TGArmv6FinishBitmapContext(&bitmap);
+#else
     UIGraphicsBeginImageContextWithOptions(size, true, 1.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
     UIImage *result = nil;
@@ -306,6 +642,7 @@ UIImage *TGScaleImageToPixelSize(UIImage *image, CGSize size)
     UIGraphicsEndImageContext();
 
     return result;
+#endif
 }
 
 UIImage *TGRotateAndScaleImageToPixelSize(UIImage *image, CGSize size)
@@ -329,13 +666,6 @@ UIImage *TGRotateAndScaleImageToPixelSize(UIImage *image, CGSize size)
 
 UIImage *TGFixOrientationAndCrop(UIImage *source, CGRect cropFrame, CGSize imageSize)
 {
-    /*float scale = 1.0f;
-    if (isRetina())
-    {
-        scale = 2.0f;
-        imageSize.width *= 2;
-        imageSize.height *= 2;
-    }*/
     
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(imageSize.width, imageSize.height), true, 1.0f);
     CGContextRef context = UIGraphicsGetCurrentContext();
@@ -347,7 +677,6 @@ UIImage *TGFixOrientationAndCrop(UIImage *source, CGRect cropFrame, CGSize image
     
     CGContextScaleCTM (context, imageSize.width / cropFrame.size.width, imageSize.height / cropFrame.size.height);
     [source drawAtPoint:CGPointMake(-cropFrame.origin.x, -cropFrame.origin.y) blendMode:kCGBlendModeCopy alpha:1.0f];
-    //[source drawInRect:CGRectMake(-cropFrame.origin.x, -cropFrame.origin.y, sourceSize.width, sourceSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
     UIImage *croppedImage = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return croppedImage;
@@ -374,7 +703,7 @@ UIImage *TGRotateAndCrop(UIImage *source, CGRect cropFrame, CGSize imageSize)
 static int32_t get_bits(uint8_t const *bytes, unsigned int bitOffset, unsigned int numBits)
 {
     uint8_t const *data = bytes;
-    numBits = (unsigned int)pow(2, numBits) - 1; //this will only work up to 32 bits, of course
+    numBits = (unsigned int)pow(2, numBits) - 1;
     data += bitOffset / 8;
     bitOffset %= 8;
     return (*((int*)data) >> bitOffset) & numBits;
@@ -495,7 +824,20 @@ UIImage *TGCircleImage(CGFloat radius, UIColor *color)
 
 UIImage *TGImageNamed(NSString *name)
 {
-    return [UIImage imageNamed:name];
+    if (name.length == 0)
+        return nil;
+    static OGMemoryCache *missingNames = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        missingNames = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:512 * 64];
+    });
+    if ([missingNames objectForKey:name] != nil)
+        return nil;
+    UIImage *image = [UIImage imageNamed:name];
+    if (image == nil)
+        [missingNames setObject:[NSNull null] forKey:name cost:64];
+    return image;
 }
 
 UIImage *TGTintedImage(UIImage *image, UIColor *color)
@@ -662,16 +1004,16 @@ NSString *TGImageHash(NSData *data)
     UIGraphicsEndImageContext();
 }
 
-static const char *mediumImageKey = "mediumImage";
+static char mediumImageKey;
 
 - (void)setMediumImage:(UIImage *)image
 {
-    objc_setAssociatedObject(self, mediumImageKey, image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(self, &mediumImageKey, image, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 - (UIImage *)mediumImage
 {
-    return (UIImage *)objc_getAssociatedObject(self, mediumImageKey);
+    return (UIImage *)objc_getAssociatedObject(self, &mediumImageKey);
 }
 
 - (CGSize)screenSize
@@ -736,13 +1078,13 @@ CGSize TGFillSize(CGSize size, CGSize maxSize)
     if (size.height < 1)
         size.height = 1;
     
-    if (/*size.width >= size.height && */size.width < maxSize.width)
+    if (size.width < maxSize.width)
     {
         size.height = CGFloor(maxSize.width * size.height / MAX(1.0f, size.width));
         size.width = maxSize.width;
     }
     
-    if (/*size.width <= size.height &&*/ size.height < maxSize.height)
+    if ( size.height < maxSize.height)
     {
         size.width = CGFloor(maxSize.height * size.width / MAX(1.0f, size.height));
         size.height = maxSize.height;
@@ -758,13 +1100,13 @@ CGSize TGFillSizeF(CGSize size, CGSize maxSize)
     if (size.height < 1)
         size.height = 1;
     
-    if (/*size.width >= size.height && */size.width < maxSize.width)
+    if (size.width < maxSize.width)
     {
         size.height = maxSize.width * size.height / MAX(1.0f, size.width);
         size.width = maxSize.width;
     }
     
-    if (/*size.width <= size.height &&*/ size.height < maxSize.height)
+    if ( size.height < maxSize.height)
     {
         size.width = maxSize.height * size.width / MAX(1.0f, size.height);
         size.height = maxSize.height;
@@ -944,44 +1286,41 @@ NSData *TGJPEGRepresentation(UIImage *image, CGFloat compressionRate)
 {
     if (image.CGImage == nil)
         return nil;
-    
+#if defined(ONEGRAM_ARMV6)
+    return OGPlatformJPEGRepresentation(image, compressionRate);
+#else
     NSMutableData *data = [[NSMutableData alloc] init];
-    
     CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data, (__bridge CFStringRef)@"public.jpeg", 1, NULL);
     if (destination == NULL)
         return nil;
-    
     NSMutableDictionary *properties = [[NSMutableDictionary alloc] init];
     [properties setObject:@(compressionRate) forKey:(__bridge NSString *)kCGImageDestinationLossyCompressionQuality];
-    
     CGImageDestinationAddImage(destination, image.CGImage, (__bridge CFDictionaryRef)properties);
     CGImageDestinationFinalize(destination);
-    
     CFRelease(destination);
-    
     if (data.length == 0)
         return nil;
-    
     return data;
+#endif
 }
 
 bool TGWriteJPEGRepresentationToFile(UIImage *image, CGFloat compressionRate, NSString *filePath)
 {
     if (image.CGImage == nil)
         return false;
-    
+#if defined(ONEGRAM_ARMV6)
+    return OGPlatformWriteJPEGRepresentationToFile(image, compressionRate, filePath);
+#else
     CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:filePath], (__bridge CFStringRef)@"public.jpeg", 1, NULL);
     if (destination == NULL)
         return false;
-    
     NSMutableDictionary *properties = [[NSMutableDictionary alloc] init];
     [properties setObject:@(compressionRate) forKey:(__bridge NSString *)kCGImageDestinationLossyCompressionQuality];
-    
     CGImageDestinationAddImage(destination, image.CGImage, (__bridge CFDictionaryRef)properties);
     bool succeed = CGImageDestinationFinalize(destination);
     CFRelease(destination);
-    
     return succeed;
+#endif
 }
 
 
@@ -1031,19 +1370,19 @@ void TGDrawSvgPath(CGContextRef context, NSString *path) {
             continue;
         }
         
-        if (c == 'M') { // M
+        if (c == 'M') {
             CGFloat x = 0.0f;
             CGFloat y = 0.0f;
             readCGFloat(path, position, x);
             readCGFloat(path, position, y);
             CGContextMoveToPoint(context, x, y);
-        } else if (c == 'L') { // L
+        } else if (c == 'L') {
             CGFloat x = 0.0f;
             CGFloat y = 0.0f;
             readCGFloat(path, position, x);
             readCGFloat(path, position, y);
             CGContextAddLineToPoint(context, x, y);
-        } else if (c == 'C') { // C
+        } else if (c == 'C') {
             CGFloat x1 = 0.0f;
             CGFloat y1 = 0.0f;
             CGFloat x2 = 0.0f;
@@ -1058,15 +1397,15 @@ void TGDrawSvgPath(CGContextRef context, NSString *path) {
             readCGFloat(path, position, y);
             
             CGContextAddCurveToPoint(context, x1, y1, x2, y2, x, y);
-        } else if (c == 'Z') { // Z
+        } else if (c == 'Z') {
             CGContextClosePath(context);
             CGContextFillPath(context);
             CGContextBeginPath(context);
-        } else if (c == 'S') { // Z
+        } else if (c == 'S') {
             CGContextClosePath(context);
             CGContextStrokePath(context);
             CGContextBeginPath(context);
-        } else if (c == 'U') { // Z
+        } else if (c == 'U') {
             CGContextStrokePath(context);
             CGContextBeginPath(context);
         }

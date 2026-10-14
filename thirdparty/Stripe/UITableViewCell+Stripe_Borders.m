@@ -22,7 +22,9 @@ static NSInteger const STPTableViewCellFakeSeparatorTag = 787475;
         view.tag = STPTableViewCellTopBorderTag;
         view.backgroundColor = self.backgroundColor;
         view.hidden = YES;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         view.accessibilityIdentifier = @"stp_topBorderView";
+#endif
         [self.contentView addSubview:view];
     }
     return view;
@@ -36,7 +38,9 @@ static NSInteger const STPTableViewCellFakeSeparatorTag = 787475;
         view.tag = STPTableViewCellBottomBorderTag;
         view.backgroundColor = self.backgroundColor;
         view.hidden = YES;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         view.accessibilityIdentifier = @"stp_bottomBorderView";
+#endif
         [self.contentView addSubview:view];
     }
     return view;
@@ -49,7 +53,9 @@ static NSInteger const STPTableViewCellFakeSeparatorTag = 787475;
         view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
         view.tag = STPTableViewCellFakeSeparatorTag;
         view.backgroundColor = self.backgroundColor;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
         view.accessibilityIdentifier = @"stp_fakeSeparatorView";
+#endif
         [self.contentView addSubview:view];
     }
     return view;

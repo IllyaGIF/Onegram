@@ -409,13 +409,19 @@ static void stp_aspect_undoSwizzleForwardInvocation(Class klass) {
     STPAspectLog(@"Aspects: %@ has been restored.", NSStringFromClass(klass));
 }
 
+static Class stp_aspect_statedClass(id self, SEL selector) {
+    Class runtimeClass = object_getClass(self);
+    if (class_isMetaClass(runtimeClass)) {
+        return class_getSuperclass((Class)self);
+    }
+    return class_getSuperclass(runtimeClass);
+}
+
 static void stp_aspect_hookedGetClass(Class class, Class statedClass) {
     NSCParameterAssert(class);
     NSCParameterAssert(statedClass);
 	Method method = class_getInstanceMethod(class, @selector(class));
-	IMP newIMP = imp_implementationWithBlock(^(__unused id self) {
-		return statedClass;
-	});
+	IMP newIMP = (IMP)stp_aspect_statedClass;
 	class_replaceMethod(class, @selector(class), newIMP, method_getTypeEncoding(method));
 }
 

@@ -85,7 +85,7 @@ typedef enum {
     
     bool _hasLeavePanel;
     
-    bool _isMuted; // Main Thread
+    bool _isMuted;
     
     NSMutableDictionary *_defaultNotificationSettings;
     NSMutableDictionary *_groupNotificationSettings;
@@ -326,8 +326,6 @@ typedef enum {
         if (classicIOS6Style)
         {
             NSString *buttonTitle = [NSString stringWithFormat:@"%d. %@", (int)index + 1, title];
-            // UIActionSheet scales long labels down independently.  Keep every
-            // pinned-message button short enough to preserve one font size.
             if (buttonTitle.length > 24)
             {
                 NSRange range = [buttonTitle rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 23)];
@@ -630,14 +628,9 @@ typedef enum {
             NSString *secondPart = [self stringForOnlineCount:onlineCount];
             NSString *combinedString = [firstPart stringByAppendingString:secondPart];
             
-            //NSRange range1 = NSMakeRange(firstPart.length, secondPart.length);
-            //NSRange range2 = [combinedString rangeOfString:secondPart];
             
             return combinedString;
             
-            /*NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:[firstPart stringByAppendingString:secondPart]];
-            [attributedString addAttribute:NSForegroundColorAttributeName value:TGAccentColor() range:NSMakeRange(firstPart.length, secondPart.length)];
-            return attributedString;*/
         }
     }
 }
@@ -1256,87 +1249,12 @@ typedef enum {
 
 - (SSignal *)userListForMention:(NSString *)mention canBeContextBot:(bool)canBeContextBot includeSelf:(bool)includeSelf
 {
-    NSString *normalizedMention = [mention lowercaseString];
-    
-    NSMutableDictionary *userDict = [[NSMutableDictionary alloc] init];
-    if (_conversation.chatParticipants != nil)
-    {
-        for (NSNumber *nUid in _conversation.chatParticipants.chatParticipantUids)
-        {
-            TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
-            if (user != nil && (normalizedMention.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedMention] || [[user.firstName lowercaseString] hasPrefix:normalizedMention] || [[user.lastName lowercaseString] hasPrefix:normalizedMention])) {
-                userDict[@(user.uid)] = user;
-            }
-        }
-    }
-    
-    NSMutableArray *sortedUserList = [[NSMutableArray alloc] init];
-    
-    TGModernConversationController *controller = self.controller;
-    for (TGMessageModernConversationItem *item in [controller _items])
-    {
-        int32_t uid = (int32_t)(item->_message.fromUid);
-        TGUser *user = userDict[@(uid)];
-        if (user != nil && (includeSelf || user.uid != TGTelegraphInstance.clientUserId))
-        {
-            [sortedUserList addObject:user];
-            [userDict removeObjectForKey:@(uid)];
-            if (userDict.count == 0)
-                break;
-        }
-    }
-    
-    return [[canBeContextBot ? [TGRecentContextBotsSignal recentBots] : [SSignal single:@[]] mapToSignal:^SSignal *(NSArray *userIds) {
-        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
-            NSMutableArray *users = [[NSMutableArray alloc] init];
-            for (TGUser *user in [userDict allValues]) {
-                if (user.uid != TGTelegraphInstance.clientUserId || includeSelf) {
-                    [users addObject:user];
-                }
-            }
-            
-            NSMutableArray *contextBots = [[NSMutableArray alloc] init];
-            
-            NSMutableSet *existingUsers = [[NSMutableSet alloc] init];
-            
-            for (TGUser *user in users) {
-                [existingUsers addObject:@(user.uid)];
-            }
-            
-            for (TGUser *user in sortedUserList) {
-                [existingUsers addObject:@(user.uid)];
-            }
-            
-            NSString *normalizedMention = [mention lowercaseString];
-            for (NSNumber *nUserId in userIds) {
-                if (![existingUsers containsObject:nUserId]) {
-                    [existingUsers addObject:nUserId];
-                    
-                    TGUser *user = [TGDatabaseInstance() loadUser:[nUserId intValue]];
-                    if (user != nil && (normalizedMention.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedMention] || [[user.firstName lowercaseString] hasPrefix:normalizedMention] || [[user.lastName lowercaseString] hasPrefix:normalizedMention])) {
-                        if (user.isContextBot) {
-                            [contextBots addObject:user];
-                        } else {
-                            [users addObject:user];
-                        }
-                    }
-                }
-            }
-            
-            NSArray *sortedContextBots = [contextBots sortedArrayUsingComparator:^NSComparisonResult(TGUser *user1, TGUser *user2) {
-                return [user1.displayName compare:user2.displayName];
-            }];
-            
-            NSArray *sortedRemainingUsers = [users sortedArrayUsingComparator:^NSComparisonResult(TGUser *user1, TGUser *user2) {
-                return [user1.displayName compare:user2.displayName];
-            }];
-            
-            NSMutableArray *finalList = [[NSMutableArray alloc] init];
-            [finalList addObjectsFromArray:sortedContextBots];
-            [finalList addObjectsFromArray:sortedUserList];
-            [finalList addObjectsFromArray:sortedRemainingUsers];
-            
-            return finalList;
+    NSArray *memberUserIds = [_conversation.chatParticipants.chatParticipantUids copy];
+    NSArray *recentUserIds = [self recentMentionUserIds];
+    SSignal *contextBots = canBeContextBot ? [TGRecentContextBotsSignal recentBots] : [SSignal single:@[]];
+    return [[contextBots mapToSignal:^SSignal *(NSArray *contextBotIds) {
+        return [TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
+            return [TGModernConversationCompanion mentionUsersForQuery:mention memberUserIds:memberUserIds recentUserIds:recentUserIds contextBotIds:contextBotIds includeSelf:includeSelf];
         }];
     }] deliverOn:[SQueue mainQueue]];
 }
@@ -1391,7 +1309,7 @@ typedef enum {
 
 - (bool)isASingleBotGroup
 {
-    return false;//_hasSingleBot;
+    return false;
 }
 
 - (TGModernGalleryController *)galleryControllerForAvatar

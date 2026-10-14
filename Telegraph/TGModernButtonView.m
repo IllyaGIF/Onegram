@@ -11,6 +11,7 @@
     NSString *_title;
     NSArray *_possibleTitles;
     long _titleFontFingerprint;
+    UIFont *_titleFont;
     
     long _imageFingerprint;
     
@@ -81,6 +82,9 @@
 - (void)setTitleFont:(UIFont *)titleFont
 {
     _titleFontFingerprint = (long)titleFont;
+    if (_titleFont == titleFont || (titleFont != nil && [_titleFont isEqual:titleFont]))
+        return;
+    _titleFont = titleFont;
     self.titleLabel.font = titleFont;
 }
 

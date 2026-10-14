@@ -29,7 +29,6 @@
 
 - (void)setItem:(id<TGModernGalleryItem>)item
 {
-    NSLog(@"i");
 }
 
 - (void)layoutSubviews

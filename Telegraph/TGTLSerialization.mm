@@ -26,43 +26,7 @@
 #import "TLMsgsAck$msgs_ack_manual.h"
 
 #import "TLDcOption$modernDcOption.h"
-
-@interface TGTLSerializationEnvironment : NSObject <TLSerializationEnvironment>
-
-@property (nonatomic, copy) int32_t (^responseParsingBlock)(int64_t, bool *);
-
-@end
-
-@implementation TGTLSerializationEnvironment
-
-- (instancetype)initWithResponseParsingBlock:(int32_t (^)(int64_t, bool *))responseParsingBlock
-{
-    self = [super init];
-    if (self != nil)
-    {
-        self.responseParsingBlock = responseParsingBlock;
-    }
-    return self;
-}
-
-- (TLSerializationContext *)serializationContextForRpcResult:(int64_t)requestMessageId
-{
-    if (_responseParsingBlock != nil)
-    {
-        bool found = false;
-        int32_t signature = _responseParsingBlock(requestMessageId, &found);
-        if (found)
-        {
-            TLSerializationContext *context = [[TLSerializationContext alloc] init];
-            context.impliedSignature = signature;
-            return context;
-        }
-    }
-    
-    return nil;
-}
-
-@end
+#import "TGIOS6MessageViewsRpc.h"
 
 @interface TGTLSerialization ()
 
@@ -92,15 +56,13 @@ static void TGLogTLParseError(id error)
         static dispatch_once_t onceToken;
         dispatch_once(&onceToken, ^
         {
-
-            TLRegisterClasses();
-
+            CFAbsoluteTime totalStart = CFAbsoluteTimeGetCurrent();
+            CFAbsoluteTime phaseStart = totalStart;
             TLMetaClassStore::registerObjectClass([[TLMessageContainer$msg_container alloc] init]);
             TLMetaClassStore::registerObjectClass([[TLFutureSalts$future_salts alloc] init]);
 
-            TLScheme *metaScheme = TLgetMetaScheme();
-            
-            TLMetaClassStore::mergeScheme(metaScheme);
+            phaseStart = CFAbsoluteTimeGetCurrent();
+            TLMetaClassStore::mergeSchemeTable(TLgetMetaSchemeTable());
         });
     }
     return self;
@@ -216,8 +178,6 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
     if (users == nil)
         return nil;
 
-    NSLog(@"COMMENTS discussion.parse flags=0x%08x messages=%d chats=%d users=%d max=%d unread=%d",
-          flags, (int)messages.count, (int)chats.count, (int)users.count, maxId, unreadCount);
 
     return @{
         @"messages": messages,
@@ -243,6 +203,16 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
         return nil;
     }
 
+    if ([request isKindOfClass:[TGIOS6MessageViewsRpc class]])
+    {
+        __autoreleasing NSError *viewsError = nil;
+        NSDictionary *views = [TGIOS6MessageViewsRpc parseResponseFromStream:is signature:topSignature error:&viewsError];
+        if (viewsError != nil)
+            TGLogTLParseError(viewsError);
+        [is close];
+        return views;
+    }
+
     if ([NSStringFromClass([request class]) isEqualToString:@"TGIOS6GetDiscussionMessageRpc"])
     {
         __autoreleasing NSError *discussionError = nil;
@@ -264,11 +234,13 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
     __autoreleasing NSError *error = nil;
     TLSerializationContext *context = [[TLSerializationContext alloc] init];
     context.impliedSignature = request.impliedResponseSignature;
-    id topObject = TLMetaClassStore::constructObject(is, topSignature, nil, context, &error);
+    id topObject = nil;
+    {
+        topObject = TLMetaClassStore::constructObject(is, topSignature, nil, context, &error);
+    }
     if (error != nil)
     {
         TGLogTLParseError(error);
-        NSLog(@"TLRESPONSE top=0x%08x request=%@ implied=0x%08x description=%@", topSignature, NSStringFromClass([request class]), request.impliedResponseSignature, error.localizedDescription ?: @"");
     }
     
     [is close];
@@ -302,7 +274,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
     if (signature != (int32_t)0x34a2f297)
     {
         [is close];
-        TGLog(@"PROFILEMUSIC layer213 unexpected response=0x%08x bytes=%lu", signature, (unsigned long)data.length);
+        TGLog(@"PROFILEMUSIC unexpected response=0x%08x bytes=%lu", signature, (unsigned long)data.length);
         return nil;
     }
 
@@ -312,7 +284,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
     if (failed || vectorSignature != TL_UNIVERSAL_VECTOR_CONSTRUCTOR || vectorCount < 0 || vectorCount > 10000)
     {
         [is close];
-        TGLog(@"PROFILEMUSIC layer213 invalid vector sig=0x%08x count=%d total=%d", vectorSignature, vectorCount, totalCount);
+        TGLog(@"PROFILEMUSIC invalid vector sig=0x%08x count=%d total=%d", vectorSignature, vectorCount, totalCount);
         return nil;
     }
 
@@ -329,7 +301,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
         {
             if (error != nil)
                 TGLogTLParseError(error);
-            TGLog(@"PROFILEMUSIC layer213 document parse failed index=%d sig=0x%08x", i, documentSignature);
+            TGLog(@"PROFILEMUSIC document parse failed index=%d sig=0x%08x", i, documentSignature);
             failed = true;
             break;
         }
@@ -443,7 +415,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
 
 - (NSUInteger)currentLayer
 {
-    return 181;
+    return 228;
 }
 
 @end

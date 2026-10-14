@@ -476,7 +476,7 @@
     if (selectedItems.count == 1 && ((NSIndexPath *)selectedItems[0]).section == (NSInteger)section && ((NSIndexPath *)selectedItems[0]).row == (NSInteger)row)
         return;
     
-    PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:row inSection:section]];
+    PSTCollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:row inSection:section]];
     UICollectionViewScrollPosition scrollPosition = UICollectionViewScrollPositionNone;
     if (!CGRectContainsRect(_collectionView.bounds, attributes.frame))
     {
@@ -499,7 +499,7 @@
 }
 
 - (void)scrollToGifsButton {
-    PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
+    PSTCollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
     UICollectionViewScrollPosition scrollPosition = UICollectionViewScrollPositionNone;
     if (!CGRectContainsRect(_collectionView.bounds, attributes.frame))
     {
@@ -527,7 +527,7 @@
         indexPath = [NSIndexPath indexPathForItem:item inSection:5];
     }
     if (indexPath.section < [self numberOfSectionsInCollectionView:_collectionView] && indexPath.item < [self collectionView:_collectionView numberOfItemsInSection:indexPath.section]) {
-        PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:indexPath];
+        PSTCollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:indexPath];
         
         UICollectionViewScrollPosition scrollPosition = UICollectionViewScrollPositionNone;
         if (!CGRectContainsRect(_collectionView.bounds, attributes.frame))

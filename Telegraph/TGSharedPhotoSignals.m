@@ -1,4 +1,5 @@
 #import "TGSharedPhotoSignals.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -408,17 +409,7 @@
                         [subscriber putError:nil];
                     }
                 } else if ([document.mimeType isEqualToString:@"video/mp4"]) {
-                    AVAsset *asset = [[AVURLAsset alloc] initWithURL:[NSURL fileURLWithPath:filePath] options:nil];
-                    
-                    AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
-                    imageGenerator.maximumSize = CGSizeMake(500, 500);
-                    imageGenerator.appliesPreferredTrackTransform = true;
-                    NSError *imageError = nil;
-                    CGImageRef imageRef = [imageGenerator copyCGImageAtTime:CMTimeMake(0, asset.duration.timescale) actualTime:NULL error:&imageError];
-                    UIImage *image = [[UIImage alloc] initWithCGImage:imageRef];
-                    if (imageRef != NULL) {
-                        CGImageRelease(imageRef);
-                    }
+                    UIImage *image = OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:filePath], 0.0, CGSizeMake(500.0f, 500.0f));
                     
                     if (image != nil) {
                         [subscriber putNext:image];
@@ -458,7 +449,6 @@
                     return [[TGSharedMediaSignals memoizedDataSignalForRemoteWebLocation:webLocation datacenterId:datacenterId reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(NSData *data)
                    {
                        [[TGSharedMediaUtils sharedMediaTemporaryPersistentCache] setValue:data forKey:[url dataUsingEncoding:NSUTF8StringEncoding]];
-                       //[data writeToFile:lowQualityImagePath atomically:true];
 
                        if (data.length == 0)
                            return [SSignal complete];

@@ -1,4 +1,5 @@
 #import "MTBackupAddressSignals.h"
+#import "thirdparty/AFNetworking/AFJSONUtilities.h"
 
 #if defined(MtProtoKitDynamicFramework)
 #   import <MTProtoKitDynamic/MTSignal.h>
@@ -111,7 +112,11 @@ static NSData *base64_decode(NSString *str) {
     NSMutableArray *signals = [[NSMutableArray alloc] init];
     for (NSString *host in hosts) {
         MTSignal *signal = [[[MTHttpRequestOperation dataForHttpUrl:[NSURL URLWithString:[NSString stringWithFormat:@"https://%@/resolve?name=%@&type=16", host, isTesting ? @"tapv2.stel.com" : @"apv2.stel.com"]] headers:headers] mapToSignal:^MTSignal *(NSData *data) {
+#if ONEGRAM_ARMV6
+            NSDictionary *dict = AFJSONDecode(data, NULL);
+#else
             NSDictionary *dict = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+#endif
             if ([dict respondsToSelector:@selector(objectForKey:)]) {
                 NSArray *answer = dict[@"Answer"];
                 NSMutableArray *strings = [[NSMutableArray alloc] init];
@@ -124,6 +129,15 @@ static NSData *base64_decode(NSString *str) {
                             }
                         }
                     }
+#if ONEGRAM_ARMV6
+                    for (NSUInteger i = 0; i < [strings count]; i++) {
+                        for (NSUInteger j = i + 1; j < [strings count]; j++) {
+                            if ([[strings objectAtIndex:i] length] < [[strings objectAtIndex:j] length]) {
+                                [strings exchangeObjectAtIndex:i withObjectAtIndex:j];
+                            }
+                        }
+                    }
+#else
                     [strings sortUsingComparator:^NSComparisonResult(NSString *lhs, NSString *rhs) {
                         if (lhs.length > rhs.length) {
                             return NSOrderedAscending;
@@ -131,6 +145,7 @@ static NSData *base64_decode(NSString *str) {
                             return NSOrderedDescending;
                         }
                     }];
+#endif
                     
                     NSString *finalString = @"";
                     for (NSString *string in strings) {
@@ -202,6 +217,19 @@ static NSData *base64_decode(NSString *str) {
              if (error == nil) {
                  __strong MTContext *strongCurrentContext = weakCurrentContext;
                  if (strongCurrentContext != nil) {
+#if ONEGRAM_ARMV6
+                     for (NSNumber *nDatacenterId in result.addressList) {
+                         NSArray *list = [result.addressList objectForKey:nDatacenterId];
+                         MTDatacenterAddressSet *addressSet = [[MTDatacenterAddressSet alloc] initWithAddressList:list];
+                         MTDatacenterAddressSet *currentAddressSet = [context addressSetForDatacenterWithId:[nDatacenterId integerValue]];
+                         if (currentAddressSet == nil || ![addressSet isEqual:currentAddressSet])
+                         {
+                             [strongCurrentContext updateAddressSetForDatacenterWithId:[nDatacenterId integerValue] addressSet:addressSet forceUpdateSchemes:true];
+                             [subscriber putNext:@true];
+                             [subscriber putCompletion];
+                         }
+                     }
+#else
                      [result.addressList enumerateKeysAndObjectsUsingBlock:^(NSNumber *nDatacenterId, NSArray *list, __unused BOOL *stop) {
                          MTDatacenterAddressSet *addressSet = [[MTDatacenterAddressSet alloc] initWithAddressList:list];
                          
@@ -209,15 +237,13 @@ static NSData *base64_decode(NSString *str) {
                          
                          if (currentAddressSet == nil || ![addressSet isEqual:currentAddressSet])
                          {
-                             if (MTLogEnabled()) {
-                                 MTLog(@"[Backup address fetch: updating datacenter %d address set to %@]", [nDatacenterId intValue], addressSet);
-                             }
                              
                              [strongCurrentContext updateAddressSetForDatacenterWithId:[nDatacenterId integerValue] addressSet:addressSet forceUpdateSchemes:true];
                              [subscriber putNext:@true];
                              [subscriber putCompletion];
                          }
                      }];
+#endif
                  }
              } else {
                  [subscriber putCompletion];

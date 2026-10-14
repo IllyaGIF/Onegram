@@ -52,11 +52,3 @@
 
 @end
 
-@interface MTPipe : NSObject
-
-@property (nonatomic, copy, readonly) MTSignal *(^signalProducer)();
-@property (nonatomic, copy, readonly) void (^sink)(id);
-
-- (instancetype)initWithReplay:(bool)replay;
-
-@end

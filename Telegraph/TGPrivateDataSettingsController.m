@@ -227,18 +227,6 @@
     
     void (^updateCheckedTypes)() = ^{
         [clearButtonItem setEnabled:checkedTypes.count != 0];
-        /*[evaluatedSizeByType enumerateKeysAndObjectsUsingBlock:^(NSNumber *nType, NSNumber *nSize, __unused BOOL *stop) {
-         if ([checkedTypes containsObject:nType]) {
-         totalSize += [nSize longLongValue];
-         }
-         }];
-         if (totalSize > 0) {
-         [clearButtonItem setTitle:[[NSString alloc] initWithFormat:TGLocalized(@"Cache.Clear"), [TGStringUtils stringForFileSize:totalSize]]];
-         //[clearButtonItem setDisabled:false];
-         } else {
-         [clearButtonItem setTitle:TGLocalized(@"Cache.ClearNone")];
-         //[clearButtonItem setDisabled:true];
-         }*/
     };
     
     updateCheckedTypes();

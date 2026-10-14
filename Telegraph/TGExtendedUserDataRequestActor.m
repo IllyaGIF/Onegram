@@ -122,7 +122,6 @@
     if (botInfo != nil)
         [TGDatabaseInstance() storeBotInfo:botInfo forUserId:user.uid];
     
-    TGLog(@"TRACE userFull pinned peer=%d pinned=%d", userId, userDesc.pinned_msg_id);
     if (userId != 0)
         [TGDatabaseInstance() updateChannelPinnedMessageId:userId pinnedMessageId:userDesc.pinned_msg_id hidden:userDesc.pinned_msg_id == 0 ? nil : @false];
     

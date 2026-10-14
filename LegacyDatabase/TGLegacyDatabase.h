@@ -7,7 +7,6 @@
 @interface TGLegacyDatabase : NSObject
 
 - (instancetype)initWithPath:(NSString *)path;
-//- (SSignal *)contactUsersMatchingQuery:(NSString *)query;
 - (SSignal *)contactUsersMatchingPhone:(NSString *)phoneNumber;
 - (NSArray *)contactUsersMatchingPhoneSync:(NSString *)phoneNumber;
 - (NSArray *)topUsers;

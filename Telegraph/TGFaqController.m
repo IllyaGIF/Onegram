@@ -99,11 +99,8 @@ static NSArray *cachedResult = nil;
             item.expandedChanged = ^(__unused TGCollectionBottonDisclosureItem *item)
             {
                 __strong TGFaqController *strongSelf = weakSelf;
-                //[UIView animateWithDuration:0.2 animations:^
-                //{
                     [strongSelf.collectionLayout invalidateLayout];
                     [strongSelf.collectionView layoutSubviews];
-                //}];
             };
             item.followAnchor = ^(NSString *anchor)
             {

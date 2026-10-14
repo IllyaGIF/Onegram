@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 20
- */
 
 @class Secret20_DecryptedMessageAction;
 @class Secret20_DecryptedMessageAction_decryptedMessageActionSetMessageTTL;
@@ -65,9 +62,6 @@
 
 @end
 
-/*
- * Types 20
- */
 
 @interface Secret20_DecryptedMessageAction : NSObject
 
@@ -347,10 +341,6 @@
 
 @end
 
-
-/*
- * Functions 20
- */
 
 @interface Secret20: NSObject
 

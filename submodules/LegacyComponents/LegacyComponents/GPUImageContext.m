@@ -256,7 +256,7 @@ static void *openGLESContextQueueKey;
 
 + (BOOL)supportsFastTextureUpload
 {
-#if TARGET_IPHONE_SIMULATOR
+#if defined(ONEGRAM_ARMV6) || TARGET_IPHONE_SIMULATOR
     return NO;
 #else
     return TGIOS4CVOpenGLESTextureCacheAvailable();
@@ -287,7 +287,7 @@ static void *openGLESContextQueueKey;
 #if defined(__IPHONE_6_0)
         CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, [self context], NULL, &_coreVideoTextureCache);
 #else
-        CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, (__bridge void *)[self context], NULL, &_coreVideoTextureCache);
+        CVReturn err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, [self context], NULL, &_coreVideoTextureCache);
 #endif
         
         if (err)

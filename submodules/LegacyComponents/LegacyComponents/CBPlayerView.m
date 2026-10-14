@@ -34,7 +34,9 @@
 
 	_videoPlayerView = [[CBPlayerLayerView alloc] initWithFrame:self.bounds];
 	_videoPlayerView.hidden = YES;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 	((AVPlayerLayer *) _videoPlayerView.layer).videoGravity = AVLayerVideoGravityResizeAspectFill;
+#endif
 	[self addSubview:_videoPlayerView];
 }
 
@@ -43,7 +45,9 @@
     [super setContentMode:contentMode];
 
 	_preview.contentMode = contentMode;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 	((AVPlayerLayer *)_videoPlayerView.layer).videoGravity = (contentMode == UIViewContentModeScaleAspectFit) ? AVLayerVideoGravityResizeAspect : AVLayerVideoGravityResizeAspectFill;
+#endif
 }
 
 - (void)layoutSubviews

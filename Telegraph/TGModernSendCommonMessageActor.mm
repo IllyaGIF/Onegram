@@ -1,7 +1,7 @@
 #import "TGModernSendCommonMessageActor.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
-
 
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
@@ -404,17 +404,25 @@
         {
             TGPreparedLocalVideoMessage *localVideoMessage = (TGPreparedLocalVideoMessage *)self.preparedMessage;
             
-            UIImage *thumbnailImage = [[UIImage alloc] initWithContentsOfFile:[self pathForLocalImagePath:localVideoMessage.localThumbnailDataPath]];
-            CGSize thumbnailSize = TGFitSize(thumbnailImage.size, CGSizeMake(90, 90));
-            NSData *thumbnailData = UIImageJPEGRepresentation(TGScaleImageToPixelSize(thumbnailImage, thumbnailSize), 0.6f);
-            
+            NSData *thumbnailData = nil;
+            if (localVideoMessage.localThumbnailDataPath != nil)
+            {
+                UIImage *thumbnailImage = [[UIImage alloc] initWithContentsOfFile:[self pathForLocalImagePath:localVideoMessage.localThumbnailDataPath]];
+                CGSize thumbnailSize = TGFitSize(thumbnailImage.size, CGSizeMake(90, 90));
+                thumbnailData = UIImageJPEGRepresentation(TGScaleImageToPixelSize(thumbnailImage, thumbnailSize), 0.6f);
+            }
+
             [self setupFailTimeout:[TGModernSendCommonMessageActor defaultTimeoutInterval]];
-            
-            NSMutableArray *desc = [[NSMutableArray alloc] initWithArray:@[[localVideoMessage localVideoPath], @"mp4", @(true)]];
+
+            NSString *videoExtension = [localVideoMessage.videoMimeType isEqualToString:@"video/quicktime"] ? @"mov" : @"mp4";
+            NSMutableArray *desc = [[NSMutableArray alloc] initWithArray:@[[localVideoMessage localVideoPath], videoExtension, @(true)]];
             if (localVideoMessage.liveData != nil)
                 [desc addObject:localVideoMessage.liveData];
-            
-            [self uploadFilesWithExtensions:@[desc, @[thumbnailData, @"jpg", @(false)]] mediaTypeTag:TGNetworkMediaTypeTagVideo];
+
+            NSMutableArray *files = [[NSMutableArray alloc] initWithObjects:desc, nil];
+            if (thumbnailData != nil)
+                [files addObject:@[thumbnailData, @"jpg", @(false)]];
+            [self uploadFilesWithExtensions:files mediaTypeTag:TGNetworkMediaTypeTagVideo];
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedRemoteVideoMessage class]])
         {
@@ -476,7 +484,6 @@
                 getDocumentByHash.mime_type = localDocumentMessage.mimeType;
                 getDocumentByHash.size = (int32_t)documentData.length;
                 
-                TGLog(@"getDocumentByHash hash: %@", getDocumentByHash.sha256);
                 
                 locateSignal = [[[TGTelegramNetworking instance] requestSignal:getDocumentByHash] catch:^SSignal *(__unused id error) {
                     return [SSignal single:nil];
@@ -993,19 +1000,8 @@
                 UIImage *previewImage = [UIImage imageWithContentsOfFile:thumbnailPath];
                 if (previewImage == nil && fileUrl != nil)
                 {
-                    AVAsset *asset = [[AVURLAsset alloc] initWithURL:fileUrl options:nil];
-                    AVAssetImageGenerator *generator = asset == nil ? nil : [[AVAssetImageGenerator alloc] initWithAsset:asset];
-                    generator.appliesPreferredTrackTransform = true;
-                    generator.maximumSize = CGSizeMake(240.0f, 240.0f);
-                    CMTime time = assetVideoMessage.duration > 0.1 ? CMTimeMakeWithSeconds(0.1, 30) : kCMTimeZero;
-                    NSError *thumbnailError = nil;
-                    CGImageRef imageRef = [generator copyCGImageAtTime:time actualTime:NULL error:&thumbnailError];
-                    if (imageRef != NULL)
-                    {
-                        previewImage = [UIImage imageWithCGImage:imageRef];
-                        CGImageRelease(imageRef);
-                    }
-                    TGLog(@"VIDEO round preview regenerated success=%d error=%@ path=%@", previewImage != nil ? 1 : 0, thumbnailError, fileUrl.path);
+                    NSTimeInterval thumbnailTime = assetVideoMessage.duration > 0.1 ? 0.1 : 0.0;
+                    previewImage = OGPlatformVideoThumbnailAtURL(fileUrl, thumbnailTime, CGSizeMake(240.0f, 240.0f));
                 }
 
                 if (previewImage == nil)
@@ -1070,7 +1066,11 @@
                 }
                 else if (assetVideoMessage.assetURL != nil)
                 {
+#if defined(ONEGRAM_ARMV6)
+                    sourceSignal = [SSignal single:assetVideoMessage.assetURL];
+#else
                     sourceSignal = [SSignal single:[[AVURLAsset alloc] initWithURL:assetVideoMessage.assetURL options:nil]];
+#endif
                 }
                 else
                 {
@@ -1079,6 +1079,25 @@
                 
                 signal = [videoDownloadQueue() enqueue:[sourceSignal mapToSignal:^SSignal *(id value)
                 {
+#if defined(ONEGRAM_ARMV6)
+                    if ([value isKindOfClass:[NSURL class]])
+                    {
+                        NSURL *sourceURL = (NSURL *)value;
+                        NSTimeInterval duration = assetVideoMessage.duration;
+                        CGSize dimensions = assetVideoMessage.dimensions;
+                        OGPlatformReadVideoMetadataAtURL(sourceURL, &duration, &dimensions);
+                        UIImage *previewImage = [UIImage imageWithContentsOfFile:assetVideoMessage.localThumbnailDataPath];
+                        if (previewImage == nil)
+                            previewImage = OGPlatformVideoThumbnailAtURL(sourceURL, 0.0, CGSizeMake(800.0f, 800.0f));
+                        NSMutableDictionary *result = [[NSMutableDictionary alloc] init];
+                        result[@"fileUrl"] = sourceURL;
+                        result[@"duration"] = @(duration);
+                        result[@"dimensions"] = [NSValue valueWithCGSize:dimensions];
+                        if (previewImage != nil)
+                            result[@"previewImage"] = previewImage;
+                        return [SSignal single:@{ @"convertResult": result }];
+                    }
+#else
                     if ([value isKindOfClass:[AVAsset class]])
                     {
                         AVAsset *avAsset = (AVAsset *)value;
@@ -1145,6 +1164,7 @@
                             return convertSignal(nil);
                         }
                     }
+#endif
                     else if ([value isKindOfClass:[NSString class]])
                     {
                         NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
@@ -1492,7 +1512,6 @@
 {
     if (self.preparedMessage.targetMessageId != 0)
     {
-        //[ActionStageInstance() dispatchMessageToWatchers:strongSelf.path messageType:@"messageProgressFinished" message:@{@"mid": @(strongSelf.preparedMessage.mid)}];
         
         if (self.preparedMessage.randomId != 0)
             [TGDatabaseInstance() removeTempIds:@[@(self.preparedMessage.randomId)]];
@@ -1862,7 +1881,6 @@
             
             TLDocumentAttribute$documentAttributeAudio *nativeAttribute = [[TLDocumentAttribute$documentAttributeAudio alloc] init];
             nativeAttribute.flags = flags;
-            // Keep the explicit TL boolean in sync with flags; the serializer reads it for flags.10?true.
             nativeAttribute.is_voice = audio.isVoice;
             nativeAttribute.duration = audio.duration;
             nativeAttribute.title = audio.title;
@@ -1990,12 +2008,15 @@
         
         NSDictionary *videoFileInfo = filePathToUploadedFile[[localVideoMessage localVideoPath]];
         NSDictionary *thumbnailFileInfo = filePathToUploadedFile[@"embedded-data://0"];
-        if (videoFileInfo != nil && thumbnailFileInfo != nil)
+        if (videoFileInfo != nil)
         {
             TLInputMediaUploadedDocument *uploadedDocument = [[TLInputMediaUploadedDocument alloc] init];
             uploadedDocument.file = videoFileInfo[@"file"];
-            uploadedDocument.thumb = thumbnailFileInfo[@"file"];
-            uploadedDocument.flags |= (1 << 2);
+            if (thumbnailFileInfo != nil)
+            {
+                uploadedDocument.thumb = thumbnailFileInfo[@"file"];
+                uploadedDocument.flags |= (1 << 2);
+            }
             if (localVideoMessage.messageLifetime > 0) {
                 uploadedDocument.flags |= (1 << 1);
                 uploadedDocument.ttl_seconds = localVideoMessage.messageLifetime;
@@ -2007,11 +2028,12 @@
             video.w = (int32_t)localVideoMessage.videoSize.width;
             video.h = (int32_t)localVideoMessage.videoSize.height;
             
+            NSString *videoMimeType = localVideoMessage.videoMimeType ?: @"video/mp4";
             TLDocumentAttribute$documentAttributeFilename *filename = [[TLDocumentAttribute$documentAttributeFilename alloc] init];
-            filename.file_name = @"video.mp4";
-            
+            filename.file_name = [videoMimeType isEqualToString:@"video/quicktime"] ? @"video.mov" : @"video.mp4";
+
             uploadedDocument.attributes = @[video, filename];
-            uploadedDocument.mime_type = @"video/mp4";
+            uploadedDocument.mime_type = videoMimeType;
             
             if (self.preparedMessage.targetMessageId != 0)
             {
@@ -2578,11 +2600,22 @@
 
 #pragma mark -
 
+- (void)notifyDeliveryConfirmed:(int32_t)messageId
+{
+    if (messageId <= 0)
+        return;
+    [self finishUploadProgress];
+    [ActionStageInstance() dispatchMessageToWatchers:self.path messageType:@"messageDeliveryConfirmed" message:@{
+        @"previousMid": @(self.preparedMessage.mid)
+    }];
+}
+
 - (void)conversationSendMessageRequestSuccess:(id)result
 {
     if ([result isKindOfClass:[TLUpdates$updateShortSentMessage class]])
     {
         TLUpdates$updateShortSentMessage *sentMessage = result;
+        [self notifyDeliveryConfirmed:sentMessage.n_id];
         
         TGMessage *updatedMessage = nil;
         if ([sentMessage.media isKindOfClass:[TLMessageMedia$messageMediaWebPage class]])
@@ -2705,6 +2738,8 @@
             }
         }
         
+        if (actualId > 0 && updateMessage.n_id == actualId)
+            [self notifyDeliveryConfirmed:actualId];
         int32_t pts = 1;
         if (grouped && TGPeerIdIsChannel(self.peerId))
         {
@@ -2968,11 +3003,6 @@
             }
             else if ([self.preparedMessage isKindOfClass:[TGPreparedRemoteDocumentMessage class]])
             {
-                // Inline GIFs are often downloaded before they are sent. The
-                // optimistic document and the server document can use different
-                // safe filenames (for example video.mp4 vs animation.mp4), even
-                // when the document id is unchanged. Keep an alias to the file so
-                // the freshly replaced message can start playback immediately.
                 TGDocumentMediaAttachment *sourceDocument = [(TGPreparedRemoteDocumentMessage *)self.preparedMessage document];
                 for (TGMediaAttachment *attachment in message.mediaAttachments)
                 {

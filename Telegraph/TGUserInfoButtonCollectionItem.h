@@ -14,6 +14,8 @@
 @property (nonatomic, strong) NSString *title;
 @property (nonatomic, strong) NSString *iconName;
 @property (nonatomic) bool editing;
+@property (nonatomic) bool centeredTitle;
+@property (nonatomic) bool showsDisclosureIndicator;
 
 - (instancetype)initWithTitle:(NSString *)title action:(SEL)action;
 

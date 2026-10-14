@@ -33,9 +33,7 @@
         self.opaque = false;
         self.userInteractionEnabled = false;
         
-        //static dispatch_once_t onceToken;
         UIImage *arcImage = nil;
-        //dispatch_once(&onceToken, ^{
             CGRect rect = CGRectMake(0.0f, 0.0f, 48.0f, 48.0f);
             UIGraphicsBeginImageContextWithOptions(rect.size, false, 0.0f);
             CGContextRef context = UIGraphicsGetCurrentContext();
@@ -62,7 +60,6 @@
             
             arcImage = UIGraphicsGetImageFromCurrentImageContext();
             UIGraphicsEndImageContext();
-        //});
         
         _arcView = [[UIImageView alloc] initWithFrame:self.bounds];
         _arcView.image = arcImage;
@@ -311,6 +308,10 @@
 @implementation TGActivityIndicatorView
 {
     BOOL _animating;
+    NSTimer *_stepTimer;
+    NSInteger _step;
+    CALayer *_spokesLayer;
+    CGSize _spokesSize;
 }
 
 - (instancetype)initWithActivityIndicatorStyle:(UIActivityIndicatorViewStyle)style
@@ -326,8 +327,43 @@
         self.opaque = NO;
         self.userInteractionEnabled = NO;
         self.hidden = YES;
+        _spokesLayer = [CALayer layer];
+        [self.layer addSublayer:_spokesLayer];
     }
     return self;
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    CGRect bounds = self.bounds;
+    [CATransaction begin];
+    [CATransaction setDisableActions:true];
+    _spokesLayer.bounds = CGRectMake(0.0f, 0.0f, bounds.size.width, bounds.size.height);
+    _spokesLayer.position = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+    [CATransaction commit];
+    if (!CGSizeEqualToSize(_spokesSize, bounds.size))
+        [self updateSpokesImage];
+}
+
+- (void)updateSpokesImage
+{
+    CGSize size = self.bounds.size;
+    _spokesSize = size;
+    if (size.width < 1.0f || size.height < 1.0f)
+    {
+        _spokesLayer.contents = nil;
+        return;
+    }
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    [self drawSpokesInRect:CGRectMake(0.0f, 0.0f, size.width, size.height)];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    [CATransaction begin];
+    [CATransaction setDisableActions:true];
+    _spokesLayer.contents = (__bridge id)image.CGImage;
+    TGSetLayerContentsScale(_spokesLayer, image.scale);
+    [CATransaction commit];
 }
 
 - (void)setActivityIndicatorViewStyle:(UIActivityIndicatorViewStyle)activityIndicatorViewStyle
@@ -337,13 +373,13 @@
     CGRect frame = self.frame;
     frame.size = CGSizeMake(side, side);
     self.frame = frame;
-    [self setNeedsDisplay];
+    [self updateSpokesImage];
 }
 
 - (void)setColor:(UIColor *)color
 {
     _color = color ?: (_activityIndicatorViewStyle == UIActivityIndicatorViewStyleGray ? [UIColor colorWithWhite:0.35f alpha:1.0f] : [UIColor whiteColor]);
-    [self setNeedsDisplay];
+    [self updateSpokesImage];
 }
 
 - (BOOL)isAnimating
@@ -364,14 +400,37 @@
 
     _animating = YES;
     self.hidden = NO;
+    [self updateStepTimer];
+}
 
-    CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
-    animation.fromValue = @(0.0f);
-    animation.toValue = @(M_PI * 2.0f);
-    animation.duration = 0.8;
-    animation.repeatCount = HUGE_VALF;
-    animation.removedOnCompletion = NO;
-    [self.layer addAnimation:animation forKey:@"TGActivityIndicatorRotation"];
+- (void)updateStepTimer
+{
+    bool shouldRun = _animating && self.window != nil;
+    if (shouldRun && _stepTimer == nil)
+    {
+        _stepTimer = [NSTimer timerWithTimeInterval:0.8 / 12.0 target:self selector:@selector(stepTimerFired) userInfo:nil repeats:true];
+        [[NSRunLoop mainRunLoop] addTimer:_stepTimer forMode:NSRunLoopCommonModes];
+    }
+    else if (!shouldRun && _stepTimer != nil)
+    {
+        [_stepTimer invalidate];
+        _stepTimer = nil;
+    }
+}
+
+- (void)stepTimerFired
+{
+    _step = (_step + 1) % 12;
+    [CATransaction begin];
+    [CATransaction setDisableActions:true];
+    _spokesLayer.transform = CATransform3DMakeRotation((CGFloat)_step * (CGFloat)(M_PI * 2.0 / 12.0), 0.0f, 0.0f, 1.0f);
+    [CATransaction commit];
+}
+
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+    [self updateStepTimer];
 }
 
 - (void)stopAnimating
@@ -384,12 +443,12 @@
     }
 
     _animating = NO;
-    [self.layer removeAnimationForKey:@"TGActivityIndicatorRotation"];
+    [self updateStepTimer];
     if (_hidesWhenStopped)
         self.hidden = YES;
 }
 
-- (void)drawRect:(CGRect)rect
+- (void)drawSpokesInRect:(CGRect)rect
 {
     CGContextRef context = UIGraphicsGetCurrentContext();
     if (context == NULL)

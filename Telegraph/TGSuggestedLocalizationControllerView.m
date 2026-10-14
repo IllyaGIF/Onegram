@@ -234,7 +234,6 @@
         _otherDisclosureView = [[UIImageView alloc] initWithImage:presentation.images.collectionMenuDisclosureIcon];
         [_otherButton addSubview:_otherDisclosureView];
         
-        //[_dimmingView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dimViewTapGesture:)]];
     }
     return self;
 }

@@ -8,6 +8,7 @@
 
 #import "TGModernRemoteImageViewModel.h"
 #import "TGModernButtonViewModel.h"
+#import "TGMessageCommentsFooterViewModel.h"
 #import "TGModernCheckButtonViewModel.h"
 
 #import "TGMessageModernConversationItem.h"
@@ -19,6 +20,7 @@
 #import "TGTelegraphConversationMessageAssetsSource.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
 
 static CGFloat preferredTextFontSize;
 
@@ -74,7 +76,7 @@ const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants()
             minTextFontSize = 12.0f;
             maxTextFontSize = 26.0f;
             
-            defaultTextFontSize = [TGPresentation brandedIOS6Style] ? 15.0f : 17.0f;
+            defaultTextFontSize = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].messageFont.pointSize : 17.0f;
         }
         else
         {
@@ -229,31 +231,6 @@ static UIImage *TGIOS6CommentsAttachedFooterImage(UIColor *highlightColor, UICol
     return image;
 }
 
-static UIImage *TGIOS6CommentsBubbleIcon(UIColor *color)
-{
-    CGSize size = CGSizeMake(16.0f, 15.0f);
-    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-
-    UIColor *drawColor = color != nil ? color : UIColorRGB(0x2f8bd8);
-    [drawColor setStroke];
-    UIBezierPath *bubble = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(1.0f, 1.0f, 13.0f, 10.0f) cornerRadius:4.0f];
-    bubble.lineWidth = 1.5f;
-    [bubble stroke];
-
-    UIBezierPath *tail = [UIBezierPath bezierPath];
-    [tail moveToPoint:CGPointMake(5.0f, 10.2f)];
-    [tail addLineToPoint:CGPointMake(3.3f, 13.4f)];
-    [tail addLineToPoint:CGPointMake(8.0f, 10.8f)];
-    tail.lineWidth = 1.5f;
-    tail.lineJoinStyle = kCGLineJoinRound;
-    tail.lineCapStyle = kCGLineCapRound;
-    [tail stroke];
-
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return image;
-}
-
 static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 {
     if (count <= 0)
@@ -289,9 +266,12 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
     UIImpactFeedbackGenerator *_feedbackGenerator;
 
     TGModernButtonViewModel *_ios6CommentsButtonModel;
+    TGMessageCommentsFooterViewModel *_ios6CommentsFooterModel;
     bool _ios6CommentsEnabled;
     int32_t _ios6CommentsCount;
     int64_t _ios6CommentsChannelId;
+    NSArray *_ios6CommentsRecentRepliers;
+    int32_t _ios6CommentsMessageId;
 }
 
 @end
@@ -357,16 +337,15 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 
 @end
 
+static char TGMessageViewModelReplyPanRecognizerPoolKey;
+static char TGMessageViewModelAvatarTapRecognizerPoolKey;
+
 @implementation TGMessageViewModel
 
 - (void)dealloc
 {
-    _replyPanGestureRecognizer.delegate = nil;
-    [_replyPanGestureRecognizer removeTarget:self action:@selector(replyPanGesture:)];
-    [_replyPanGestureRecognizer.view removeGestureRecognizer:_replyPanGestureRecognizer];
-    _boundAvatarTapRecognizer.delegate = nil;
-    [_boundAvatarTapRecognizer removeTarget:self action:@selector(avatarTapGesture:)];
-    [_boundAvatarTapRecognizer.view removeGestureRecognizer:_boundAvatarTapRecognizer];
+    TGModernViewModelRelinquishGestureRecognizer(_replyPanGestureRecognizer, &TGMessageViewModelReplyPanRecognizerPoolKey, self, @selector(replyPanGesture:));
+    TGModernViewModelRelinquishGestureRecognizer(_boundAvatarTapRecognizer, &TGMessageViewModelAvatarTapRecognizerPoolKey, self, @selector(avatarTapGesture:));
     [self invalidateLifetimeReference];
     _ios6CommentsButtonModel.pressed = nil;
 }
@@ -504,18 +483,24 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
     _ios6CommentsButtonModel.image = nil;
 }
 
-- (bool)setDiscussionCommentsEnabled:(bool)enabled count:(int32_t)count channelId:(int64_t)channelId
+- (bool)setDiscussionCommentsEnabled:(bool)enabled count:(int32_t)count channelId:(int64_t)channelId recentRepliers:(NSArray *)recentRepliers messageId:(int32_t)messageId
 {
     int32_t resolvedCount = MAX(0, count);
+    NSArray *resolvedRepliers = recentRepliers ?: @[];
     bool enabledChanged = _ios6CommentsEnabled != enabled;
     bool countChanged = _ios6CommentsCount != resolvedCount;
     bool channelChanged = _ios6CommentsChannelId != channelId;
-    if (!enabledChanged && !countChanged && !channelChanged)
+    bool repliersChanged = !TGObjectCompare(_ios6CommentsRecentRepliers, resolvedRepliers);
+    int32_t resolvedMessageId = messageId != 0 ? messageId : _mid;
+    bool messageChanged = _ios6CommentsMessageId != resolvedMessageId;
+    if (!enabledChanged && !countChanged && !channelChanged && !repliersChanged && !messageChanged)
         return false;
 
     _ios6CommentsEnabled = enabled;
     _ios6CommentsCount = resolvedCount;
     _ios6CommentsChannelId = channelId;
+    _ios6CommentsRecentRepliers = [resolvedRepliers copy];
+    _ios6CommentsMessageId = resolvedMessageId;
 
     bool createdButton = false;
     if (enabled && _ios6CommentsButtonModel == nil)
@@ -529,18 +514,30 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
         createdButton = true;
     }
 
-    if (enabled && (createdButton || channelChanged))
+    bool createdFooter = false;
+    if (enabled && _ios6CommentsFooterModel == nil && [TGPresentation brandedIOS6Style])
+    {
+        _ios6CommentsFooterModel = [[TGMessageCommentsFooterViewModel alloc] init];
+        _ios6CommentsFooterModel.presentation = _context.presentation;
+        _ios6CommentsFooterModel.title = TGLocalized(@"Conversation.CommentsFooterTitle");
+        [self addSubmodel:_ios6CommentsFooterModel];
+        createdFooter = true;
+    }
+
+    if (enabled && (createdButton || createdFooter || channelChanged || messageChanged))
     {
         id companionHandle = _context.companionHandle;
-        int32_t messageId = _mid;
+        int32_t discussionMessageId = _ios6CommentsMessageId;
         int64_t discussionChannelId = _ios6CommentsChannelId;
-        _ios6CommentsButtonModel.pressed = ^
+        void (^openComments)(void) = ^
         {
             [companionHandle requestAction:@"ios6OpenComments" options:@{
-                @"mid": @(messageId),
+                @"mid": @(discussionMessageId),
                 @"discussionChannelId": @(discussionChannelId)
             }];
         };
+        _ios6CommentsButtonModel.pressed = openComments;
+        _ios6CommentsFooterModel.pressed = openComments;
     }
 
     if (_ios6CommentsButtonModel != nil)
@@ -551,18 +548,49 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
             _ios6CommentsButtonModel.title = TGIOS6CommentsTitleForCount(_ios6CommentsCount);
     }
 
-    return enabledChanged || (enabled && countChanged);
+    if (_ios6CommentsFooterModel != nil)
+    {
+        if (enabledChanged || createdFooter)
+            _ios6CommentsFooterModel.hidden = !enabled;
+        if (enabled && (countChanged || createdFooter))
+            _ios6CommentsFooterModel.count = _ios6CommentsCount;
+        if (enabled && (repliersChanged || createdFooter))
+            _ios6CommentsFooterModel.repliers = [TGMessageCommentsFooterReplier repliersWithPeerIds:_ios6CommentsRecentRepliers];
+    }
+
+    return enabledChanged || (enabled && (countChanged || repliersChanged));
+}
+
+- (bool)_ios6UsesBrandedCommentsFooter
+{
+    return _ios6CommentsFooterModel != nil && [TGPresentation brandedIOS6Style] && [self discussionCommentsFooterIntegratedInBubble];
 }
 
 - (CGFloat)discussionCommentsFooterHeight
 {
-    return _ios6CommentsEnabled ? 36.0f : 0.0f;
+    if (!_ios6CommentsEnabled)
+        return 0.0f;
+    if ([self _ios6UsesBrandedCommentsFooter])
+        return [TGPresentation brandedIOS6ConversationAppearance].commentsFooterHeight;
+    return 36.0f;
 }
 
 - (CGFloat)discussionCommentsFooterMinimumWidth
 {
     if (!_ios6CommentsEnabled)
         return 0.0f;
+
+    if ([self _ios6UsesBrandedCommentsFooter])
+    {
+        OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+        UIEdgeInsets bubbleInsets = [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance];
+        NSUInteger avatarCount = MIN(_ios6CommentsRecentRepliers.count, appearance.commentsAvatarMaximumCount);
+        CGFloat titleX = avatarCount == 0 ? appearance.commentsTitleLeftWithoutAvatars : (appearance.commentsAvatarLeft + appearance.commentsAvatarStep * (avatarCount - 1) + appearance.commentsAvatarSize + appearance.commentsTitleSpacing);
+        CGFloat titleWidth = ceilf([TGLocalized(@"Conversation.CommentsFooterTitle") sizeWithFont:appearance.commentsTitleFont].width);
+        CGFloat countWidth = _ios6CommentsCount > 0 ? (ceilf([[NSString stringWithFormat:@"+%d", (int)_ios6CommentsCount] sizeWithFont:appearance.commentsCountFont].width) + appearance.commentsCountSpacing) : 0.0f;
+        CGFloat chevronWidth = [TGPresentation brandedIOS6CommentsChevronImage].size.width;
+        return bubbleInsets.left + titleX + titleWidth + appearance.commentsCountSpacing + countWidth + chevronWidth + appearance.commentsChevronRightInset + bubbleInsets.right;
+    }
 
     UIFont *font = _ios6CommentsButtonModel.font;
     if (font == nil)
@@ -575,6 +603,35 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 - (bool)discussionCommentsFooterIntegratedInBubble
 {
     return false;
+}
+
+- (CGRect)discussionCommentsBubbleFrame
+{
+    return [self effectiveContentFrame];
+}
+
+- (bool)brandedCommentsFooterTop:(CGFloat *)footerTop bubbleFrame:(CGRect)bubbleFrame
+{
+    if (!_ios6CommentsEnabled || ![self _ios6UsesBrandedCommentsFooter])
+        return false;
+
+    UIEdgeInsets bubbleInsets = [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance];
+    if (footerTop != NULL)
+        *footerTop = CGRectGetMaxY(bubbleFrame) - bubbleInsets.bottom - [self discussionCommentsFooterHeight];
+    return true;
+}
+
+- (bool)brandedCommentsCountRight:(CGFloat *)countRight bubbleFrame:(CGRect)bubbleFrame
+{
+    if (!_ios6CommentsEnabled || _ios6CommentsCount <= 0 || ![self _ios6UsesBrandedCommentsFooter])
+        return false;
+
+    OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
+    UIEdgeInsets bubbleInsets = [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance];
+    CGFloat chevronWidth = [TGPresentation brandedIOS6CommentsChevronImage].size.width;
+    if (countRight != NULL)
+        *countRight = CGRectGetMaxX(bubbleFrame) - bubbleInsets.right - appearance.commentsChevronRightInset - chevronWidth - appearance.commentsCountSpacing;
+    return true;
 }
 
 - (void)updateAssets
@@ -641,6 +698,10 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 {
 }
 
+- (void)prepareForAsynchronousContentDrawing
+{
+}
+
 - (void)updateMessageAttributes
 {
 }
@@ -662,6 +723,10 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 }
 
 - (void)resumeInlineMedia
+{
+}
+
+- (void)activateDeferredInlineMedia
 {
 }
 
@@ -845,45 +910,42 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
     [super bindViewToContainer:container viewStorage:viewStorage];
     
     if (_avatarModel != nil)
-    {
-        _boundAvatarTapRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(avatarTapGesture:)];
-        [[_avatarModel boundView] addGestureRecognizer:_boundAvatarTapRecognizer];
-    }
+        _boundAvatarTapRecognizer = TGModernViewModelAcquireGestureRecognizer([_avatarModel boundView], &TGMessageViewModelAvatarTapRecognizerPoolKey, [UITapGestureRecognizer class], self, @selector(avatarTapGesture:));
     
     if (_checkButtonModel != nil)
         [(UIButton *)[_checkButtonModel boundView] addTarget:self action:@selector(checkButtonPressed) forControlEvents:UIControlEventTouchUpInside];
     if (_checkAreaModel != nil)
         [(UIButton *)[_checkAreaModel boundView] addTarget:self action:@selector(checkButtonPressed) forControlEvents:UIControlEventTouchUpInside];
     
-    _replyPanGestureRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(replyPanGesture:)];
+    _replyPanGestureRecognizer = TGModernViewModelAcquireGestureRecognizer(container, &TGMessageViewModelReplyPanRecognizerPoolKey, [UIPanGestureRecognizer class], self, @selector(replyPanGesture:));
     _replyPanGestureRecognizer.delegate = self;
-    [container addGestureRecognizer:_replyPanGestureRecognizer];
 }
 
 - (void)moveViewToContainer:(UIView *)container
 {
-    if (_replyPanGestureRecognizer != nil)
-        [_replyPanGestureRecognizer.view removeGestureRecognizer:_replyPanGestureRecognizer];
+    bool hadReplyPanGestureRecognizer = _replyPanGestureRecognizer != nil;
+    TGModernViewModelRelinquishGestureRecognizer(_replyPanGestureRecognizer, &TGMessageViewModelReplyPanRecognizerPoolKey, self, @selector(replyPanGesture:));
+    _replyPanGestureRecognizer = nil;
     
     [super moveViewToContainer:container];
     
-    if (_replyPanGestureRecognizer != nil)
-        [container addGestureRecognizer:_replyPanGestureRecognizer];
+    if (hadReplyPanGestureRecognizer)
+    {
+        _replyPanGestureRecognizer = TGModernViewModelAcquireGestureRecognizer(container, &TGMessageViewModelReplyPanRecognizerPoolKey, [UIPanGestureRecognizer class], self, @selector(replyPanGesture:));
+        _replyPanGestureRecognizer.delegate = self;
+    }
 }
 
 - (void)unbindView:(TGModernViewStorage *)viewStorage
 {
     if (_avatarModel != nil)
     {
-        [_boundAvatarTapRecognizer removeTarget:self action:@selector(avatarTapGesture:)];
-        [[_avatarModel boundView] removeGestureRecognizer:_boundAvatarTapRecognizer];
+        TGModernViewModelRelinquishGestureRecognizer(_boundAvatarTapRecognizer, &TGMessageViewModelAvatarTapRecognizerPoolKey, self, @selector(avatarTapGesture:));
         _boundAvatarTapRecognizer = nil;
     }
     
     _replyPanOffset = 0.0f;
-    _replyPanGestureRecognizer.delegate = nil;
-    [_replyPanGestureRecognizer removeTarget:self action:@selector(replyPanGesture:)];
-    [_replyPanGestureRecognizer.view removeGestureRecognizer:_replyPanGestureRecognizer];
+    TGModernViewModelRelinquishGestureRecognizer(_replyPanGestureRecognizer, &TGMessageViewModelReplyPanRecognizerPoolKey, self, @selector(replyPanGesture:));
     _replyPanGestureRecognizer = nil;
     
     if (_checkButtonModel != nil)
@@ -1070,11 +1132,22 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 {
     CGFloat contentHeight = self.frame.size.height;
 
-    if (_ios6CommentsEnabled && _ios6CommentsButtonModel != nil)
+    bool brandedCommentsFooter = _ios6CommentsEnabled && [self _ios6UsesBrandedCommentsFooter];
+    _ios6CommentsFooterModel.hidden = !brandedCommentsFooter;
+    if (brandedCommentsFooter)
     {
+        _ios6CommentsButtonModel.hidden = true;
+        CGRect bubbleFrame = [self discussionCommentsBubbleFrame];
+        UIEdgeInsets bubbleInsets = [TGPresentation brandedIOS6BubbleImageInsetsOutgoing:!_incomingAppearance];
+        CGFloat footerHeight = [self discussionCommentsFooterHeight];
+        _ios6CommentsFooterModel.frame = CGRectMake(bubbleFrame.origin.x + bubbleInsets.left, CGRectGetMaxY(bubbleFrame) - bubbleInsets.bottom - footerHeight, MAX(1.0f, bubbleFrame.size.width - bubbleInsets.left - bubbleInsets.right), footerHeight);
+    }
+    else if (_ios6CommentsEnabled && _ios6CommentsButtonModel != nil)
+    {
+        _ios6CommentsButtonModel.hidden = false;
         if ([self discussionCommentsFooterIntegratedInBubble])
         {
-            CGRect bubbleFrame = [self effectiveContentFrame];
+            CGRect bubbleFrame = [self discussionCommentsBubbleFrame];
             CGFloat footerHeight = [self discussionCommentsFooterHeight];
             if (bubbleFrame.size.width > FLT_EPSILON && bubbleFrame.size.height >= footerHeight)
             {

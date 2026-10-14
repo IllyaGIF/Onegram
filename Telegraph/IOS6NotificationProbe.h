@@ -3,17 +3,10 @@
 #import <sys/time.h>
 #import <time.h>
 #import <unistd.h>
+#import "../OnegramPlatform/OGPlatformVersion.h"
 
-// Keep the flight recorder implementation available for future diagnostics,
-// but compile every call out completely during normal use.  This avoids even
-// evaluating format arguments, so there are no file opens, fsyncs or hidden
-// battery costs while disabled.
 #define IOS6_NOTIFICATION_PROBE_ENABLED 0
 
-// A deliberately small synchronous flight recorder for background notification
-// diagnosis. Events are rare state transitions, never message bodies or packet
-// dumps. Opening and closing the file for each event ensures that the final
-// breadcrumb survives suspension or detaching Xcode.
 
 #if IOS6_NOTIFICATION_PROBE_ENABLED
 static inline NSString *IOS6NotificationProbeLogPath()
@@ -55,7 +48,7 @@ static inline void IOS6NotificationProbeWrite(NSString *stage, NSString *format,
             char dateBuffer[32] = {0};
             strftime(dateBuffer, sizeof(dateBuffer), "%Y-%m-%d %H:%M:%S", &timeInfo);
             int milliseconds = (int)(currentTime.tv_usec / 1000);
-            NSTimeInterval uptime = [[NSProcessInfo processInfo] systemUptime];
+            NSTimeInterval uptime = OGPlatformSystemUptime();
 
             NSString *line = [NSString stringWithFormat:@"%s.%03d pid=%d up=%.1f %@ %@\n",
                               dateBuffer, milliseconds, getpid(), uptime, stage, details];
@@ -87,7 +80,6 @@ static inline void IOS6NotificationProbeWrite(NSString *stage, NSString *format,
         }
         @catch (__unused NSException *exception)
         {
-            // Diagnostics must never affect the client.
         }
     }
 }

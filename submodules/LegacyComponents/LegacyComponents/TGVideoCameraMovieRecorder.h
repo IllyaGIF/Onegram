@@ -1,5 +1,7 @@
 #import <Foundation/Foundation.h>
+#if __has_include(<CoreMedia/CoreMedia.h>)
 #import <CoreMedia/CoreMedia.h>
+#endif
 
 @protocol TGVideoCameraMovieRecorderDelegate;
 

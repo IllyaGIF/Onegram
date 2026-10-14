@@ -75,6 +75,7 @@ typedef enum
     bool _positionChangeLocked;
     bool _alreadyStarted;
     bool _recordingDidStart;
+    bool _finishing;
     
     CGRect _controlsFrame;
     TGVideoMessageControls *_controlsView;
@@ -109,6 +110,7 @@ typedef enum
     SMetaDisposable *_activityDisposable;
     
     SMetaDisposable *_currentAudioSession;
+    SMetaDisposable *_notificationSoundsSuppression;
     bool _otherAudioPlaying;
     
     id _didEnterBackgroundObserver;
@@ -172,7 +174,12 @@ typedef enum
         
         _activityDisposable = [[SMetaDisposable alloc] init];
         _currentAudioSession = [[SMetaDisposable alloc] init];
+        _notificationSoundsSuppression = [[SMetaDisposable alloc] init];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramApplicationWillResignActive:) name:UIApplicationWillResignActiveNotification object:nil];
+        _didEnterBackgroundObserver = self;
+#else
         __weak TGVideoMessageCaptureController *weakSelf = self;
         _didEnterBackgroundObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:nil usingBlock:^(__unused NSNotification *notification)
         {
@@ -184,6 +191,7 @@ typedef enum
                 [strongSelf dismiss:true];
             }
         }];
+#endif
         
         _thumbnailsDisposable = [[SMetaDisposable alloc] init];
         
@@ -197,14 +205,32 @@ typedef enum
 
 - (void)dealloc
 {
+    [_notificationSoundsSuppression dispose];
     [_thumbnailsDisposable dispose];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillResignActiveNotification object:nil];
+#else
     [[NSNotificationCenter defaultCenter] removeObserver:_didEnterBackgroundObserver];
+#endif
     [_activityDisposable dispose];
     id<SDisposable> currentAudioSession = _currentAudioSession;
     [_queue dispatch:^{
          [currentAudioSession dispose];
     }];
 }
+
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (void)onegramApplicationWillResignActive:(NSNotification *)notification
+{
+    if (!_stopped)
+    {
+        _automaticDismiss = true;
+        _gpuAvailable = false;
+        [self dismiss:true];
+    }
+}
+#endif
 
 + (NSURL *)tempOutputPath
 {
@@ -385,12 +411,18 @@ typedef enum
 
 - (void)setupPreviewView
 {
-    if (iosMajorVersion() < 5)
+    if (_capturePipeline.usesNativePreview)
     {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+        [_legacyPreviewLayer removeFromSuperlayer];
+        _legacyPreviewLayer.session = nil;
+#endif
+        [_legacyPreviewView removeFromSuperview];
         _legacyPreviewView = [[UIView alloc] initWithFrame:_circleView.bounds];
         _legacyPreviewView.clipsToBounds = true;
         [_circleView insertSubview:_legacyPreviewView belowSubview:_placeholderView];
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         _legacyPreviewLayer = [_capturePipeline previewLayer];
         _legacyPreviewLayer.frame = _legacyPreviewView.bounds;
         _legacyPreviewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
@@ -402,6 +434,7 @@ typedef enum
             _legacyPreviewLayer.mirrored = _preferredPosition == AVCaptureDevicePositionFront;
         }
         [_legacyPreviewView.layer addSublayer:_legacyPreviewLayer];
+#endif
     }
     else
     {
@@ -412,7 +445,6 @@ typedef enum
             _previewView.accessibilityIgnoresInvertColors = true;
     }
     
-    [self captureStarted];
 }
 
 - (void)_transitionIn
@@ -485,6 +517,7 @@ typedef enum
     [super viewWillAppear:animated];
     
     _capturePipeline.renderingEnabled = true;
+    [_notificationSoundsSuppression setDisposable:[[LegacyComponentsGlobals provider] suppressNotificationSoundsForCapture]];
     
     _startTimestamp = CFAbsoluteTimeGetCurrent();
     
@@ -494,9 +527,23 @@ typedef enum
     
     [self _transitionIn];
     
-    [self _beginAudioSession:false completion:^
-    {
-        [_capturePipeline startRunning];
+    __weak TGVideoMessageCaptureController *weakSelf = self;
+    [[LegacyComponentsGlobals provider] prepareAudioForVideoCapture:^{
+        TGDispatchOnMainThread(^{
+            TGVideoMessageCaptureController *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf->_finishing || strongSelf->_stopped)
+                return;
+            [strongSelf _beginAudioSession:false completion:^{
+                TGDispatchOnMainThread(^{
+                    if (strongSelf->_finishing || strongSelf->_stopped)
+                    {
+                        [strongSelf _endAudioSession];
+                        return;
+                    }
+                    [strongSelf->_capturePipeline startRunning];
+                });
+            }];
+        });
     }];
 }
 
@@ -548,7 +595,9 @@ typedef enum
 
 - (void)viewWillLayoutSubviews
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [super viewWillLayoutSubviews];
+#endif
     
     CGRect fadeFrame = TGIsPad() ? self.view.bounds : CGRectMake(0.0f, 0.0f, _wrapperView.frame.size.width, _wrapperView.frame.size.height);
     _blurView.frame = fadeFrame;
@@ -565,11 +614,15 @@ typedef enum
 
 - (void)dismissImmediately
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (_legacyPreviewLayer != nil)
     {
-        _legacyPreviewLayer.session = nil;
         [_legacyPreviewLayer removeFromSuperlayer];
         _legacyPreviewLayer = nil;
+    }
+#endif
+    if (_legacyPreviewView != nil)
+    {
         [_legacyPreviewView removeFromSuperview];
         _legacyPreviewView = nil;
     }
@@ -597,13 +650,19 @@ typedef enum
 
 - (void)dismiss:(bool)cancelled
 {
+    if (_finishing)
+        return;
+    _finishing = true;
+    [self stopRecordingTimer];
     _dismissed = cancelled;
     
     if (self.onDismiss != nil)
         self.onDismiss(_automaticDismiss);
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (_player != nil)
         [_player pause];
+#endif
     
     self.view.backgroundColor = [UIColor clearColor];
     self.view.userInteractionEnabled = false;
@@ -677,12 +736,14 @@ typedef enum
 {
     [self _updateMuted:false];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [[SQueue concurrentDefaultQueue] dispatch:^
     {
         _player.muted = false;
         
         [self _seekToPosition:_controlsView.scrubberView.trimStartValue];
     }];
+#endif
 }
 
 - (void)_stop
@@ -727,13 +788,14 @@ typedef enum
     [_controlsView.scrubberView setTrimApplied:false];
     [_controlsView.scrubberView reloadData];
     
+    UIView *previewContainer = _capturePipeline.usesNativePreview ? _legacyPreviewView : _previewView;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     _player = [[AVPlayer alloc] initWithURL:_url];
     _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
     _player.muted = true;
     
     _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:_player.currentItem];
     
-    UIView *previewContainer = iosMajorVersion() < 5 ? _legacyPreviewView : _previewView;
     _videoView = [[TGModernGalleryVideoView alloc] initWithFrame:previewContainer.frame player:_player];
     [previewContainer.superview insertSubview:_videoView belowSubview:previewContainer];
     
@@ -746,6 +808,13 @@ typedef enum
     [previewContainer.superview addSubview:_muteView];
     
     [_player play];
+#else
+    UIImageView *videoImageView = [[UIImageView alloc] initWithFrame:previewContainer.frame];
+    videoImageView.image = _thumbnailImage != nil ? _thumbnailImage : [TGVideoMessageCaptureController startImage];
+    videoImageView.contentMode = UIViewContentModeScaleAspectFill;
+    videoImageView.clipsToBounds = true;
+    [previewContainer.superview insertSubview:videoImageView belowSubview:previewContainer];
+#endif
     
     [UIView animateWithDuration:0.1 delay:0.1 options:kNilOptions animations:^
     {
@@ -782,8 +851,12 @@ typedef enum
 
 - (void)_seekToPosition:(NSTimeInterval)position
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     CMTime targetTime = CMTimeMakeWithSeconds(MIN(position, _duration - 0.1), NSEC_PER_SEC);
     [_player.currentItem seekToTime:targetTime toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];
+#else
+    (void)position;
+#endif
 }
 
 - (void)playerItemDidPlayToEndTime:(NSNotification *)__unused notification
@@ -794,10 +867,12 @@ typedef enum
     {
         [self _updateMuted:true];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         [[SQueue concurrentDefaultQueue] dispatch:^
         {
             _player.muted = true;
         }];
+#endif
     });
 }
 
@@ -811,16 +886,18 @@ typedef enum
     _preferredPosition = (_preferredPosition == AVCaptureDevicePositionFront) ? AVCaptureDevicePositionBack : AVCaptureDevicePositionFront;
     
     _gpuAvailable = false;
-    if (iosMajorVersion() >= 5)
+    if (!_capturePipeline.usesNativePreview)
     {
         [_previewView removeFromSuperview];
         _previewView = nil;
     }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     else if (_legacyPreviewLayer.mirroringSupported)
     {
         _legacyPreviewLayer.automaticallyAdjustsMirroring = false;
         _legacyPreviewLayer.mirrored = _preferredPosition == AVCaptureDevicePositionFront;
     }
+#endif
 
     _ringView.alpha = 0.0f;
     
@@ -828,12 +905,13 @@ typedef enum
     {
         [UIView transitionWithView:_circleWrapperView duration:0.4f options:UIViewAnimationOptionTransitionFlipFromLeft | UIViewAnimationOptionCurveEaseOut animations:^
         {
-            if (iosMajorVersion() >= 5)
-                _placeholderView.hidden = false;
+            _placeholderView.hidden = false;
         } completion:^(__unused BOOL finished)
         {
             _ringView.alpha = 1.0f;
             _gpuAvailable = true;
+            if (_capturePipeline.usesNativePreview)
+                [self captureStarted];
         }];
         
         [_capturePipeline setCameraPosition:_preferredPosition];
@@ -853,7 +931,6 @@ typedef enum
     [_buttonHandler ignoreEventsFor:1.0f andDisable:false];
     [_capturePipeline startRecording:_url preset:TGMediaVideoConversionPresetVideoMessage liveUpload:true];
     
-    [self startRecordingTimer];
 }
 
 - (void)stopRecording
@@ -867,6 +944,7 @@ typedef enum
     if (duration < 1.0)
         _dismissed = true;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     if (thumbnailImage == nil && url != nil)
     {
         AVAsset *asset = [[AVURLAsset alloc] initWithURL:url options:nil];
@@ -881,6 +959,7 @@ typedef enum
             CGImageRelease(imageRef);
         }
     }
+#endif
 
     if (thumbnailImage == nil)
         thumbnailImage = [TGVideoMessageCaptureController startImage];
@@ -897,10 +976,7 @@ typedef enum
     CGFloat minSize = MIN(thumbnailImage.size.width, thumbnailImage.size.height);
     CGFloat maxSize = MAX(thumbnailImage.size.width, thumbnailImage.size.height);
     
-    bool mirrored = true;
-    UIImageOrientation orientation = [self orientationForThumbnailWithTransform:_capturePipeline.videoTransform mirrored:mirrored];
-    
-    UIImage *image = TGPhotoEditorCrop(thumbnailImage, nil, orientation, 0.0f, CGRectMake((maxSize - minSize) / 2.0f, 0.0f, minSize, minSize), mirrored, CGSizeMake(240.0f, 240.0f), thumbnailImage.size, true);
+    UIImage *image = TGPhotoEditorCrop(thumbnailImage, nil, UIImageOrientationUp, 0.0f, CGRectMake((maxSize - minSize) / 2.0f, 0.0f, minSize, minSize), false, CGSizeMake(240.0f, 240.0f), thumbnailImage.size, true);
     if (image == nil)
     {
         image = thumbnailImage;
@@ -928,6 +1004,7 @@ typedef enum
         if (trimStartValue > DBL_EPSILON)
         {
             bool generatedImage = false;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
             AVAsset *asset = [[AVURLAsset alloc] initWithURL:url options:nil];
             if (asset != nil) {
                 AVAssetImageGenerator *imageGenerator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
@@ -940,10 +1017,11 @@ typedef enum
                     generatedImage = true;
                 }
             }
-            
+#endif
             if (!generatedImage) {
                 NSArray *thumbnail = [self thumbnailsForTimestamps:@[@(trimStartValue)]];
-                image = thumbnail.firstObject;
+                if ([thumbnail count] != 0)
+                    image = [thumbnail objectAtIndex:0];
             }
         }
     }
@@ -1006,24 +1084,19 @@ typedef enum
     if (recordingDuration < _previousDuration)
         recordingDuration = _previousDuration;
     
+    if (recordingDuration > _previousDuration)
+        [_ringView setValue:recordingDuration / TGVideoMessageMaximumDuration];
     _previousDuration = recordingDuration;
-    [_ringView setValue:recordingDuration / TGVideoMessageMaximumDuration];
-    
-    CFAbsoluteTime currentTime = CACurrentMediaTime();
     NSUInteger currentDurationSeconds = (NSUInteger)recordingDuration;
     NSUInteger currentDurationMilliseconds = (int)(recordingDuration * 100.0f) % 100;
-    if (currentDurationSeconds == _audioRecordingDurationSeconds && currentDurationMilliseconds == _audioRecordingDurationMilliseconds)
-    {
-        _recordingTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(timerEvent) interval:MAX(0.01, _audioRecordingDurationSeconds + 2.0 / 60.0 - currentTime) repeat:false];
-    }
-    else
+    if (currentDurationSeconds != _audioRecordingDurationSeconds || currentDurationMilliseconds != _audioRecordingDurationMilliseconds)
     {
         _audioRecordingDurationSeconds = currentDurationSeconds;
         _audioRecordingDurationMilliseconds = currentDurationMilliseconds;
         [_controlsView setDurationString:[[NSString alloc] initWithFormat:@"%d:%02d,%02d", (int)_audioRecordingDurationSeconds / 60, (int)_audioRecordingDurationSeconds % 60, (int)_audioRecordingDurationMilliseconds]];
-        _recordingTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(timerEvent) interval:2.0 / 60.0 repeat:false];
     }
-    
+    _recordingTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(timerEvent) interval:2.0 / 60.0 repeat:false];
+
     if (recordingDuration >= TGVideoMessageMaximumDuration)
     {
         [_recordingTimer invalidate];
@@ -1050,6 +1123,8 @@ typedef enum
 
 - (void)captureStarted
 {
+    if (_finishing || _stopped)
+        return;
     bool firstTime = !_alreadyStarted;
     _alreadyStarted = true;
     
@@ -1068,10 +1143,7 @@ typedef enum
     
     if (firstTime)
     {
-        TGDispatchAfter(0.2, dispatch_get_main_queue(), ^
-        {
-            [self startRecording];
-        });
+        [self startRecording];
     }
 }
 
@@ -1099,38 +1171,59 @@ typedef enum
 
 #pragma mark -
 
-- (void)capturePipelineDidStartRunning:(TGVideoCameraPipeline *)__unused capturePipeline
+- (bool)capturePipelineDidPrepareToStartRunning:(TGVideoCameraPipeline *)capturePipeline
 {
-    if (iosMajorVersion() < 5 && _legacyPreviewView == nil)
-        [self setupPreviewView];
+    if (_finishing || _stopped || capturePipeline != _capturePipeline)
+        return false;
+    [self setupPreviewView];
+    return true;
 }
 
-- (void)capturePipeline:(TGVideoCameraPipeline *)capturePipeline didStopRunningWithError:(NSError *)error
+- (void)capturePipelineDidStartRunning:(TGVideoCameraPipeline *)__unused capturePipeline
 {
+    if (_finishing)
+        return;
+    if (_capturePipeline.usesNativePreview)
+    {
+        if (_legacyPreviewView == nil)
+            [self setupPreviewView];
+        [self captureStarted];
+    }
+}
+
+- (void)capturePipeline:(TGVideoCameraPipeline *)__unused capturePipeline didStopRunningWithError:(NSError *)error
+{
+    [self captureFailedWithError:error];
 }
 
 - (void)capturePipeline:(TGVideoCameraPipeline *)__unused capturePipeline previewPixelBufferReadyForDisplay:(CVPixelBufferRef)previewPixelBuffer
 {
-    if (!_gpuAvailable)
+    if (!_gpuAvailable || _finishing)
         return;
     
-    if (iosMajorVersion() >= 5)
+    if (!_capturePipeline.usesNativePreview)
     {
         if (_previewView == nil)
+        {
             [self setupPreviewView];
+            [self captureStarted];
+        }
         [_previewView displayPixelBuffer:previewPixelBuffer];
     }
 }
 
 - (void)capturePipelineDidRunOutOfPreviewBuffers:(TGVideoCameraPipeline *)__unused capturePipeline
 {
-    if (_gpuAvailable && iosMajorVersion() >= 5)
+    if (_gpuAvailable && !_capturePipeline.usesNativePreview)
         [_previewView flushPixelBufferCache];
 }
 
 - (void)capturePipelineRecordingDidStart:(TGVideoCameraPipeline *)__unused capturePipeline
 {
+    if (_finishing || _stopped)
+        return;
     _recordingDidStart = true;
+    [self startRecordingTimer];
     __weak TGVideoMessageCaptureController *weakSelf = self;
     [_activityDisposable setDisposable:[[[SSignal complete] delay:0.3 onQueue:[SQueue mainQueue]] startWithNext:nil error:nil completed:^{
         __strong TGVideoMessageCaptureController *strongSelf = weakSelf;
@@ -1147,17 +1240,24 @@ typedef enum
 - (void)capturePipelineRecordingDidStop:(TGVideoCameraPipeline *)__unused capturePipeline duration:(NSTimeInterval)duration liveUploadData:(id)liveUploadData thumbnailImage:(UIImage *)thumbnailImage thumbnails:(NSDictionary *)thumbnails
 {
     _recordingDidStart = false;
+    if (_finishing && _dismissed)
+        return;
     if (_stopped && duration > 0.33)
     {
         _duration = duration;
         _liveUploadData = liveUploadData;
         _thumbnailImage = thumbnailImage;
         _thumbnails = thumbnails;
-        TGDispatchOnMainThread(^
-        {
-            [self _stop];
-            [self setupVideoView];
-        });
+        [_capturePipeline stopRunningWithCompletion:^{
+            [self _endAudioSessionWithCompletion:^{
+                TGDispatchOnMainThread(^{
+                    if (_finishing || _dismissed)
+                        return;
+                    [self _stop];
+                    [self setupVideoView];
+                });
+            }];
+        }];
     }
     else
     {
@@ -1165,9 +1265,25 @@ typedef enum
     }
 }
 
-- (void)capturePipeline:(TGVideoCameraPipeline *)capturePipeline recordingDidFailWithError:(NSError *)error
+- (void)capturePipeline:(TGVideoCameraPipeline *)__unused capturePipeline recordingDidFailWithError:(NSError *)error
 {
+    [self captureFailedWithError:error];
+}
+
+- (void)captureFailedWithError:(NSError *)error
+{
+    TGLegacyLog(@"VIDEOMESSAGE capture failed: %@", error);
+    if (_finishing)
+        return;
     _recordingDidStart = false;
+    _automaticDismiss = true;
+    _gpuAvailable = false;
+    [self stopRecordingTimer];
+    [self dismiss:true];
+    TGDispatchAfter(0.35, dispatch_get_main_queue(), ^
+    {
+        [[[UIAlertView alloc] initWithTitle:nil message:TGLocalized(@"Login.UnknownError") delegate:nil cancelButtonTitle:TGLocalized(@"Common.OK") otherButtonTitles:nil] show];
+    });
 }
 
 #pragma mark - 
@@ -1176,6 +1292,12 @@ typedef enum
 {
     [_queue dispatch:^
     {
+        if (iosMajorVersion() < 7)
+        {
+            if (completion != nil)
+                completion();
+            return;
+        }
         UInt32 otherAudioPlaying = 0;
         UInt32 otherAudioPlayingSize = sizeof(otherAudioPlaying);
         OSStatus otherAudioPlayingStatus = AudioSessionGetProperty(kAudioSessionProperty_OtherAudioIsPlaying, &otherAudioPlayingSize, &otherAudioPlaying);
@@ -1184,7 +1306,16 @@ typedef enum
         else
         {
             AVAudioSession *audioSession = [AVAudioSession sharedInstance];
-            _otherAudioPlaying = [audioSession respondsToSelector:@selector(isOtherAudioPlaying)] ? [audioSession isOtherAudioPlaying] : false;
+            SEL selector = @selector(isOtherAudioPlaying);
+            if ([audioSession respondsToSelector:selector])
+            {
+                BOOL (*implementation)(id, SEL) = (BOOL (*)(id, SEL))[audioSession methodForSelector:selector];
+                _otherAudioPlaying = implementation != NULL ? implementation(audioSession, selector) : false;
+            }
+            else
+            {
+                _otherAudioPlaying = false;
+            }
         }
         
         __weak TGVideoMessageCaptureController *weakSelf = self;
@@ -1209,10 +1340,19 @@ typedef enum
 
 - (void)_endAudioSession
 {
+    [self _endAudioSessionWithCompletion:nil];
+}
+
+- (void)_endAudioSessionWithCompletion:(void (^)(void))completion
+{
     id<SDisposable> currentAudioSession = _currentAudioSession;
+    SMetaDisposable *notificationSoundsSuppression = _notificationSoundsSuppression;
     [_queue dispatch:^
     {
         [currentAudioSession dispose];
+        [notificationSoundsSuppression setDisposable:nil];
+        if (completion != nil)
+            completion();
     }];
 }
 
@@ -1254,6 +1394,11 @@ static UIImage *startImage = nil;
 
 + (void)requestCameraAccess:(void (^)(bool granted, bool wasNotDetermined))resultBlock
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (resultBlock != nil)
+        resultBlock(true, false);
+    return;
+#else
     if (iosMajorVersion() < 7)
     {
         if (resultBlock != nil)
@@ -1270,10 +1415,16 @@ static UIImage *startImage = nil;
                 resultBlock(granted, wasNotDetermined);
         });
     }];
+#endif
 }
 
 + (void)requestMicrophoneAccess:(void (^)(bool granted, bool wasNotDetermined))resultBlock
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    if (resultBlock != nil)
+        resultBlock(true, false);
+    return;
+#else
     if (iosMajorVersion() < 7)
     {
         if (resultBlock != nil)
@@ -1290,6 +1441,7 @@ static UIImage *startImage = nil;
                 resultBlock(granted, wasNotDetermined);
         });
     }];
+#endif
 }
 
 #pragma mark - Scrubbing
@@ -1315,7 +1467,9 @@ static UIImage *startImage = nil;
 
 - (void)videoScrubberDidBeginEditing:(TGVideoMessageScrubber *)__unused videoScrubber
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_player pause];
+#endif
 }
 
 - (void)videoScrubberDidEndEditing:(TGVideoMessageScrubber *)videoScrubber endValueChanged:(bool)endValueChanged
@@ -1325,7 +1479,9 @@ static UIImage *startImage = nil;
     if (endValueChanged)
         [self _seekToPosition:videoScrubber.trimStartValue];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_player play];
+#endif
 }
 
 - (void)videoScrubber:(TGVideoMessageScrubber *)__unused videoScrubber editingStartValueDidChange:(NSTimeInterval)startValue
@@ -1340,7 +1496,11 @@ static UIImage *startImage = nil;
 
 - (void)updatePlayerRange:(NSTimeInterval)trimEndValue
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     _player.currentItem.forwardPlaybackEndTime = CMTimeMakeWithSeconds(trimEndValue, NSEC_PER_SEC);
+#else
+    (void)trimEndValue;
+#endif
 }
 
 #pragma mark - Thumbnails

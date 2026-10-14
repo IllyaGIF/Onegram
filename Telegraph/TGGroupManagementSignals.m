@@ -77,7 +77,10 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
         [TGDatabaseInstance() dispatchOnDatabaseThread:^
 #endif
         {
-            result = block();
+            [TGDatabaseInstance() performStorageBatch:^
+            {
+                result = block();
+            }];
         } synchronous:true];
         [subscriber putNext:result];
         [subscriber putCompletion];
@@ -94,18 +97,6 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 {
     return TGIOS6GroupPeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
 }
-
-@interface TGActionStageWatcherAdapter : NSObject <ASWatcher>
-{
-    NSString *_path;
-    void (^_updatedBlock)(id);
-}
-
-@property (nonatomic, strong) ASHandle *actionHandle;
-
-- (instancetype)initWithPath:(NSString *)path updated:(void (^)(id))updated;
-
-@end
 
 
 @implementation TGSynchronizePinnedConversationsAction
@@ -822,6 +813,8 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                     if ([baseDialog isKindOfClass:[TLDialog$dialogMeta class]])
                     {
                         TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
+                        if (dialog.top_message == 0)
+                            continue;
                         int64_t peerId = 0;
                         if ([dialog.peer isKindOfClass:[TLPeer$peerUser class]])
                         {
@@ -839,7 +832,6 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                             
                             if (conversation.conversationId != 0)
                             {
-                                //TGLog(@"Dialog with %@", [TGDatabaseInstance() loadUser:conversation.conversationId].displayName);
                                 
                                 [conversations addObject:conversation];
                                 
@@ -904,7 +896,6 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                             
                             if (conversation.conversationId != 0)
                             {
-                                //TGLog(@"Chat %@", conversation.chatTitle);
                                 
                                 [conversations addObject:conversation];
                                 
@@ -1251,6 +1242,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 
 + (SSignal *)pullPinnedConversations {
     TLRPCmessages_getPinnedDialogs$messages_getPinnedDialogs *getPinnedDialogs = [[TLRPCmessages_getPinnedDialogs$messages_getPinnedDialogs alloc] init];
+    getPinnedDialogs.folder_id = 0;
     return [[[TGTelegramNetworking instance] requestSignal:getPinnedDialogs] mapToSignal:^SSignal *(TLmessages_PeerDialogs *result) {
         return [[self processedDialogs:result peerId:0] mapToSignal:^SSignal *(__unused id result1) {
             return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
@@ -1287,31 +1279,3 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 @end
 
 
-@implementation TGActionStageWatcherAdapter
-
-- (instancetype)initWithPath:(NSString *)path updated:(void (^)(id))updated
-{
-    self = [super init];
-    if (self != nil)
-    {
-        _path = path;
-        _updatedBlock = [updated copy];
-        
-        _actionHandle = [[ASHandle alloc] initWithDelegate:self];
-        [ActionStageInstance() watchForPath:_path watcher:self];
-    }
-    return self;
-}
-
-- (void)dealloc
-{
-    [_actionHandle reset];
-}
-
-- (void)actionStageResourceDispatched:(NSString *)path resource:(id)resource arguments:(id)__unused arguments
-{
-    if ([path isEqualToString:_path])
-        _updatedBlock(resource);
-}
-
-@end

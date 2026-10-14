@@ -8,16 +8,6 @@
 
 #import <UIKit/UIKit.h>
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-@interface TGAlertViewController : UIAlertController
-#else
-@interface TGAlertViewController : UIViewController
-#endif
-
-@property (nonatomic, copy) void (^backgroundTapped)();
-
-@end
-
 @interface TGAlertView : UIAlertView
 
 - (id)initWithTitle:(NSString *)title message:(NSString *)message cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(bool okButtonPressed))completionBlock;

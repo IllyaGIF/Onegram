@@ -1,5 +1,20 @@
 #import "TGVTAcceleratedVideoView.h"
 
+#if defined(ONEGRAM_ARMV6)
+
+#import "TGGLVideoView.h"
+
+@implementation TGVTAcceleratedVideoView
+
++ (Class)videoViewClass
+{
+    return [TGGLVideoView class];
+}
+
+@end
+
+#else
+
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
@@ -527,7 +542,6 @@ static NSMutableDictionary *queueItemsByPath() {
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self != nil) {
-        //TGLog(@"TGVTAcceleratedVideoView count %d", OSAtomicIncrement32(&TGVTAcceleratedVideoViewCount));
         
         _applicationWillEnterForeground = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(applicationDidBecomeActiveNotification:) name:UIApplicationDidBecomeActiveNotification];
         _applicationDidEnterBackground = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(applicationWillResignActiveNotification:) name:UIApplicationWillResignActiveNotification];
@@ -553,7 +567,6 @@ static NSMutableDictionary *queueItemsByPath() {
 }
 
 - (void)dealloc {
-    //TGLog(@"TGVTAcceleratedVideoView count %d", OSAtomicDecrement32(&TGVTAcceleratedVideoViewCount));
     
     NSAssert([NSThread isMainThread], @"dealloc from background thread");
     
@@ -585,7 +598,6 @@ static NSMutableDictionary *queueItemsByPath() {
 }
 
 - (void)displayFrame:(TGVTAcceleratedVideoFrame *)frame {
-    //TGLog(@"draw frame at %f", frame.timestamp);
     
     pthread_mutex_lock(&_inBackgroundMutex);
     if (!_inBackground) {
@@ -669,3 +681,5 @@ static NSMutableDictionary *queueItemsByPath() {
 }
 
 @end
+
+#endif

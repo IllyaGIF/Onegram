@@ -2,30 +2,6 @@
 
 #import "TGAppDelegate.h"
 
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
-@implementation TGAlertViewController
-
-- (void)backgroundTapGesture:(UITapGestureRecognizer *)recognizer {
-    if (recognizer.state == UIGestureRecognizerStateEnded) {
-        if (_backgroundTapped) {
-            _backgroundTapped();
-        }
-    }
-}
-
-- (void)viewDidAppear:(BOOL)animated {
-    [super viewDidAppear:animated];
-    
-    UIView *firstSubview = [self.view.superview.subviews objectAtIndex:0];
-    if (_backgroundTapped && [firstSubview.backgroundColor isEqual:[UIColor colorWithWhite:0.0 alpha:0.4]]) {
-        firstSubview.userInteractionEnabled = true;
-        [self.view.superview.subviews.firstObject addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(backgroundTapGesture:)]];
-    }
-}
-
-@end
-#endif
-
 @interface TGAlertView () <UIAlertViewDelegate>
 
 @property (nonatomic, copy) void (^completionBlock)(bool okButtonPressed);

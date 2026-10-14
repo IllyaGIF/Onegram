@@ -15,12 +15,23 @@
 }
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
-    return [self initWithRoundMessage:[aDecoder decodeBoolForKey:@"roundMessage"] size:[aDecoder decodeCGSizeForKey:@"size"] duration:[aDecoder decodeInt32ForKey:@"duration"]];
+    CGFloat width = (CGFloat)[aDecoder decodeDoubleForKey:@"sizeWidth"];
+    CGFloat height = (CGFloat)[aDecoder decodeDoubleForKey:@"sizeHeight"];
+    if (width == 0.0f && height == 0.0f) {
+        @try {
+            CGSize legacySize = [aDecoder decodeCGSizeForKey:@"size"];
+            width = legacySize.width;
+            height = legacySize.height;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    return [self initWithRoundMessage:[aDecoder decodeBoolForKey:@"roundMessage"] size:CGSizeMake(width, height) duration:[aDecoder decodeInt32ForKey:@"duration"]];
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder {
     [aCoder encodeBool:_isRoundMessage forKey:@"roundMessage"];
-    [aCoder encodeCGSize:_size forKey:@"size"];
+    [aCoder encodeDouble:_size.width forKey:@"sizeWidth"];
+    [aCoder encodeDouble:_size.height forKey:@"sizeHeight"];
     [aCoder encodeInt32:_duration forKey:@"duration"];
 }
 

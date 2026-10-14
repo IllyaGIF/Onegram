@@ -17,6 +17,8 @@ typedef void (^LOTAnimationCompletionBlock)(BOOL animationFinished);
 
 @interface LOTAnimationView : LOTView
 
+- (CGSize)intrinsicContentSize;
+
 /// Load animation by name from the default bundle, Images are also loaded from the bundle
 + ( instancetype)animationNamed:( NSString *)animationName;
 

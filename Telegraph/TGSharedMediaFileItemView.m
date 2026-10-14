@@ -379,10 +379,6 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
             
             if (animated)
             {
-                /*[UIView animateWithDuration:0.2 delay:0.0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState animations:^
-                {
-                    _progressView.frame = CGRectMake(insets.left, self.frame.size.height - 2.0f, (self.frame.size.width - insets.left) * _availabilityState.progress, 2.0f);
-                } completion:nil];*/
                 
                 CALayer *layer = _progressView.layer.presentationLayer;
                 if (layer == nil)

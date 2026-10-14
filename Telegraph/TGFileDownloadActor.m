@@ -232,7 +232,7 @@ static TGFileDownloadActor *TGFileDownloadActorResolve(NSString *path, id token)
         TGMediaOriginInfo *originInfo = options[@"originInfo"];
         if (originInfo == nil && fileReferenceStr != nil)
         {
-            NSString *decoded = (__bridge_transfer NSString *)CFURLCreateStringByReplacingPercentEscapesUsingEncoding(NULL, (CFStringRef)fileReferenceStr, CFSTR(""), kCFStringEncodingUTF8);
+            NSString *decoded = (__bridge_transfer NSString *)CFURLCreateStringByReplacingPercentEscapesUsingEncoding(NULL, (__bridge CFStringRef)fileReferenceStr, CFSTR(""), kCFStringEncodingUTF8);
             fileReferenceStr = decoded;
             
             if ([fileReferenceStr hasPrefix:@"o"]) {

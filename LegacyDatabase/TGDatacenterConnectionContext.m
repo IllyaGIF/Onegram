@@ -50,7 +50,6 @@
                     [subscriber putError:error];
             }];
             
-            //request.dependsOnPasswordEntry = (requestClass & TGRequestClassIgnorePasswordEntryRequired) == 0;
             
             [request setShouldContinueExecutionWithErrorContext:^bool(MTRequestErrorContext *errorContext)
             {

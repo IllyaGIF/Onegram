@@ -169,7 +169,7 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     _portraitToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
     _portraitToolControlView.clipsToBounds = true;
     _portraitToolControlView.interactionEnded = interactionEnded;
-    _portraitToolControlView.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(_portraitToolControlView.layer, TGScreenScaling());
     _portraitToolControlView.isLandscape = false;
     [_portraitToolsWrapperView addSubview:_portraitToolControlView];
     
@@ -184,7 +184,7 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     _landscapeToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
     _landscapeToolControlView.clipsToBounds = true;
     _landscapeToolControlView.interactionEnded = interactionEnded;
-    _landscapeToolControlView.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(_landscapeToolControlView.layer, TGScreenScaling());
     _landscapeToolControlView.isLandscape = true;
     _landscapeToolControlView.toolbarLandscapeSize = self.toolbarLandscapeSize;
     [_landscapeToolsWrapperView addSubview:_landscapeToolControlView];
@@ -225,9 +225,9 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     }];
     
     if (UIInterfaceOrientationIsPortrait(self.interfaceOrientation))
-        _portraitToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_portraitToolControlView.layer, true);
     else
-        _landscapeToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_landscapeToolControlView.layer, true);
     
     CGRect toolTargetFrame;
     switch (self.interfaceOrientation)
@@ -268,8 +268,8 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     {
         if (finished)
         {
-            _portraitToolControlView.layer.shouldRasterize = false;
-            _landscapeToolControlView.layer.shouldRasterize = false;
+            TGSetLayerShouldRasterize(_portraitToolControlView.layer, false);
+            TGSetLayerShouldRasterize(_landscapeToolControlView.layer, false);
         }
     }];
 
@@ -284,9 +284,9 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     _wrapperView.backgroundColor = [UIColor clearColor];
     
     if (UIInterfaceOrientationIsPortrait(self.interfaceOrientation))
-        _portraitToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_portraitToolControlView.layer, true);
     else
-        _landscapeToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_landscapeToolControlView.layer, true);
     
     [UIView animateWithDuration:0.3f animations:^
     {
@@ -683,7 +683,7 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
             if ([value isKindOfClass:[TGMediaVideoConversionResult class]])
             {
                 TGMediaVideoConversionResult *result = (TGMediaVideoConversionResult *)value;
-                [[NSFileManager defaultManager] moveItemAtURL:result.fileURL toURL:fileUrl error:NULL];
+                [[NSFileManager defaultManager] moveItemAtPath:result.fileURL.path toPath:fileUrl.path error:NULL];
                 return fileUrl;
             }
             return value;
@@ -871,23 +871,23 @@ const NSTimeInterval TGPhotoQualityPreviewDuration = 15.0f;
     switch (value)
     {
         case TGMediaVideoConversionPresetCompressedVeryLow:
-            title = @"240p"; //TGLocalized(@"PhotoEditor.QualityVeryLow");
+            title = @"240p";
             break;
             
         case TGMediaVideoConversionPresetCompressedLow:
-            title = @"360p"; //TGLocalized(@"PhotoEditor.QualityLow");
+            title = @"360p";
             break;
             
         case TGMediaVideoConversionPresetCompressedMedium:
-            title = @"480p"; //TGLocalized(@"PhotoEditor.QualityMedium");
+            title = @"480p";
             break;
             
         case TGMediaVideoConversionPresetCompressedHigh:
-            title = @"720p"; //TGLocalized(@"PhotoEditor.QualityHigh");
+            title = @"720p";
             break;
             
         case TGMediaVideoConversionPresetCompressedVeryHigh:
-            title = @"1080p"; //TGLocalized(@"PhotoEditor.QualityVeryHigh");
+            title = @"1080p";
             break;
             
         default:

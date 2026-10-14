@@ -3,6 +3,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import <CoreLocation/CoreLocation.h>
+#import "OGPlatformLocation.h"
 #import "TGSynchronizeContactsActor.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGMediaAssetsLibrary.h"
 #import "../submodules/LegacyComponents/LegacyComponents/PGCamera.h"
@@ -167,9 +168,9 @@
 
 - (bool)checkLocationAuthorizationStatusForIntent:(TGLocationAccessIntent)intent alertDismissComlpetion:(void (^)(void))alertDismissCompletion
 {
-    switch ([CLLocationManager authorizationStatus])
+    switch (OGPlatformLocationAuthorizationStatusCurrent())
     {
-        case kCLAuthorizationStatusDenied:
+        case OGPlatformLocationAuthorizationStatusDenied:
         {
             NSString *message = nil;
             switch (intent)
@@ -192,7 +193,7 @@
         }
             return false;
             
-        case kCLAuthorizationStatusRestricted:
+        case OGPlatformLocationAuthorizationStatusRestricted:
         {
             [TGAccessRequiredAlertView presentWithMessage:TGLocalized(@"AccessDenied.LocationDisabled")
                                              showSettingsButton:false
@@ -200,7 +201,7 @@
         }
             return false;
             
-        case kCLAuthorizationStatusAuthorizedWhenInUse:
+        case OGPlatformLocationAuthorizationStatusAuthorizedWhenInUse:
         {
             if (intent == TGLocationAccessIntentLiveLocation)
             {

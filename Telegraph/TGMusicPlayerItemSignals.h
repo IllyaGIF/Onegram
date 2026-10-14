@@ -27,6 +27,7 @@ NSString *cacheKeyForDocument(TGDocumentMediaAttachment *document);
 + (NSString *)pathForItem:(TGMusicPlayerItem *)item;
 
 + (SSignal *)itemAvailability:(TGMusicPlayerItem *)item priority:(bool)priority;
++ (SSignal *)itemAvailability:(TGMusicPlayerItem *)item priority:(bool)priority allowDownload:(bool)allowDownload;
 
 + (SSignal *)albumArtForItem:(TGMusicPlayerItem *)item thumbnail:(bool)thumbnail;
 + (SSignal *)albumArtForDocument:(TGDocumentMediaAttachment *)document messageId:(int32_t)messageId thumbnail:(bool)thumbnail;

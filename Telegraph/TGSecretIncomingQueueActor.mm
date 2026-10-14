@@ -221,9 +221,7 @@
             
             if (removeActionIds.count < actions.count)
             {
-                TGLog(@"Waiting for %d more messages to process in sequence (expecting seqOut: %d, got: %@)", (int)(actions.count - actionsToProcess.count), (int)nextExpectedSeqOut, outOfOrderSeqOutList);
                 
-                //if (!hasResendSeqIn)
                 {
                     [TGDatabaseInstance() setCurrentPeerResendSeqIn:_peerId seqIn:nextExpectedSeqOut];
                     
@@ -237,7 +235,6 @@
                     int32_t fromSeq = nextExpectedSeqOut * 2 + (isCreator ? 0 : 1);
                     int32_t toSeq = (minLocalSeqOut - 1) * 2 + (isCreator ? 0 : 1);
                     
-                    TGLog(@"Requesting resend from %d * 2 + %d (%d) to (%d - 1) * 2 + %d (%d)", nextExpectedSeqOut, (isCreator ? 0 : 1), fromSeq, minLocalSeqOut, (isCreator ? 0 : 1), toSeq);
                     
                     NSData *messageData = [TGModernSendSecretMessageActor decryptedServiceMessageActionWithLayer:MIN(currentPeerLayer, [TGModernSendSecretMessageActor currentLayer]) resendMessagesFromSeq:fromSeq toSeq:toSeq randomId:randomId];
                     
@@ -294,7 +291,6 @@
                     message.fromUid = _userId;
                     message.toUid = TGTelegraphInstance.clientUserId;
                     message.date = [actionDesc[@"date"] intValue];
-                    //message.unread = false;
                     message.outgoing = false;
                     message.cid = _peerId;
                     message.layer = [actionDesc[@"layer"] intValue];
@@ -346,7 +342,6 @@
                 }
                 else if ([actionType isEqualToString:@"resendActions"])
                 {
-                    TGLog(@"Requested to resend messages from %d to %d", [actionDesc[@"fromSeq"] intValue], [actionDesc[@"toSeq"] intValue]);
                     
                     [TGModernSendSecretMessageActor enqueueOutgoingResendMessagesForPeerId:_peerId fromSeq:[actionDesc[@"fromSeq"] intValue] / 2 toSeq:[actionDesc[@"toSeq"] intValue] / 2];
                 }
@@ -375,10 +370,6 @@
                             {
                                 acceptKey = true;
                             }
-                        }
-                        else
-                        {
-                            TGLog(@"Ignoring incoming requestKey because there is already one in proccess");
                         }
                     }
                     else
@@ -426,7 +417,6 @@
                                 {
                                     uint8_t zero = 0;
                                     [key replaceBytesInRange:NSMakeRange(0, 0) withBytes:&zero length:1];
-                                    TGLog(@"(adding key padding)");
                                 }
                                 
                                 NSData *keyHash = MTSha1(key);
@@ -498,7 +488,6 @@
                                 {
                                     uint8_t zero = 0;
                                     [key replaceBytesInRange:NSMakeRange(0, 0) withBytes:&zero length:1];
-                                    TGLog(@"(adding key padding)");
                                 }
                                 
                                 NSData *keyHash = MTSha1(key);
@@ -547,7 +536,6 @@
                                 }
                                 else
                                 {
-                                    TGLog(@"Key_fingerprints do not match: %lld vs %lld", [actionDesc[@"key_fingerprint"] longLongValue], (long long)keyId);
                                     [self abortHandshake:[actionDesc[@"exchangeId"] longLongValue]];
                                 }
                             }
@@ -788,7 +776,6 @@
 
 - (void)_processIncomingMessage:(TGStoredIncomingMessageSecretAction *)action seqIn:(int32_t)seqIn seqOut:(int32_t)seqOut addedMessages:(NSMutableArray *)addedMessages addedActions:(NSMutableArray *)addedActions layerUpdate:(NSUInteger *)layerUpdate
 {
-    TGLog(@"incoming message: layer: %d seq_in: %d, seq_out: %d", (int)action.layer, seqIn, seqOut);
     
     if (layerUpdate)
         *layerUpdate = MAX(*layerUpdate, action.layer);

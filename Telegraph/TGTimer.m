@@ -2,18 +2,18 @@
 
 #if TARGET_OS_IPHONE
 
-#if __IPHONE_OS_VERSION_MIN_REQUIRED >= 60000 // iOS 6.0 or later
+#if __IPHONE_OS_VERSION_MIN_REQUIRED >= 60000
 #define NEEDS_DISPATCH_RETAIN_RELEASE 0
-#else                                         // iOS 5.X or earlier
+#else
 #define NEEDS_DISPATCH_RETAIN_RELEASE 1
 #endif
 
 #else
 
-#if MAC_OS_X_VERSION_MIN_REQUIRED >= 1080     // Mac OS X 10.8 or later
+#if MAC_OS_X_VERSION_MIN_REQUIRED >= 1080
 #define NEEDS_DISPATCH_RETAIN_RELEASE 0
 #else
-#define NEEDS_DISPATCH_RETAIN_RELEASE 1     // Mac OS X 10.7 or earlier
+#define NEEDS_DISPATCH_RETAIN_RELEASE 1
 #endif
 
 #endif

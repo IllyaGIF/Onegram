@@ -450,7 +450,6 @@
 
 - (void)deleteAction
 {
-    //[self setShowsEditingOptions:false animated:true];
     
     id<TGGroupInfoUserCollectionItemViewDelegate> delegate = _delegate;
     if ([delegate respondsToSelector:@selector(groupInfoUserItemViewRequestedDeleteAction:)])

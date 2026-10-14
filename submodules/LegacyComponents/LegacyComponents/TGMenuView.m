@@ -163,10 +163,14 @@ static UIImage *pagerLeftButtonHighlightedImage() {
 {
     NSString *title = nil;
     
+#if defined(ONEGRAM_ARMV6)
+    title = [self titleForState:UIControlStateNormal];
+#else
     if (iosMajorVersion() >= 6)
         title = [self attributedTitleForState:UIControlStateNormal].string;
     else
         title = [self titleForState:UIControlStateNormal];
+#endif
     if (title.length == 0)
         title = [self titleForState:UIControlStateNormal];
     
@@ -353,7 +357,6 @@ static UIImage *pagerLeftButtonHighlightedImage() {
         if ([imageValue isKindOfClass:[UIImage class]])
         {
             [buttonView setImage:imageValue forState:UIControlStateNormal];
-            //buttonView.imageEdgeInsets = UIEdgeInsetsMake(0.0f, 10.0f, 0.0f, 10.0f);
         }
         
         buttonView.selected = false;
@@ -494,12 +497,10 @@ static UIImage *pagerLeftButtonHighlightedImage() {
         
         if (index == 0)
         {
-            //titleInset.left += 2;
         }
         
         if (index == (NSInteger)_buttonViews.count - 1)
         {
-            //titleInset.right += 2;
         }
         
         if (_multiline)
@@ -684,7 +685,6 @@ static UIImage *pagerLeftButtonHighlightedImage() {
     _leftPagerButton.frame = CGRectMake(0.0f, 2.0f, pagerButtonWidth, 36.0f);
     _rightPagerButton.frame = CGRectMake(maxPageWidth - pagerButtonWidth, 2.0f, pagerButtonWidth, 36.0f);
     
-    //_backgroundView.frame = CGRectMake(0.0f, 2.0f, maxPageWidth, 36.0f);
     self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, maxPageWidth, buttonHeight);
     
     CGFloat minArrowX = 10.0f;
@@ -701,7 +701,6 @@ static UIImage *pagerLeftButtonHighlightedImage() {
     
     if (_containerMaskView == nil) {
         _containerMaskView = [[UIImageView alloc] init];
-        //[_buttonContainerContainer addSubview:_containerMaskView];
     }
     _containerMaskView.image = [self highlightMask];
     [_containerMaskView sizeToFit];
@@ -766,8 +765,10 @@ static UIImage *pagerLeftButtonHighlightedImage() {
     
     self.transform = transform;
     
-    self.layer.rasterizationScale = [[UIScreen mainScreen] scale];
-    self.layer.shouldRasterize = true;
+#if !defined(ONEGRAM_ARMV6)
+    TGSetLayerRasterizationScale(self.layer, [[UIScreen mainScreen] scale]);
+    TGSetLayerShouldRasterize(self.layer, true);
+#endif
     
     self.alpha = 1.0f;
  
@@ -787,7 +788,9 @@ static UIImage *pagerLeftButtonHighlightedImage() {
                 {
                     if (finished)
                     {
-                        self.layer.shouldRasterize = false;
+#if !defined(ONEGRAM_ARMV6)
+                        TGSetLayerShouldRasterize(self.layer, false);
+#endif
                     }
                 }];
             }
@@ -825,53 +828,6 @@ static UIImage *pagerLeftButtonHighlightedImage() {
 {
     [super layoutSubviews];
     
-    /*_buttonContainer.frame = CGRectMake(0.0f, 2.0f, self.frame.size.width, self.frame.size.height - 5.0f);
-    
-    float currentX = 0;
-    
-    NSInteger index = -1;
-    for (TGMenuButtonView *buttonView in _buttonViews)
-    {
-        index++;
-        
-        buttonView.frame = CGRectMake(currentX, -2.0f, buttonView.frame.size.width, buttonView.frame.size.height);
-        currentX += buttonView.frame.size.width;
-        [buttonView layoutSubviews];
-    }
-    
-    index = -1;
-    for (TGMenuButtonView *buttonView in _buttonViews)
-    {
-        index++;
-        
-        CGFloat linePosition = 0.0f;
-        CGFloat lineWidth = buttonView.frame.size.width;
-        
-        if (index > 0)
-        {
-            UIImageView *separatorView = [_separatorViews objectAtIndex:index - 1];
-            separatorView.frame = CGRectMake(buttonView.frame.origin.x - 1, 0.0f, separatorView.image.size.width, 36.0f);
-        }
-        
-        bool containsArrow = _arrowLocation >= buttonView.frame.origin.x && _arrowLocation < buttonView.frame.origin.x + buttonView.frame.size.width;
-        
-        if (index == 0)
-        {
-            linePosition += 10;
-            lineWidth -= 10;
-            
-            if (_arrowLocation < buttonView.frame.size.width)
-                containsArrow = true;
-        }
-        
-        if (index == (NSInteger)_buttonViews.count - 1)
-        {
-            lineWidth -= 10;
-            
-            if (_arrowLocation >= buttonView.frame.origin.x)
-                containsArrow = true;
-        }
-    }*/
 }
 
 #pragma mark -

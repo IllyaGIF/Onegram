@@ -9,6 +9,7 @@ void TGDismissViewController(UIViewController *controller, BOOL animated, void (
 }
 #endif
 #import "LegacyComponentsIos6Compat.h"
+#import "LegacyComponentsGlobals.h"
 #import "SSignalKitCompat/SSignalKit.h"
 
 #import "LegacyComponentsContext.h"
@@ -36,6 +37,7 @@ typedef enum {
 
 @optional
 
+- (TGNavigationBarBackgroundVariant)navigationBarBackgroundVariant;
 - (bool)navigationBarHasAction;
 - (void)navigationBarAction;
 - (void)navigationBarSwipeDownAction;
@@ -48,6 +50,9 @@ typedef enum {
 @end
 
 @interface TGViewController : UIViewController <TGViewControllerNavigationBarAppearance>
+
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations;
+- (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation;
 
 + (void)setDefaultContext:(id<LegacyComponentsContext>)defaultContext;
 
@@ -125,6 +130,7 @@ typedef enum {
 
 - (void)setExplicitTableInset:(UIEdgeInsets)explicitTableInset scrollIndicatorInset:(UIEdgeInsets)scrollIndicatorInset;
 
+- (BOOL)shouldAutorotate;
 - (void)adjustToInterfaceOrientation:(UIInterfaceOrientation)orientation;
 - (UIEdgeInsets)controllerInsetForInterfaceOrientation:(UIInterfaceOrientation)orientation;
 
@@ -191,4 +197,3 @@ typedef enum {
 @property (nonatomic) int lockId;
 
 @end
-

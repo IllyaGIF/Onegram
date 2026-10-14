@@ -14,7 +14,7 @@
     return self;
 }
 
-- (bool)isEqual:(id)object {
+- (BOOL)isEqual:(id)object {
     return [object isKindOfClass:[TGMessageGroup class]] && ((TGMessageGroup *)object)->_minId == _minId && ((TGMessageGroup *)object)->_maxId == _maxId && ((TGMessageGroup *)object)->_maxTimestamp == _maxTimestamp && ((TGMessageGroup *)object)->_count == _count;
 }
 

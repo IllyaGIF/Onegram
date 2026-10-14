@@ -18,7 +18,16 @@ NSURL *TGFileURLWithPathRelativeToURL(NSString *path, NSURL *baseURL)
     if (baseURL == nil)
         return nil;
     
+#if defined(ONEGRAM_ARMV6)
+    if ([baseURL isFileURL])
+        return [NSURL fileURLWithPath:[[baseURL path] stringByAppendingPathComponent:path]];
+    NSString *baseString = [baseURL absoluteString];
+    if (![baseString hasSuffix:@"/"])
+        baseString = [baseString stringByAppendingString:@"/"];
+    return [NSURL URLWithString:[baseString stringByAppendingString:path]];
+#else
     return [baseURL URLByAppendingPathComponent:path];
+#endif
 }
 
 void BN_init(BIGNUM *value)
@@ -198,7 +207,11 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen) {
     // that happens currently, but I've got into the habit of doing this as a
     // defensive measure.
     
+#if defined(ONEGRAM_ARMV6)
+    PingFoundation *strongSelf = self;
+#else
     CFAutorelease(CFBridgingRetain(self));
+#endif
     
     [self stop];
     
@@ -207,6 +220,9 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen) {
     {
         [strongDelegate pingFoundation:self didFailWithError:error];
     }
+#if defined(ONEGRAM_ARMV6)
+    (void)strongSelf;
+#endif
 }
 
 /*! Shuts down the pinger object and tell the delegate about the error.

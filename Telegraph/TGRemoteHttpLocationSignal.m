@@ -1,9 +1,9 @@
 #import "TGRemoteHttpLocationSignal.h"
 
-//#import <thirdparty/AFNetworking/AFHTTPRequestOperation.h>
 #import "../submodules/MtProtoKit/MTProtoKit/MTHttpRequestOperation.h"
 #import "MTSignal.h"
 #import "MTDisposable.h"
+#import "../submodules/MtProtoKit/thirdparty/AFNetworking/AFJSONUtilities.h"
 
 @implementation TGRemoteHttpLocationSignal
 
@@ -33,7 +33,11 @@
         @try
         {
             NSError *error = nil;
+#if ONEGRAM_ARMV6
+            id json = AFJSONDecode(response, &error);
+#else
             id json = [NSJSONSerialization JSONObjectWithData:response options:kNilOptions error:&error];
+#endif
             if (error == nil)
                 return [SSignal single:json];
             else

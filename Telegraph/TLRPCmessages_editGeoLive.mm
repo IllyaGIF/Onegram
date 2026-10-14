@@ -29,7 +29,6 @@
     return 73;
 }
 
-//messages.editGeoLive#9a92304e flags:# stop:flags.0?true peer:InputPeer id:int geo_point:flags.1?InputGeoPoint = Updates;
 
 - (void)TLserialize:(NSOutputStream *)os
 {

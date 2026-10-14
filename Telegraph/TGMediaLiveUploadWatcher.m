@@ -82,13 +82,7 @@
         }];
         
         if (headerData != nil && finalSize != 0)
-        {
-            dispatch_sync([ActionStageInstance() globalStageDispatchQueue], ^
-            {
-                TGLiveUploadActor *actor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:_liveUploadPath];
-                liveData = [actor finishRestOfFileWithHeader:headerData finalSize:finalSize];
-            });
-        }
+            liveData = [TGLiveUploadActor finishRestOfFileWithHeader:headerData finalSize:finalSize forActorPath:_liveUploadPath];
         
         return liveData;
     }
@@ -101,13 +95,7 @@
         }];
         
         if (availableSize != 0)
-        {
-            [ActionStageInstance() dispatchOnStageQueue:^
-            {
-                TGLiveUploadActor *actor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:_liveUploadPath];
-                [actor updateSize:availableSize];
-            }];
-        }
+            [TGLiveUploadActor updateSize:availableSize forActorPath:_liveUploadPath];
     }
     
     return nil;

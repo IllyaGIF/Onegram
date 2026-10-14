@@ -156,7 +156,6 @@
         if (![imageData isDiscarded])
             cachedSize += (NSUInteger)(imageData.size.width * imageData.size.height * 4);
     }];
-    NSLog(@"(EMInMemoryImageCache residentSize: %.02fMB, cachedSize: %.02fMB)", residentSize / (1024.0f * 1024.0f), cachedSize / (1024.0f * 1024.0f));
     pthread_mutex_unlock(&_lock);
 }
 

@@ -9,6 +9,9 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGAppDelegate.h"
+#import "../OnegramPlatform/OGPlatformVersion.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #if !TGUseModernNetworking
 #import "TGSession.h"
@@ -22,7 +25,6 @@ static const NSInteger TGOnegramTransportCacheVersion = 1;
 void TGIOS6SetQRLoginFlowActive(bool active)
 {
     sTGIOS6QRLoginFlowActive = active;
-    TGLog(@"QR flow active=%d", active ? 1 : 0);
 }
 
 bool TGIOS6QRLoginFlowActive(void)
@@ -58,6 +60,7 @@ bool TGIOS6QRLoginFlowActive(void)
 #endif
 
 #import "TGNetworkWorker.h"
+#import "../submodules/LegacyComponents/LegacyComponents/ASQueue.h"
 
 static bool TGIos6IsHexString(NSString *string)
 {
@@ -66,11 +69,6 @@ static bool TGIos6IsHexString(NSString *string)
     
     NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
     return [string rangeOfCharacterFromSet:[hexSet invertedSet]].location == NSNotFound;
-}
-
-static NSString *TGOnegramWebSocketEnabledKey(void)
-{
-    return @"TGOnegramWebSocketEnabled";
 }
 
 static MTSocksProxySettings *TGOnegramStoredProxySettings(void)
@@ -386,6 +384,150 @@ MTInternalIdClass(TGDownloadWorker)
 
 @end
 
+static int TGMaxUploadWorkerCount(void)
+{
+    return 2;
+}
+
+@interface TGUploadWorkerRequest : NSObject
+
+@property (nonatomic, strong) id token;
+@property (nonatomic, strong) MTContext *context;
+@property (nonatomic) NSInteger datacenterId;
+@property (nonatomic) NSInteger masterDatacenterId;
+@property (nonatomic) TGNetworkMediaTypeTag type;
+@property (nonatomic, copy) void (^completion)(TGNetworkWorkerGuard *);
+
+@end
+
+@implementation TGUploadWorkerRequest
+
+@end
+
+@interface TGUploadWorkerPool : NSObject <TGNetworkWorkerDelegate>
+{
+    ASQueue *_queue;
+    MTQueue *_networkQueue;
+    NSMutableDictionary *_workersByDatacenterId;
+    NSMutableArray *_pendingRequests;
+}
+
+- (instancetype)initWithNetworkQueue:(MTQueue *)networkQueue;
+- (void)enqueueRequest:(TGUploadWorkerRequest *)request;
+- (void)cancelRequestByToken:(id)token;
+
+@end
+
+@implementation TGUploadWorkerPool
+
+- (instancetype)initWithNetworkQueue:(MTQueue *)networkQueue
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _queue = [[ASQueue alloc] initWithName:"org.telegram.uploadWorkerPool"];
+        dispatch_set_target_queue(_queue.nativeQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
+        _networkQueue = networkQueue;
+        _workersByDatacenterId = [[NSMutableDictionary alloc] init];
+        _pendingRequests = [[NSMutableArray alloc] init];
+    }
+    return self;
+}
+
+- (void)enqueueRequest:(TGUploadWorkerRequest *)request
+{
+    [_queue dispatchOnQueue:^
+    {
+        [_pendingRequests addObject:request];
+        [self processPendingRequests];
+    }];
+}
+
+- (void)cancelRequestByToken:(id)token
+{
+    [_queue dispatchOnQueue:^
+    {
+        NSUInteger index = 0;
+        for (TGUploadWorkerRequest *request in _pendingRequests)
+        {
+            if ([request.token isEqual:token])
+            {
+                [_pendingRequests removeObjectAtIndex:index];
+                break;
+            }
+            index++;
+        }
+    }];
+}
+
+- (TGNetworkWorker *)availableWorkerForRequest:(TGUploadWorkerRequest *)request
+{
+    NSNumber *datacenterKey = @(request.datacenterId);
+    NSMutableArray *workers = _workersByDatacenterId[datacenterKey];
+    if (workers == nil)
+    {
+        workers = [[NSMutableArray alloc] init];
+        _workersByDatacenterId[datacenterKey] = workers;
+    }
+
+    for (TGNetworkWorker *worker in workers)
+    {
+        if (!worker.isBusy)
+            return worker;
+    }
+
+    if ((int)workers.count >= TGMaxUploadWorkerCount())
+        return nil;
+
+    TGNetworkWorker *worker = [[TGNetworkWorker alloc] initWithContext:request.context datacenterId:request.datacenterId masterDatacenterId:request.masterDatacenterId isCdn:false networkQueue:_networkQueue stateQueue:_queue];
+    worker.delegate = self;
+    [workers addObject:worker];
+    return worker;
+}
+
+- (void)processPendingRequests
+{
+    NSUInteger index = 0;
+    while (index < _pendingRequests.count)
+    {
+        TGUploadWorkerRequest *request = _pendingRequests[index];
+        TGNetworkWorker *worker = [self availableWorkerForRequest:request];
+        if (worker == nil)
+        {
+            index++;
+            continue;
+        }
+
+        [_pendingRequests removeObjectAtIndex:index];
+        [worker setIsBusy:true];
+        [worker setUsageCalculationInfo:[[TGTelegramNetworking instance] mediaUsageInfoForType:request.type]];
+        request.completion([[TGNetworkWorkerGuard alloc] initWithWorker:worker]);
+    }
+}
+
+- (void)networkWorkerDidBecomeAvailable:(TGNetworkWorker *)__unused networkWorker
+{
+    [_queue dispatchOnQueue:^
+    {
+        [self processPendingRequests];
+    }];
+}
+
+- (void)networkWorkerReadyToBeRemoved:(TGNetworkWorker *)networkWorker
+{
+    [_queue dispatchOnQueue:^
+    {
+        NSMutableArray *workers = _workersByDatacenterId[@(networkWorker.datacenterId)];
+        if ([workers containsObject:networkWorker] && !networkWorker.isBusy)
+        {
+            networkWorker.delegate = nil;
+            [workers removeObject:networkWorker];
+        }
+    }];
+}
+
+@end
+
 @interface TGTelegramNetworking () <ASWatcher, MTProtoDelegate, MTRequestMessageServiceDelegate, TGNetworkWorkerDelegate, MTContextChangeListener>
 {
     bool _isTestingEnvironment;
@@ -415,6 +557,9 @@ MTInternalIdClass(TGDownloadWorker)
     
     NSMutableDictionary *_workersByDatacenterId;
     NSMutableDictionary *_awaitingWorkerTokensByDatacenterId;
+    MTQueue *_mediaNetworkQueue;
+    MTQueue *_transferNetworkQueue;
+    TGUploadWorkerPool *_uploadWorkerPool;
     NSMutableDictionary *_cdnDatas;
     
     NSMutableArray *_currentWakeUpCompletions;
@@ -423,20 +568,32 @@ MTInternalIdClass(TGDownloadWorker)
     
     SMetaDisposable *_updateCallsConfig;
     SVariable *_socksProxySettingsValue;
+    bool _authorizationRecoveryInProgress;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
+
+- (void)resetMainMtProto:(NSInteger)datacenterId completion:(void (^)(void))completion;
 
 @end
 
 @implementation TGTelegramNetworking
 
+static bool TGTelegramLoggingFormatIsNetworkTrace(NSString *format)
+{
+    if (!OGPlatformUsesConstrainedBackgroundExecution())
+        return false;
+
+    return [format hasPrefix:@"MTHttpWorker"] || [format hasPrefix:@"[MTHttpTransport"] || [format rangeOfString:@"resetting session"].location != NSNotFound || [format rangeOfString:@"changing transport"].location != NSNotFound;
+}
+
 static void TGTelegramLoggingFunction(NSString *format, va_list args)
 {
     if ([format rangeOfString:@"MTDatacenterAuth"].location != NSNotFound)
     {
-        NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
-        TGLog(@"IOS6AUTH %@", message);
+    }
+    else if (TGTelegramLoggingFormatIsNetworkTrace(format))
+    {
     }
     else
     {
@@ -467,6 +624,16 @@ static TGTelegramNetworking *singleton = nil;
         singleton = [[TGTelegramNetworking alloc] initWithSocksProxyData:initialSocksProxyData networkSettingsData:initialNetworkSettingsData];
     });
     return singleton;
+}
+
++ (void)prepareInstanceWithCompletion:(dispatch_block_t)completion
+{
+    OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
+    {
+        [self instance];
+        if (completion)
+            completion();
+    });
 }
 
 + (TGTelegramNetworking *)maybeInstance
@@ -545,8 +712,14 @@ static TGTelegramNetworking *singleton = nil;
         
         apiEnvironment.layer = @([[[TGTLSerialization alloc] init] currentLayer]);
 
-        apiEnvironment = [apiEnvironment withUpdatedLangPackCode:currentNativeLocalization().code];
+        apiEnvironment = [apiEnvironment withUpdatedLangPackCode:currentNativeLocalizationCode()];
 
+        OGOnegramCore *onegramCore = [OGOnegramCore sharedCore];
+        OGOnegramCoreMode proxyMode = onegramCore.mode;
+        bool webSocketEnabled = proxyMode == OGOnegramCoreModeWebSocket;
+        if (OGPlatformMajorVersion() <= 3 && proxyMode == OGOnegramCoreModeNone) {
+            apiEnvironment = [apiEnvironment withUpdatedPreferHttpTransport:true];
+        }
 
         if (socksProxyData != nil) {
             NSDictionary *socksProxyDict = [NSKeyedUnarchiver unarchiveObjectWithData:socksProxyData];
@@ -558,10 +731,15 @@ static TGTelegramNetworking *singleton = nil;
                 apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:[[MTSocksProxySettings alloc] initWithIp:socksProxyDict[@"ip"] port:(uint16_t)[socksProxyDict[@"port"] intValue] username:socksProxyDict[@"username"] password:socksProxyDict[@"password"] secret:secret]];
             }
         }
-        if ([[NSUserDefaults standardUserDefaults] boolForKey:TGOnegramWebSocketEnabledKey()])
+        if (webSocketEnabled)
         {
             apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:nil];
             apiEnvironment = [apiEnvironment withUpdatedOnegramWebSocketEnabled:true];
+        }
+
+        if (proxyMode == OGOnegramCoreModeDanteWARP || proxyMode == OGOnegramCoreModeDantePower) {
+            apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:[[MTSocksProxySettings alloc] initWithIp:@"127.0.0.1" port:onegramCore.socksPort username:nil password:nil secret:nil]];
+            apiEnvironment = [apiEnvironment withUpdatedPreferHttpTransport:false];
         }
 
         TGNetworkSettings *networkSettings = nil;
@@ -593,9 +771,14 @@ static TGTelegramNetworking *singleton = nil;
         _context = [[MTContext alloc] initWithSerialization:[[TGTLSerialization alloc] init] apiEnvironment:apiEnvironment isTestingEnvironment:_isTestingEnvironment useTempAuthKeys:false];
 
         [_context addChangeListener:self];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramCoreDidChange:) name:OGOnegramCoreDidChangeNotification object:nil];
         
         _workersByDatacenterId = [[NSMutableDictionary alloc] init];
         _awaitingWorkerTokensByDatacenterId = [[NSMutableDictionary alloc] init];
+        _mediaNetworkQueue = [[MTQueue alloc] initWithName:"org.telegram.network.media"];
+        _transferNetworkQueue = [[MTQueue alloc] initWithName:"org.telegram.network.transfer"];
+        dispatch_set_target_queue(_transferNetworkQueue.nativeQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
+        _uploadWorkerPool = [[TGUploadWorkerPool alloc] initWithNetworkQueue:_transferNetworkQueue];
         
         if (_isTestingEnvironment)
         {
@@ -661,7 +844,6 @@ static TGTelegramNetworking *singleton = nil;
             ]] forceUpdateSchemes:true];
         } else {
 #if DEBUG
-            //[_context updateAddressSetForDatacenterWithId:1 addressSet:[[MTDatacenterAddressSet alloc] initWithAddressList:@[]] forceUpdateSchemes:true];
 #endif
         }
         
@@ -700,7 +882,6 @@ static TGTelegramNetworking *singleton = nil;
         
         __unused id<SDisposable> disposable = [[TGICloudEmergencyDataSignals updateSubscription] startWithNext:nil];
 
-        //__unused id disposable2 = [discoverBackupAddressList startWithNext:nil];
         
         bool foundAuthorizations = false;
         for (NSInteger i = 0; i < 5; i++)
@@ -721,35 +902,18 @@ static TGTelegramNetworking *singleton = nil;
             else
                 nDefaultDatacenterId = @(2);
         }
-        // A one-off modern-layer request (for example profile Saved Music) can
-        // update the API layer associated with the shared authorization key.
-        // Never trust the persisted initialization marker across launches: force
-        // the first ordinary request to re-run invokeWithLayer(181)+initConnection.
-        NSInteger defaultDatacenterId = [nDefaultDatacenterId integerValue];
-        [_context performBatchUpdates:^
-        {
-            MTDatacenterAuthInfo *authInfo = [_context authInfoForDatacenterWithId:defaultDatacenterId];
-            if (authInfo != nil && authInfo.authKeyAttributes[@"apiInitializationHash"] != nil)
-            {
-                NSMutableDictionary *authKeyAttributes = [[NSMutableDictionary alloc] initWithDictionary:authInfo.authKeyAttributes];
-                [authKeyAttributes removeObjectForKey:@"apiInitializationHash"];
-                authInfo = [authInfo withUpdatedAuthKeyAttributes:authKeyAttributes];
-                [_context updateAuthInfoForDatacenterWithId:defaultDatacenterId authInfo:authInfo];
-            }
-        }];
+
 
         if (iosMajorVersion() < 5 && !foundAuthorizations && TGTelegraphInstance.clientUserId == 0)
         {
             NSTimeInterval localUnixTime = [[NSDate date] timeIntervalSince1970];
             NSTimeInterval networkUnixTime = 0.0;
-            TGLog(@"IOS6AUTH time bootstrap begin local=%.3f", localUnixTime);
             if (TGIOS6FetchNetworkUnixTime(&networkUnixTime))
             {
                 localUnixTime = [[NSDate date] timeIntervalSince1970];
                 NSTimeInterval difference = networkUnixTime - localUnixTime;
                 [_context setGlobalTimeDifference:difference];
                 [_context globalTimeDifference];
-                TGLog(@"IOS6AUTH time bootstrap ready network=%.3f local=%.3f diff=%.3f", networkUnixTime, localUnixTime, difference);
             }
             else
             {
@@ -757,24 +921,9 @@ static TGTelegramNetworking *singleton = nil;
             }
         }
 
-        [self moveToDatacenterId:defaultDatacenterId];
+        [self moveToDatacenterId:[nDefaultDatacenterId integerValue]];
 
-        // Queue an explicit harmless request so an already contaminated auth key
-        // is restored to layer 181 immediately on startup, before normal UI RPCs
-        // have a chance to receive newer Message constructors.  addRequest: will
-        // postpone it until resetMainMtProto creates the request service.
-        if (TGTelegraphInstance.clientUserId != 0 && [_context authInfoForDatacenterWithId:defaultDatacenterId] != nil)
-        {
-            MTRequest *layerRecoveryRequest = [[MTRequest alloc] init];
-            layerRecoveryRequest.body = [[TLRPCupdates_getState$updates_getState alloc] init];
-            [layerRecoveryRequest setCompleted:^(__unused id result, __unused NSTimeInterval timestamp, MTRpcError *error)
-            {
-                if (error != nil)
-                    TGLog(@"PROFILEMUSIC recovery layer181 error dc=%ld code=%d description=%@", (long)defaultDatacenterId, (int)error.errorCode, error.errorDescription);
-            }];
-            [self addRequest:layerRecoveryRequest];
-        }
-        
+
 #ifdef DEBUG
         TGLog(@"auth key id: %llx", [_context authInfoForDatacenterWithId:[nDefaultDatacenterId integerValue]].authKeyId);
 #endif
@@ -803,6 +952,9 @@ static TGTelegramNetworking *singleton = nil;
 
 - (NSURL *)sharedAuthInfoPath
 {
+    if (iosMajorVersion() < 8)
+        return nil;
+
     NSString *groupName = [@"group." stringByAppendingString:[[NSBundle mainBundle] bundleIdentifier]];
     NSURL *groupURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:groupName];
     if (groupURL != nil)
@@ -943,6 +1095,11 @@ static TGTelegramNetworking *singleton = nil;
 
 - (void)resetMainMtProto:(NSInteger)datacenterId
 {
+    [self resetMainMtProto:datacenterId completion:nil];
+}
+
+- (void)resetMainMtProto:(NSInteger)datacenterId completion:(void (^)(void))completion
+{
     [ActionStageInstance() dispatchOnStageQueue:^
     {
         if (_requestService != nil)
@@ -967,20 +1124,19 @@ static TGTelegramNetworking *singleton = nil;
         _masterDatacenterId = datacenterId;
 
         MTDatacenterAuthInfo *existingAuthInfo = [_context authInfoForDatacenterWithId:datacenterId];
-        bool forceLegacyApiInitialization = TGTelegraphInstance.clientUserId != 0 && existingAuthInfo != nil && existingAuthInfo.authKeyAttributes[@"apiInitializationHash"] == nil;
+        bool forceApiInitialization = TGTelegraphInstance.clientUserId != 0 && existingAuthInfo != nil && existingAuthInfo.authKeyAttributes[@"apiInitializationHash"] == nil;
         
         MTNetworkUsageCalculationInfo *dataUsageInfo = [self dataUsageInfo];
         dataUsageInfo.primaryConnection = true;
         _mtProto = [[MTProto alloc] initWithContext:_context datacenterId:datacenterId usageCalculationInfo:dataUsageInfo];
         _mtProto.delegate = self;
-        if (forceLegacyApiInitialization)
+        if (forceApiInitialization)
         {
             [_mtProto pause];
         }
         _isNetworkAvailable = true;
         _isConnected = true;
         _mtProto.useTempAuthKeys = false;
-        //_mtProto.checkForProxyConnectionIssues = true;
         [self dispatchNetworkState];
         
         _requestService = [[MTRequestMessageService alloc] initWithContext:_context];
@@ -1003,7 +1159,7 @@ static TGTelegramNetworking *singleton = nil;
             [_postponedRequests removeAllObjects];
         }
 
-        if (forceLegacyApiInitialization)
+        if (forceApiInitialization)
             [_mtProto resume];
         
 #if TARGET_IPHONE_SIMULATOR && false
@@ -1011,12 +1167,12 @@ static TGTelegramNetworking *singleton = nil;
         getSchemeRequest.body = [[TLRPChelp_getScheme$help_getScheme alloc] init];
         [getSchemeRequest setCompleted:^(TLScheme$scheme *result, __unused NSTimeInterval timestamp, __unused id error)
         {
-            TGLog(@"%@", result.scheme_raw);
         }];
         [self addRequest:getSchemeRequest];
         
-        //[_context transportSchemeForDatacenterWithIdRequired:1];
 #endif
+        if (completion != nil)
+            completion();
     }];
 }
 
@@ -1081,15 +1237,42 @@ static TGTelegramNetworking *singleton = nil;
 #endif
 }
 
+- (void)prepareForUnauthorizedRequests
+{
+#if TGUseModernNetworking
+    [_mtProto resume];
+    NSInteger datacenterId = _mtProto.datacenterId;
+    if (datacenterId != 0)
+    {
+        [_context authInfoForDatacenterWithIdRequired:datacenterId isCdn:false];
+        [_context transportSchemeForDatacenterWithIdRequired:datacenterId media:false];
+    }
+#else
+    [[TGSession instance] resumeNetwork];
+#endif
+}
+
 - (void)moveToDatacenterId:(NSInteger)datacenterId
+{
+    [self moveToDatacenterId:datacenterId completion:nil];
+}
+
+- (void)moveToDatacenterId:(NSInteger)datacenterId completion:(void (^)(void))completion
 {
 #if TGUseModernNetworking
     if (_mtProto == nil || datacenterId != _mtProto.datacenterId)
     {
         _masterDatacenterId = datacenterId;
         [_keychain setObject:@(_masterDatacenterId) forKey:@"defaultDatacenterId" group:@"persistent"];
-        [self resetMainMtProto:datacenterId];
+        [self resetMainMtProto:datacenterId completion:completion];
     }
+    else if (completion != nil)
+    {
+        [ActionStageInstance() dispatchOnStageQueue:completion];
+    }
+#else
+    if (completion != nil)
+        completion();
 #endif
 }
 
@@ -1119,6 +1302,7 @@ static TGTelegramNetworking *singleton = nil;
     }];
     
     [TGKeychainImport clearLegacyKeychain];
+    _authorizationRecoveryInProgress = false;
 #else
     [[TGSession instance] clearSessionAndTakeOff];
 #endif
@@ -1245,7 +1429,7 @@ static TGTelegramNetworking *singleton = nil;
                             isCdn = true;
                         }
                     }
-                    TGNetworkWorker *worker = [[TGNetworkWorker alloc] initWithContext:_context datacenterId:[nDatacenterId integerValue] masterDatacenterId:_masterDatacenterId isCdn:isCdn];
+                    TGNetworkWorker *worker = [[TGNetworkWorker alloc] initWithContext:_context datacenterId:[nDatacenterId integerValue] masterDatacenterId:_masterDatacenterId isCdn:isCdn networkQueue:_mediaNetworkQueue stateQueue:nil];
                     worker.delegate = self;
                     [workerList addObject:worker];
                     
@@ -1264,6 +1448,24 @@ static TGTelegramNetworking *singleton = nil;
             }
         }];
     }];
+}
+
+- (id)requestUploadWorkerForDatacenterId:(NSInteger)datacenterId type:(TGNetworkMediaTypeTag)type completion:(void (^)(TGNetworkWorkerGuard *))completion
+{
+    TGUploadWorkerRequest *request = [[TGUploadWorkerRequest alloc] init];
+    request.token = [[MTInternalId(TGDownloadWorker) alloc] init];
+    request.context = _context;
+    request.datacenterId = datacenterId;
+    request.masterDatacenterId = _masterDatacenterId;
+    request.type = type;
+    request.completion = completion;
+    [_uploadWorkerPool enqueueRequest:request];
+    return request.token;
+}
+
+- (void)cancelUploadWorkerRequestByToken:(id)token
+{
+    [_uploadWorkerPool cancelRequestByToken:token];
 }
 
 - (void)cancelDownloadWorkerRequestByToken:(id)token
@@ -1358,37 +1560,20 @@ static TGTelegramNetworking *singleton = nil;
     
     if (_requestService == nil)
     {
-        CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
         
         [_postponedRequests addObject:request];
         
-        double ms = (CFAbsoluteTimeGetCurrent() - start) * 1000.0;
         
-        if (ms >= 20.0)
-        {
-            NSLog(@"NETADD POSTPONED rpc=%@ ms=%.1f",
-                  rpcClass,
-                  ms);
-        }
         
         return;
     }
     
     NSAssert(_requestService != nil, @"requestService should not be nil");
     
-    CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
     
     [_requestService addRequest:request];
     
-    double ms = (CFAbsoluteTimeGetCurrent() - start) * 1000.0;
     
-    if (ms >= 20.0)
-    {
-        NSLog(@"NETADD rpc=%@ service=%@ ms=%.1f",
-              rpcClass,
-              NSStringFromClass([_requestService class]),
-              ms);
-    }
 }
 
 - (NSObject *)performRpc:(TLMetaRpc *)rpc completionBlock:(void (^)(id<TLObject> response, int64_t responseTime, MTRpcError *error))completionBlock progressBlock:(void (^)(int length, float progress))progressBlock requiresCompletion:(bool)requiresCompletion requestClass:(int)requestClass
@@ -1435,19 +1620,10 @@ static TGTelegramNetworking *singleton = nil;
     if (datacenterId != INT_MAX && datacenterId != 1)
         return nil;
     
-    CFAbsoluteTime normalizeStart = CFAbsoluteTimeGetCurrent();
 
     TGIOS6NormalizeRpcForModernApi(rpc);
 
-    double normalizeMs =
-        (CFAbsoluteTimeGetCurrent() - normalizeStart) * 1000.0;
 
-    if (normalizeMs >= 20.0)
-    {
-        NSLog(@"RPCPERF NORMALIZE rpc=%@ ms=%.1f",
-              rpcPerfClass,
-              normalizeMs);
-    }
     
     static bool collectingForwardMessages = false;
     static NSMutableDictionary *collectedForwardMessagesByPeerIdsString = nil;
@@ -1628,6 +1804,10 @@ static TGTelegramNetworking *singleton = nil;
         request.body = rpc;
         [request setCompleted:^(id result, NSTimeInterval timestamp, id error)
         {
+            CFAbsoluteTime responseReceivedAt = CFAbsoluteTimeGetCurrent();
+            bool messageSend = [rpc isKindOfClass:[TLRPCmessages_sendMedia_manual class]] || [rpc isKindOfClass:[TLRPCmessages_sendMessage_manual class]] || [rpc isKindOfClass:[TLRPCmessages_forwardMessages class]] || [rpc isKindOfClass:[TLRPCmessages_sendInlineBotResult class]];
+            if (messageSend)
+                TGLog(@"SENDSTATE response rpc=%@ result=%@ error=%@ elapsed=%.0fms", rpcPerfClass, NSStringFromClass([result class]), error == nil ? @"none" : NSStringFromClass([error class]), (responseReceivedAt - rpcPerfStart) * 1000.0);
             if (error != nil)
                 TGLog(@"TRACE rpc error path=performRpc rpc=%@ error=%@", TGIOS6DescribeRpcForError(rpc), error);
             [ActionStageInstance() dispatchOnStageQueue:^
@@ -1638,7 +1818,19 @@ static TGTelegramNetworking *singleton = nil;
         }];
         
         if (quickAckBlock != nil)
-            [request setAcknowledgementReceived:quickAckBlock];
+        {
+            bool messageSend = [rpc isKindOfClass:[TLRPCmessages_sendMedia_manual class]] || [rpc isKindOfClass:[TLRPCmessages_sendMessage_manual class]];
+            if (messageSend)
+            {
+                [request setAcknowledgementReceived:^
+                {
+                    TGLog(@"SENDSTATE quickack rpc=%@ elapsed=%.0fms", rpcPerfClass, (CFAbsoluteTimeGetCurrent() - rpcPerfStart) * 1000.0);
+                    quickAckBlock();
+                }];
+            }
+            else
+                [request setAcknowledgementReceived:quickAckBlock];
+        }
         
         static NSArray *sequentialMessageClasses = nil;
         static dispatch_once_t onceToken;
@@ -1674,13 +1866,11 @@ static TGTelegramNetworking *singleton = nil;
         }
         
         NSString *requestClassName = NSStringFromClass([request.body class]);
-        // This hand-written current-layer RPC must use the auth request path
-        // too, otherwise a second-account login can remain queued indefinitely.
         bool isAuthRequest = [request.body isKindOfClass:[TLRPCauth_sendCode class]] || [request.body isKindOfClass:[TLRPCauth_resendCode$auth_resendCode class]] || [requestClassName hasPrefix:@"TGIOS6Auth"] || [requestClassName hasPrefix:@"TLRPCauth_signIn"] || [requestClassName hasPrefix:@"TLRPCauth_signUp"];
         if (isAuthRequest)
             request.dependsOnPasswordEntry = false;
         
-        if ([request.body isKindOfClass:[TLRPCmessages_sendMessage_manual class]] || [request.body isKindOfClass:[TLRPCmessages_forwardMessages class]] || [request.body isKindOfClass:[TLRPCmessages_sendEncrypted class]] || [request.body isKindOfClass:[TLRPCmessages_sendInlineBotResult class]] || isAuthRequest) {
+        if ([request.body isKindOfClass:[TLRPCmessages_sendMessage_manual class]] || [request.body isKindOfClass:[TLRPCmessages_sendMedia_manual class]] || [request.body isKindOfClass:[TLRPCmessages_forwardMessages class]] || [request.body isKindOfClass:[TLRPCmessages_sendEncrypted class]] || [request.body isKindOfClass:[TLRPCmessages_sendInlineBotResult class]] || isAuthRequest) {
             request.hasHighPriority = true;
         }
         
@@ -1696,32 +1886,20 @@ static TGTelegramNetworking *singleton = nil;
             }
             if (requestClass & TGRequestClassFailOnServerErrorsImmediately)
                 return false;
-            if (requestClass & 256/*TGRequestClassFailOnServerErrors*/)
+            if (requestClass & 256)
                 return errorContext.internalServerErrorCount < 5;
             if (requestClass & 512)
                 return false;
             return true;
         }];
         
-        CFAbsoluteTime addStart = CFAbsoluteTimeGetCurrent();
 
         [self addRequest:request];
 
-        double addMs =
-            (CFAbsoluteTimeGetCurrent() - addStart) * 1000.0;
 
         id internalId = request.internalId;
 
-        double totalMs =
-            (CFAbsoluteTimeGetCurrent() - rpcPerfStart) * 1000.0;
 
-        if (addMs >= 20.0 || totalMs >= 20.0)
-        {
-            NSLog(@"RPCPERF rpc=%@ add=%.1fms total=%.1fms",
-                  rpcPerfClass,
-                  addMs,
-                  totalMs);
-        }
 
         return internalId;
     }
@@ -1734,9 +1912,22 @@ static TGTelegramNetworking *singleton = nil;
 {
 #if TGUseModernNetworking
     if ([token conformsToProtocol:@protocol(SDisposable)])
+    {
         [(id<SDisposable>)token dispose];
-    else
-        [_requestService removeRequestByInternalId:token];
+        return;
+    }
+
+    for (NSInteger index = (NSInteger)_postponedRequests.count - 1; index >= 0; index--)
+    {
+        MTRequest *request = [_postponedRequests objectAtIndex:(NSUInteger)index];
+        if ([request.internalId isEqual:token])
+        {
+            [_postponedRequests removeObjectAtIndex:(NSUInteger)index];
+            return;
+        }
+    }
+
+    [_requestService removeRequestByInternalId:token];
 #else
     [[TGSession instance] cancelRpc:token notifyServer:true];
 #endif
@@ -1773,14 +1964,7 @@ static TGTelegramNetworking *singleton = nil;
 {
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        TGLog(@"[TGTelegramNetworking waking up]");
         
-        /*if (_currentWakeUpCompletion != nil)
-        {
-            TGLog(@"[TGTelegramNetworking waking up]");
-            _currentWakeUpCompletion();
-            _currentWakeUpCompletion = nil;
-        }*/
         
         [_currentWakeUpCompletions addObject:[completion copy]];
         
@@ -1814,7 +1998,6 @@ static TGTelegramNetworking *singleton = nil;
         {
             _completeWakeUpToken++;
             
-            TGLog(@"[TGTelegramNetworking completed wake up: %@ (%lu)]", reason, (unsigned long)_currentWakeUpCompletions.count);
             
             for (dispatch_block_t block in _currentWakeUpCompletions)
             {
@@ -1828,16 +2011,21 @@ static TGTelegramNetworking *singleton = nil;
 
 - (void)requestMessageServiceAuthorizationRequired:(MTRequestMessageService *)__unused requestMessageService
 {
-    TGLog(@"AUTH authorizationRequired userId=%d activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
-    
+    int32_t userId = TGTelegraphInstance.clientUserId;
+    bool activated = TGTelegraphInstance.clientIsActivated;
+    TGLog(@"AUTH authorizationRequired userId=%d activated=%d", userId, activated ? 1 : 0);
+
+    if (userId == 0 || !activated || _authorizationRecoveryInProgress)
+        return;
+
+    _authorizationRecoveryInProgress = true;
     [_mtProto resetSessionInfo];
-    
     [_context removeAllAuthTokens];
-    
+
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        TGLog(@"AUTH authorizationRequired.logoutActor userId=%d", TGTelegraphInstance.clientUserId);
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%d)", TGTelegraphInstance.clientUserId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
+        TGLog(@"AUTH authorizationRequired.logoutActor userId=%d", userId);
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%d)", userId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
     }];
 }
 
@@ -1885,7 +2073,6 @@ static TGTelegramNetworking *singleton = nil;
                 {
                     if (token == _serviceTasksWatchdogToken && _isPerformingServiceTasks && !_isUpdatingConnectionContext)
                     {
-                        TGLog(@"UPD serviceTasks watchdog cleared stuck updating state");
                         _isPerformingServiceTasks = false;
                         _serviceTasksWatchdogToken++;
                         [self dispatchNetworkState];
@@ -2297,14 +2484,8 @@ static TGTelegramNetworking *singleton = nil;
         {
             if (passwordRequired)
             {
-                // auth.exportLoginToken can set SESSION_PASSWORD_NEEDED before
-                // its completion block has a chance to push the QR-specific
-                // password controller. Without this guard the generic network
-                // callback races it and installs a plain controller, so the
-                // eventual checkPassword actor receives qrLogin=0.
                 if (TGIOS6QRLoginFlowActive())
                 {
-                    TGLog(@"QR suppress automatic password controller dc=%d", (int)datacenterId);
                     return;
                 }
 
@@ -2400,21 +2581,45 @@ static TGTelegramNetworking *singleton = nil;
     return [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"wifi-usage-reset"];
 }
 
+- (OGOnegramCoreMode)onegramCoreMode
+{
+    return [OGOnegramCore sharedCore].mode;
+}
+
+- (void)setOnegramCoreMode:(OGOnegramCoreMode)mode
+{
+    [[OGOnegramCore sharedCore] setMode:mode];
+    [self refreshOnegramCoreSettings];
+}
+
 - (bool)onegramWebSocketProxyEnabled
 {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:TGOnegramWebSocketEnabledKey()];
+    return self.onegramCoreMode == OGOnegramCoreModeWebSocket;
 }
 
 - (void)setOnegramWebSocketProxyEnabled:(bool)enabled
 {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setBool:enabled forKey:TGOnegramWebSocketEnabledKey()];
-    [defaults synchronize];
+    [self setOnegramCoreMode:enabled ? OGOnegramCoreModeWebSocket : OGOnegramCoreModeNone];
+}
 
-    MTSocksProxySettings *settings = enabled ? nil : TGOnegramStoredProxySettings();
+- (void)onegramCoreDidChange:(NSNotification *)notification
+{
+    [self refreshOnegramCoreSettings];
+}
+
+- (void)refreshOnegramCoreSettings
+{
+    OGOnegramCore *proxy = [OGOnegramCore sharedCore];
+    OGOnegramCoreMode mode = proxy.mode;
+    MTSocksProxySettings *settings = nil;
+    if (mode == OGOnegramCoreModeDanteWARP || mode == OGOnegramCoreModeDantePower)
+        settings = [[MTSocksProxySettings alloc] initWithIp:@"127.0.0.1" port:proxy.socksPort username:nil password:nil secret:nil];
+    else if (mode == OGOnegramCoreModeNone)
+        settings = TGOnegramStoredProxySettings();
     [_context updateApiEnvironment:^MTApiEnvironment *(MTApiEnvironment *environment)
     {
-        MTApiEnvironment *updated = [environment withUpdatedOnegramWebSocketEnabled:enabled];
+        MTApiEnvironment *updated = [environment withUpdatedOnegramWebSocketEnabled:mode == OGOnegramCoreModeWebSocket];
+        updated = [updated withUpdatedPreferHttpTransport:OGPlatformMajorVersion() <= 3 && mode == OGOnegramCoreModeNone];
         return [updated withUpdatedSocksProxySettings:settings];
     }];
 }

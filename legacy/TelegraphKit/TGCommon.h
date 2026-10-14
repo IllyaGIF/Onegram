@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 #include <inttypes.h>
 #import <stddef.h>
+#import "OGPlatformDispatch.h"
 
 #define TGUseSocial true
 
@@ -19,6 +20,7 @@
 
 
 extern int TGLocalizedStaticVersion;
+FOUNDATION_EXPORT NSString *const TGStartupLocalizationUpdatedNotification;
 
 #undef TG_TIMESTAMP_DEFINE
 #undef TG_TIMESTAMP_MEASURE
@@ -43,6 +45,7 @@ int performanceBackgroundWorkerCount();
     
 void TGSetLocalizationFromFile(NSString *filePath);
 NSString *TGLocalized(NSString *s);
+NSString *TGStartupLocalized(NSString *s);
     
 @class TGLocalization;
 
@@ -50,6 +53,7 @@ TGLocalization *effectiveLocalization();
 NSString *currentLocalizationEnglishLanguageName();
 TGLocalization *nativeEnglishLocalization();
 TGLocalization *currentNativeLocalization();
+NSString *currentNativeLocalizationCode();
 TGLocalization *currentCustomLocalization();
 void setCurrentNativeLocalization(TGLocalization *localization, bool switchIfCustom);
 void setCurrentCustomLocalization(TGLocalization *localization);
@@ -72,10 +76,7 @@ NSString *TGEncodeText(NSString *string, int key);
     
 inline void TGDispatchOnMainThread(dispatch_block_t block)
 {
-    if ([NSThread isMainThread])
-        block();
-    else
-        dispatch_async(dispatch_get_main_queue(), block);
+    OGPlatformDispatchOnMainThread(block);
 }
 
 inline void TGDispatchAfter(double delay, dispatch_queue_t queue, dispatch_block_t block)
@@ -85,11 +86,21 @@ inline void TGDispatchAfter(double delay, dispatch_queue_t queue, dispatch_block
     
 void TGLogSetEnabled(bool enabled);
 bool TGLogEnabled();
+bool TGLogAvailable();
+#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
+#undef TGLog
+#undef TGLogv
 void TGLog(NSString *format, ...);
 void TGLogv(NSString *format, va_list args);
+#else
+#undef TGLog
+#define TGLog(...) ((void)0)
+#define TGLogv(...) ((void)0)
+#endif
 
 void TGLogSynchronize();
 void TGLogClear();
+bool TGDeleteLogFile(NSString *path, NSError **error);
 NSString *TGIOS6DiagnosticBreadcrumbPath();
 void TGIOS6PrepareDiagnosticBreadcrumbs();
 void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length);

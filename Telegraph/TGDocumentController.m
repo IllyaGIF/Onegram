@@ -10,6 +10,7 @@
 
 #import "TGLegacyComponentsContext.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 @interface TGFilePreviewItem : NSObject <QLPreviewItem>
 
 @property (nonatomic, strong) NSURL *previewItemURL;
@@ -157,3 +158,65 @@
 }
 
 @end
+#else
+
+@interface TGDocumentController () <UIWebViewDelegate>
+{
+    NSURL *_url;
+    int32_t _messageId;
+    UIWebView *_webView;
+    UILabel *_errorLabel;
+}
+@end
+
+@implementation TGDocumentController
+
+- (instancetype)initWithURL:(NSURL *)url messageId:(int32_t)messageId
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _url = url;
+        _messageId = messageId;
+        self.title = [url lastPathComponent];
+    }
+    return self;
+}
+
+- (void)loadView
+{
+    [super loadView];
+    self.view.backgroundColor = [UIColor whiteColor];
+
+    _webView = [[UIWebView alloc] initWithFrame:self.view.bounds];
+    _webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _webView.delegate = self;
+    _webView.scalesPageToFit = YES;
+    [self.view addSubview:_webView];
+
+    if (_url != nil)
+        [_webView loadRequest:[NSURLRequest requestWithURL:_url]];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self.navigationController setNavigationBarHidden:_previewMode animated:animated];
+}
+
+- (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error
+{
+    if (_errorLabel == nil)
+    {
+        _errorLabel = [[UILabel alloc] initWithFrame:CGRectInset(self.view.bounds, 24.0f, 24.0f)];
+        _errorLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _errorLabel.backgroundColor = [UIColor clearColor];
+        _errorLabel.textAlignment = UITextAlignmentCenter;
+        _errorLabel.numberOfLines = 0;
+        [self.view addSubview:_errorLabel];
+    }
+    _errorLabel.text = [error localizedDescription];
+}
+
+@end
+#endif

@@ -66,28 +66,28 @@ static void PGButtonHandlerEnableMonitoring(bool enable)
         uint32_t hash = murMurHash32(notification.name);
         switch (hash)
         {
-            case 0xaeae3258: //_UIApplicationVolumeDownButtonDownNotification
+            case 0xaeae3258:
             {
                 if (self.downButtonPressedBlock != nil)
                     self.downButtonPressedBlock();
             }
                 break;
                 
-            case 0x784c165e: //_UIApplicationVolumeDownButtonUpNotification
+            case 0x784c165e:
             {
                 if (self.downButtonReleasedBlock != nil)
                     self.downButtonReleasedBlock();
             }
                 break;
                 
-            case 0xba416d8e: //_UIApplicationVolumeUpButtonDownNotification
+            case 0xba416d8e:
             {
                 if (self.upButtonPressedBlock != nil)
                     self.upButtonPressedBlock();
             }
                 break;
                 
-            case 0x4074ecfb: //_UIApplicationVolumeUpButtonUpNotification
+            case 0x4074ecfb:
             {
                 if (self.upButtonReleasedBlock != nil)
                     self.upButtonReleasedBlock();

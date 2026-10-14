@@ -31,7 +31,7 @@ const CGSize TGOverlayFormsheetControllerReferenceSize = { 540.0f, 620.0f };
         [self.view addSubview:_dimView];
         
         _wrapperView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, TGOverlayFormsheetControllerReferenceSize.width, TGOverlayFormsheetControllerReferenceSize.height)];
-        _wrapperView.layer.rasterizationScale = [[UIScreen mainScreen] scale];
+        TGSetLayerRasterizationScale(_wrapperView.layer, [[UIScreen mainScreen] scale]);
         [self.view addSubview:_wrapperView];
         
         _contentView = [[UIView alloc] initWithFrame:_wrapperView.bounds];
@@ -62,7 +62,7 @@ const CGSize TGOverlayFormsheetControllerReferenceSize = { 540.0f, 620.0f };
     CGRect targetFrame = _wrapperView.frame;
     _wrapperView.frame = CGRectMake(_wrapperView.frame.origin.x, self.view.frame.size.height, _wrapperView.frame.size.width, _wrapperView.frame.size.height);
     
-    _wrapperView.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(_wrapperView.layer, true);
     
     [UIView animateWithDuration:0.3f delay:0.0f options:(7 << 16) animations:^
     {
@@ -72,13 +72,13 @@ const CGSize TGOverlayFormsheetControllerReferenceSize = { 540.0f, 620.0f };
         if (completion != nil)
             completion();
         
-        _wrapperView.layer.shouldRasterize = false;
+        TGSetLayerShouldRasterize(_wrapperView.layer, false);
     }];
 }
 
 - (void)animateOutWithCompletion:(void (^)(void))completion
 {
-    _wrapperView.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(_wrapperView.layer, true);
     
     [UIView animateWithDuration:0.3f delay:0.0f options:(7 << 16) animations:^
     {
@@ -86,7 +86,7 @@ const CGSize TGOverlayFormsheetControllerReferenceSize = { 540.0f, 620.0f };
         _wrapperView.frame = CGRectMake(_wrapperView.frame.origin.x, self.view.frame.size.height, _wrapperView.frame.size.width, _wrapperView.frame.size.height);
     } completion:^(__unused BOOL finished)
     {
-        _wrapperView.layer.shouldRasterize = false;
+        TGSetLayerShouldRasterize(_wrapperView.layer, false);
         if (completion != nil)
             completion();
     }];

@@ -100,61 +100,6 @@
         }] cameraController:strongCameraController resultController:controller navigationController:(TGNavigationController *)controller.navigationController];
     };
     
-//    controller.finishedWithPhoto = ^(TGOverlayController *controller, UIImage *resultImage, NSString *caption, NSArray *entities, NSArray *stickers, NSNumber *timer)
-//    {
-//        __autoreleasing NSString *disabledMessage = nil;
-//        if (![TGApplicationFeatures isPhotoUploadEnabledForPeerType:TGApplicationFeaturePeerPrivate disabledMessage:&disabledMessage])
-//        {
-//            [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"FeatureDisabled.Oops") message:disabledMessage cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
-//            return;
-//        }
-//
-//        NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-//        dict[@"type"] = @"image";
-//        dict[@"image"] = resultImage;
-//        if (caption.length > 0)
-//            dict[@"caption"] = caption;
-//        if (entities.count > 0)
-//            dict[@"entities"] = entities;
-//        if (stickers.count > 0)
-//            dict[@"stickers"] = stickers;
-//        if (timer != nil)
-//            dict[@"timer"] = timer;
-//
-//        __strong TGCameraController *strongCameraController = weakCameraController;
-//        [TGCameraController showTargetController:@[dict] cameraController:strongCameraController resultController:controller navigationController:(TGNavigationController *)controller.navigationController];
-//    };
-//
-//    controller.finishedWithVideo = ^(TGOverlayController *controller, NSURL *videoURL, UIImage *previewImage, NSTimeInterval duration, CGSize dimensions, TGVideoEditAdjustments *adjustments, NSString *caption, NSArray *entities, NSArray *stickers, NSNumber *timer)
-//    {
-//        __autoreleasing NSString *disabledMessage = nil;
-//        if (![TGApplicationFeatures isFileUploadEnabledForPeerType:TGApplicationFeaturePeerPrivate disabledMessage:&disabledMessage])
-//        {
-//            [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"FeatureDisabled.Oops") message:disabledMessage cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
-//            return;
-//        }
-//
-//        NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-//        dict[@"type"] = @"cameraVideo";
-//        dict[@"url"] = videoURL;
-//        dict[@"duration"] = @(duration);
-//        dict[@"dimensions"] = [NSValue valueWithCGSize:dimensions];
-//        if (adjustments != nil)
-//            dict[@"adjustments"] = adjustments;
-//        if (previewImage != nil)
-//            dict[@"previewImage"] = previewImage;
-//        if (caption.length > 0)
-//            dict[@"caption"] = caption;
-//        if (entities.count > 0)
-//            dict[@"entities"] = entities;
-//        if (stickers.count > 0)
-//            dict[@"stickers"] = stickers;
-//        if (timer != nil)
-//            dict[@"timer"] = timer;
-//
-//        __strong TGCameraController *strongCameraController = weakCameraController;
-//        [TGCameraController showTargetController:@[dict] cameraController:strongCameraController resultController:controller navigationController:(TGNavigationController *)controller.navigationController];
-//    };
 }
 
 + (void)showTargetController:(NSArray *)resultSignals cameraController:(TGCameraController *)cameraController resultController:(TGOverlayController *)resultController navigationController:(TGNavigationController *)navigationController

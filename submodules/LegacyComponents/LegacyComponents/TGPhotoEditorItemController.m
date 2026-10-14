@@ -136,7 +136,7 @@
     _portraitToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
     _portraitToolControlView.clipsToBounds = true;
     _portraitToolControlView.interactionEnded = interactionEnded;
-    _portraitToolControlView.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(_portraitToolControlView.layer, TGScreenScaling());
     _portraitToolControlView.isLandscape = false;
     
     if ([_portraitToolControlView respondsToSelector:@selector(setHistogramSignal:)])
@@ -159,7 +159,7 @@
     _landscapeToolControlView.backgroundColor = [TGPhotoEditorInterfaceAssets panelBackgroundColor];
     _landscapeToolControlView.clipsToBounds = true;
     _landscapeToolControlView.interactionEnded = interactionEnded;
-    _landscapeToolControlView.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(_landscapeToolControlView.layer, TGScreenScaling());
     _landscapeToolControlView.isLandscape = true;
     _landscapeToolControlView.toolbarLandscapeSize = self.toolbarLandscapeSize;
     
@@ -400,9 +400,9 @@
 - (void)transitionIn
 {
     if (UIInterfaceOrientationIsPortrait(self.interfaceOrientation))
-        _portraitToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_portraitToolControlView.layer, true);
     else
-        _landscapeToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_landscapeToolControlView.layer, true);
     
     CGRect targetFrame;
     CGRect toolTargetFrame;
@@ -454,8 +454,8 @@
     {
         if (finished)
         {
-            _portraitToolControlView.layer.shouldRasterize = false;
-            _landscapeToolControlView.layer.shouldRasterize = false;
+            TGSetLayerShouldRasterize(_portraitToolControlView.layer, false);
+            TGSetLayerShouldRasterize(_landscapeToolControlView.layer, false);
         }
     }];
     
@@ -490,9 +490,9 @@
     [_initialPreviewSuperview addSubview:self.previewView];
     
     if (UIInterfaceOrientationIsPortrait(self.interfaceOrientation))
-        _portraitToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_portraitToolControlView.layer, true);
     else
-        _landscapeToolControlView.layer.shouldRasterize = true;
+        TGSetLayerShouldRasterize(_landscapeToolControlView.layer, true);
     
     [_toolAreaView.superview bringSubviewToFront:_toolAreaView];
     

@@ -501,6 +501,7 @@
         _about = [coder decodeStringForCKey:"about"];
         _username = [coder decodeStringForCKey:"username"];
         _nameColorId = [coder decodeInt32ForCKey:"nci"] - 1;
+        _linkedCommunityId = [coder decodeInt64ForCKey:"lcm"];
         _outgoing = [coder decodeInt32ForCKey:"out"];
         _unread = [coder decodeInt32ForCKey:"unr"];
         _deliveryError = [coder decodeInt32ForCKey:"der"];
@@ -569,6 +570,7 @@
     [coder encodeString:_about forCKey:"about"];
     [coder encodeString:_username forCKey:"username"];
     [coder encodeInt32:_nameColorId + 1 forCKey:"nci"];
+    [coder encodeInt64:_linkedCommunityId forCKey:"lcm"];
     [coder encodeInt32:_outgoing ? 1 : 0 forCKey:"out"];
     [coder encodeInt32:_unread ? 1 : 0 forCKey:"unr"];
     [coder encodeInt32:_deliveryError ? 1 : 0 forCKey:"der"];
@@ -626,6 +628,7 @@
     conversation.about = _about;
     conversation.username = _username;
     conversation.nameColorId = _nameColorId;
+    conversation.linkedCommunityId = _linkedCommunityId;
     conversation.outgoing = _outgoing;
     conversation.unread = _unread;
     conversation.deliveryError = _deliveryError;
@@ -741,7 +744,7 @@
 
 - (BOOL)isEqualToConversation:(TGConversation *)other
 {
-    if (_conversationId != other.conversationId || _outgoing != other.outgoing || _messageDate != other.messageDate || _fromUid != other.fromUid || ![_text isEqualToString:other.text] || _unreadCount != other.unreadCount || _serviceUnreadCount != other.serviceUnreadCount || _unread != other.unread || _isChat != other.isChat || _isArchived != other.isArchived || _deliveryError != other.deliveryError || _deliveryState != other.deliveryState || _nameColorId != other.nameColorId)
+    if (_conversationId != other.conversationId || _outgoing != other.outgoing || _messageDate != other.messageDate || _fromUid != other.fromUid || ![_text isEqualToString:other.text] || _unreadCount != other.unreadCount || _serviceUnreadCount != other.serviceUnreadCount || _unread != other.unread || _isChat != other.isChat || _isArchived != other.isArchived || _deliveryError != other.deliveryError || _deliveryState != other.deliveryState || _nameColorId != other.nameColorId || _linkedCommunityId != other.linkedCommunityId)
         return false;
     
     if (_media.count != other.media.count)
@@ -829,7 +832,7 @@
 
 - (BOOL)isEqualToConversationIgnoringMessage:(TGConversation *)other
 {
-    if (_conversationId != other.conversationId || _isChat != other.isChat || _nameColorId != other.nameColorId)
+    if (_conversationId != other.conversationId || _isChat != other.isChat || _nameColorId != other.nameColorId || _linkedCommunityId != other.linkedCommunityId)
         return false;
     
     if (_isChat)
@@ -1083,6 +1086,8 @@
     self.username = conversation.username;
     if (!conversation.isChannel || !conversation.isMin || conversation.nameColorId >= 0)
         self.nameColorId = conversation.nameColorId;
+    if (!conversation.isChannel || !conversation.isMin)
+        self.linkedCommunityId = conversation.linkedCommunityId;
     self.chatTitle = conversation.chatTitle;
     self.chatPhotoSmall = conversation.chatPhotoSmall;
     self.chatPhotoMedium = conversation.chatPhotoMedium;
@@ -1125,10 +1130,13 @@
     _username = channel.username;
     if (!channel.isMin || channel.nameColorId >= 0)
         _nameColorId = channel.nameColorId;
-    if (channel.accessHash != 0 && _accessHash != channel.accessHash) {
+    if (!channel.isMin)
+        _linkedCommunityId = channel.linkedCommunityId;
+    if (channel.accessHash != 0 && _accessHash != channel.accessHash && (!channel.isMin || _accessHash == 0)) {
         _accessHash = channel.accessHash;
     }
     if (!channel.isMin) {
+        self.isMin = false;
         _chatIsAdmin = channel.chatIsAdmin;
         self.channelRole = channel.channelRole;
         _leftChat = channel.leftChat;
@@ -1162,6 +1170,10 @@
     if (pinnedDate > TGConversationSortKeyTimestamp(_variantSortKey)) {
         _variantSortKey = TGConversationSortKeyMake(TGConversationSortKeyKind(_variantSortKey), pinnedDate, TGConversationSortKeyMid(_variantSortKey));
     }
+}
+
+- (bool)isChannelMember {
+    return self.isChannel && !self.isMin && self.kind == TGConversationKindPersistentChannel && !self.leftChat && !self.kickedFromChat;
 }
 
 - (bool)currentUserCanSendMessages {

@@ -5,6 +5,7 @@
 #import "TGCallDiscardReason.h"
 
 #import "TLMessageAction$messageActionPhoneCall.h"
+#import "TLMessageAction$messageActionChangeCommunity.h"
 
 @implementation TGActionMediaAttachment (Telegraph)
 
@@ -70,7 +71,7 @@
             TLMessageAction$messageActionChatJoinedByLink *concreteAction = (TLMessageAction$messageActionChatJoinedByLink *)actionDesc;
             self.actionType = TGMessageActionJoinedByLink;
             if (concreteAction.inviter_id == (-2147483647 - 1)) {
-                self.actionData = @{ @"invitedBy": @0, @"joinedByRequest": @YES };
+                self.actionData = @{ @"invitedBy": @0, @"joinedByRequest": @(YES) };
             } else {
                 self.actionData = [NSDictionary dictionaryWithObject:[NSNumber numberWithInt:concreteAction.inviter_id] forKey:@"invitedBy"];
             }
@@ -116,6 +117,9 @@
         } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionCustomAction class]]) {
             self.actionType = TGMessageActionText;
             self.actionData = @{@"text": ((TLMessageAction$messageActionCustomAction *)actionDesc).message};
+        } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChangeCommunity class]]) {
+            self.actionType = TGMessageActionCommunityChanged;
+            self.actionData = @{@"communityId": @(((TLMessageAction$messageActionChangeCommunity *)actionDesc).community_id)};
         } else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionBotAllowed class]]) {
             self.actionType = TGMessageActionBotAllowed;
             self.actionData = @{@"domain": ((TLMessageAction$messageActionBotAllowed *)actionDesc).domain};

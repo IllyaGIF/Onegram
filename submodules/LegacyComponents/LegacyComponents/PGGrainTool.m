@@ -84,41 +84,34 @@
           highp vec3 pi = permTexUnit*floor(p)+permTexUnitHalf;
           highp vec3 pf = fract(p);
           
-          // Noise contributions from (x=0, y=0), z=0 and z=1
           highp float perm00 = rnm(pi.xy).a ;
           highp vec3  grad000 = rnm(vec2(perm00, pi.z)).rgb * 4.0 - 1.0;
           highp float n000 = dot(grad000, pf);
           highp vec3  grad001 = rnm(vec2(perm00, pi.z + permTexUnit)).rgb * 4.0 - 1.0;
           highp float n001 = dot(grad001, pf - vec3(0.0, 0.0, 1.0));
           
-          // Noise contributions from (x=0, y=1), z=0 and z=1
           highp float perm01 = rnm(pi.xy + vec2(0.0, permTexUnit)).a ;
           highp vec3  grad010 = rnm(vec2(perm01, pi.z)).rgb * 4.0 - 1.0;
           highp float n010 = dot(grad010, pf - vec3(0.0, 1.0, 0.0));
           highp vec3  grad011 = rnm(vec2(perm01, pi.z + permTexUnit)).rgb * 4.0 - 1.0;
           highp float n011 = dot(grad011, pf - vec3(0.0, 1.0, 1.0));
           
-          // Noise contributions from (x=1, y=0), z=0 and z=1
           highp float perm10 = rnm(pi.xy + vec2(permTexUnit, 0.0)).a ;
           highp vec3  grad100 = rnm(vec2(perm10, pi.z)).rgb * 4.0 - 1.0;
           highp float n100 = dot(grad100, pf - vec3(1.0, 0.0, 0.0));
           highp vec3  grad101 = rnm(vec2(perm10, pi.z + permTexUnit)).rgb * 4.0 - 1.0;
           highp float n101 = dot(grad101, pf - vec3(1.0, 0.0, 1.0));
           
-          // Noise contributions from (x=1, y=1), z=0 and z=1
           highp float perm11 = rnm(pi.xy + vec2(permTexUnit, permTexUnit)).a ;
           highp vec3  grad110 = rnm(vec2(perm11, pi.z)).rgb * 4.0 - 1.0;
           highp float n110 = dot(grad110, pf - vec3(1.0, 1.0, 0.0));
           highp vec3  grad111 = rnm(vec2(perm11, pi.z + permTexUnit)).rgb * 4.0 - 1.0;
           highp float n111 = dot(grad111, pf - vec3(1.0, 1.0, 1.0));
           
-          // Blend contributions along x
           highp vec4 n_x = mix(vec4(n000, n001, n010, n011), vec4(n100, n101, n110, n111), fade(pf.x));
           
-          // Blend contributions along y
           highp vec2 n_xy = mix(n_x.xy, n_x.zw, fade(pf.y));
           
-          // Blend contributions along z
           highp float n_xyz = mix(n_xy.x, n_xy.y, fade(pf.z));
           
           return n_xyz;

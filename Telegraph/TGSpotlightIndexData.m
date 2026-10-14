@@ -46,7 +46,7 @@
     return item;
 }
 
-- (bool)isEqual:(id)object {
+- (BOOL)isEqual:(id)object {
     return [object isKindOfClass:[TGSpotlightIndexItem class]] && _peerId == ((TGSpotlightIndexItem *)object)->_peerId && TGStringCompare(_title, ((TGSpotlightIndexItem *)object)->_title) && TGStringCompare(_avatarUrl, ((TGSpotlightIndexItem *)object)->_avatarUrl);
 }
 

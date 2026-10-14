@@ -5,6 +5,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGEmbedPlayerState.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <MediaPlayer/MediaPlayer.h>
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGObserverProxy.h"
@@ -23,7 +24,14 @@
 {
     NSString *_url;
     TGDocumentMediaAttachment *_document;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVPlayer *_player;
+#else
+    MPMoviePlayerController *_player;
+    NSTimeInterval _legacyPlaybackPosition;
+    NSDate *_legacyPlaybackStartDate;
+    bool _legacyIgnoringFinish;
+#endif
     TGObserverProxy *_didPlayToEndObserver;
     
     NSTimer *_positionTimer;
@@ -79,12 +87,14 @@
 
 - (void)dealloc
 {
-    //[self _stop];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    _legacyIgnoringFinish = true;
+    [_player stop];
+#endif
     
     [_actionHandle reset];
     [ActionStageInstance() removeWatcher:self];
     
-    //[_currentAudioSession dispose];
 }
 
 - (void)setupWithEmbedSize:(CGSize)embedSize
@@ -129,6 +139,11 @@
     TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:true duration:self.state.duration position:self.state.position downloadProgress:1.0f buffering:false];
     [self updateState:state];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    _legacyIgnoringFinish = false;
+    _player.initialPlaybackTime = _legacyPlaybackPosition;
+    _legacyPlaybackStartDate = [NSDate date];
+#endif
     [_player play];
     [self _startPositionTimer];
 }
@@ -138,13 +153,34 @@
     TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:false duration:self.state.duration position:self.state.position downloadProgress:self.state.downloadProgress buffering:false];
     [self updateState:state];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_player pause];
+#else
+    _legacyPlaybackPosition = [self legacyPlaybackPosition];
+    _legacyPlaybackStartDate = nil;
+    _legacyIgnoringFinish = true;
+    [_player stop];
+#endif
     [self _invalidatePositionTimer];
 }
 
 - (void)seekToPosition:(NSTimeInterval)position
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_player.currentItem seekToTime:CMTimeMake((int64_t)(position * 1000.0), 1000.0)];
+#else
+    _legacyPlaybackPosition = MAX(0.0, MIN(position, _duration));
+    bool resume = self.state.playing;
+    _legacyIgnoringFinish = true;
+    [_player stop];
+    _player.initialPlaybackTime = _legacyPlaybackPosition;
+    if (resume)
+    {
+        _legacyIgnoringFinish = false;
+        _legacyPlaybackStartDate = [NSDate date];
+        [_player play];
+    }
+#endif
 }
 
 - (void)_onPageReady
@@ -202,6 +238,7 @@
         if (videoPath == nil)
             return;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
         _player = [[AVPlayer alloc] initWithURL:[NSURL fileURLWithPath:videoPath]];
         _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
         
@@ -216,6 +253,15 @@
             [self insertSubview:_videoView belowSubview:self.controlsView];
         else
             [self insertSubview:_videoView belowSubview:self.dimWrapperView];
+#else
+        _legacyPlaybackPosition = 0.0;
+        _legacyPlaybackStartDate = nil;
+        _legacyIgnoringFinish = false;
+        _player = [[MPMoviePlayerController alloc] initWithContentURL:[NSURL fileURLWithPath:videoPath]];
+        _player.movieControlMode = MPMovieControlModeDefault;
+        _player.scalingMode = MPMovieScalingModeFill;
+        _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:MPMoviePlayerPlaybackDidFinishNotification object:_player];
+#endif
     
         [self playVideo];
         [self _didBeginPlayback];
@@ -240,16 +286,37 @@
 
 - (void)positionTimerEvent
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:self.state.playing duration:self.state.duration position:CMTimeGetSeconds(_player.currentItem.currentTime) downloadProgress:self.state.downloadProgress buffering:false];
+#else
+    TGEmbedPlayerState *state = [TGEmbedPlayerState stateWithPlaying:self.state.playing duration:self.state.duration position:[self legacyPlaybackPosition] downloadProgress:self.state.downloadProgress buffering:false];
+#endif
     [self updateState:state];
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (NSTimeInterval)legacyPlaybackPosition
+{
+    NSTimeInterval position = _legacyPlaybackPosition;
+    if (_legacyPlaybackStartDate != nil && self.state.playing)
+        position += -[_legacyPlaybackStartDate timeIntervalSinceNow];
+    return MAX(0.0, MIN(position, _duration));
+}
+#endif
+
 - (void)playerItemDidPlayToEndTime:(NSNotification *)notification
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_player pause];
     
     AVPlayerItem *p = [notification object];
     [p seekToTime:kCMTimeZero];
+#else
+    if (_legacyIgnoringFinish)
+        return;
+    _legacyPlaybackPosition = 0.0;
+    _legacyPlaybackStartDate = nil;
+#endif
 
     [self _invalidatePositionTimer];
     

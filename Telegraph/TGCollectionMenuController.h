@@ -20,6 +20,7 @@
 @property (nonatomic, strong) TGPresentation *presentation;
 
 - (UIColor *)collectionMenuBackgroundColor;
+- (bool)usesBrandedScreenBackground;
 
 - (void)_resetCollectionView;
 - (void)_ensureBinding;

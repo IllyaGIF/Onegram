@@ -42,7 +42,6 @@
 + (SSignal *)partsForLocation:(TLInputFileLocation *)location datacenterId:(NSInteger)datacenterId size:(NSUInteger)size mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
     if (datacenterId <= 0) {
-        while (false) TGLog(@"MEDIA partsForLocation skip invalid dc=%d location=%@", (int)datacenterId, NSStringFromClass([location class]));
         return [SSignal fail:nil];
     }
 
@@ -82,7 +81,6 @@
 + (SSignal *)partsForWebLocation:(TLInputWebFileLocation *)location datacenterId:(NSInteger)datacenterId size:(NSUInteger)size mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
     if (datacenterId <= 0) {
-        while (false) TGLog(@"MEDIA partsForWebLocation skip invalid dc=%d location=%@", (int)datacenterId, NSStringFromClass([location class]));
         return [SSignal fail:nil];
     }
 
@@ -109,7 +107,6 @@
 + (SSignal *)multipartDownload:(TLInputFileLocation *)location datacenterId:(NSInteger)datacenterId originInfo:(TGMediaOriginInfo *)originInfo identifier:(int64_t)identifier size:(NSUInteger)size mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
     if (datacenterId <= 0) {
-        while (false) TGLog(@"MEDIA multipartDownload skip invalid dc=%d location=%@ identifier=%lld", (int)datacenterId, NSStringFromClass([location class]), identifier);
         return [SSignal fail:nil];
     }
 
@@ -344,10 +341,8 @@
 }
 
 
-
 + (SSignal *)dataForLocation:(TLInputFileLocation *)location datacenterId:(NSInteger)datacenterId originInfo:(TGMediaOriginInfo *)originInfo identifier:(int64_t)identifier size:(NSUInteger)size reportProgress:(bool)reportProgress mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
-//    if (true || size >= 1 * 1024 * 1024) {
         return [[[self multipartDownload:location datacenterId:datacenterId originInfo:originInfo identifier:identifier size:size mediaTypeTag:mediaTypeTag] filter:^bool(id next) {
             if (!reportProgress) {
                 return ![next respondsToSelector:@selector(floatValue)];
@@ -360,20 +355,6 @@
             }
             return current;
         }];
-//    } else {
-//        return [[[self partsForLocation:location datacenterId:datacenterId size:size mediaTypeTag:mediaTypeTag] map:^id(id next)
-//        {
-//            if ([next isKindOfClass:[TGRemoteFileDataEvent class]])
-//                return [next data];
-//            else if (reportProgress && [next isKindOfClass:[TGRemoteFileProgressEvent class]])
-//                return @([(TGRemoteFileProgressEvent *)next progress]);
-//
-//            return nil;
-//        }] filter:^bool(id value)
-//        {
-//            return value != nil;
-//        }];
-//    }
 }
 
 + (SSignal *)dataForWebLocation:(TLInputWebFileLocation *)location datacenterId:(NSInteger)datacenterId size:(NSUInteger)size reportProgress:(bool)reportProgress mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag {

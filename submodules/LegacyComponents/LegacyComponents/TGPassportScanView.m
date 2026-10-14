@@ -46,7 +46,6 @@
     [_camera startCaptureForResume:false completion:nil];
     
     _timer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(handleNextFrame) interval:0.5 repeat:false];
-    NSLog(@"SS_scheduledFirst");
 }
 
 - (void)stop

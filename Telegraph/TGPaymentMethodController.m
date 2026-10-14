@@ -12,7 +12,6 @@
 #import "TGPaymentWebController.h"
 #import "TGAddPaymentCardController.h"
 
-#import <PassKit/PassKit.h>
 
 #import "NSString+Stripe_CardBrands.h"
 
@@ -271,11 +270,6 @@
     id<TGPaymentMethod> addedMethod = [[TGPaymentMethodStripeToken alloc] initWithToken:stripeToken];
     
     NSMutableArray *updatedMethods = [[NSMutableArray alloc] init];
-    /*for (id<TGPaymentMethod> method in _paymentMethods.methods) {
-        if ([method class] != [addedMethod class]) {
-            [updatedMethods addObject:method];
-        }
-    }*/
     
     [updatedMethods addObject:addedMethod];
     _paymentMethods = [[TGPaymentMethods alloc] initWithMethods:updatedMethods selectedIndex:updatedMethods.count - 1];

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Execute explicit Xcode copy phases for static-library header products."""
 import json
 import os
 import sys

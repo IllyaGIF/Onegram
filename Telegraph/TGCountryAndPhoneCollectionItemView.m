@@ -5,12 +5,12 @@
 #import "TGBackspaceTextField.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGTextField.h"
 
-#import <CoreTelephony/CTCarrier.h>
-#import <CoreTelephony/CTTelephonyNetworkInfo.h>
+#import "../OnegramPlatform/OGPlatformTelephony.h"
 
 #import "TGLoginCountriesController.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 @interface TGCountryAndPhoneCollectionItemView () <UITextFieldDelegate>
 {
@@ -66,14 +66,7 @@
         
         NSString *countryId = nil;
         
-        CTTelephonyNetworkInfo *networkInfo = [[CTTelephonyNetworkInfo alloc] init];
-        CTCarrier *carrier = [networkInfo subscriberCellularProvider];
-        if (carrier != nil)
-        {
-            NSString *mcc = [carrier isoCountryCode];
-            if (mcc != nil)
-                countryId = mcc;
-        }
+        countryId = OGPlatformCarrierISOCountryCode();
         if (countryId == nil)
         {
             NSLocale *locale = [NSLocale currentLocale];
@@ -365,14 +358,10 @@
                 if (caretPosition >= (int)textField.text.length)
                     caretPosition = (int)textField.text.length;
                 
-                UITextPosition *startPosition = [textField positionFromPosition:textField.beginningOfDocument offset:newCaretPosition];
-                UITextPosition *endPosition = [textField positionFromPosition:textField.beginningOfDocument offset:newCaretPosition];
-                UITextRange *selection = [textField textRangeFromPosition:startPosition toPosition:endPosition];
-                textField.selectedTextRange = selection;
+                OGPlatformSetTextFieldSelectionRange(textField, NSMakeRange((NSUInteger)newCaretPosition, 0));
             }
             @catch (NSException *e)
             {
-                TGLog(@"%@", e);
             }
             
             [self _notifyPhoneChanged];
@@ -470,12 +459,10 @@
     
     if (countryName != nil)
     {
-        //[_countryButton setTitleColor:UIColorRGB(0xf0f0f0) forState:UIControlStateNormal];
         [_countryButton setTitle:countryName forState:UIControlStateNormal];
     }
     else
     {
-        //[_countryButton setTitleColor:UIColorRGBA(0xf0f0f0, 0.7f) forState:UIControlStateNormal];
         [_countryButton setTitle:_countryTextField.text.length <= 1 ? TGLocalized(@"Login.CountryCode") : TGLocalized(@"Login.InvalidCountryCode") forState:UIControlStateNormal];
     }
 }

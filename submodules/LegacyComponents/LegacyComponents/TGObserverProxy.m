@@ -1,4 +1,6 @@
 #import "TGObserverProxy.h"
+#import <UIKit/UIKit.h>
+#import "OGPlatformVersion.h"
 
 @interface TGObserverProxyScheduledNotification : NSObject
 
@@ -73,6 +75,18 @@
 
 @implementation TGObserverProxy
 
+- (instancetype)initWithKeyboardFrameTarget:(id)target targetSelector:(SEL)targetSelector
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
+    if (OGPlatformMajorVersion() >= 5)
+        return [self initWithTarget:target targetSelector:targetSelector name:UIKeyboardWillChangeFrameNotification];
+#endif
+    self = [self initWithTarget:target targetSelector:targetSelector name:UIKeyboardWillShowNotification];
+    if (self != nil)
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notificationReceived:) name:UIKeyboardWillHideNotification object:nil];
+    return self;
+}
+
 - (instancetype)initWithTarget:(id)target targetSelector:(SEL)targetSelector name:(NSString *)name
 {
     return [self initWithTarget:target targetSelector:targetSelector name:name object:nil];
@@ -95,7 +109,7 @@
 
 - (void)dealloc
 {
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:_name object:_object];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)notificationReceived:(NSNotification *)notification

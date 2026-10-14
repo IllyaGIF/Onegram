@@ -1,4 +1,5 @@
 #import "TGInstantPageEmbedView.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -41,8 +42,7 @@
         if (iosMajorVersion() <= 8) {
             UIWebView *webView = [[UIWebView alloc] initWithFrame:self.bounds];
             webView.scalesPageToFit = true;
-            webView.mediaPlaybackRequiresUserAction = false;
-            webView.allowsInlineMediaPlayback = true;
+            OGPlatformConfigureWebViewMediaPlayback(webView, YES, NO);
             TGUIWebViewScrollView(webView).scrollEnabled = enableScrolling;
             
             [self addSubview:webView];

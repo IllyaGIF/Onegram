@@ -1,11 +1,15 @@
 #import "TGModernConversationController.h"
+#import "TGPinnedMessageTitlePanel.h"
 #import "../OnegramRuntime/OGRuntime.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 #include <inttypes.h>
+#include <algorithm>
+#include <vector>
+#include <mach/mach.h>
+#include <pthread.h>
+#include <dlfcn.h>
 #import "../submodules/LegacyComponents/LegacyComponents/TGLocationSignals.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponentsGlobals.h"
 
@@ -56,6 +60,7 @@
 #import "TLInputChannel.h"
 #import "TLmessages_ChatFull.h"
 #import "TLChatFull.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 
 static bool TGTransitionCoordinatorIsInteractive(id coordinator)
 {
@@ -317,6 +322,9 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
 
 #import "TGInterfaceManager.h"
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGNavigationAppearance.h"
 #import "TGPreviewPresentationHelper.h"
 
 #import "TGModernConversationTitleView.h"
@@ -383,8 +391,12 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
 #import <CommonCrypto/CommonDigest.h>
 #import <AVFoundation/AVFoundation.h>
 #import <MobileCoreServices/MobileCoreServices.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <QuickLook/QuickLook.h>
+#endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
 #import <PassKit/PassKit.h>
+#endif
 
 #import "TGGiphySearchResultItem.h"
 #import "TGBingSearchResultItem.h"
@@ -565,6 +577,8 @@ static NSMutableDictionary *TGIOS6ReactionPolicyCache(void)
 #import "TGMediaLiveUploadWatcher.h"
 
 #import "TGLiveLocationSignals.h"
+#import "TGPollSignals.h"
+#import "TGPollMediaAttachment.h"
 #import "TGScreenCaptureSignals.h"
 #import "TGProxySignals.h"
 
@@ -605,7 +619,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     return result;
 }
 
-@interface TGModernConversationController () <PSUICollectionViewDataSource, TGModernConversationViewLayoutDelegate, HPGrowingTextViewDelegate, UIGestureRecognizerDelegate, TGLegacyCameraControllerDelegate, TGModernConversationInputTextPanelDelegate, TGModernConversationEditingPanelDelegate, TGModernConversationTitleViewDelegate, TGForwardContactPickerControllerDelegate, TGAudioRecorderDelegate, UIDocumentInteractionControllerDelegate, TGImagePickerControllerDelegate, TGSearchBarDelegate, TGKeyCommandResponder, UIDocumentPickerDelegate>
+@interface TGModernConversationController () <PSUICollectionViewDataSource, TGModernConversationViewLayoutDelegate, HPGrowingTextViewDelegate, UIGestureRecognizerDelegate, TGLegacyCameraControllerDelegate, TGModernConversationInputTextPanelDelegate, TGModernConversationEditingPanelDelegate, TGModernConversationTitleViewDelegate, TGForwardContactPickerControllerDelegate, TGAudioRecorderDelegate,
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
+UIDocumentInteractionControllerDelegate,
+#endif
+TGImagePickerControllerDelegate, TGSearchBarDelegate, TGKeyCommandResponder, UIDocumentPickerDelegate>
 {
     bool _alreadyHadWillAppear;
     bool _alreadyHadDidAppear;
@@ -649,6 +667,17 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     UIImageView *_backgroundView;
     UIImageView *_backgroundTransitionView;
+    UIImageView *_brandedCardView;
+    UIImageView *_brandedCardTopEdgeView;
+    UIImageView *_brandedCardBottomEdgeView;
+    CGSize _brandedBackgroundAppliedSize;
+    CGFloat _brandedBackgroundAppliedTopInset;
+    CGFloat _brandedBackgroundAppliedBottomSafeInset;
+    OGTheme *_brandedBackgroundAppliedTheme;
+    UIView *_brandedMusicPlayerHostView;
+    CGFloat _brandedMusicPlayerRequestedHeight;
+    bool _brandedMusicPlayerCompact;
+    bool _brandedMusicPlayerVisible;
     
     TGModernConversationInputTextPanel *_inputTextPanel;
     TGModernConversationInputPanel *_currentInputPanel;
@@ -675,6 +704,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     TGObserverProxy *_dropboxProxy;
     UIPopoverController *_legacyCameraPopoverController;
+    TGMessage *_legacyPickerMessageToEdit;
     
     TGModernConversationTitleView *_titleView;
     TGModernConversationAvatarButton *_avatarButton;
@@ -690,6 +720,29 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     bool _disableScrollProcessing;
     
     bool _enableAboveHistoryRequests;
+    bool _prefetchedHoleValid;
+    CGFloat _prefetchedHoleOffset;
+    NSUInteger _prefetchedHoleItemCount;
+    __unsafe_unretained id _prefetchedHoleFirstItem;
+    __unsafe_unretained id _prefetchedHoleLastItem;
+    TGMessageModernConversationItem *_prefetchedHoleItem;
+    bool _reportedHolesValid;
+    NSUInteger _reportedHolesItemCount;
+    NSArray *_reportedHoles;
+    NSArray *_reportedVisibleMessageIds;
+    bool _visibleItemIndicesUpdateScheduled;
+    NSMutableArray *_deferredReleaseItems;
+    bool _deferredReleaseScheduled;
+    bool _historyTargetOffsetValid;
+    CGFloat _historyTargetOffset;
+    bool _prerenderValid;
+    CGFloat _prerenderOffset;
+    CGFloat _prerenderPredictionOffset;
+    CGFloat _scrollVelocityY;
+    CGFloat _scrollLastSampleOffset;
+    CFAbsoluteTime _scrollLastSampleTime;
+    NSUInteger _prerenderItemCount;
+    NSMutableArray *_prerenderModels;
     bool _enableBelowHistoryRequests;
     
     bool _enableUnloadHistoryRequests;
@@ -702,7 +755,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     NSUserActivity *_currentActivity;
     
     TGShareSheetWindow *_shareSheetWindow;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
     UIDocumentInteractionController *_interactionController;
+#else
+    id _interactionController;
+#endif
     
     TGICloudItemRequest *_currentICloudItemRequest;
     
@@ -747,6 +804,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     int32_t _messageIdForVisibleHoleDirection;
     
     bool _loadingMessages;
+#if defined(ONEGRAM_ARMV6)
+    bool _initialMessagePositioningPending;
+#endif
     TGProgressWindowController *_loadingMessagesController;
     
     SMetaDisposable *_mentionTextResultsDisposable;
@@ -776,6 +836,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     bool _ignoreStackOperations;
     
     SMetaDisposable *_currentMentionDisposable;
+    NSString *_currentMentionQuery;
+    bool _currentMentionCanBeContextBot;
+    NSUInteger _mentionRequestGeneration;
     SMetaDisposable *_musicPlayerStatusDisposable;
     
     TGNavigationBar *_previewNavigationBar;
@@ -785,6 +848,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     bool _fastScrolling;
     bool _ogRuntimeInteractionActive;
+    bool _ogRuntimeInteractionCheckScheduled;
+    __weak UIViewController *_backTitleAdjustedController;
     
     bool _doNotIgnoreKeyboardChangeDuringAppearance;
     TGPickerSheet *_pickerSheet;
@@ -838,6 +903,104 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 @end
 
+static CGFloat TGConversationHeaderHeight(CGFloat requestedHeight, bool keyboardVisible, bool branded, bool pinned)
+{
+    if (!branded || !keyboardVisible)
+        return requestedHeight;
+    if (requestedHeight <= 2.0f)
+        return pinned ? 21.0f : requestedHeight;
+    return 21.0f;
+}
+
+static void TGModernConversationRetainCollectionViewUntilUpdatesFinish(PSUICollectionView *collectionView)
+{
+    if (collectionView == nil)
+        return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        [collectionView.layer removeAllAnimations];
+    });
+}
+
+#if defined(ONEGRAM_DIAGNOSTICS)
+typedef struct
+{
+    double threadTime;
+    double taskTime;
+    int64_t faults;
+    int64_t pageins;
+    int64_t contextSwitches;
+    int currentPriority;
+} TGModernConversationThreadSample;
+
+static void TGModernConversationTakeThreadSample(TGModernConversationThreadSample *sample)
+{
+    memset(sample, 0, sizeof(TGModernConversationThreadSample));
+    thread_act_t thread = pthread_mach_thread_np(pthread_self());
+    
+    thread_basic_info_data_t basicInfo;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(thread, THREAD_BASIC_INFO, (thread_info_t)&basicInfo, &count) == KERN_SUCCESS)
+        sample->threadTime = (double)basicInfo.user_time.seconds + (double)basicInfo.user_time.microseconds / 1000000.0 + (double)basicInfo.system_time.seconds + (double)basicInfo.system_time.microseconds / 1000000.0;
+    
+    thread_extended_policy_data_t extendedPolicy;
+    mach_msg_type_number_t extendedCount = THREAD_EXTENDED_POLICY_COUNT;
+    boolean_t extendedDefault = FALSE;
+    bool fixedPolicy = thread_policy_get(thread, THREAD_EXTENDED_POLICY, (thread_policy_t)&extendedPolicy, &extendedCount, &extendedDefault) == KERN_SUCCESS && !extendedPolicy.timeshare;
+    policy_timeshare_info_data_t timeshareInfo;
+    count = POLICY_TIMESHARE_INFO_COUNT;
+    if (thread_info(thread, THREAD_SCHED_TIMESHARE_INFO, (thread_info_t)&timeshareInfo, &count) == KERN_SUCCESS)
+        sample->currentPriority = (fixedPolicy ? 1000 : 0) + timeshareInfo.cur_priority;
+    else
+    {
+        policy_rr_info_data_t fixedInfo;
+        count = POLICY_RR_INFO_COUNT;
+        if (thread_info(thread, THREAD_SCHED_RR_INFO, (thread_info_t)&fixedInfo, &count) == KERN_SUCCESS)
+            sample->currentPriority = 1000 + fixedInfo.base_priority;
+    }
+    
+    task_thread_times_info_data_t timesInfo;
+    count = TASK_THREAD_TIMES_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_THREAD_TIMES_INFO, (task_info_t)&timesInfo, &count) == KERN_SUCCESS)
+        sample->taskTime = (double)timesInfo.user_time.seconds + (double)timesInfo.user_time.microseconds / 1000000.0 + (double)timesInfo.system_time.seconds + (double)timesInfo.system_time.microseconds / 1000000.0;
+    
+    task_events_info_data_t eventsInfo;
+    count = TASK_EVENTS_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&eventsInfo, &count) == KERN_SUCCESS)
+    {
+        sample->faults = eventsInfo.faults;
+        sample->pageins = eventsInfo.pageins;
+        sample->contextSwitches = eventsInfo.csw;
+    }
+}
+#endif
+
+static CGFloat TGModernConversationControllerHistoryPrefetchScreens = 10.0f;
+static CGFloat TGModernConversationControllerHistoryPrefetchMinimumDistance = 4000.0f;
+
+static void TGModernConversationControllerConfigureHistoryWindow(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        unsigned long long physicalMemory = [NSProcessInfo processInfo].physicalMemory;
+        if (physicalMemory >= 480ULL * 1024ULL * 1024ULL)
+        {
+            TGModernConversationControllerUnloadHistoryLimit = 1000;
+            TGModernConversationControllerUnloadHistoryThreshold = 400;
+            TGModernConversationControllerHistoryPrefetchScreens = 96.0f;
+            TGModernConversationControllerHistoryPrefetchMinimumDistance = 48000.0f;
+        }
+        else if (physicalMemory >= 240ULL * 1024ULL * 1024ULL)
+        {
+            TGModernConversationControllerUnloadHistoryLimit = 750;
+            TGModernConversationControllerUnloadHistoryThreshold = 250;
+            TGModernConversationControllerHistoryPrefetchScreens = 48.0f;
+            TGModernConversationControllerHistoryPrefetchMinimumDistance = 24000.0f;
+        }
+    });
+}
+
 @implementation TGModernConversationController
 
 - (instancetype)init
@@ -845,6 +1008,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     self = [super init];
     if (self != nil)
     {
+        TGModernConversationControllerConfigureHistoryWindow();
         _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
         _ios4LifetimeReference = [[TGModernConversationControllerReference alloc] init];
         _ios4LifetimeReference.value = self;
@@ -947,6 +1111,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     _collectionView.delegate = nil;
     _collectionView.dataSource = nil;
     
+    TGModernConversationRetainCollectionViewUntilUpdatesFinish(_collectionView);
+    
+    for (TGModernFlatteningViewModel *model in _prerenderModels)
+        [model cancelAsynchronousContentsPreparation];
+    
     if (_snapshotImage != nil)
     {
         CGImageRelease(_snapshotImage);
@@ -959,6 +1128,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     [_tooltipDismissDisposable dispose];
     [_musicPlayerStatusDisposable dispose];
     [_mentionTextResultsDisposable dispose];
+    [_currentMentionDisposable dispose];
     [_recentGifsDisposable dispose];
     [_inputPlaceholderForTextDisposable dispose];
     [_processMediaDisposable dispose];
@@ -977,7 +1147,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (NSInteger)_indexForCollectionView
 {
-    return 1;
+    UIView *bottomView = _brandedCardView.superview == _view ? _brandedCardView : _backgroundView;
+    NSUInteger index = bottomView != nil && bottomView.superview == _view ? [_view.subviews indexOfObject:bottomView] : NSNotFound;
+    return index == NSNotFound ? 0 : (NSInteger)index + 1;
 }
 
 - (void)_resetCollectionView
@@ -993,12 +1165,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         _collectionView.dataSource = nil;
         [_collectionView removeFromSuperview];
         
-        PSUICollectionView *collectionView = _collectionView;
-        
-        dispatch_async(dispatch_get_main_queue(), ^
-        {
-            TGLog(@"***** replacing collection view %@", collectionView);
-        });
+        TGModernConversationRetainCollectionViewUntilUpdatesFinish(_collectionView);
     }
     
     if (_collectionViewScrollToTopProxy != nil)
@@ -1052,7 +1219,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     [_emptyListPlaceholder adjustLayoutForSize:collectionViewSize contentInsets:UIEdgeInsetsMake(_collectionView.contentInset.bottom - 210.0f - [_collectionView implicitTopInset], 0.0f, _collectionView.contentInset.top, 0.0f) duration:0.0f curve:0];
     
     [_view insertSubview:_collectionView atIndex:[self _indexForCollectionView]];
-    [_view insertSubview:_emptyListPlaceholder aboveSubview:_collectionView];
+    [self _orderBrandedCardEdgeViews];
+    [_view insertSubview:_emptyListPlaceholder aboveSubview:[self _collectionContentTopView]];
     
     _collectionViewScrollToTopProxy = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, _view.frame.size.width, 8)];
     _collectionViewScrollToTopProxy.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -1068,6 +1236,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         int64_t peerId = [_companion initialPositioningPeerId];
         TGInitialScrollPosition scrollPosition = [_companion initialPositioningScrollPosition];
         CGFloat scrollOffset = [_companion initialPositioningScrollOffset];
+#if defined(ONEGRAM_ARMV6)
+        _initialMessagePositioningPending = messageId != 0 && _items.count == 0;
+#endif
         if (messageId != 0)
         {
             _collectionView.contentOffset = CGPointMake(0.0f, [self contentOffsetForMessageId:messageId peerId:peerId scrollPosition:scrollPosition initial:true additionalOffset:(_companion.previewMode ? self.controllerInset.top : 0.0f) + scrollOffset]);
@@ -1079,6 +1250,15 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     [self _updateVisibleItemIndices:nil];
     
     [self check3DTouch];
+    
+    _prerenderValid = false;
+    __weak TGModernConversationController *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGModernConversationController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf _updateContentPrerendering:true];
+    });
 }
 
 - (CGFloat)contentOffsetForMessageId:(int32_t)messageId peerId:(int64_t)peerId scrollPosition:(TGInitialScrollPosition)scrollPosition initial:(bool)__unused initial additionalOffset:(CGFloat)additionalOffset
@@ -1094,9 +1274,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         
         if (messageItem->_message.mid == messageId && TGIOS6MessageMatchesMediaPeer(messageItem->_message, peerId))
         {
-            /*if (false && index == 0 && initial) {
-             return -_collectionView.contentInset.top;
-             }*/
             
             PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:index inSection:0]];
             if (attributes != nil)
@@ -1224,9 +1401,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (UIBarButtonItem *)defaultLeftBarButtonItem
 {
-    /*if (_inputTextPanel.messageEditingContext != nil) {
-     return [[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Cancel") style:UIBarButtonItemStylePlain target:self action:@selector(messageEditingCancelPressed)];
-     }*/
     
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPhone)
         return nil;
@@ -1253,6 +1427,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     if ([self isAdminLog] || [self isSavedMessages]) {
         if (_infoButtonItem == nil) {
             _infoButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSearch target:self action:@selector(searchPressed)];
+            if ([TGPresentation brandedIOS6Style])
+                _infoButtonItem.imageInsets = UIEdgeInsetsMake(0.0f, 2.0f, 0.0f, -2.0f);
         }
         return _infoButtonItem;
     }
@@ -1261,15 +1437,198 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
 }
 
+- (void)setAdditionalNavigationBarHeight:(CGFloat)height
+{
+    _brandedMusicPlayerRequestedHeight = height;
+    CGFloat appliedHeight = TGConversationHeaderHeight(height, _brandedMusicPlayerCompact, [TGPresentation brandedIOS6Style], [_currentTitlePanel isKindOfClass:[TGPinnedMessageTitlePanel class]]);
+    [super setAdditionalNavigationBarHeight:appliedHeight];
+    [self _layoutBrandedMusicPlayer];
+}
+
+- (CGFloat)_brandedMusicPlayerCardTopInset
+{
+    return MAX(0.0f, self.controllerInset.top - self.additionalNavigationBarHeight);
+}
+
+- (void)_layoutBrandedPinnedHeader
+{
+    bool pinned = [_currentTitlePanel isKindOfClass:[TGPinnedMessageTitlePanel class]];
+    bool branded = [TGPresentation brandedIOS6Style];
+    bool merged = branded && _brandedMusicPlayerCompact && pinned;
+    bool player = _brandedMusicPlayerRequestedHeight > 2.0f;
+    if (pinned)
+    {
+        TGPinnedMessageTitlePanel *panel = (TGPinnedMessageTitlePanel *)_currentTitlePanel;
+        panel.joinsPreviousHeader = branded && _brandedMusicPlayerRequestedHeight > FLT_EPSILON;
+        panel.compactHeader = merged && !player;
+        TGModernConversationControllerReference *reference = _ios4LifetimeReference;
+        panel.compactHeaderActivated = ^
+        {
+            [TGModernConversationControllerResolveReference(reference) endEditing];
+        };
+    }
+    _titlePanelWrappingView.hidden = merged && player;
+    if (_titlePanelWrappingView != nil)
+    {
+        CGFloat top = merged && !player ? [self _brandedMusicPlayerCardTopInset] : self.controllerInset.top;
+        CGFloat height = merged && !player ? 21.0f : MAX(44.0f, _currentTitlePanel.frame.size.height);
+        _titlePanelWrappingView.frame = CGRectMake(0.0f, top, _view.bounds.size.width, height);
+    }
+}
+
+- (CGFloat)_visibleTitlePanelHeight:(TGModernConversationTitlePanel *)panel
+{
+    if (panel == nil || panel.superview != _titlePanelWrappingView || _titlePanelWrappingView.hidden || panel.hidden || panel.frame.origin.y < -FLT_EPSILON)
+        return 0.0f;
+    if ([panel isKindOfClass:[TGPinnedMessageTitlePanel class]] && ((TGPinnedMessageTitlePanel *)panel).compactHeader)
+        return 0.0f;
+    return panel.frame.size.height;
+}
+
+- (void)_layoutBrandedMusicPlayer
+{
+    [self _layoutBrandedPinnedHeader];
+    if (_brandedMusicPlayerHostView == nil)
+        return;
+    bool branded = [TGPresentation brandedIOS6Style];
+    CGFloat inset = [TGPresentation brandedIOS6ConversationAppearance].backgroundCardHorizontalInset;
+    bool pinnedSummary = _brandedMusicPlayerCompact && _brandedMusicPlayerRequestedHeight <= 2.0f && [_currentTitlePanel isKindOfClass:[TGPinnedMessageTitlePanel class]];
+    CGFloat height = branded && !pinnedSummary && _brandedMusicPlayerRequestedHeight > FLT_EPSILON ? self.additionalNavigationBarHeight : 0.0f;
+    _brandedMusicPlayerHostView.frame = CGRectMake(inset, [self _brandedMusicPlayerCardTopInset], MAX(0.0f, _view.bounds.size.width - inset * 2.0f), height);
+    _brandedMusicPlayerHostView.hidden = height < FLT_EPSILON;
+    TGNavigationBar *navigationBar = [self.navigationController.navigationBar isKindOfClass:[TGNavigationBar class]] ? (TGNavigationBar *)self.navigationController.navigationBar : nil;
+    if (_brandedMusicPlayerVisible && branded)
+    {
+        navigationBar.musicPlayerLayout = _brandedMusicPlayerCompact ? TGNavigationBarMusicPlayerLayoutCompactConversation : TGNavigationBarMusicPlayerLayoutConversation;
+        navigationBar.musicPlayerHostView = _brandedMusicPlayerHostView;
+        TGModernConversationControllerReference *reference = _ios4LifetimeReference;
+        navigationBar.musicPlayerCompactHeaderActivated = ^
+        {
+            [TGModernConversationControllerResolveReference(reference) endEditing];
+        };
+    }
+    else if (navigationBar.musicPlayerHostView == _brandedMusicPlayerHostView)
+    {
+        navigationBar.musicPlayerLayout = TGNavigationBarMusicPlayerLayoutStandard;
+        navigationBar.musicPlayerCompactHeaderActivated = nil;
+        navigationBar.musicPlayerHostView = nil;
+    }
+}
+
+- (void)_updateBrandedMusicPlayerForKeyboardHeight:(CGFloat)keyboardHeight duration:(NSTimeInterval)duration animationCurve:(int)curve
+{
+    bool compact = keyboardHeight > FLT_EPSILON || (_inputTextPanel.isCustomKeyboardActive && _inputTextPanel.customKeyboardHeight > FLT_EPSILON);
+    if (_brandedMusicPlayerCompact == compact)
+        return;
+    _brandedMusicPlayerCompact = compact;
+    if (![TGPresentation brandedIOS6Style])
+        return;
+    void (^layout)(void) = ^
+    {
+        [self setAdditionalNavigationBarHeight:_brandedMusicPlayerRequestedHeight];
+    };
+    if (duration > DBL_EPSILON)
+        [UIView animateWithDuration:duration delay:0.0 options:(curve << 16) | UIViewAnimationOptionBeginFromCurrentState animations:layout completion:nil];
+    else
+        layout();
+}
+
+- (CGSize)_brandedBackgroundSize
+{
+    CGSize size = _view.bounds.size;
+    if (size.width < 1.0f || size.height < 1.0f)
+        size = [TGViewController screenSizeForInterfaceOrientation:UIInterfaceOrientationPortrait];
+    return size;
+}
+
+- (UIImage *)brandedBackgroundImage
+{
+    return [TGPresentation brandedIOS6ConversationBackgroundImageForSize:[self _brandedBackgroundSize]];
+}
+
+- (bool)_brandedBackgroundNeedsUpdate
+{
+    return !CGSizeEqualToSize(_brandedBackgroundAppliedSize, [self _brandedBackgroundSize]) || ABS(_brandedBackgroundAppliedTopInset - [self _brandedMusicPlayerCardTopInset]) > FLT_EPSILON || ABS(_brandedBackgroundAppliedBottomSafeInset - self.controllerSafeAreaInset.bottom) > FLT_EPSILON || _brandedBackgroundAppliedTheme != [OGTheme brandedTheme];
+}
+
+- (UIImageView *)_brandedImageView:(UIImageView *)view image:(UIImage *)image frame:(CGRect)frame
+{
+    if (image == nil)
+    {
+        [view removeFromSuperview];
+        return nil;
+    }
+    if (view == nil)
+    {
+        view = [[UIImageView alloc] init];
+        view.userInteractionEnabled = false;
+    }
+    view.image = image;
+    view.frame = frame;
+    return view;
+}
+
+- (void)_orderBrandedCardEdgeViews
+{
+    if (_collectionView == nil || _collectionView.superview != _view)
+        return;
+    if (_brandedCardBottomEdgeView != nil)
+        [_view insertSubview:_brandedCardBottomEdgeView aboveSubview:_collectionView];
+    if (_brandedCardTopEdgeView != nil)
+        [_view insertSubview:_brandedCardTopEdgeView aboveSubview:_collectionView];
+    if (_brandedMusicPlayerHostView != nil)
+        [_view insertSubview:_brandedMusicPlayerHostView aboveSubview:[self _collectionContentTopView]];
+    [self _layoutBrandedMusicPlayer];
+}
+
+- (UIView *)_collectionContentTopView
+{
+    if (_brandedCardBottomEdgeView.superview == _view)
+        return _brandedCardBottomEdgeView;
+    if (_brandedCardTopEdgeView.superview == _view)
+        return _brandedCardTopEdgeView;
+    return _collectionView;
+}
+
+- (void)_updateBrandedCardViewsWithBackground:(UIImage *)background
+{
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    CGSize size = [self _brandedBackgroundSize];
+    CGFloat topInset = [self _brandedMusicPlayerCardTopInset];
+    CGFloat bottomSafeInset = self.controllerSafeAreaInset.bottom;
+
+    CGRect cardFrame = CGRectZero;
+    UIImage *cardImage = brandedIOS6Style && background != nil ? [TGPresentation brandedIOS6ConversationCardImageForSize:size topInset:topInset bottomSafeInset:bottomSafeInset frame:&cardFrame] : nil;
+    _brandedCardView = [self _brandedImageView:_brandedCardView image:cardImage frame:cardFrame];
+    if (_brandedCardView != nil && _backgroundView != nil)
+    {
+        _brandedCardView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_view insertSubview:_brandedCardView aboveSubview:_backgroundView];
+    }
+
+    CGRect topFrame = CGRectZero;
+    CGRect bottomFrame = CGRectZero;
+    UIImage *topImage = cardImage != nil ? [TGPresentation brandedIOS6ConversationCardEdgeImageWithBackground:background card:cardImage cardImageFrame:cardFrame topInset:topInset bottomSafeInset:bottomSafeInset bottomEdge:false frame:&topFrame] : nil;
+    UIImage *bottomImage = cardImage != nil ? [TGPresentation brandedIOS6ConversationCardEdgeImageWithBackground:background card:cardImage cardImageFrame:cardFrame topInset:topInset bottomSafeInset:bottomSafeInset bottomEdge:true frame:&bottomFrame] : nil;
+    _brandedCardTopEdgeView = [self _brandedImageView:_brandedCardTopEdgeView image:topImage frame:topFrame];
+    _brandedCardBottomEdgeView = [self _brandedImageView:_brandedCardBottomEdgeView image:bottomImage frame:bottomFrame];
+    [self _orderBrandedCardEdgeViews];
+
+    _brandedBackgroundAppliedSize = size;
+    _brandedBackgroundAppliedTopInset = topInset;
+    _brandedBackgroundAppliedBottomSafeInset = bottomSafeInset;
+    _brandedBackgroundAppliedTheme = brandedIOS6Style ? [OGTheme brandedTheme] : nil;
+}
+
 - (void)_updateConversationBackgroundAnimated:(bool)animated
 {
     if (_view == nil || _backgroundView == nil)
         return;
 
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
-    UIImage *image = brandedIOS6Style ? nil : [[TGWallpaperManager instance] currentWallpaperImage];
-    UIColor *viewColor = brandedIOS6Style ? UIColorRGB(0xdbe2ed) : [UIColor whiteColor];
-    UIColor *imageViewColor = brandedIOS6Style ? UIColorRGB(0xdbe2ed) : [UIColor clearColor];
+    UIImage *image = brandedIOS6Style ? [self brandedBackgroundImage] : [[TGWallpaperManager instance] currentWallpaperImage];
+    UIColor *viewColor = [UIColor whiteColor];
+    UIColor *imageViewColor = brandedIOS6Style ? [UIColor whiteColor] : [UIColor clearColor];
 
     [_backgroundTransitionView.layer removeAllAnimations];
     [_backgroundTransitionView removeFromSuperview];
@@ -1289,6 +1648,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     _view.backgroundColor = viewColor;
     _backgroundView.image = image;
     _backgroundView.backgroundColor = imageViewColor;
+    [self _updateBrandedCardViewsWithBackground:image];
 
     UIImageView *transitionView = _backgroundTransitionView;
     if (transitionView != nil)
@@ -1308,6 +1668,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 - (void)setPresentation:(TGPresentation *)presentation
 {
     _presentation = presentation;
+    [self setAdditionalNavigationBarHeight:_brandedMusicPlayerRequestedHeight];
     [_titleView setPresentation:presentation];
     [_inputTextPanel setPresentation:presentation];
     if (_currentInputPanel != _inputTextPanel)
@@ -1353,7 +1714,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         if (strongSelf != nil) {
             bool keyboardShouldChangeSize = false;
             if (strongSelf->_keyboardHeight > FLT_EPSILON) {
-                UIView *inputView = strongSelf->_inputTextPanel.inputField.internalTextView.inputView;
+                UIView *inputView = OGPlatformTextInputView(strongSelf->_inputTextPanel.inputField.internalTextView);
                 if ([inputView isKindOfClass:[TGCommandKeyboardView class]] && (inputView.autoresizingMask & UIViewAutoresizingFlexibleHeight) == 0) {
                     keyboardShouldChangeSize = false;
                 } else {
@@ -1387,16 +1748,20 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     };
     
     _view.clipsToBounds = true;
-    _view.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : [UIColor whiteColor];
+    _view.backgroundColor = [UIColor whiteColor];
+    _brandedMusicPlayerHostView = [[UIView alloc] initWithFrame:CGRectZero];
+    _brandedMusicPlayerHostView.clipsToBounds = true;
+    _brandedMusicPlayerHostView.backgroundColor = [UIColor clearColor];
     
     _backgroundView = [[UIImageView alloc] initWithFrame:_view.bounds];
-    UIImage *wallpaperImage = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ResourceImage:@"list"] : [[TGWallpaperManager instance] currentWallpaperImage];
+    UIImage *wallpaperImage = [TGPresentation brandedIOS6Style] ? [self brandedBackgroundImage] : [[TGWallpaperManager instance] currentWallpaperImage];
     _backgroundView.image = wallpaperImage;
     _backgroundView.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : [UIColor clearColor];
     _backgroundView.clipsToBounds = true;
     _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _backgroundView.contentMode = UIViewContentModeScaleAspectFill;
     [_view addSubview:_backgroundView];
+    [self _updateBrandedCardViewsWithBackground:wallpaperImage];
     
     int64_t peerId = [self peerId];
     _inputTextPanel = [[TGModernConversationInputTextPanel alloc] initWithFrame:CGRectMake(0, _view.frame.size.height - 45, _view.frame.size.width, 45) accessoryView:[_companion _controllerInputTextPanelAccessoryView]];
@@ -1430,13 +1795,19 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     _inputTextPanel.micButton.fadeDisabled = _bannedMedia;
     
     bool videoMessage = false;
+#if !defined(ONEGRAM_ARMV6)
     if (_isChannel)
         videoMessage = ![[[NSUserDefaults standardUserDefaults] objectForKey:@"TG_lastChannelRecordModeIsAudio_v0"] boolValue];
     else
         videoMessage = [[[NSUserDefaults standardUserDefaults] objectForKey:@"TG_lastPrivateRecordModeIsVideo_v0"] boolValue];
+#endif
     
     [_inputTextPanel setVideoMessage:videoMessage];
+#if defined(ONEGRAM_ARMV6)
+    [_inputTextPanel setVideoMessageAvailable:false];
+#else
     [_inputTextPanel setVideoMessageAvailable:[_companion allowVideoMessages]];
+#endif
     
     _inputTextPanel.delegate = self;
     
@@ -1491,7 +1862,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
     
     if (_collectionView != nil) {
-        [_view insertSubview:_emptyListPlaceholder aboveSubview:_collectionView];
+        [_view insertSubview:_emptyListPlaceholder aboveSubview:[self _collectionContentTopView]];
     }
     
     _scrollButtons = [[TGConversationScrollButtonContainer alloc] init];
@@ -1535,7 +1906,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     };
     
     if (_collectionView != nil)
-        [_view insertSubview:_scrollButtons aboveSubview:_collectionView];
+        [_view insertSubview:_scrollButtons aboveSubview:[self _collectionContentTopView]];
     else
         [_view insertSubview:_scrollButtons belowSubview:_currentInputPanel];
     
@@ -1579,6 +1950,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         UIViewController *previousController = [self.navigationController.viewControllers objectAtIndex:self.navigationController.viewControllers.count - 2];
         [_titleView setBackButtonTitle:previousController.navigationItem.backBarButtonItem.title.length == 0 ? TGLocalized(@"Common.Back") : previousController.navigationItem.backBarButtonItem.title];
     }
+    [self _updateBackButtonTitleAdjustment:true];
     
     if (!_alreadyHadWillAppear) {
         _readMentionsMessageIds = [[NSMutableSet alloc] init];
@@ -1608,6 +1980,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     [_avatarButton setOrientation:self.interfaceOrientation];
     
     [super viewWillAppear:animated];
+    _brandedMusicPlayerVisible = true;
+    [self _updateBrandedMusicPlayerForKeyboardHeight:_keyboardHeight duration:0.0 animationCurve:0];
+    [self _layoutBrandedMusicPlayer];
     
     bool beingAnimated = animated;
     if (_shouldIgnoreAppearAnimationOnce)
@@ -1619,17 +1994,17 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     if (!_companion.previewMode && [_companion respondsToSelector:@selector(scheduleReadHistory)])
     {
         TGGenericModernConversationCompanion *genericCompanion = (TGGenericModernConversationCompanion *)_companion;
-        while (false) TGLog(@"READ controller.willAppearSchedule peer=%lld first=%d canRead=%d", genericCompanion.conversationId, !_alreadyHadWillAppear ? 1 : 0, [self canReadHistory] ? 1 : 0);
         [genericCompanion scheduleReadHistory];
         TGDispatchAfter(0.8, dispatch_get_main_queue(), ^
         {
             if (!_companion.previewMode && [_companion respondsToSelector:@selector(scheduleReadHistory)])
             {
                 TGGenericModernConversationCompanion *delayedCompanion = (TGGenericModernConversationCompanion *)_companion;
-                while (false) TGLog(@"READ controller.delayedSchedule peer=%lld canRead=%d", delayedCompanion.conversationId, [self canReadHistory] ? 1 : 0);
                 [delayedCompanion scheduleReadHistory];
                 int64_t delayedPeerId = delayedCompanion.conversationId;
-                while (false) TGLog(@"READ controller.delayedDbRead peer=%lld", delayedPeerId);
+#if defined(ONEGRAM_ARMV6)
+                if ([self canReadHistory])
+#endif
                 [TGDatabaseInstance() transactionReadHistoryForPeerIds:@[[[TGReadPeerMessagesRequest alloc] initWithPeerId:delayedPeerId maxMessageIndex:nil date:0 length:0 unread:false]]];
             }
         });
@@ -1763,7 +2138,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     if (!_ios6DidRefreshRecentReactions && !_companion.previewMode)
     {
         TGModernConversationControllerReference *weakReactionSelf = _ios4LifetimeReference;
-        TGDispatchAfter(0.35, dispatch_get_main_queue(), ^
+        TGDispatchAfter(2.0, dispatch_get_main_queue(), ^
         {
             TGModernConversationController *strongReactionSelf = TGModernConversationControllerResolveReference(weakReactionSelf);
             if (strongReactionSelf != nil)
@@ -1992,6 +2367,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)viewWillDisappear:(BOOL)animated
 {
+    _brandedMusicPlayerVisible = false;
+    [self _layoutBrandedMusicPlayer];
     if (_ogRuntimeInteractionActive)
     {
         _ogRuntimeInteractionActive = false;
@@ -2092,6 +2469,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)viewDidDisappear:(BOOL)animated
 {
+    [self _updateBackButtonTitleAdjustment:false];
     _receivedWillDisappear = false;
     _didDisappearBeforeAppearing = true;
     
@@ -2138,9 +2516,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     _isRotating = true;
     
-    if (_keyboardHeight < FLT_EPSILON) {
-        //[self _performSizeChangesWithDuration:duration size:_view.bounds.size];
-    }
     
     [_menuContainerView hideMenu];
     _menuContainerView = nil;
@@ -2165,6 +2540,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
     
+    if ([TGPresentation brandedIOS6Style] && [self _brandedBackgroundNeedsUpdate])
+        [self _updateConversationBackgroundAnimated:false];
+    
     [_currentInputPanel adjustForSize:_view.bounds.size keyboardHeight:_keyboardHeight duration:duration animationCurve:0 contentAreaHeight:[self contentAreaHeight] safeAreaInset:[TGViewController safeAreaInsetForOrientation:toInterfaceOrientation]];
     [self _adjustCollectionViewForSize:_view.bounds.size keyboardHeight:_keyboardHeight inputContainerHeight:[_currentInputPanel currentHeight] duration:duration animationCurve:0];
 }
@@ -2172,6 +2550,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 - (void)controllerInsetUpdated:(UIEdgeInsets)previousInset
 {
     [super controllerInsetUpdated:previousInset];
+    
+    if ([TGPresentation brandedIOS6Style] && [self _brandedBackgroundNeedsUpdate])
+        [self _updateConversationBackgroundAnimated:false];
     
     if (![self viewControllerIsChangingInterfaceOrientation] && _collectionView != nil)
         [self _adjustCollectionInset];
@@ -2189,7 +2570,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     {
         if (_titlePanelWrappingView != nil)
         {
-            _titlePanelWrappingView.frame = CGRectMake(0.0f, self.controllerInset.top, _view.frame.size.width, _titlePanelWrappingView.frame.size.height);
+            [self _layoutBrandedPinnedHeader];
         }
     }
     
@@ -2366,7 +2747,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         {
             [_view addSubview:_currentInputPanel];
             [_currentInputPanel adjustForSize:_view.bounds.size keyboardHeight:_keyboardHeight duration:0.0 animationCurve:0 contentAreaHeight:[self contentAreaHeight] safeAreaInset:self.controllerSafeAreaInset];
-            //_currentInputPanel.frame = CGRectMake(_currentInputPanel.frame.origin.x, _view.frame.size.height - _currentInputPanel.frame.size.height, _currentInputPanel.frame.size.width, _currentInputPanel.frame.size.height);
             
             [self _adjustCollectionViewForSize:_view.bounds.size keyboardHeight:_keyboardHeight inputContainerHeight:_currentInputPanel.frame.size.height duration:0.0 animationCurve:0];
         }
@@ -2399,8 +2779,187 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     return 0;
 }
 
+- (CGFloat)_historyPrefetchDistance
+{
+    CGFloat height = _collectionView.bounds.size.height;
+    return MAX(height * TGModernConversationControllerHistoryPrefetchScreens, TGModernConversationControllerHistoryPrefetchMinimumDistance);
+}
+
+- (CGFloat)_predictedHistoryOffset
+{
+    CGRect bounds = _collectionView.bounds;
+    CGFloat height = bounds.size.height;
+    CGFloat projected = bounds.origin.y + MAX(-height * 3.0f, MIN(height * 3.0f, _scrollVelocityY * 0.18f));
+    if (_historyTargetOffsetValid)
+        projected = _historyTargetOffset;
+    CGFloat maxOffset = MAX(-_collectionView.contentInset.top, _collectionView.contentSize.height - height + _collectionView.contentInset.bottom);
+    return MAX(-_collectionView.contentInset.top, MIN(maxOffset, projected));
+}
+
+- (void)_historyPrefetchRangeMinY:(CGFloat *)minY maxY:(CGFloat *)maxY
+{
+    CGRect bounds = _collectionView.bounds;
+    CGFloat predicted = [self _predictedHistoryOffset];
+    CGFloat lower = MIN(bounds.origin.y, predicted);
+    CGFloat upper = MAX(bounds.origin.y, predicted);
+    *minY = lower;
+    *maxY = upper + bounds.size.height;
+}
+
+- (void)_requestHistoryIfNeeded
+{
+    CGFloat contentHeight = _collectionView.contentSize.height;
+    if (_fastScrolling || contentHeight < FLT_EPSILON || _collectionView.bounds.size.height < FLT_EPSILON)
+        return;
+    
+    CGFloat minY = 0.0f;
+    CGFloat maxY = 0.0f;
+    [self _historyPrefetchRangeMinY:&minY maxY:&maxY];
+    CGFloat distance = [self _historyPrefetchDistance];
+    CGFloat velocityLead = MIN(_collectionView.bounds.size.height * 4.0f, ABS(_scrollVelocityY) * 0.35f);
+    CGFloat aboveDistance = _scrollVelocityY > 60.0f ? distance + velocityLead : (_scrollVelocityY < -60.0f ? MAX(_collectionView.bounds.size.height * 2.0f, distance * 0.5f) : distance);
+    CGFloat belowDistance = _scrollVelocityY < -60.0f ? distance + velocityLead : (_scrollVelocityY > 60.0f ? MAX(_collectionView.bounds.size.height * 2.0f, distance * 0.5f) : distance);
+
+    [_companion setHistoryAboveReadAheadAllowed:contentHeight - maxY < aboveDistance];
+
+    if (_enableAboveHistoryRequests && contentHeight - maxY < aboveDistance)
+    {
+#if defined(ONEGRAM_DIAGNOSTICS)
+        static CFAbsoluteTime lastAboveReport = 0.0;
+        CFAbsoluteTime reportTime = CFAbsoluteTimeGetCurrent();
+        if (reportTime - lastAboveReport > 0.5)
+        {
+            lastAboveReport = reportTime;
+            OGPlatformDiagnosticLog(@"HISTORY request above remaining=%.0f distance=%.0f velocity=%.0f items=%d", contentHeight - maxY, aboveDistance, _scrollVelocityY, (int)_items.count);
+        }
+#endif
+        [_companion loadMoreMessagesAbove];
+    }
+    
+    if (_enableBelowHistoryRequests && minY < belowDistance)
+    {
+#if defined(ONEGRAM_DIAGNOSTICS)
+        static CFAbsoluteTime lastBelowReport = 0.0;
+        CFAbsoluteTime reportTime = CFAbsoluteTimeGetCurrent();
+        if (reportTime - lastBelowReport > 0.5)
+        {
+            lastBelowReport = reportTime;
+            OGPlatformDiagnosticLog(@"HISTORY request below remaining=%.0f distance=%.0f velocity=%.0f items=%d", minY, belowDistance, _scrollVelocityY, (int)_items.count);
+        }
+#endif
+        [_companion loadMoreMessagesBelow];
+    }
+}
+
+- (TGVisibleMessageHole *)_prefetchedMessageHole
+{
+    CGRect bounds = _collectionView.bounds;
+    if (bounds.size.height < FLT_EPSILON || _items.count == 0 || _collectionView.contentSize.height < FLT_EPSILON)
+        return nil;
+    
+    CGFloat offsetY = bounds.origin.y;
+    NSUInteger itemCount = _items.count;
+    id firstItem = _items[0];
+    id lastItem = _items[itemCount - 1];
+    if (!_prefetchedHoleValid || _prefetchedHoleItemCount != itemCount || _prefetchedHoleFirstItem != firstItem || _prefetchedHoleLastItem != lastItem || ABS(offsetY - _prefetchedHoleOffset) > bounds.size.height * 0.5f)
+    {
+        _prefetchedHoleValid = true;
+        _prefetchedHoleOffset = offsetY;
+        _prefetchedHoleItemCount = itemCount;
+        _prefetchedHoleFirstItem = firstItem;
+        _prefetchedHoleLastItem = lastItem;
+        _prefetchedHoleItem = [self _findPrefetchedHoleItem];
+    }
+    
+    if (_prefetchedHoleItem == nil || _prefetchedHoleItem->_message.hole == nil)
+        return nil;
+    
+    TGVisibleMessageHoleDirection direction = TGVisibleMessageHoleDirectionEarlier;
+    if (_messageIdForVisibleHoleDirection != 0 && _messageIdForVisibleHoleDirection <= ABS(_prefetchedHoleItem->_message.mid))
+        direction = TGVisibleMessageHoleDirectionLater;
+    
+    return [[TGVisibleMessageHole alloc] initWithHole:_prefetchedHoleItem->_message.hole direction:direction];
+}
+
+- (bool)_shouldReportVisibleHoles:(NSArray *)holes
+{
+    NSUInteger itemCount = _items.count;
+    bool changed = !_reportedHolesValid || _reportedHolesItemCount != itemCount || _reportedHoles.count != holes.count;
+    if (!changed)
+    {
+        for (NSUInteger index = 0; index < holes.count; index++)
+        {
+            TGVisibleMessageHole *hole = holes[index];
+            TGVisibleMessageHole *reportedHole = _reportedHoles[index];
+            if (hole.hole != reportedHole.hole || hole.direction != reportedHole.direction)
+            {
+                changed = true;
+                break;
+            }
+        }
+    }
+    
+    if (!changed)
+        return false;
+    
+    _reportedHolesValid = true;
+    _reportedHolesItemCount = itemCount;
+    _reportedHoles = holes;
+    return true;
+}
+
+- (TGMessageModernConversationItem *)_findPrefetchedHoleItem
+{
+    CGRect bounds = _collectionView.bounds;
+    CGFloat prefetchDistance = [self _historyPrefetchDistance];
+    CGFloat minY = 0.0f;
+    CGFloat maxY = 0.0f;
+    [self _historyPrefetchRangeMinY:&minY maxY:&maxY];
+    CGRect prefetchRect = CGRectMake(bounds.origin.x, minY - prefetchDistance, bounds.size.width, maxY - minY + prefetchDistance * 2.0f);
+    
+    TGMessageModernConversationItem *closestItem = nil;
+    CGFloat closestDistance = CGFLOAT_MAX;
+    NSUInteger itemCount = _items.count;
+    if (itemCount == 0)
+        return nil;
+    
+    std::vector<const void *> itemPointers(itemCount);
+    CFArrayGetValues((__bridge CFArrayRef)_items, CFRangeMake(0, (CFIndex)itemCount), &itemPointers[0]);
+    Class messageItemClass = [TGMessageModernConversationItem class];
+    for (NSUInteger index = 0; index < itemCount; index++)
+    {
+        __unsafe_unretained id candidate = (__bridge id)itemPointers[index];
+        if (object_getClass(candidate) != messageItemClass && ![candidate isKindOfClass:messageItemClass])
+            continue;
+        
+        __unsafe_unretained TGMessageModernConversationItem *item = (TGMessageModernConversationItem *)candidate;
+        if (item->_message.hole == nil)
+            continue;
+        
+        CGRect frame = CGRectZero;
+        if (![_collectionLayout frameForItemAtIndex:index frame:&frame] || !CGRectIntersectsRect(prefetchRect, frame))
+            continue;
+        
+        CGFloat distance = 0.0f;
+        if (CGRectGetMaxY(frame) < CGRectGetMinY(bounds))
+            distance = CGRectGetMinY(bounds) - CGRectGetMaxY(frame);
+        else if (CGRectGetMinY(frame) > CGRectGetMaxY(bounds))
+            distance = CGRectGetMinY(frame) - CGRectGetMaxY(bounds);
+        
+        if (closestItem == nil || distance < closestDistance)
+        {
+            closestItem = item;
+            closestDistance = distance;
+        }
+    }
+    
+    return closestItem;
+}
+
 - (void)_updateVisibleItemIndices:(TGModernCollectionCell *)additionalCell
 {
+    _visibleItemIndicesUpdateScheduled = false;
+    
     if (!_disableScrollProcessing) {
         if (_messageIdForVisibleHoleDirection != 0 && !_enableBelowHistoryRequests && _collectionView.contentOffset.y <= -_collectionView.contentInset.top + 10.0f && [_collectionView visibleCells].count != 0) {
             _messageIdForVisibleHoleDirection = 0;
@@ -2409,6 +2968,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     NSMutableArray *sortedHoles = nil;
     NSMutableArray *currentMessageIds = nil;
+    NSMutableArray *visibleMessageIds = [[NSMutableArray alloc] init];
     NSMutableArray *currentUnseenMentionIds = nil;
     int32_t maxMessageId = 0;
     TGMessage *maxMessage = nil;
@@ -2461,6 +3021,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             
             int32_t itemMid = item->_message.mid;
             int32_t itemDate = (int32_t)item->_message.date;
+            [visibleMessageIds addObject:@(itemMid)];
             
             if (item->_message.viewCount != 0 && itemMid < TGMessageLocalMidBaseline) {
                 if (currentMessageIds == nil) {
@@ -2550,10 +3111,25 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                     [currentUnseenMentionIds addObject:@(item->_message.mid)];
                 }
             }
+            [visibleMessageIds addObject:@(item->_message.mid)];
         }
     }
     
-    [_companion _controllerDidUpdateVisibleHoles:sortedHoles];
+    [visibleMessageIds sortUsingSelector:@selector(compare:)];
+    if (visibleMessageIds.count != 0 && ![visibleMessageIds isEqualToArray:_reportedVisibleMessageIds])
+    {
+        _reportedVisibleMessageIds = visibleMessageIds;
+        [_companion _controllerDidUpdateVisibleMessageIds:visibleMessageIds];
+    }
+    
+    if (sortedHoles == nil) {
+        TGVisibleMessageHole *prefetchedHole = [self _prefetchedMessageHole];
+        if (prefetchedHole != nil)
+            sortedHoles = [[NSMutableArray alloc] initWithObjects:prefetchedHole, nil];
+    }
+    
+    if ([self _shouldReportVisibleHoles:sortedHoles])
+        [_companion _controllerDidUpdateVisibleHoles:sortedHoles];
     if (currentMessageIds != nil) {
         [_companion _controllerDidUpdateVisibleUnseenMessageIds:currentMessageIds];
     }
@@ -2567,21 +3143,10 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         if ((NSInteger)_items.count >= TGModernConversationControllerUnloadHistoryLimit + TGModernConversationControllerUnloadHistoryThreshold)
             [self _maybeUnloadHistory];
         
-        if (!_fastScrolling && _enableAboveHistoryRequests && _collectionView.contentOffset.y > _collectionView.contentSize.height - 800 * 2.0f && _collectionView.contentSize.height > FLT_EPSILON)
-            [_companion loadMoreMessagesAbove];
-        
-        if (!_fastScrolling && _enableBelowHistoryRequests && _collectionView.contentOffset.y < 600 * 2.0f)
-            [_companion loadMoreMessagesBelow];
+        [self _requestHistoryIfNeeded];
     }
-    
-    if (maxMessageId != 0) {
-        //[_scrollStack updateStack:maxMessageId];
-    }
-    
-//    if (maxMessage != nil && [_companion supportsSequentialRead]) {
-//        [_companion updateLatestVisibleMessageIndex:[TGMessageIndex indexWithPeerId:maxMessage.fromUid messageId:maxMessage.mid] date:(int32_t)maxMessage.date force:false];
-//    }
-    
+
+
     bool explicitelyShowUnseenMessagesButton = _collectionView.contentOffset.y > 200.0f || _hasUnseenMessagesBelow;
     [self setScrollBackButtonVisible:explicitelyShowUnseenMessagesButton];
 }
@@ -2633,7 +3198,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         }
     }
     
-    [self _updateVisibleItemIndices:(TGModernCollectionCell *)cell];
+    [self _setNeedsVisibleItemIndicesUpdate];
 }
 
 - (PSUICollectionViewCell *)collectionView:(PSUICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath
@@ -2691,7 +3256,26 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         if (item.boundCell != nil)
             [item unbindCell:_viewStorage];
         
+#if defined(ONEGRAM_DIAGNOSTICS)
+        TGModernConversationThreadSample diagnosticStartSample;
+        TGModernConversationTakeThreadSample(&diagnosticStartSample);
+        CFAbsoluteTime diagnosticStartTime = CFAbsoluteTimeGetCurrent();
+        TGModernViewModelBindTraceBegin();
+#endif
         [item bindCell:cell viewStorage:_viewStorage];
+#if defined(ONEGRAM_DIAGNOSTICS)
+        CFAbsoluteTime diagnosticDuration = CFAbsoluteTimeGetCurrent() - diagnosticStartTime;
+        TGModernViewModel *diagnosticViewModel = [item isKindOfClass:[TGMessageModernConversationItem class]] ? [(TGMessageModernConversationItem *)item viewModel] : nil;
+        NSString *diagnosticTrace = TGModernViewModelBindTraceEnd(diagnosticViewModel == nil ? Nil : [diagnosticViewModel class], diagnosticDuration);
+        TGModernConversationThreadSample diagnosticEndSample;
+        TGModernConversationTakeThreadSample(&diagnosticEndSample);
+        TGModernConversationScrollStatBindTime += diagnosticEndSample.threadTime - diagnosticStartSample.threadTime;
+        TGModernConversationScrollStatBindCount++;
+        if (diagnosticDuration >= 0.016)
+        {
+            OGPlatformDiagnosticLog(@"BINDSLOW %@ mid=%d h=%.0f ms=%.0f interaction=%d main=%.0f others=%.0f faults=%d pageins=%d csw=%d pri=%d trace: %@", diagnosticViewModel == nil ? @"?" : NSStringFromClass([diagnosticViewModel class]), [item isKindOfClass:[TGMessageModernConversationItem class]] ? ((TGMessageModernConversationItem *)item)->_message.mid : 0, diagnosticViewModel.frame.size.height, diagnosticDuration * 1000.0, OGRuntimeInteractionActiveFast() ? 1 : 0, (diagnosticEndSample.threadTime - diagnosticStartSample.threadTime) * 1000.0, ((diagnosticEndSample.taskTime - diagnosticStartSample.taskTime) - (diagnosticEndSample.threadTime - diagnosticStartSample.threadTime)) * 1000.0, (int)(diagnosticEndSample.faults - diagnosticStartSample.faults), (int)(diagnosticEndSample.pageins - diagnosticStartSample.pageins), (int)(diagnosticEndSample.contextSwitches - diagnosticStartSample.contextSwitches), diagnosticEndSample.currentPriority, diagnosticTrace);
+        }
+#endif
     }
     
     if (_openMediaForMessageIdUponDisplay != 0 && [item isKindOfClass:[TGMessageModernConversationItem class]] && ((TGMessageModernConversationItem *)item)->_message.mid == _openMediaForMessageIdUponDisplay)
@@ -2753,34 +3337,254 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         }
     }
     
-    [self _updateVisibleItemIndices:nil];
+    [self _setNeedsVisibleItemIndicesUpdate];
+}
+
+- (void)_setNeedsVisibleItemIndicesUpdate
+{
+    if (_visibleItemIndicesUpdateScheduled)
+        return;
+    _visibleItemIndicesUpdateScheduled = true;
+    __weak TGModernConversationController *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGModernConversationController *strongSelf = weakSelf;
+        if (strongSelf != nil && strongSelf->_visibleItemIndicesUpdateScheduled)
+            [strongSelf _updateVisibleItemIndices:nil];
+    });
 }
 
 #pragma mark -
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+    if (scrollView == _collectionView && targetContentOffset != NULL)
+    {
+        _historyTargetOffset = targetContentOffset->y;
+        _historyTargetOffsetValid = true;
+        _scrollVelocityY = velocity.y;
+        if (velocity.y > FLT_EPSILON && !_disableScrollProcessing && [_companion historyAboveMayBeAvailable])
+        {
+            CGFloat height = _collectionView.bounds.size.height;
+            CGFloat maxOffset = _collectionView.contentSize.height - height + _collectionView.contentInset.bottom;
+            CGFloat softLimit = maxOffset - height;
+            if (targetContentOffset->y > softLimit)
+                targetContentOffset->y = MAX(_collectionView.contentOffset.y, softLimit);
+        }
+        _prerenderValid = false;
+        _prefetchedHoleValid = false;
+        [self _updateContentPrerendering:false];
+        if (!_disableScrollProcessing)
+        {
+            [self _requestHistoryIfNeeded];
+            TGVisibleMessageHole *prefetchedHole = [self _prefetchedMessageHole];
+            if (prefetchedHole != nil)
+            {
+                NSArray *holes = @[prefetchedHole];
+                if ([self _shouldReportVisibleHoles:holes])
+                    [_companion _controllerDidUpdateVisibleHoles:holes];
+            }
+        }
+    }
+}
 
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView
 {
     if (scrollView == _collectionView)
     {
-        if (!_ogRuntimeInteractionActive)
-        {
-            _ogRuntimeInteractionActive = true;
-            OGRuntimeBeginInteraction();
-        }
+#if defined(ONEGRAM_ARMV6)
+        _initialMessagePositioningPending = false;
+#endif
+        _historyTargetOffsetValid = false;
+        _scrollVelocityY = 0.0f;
+        _scrollLastSampleTime = CFAbsoluteTimeGetCurrent();
+        _scrollLastSampleOffset = scrollView.contentOffset.y;
+        [self _beginRuntimeInteraction];
         if (_scrollToMid != nil)
         {
             _scrollToMid = nil;
             _scrollToFinishedPipe.sink(@true);
         }
-        //if (!_disableScrollProcessing)
-        //    _disableScrollProcessing = false;
     }
 }
 
+#if defined(ONEGRAM_DIAGNOSTICS)
+static CFAbsoluteTime TGModernConversationScrollStatStart = 0.0;
+static TGModernConversationThreadSample TGModernConversationScrollStatStartSample;
+static double TGModernConversationScrollStatHandlerTime = 0.0;
+static double TGModernConversationScrollStatBindTime = 0.0;
+static int TGModernConversationScrollStatBindCount = 0;
+static int TGModernConversationScrollStatEventCount = 0;
+static double TGModernConversationScrollStatPrerenderTime = 0.0;
+static int TGModernConversationScrollStatPrerenderCount = 0;
+static int TGModernConversationScrollStatPrerenderItems = 0;
+
+typedef int (*TGModernConversationPthreadGetNameFunction)(pthread_t, char *, size_t);
+typedef pthread_t (*TGModernConversationPthreadFromMachThreadFunction)(mach_port_t);
+
+static NSString *TGModernConversationThreadBreakdown(void)
+{
+#if !defined(THREAD_IDENTIFIER_INFO)
+    return @"";
+#else
+    static NSMutableDictionary *previousTimes = nil;
+    if (previousTimes == nil)
+        previousTimes = [[NSMutableDictionary alloc] init];
+    static TGModernConversationPthreadGetNameFunction getNameFunction = NULL;
+    static TGModernConversationPthreadFromMachThreadFunction fromMachThreadFunction = NULL;
+    static bool functionsResolved = false;
+    if (!functionsResolved)
+    {
+        functionsResolved = true;
+        getNameFunction = (TGModernConversationPthreadGetNameFunction)dlsym(RTLD_DEFAULT, "pthread_getname_np");
+        fromMachThreadFunction = (TGModernConversationPthreadFromMachThreadFunction)dlsym(RTLD_DEFAULT, "pthread_from_mach_thread_np");
+    }
+    
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t threadCount = 0;
+    if (task_threads(mach_task_self(), &threads, &threadCount) != KERN_SUCCESS)
+        return @"";
+    
+    NSMutableArray *entries = [[NSMutableArray alloc] init];
+    NSMutableDictionary *currentTimes = [[NSMutableDictionary alloc] init];
+    thread_act_t mainThread = pthread_mach_thread_np(pthread_self());
+    for (mach_msg_type_number_t index = 0; index < threadCount; index++)
+    {
+        thread_act_t thread = threads[index];
+        thread_basic_info_data_t basicInfo;
+        mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+        thread_identifier_info_data_t identifierInfo;
+        mach_msg_type_number_t identifierCount = THREAD_IDENTIFIER_INFO_COUNT;
+        if (thread != mainThread && thread_info(thread, THREAD_BASIC_INFO, (thread_info_t)&basicInfo, &count) == KERN_SUCCESS && thread_info(thread, THREAD_IDENTIFIER_INFO, (thread_info_t)&identifierInfo, &identifierCount) == KERN_SUCCESS)
+        {
+            double time = (double)basicInfo.user_time.seconds + (double)basicInfo.user_time.microseconds / 1000000.0 + (double)basicInfo.system_time.seconds + (double)basicInfo.system_time.microseconds / 1000000.0;
+            NSNumber *key = @(identifierInfo.thread_id);
+            currentTimes[key] = @(time);
+            NSNumber *previous = previousTimes[key];
+            double delta = previous == nil ? 0.0 : time - [previous doubleValue];
+            if (delta >= 0.02)
+            {
+                char name[64] = { 0 };
+                if (getNameFunction != NULL && fromMachThreadFunction != NULL)
+                {
+                    pthread_t pthread = fromMachThreadFunction(thread);
+                    if (pthread != NULL)
+                        getNameFunction(pthread, name, sizeof(name));
+                }
+                const char *label = "";
+                if (identifierInfo.dispatch_qaddr != 0)
+                {
+                    dispatch_queue_t queue = NULL;
+                    vm_size_t readSize = 0;
+                    if (vm_read_overwrite(mach_task_self(), (vm_address_t)identifierInfo.dispatch_qaddr, sizeof(queue), (vm_address_t)&queue, &readSize) == KERN_SUCCESS && readSize == sizeof(queue) && queue != NULL)
+                    {
+                        const char *queueLabel = dispatch_queue_get_label(queue);
+                        if (queueLabel != NULL)
+                            label = queueLabel;
+                    }
+                }
+                policy_timeshare_info_data_t timeshareInfo;
+                mach_msg_type_number_t timeshareCount = POLICY_TIMESHARE_INFO_COUNT;
+                int priority = -1;
+                if (thread_info(thread, THREAD_SCHED_TIMESHARE_INFO, (thread_info_t)&timeshareInfo, &timeshareCount) == KERN_SUCCESS)
+                    priority = timeshareInfo.base_priority;
+                [entries addObject:@[@(delta), [[NSString alloc] initWithFormat:@"%s|%s|p%d=%.0f", name, label, priority, delta * 1000.0]]];
+            }
+        }
+        mach_port_deallocate(mach_task_self(), thread);
+    }
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, sizeof(thread_act_t) * threadCount);
+    previousTimes = currentTimes;
+    
+    [entries sortUsingComparator:^NSComparisonResult(NSArray *lhs, NSArray *rhs)
+    {
+        return [rhs[0] compare:lhs[0]];
+    }];
+    NSMutableString *result = [[NSMutableString alloc] init];
+    NSUInteger limit = MIN((NSUInteger)8, entries.count);
+    for (NSUInteger index = 0; index < limit; index++)
+        [result appendFormat:@"%@%@", index == 0 ? @"" : @" ", entries[index][1]];
+    return result;
+#endif
+}
+
+static void TGModernConversationScrollStatTick(void)
+{
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (TGModernConversationScrollStatStart <= 0.0 || now - TGModernConversationScrollStatStart > 3.0)
+    {
+        TGModernConversationScrollStatStart = now;
+        TGModernConversationTakeThreadSample(&TGModernConversationScrollStatStartSample);
+        TGModernConversationThreadBreakdown();
+        TGModernConversationScrollStatHandlerTime = 0.0;
+        TGModernConversationScrollStatBindTime = 0.0;
+        TGModernConversationScrollStatBindCount = 0;
+        TGModernConversationScrollStatEventCount = 0;
+        TGModernConversationScrollStatPrerenderTime = 0.0;
+        TGModernConversationScrollStatPrerenderCount = 0;
+        TGModernConversationScrollStatPrerenderItems = 0;
+        return;
+    }
+    if (now - TGModernConversationScrollStatStart < 1.0)
+        return;
+    TGModernConversationThreadSample sample;
+    TGModernConversationTakeThreadSample(&sample);
+    double wall = now - TGModernConversationScrollStatStart;
+    double mainTime = sample.threadTime - TGModernConversationScrollStatStartSample.threadTime;
+    double taskTime = sample.taskTime - TGModernConversationScrollStatStartSample.taskTime;
+    OGPlatformDiagnosticLog(@"SCROLLSTAT wall=%.0f main=%.0f others=%.0f idle=%.0f scrollHandler=%.0f binds=%d bindTime=%.0f events=%d prerenderMs=%.1f prerenderRuns=%d prerenderModels=%d threads: %@", wall * 1000.0, mainTime * 1000.0, (taskTime - mainTime) * 1000.0, MAX(0.0, wall - taskTime) * 1000.0, TGModernConversationScrollStatHandlerTime * 1000.0, TGModernConversationScrollStatBindCount, TGModernConversationScrollStatBindTime * 1000.0, TGModernConversationScrollStatEventCount, TGModernConversationScrollStatPrerenderTime * 1000.0, TGModernConversationScrollStatPrerenderCount, TGModernConversationScrollStatPrerenderItems, TGModernConversationThreadBreakdown());
+    [TGModernFlatteningViewModel logRenderingStatistics];
+    TGModernConversationScrollStatStart = now;
+    TGModernConversationScrollStatStartSample = sample;
+    TGModernConversationScrollStatHandlerTime = 0.0;
+    TGModernConversationScrollStatBindTime = 0.0;
+    TGModernConversationScrollStatBindCount = 0;
+    TGModernConversationScrollStatEventCount = 0;
+    TGModernConversationScrollStatPrerenderTime = 0.0;
+    TGModernConversationScrollStatPrerenderCount = 0;
+    TGModernConversationScrollStatPrerenderItems = 0;
+}
+#endif
+
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+#if defined(ONEGRAM_DIAGNOSTICS)
+    TGModernConversationThreadSample scrollStartSample;
+    TGModernConversationTakeThreadSample(&scrollStartSample);
+#endif
+    [self _handleScrollViewDidScroll:scrollView];
+#if defined(ONEGRAM_DIAGNOSTICS)
+    if (scrollView == _collectionView)
+    {
+        TGModernConversationThreadSample scrollEndSample;
+        TGModernConversationTakeThreadSample(&scrollEndSample);
+        TGModernConversationScrollStatHandlerTime += scrollEndSample.threadTime - scrollStartSample.threadTime;
+        TGModernConversationScrollStatEventCount++;
+        TGModernConversationScrollStatTick();
+    }
+#endif
+}
+
+- (void)_handleScrollViewDidScroll:(UIScrollView *)scrollView
 {
     if (scrollView == _collectionView)
     {
+        CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        CGFloat currentOffset = scrollView.contentOffset.y;
+        CFAbsoluteTime elapsed = now - _scrollLastSampleTime;
+        CGFloat displacement = currentOffset - _scrollLastSampleOffset;
+        if (_scrollLastSampleTime > 0.0 && elapsed > 0.003 && elapsed < 0.25 && ABS(displacement) < scrollView.bounds.size.height * 2.0f)
+        {
+            CGFloat observedVelocity = displacement / elapsed;
+            _scrollVelocityY = _scrollVelocityY * 0.4f + observedVelocity * 0.6f;
+        }
+        else if (elapsed >= 0.25 || ABS(displacement) >= scrollView.bounds.size.height * 2.0f)
+        {
+            _scrollVelocityY = 0.0f;
+            _prerenderValid = false;
+        }
+        _scrollLastSampleTime = now;
+        _scrollLastSampleOffset = currentOffset;
         if (_scrollButtons != nil && (_scrollButtons.superview != nil && _scrollButtons.displayDownButton) && scrollView.contentOffset.y <= -scrollView.contentInset.top)
         {
             [self setHasUnseenMessagesBelow:false];
@@ -2791,11 +3595,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             if ((NSInteger)_items.count >= TGModernConversationControllerUnloadHistoryLimit + TGModernConversationControllerUnloadHistoryThreshold)
                 [self _maybeUnloadHistory];
             
-            if (!_fastScrolling && _enableAboveHistoryRequests && scrollView.contentOffset.y > scrollView.contentSize.height - 800 * 2.0f && scrollView.contentSize.height > FLT_EPSILON)
-                [_companion loadMoreMessagesAbove];
-            
-            if (!_fastScrolling && _enableBelowHistoryRequests && scrollView.contentOffset.y < 600 * 2.0f)
-                [_companion loadMoreMessagesBelow];
+            [self _requestHistoryIfNeeded];
             
             bool atBottom = _collectionView.contentOffset.y < FLT_EPSILON && !_hasUnseenMessagesBelow;
             if (_atBottom != atBottom) {
@@ -2811,8 +3611,156 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         
         if (_scrollToMid == nil)
             [self updateMessageVisibilitySubscriber];
-
+        
+        [self _updateContentPrerendering:false];
     }
+}
+
+static void TGModernConversationCollectFlatteningModels(TGModernViewModel *model, NSMutableArray *result, int depth)
+{
+    if ([model isKindOfClass:[TGModernFlatteningViewModel class]])
+    {
+        [result addObject:model];
+        return;
+    }
+    if (depth >= 4)
+        return;
+    for (TGModernViewModel *submodel in model.submodels)
+        TGModernConversationCollectFlatteningModels(submodel, result, depth + 1);
+}
+
+struct TGModernConversationPrerenderCandidate
+{
+    NSUInteger index;
+    CGFloat priority;
+    bool fromBottomEdge;
+};
+
+struct TGModernConversationPrerenderCandidateComparator
+{
+    bool operator()(const TGModernConversationPrerenderCandidate &lhs, const TGModernConversationPrerenderCandidate &rhs) const
+    {
+        return lhs.priority < rhs.priority;
+    }
+};
+
+- (void)_updateContentPrerendering:(bool)symmetric
+{
+    if (_collectionView == nil || _collectionLayout == nil)
+        return;
+    CGRect bounds = _collectionView.bounds;
+    NSUInteger itemCount = _items.count;
+    if (bounds.size.height < 1.0f || itemCount == 0)
+        return;
+#if defined(ONEGRAM_DIAGNOSTICS)
+    CFAbsoluteTime prerenderStart = CFAbsoluteTimeGetCurrent();
+#endif
+    CGFloat offsetY = bounds.origin.y;
+    CGFloat height = bounds.size.height;
+    CGFloat prediction = symmetric ? offsetY : [self _predictedHistoryOffset];
+    CGFloat delta = offsetY - _prerenderOffset;
+    CGFloat predictedDelta = prediction - _prerenderPredictionOffset;
+    if (!symmetric && _prerenderValid && _prerenderItemCount == itemCount && ABS(delta) < height * 0.55f && ABS(predictedDelta) < height * 0.8f)
+        return;
+    _prerenderValid = true;
+    _prerenderOffset = offsetY;
+    _prerenderPredictionOffset = prediction;
+    _prerenderItemCount = itemCount;
+
+    int direction = symmetric ? 0 : (_scrollVelocityY > 60.0f ? 1 : (_scrollVelocityY < -60.0f ? -1 : (delta >= 0.0f ? 1 : -1)));
+    CGFloat minY = MIN(offsetY, prediction) - height * (direction < 0 ? 2.5f : 0.8f);
+    CGFloat maxY = MAX(offsetY, prediction) + height * (direction > 0 ? 2.5f : 0.8f);
+    if (direction == 0)
+    {
+        minY = offsetY - height;
+        maxY = offsetY + height * 2.0f;
+    }
+    CGRect rect = CGRectMake(bounds.origin.x, minY, bounds.size.width, maxY - minY);
+    CGFloat boundsMinY = CGRectGetMinY(bounds);
+    CGFloat boundsMaxY = CGRectGetMaxY(bounds);
+    CGFloat predictedMinY = prediction;
+    CGFloat predictedMaxY = prediction + height;
+    NSArray *attributesList = [_collectionLayout layoutAttributesForElementsInRect:rect];
+    std::vector<TGModernConversationPrerenderCandidate> candidates;
+    candidates.reserve(attributesList.count);
+    for (PSUICollectionViewLayoutAttributes *attributes in attributesList)
+    {
+        NSInteger row = attributes.indexPath.row;
+        if (row < 0 || (NSUInteger)row >= itemCount)
+            continue;
+        TGModernConversationItem *item = _items[(NSUInteger)row];
+        if ([item boundCell] != nil)
+            continue;
+        CGRect frame = attributes.frame;
+        CGFloat above = CGRectGetMinY(frame) - boundsMaxY;
+        CGFloat below = boundsMinY - CGRectGetMaxY(frame);
+        CGFloat distance = MAX(0.0f, MAX(above, below));
+        CGFloat predictedDistance = MAX(0.0f, MAX(CGRectGetMinY(frame) - predictedMaxY, predictedMinY - CGRectGetMaxY(frame)));
+        CGFloat priority = MIN(distance, predictedDistance);
+        if (direction > 0 && below > 0.0f)
+            priority += height * 4.0f;
+        else if (direction < 0 && above > 0.0f)
+            priority += height * 4.0f;
+        TGModernConversationPrerenderCandidate candidate = { (NSUInteger)row, priority, CGRectGetMidY(frame) > CGRectGetMidY(bounds) };
+        candidates.push_back(candidate);
+    }
+    std::stable_sort(candidates.begin(), candidates.end(), TGModernConversationPrerenderCandidateComparator());
+
+    NSUInteger budget = [TGModernFlatteningViewModel prerenderBudgetBytes];
+    NSUInteger usedBytes = 0;
+    NSUInteger maxCandidates = OGRuntimeSingleCoreDevice() ? 18 : 48;
+    NSMutableArray *models = [[NSMutableArray alloc] initWithCapacity:MIN((NSUInteger)candidates.size(), maxCandidates)];
+    std::vector<CGFloat> priorities;
+    std::vector<bool> edges;
+    priorities.reserve(MIN((NSUInteger)candidates.size(), maxCandidates));
+    edges.reserve(MIN((NSUInteger)candidates.size(), maxCandidates));
+    for (NSUInteger index = 0; index < candidates.size() && index < maxCandidates; index++)
+    {
+        TGModernConversationPrerenderCandidate candidate = candidates[index];
+        TGModernConversationItem *item = _items[candidate.index];
+        TGModernViewModel *viewModel = [item viewModel];
+        if (viewModel == nil)
+            continue;
+        if ([viewModel isKindOfClass:[TGMessageViewModel class]])
+            [(TGMessageViewModel *)viewModel prepareForAsynchronousContentDrawing];
+        NSMutableArray *itemModels = [[NSMutableArray alloc] init];
+        TGModernConversationCollectFlatteningModels(viewModel, itemModels, 0);
+        for (TGModernFlatteningViewModel *model in itemModels)
+        {
+            NSUInteger bytes = [model estimatedContentsBytes];
+            if (usedBytes + bytes > budget && models.count != 0)
+                break;
+            usedBytes += bytes;
+            [models addObject:model];
+            priorities.push_back(candidate.priority);
+            edges.push_back(candidate.fromBottomEdge);
+        }
+        if (usedBytes >= budget)
+            break;
+    }
+
+    if (_prerenderModels.count != 0)
+    {
+        NSSet *currentModels = [[NSSet alloc] initWithArray:models];
+        for (TGModernFlatteningViewModel *model in _prerenderModels)
+        {
+            if (![currentModels containsObject:model])
+                [model cancelAsynchronousContentsPreparation];
+        }
+    }
+
+    NSUInteger modelIndex = 0;
+    for (TGModernFlatteningViewModel *model in models)
+    {
+        [model prepareContentsAsynchronouslyWithPriority:priorities[modelIndex] fromBottomEdge:edges[modelIndex]];
+        modelIndex++;
+    }
+    _prerenderModels = models;
+#if defined(ONEGRAM_DIAGNOSTICS)
+    TGModernConversationScrollStatPrerenderTime += CFAbsoluteTimeGetCurrent() - prerenderStart;
+    TGModernConversationScrollStatPrerenderCount++;
+    TGModernConversationScrollStatPrerenderItems += (int)models.count;
+#endif
 }
 
 - (void)updateMessageVisibilitySubscriber
@@ -2855,25 +3803,91 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
 }
 
+- (void)_beginRuntimeInteraction
+{
+    if (_ogRuntimeInteractionActive)
+        return;
+    _ogRuntimeInteractionActive = true;
+    _companion.viewContext.inlineMediaActivationDeferred = true;
+    OGRuntimeBeginInteraction();
+    [self _scheduleRuntimeInteractionCheck];
+}
+
+- (void)_endRuntimeInteraction
+{
+    if (!_ogRuntimeInteractionActive)
+        return;
+    _ogRuntimeInteractionActive = false;
+    OGRuntimeEndInteraction();
+    _companion.viewContext.inlineMediaActivationDeferred = false;
+    for (TGModernCollectionCell *cell in _collectionView.visibleCells)
+    {
+        TGModernConversationItem *item = cell.boundItem;
+        [item activateDeferredInlineMedia];
+    }
+    if (!_disableScrollProcessing)
+        [self _maybeUnloadHistory];
+}
+
+- (void)_scheduleRuntimeInteractionCheck
+{
+    if (_ogRuntimeInteractionCheckScheduled)
+        return;
+    _ogRuntimeInteractionCheckScheduled = true;
+    TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
+        if (strongSelf == nil)
+            return;
+        strongSelf->_ogRuntimeInteractionCheckScheduled = false;
+        [strongSelf _checkRuntimeInteraction];
+    });
+}
+
+- (void)_checkRuntimeInteraction
+{
+    if (!_ogRuntimeInteractionActive)
+        return;
+    if (_collectionView != nil && (_collectionView.tracking || _collectionView.dragging || _collectionView.decelerating))
+    {
+        [self _scheduleRuntimeInteractionCheck];
+        return;
+    }
+    [self _endRuntimeInteraction];
+    [self updateLastScrollTime];
+    _historyTargetOffsetValid = false;
+    _scrollVelocityY = 0.0f;
+    [self _updateContentPrerendering:true];
+}
+
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
     if (scrollView == _collectionView && !decelerate && _ogRuntimeInteractionActive)
-    {
-        _ogRuntimeInteractionActive = false;
-        OGRuntimeEndInteraction();
-    }
+        [self _endRuntimeInteraction];
     if (!decelerate)
+    {
         [self updateLastScrollTime];
+        if (scrollView == _collectionView)
+        {
+            _historyTargetOffsetValid = false;
+            _scrollVelocityY = 0.0f;
+            [self _updateContentPrerendering:true];
+        }
+    }
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
 {
     if (scrollView == _collectionView && _ogRuntimeInteractionActive)
-    {
-        _ogRuntimeInteractionActive = false;
-        OGRuntimeEndInteraction();
-    }
+        [self _endRuntimeInteraction];
     [self updateLastScrollTime];
+    if (scrollView == _collectionView)
+    {
+        _historyTargetOffsetValid = false;
+        _scrollVelocityY = 0.0f;
+        [self _updateContentPrerendering:true];
+    }
 }
 
 - (BOOL)scrollViewShouldScrollToTop:(UIScrollView *)scrollView
@@ -3008,8 +4022,26 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     return _items;
 }
 
+- (void)_preloadAuthorsForItems:(NSArray *)items
+{
+    if (items.count == 0)
+        return;
+    NSMutableSet *identifiers = [[NSMutableSet alloc] init];
+    for (id item in items)
+    {
+        if (![item isKindOfClass:[TGMessageModernConversationItem class]])
+            continue;
+        int64_t uid = ((TGMessageModernConversationItem *)item)->_message.fromUid;
+        if (uid > 0 && uid <= INT32_MAX)
+            [identifiers addObject:@((int32_t)uid)];
+    }
+    if (identifiers.count != 0)
+        [TGDatabaseInstance() preloadUsersForUserIds:[identifiers allObjects]];
+}
+
 - (void)replaceItems:(NSArray *)newItems messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection
 {
+    [self _preloadAuthorsForItems:newItems];
     _messageIdForVisibleHoleDirection = messageIdForVisibleHoleDirection;
     
     [_items removeAllObjects];
@@ -3019,6 +4051,18 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     {
         _collectionView.unreadMessageRange = _companion.unreadMessageRange;
         [_collectionView reloadData];
+#if defined(ONEGRAM_ARMV6)
+        if (_initialMessagePositioningPending && _items.count != 0 && _collectionView != nil)
+        {
+            _initialMessagePositioningPending = false;
+            int32_t messageId = [_companion initialPositioningMessageId];
+            int64_t peerId = [_companion initialPositioningPeerId];
+            TGInitialScrollPosition position = [_companion initialPositioningScrollPosition];
+            CGFloat offset = [_companion initialPositioningScrollOffset];
+            if (messageId != 0)
+                _collectionView.contentOffset = CGPointMake(0.0f, [self contentOffsetForMessageId:messageId peerId:peerId scrollPosition:position initial:true additionalOffset:(_companion.previewMode ? self.controllerInset.top : 0.0f) + offset]);
+        }
+#endif
     }
 }
 
@@ -3083,6 +4127,10 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 }
 
 - (void)replaceItems:(NSArray *)newItems positionAtMessageId:(int32_t)positionAtMessageId peerId:(int64_t)positionAtPeerId expandAt:(int32_t)expandMessageId jump:(bool)jump top:(bool)top messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection scrollBackMessageId:(int32_t)scrollBackMessageId animated:(bool)animated {
+#if defined(ONEGRAM_ARMV6)
+    _initialMessagePositioningPending = false;
+#endif
+    [self _preloadAuthorsForItems:newItems];
     _messageIdForVisibleHoleDirection = positionAtMessageId;
     if (messageIdForVisibleHoleDirection != 0) {
         _messageIdForVisibleHoleDirection = messageIdForVisibleHoleDirection;
@@ -3468,6 +4516,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             }
         }
         
+        [self _preloadAuthorsForItems:newItems];
         [_items addObjectsFromArray:newItems];
         
         [_collectionView reloadData];
@@ -3533,8 +4582,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         {
             maxCurrentCellY = MAX(maxCurrentCellY, CGRectGetMaxY(cell.frame));
             
-            //[currentCellsWithFrames addObject:@[cell, [NSValue valueWithCGRect:cell.frame]]];
-            //cell.frame = CGRectOffset(cell.frame, 0.0f, offsetDifference);
             
             if (animated) {
                 CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"transform.translation.y"];
@@ -3562,11 +4609,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 cell.frame = CGRectOffset(cell.frame, 0.0f, -offsetDifference);
             }
             
-            /*for (NSArray *desc in currentCellsWithFrames)
-             {
-             TGModernCollectionCell *cell = desc[0];
-             cell.frame = [(NSValue *)desc[1] CGRectValue];
-             }*/
             
             for (NSArray *desc in currentDecorationsWithFrames)
             {
@@ -3600,6 +4642,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             }
         }
         
+        [self _preloadAuthorsForItems:newItems];
         [_items addObjectsFromArray:newItems];
         [_collectionView reloadData];
         _scrollingToBottom = nil;
@@ -3612,6 +4655,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)replaceItems:(NSArray *)items atIndices:(NSIndexSet *)indices
 {
+    [self _preloadAuthorsForItems:items];
     [_items replaceObjectsAtIndexes:indices withObjects:items];
     [_collectionView reloadData];
     [self _updateVisibleItemIndices:nil];
@@ -3622,8 +4666,50 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     [self _deleteItemsAtIndices:indexSet animated:animated animationFactor:0.7f];
 }
 
+- (void)_deferReleaseOfItems:(NSArray *)items
+{
+    if (items.count == 0)
+        return;
+    if (_deferredReleaseItems == nil)
+        _deferredReleaseItems = [[NSMutableArray alloc] init];
+    [_deferredReleaseItems addObjectsFromArray:items];
+    [self _scheduleDeferredRelease:0.0];
+}
+
+- (void)_scheduleDeferredRelease:(NSTimeInterval)delay
+{
+    if (_deferredReleaseScheduled)
+        return;
+    _deferredReleaseScheduled = true;
+    __weak TGModernConversationController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        __strong TGModernConversationController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+        {
+            strongSelf->_deferredReleaseScheduled = false;
+            [strongSelf _drainDeferredRelease];
+        }
+    });
+}
+
+- (void)_drainDeferredRelease
+{
+    NSUInteger count = _deferredReleaseItems.count;
+    if (count == 0)
+        return;
+    NSUInteger chunk = _ogRuntimeInteractionActive ? 2 : 8;
+    NSUInteger length = MIN(chunk, count);
+    [_deferredReleaseItems removeObjectsInRange:NSMakeRange(count - length, length)];
+    if (_deferredReleaseItems.count != 0)
+        [self _scheduleDeferredRelease:_ogRuntimeInteractionActive ? 0.05 : 0.0];
+}
+
 - (void)_deleteItemsAtIndices:(NSIndexSet *)indexSet animated:(bool)animated animationFactor:(CGFloat)animationFactor
 {
+    if (indexSet.count != 0 && indexSet.lastIndex < _items.count)
+        [self _deferReleaseOfItems:[_items objectsAtIndexes:indexSet]];
+    
     NSMutableIndexSet *indexSetAnimated = [[NSMutableIndexSet alloc] initWithIndexSet:indexSet];
     
     if (true)
@@ -3631,34 +4717,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         CGFloat referenceContentOffset = _collectionView.contentOffset.y;
         CGFloat referenceContentBoundsOffset = referenceContentOffset + _collectionView.bounds.size.height;
         
-        NSUInteger lastVisibleOfCurrentIndices = NSNotFound;
-        NSUInteger farthestVisibleOfCurrentIndices = NSNotFound;
-        
-        int currentItemCount = (int)_items.count;
-        for (int i = 0; i < currentItemCount; i++)
-        {
-            PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]];
-            CGRect itemFrame = attributes.frame;
-            
-            if (CGRectGetMaxY(itemFrame) > referenceContentOffset + FLT_EPSILON)
-            {
-                if (i != 0 || itemFrame.origin.y < referenceContentOffset - FLT_EPSILON)
-                    lastVisibleOfCurrentIndices = i;
-                break;
-            }
-        }
-        for (int i = currentItemCount - 1; i >= 0; i--)
-        {
-            PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]];
-            CGRect itemFrame = attributes.frame;
-            
-            if (itemFrame.origin.y < referenceContentBoundsOffset + FLT_EPSILON)
-            {
-                if (i != currentItemCount - 1 || CGRectGetMaxY(itemFrame) > referenceContentBoundsOffset - FLT_EPSILON)
-                    farthestVisibleOfCurrentIndices = i;
-                break;
-            }
-        }
+        NSUInteger lastVisibleOfCurrentIndices = [self _lowestItemIndexAboveOffset:referenceContentOffset];
+        NSUInteger farthestVisibleOfCurrentIndices = [self _highestItemIndexBelowOffset:referenceContentBoundsOffset];
         
         if (lastVisibleOfCurrentIndices != NSNotFound)
         {
@@ -3722,13 +4782,20 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 }
             }
             
+            bool removedBeyondVisibleItems = indicesToRemoveWithoutAnimation.count != 0 && [self _maxVisibleItemIndex] < (NSInteger)indicesToRemoveWithoutAnimation.firstIndex;
+            
             if (indicesToRemoveWithoutAnimation.count != 0)
                 [_items removeObjectsAtIndexes:indicesToRemoveWithoutAnimation];
             
             if (partialReloadRequired)
             {
-                [self _beginReloadDataWithTemporaryContainer];
-                [self _endReloadDataWithTemporaryContainer];
+                if (removedBeyondVisibleItems)
+                    [self _applyItemsChangeBeyondVisibleItems];
+                else
+                {
+                    [self _beginReloadDataWithTemporaryContainer];
+                    [self _endReloadDataWithTemporaryContainer];
+                }
                 
                 [_collectionView updateRelativeBounds];
             }
@@ -3737,6 +4804,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     if (indexSetAnimated.count != 0)
     {
+        [_collectionView numberOfItemsInSection:0];
         [_items removeObjectsAtIndexes:indexSetAnimated];
         
         if (animated && indexSetAnimated.count < 100)
@@ -3767,7 +4835,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 #ifndef DEBUG
             @catch (NSException *e)
             {
-                TGLog(@"%@", e);
                 [self _resetCollectionView];
             }
 #endif
@@ -3790,6 +4857,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)moveItems:(NSArray *)moveIndexPairs
 {
+    [_collectionView numberOfItemsInSection:0];
     NSMutableArray *movingItems = [[NSMutableArray alloc] init];
     
     for (NSArray *pair in moveIndexPairs)
@@ -3821,7 +4889,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 #ifndef DEBUG
     @catch (NSException *e)
     {
-        TGLog(@"%@", e);
         
         [self _resetCollectionView];
     }
@@ -3848,6 +4915,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         return;
     }
     
+    [self _preloadAuthorsForItems:itemsArray];
     NSMutableArray *insertItemsAnimated = [[NSMutableArray alloc] initWithArray:itemsArray];
     NSMutableIndexSet *insertIndicesAnimated = [[NSMutableIndexSet alloc] initWithIndexSet:indexSet];
     
@@ -3855,26 +4923,22 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     {
         CGFloat referenceContentOffset = _collectionView.contentOffset.y + _collectionView.contentInset.top;
         
-        NSUInteger lastVisibleOfCurrentIndices = NSNotFound;
-        
-        NSUInteger currentItemCount = _items.count;
-        for (NSUInteger i = 0; i < currentItemCount; i++)
-        {
-            PSUICollectionViewLayoutAttributes *attributes = [_collectionLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]];
-            CGRect itemFrame = attributes.frame;
-            if (CGRectGetMaxY(itemFrame) > referenceContentOffset + FLT_EPSILON)
-            {
-                if (i != 0 || itemFrame.origin.y < referenceContentOffset - FLT_EPSILON)
-                    lastVisibleOfCurrentIndices = i;
-                break;
-            }
-        }
+        NSUInteger lastVisibleOfCurrentIndices = [self _lowestItemIndexAboveOffset:referenceContentOffset];
         
         bool partialReloadRequired = false;
+        NSUInteger partialInsertedCount = 0;
+        NSUInteger partialMaxInsertedIndex = 0;
+        NSInteger minimumVisibleItemIndex = NSIntegerMax;
         
         if (lastVisibleOfCurrentIndices != NSNotFound || intent == TGModernConversationInsertItemIntentLoadMoreMessagesBelow)
         {
             bool hadIncomingUnread = false;
+            
+            for (NSIndexPath *indexPath in [_collectionView indexPathsForVisibleItems])
+            {
+                if (indexPath.item < minimumVisibleItemIndex)
+                    minimumVisibleItemIndex = indexPath.item;
+            }
             
             NSUInteger modifiedLastVisibleOfCurrentIndices = lastVisibleOfCurrentIndices;
             NSUInteger insertedItems = 0;
@@ -3888,6 +4952,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 {
                     [_items insertObject:insertItemsAnimated[i] atIndex:currentIndex];
                     insertedItems++;
+                    partialMaxInsertedIndex = MAX(partialMaxInsertedIndex, currentIndex);
                     
                     if (intent != TGModernConversationInsertItemIntentLoadMoreMessagesBelow)
                     {
@@ -3908,6 +4973,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             
             if (insertedItems != 0)
                 [insertItemsAnimated removeObjectsInRange:NSMakeRange(0, insertedItems)];
+            partialInsertedCount = insertedItems;
             
             if (hadIncomingUnread)
                 [self setHasUnseenMessagesBelow:true];
@@ -3919,18 +4985,28 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             [_collectionLayout prepareLayout];
             CGFloat currentContentHeight = _collectionLayout.collectionViewContentSize.height;
             
-            [self _beginReloadDataWithTemporaryContainer];
-            if (intent == TGModernConversationInsertItemIntentLoadMoreMessagesBelow) {
+            bool insertedBeforeVisibleItems = partialInsertedCount != 0 && minimumVisibleItemIndex != NSIntegerMax && (NSInteger)partialMaxInsertedIndex < minimumVisibleItemIndex + (NSInteger)partialInsertedCount;
+            bool shiftedVisibleItems = insertedBeforeVisibleItems && [_collectionView respondsToSelector:@selector(shiftVisibleItemIndexPathsByOffset:)] && [_collectionView shiftVisibleItemIndexPathsByOffset:(NSInteger)partialInsertedCount];
+            if (shiftedVisibleItems)
+            {
+                [_collectionLayout invalidateLayout];
                 _collectionView.contentOffset = CGPointMake(0.0f, _collectionView.contentOffset.y + (currentContentHeight - previousContentHeight));
-            } else {
-                _collectionView.contentOffset = CGPointMake(0.0f, _collectionView.contentOffset.y + (currentContentHeight - previousContentHeight));
+                [_collectionView layoutSubviews];
+                [_collectionView updateRelativeBounds];
             }
-            [self _endReloadDataWithTemporaryContainer];
+            else
+            {
+                [self _beginReloadDataWithTemporaryContainer];
+                _collectionView.contentOffset = CGPointMake(0.0f, _collectionView.contentOffset.y + (currentContentHeight - previousContentHeight));
+                [self _endReloadDataWithTemporaryContainer];
+            }
         }
     }
     
     if (insertIndicesAnimated.count != 0)
     {
+        bool insertedBeyondVisibleItems = !animated && [self _maxVisibleItemIndex] < (NSInteger)insertIndicesAnimated.firstIndex;
+        [_collectionView numberOfItemsInSection:0];
         [_items insertObjects:insertItemsAnimated atIndexes:insertIndicesAnimated];
         
         if (animated)
@@ -3984,14 +5060,12 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                             _scrollingToBottom = @true;
                         }
                         
-                        //[_collectionView scrollRectToVisible:CGRectMake(0.0f, 0.0f, 1.0f, 1.0f) animated:true];
                     }
                 } animated:true animationFactor:0.7f];
             }
 #ifndef DEBUG
             @catch (NSException *e)
             {
-                TGLog(@"%@", e);
                 [self _resetCollectionView];
             }
 #endif
@@ -4003,10 +5077,12 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         }
         else
         {
-            [self _beginReloadDataWithTemporaryContainer];
-            [self _endReloadDataWithTemporaryContainer];
-            if (intent == TGModernConversationInsertItemIntentLoadMoreMessagesBelow) {
-                
+            if (insertedBeyondVisibleItems)
+                [self _applyItemsChangeBeyondVisibleItems];
+            else
+            {
+                [self _beginReloadDataWithTemporaryContainer];
+                [self _endReloadDataWithTemporaryContainer];
             }
             [_collectionView updateRelativeBounds];
             
@@ -4269,7 +5345,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             topInset = _keyboardHeight + [_currentInputPanel currentHeight];
         }
         UIEdgeInsets safeAreaInset = self.controllerSafeAreaInset;
-        _scrollButtons.frame = CGRectMake(collectionViewSize.width - buttonSize.width - 6 - safeAreaInset.right, collectionViewSize.height - buttonSize.height - topInset - 6, buttonSize.width, buttonSize.height);
+        UIEdgeInsets buttonInsets = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].scrollButtonInsets : UIEdgeInsetsMake(0.0f, 0.0f, 6.0f, 6.0f);
+        _scrollButtons.frame = CGRectMake(collectionViewSize.width - buttonSize.width - buttonInsets.right - safeAreaInset.right, collectionViewSize.height - buttonSize.height - topInset - buttonInsets.bottom, buttonSize.width, buttonSize.height);
     }
 }
 
@@ -4284,6 +5361,77 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         [editingPanel setForwardingEnabled:[_companion allowMessageForwarding] && [self canForwardAllSelectedMessages]];
         [editingPanel setShareEnabled:[_companion allowMessageExternalSharing] && [self canShareAllSelectedMessages]];
     }
+}
+
+- (NSUInteger)_lowestItemIndexAboveOffset:(CGFloat)offset
+{
+    NSUInteger itemCount = _items.count;
+    if (itemCount == 0)
+        return NSNotFound;
+    CGFloat height = MAX(_collectionView.bounds.size.height, 1.0f) * 2.0f;
+    NSInteger lowestIndex = NSIntegerMax;
+    PSUICollectionViewLayoutAttributes *lowestAttributes = nil;
+    for (PSUICollectionViewLayoutAttributes *attributes in [_collectionLayout layoutAttributesForElementsInRect:CGRectMake(0.0f, offset - 1.0f, _collectionView.bounds.size.width, height + 1.0f)])
+    {
+        NSInteger index = attributes.indexPath.item;
+        if (index >= 0 && (NSUInteger)index < itemCount && index < lowestIndex && CGRectGetMaxY(attributes.frame) > offset + FLT_EPSILON)
+        {
+            lowestIndex = index;
+            lowestAttributes = attributes;
+        }
+    }
+    if (lowestAttributes == nil)
+        return NSNotFound;
+    if (lowestIndex != 0 || lowestAttributes.frame.origin.y < offset - FLT_EPSILON)
+        return (NSUInteger)lowestIndex;
+    return NSNotFound;
+}
+
+- (NSUInteger)_highestItemIndexBelowOffset:(CGFloat)offset
+{
+    NSUInteger itemCount = _items.count;
+    if (itemCount == 0)
+        return NSNotFound;
+    CGFloat height = MAX(_collectionView.bounds.size.height, 1.0f) * 2.0f;
+    NSInteger highestIndex = -1;
+    PSUICollectionViewLayoutAttributes *highestAttributes = nil;
+    for (PSUICollectionViewLayoutAttributes *attributes in [_collectionLayout layoutAttributesForElementsInRect:CGRectMake(0.0f, offset - height, _collectionView.bounds.size.width, height + 1.0f)])
+    {
+        NSInteger index = attributes.indexPath.item;
+        if (index >= 0 && (NSUInteger)index < itemCount && index > highestIndex && attributes.frame.origin.y < offset + FLT_EPSILON)
+        {
+            highestIndex = index;
+            highestAttributes = attributes;
+        }
+    }
+    if (highestAttributes == nil)
+        return NSNotFound;
+    if ((NSUInteger)highestIndex != itemCount - 1 || CGRectGetMaxY(highestAttributes.frame) > offset - FLT_EPSILON)
+        return (NSUInteger)highestIndex;
+    return NSNotFound;
+}
+
+- (NSInteger)_maxVisibleItemIndex
+{
+    NSInteger maxIndex = -1;
+    for (NSIndexPath *indexPath in [_collectionView indexPathsForVisibleItems])
+    {
+        if (indexPath.item > maxIndex)
+            maxIndex = indexPath.item;
+    }
+    return maxIndex;
+}
+
+- (void)_applyItemsChangeBeyondVisibleItems
+{
+    if ([_collectionView itemCountChangesRequireReload])
+    {
+        [self _beginReloadDataWithTemporaryContainer];
+        [self _endReloadDataWithTemporaryContainer];
+        return;
+    }
+    [_collectionLayout invalidateLayout];
+    [_collectionView layoutSubviews];
 }
 
 - (void)_beginReloadDataWithTemporaryContainer
@@ -4331,6 +5479,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
     
     _itemsBoundToTemporaryContainer = nil;
+    
+    [_collectionView updateRelativeBounds];
 }
 
 - (void)updateItems:(NSArray *)updatedItems atIndices:(NSArray *)indices
@@ -4448,7 +5598,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         if (messageItem != nil && messageItem->_message.mid == messageId && TGIOS6MessageMatchesMediaPeer(messageItem->_message, peerId))
         {
             foundCell = true;
-            while (false) TGLog(@"MEDIA open visible mid=%d peer=%lld cid=%lld from=%lld to=%lld available=%d attachments=%d", messageId, peerId, messageItem->_message.cid, (int64_t)messageItem->_message.fromUid, (int64_t)messageItem->_message.toUid, messageItem->_mediaAvailabilityStatus ? 1 : 0, (int)messageItem->_message.mediaAttachments.count);
             break;
         }
     }
@@ -4459,7 +5608,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
     else
     {
-        while (false) TGLog(@"MEDIA open defer mid=%d peer=%lld visibleCount=%d", messageId, peerId, (int)_collectionView.visibleCells.count);
         _openMediaForMessageIdUponDisplay = messageId;
         _openMediaForPeerIdUponDisplay = peerId;
         _openedMediaIsEmbed = false;
@@ -4498,7 +5646,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             }
             else
             {
-                while (false) TGLog(@"MEDIA open blocked mid=%d peer=%lld cid=%lld from=%lld to=%lld available=%d force=%d cell=%d attachments=%d", messageId, peerId, messageItem->_message.cid, (int64_t)messageItem->_message.fromUid, (int64_t)messageItem->_message.toUid, messageItem->_mediaAvailabilityStatus ? 1 : 0, forceOpen ? 1 : 0, cell != nil ? 1 : 0, (int)messageItem->_message.mediaAttachments.count);
                 [_companion actionStageActionRequested:@"mediaDownloadRequested" options:@{@"peerId": @(messageItem->_message.cid), @"mid": @(messageItem->_message.mid)}];
             }
             
@@ -4638,6 +5785,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 {
                     TGDocumentMediaAttachment *documentAttachment = (TGDocumentMediaAttachment *)attachment;
                     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
                     if (iosMajorVersion() >= 6 && ([[[documentAttachment.fileName pathExtension] lowercaseString] isEqualToString:@"pkpass"] || [documentAttachment.mimeType isEqualToString:@"application/vnd.apple.pkpass"]))
                     {
                         NSData *passData = [[NSData alloc] initWithContentsOfFile:[_companion fileUrlForDocumentMedia:documentAttachment].path];
@@ -4650,6 +5798,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                             return nil;
                         }
                     }
+#endif
                     
                     if (documentAttachment.isVoice) {
                         break;
@@ -4986,7 +6135,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         }
         else if (isGallery)
         {
-            while (false) TGLog(@"MEDIA gallery open requestedPeer=%lld galleryPeer=%lld currentPeer=%lld mid=%d convertedMid=%d attachments=%d", peerId, mediaMessageItem->_message.cid, [self peerId], mediaMessageItem->_message.mid, [self convertMessageId:mediaMessageItem->_message.mid toPeerId:mediaMessageItem->_message.cid], (int)mediaMessageItem->_message.mediaAttachments.count);
 
             NSArray *galleryMessages = @[mediaMessageItem->_message];
             if (mediaMessageItem->_message.groupedId != 0)
@@ -5023,11 +6171,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 bool isCurrentGroupLikePeer = TGPeerIdIsGroup(currentPeerId) || TGPeerIdIsChannel(currentPeerId);
                 if (isCurrentGroupLikePeer)
                 {
-                    while (false) TGLog(@"MEDIA gallery group direct peer=%lld messageCid=%lld requestedPeer=%lld mid=%d", currentPeerId, mediaMessageItem->_message.cid, peerId, mediaMessageItem->_message.mid);
                     modernGallery.model = [[TGGenericPeerMediaGalleryModel alloc] initWithPeerId:currentPeerId allowActions:_companion.allowMessageForwarding messages:galleryMessages atMessageId:mediaMessageItem->_message.mid];
                     ((TGGenericPeerMediaGalleryModel *)modernGallery.model).disableDelete = ![_companion canDeleteMessages];
                 } else if (mediaMessageItem->_message.cid > 0 && mediaMessageItem->_message.cid == currentPeerId) {
-                    while (false) TGLog(@"MEDIA gallery exact user peer=%lld mid=%d", [self peerId], mediaMessageItem->_message.mid);
                     modernGallery.model = [[TGGenericPeerMediaGalleryModel alloc] initWithPeerId:currentPeerId allowActions:_companion.allowMessageForwarding messages:galleryMessages atMessageId:mediaMessageItem->_message.mid];
                     ((TGGenericPeerMediaGalleryModel *)modernGallery.model).disableDelete = ![_companion canDeleteMessages];
                 } else if (mediaMessageItem->_message.cid == currentPeerId) {
@@ -6071,6 +7217,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             NSDictionary *reportAction = nil;
             NSDictionary *stopLiveLocationAction = nil;
             NSDictionary *reactionAction = nil;
+            NSDictionary *unvotePollAction = nil;
+            NSDictionary *stopPollAction = nil;
             
             if ([_companion canDeleteMessage:messageItem->_message])
             {
@@ -6177,6 +7325,15 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                     photo = (TGImageMediaAttachment *)attachment;
                     break;
                 }
+            }
+            
+            TGPollMediaAttachment *pollAttachment = [TGPollMediaAttachment pollInMediaAttachments:messageItem->_message.mediaAttachments];
+            if (pollAttachment != nil && messageItem->_message.mid > 0 && messageItem->_message.mid < TGMessageLocalMidBaseline && ![self isAdminLog] && ![pollAttachment isClosedAtTime:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime]])
+            {
+                if ([pollAttachment hasVoted] && ![pollAttachment quiz] && ![pollAttachment revotingDisabled])
+                    unvotePollAction = @{ @"title": TGLocalized(@"Conversation.UnvotePoll"), @"action": @"unvotePoll" };
+                if (messageItem->_message.outgoing)
+                    stopPollAction = @{ @"title": [pollAttachment quiz] ? TGLocalized(@"Conversation.StopQuiz") : TGLocalized(@"Conversation.StopPoll"), @"action": @"stopPoll" };
             }
             
             bool addedForward = false;
@@ -6296,6 +7453,14 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 [menuActions addObject:stopLiveLocationAction];
             }
             
+            if (unvotePollAction != nil) {
+                [menuActions addObject:unvotePollAction];
+            }
+            
+            if (stopPollAction != nil) {
+                [menuActions addObject:stopPollAction];
+            }
+            
             if (copyAction != nil) {
                 [actions addObject:copyAction];
             }
@@ -6392,10 +7557,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 if (frame.origin.y > FLT_EPSILON)
                     frame = CGRectMake(frame.origin.x, 0.0f, frame.size.width, frame.size.height + frame.origin.y);
                 CGFloat additionalHeight = ((TGNavigationController *)self.navigationController).currentAdditionalNavigationBarHeight;
-                if (_primaryTitlePanel.frame.origin.y > -FLT_EPSILON)
-                    additionalHeight += _primaryTitlePanel.frame.size.height;
-                if (_secondaryTitlePanel.frame.origin.y > -FLT_EPSILON)
-                    additionalHeight += _secondaryTitlePanel.frame.size.height;
+                additionalHeight += [self _visibleTitlePanelHeight:_primaryTitlePanel];
+                additionalHeight += [self _visibleTitlePanelHeight:_secondaryTitlePanel];
                 CGFloat topHeight = frame.size.height + additionalHeight;
                 
                 CGRect cellFrame = CGRectNull;
@@ -6552,10 +7715,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         if (frame.origin.y > FLT_EPSILON)
             frame = CGRectMake(frame.origin.x, 0.0f, frame.size.width, frame.size.height + frame.origin.y);
         CGFloat additionalHeight = ((TGNavigationController *)self.navigationController).currentAdditionalNavigationBarHeight;
-        if (_primaryTitlePanel.frame.origin.y > -FLT_EPSILON)
-            additionalHeight += _primaryTitlePanel.frame.size.height;
-        if (_secondaryTitlePanel.frame.origin.y > -FLT_EPSILON)
-            additionalHeight += _secondaryTitlePanel.frame.size.height;
+        additionalHeight += [self _visibleTitlePanelHeight:_primaryTitlePanel];
+        additionalHeight += [self _visibleTitlePanelHeight:_secondaryTitlePanel];
         CGFloat topHeight = frame.size.height + additionalHeight;
         CGFloat safeAreaInset = self.controllerSafeAreaInset.top;
         CGRect topDimViewFrame = CGRectMake(frame.origin.x, frame.origin.y - safeAreaInset, frame.size.width, topHeight + safeAreaInset);
@@ -7042,7 +8203,10 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
                 userInfo[UIKeyboardAnimationDurationUserInfoKey] = @0;
                 
-                CGRect keyboardFrame = [TGHacks applicationKeyboardView].frame;
+                UIView *keyboardView = [TGHacks applicationKeyboardView];
+                CGRect keyboardFrame = [keyboardView convertRect:keyboardView.bounds toView:nil];
+                if (keyboardView.window != nil)
+                    keyboardFrame = [keyboardView.window convertRect:keyboardFrame toWindow:nil];
                 userInfo[UIKeyboardFrameEndUserInfoKey] = [NSValue valueWithCGRect:keyboardFrame];
                 
                 NSString *notificationName = iosMajorVersion() >= 5 ? UIKeyboardWillChangeFrameNotification : UIKeyboardWillShowNotification;
@@ -7065,8 +8229,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     tempImageView.contentMode = _backgroundView.contentMode;
     tempImageView.frame = _backgroundView.frame;
     [_backgroundView.superview insertSubview:tempImageView aboveSubview:_backgroundView];
-    _backgroundView.image = [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ResourceImage:@"list"] : [[TGWallpaperManager instance] currentWallpaperImage];
+    _backgroundView.image = [TGPresentation brandedIOS6Style] ? [self brandedBackgroundImage] : [[TGWallpaperManager instance] currentWallpaperImage];
     _backgroundView.backgroundColor = [TGPresentation brandedIOS6Style] ? [UIColor whiteColor] : [UIColor clearColor];
+    [self _updateBrandedCardViewsWithBackground:_backgroundView.image];
     
     [UIView animateWithDuration:0.3 animations:^
     {
@@ -7116,7 +8281,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
     else if (TGStringCompare(_inputTextPanel.maybeInputField.text, @"") || replace || (replaceIfPrefix && [inputText hasPrefix:_inputTextPanel.maybeInputField.text]))
     {
-        [[_inputTextPanel inputField] setAttributedText:[TGMessageEditingContext attributedStringForText:inputText entities:entities fontSize:[_inputTextPanel fontSize]] animated:false];
+        [[_inputTextPanel inputField] setAttributedText:[TGMessageEditingContext attributedStringForText:inputText entities:entities font:[_inputTextPanel inputFieldFont]] animated:false];
         [[_inputTextPanel inputField] selectRange:selectRange force:forceSelectRange];
         
         if (_collectionView != nil)
@@ -7490,6 +8655,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     [_inputTextPanel setAssociatedPanel:nil animated:true];
     [_mentionTextResultsDisposable setDisposable:nil];
     [_currentMentionDisposable setDisposable:nil];
+    _currentMentionQuery = nil;
+    _mentionRequestGeneration++;
     
     [_inputTextPanel setMessageEditingContext:[[TGMessageEditingContext alloc] initWithText:text entities:entities isCaption:hasMedia hasMedia:hasMedia cid:[self peerId] messageId:messageId] animated:animated];
 }
@@ -7625,6 +8792,47 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 - (void)setGlobalUnreadCount:(int)unreadCount
 {
     [_titleView setUnreadCount:unreadCount];
+    [self _updateBackButtonTitleAdjustment:self.navigationController.topViewController == self];
+}
+
+- (void)_updateBackButtonTitleAdjustment:(bool)appearing
+{
+    if (![TGPresentation brandedIOS6Style])
+        return;
+    UIViewController *previousController = nil;
+    NSArray *viewControllers = self.navigationController.viewControllers;
+    NSUInteger index = viewControllers != nil ? [viewControllers indexOfObject:self] : NSNotFound;
+    if (index != NSNotFound && index != 0)
+        previousController = viewControllers[index - 1];
+    else if (!appearing)
+        previousController = _backTitleAdjustedController;
+    UIBarButtonItem *backItem = previousController.navigationItem.backBarButtonItem;
+    SEL getter = NSSelectorFromString(@"backButtonTitlePositionAdjustmentForBarMetrics:");
+    SEL setter = NSSelectorFromString(@"setBackButtonTitlePositionAdjustment:forBarMetrics:");
+    if (backItem == nil || ![backItem respondsToSelector:getter] || ![backItem respondsToSelector:setter])
+        return;
+    UIOffset (*getOffset)(id, SEL, UIBarMetrics) = (UIOffset (*)(id, SEL, UIBarMetrics))[backItem methodForSelector:getter];
+    if (getOffset == NULL)
+        return;
+    _backTitleAdjustedController = previousController;
+    OGNavigationAppearance *appearance = [OGTheme brandedTheme].navigationAppearance;
+    CGFloat badgeShift = appearing && [_titleView unreadBadgeVisible] ? appearance.backButtonBadgeTitleShift : 0.0f;
+    UIOffset portrait = appearance.backButtonTitleOffset;
+    UIOffset landscape = appearance.backButtonLandscapeTitleOffset;
+    UIOffset targetPortrait = UIOffsetMake(portrait.horizontal + badgeShift, portrait.vertical);
+    UIOffset currentPortrait = getOffset(backItem, getter, UIBarMetricsDefault);
+    if (currentPortrait.horizontal == targetPortrait.horizontal && currentPortrait.vertical == targetPortrait.vertical)
+        return;
+    UIBarButtonItem *updatedItem = [[UIBarButtonItem alloc] initWithTitle:backItem.title style:backItem.style target:backItem.target action:backItem.action];
+    updatedItem.possibleTitles = backItem.possibleTitles;
+    if (![updatedItem respondsToSelector:setter])
+        return;
+    void (*setOffset)(id, SEL, UIOffset, UIBarMetrics) = (void (*)(id, SEL, UIOffset, UIBarMetrics))[updatedItem methodForSelector:setter];
+    if (setOffset == NULL)
+        return;
+    setOffset(updatedItem, setter, targetPortrait, UIBarMetricsDefault);
+    setOffset(updatedItem, setter, UIOffsetMake(landscape.horizontal + badgeShift, landscape.vertical), UIBarMetricsLandscapePhone);
+    previousController.navigationItem.backBarButtonItem = updatedItem;
 }
 
 - (void)setUnreadMentionCount:(int32_t)unreadMentionCount {
@@ -7832,6 +9040,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         }
         else
             _titlePanelWrappingView.userInteractionEnabled = false;
+        [self setAdditionalNavigationBarHeight:_brandedMusicPlayerRequestedHeight];
     }
 }
 
@@ -7984,6 +9193,10 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (bool)canReadHistory
 {
+#if defined(ONEGRAM_ARMV6)
+    if ([_companion initialItemsPreparationPending])
+        return false;
+#endif
     return _canReadHistory || ([UIApplication sharedApplication] != nil && [UIApplication sharedApplication].applicationState == UIApplicationStateActive && self.navigationController.topViewController == self);
 }
 
@@ -8077,7 +9290,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             if ([currentNormalizedText hasSuffix:[[command lowercaseString] substringToIndex:i]])
             {
                 currentText = [currentText stringByReplacingCharactersInRange:NSMakeRange(currentText.length - i, i) withString:command];
-                //currentText = [currentText stringByAppendingString:[command substringFromIndex:i]];
                 foundSuffix = true;
                 break;
             }
@@ -8138,6 +9350,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 {
     if (_enableUnloadHistoryRequests && (NSInteger)_items.count >= TGModernConversationControllerUnloadHistoryLimit + TGModernConversationControllerUnloadHistoryThreshold)
     {
+        if (_ogRuntimeInteractionActive && (NSInteger)_items.count < TGModernConversationControllerUnloadHistoryLimit + TGModernConversationControllerUnloadHistoryThreshold * 2)
+            return;
+
         NSIndexPath *indexPath = [_collectionView indexPathsForVisibleItems].firstObject;
         if (indexPath != nil)
         {
@@ -8377,18 +9592,18 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             return;
         }
 
-        UIActivityViewController *activityController = [[UIActivityViewController alloc] initWithActivityItems:next applicationActivities:nil];
-        [strongSelf presentViewController:activityController animated:true completion:^{
+        UIView *sourceView = nil;
+        CGRect sourceRect = CGRectZero;
+        if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
+        {
+            sourceView = strongSelf.view;
+            sourceRect = strongSelf.view.bounds;
+        }
+        OGPlatformPresentActivityItems(strongSelf, next, sourceView, sourceRect, nil, 0, ^{
             TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
             if (strongSelf != nil)
                 [strongSelf _leaveEditingModeAnimated:true];
-        }];
-        if (iosMajorVersion() >= 8 && [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
-        {
-            activityController.popoverPresentationController.sourceView = strongSelf.view;
-            activityController.popoverPresentationController.sourceRect = strongSelf.view.bounds;
-            activityController.popoverPresentationController.permittedArrowDirections = 0;
-        }
+        });
         [progressWindow dismiss:true];
     }];
 }
@@ -8438,7 +9653,15 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 {
     [_inputTextPanel setContextBotInputMode:mention != nil && startOfLine];
     
-    if (_currentMentionDisposable != nil) {
+    bool canBeContextBot = startOfLine && _inputTextPanel.messageEditingContext == nil;
+    if (mention != nil && TGStringCompare(mention, _currentMentionQuery) && canBeContextBot == _currentMentionCanBeContextBot) {
+        return;
+    }
+    _currentMentionQuery = [mention copy];
+    _currentMentionCanBeContextBot = canBeContextBot;
+    NSUInteger requestGeneration = ++_mentionRequestGeneration;
+
+    if (_currentMentionDisposable == nil) {
         _currentMentionDisposable = [[SMetaDisposable alloc] init];
     }
     
@@ -8450,11 +9673,11 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     }
     else
     {
-        bool canBeContextBot = startOfLine && _inputTextPanel.messageEditingContext == nil;
         TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
-        [_currentMentionDisposable setDisposable:[[[[_companion userListForMention:mention canBeContextBot:canBeContextBot includeSelf:false] take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *array) {
+        [_currentMentionDisposable setDisposable:nil];
+        [_currentMentionDisposable setDisposable:[[[_companion userListForMention:mention canBeContextBot:canBeContextBot includeSelf:false] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *array) {
             TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-            if (strongSelf != nil) {
+            if (strongSelf != nil && strongSelf->_mentionRequestGeneration == requestGeneration) {
                 if (array.count == 0) {
                     if ([[strongSelf->_inputTextPanel associatedPanel] isKindOfClass:[TGModernConversationMentionsAssociatedPanel class]]) {
                         [strongSelf->_inputTextPanel setAssociatedPanel:nil animated:true];
@@ -8475,6 +9698,9 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                                 {
                                     [strongSelf->_inputTextPanel setAssociatedPanel:nil animated:false];
                                 }
+                                [strongSelf->_currentMentionDisposable setDisposable:nil];
+                                strongSelf->_currentMentionQuery = nil;
+                                strongSelf->_mentionRequestGeneration++;
                                 
                                 if (user.userName.length == 0) {
                                     [strongSelf->_inputTextPanel replaceMention:[[NSString alloc] initWithFormat:@"%@", user.displayFirstName] username:false userId:user.uid];
@@ -8487,7 +9713,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                     }
                     
                     
-                    //canBeContextBot = false;
                     [panel setUserListSignal:[SSignal single:array]];
                     
                     [strongSelf->_inputTextPanel setAssociatedPanel:panel animated:true];
@@ -8940,7 +10165,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             _currentLinkParseLink = link;
             [_currentLinkParseDisposable setDisposable:[[parseLinkSignal deliverOn:[SQueue mainQueue]] startWithNext:^(TGWebPageMediaAttachment *webPage)
             {
-                //TGLog(@"parsed link %@ to webpage (%@)", link, webPage.url == nil ? @"incomplete" : @"complete");
                 TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
                 if (strongSelf != nil)
                 {
@@ -9745,6 +10969,27 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 {
     if (![[[LegacyComponentsGlobals provider] accessChecker] checkPhotoAuthorizationStatusForIntent:TGPhotoAccessIntentRead alertDismissCompletion:nil])
         return;
+
+#if defined(ONEGRAM_ARMV6)
+    TGLegacyCameraController *legacyPickerController = [[TGLegacyCameraController alloc] initWithContext:[TGLegacyComponentsContext shared]];
+    legacyPickerController.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+    legacyPickerController.mediaTypes = [[NSArray alloc] initWithObjects:(__bridge NSString *)kUTTypeImage, (__bridge NSString *)kUTTypeMovie, nil];
+    legacyPickerController.isInDocumentMode = file;
+    legacyPickerController.completionDelegate = self;
+    _legacyPickerMessageToEdit = messageToEdit;
+    if (TGIsPad())
+    {
+        _legacyCameraPopoverController = [[UIPopoverController alloc] initWithContentViewController:legacyPickerController];
+        CGRect bounds = self.view.bounds;
+        CGRect sourceRect = CGRectMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds), 1.0f, 1.0f);
+        [_legacyCameraPopoverController presentPopoverFromRect:sourceRect inView:self.view permittedArrowDirections:UIPopoverArrowDirectionAny animated:true];
+    }
+    else
+    {
+        [self presentViewController:legacyPickerController animated:true completion:nil];
+    }
+    return;
+#endif
     
     TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
     void (^dismissalBlock)(void) = ^
@@ -10271,6 +11516,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             @autoreleasepool
             {
                 NSDictionary *imageDescription = [_companion imageDescriptionFromImage:abstractAsset stickers:nil caption:nil entities:nil optionalAssetUrl:nil allowRemoteCache:false timer:0];
+                if (_legacyPickerMessageToEdit != nil)
+                    imageDescription = [self _descriptionForReplacingMedia:imageDescription message:_legacyPickerMessageToEdit];
                 if (imageDescription != nil)
                     [imageDescriptions addObject:imageDescription];
             }
@@ -10284,6 +11531,8 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
                 if (image != nil)
                 {
                     NSDictionary *imageDescription = [_companion imageDescriptionFromImage:image stickers:nil caption:nil entities:nil optionalAssetUrl:nil allowRemoteCache:false timer:0];
+                    if (_legacyPickerMessageToEdit != nil)
+                        imageDescription = [self _descriptionForReplacingMedia:imageDescription message:_legacyPickerMessageToEdit];
                     if (imageDescription != nil)
                         [imageDescriptions addObject:imageDescription];
                 }
@@ -10293,6 +11542,10 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     
     if (imageDescriptions.count != 0)
         [_companion controllerWantsToSendImagesWithDescriptions:imageDescriptions asReplyToMessageId:[self currentReplyMessageId] botReplyMarkup:nil];
+
+    if (_legacyPickerMessageToEdit != nil)
+        [self endMessageEditing:true];
+    _legacyPickerMessageToEdit = nil;
     
     [self _dismissLegacyCameraOrPicker];
 }
@@ -10367,6 +11620,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)legacyCameraControllerCompletedWithNoResult
 {
+    _legacyPickerMessageToEdit = nil;
     [self _dismissLegacyCameraOrPicker];
 }
 
@@ -10419,17 +11673,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
         return;
     _lastStickerSendTime = currentTime;
 
-    IOS6_NOOP_LOG(@"STICKER conversation.sendSticker peer=%lld reply=%d doc=%lld access=%lld dc=%d size=%d mime=%@ sticker=%d animated=%d pack=%@",
-        (long long)[_companion requestPeerId],
-        [self currentReplyMessageId],
-        (long long)sticker.documentId,
-        (long long)sticker.accessHash,
-        sticker.datacenterId,
-        sticker.size,
-        sticker.mimeType,
-        sticker.isSticker ? 1 : 0,
-        sticker.isAnimated ? 1 : 0,
-        sticker.stickerPackReference);
     [self->_companion controllerWantsToSendRemoteDocument:sticker asReplyToMessageId:[self currentReplyMessageId] text:nil entities:nil botContextResult:nil botReplyMarkup:nil];
 }
 
@@ -10648,6 +11891,10 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 
 - (void)startVideoMessageLockedImmediately:(bool)lockImmediately completion:(void (^)(void))completion
 {
+#if defined(ONEGRAM_ARMV6)
+    (void)lockImmediately;
+    [self startAudioRecording:false completion:completion];
+#else
     bool (^checkAuthorizationStatus)(void) = ^bool
     {
         if (![[[LegacyComponentsGlobals provider] accessChecker] checkCameraAuthorizationStatusForIntent:TGCameraAccessIntentVideoMessage alertDismissCompletion:nil])
@@ -10790,6 +12037,7 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
             checkAuthorizationStatus();
         }
     }];
+#endif
 }
 
 - (bool)maybeShowDiscardRecordingAlert
@@ -10967,7 +12215,6 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
 }
 
 - (void)startAudioRecording:(bool)speaker completion:(void (^)())completion {
-    TGLog(@"before start");
     
     [self stopAudioRecording];
     [self stopInlineMediaIfPlaying];
@@ -11688,8 +12935,6 @@ static UIView *_findBackArrow(UIView *view)
         }
     }
     
-    //[self _deleteItemsAtIndices:indexSet animated:true animationFactor:1.0f];
-    //[self _leaveEditingModeAnimated:true];
     
     [_companion _deleteMessages:checkedMessageIds animated:true];
     
@@ -11770,6 +13015,7 @@ static UIView *_findBackArrow(UIView *view)
 
 - (void)_adjustCollectionViewForSize:(CGSize)__unused size keyboardHeight:(CGFloat)keyboardHeight inputContainerHeight:(CGFloat)inputContainerHeight scrollToBottom:(bool)scrollToBottom stopScrolling:(bool)stopScrolling dismissOffset:(CGFloat)dismissOffset duration:(NSTimeInterval)duration animationCurve:(int)animationCurve
 {
+    [self _updateBrandedMusicPlayerForKeyboardHeight:keyboardHeight duration:duration animationCurve:animationCurve];
     CGFloat contentHeight =  _collectionView.contentSize.height;
     
     UIEdgeInsets originalInset = _collectionView.contentInset;
@@ -11865,13 +13111,12 @@ static UIView *_findBackArrow(UIView *view)
     if (_inputTextPanel.isCustomKeyboardExpanded)
         return;
     
-    CGSize collectionViewSize = _view.frame.size;
+    CGSize collectionViewSize = _view.bounds.size;
     
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
-    int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue] << 16;
+    int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
     
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [_view convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, _view);
     
     CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (collectionViewSize.height - keyboardFrame.origin.y);
     
@@ -11887,7 +13132,7 @@ static UIView *_findBackArrow(UIView *view)
     if (_inputTextPanel.changingKeyboardMode && keyboardHeight < FLT_EPSILON)
         return;
     
-    keyboardHeight = MAX(keyboardHeight, 0.0f);
+    keyboardHeight = [notification.name isEqualToString:UIKeyboardWillHideNotification] ? 0.0f : MAX(keyboardHeight, 0.0f);
     
     bool isSlideOver = TGAppDelegateInstance.rootController.isSlideOver;
     if (keyboardFrame.origin.y + keyboardFrame.size.height < collectionViewSize.height - FLT_EPSILON - (isSlideOver ? 20.0f : 0.0))
@@ -11940,12 +13185,11 @@ static UIView *_findBackArrow(UIView *view)
 {
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad && notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil)
     {
-        CGSize collectionViewSize = _view.frame.size;
+        CGSize collectionViewSize = _view.bounds.size;
         
         NSTimeInterval duration = 0.3;
         int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
-        CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-        CGRect keyboardFrame = [_view convertRect:screenKeyboardFrame fromView:nil];
+        CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, _view);
         
         CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f :  (collectionViewSize.height - keyboardFrame.origin.y);
         
@@ -11967,7 +13211,8 @@ static UIView *_findBackArrow(UIView *view)
     
     if (_titlePanelWrappingView != nil)
     {
-        CGRect titleWrapperFrame = CGRectMake(0.0f, self.controllerInset.top, collectionViewSize.width, _titlePanelWrappingView.frame.size.height);
+        bool compactPinned = [TGPresentation brandedIOS6Style] && _brandedMusicPlayerCompact && _brandedMusicPlayerRequestedHeight <= 2.0f && [_currentTitlePanel isKindOfClass:[TGPinnedMessageTitlePanel class]];
+        CGRect titleWrapperFrame = CGRectMake(0.0f, compactPinned ? [self _brandedMusicPlayerCardTopInset] : self.controllerInset.top, collectionViewSize.width, _titlePanelWrappingView.frame.size.height);
         CGRect titlePanelFrame = CGRectMake(0.0f, 0.0f, titleWrapperFrame.size.width, _currentTitlePanel.frame.size.height);
         _currentTitlePanel.safeAreaInset = [self calculatedSafeAreaInset];
         if (duration > DBL_EPSILON)
@@ -12240,37 +13485,40 @@ static UIView *_findBackArrow(UIView *view)
         if (strongSelf == nil)
             return;
 
-        NSMutableArray *updates = [[NSMutableArray alloc] init];
-        for (TGMessage *remoteMessage in messages)
+        [TGDatabaseInstance() dispatchOnDatabaseThread:^
         {
-            TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:remoteMessage.mid peerId:peerId];
-            if (storedMessage == nil)
-                continue;
+            NSMutableArray *updates = [[NSMutableArray alloc] init];
+            for (TGMessage *remoteMessage in messages)
+            {
+                TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:remoteMessage.mid peerId:peerId];
+                if (storedMessage == nil)
+                    continue;
 
-            NSString *remoteSummary = TGIOS6MessageDisplayedReactionSummary(remoteMessage);
-            NSString *remoteChosenReaction = nil;
-            id remoteProperty = [remoteMessage.contentProperties objectForKey:@"ios6ReactionSummary"];
-            if ([remoteProperty isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-                remoteChosenReaction = ((TGMessageReactionSummaryContentProperty *)remoteProperty).chosenReaction;
+                NSString *remoteSummary = TGIOS6MessageDisplayedReactionSummary(remoteMessage);
+                NSString *remoteChosenReaction = nil;
+                id remoteProperty = [remoteMessage.contentProperties objectForKey:@"ios6ReactionSummary"];
+                if ([remoteProperty isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
+                    remoteChosenReaction = ((TGMessageReactionSummaryContentProperty *)remoteProperty).chosenReaction;
 
-            NSString *storedSummary = TGIOS6MessageDisplayedReactionSummary(storedMessage);
-            NSString *storedChosenReaction = nil;
-            id storedProperty = [storedMessage.contentProperties objectForKey:@"ios6ReactionSummary"];
-            if ([storedProperty isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-                storedChosenReaction = ((TGMessageReactionSummaryContentProperty *)storedProperty).chosenReaction;
-            if (TGObjectCompare(remoteSummary, storedSummary) && TGObjectCompare(remoteChosenReaction, storedChosenReaction))
-                continue;
+                NSString *storedSummary = TGIOS6MessageDisplayedReactionSummary(storedMessage);
+                NSString *storedChosenReaction = nil;
+                id storedProperty = [storedMessage.contentProperties objectForKey:@"ios6ReactionSummary"];
+                if ([storedProperty isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
+                    storedChosenReaction = ((TGMessageReactionSummaryContentProperty *)storedProperty).chosenReaction;
+                if (TGObjectCompare(remoteSummary, storedSummary) && TGObjectCompare(remoteChosenReaction, storedChosenReaction))
+                    continue;
 
-            NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:storedMessage.contentProperties ?: @{}];
-            if (remoteSummary.length != 0)
-                [properties setObject:[[TGMessageReactionSummaryContentProperty alloc] initWithSummary:remoteSummary chosenReaction:remoteChosenReaction] forKey:@"ios6ReactionSummary"];
-            else
-                [properties removeObjectForKey:@"ios6ReactionSummary"];
-            storedMessage.contentProperties = properties;
-            [updates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:peerId messageId:remoteMessage.mid message:storedMessage dispatchEdited:true]];
-        }
-        if (updates.count != 0)
-            [TGDatabaseInstance() transactionUpdateMessages:updates updateConversationDatas:nil];
+                NSMutableDictionary *properties = [[NSMutableDictionary alloc] initWithDictionary:storedMessage.contentProperties ?: @{}];
+                if (remoteSummary.length != 0)
+                    [properties setObject:[[TGMessageReactionSummaryContentProperty alloc] initWithSummary:remoteSummary chosenReaction:remoteChosenReaction] forKey:@"ios6ReactionSummary"];
+                else
+                    [properties removeObjectForKey:@"ios6ReactionSummary"];
+                storedMessage.contentProperties = properties;
+                [updates addObject:[[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:peerId messageId:remoteMessage.mid message:storedMessage dispatchEdited:true]];
+            }
+            if (updates.count != 0)
+                [TGDatabaseInstance() transactionUpdateMessages:updates updateConversationDatas:nil];
+        } synchronous:false];
     } error:^(__unused id error)
     {
     } completed:nil];
@@ -12296,7 +13544,6 @@ static UIView *_findBackArrow(UIView *view)
         {
             TGIOS6CachedGlobalReactionEmojis = [emojis copy];
         }
-        IOS6_NOOP_LOG(@"FEATURE REACTION policy.global count=%d", (int)emojis.count);
         return [SSignal single:@{ @"mode": @"some", @"emojis": emojis }];
     }];
 }
@@ -12361,7 +13608,6 @@ static UIView *_findBackArrow(UIView *view)
                 [TGIOS6ReactionPolicyCache() setObject:policy forKey:peerKey];
             }
         }
-        IOS6_NOOP_LOG(@"FEATURE REACTION policy.peer peer=%lld mode=%@ count=%d", peerId, [policy objectForKey:@"mode"], (int)[[policy objectForKey:@"emojis"] count]);
         return policy;
     }] take:1];
 }
@@ -12408,12 +13654,10 @@ static UIView *_findBackArrow(UIView *view)
     request.peer = [TGTelegraphInstance createInputPeerForConversation:[_companion requestPeerId] accessHash:[_companion requestAccessHash]];
     request.msg_id = messageId;
     request.reaction = reaction;
-    IOS6_NOOP_LOG(@"FEATURE REACTION send mid=%d emoji=%@", messageId, reaction.length == 0 ? @"(remove)" : reaction);
 
     TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
     [[[[TGTelegramNetworking instance] requestSignal:request] deliverOn:[SQueue mainQueue]] startWithNext:^(TLUpdates *updates)
     {
-        IOS6_NOOP_LOG(@"FEATURE REACTION send.ok mid=%d emoji=%@ updates=%@", messageId, reaction.length == 0 ? @"(remove)" : reaction, NSStringFromClass([updates class]));
         if (updates != nil)
             [[TGTelegramNetworking instance] addUpdates:updates];
         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
@@ -12424,7 +13668,6 @@ static UIView *_findBackArrow(UIView *view)
         }
     } error:^(id error)
     {
-        IOS6_NOOP_LOG(@"FEATURE REACTION send.error mid=%d emoji=%@ error=%@", messageId, reaction.length == 0 ? @"(remove)" : reaction, error);
         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
         if (strongSelf != nil)
         {
@@ -12470,14 +13713,12 @@ static UIView *_findBackArrow(UIView *view)
         }
         if (remoteMessage == nil)
         {
-            IOS6_NOOP_LOG(@"FEATURE REACTION refresh.missing peer=%lld mid=%d", peerId, messageId);
             return;
         }
 
         TGMessage *storedMessage = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
         if (storedMessage == nil)
         {
-            IOS6_NOOP_LOG(@"FEATURE REACTION refresh.noLocal peer=%lld mid=%d", peerId, messageId);
             return;
         }
 
@@ -12495,10 +13736,8 @@ static UIView *_findBackArrow(UIView *view)
 
         TGDatabaseUpdateMessageWithMessage *update = [[TGDatabaseUpdateMessageWithMessage alloc] initWithPeerId:peerId messageId:messageId message:storedMessage dispatchEdited:true];
         [TGDatabaseInstance() transactionUpdateMessages:@[ update ] updateConversationDatas:nil];
-        IOS6_NOOP_LOG(@"FEATURE REACTION refresh.applied peer=%lld mid=%d summary=%@", peerId, messageId, summary);
     } error:^(id error)
     {
-        IOS6_NOOP_LOG(@"FEATURE REACTION refresh.error peer=%lld mid=%d error=%@", peerId, messageId, error);
     } completed:nil];
 }
 
@@ -12945,10 +14184,14 @@ static UIView *_findBackArrow(UIView *view)
                             }
                         }
                         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
                         _interactionController = [UIDocumentInteractionController interactionControllerWithURL:fileUrl];
                         _interactionController.delegate = self;
                         _interactionController.UTI = [self utiForFileExtension:[[fileUrl pathExtension] lowercaseString]];
                         [_interactionController presentOptionsMenuFromRect:messageRect inView:_view animated:true];
+#else
+                        TGShareItemsViaLegacyPasteboard(@[fileUrl]);
+#endif
                     }
                 }
             }
@@ -12996,6 +14239,41 @@ static UIView *_findBackArrow(UIView *view)
                     [[TGLiveLocationSignals stopLiveLocationWithPeerId:[self peerId] messageId:menuMessageItem->_message.mid] startWithNext:nil];
                 }
             }
+            else if ([menuAction isEqualToString:@"unvotePoll"])
+            {
+                if (menuMessageItem != nil)
+                {
+                    [[TGPollSignals voteWithPeerId:[self peerId] accessHash:[_companion requestAccessHash] messageId:menuMessageItem->_message.mid options:@[]] startWithNext:nil error:^(__unused id error)
+                    {
+                        TGDispatchOnMainThread(^
+                        {
+                            [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"MessagePoll.VoteFailed") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                        });
+                    } completed:nil];
+                }
+            }
+            else if ([menuAction isEqualToString:@"stopPoll"])
+            {
+                TGPollMediaAttachment *poll = menuMessageItem == nil ? nil : [TGPollMediaAttachment pollInMediaAttachments:menuMessageItem->_message.mediaAttachments];
+                if (poll != nil)
+                {
+                    int64_t peerId = [self peerId];
+                    int64_t accessHash = [_companion requestAccessHash];
+                    int32_t messageId = menuMessageItem->_message.mid;
+                    [TGCustomAlertView presentAlertWithTitle:[poll quiz] ? TGLocalized(@"Conversation.StopQuizConfirmationTitle") : TGLocalized(@"Conversation.StopPollConfirmationTitle") message:[poll quiz] ? TGLocalized(@"Conversation.StopQuizConfirmation") : TGLocalized(@"Conversation.StopPollConfirmation") cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:[poll quiz] ? TGLocalized(@"Conversation.StopQuiz") : TGLocalized(@"Conversation.StopPoll") completionBlock:^(bool okButtonPressed)
+                    {
+                        if (!okButtonPressed)
+                            return;
+                        [[TGPollSignals closePoll:poll peerId:peerId accessHash:accessHash messageId:messageId] startWithNext:nil error:^(__unused id error)
+                        {
+                            TGDispatchOnMainThread(^
+                            {
+                                [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"MessagePoll.StopFailed") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                            });
+                        } completed:nil];
+                    }];
+                }
+            }
         }
     }
     else if ([action isEqualToString:@"menuWillHide"])
@@ -13026,7 +14304,13 @@ static UIView *_findBackArrow(UIView *view)
     if (fileUrl == nil)
         return false;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     return [QLPreviewController canPreviewItem:(id<QLPreviewItem>)fileUrl];
+#else
+    NSString *extension = [[fileUrl pathExtension] lowercaseString];
+    NSArray *supportedExtensions = [NSArray arrayWithObjects:@"pdf", @"txt", @"rtf", @"html", @"htm", @"jpg", @"jpeg", @"png", @"gif", @"tif", @"tiff", @"doc", @"docx", @"xls", @"xlsx", @"ppt", @"pptx", @"key", @"numbers", @"pages", @"csv", nil];
+    return [supportedExtensions containsObject:extension];
+#endif
 }
 
 - (bool)isIpaDocument:(TGDocumentMediaAttachment *)documentAttachment
@@ -13083,6 +14367,7 @@ static UIView *_findBackArrow(UIView *view)
     if (isIpa)
         fileUrl = [self ipaOpenInUrlForFileUrl:fileUrl document:documentAttachment];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
     _interactionController = [UIDocumentInteractionController interactionControllerWithURL:fileUrl];
     _interactionController.delegate = self;
     
@@ -13102,6 +14387,17 @@ static UIView *_findBackArrow(UIView *view)
         _interactionController = nil;
         [TGCustomAlertView presentAlertWithTitle:nil message:@"No app is available to open this file." cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
     }
+#else
+    if ([self canPreviewFileUrl:fileUrl])
+    {
+        TGDocumentController *documentController = [[TGDocumentController alloc] initWithURL:fileUrl messageId:messageId];
+        [self.navigationController pushViewController:documentController animated:true];
+    }
+    else
+    {
+        [TGCustomAlertView presentAlertWithTitle:nil message:@"No app is available to open this file." cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+    }
+#endif
 }
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
@@ -13109,9 +14405,6 @@ static UIView *_findBackArrow(UIView *view)
 {
     TGDispatchOnMainThread(^
     {
-        if (userActivity == _currentActivity)
-        {
-        }
     });
 }
 
@@ -13274,7 +14567,6 @@ static UIView *_findBackArrow(UIView *view)
 
 - (void)openStickerPackForMessageId:(int32_t)messageId peerId:(int64_t)peerId
 {
-    IOS6_NOOP_LOG(@"STICKER conversation.openPackFromMessage request peer=%lld mid=%d items=%d", (long long)peerId, messageId, (int)_items.count);
     TGMessageModernConversationItem *stickerMessageItem = nil;
     
     for (TGMessageModernConversationItem *messageItem in _items)
@@ -13288,7 +14580,6 @@ static UIView *_findBackArrow(UIView *view)
     
     if (stickerMessageItem == nil)
     {
-        IOS6_NOOP_LOG(@"STICKER conversation.openPackFromMessage missingItem peer=%lld mid=%d", (long long)peerId, messageId);
         return;
     }
     
@@ -13298,15 +14589,6 @@ static UIView *_findBackArrow(UIView *view)
         if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]])
         {
             TGDocumentMediaAttachment *document = (TGDocumentMediaAttachment *)attachment;
-            IOS6_NOOP_LOG(@"STICKER conversation.openPackFromMessage document doc=%lld access=%lld dc=%d size=%d mime=%@ sticker=%d animated=%d attrs=%d",
-                (long long)document.documentId,
-                (long long)document.accessHash,
-                document.datacenterId,
-                document.size,
-                document.mimeType,
-                document.isSticker ? 1 : 0,
-                document.isAnimated ? 1 : 0,
-                (int)document.attributes.count);
             for (id attribute in ((TGDocumentMediaAttachment *)attachment).attributes)
             {
                 if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]])
@@ -13318,11 +14600,9 @@ static UIView *_findBackArrow(UIView *view)
     
     if (packReference == nil)
     {
-        IOS6_NOOP_LOG(@"STICKER conversation.openPackFromMessage missingPackRef peer=%lld mid=%d", (long long)peerId, messageId);
         return;
     }
     
-    IOS6_NOOP_LOG(@"STICKER conversation.openPackFromMessage present packRef=%@ isChannel=%d", packReference, _isChannel ? 1 : 0);
     
     [self endEditing];
     
@@ -13330,13 +14610,6 @@ static UIView *_findBackArrow(UIView *view)
     void (^sendSticker)(TGDocumentMediaAttachment *) = ^(TGDocumentMediaAttachment *sticker)
     {
         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-        IOS6_NOOP_LOG(@"STICKER conversation.openPackFromMessage.send doc=%lld access=%lld dc=%d size=%d mime=%@ pack=%@",
-            (long long)sticker.documentId,
-            (long long)sticker.accessHash,
-            sticker.datacenterId,
-            sticker.size,
-            sticker.mimeType,
-            sticker.stickerPackReference);
         if (strongSelf != nil)
             [strongSelf->_companion controllerWantsToSendRemoteDocument:sticker asReplyToMessageId:[strongSelf currentReplyMessageId] text:nil entities:nil botContextResult:nil botReplyMarkup:nil];
     };
@@ -13362,20 +14635,12 @@ static UIView *_findBackArrow(UIView *view)
 
 - (void)openStickerPackForReference:(id<TGStickerPackReference>)packReference
 {
-    IOS6_NOOP_LOG(@"STICKER conversation.openPackForReference packRef=%@ isChannel=%d", packReference, _isChannel ? 1 : 0);
     [self endEditing];
     
     TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
     void (^sendSticker)(TGDocumentMediaAttachment *) = ^(TGDocumentMediaAttachment *sticker)
     {
         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
-        IOS6_NOOP_LOG(@"STICKER conversation.openPackForReference.send doc=%lld access=%lld dc=%d size=%d mime=%@ pack=%@",
-            (long long)sticker.documentId,
-            (long long)sticker.accessHash,
-            sticker.datacenterId,
-            sticker.size,
-            sticker.mimeType,
-            sticker.stickerPackReference);
         if (strongSelf != nil)
             [strongSelf->_companion controllerWantsToSendRemoteDocument:sticker asReplyToMessageId:[strongSelf currentReplyMessageId] text:nil entities:nil botContextResult:nil botReplyMarkup:nil];
     };
@@ -13411,7 +14676,7 @@ static UIView *_findBackArrow(UIView *view)
                 [strongSelf clearSearchBarPrefix:complete];
             }
         };
-        [_view insertSubview:_searchBar aboveSubview:_collectionView];
+        [_view insertSubview:_searchBar aboveSubview:[self _collectionContentTopView]];
         
         _searchPanel = [[TGModernConversationSearchInputPanel alloc] init];
         _searchPanel.enableCalendar = [_companion messageSearchByDateAvailable];
@@ -13641,7 +14906,7 @@ static UIView *_findBackArrow(UIView *view)
             if (_scrollButtons.superview != nil) {
                 [_view insertSubview:_searchMentionsPanel aboveSubview:_scrollButtons];
             } else {
-                [_view insertSubview:_searchMentionsPanel aboveSubview:_collectionView];
+                [_view insertSubview:_searchMentionsPanel aboveSubview:[self _collectionContentTopView]];
             }
             
             [self _adjustCollectionInset];
@@ -14356,13 +15621,6 @@ static UIView *_findBackArrow(UIView *view)
             [_loadingMessagesController show:false];
             [self.view addSubview:_loadingMessagesController.view];
         }
-        /*if (_loadingMessagesIndicator == nil) {
-         _loadingMessagesIndicator = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-         _loadingMessagesIndicator.frame = CGRectMake(CGFloor((self.view.frame.size.width - _loadingMessagesIndicator.frame.size.width) / 2.0f), CGFloor((self.view.frame.size.height - _loadingMessagesIndicator.frame.size.height) / 2.0f), _loadingMessagesIndicator.frame.size.width, _loadingMessagesIndicator.frame.size.height);
-         _loadingMessagesIndicator.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
-         [self.view addSubview:_loadingMessagesIndicator];
-         [_loadingMessagesIndicator startAnimating];
-         }*/
         
         _snapshotImageView.hidden = true;
         _collectionView.hidden = true;
@@ -14383,11 +15641,6 @@ static UIView *_findBackArrow(UIView *view)
             _loadingMessagesController = nil;
         }
         
-        /*if (_loadingMessagesIndicator != nil) {
-         [_loadingMessagesIndicator stopAnimating];
-         [_loadingMessagesIndicator removeFromSuperview];
-         _loadingMessagesIndicator = nil;
-         }*/
     }
 }
 

@@ -269,7 +269,6 @@
         enablePay = false;
     }
     if (_shippindAddressState != nil && _shippindAddressState.username.length == 0) {
-        //enablePay = false;
     }
     if (_shippingAddressCountry != nil && _shippingAddressCountryId.length == 0) {
         enablePay = false;

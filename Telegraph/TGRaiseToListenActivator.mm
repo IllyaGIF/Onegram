@@ -65,11 +65,8 @@
                 [_manager setGestureHandler:^(int arg0, int arg1) {
                     __strong TGRaiseToListenActivator *strongSelf = weakSelf;
                     if (strongSelf != nil) {
-                        TGLog(@"gesture %d, %d", arg0, arg1);
                         if (arg0 == 0) {
                             [strongSelf startCheckingProximity];
-                        } else if (arg0 == 1) {
-                            
                         }
                     }
                 }];

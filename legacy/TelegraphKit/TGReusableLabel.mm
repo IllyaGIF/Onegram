@@ -1,11 +1,23 @@
 #import "TGReusableLabel.h"
+#import "../../OnegramPlatform/OGUnicode.h"
+#import "../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../OnegramRuntime/OGRuntime.h"
 
 #import "../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
-#import <CoreText/CoreText.h>
+#import "../../OnegramPlatform/OGPlatformText.h"
 
+#if defined(ONEGRAM_ARMV6)
+#include <map>
+typedef std::map<int, std::map<int, int> > TGReusableLabelLineOffsetMap;
+#else
 #include <tr1/unordered_map>
+typedef std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > TGReusableLabelLineOffsetMap;
+#endif
 #include <vector>
+#include <map>
+#include <string>
+#include <pthread.h>
 
 typedef struct
 {
@@ -44,6 +56,205 @@ static CGFloat TGEmojiRunGetWidth(void *refCon)
     return refCon == NULL ? 0.0f : ((TGEmojiRunContext *)refCon)->width;
 }
 
+NSString *const TGReusableLabelRunDecorationAttributeName = @"TGReusableLabelRunDecoration";
+
+@implementation TGReusableLabelRunDecoration
+
+@end
+
+CTRunDelegateRef TGReusableLabelCreateAttachmentRunDelegate(CGFloat ascent, CGFloat descent, CGFloat width)
+{
+    TGEmojiRunContext *context = (TGEmojiRunContext *)malloc(sizeof(TGEmojiRunContext));
+    if (context == NULL)
+        return NULL;
+    context->ascent = MAX(0.0f, ascent);
+    context->descent = MAX(0.0f, descent);
+    context->width = MAX(0.0f, width);
+
+    CTRunDelegateCallbacks callbacks;
+    callbacks.version = kCTRunDelegateVersion1;
+    callbacks.dealloc = TGEmojiRunDeallocate;
+    callbacks.getAscent = TGEmojiRunGetAscent;
+    callbacks.getDescent = TGEmojiRunGetDescent;
+    callbacks.getWidth = TGEmojiRunGetWidth;
+
+    CTRunDelegateRef delegate = CTRunDelegateCreate(&callbacks, context);
+    if (delegate == NULL)
+        free(context);
+    return delegate;
+}
+
+CGFloat TGReusableLabelFirstBaselineOffset(CTFontRef font)
+{
+    if (font == NULL)
+        return 0.0f;
+    return CGFloor(CTFontGetAscent(font) + CTFontGetDescent(font));
+}
+
+static TGReusableLabelRunDecoration *TGReusableLabelRunDecorationForRun(CTRunRef run)
+{
+    CFDictionaryRef attributes = CTRunGetAttributes(run);
+    if (attributes == NULL)
+        return nil;
+    id value = (__bridge id)CFDictionaryGetValue(attributes, (__bridge CFStringRef)TGReusableLabelRunDecorationAttributeName);
+    return [value isKindOfClass:[TGReusableLabelRunDecoration class]] ? value : nil;
+}
+
+static void TGReusableLabelAddRoundedRect(CGContextRef context, CGRect rect, CGFloat radius)
+{
+    radius = MIN(radius, MIN(rect.size.width, rect.size.height) / 2.0f);
+    if (radius <= 0.0f)
+    {
+        CGContextAddRect(context, rect);
+        return;
+    }
+    CGFloat minX = CGRectGetMinX(rect);
+    CGFloat maxX = CGRectGetMaxX(rect);
+    CGFloat minY = CGRectGetMinY(rect);
+    CGFloat maxY = CGRectGetMaxY(rect);
+    CGContextMoveToPoint(context, minX + radius, minY);
+    CGContextAddArcToPoint(context, maxX, minY, maxX, maxY, radius);
+    CGContextAddArcToPoint(context, maxX, maxY, minX, maxY, radius);
+    CGContextAddArcToPoint(context, minX, maxY, minX, minY, radius);
+    CGContextAddArcToPoint(context, minX, minY, maxX, minY, radius);
+    CGContextClosePath(context);
+}
+
+static void TGReusableLabelDrawCover(CGContextRef context, CGRect rect, UIColor *color)
+{
+    CGContextSaveGState(context);
+    CGContextSetShadowWithColor(context, CGSizeZero, 0.0f, NULL);
+    CGContextSetFillColorWithColor(context, [color colorWithAlphaComponent:0.12f].CGColor);
+    TGReusableLabelAddRoundedRect(context, rect, 3.0f);
+    CGContextFillPath(context);
+
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    uint32_t seed = ((uint32_t)lrintf(rect.origin.x * 7.0f) * 73856093u) ^ ((uint32_t)lrintf(rect.origin.y * 3.0f) * 19349663u) ^ ((uint32_t)lrintf(rect.size.width) * 83492791u);
+    uint32_t width = (uint32_t)MAX(1.0f, CGFloor(rect.size.width));
+    uint32_t height = (uint32_t)MAX(1.0f, CGFloor(rect.size.height));
+    int count = (int)(rect.size.width * rect.size.height / 7.0f);
+    CGFloat dot = TGScreenPixel * 2.0f;
+    for (int i = 0; i < count; i++)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        CGFloat x = rect.origin.x + (CGFloat)((seed >> 8) % width);
+        seed = seed * 1664525u + 1013904223u;
+        CGFloat y = rect.origin.y + (CGFloat)((seed >> 8) % height);
+        CGContextSetAlpha(context, 0.35f + 0.65f * (CGFloat)((seed >> 4) & 0xf) / 15.0f);
+        CGContextFillRect(context, CGRectMake(x, y, dot, dot));
+    }
+    CGContextRestoreGState(context);
+}
+
+static void TGReusableLabelDrawMergedDecoration(CGContextRef context, TGReusableLabelRunDecoration *decoration, CGRect rect, CGFloat baseline, bool background)
+{
+    if (background)
+    {
+        if (decoration.backgroundColor == nil && decoration.backgroundBorderColor == nil)
+            return;
+        CGRect backgroundRect = CGRectInset(rect, -decoration.backgroundHorizontalOutset, -1.0f);
+        CGContextSaveGState(context);
+        CGContextSetShadowWithColor(context, CGSizeZero, 0.0f, NULL);
+        if (decoration.backgroundColor != nil)
+        {
+            CGContextSetFillColorWithColor(context, decoration.backgroundColor.CGColor);
+            TGReusableLabelAddRoundedRect(context, backgroundRect, decoration.backgroundCornerRadius);
+            CGContextFillPath(context);
+        }
+        if (decoration.backgroundBorderColor != nil)
+        {
+            CGContextSetStrokeColorWithColor(context, decoration.backgroundBorderColor.CGColor);
+            CGContextSetLineWidth(context, TGScreenPixel);
+            TGReusableLabelAddRoundedRect(context, CGRectInset(backgroundRect, TGScreenPixel / 2.0f, TGScreenPixel / 2.0f), decoration.backgroundCornerRadius);
+            CGContextStrokePath(context);
+        }
+        CGContextRestoreGState(context);
+        return;
+    }
+
+    if (decoration.strikethroughColor != nil)
+    {
+        CGFloat y = CGFloor((baseline - (baseline - rect.origin.y) * 0.32f) / TGScreenPixel) * TGScreenPixel;
+        CGContextSaveGState(context);
+        CGContextSetFillColorWithColor(context, decoration.strikethroughColor.CGColor);
+        CGContextFillRect(context, CGRectMake(rect.origin.x, y, rect.size.width, MAX(1.0f, TGScreenPixel * 2.0f)));
+        CGContextRestoreGState(context);
+    }
+
+    if (decoration.underlineColor != nil)
+    {
+        CGFloat y = CGFloor((baseline + MAX(1.0f, (CGRectGetMaxY(rect) - baseline) * 0.35f)) / TGScreenPixel) * TGScreenPixel;
+        CGContextSaveGState(context);
+        CGContextSetFillColorWithColor(context, decoration.underlineColor.CGColor);
+        CGContextFillRect(context, CGRectMake(rect.origin.x, y, rect.size.width, MAX(1.0f, TGScreenPixel * 2.0f)));
+        CGContextRestoreGState(context);
+    }
+
+    if (decoration.coverColor != nil)
+        TGReusableLabelDrawCover(context, CGRectInset(rect, -1.0f, -1.0f), decoration.coverColor);
+}
+
+static bool TGReusableLabelRangeIsCovered(NSAttributedString *string, NSRange range)
+{
+    if (range.length == 0 || range.location >= string.length)
+        return false;
+    id value = [string attribute:TGReusableLabelRunDecorationAttributeName atIndex:range.location effectiveRange:NULL];
+    return [value isKindOfClass:[TGReusableLabelRunDecoration class]] && ((TGReusableLabelRunDecoration *)value).coverColor != nil;
+}
+
+static void TGReusableLabelDrawLineDecorations(CGContextRef context, CFArrayRef glyphRuns, CGPoint lineOrigin, bool background)
+{
+    CFIndex count = CFArrayGetCount(glyphRuns);
+    TGReusableLabelRunDecoration *current = nil;
+    CGRect currentRect = CGRectNull;
+    for (CFIndex index = 0; index <= count; index++)
+    {
+        TGReusableLabelRunDecoration *decoration = nil;
+        CGRect runRect = CGRectNull;
+        if (index < count)
+        {
+            CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(glyphRuns, index);
+            CFIndex glyphCount = CTRunGetGlyphCount(run);
+            decoration = glyphCount == 0 ? nil : TGReusableLabelRunDecorationForRun(run);
+            if (decoration != nil)
+            {
+                CGPoint position = CGPointZero;
+                CTRunGetPositions(run, CFRangeMake(0, 1), &position);
+                CGFloat ascent = 0.0f;
+                CGFloat descent = 0.0f;
+                CGFloat width = (CGFloat)CTRunGetTypographicBounds(run, CFRangeMake(0, glyphCount), &ascent, &descent, NULL);
+                runRect = CGRectMake(lineOrigin.x + position.x, lineOrigin.y - ascent, width, ascent + descent);
+                if (!background && decoration.drawContent != nil)
+                {
+                    CGContextSaveGState(context);
+                    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
+                    decoration.drawContent(context, runRect);
+                    CGContextSetTextMatrix(context, CGAffineTransformMakeScale(1.0f, -1.0f));
+                    CGContextRestoreGState(context);
+                }
+            }
+        }
+
+        if (current != nil && (decoration != current || ABS(CGRectGetMinX(runRect) - CGRectGetMaxX(currentRect)) > 0.5f))
+        {
+            TGReusableLabelDrawMergedDecoration(context, current, currentRect, lineOrigin.y, background);
+            current = nil;
+            currentRect = CGRectNull;
+        }
+
+        if (decoration != nil)
+        {
+            if (current == nil)
+            {
+                current = decoration;
+                currentRect = runRect;
+            }
+            else
+                currentRect = CGRectUnion(currentRect, runRect);
+        }
+    }
+}
+
 static bool TGNativeEmojiMetrics(CGFloat fontSize, CGFloat *ascent, CGFloat *descent, CGFloat *width)
 {
     static NSMutableDictionary *cache = nil;
@@ -75,8 +286,29 @@ static bool TGNativeEmojiMetrics(CGFloat fontSize, CGFloat *ascent, CGFloat *des
     if (emojiFont == NULL)
         return false;
 
+    static const UTF32Char sampleCandidates[] = {0x1F600, 0x1F604, 0x1F60A};
+    NSString *sampleText = nil;
+    CFCharacterSetRef emojiCharacters = CTFontCopyCharacterSet(emojiFont);
+    for (size_t index = 0; emojiCharacters != NULL && index < sizeof(sampleCandidates) / sizeof(sampleCandidates[0]); index++)
+    {
+        if (CFCharacterSetIsLongCharacterMember(emojiCharacters, sampleCandidates[index]))
+        {
+            UniChar units[2];
+            OGUnicodeSurrogatePairForScalar(sampleCandidates[index], units);
+            sampleText = [[NSString alloc] initWithCharacters:units length:2];
+            break;
+        }
+    }
+    if (emojiCharacters != NULL)
+        CFRelease(emojiCharacters);
+    if (sampleText == nil)
+    {
+        CFRelease(emojiFont);
+        return false;
+    }
+
     NSDictionary *attributes = [NSDictionary dictionaryWithObject:(__bridge id)emojiFont forKey:(__bridge NSString *)kCTFontAttributeName];
-    NSAttributedString *sample = [[NSAttributedString alloc] initWithString:@"\U0001F600" attributes:attributes];
+    NSAttributedString *sample = [[NSAttributedString alloc] initWithString:sampleText attributes:attributes];
     CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)sample);
 
     CGFloat measuredAscent = 0.0f;
@@ -251,18 +483,312 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
             continue;
         }
 
-        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), kCTRunDelegateAttributeName, delegate);
-        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), CFSTR("TGOnegramEmoji"), (__bridge CFStringRef)emoji);
-        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), CFSTR("TGOnegramEmojiTrailingSpacing"), (__bridge CFNumberRef)[NSNumber numberWithFloat:trailingSpacing]);
-        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), kCTForegroundColorAttributeName, [UIColor clearColor].CGColor);
+        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), kCTRunDelegateAttributeName, delegate);
+        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), CFSTR("TGOnegramEmoji"), (__bridge CFStringRef)emoji);
+        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)replacement, CFRangeMake(0, 1), CFSTR("TGOnegramEmojiTrailingSpacing"), (__bridge CFNumberRef)[NSNumber numberWithFloat:trailingSpacing]);
         [string replaceCharactersInRange:sourceRange withAttributedString:replacement];
         CFRelease(delegate);
     }
 }
 
+typedef struct
+{
+    CFCharacterSetRef characterSet;
+    std::map<UTF32Char, CTFontRef> *fallbacks;
+} TGReusableLabelFontCoverage;
+
+static pthread_mutex_t TGReusableLabelFallbackMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static std::map<std::string, TGReusableLabelFontCoverage> &TGReusableLabelFallbackCache(void)
+{
+    static std::map<std::string, TGReusableLabelFontCoverage> &cache = *new std::map<std::string, TGReusableLabelFontCoverage>();
+    return cache;
+}
+
+static std::string TGReusableLabelFontKey(CTFontRef font)
+{
+    CFStringRef name = CTFontCopyPostScriptName(font);
+    char nameBuffer[128] = { 0 };
+    if (name != NULL)
+    {
+        CFStringGetCString(name, nameBuffer, sizeof(nameBuffer), kCFStringEncodingUTF8);
+        CFRelease(name);
+    }
+    char keyBuffer[160];
+    snprintf(keyBuffer, sizeof(keyBuffer), "%s/%d", nameBuffer, (int)lrint(CTFontGetSize(font) * 64.0f));
+    return std::string(keyBuffer);
+}
+
+static TGReusableLabelFontCoverage *TGReusableLabelCoverageLocked(CTFontRef font, const std::string &key)
+{
+    std::map<std::string, TGReusableLabelFontCoverage> &cache = TGReusableLabelFallbackCache();
+    std::map<std::string, TGReusableLabelFontCoverage>::iterator it = cache.find(key);
+    if (it != cache.end())
+        return &it->second;
+    TGReusableLabelFontCoverage coverage;
+    coverage.characterSet = CTFontCopyCharacterSet(font);
+    coverage.fallbacks = new std::map<UTF32Char, CTFontRef>();
+    cache[key] = coverage;
+    return &cache[key];
+}
+
+static NSString *TGReusableLabelFallbackStorePath(void)
+{
+    static NSString *path = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        NSString *caches = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) objectAtIndex:0];
+        NSString *system = [[[UIDevice currentDevice] systemVersion] stringByReplacingOccurrencesOfString:@"." withString:@"_"];
+        path = [caches stringByAppendingPathComponent:[NSString stringWithFormat:@"OGFontFallback-%@.plist", system]];
+    });
+    return path;
+}
+
+static NSMutableDictionary *TGReusableLabelFallbackStoreLocked(void)
+{
+    static NSMutableDictionary *store = nil;
+    if (store == nil)
+    {
+        NSDictionary *saved = [NSDictionary dictionaryWithContentsOfFile:TGReusableLabelFallbackStorePath()];
+        store = [[NSMutableDictionary alloc] initWithDictionary:[saved isKindOfClass:[NSDictionary class]] ? saved : @{}];
+    }
+    return store;
+}
+
+static bool TGReusableLabelFallbackStoreSaveScheduled = false;
+
+static void TGReusableLabelFallbackStoreRememberLocked(NSString *entryKey, NSString *fontName)
+{
+    NSMutableDictionary *store = TGReusableLabelFallbackStoreLocked();
+    if ([store[entryKey] isEqualToString:fontName])
+        return;
+    store[entryKey] = fontName;
+    if (TGReusableLabelFallbackStoreSaveScheduled)
+        return;
+    TGReusableLabelFallbackStoreSaveScheduled = true;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^
+    {
+        pthread_mutex_lock(&TGReusableLabelFallbackMutex);
+        NSDictionary *snapshot = [TGReusableLabelFallbackStoreLocked() copy];
+        TGReusableLabelFallbackStoreSaveScheduled = false;
+        pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+        [snapshot writeToFile:TGReusableLabelFallbackStorePath() atomically:true];
+    });
+}
+
+static CTFontRef TGReusableLabelCreateNamedFont(NSString *fontName, CGFloat size)
+{
+    if (fontName.length == 0)
+        return NULL;
+    CTFontRef created = CTFontCreateWithName((__bridge CFStringRef)fontName, size, NULL);
+    if (created == NULL)
+        return NULL;
+    CFStringRef createdName = CTFontCopyPostScriptName(created);
+    bool matches = createdName != NULL && CFStringCompare(createdName, (__bridge CFStringRef)fontName, 0) == kCFCompareEqualTo;
+    if (createdName != NULL)
+        CFRelease(createdName);
+    if (!matches)
+    {
+        CFRelease(created);
+        return NULL;
+    }
+    return created;
+}
+
+static CTFontRef TGReusableLabelFallbackFont(CTFontRef font, const std::string &key, UTF32Char character)
+{
+    pthread_mutex_lock(&TGReusableLabelFallbackMutex);
+    TGReusableLabelFontCoverage *coverage = TGReusableLabelCoverageLocked(font, key);
+    std::map<UTF32Char, CTFontRef>::iterator it = coverage->fallbacks->find(character);
+    if (it != coverage->fallbacks->end())
+    {
+        CTFontRef cached = it->second;
+        pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+        return cached;
+    }
+    NSString *entryKey = [[NSString alloc] initWithFormat:@"%s|%X", key.c_str(), (unsigned int)character];
+    NSString *storedName = TGReusableLabelFallbackStoreLocked()[entryKey];
+    pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+
+    if (storedName != nil)
+    {
+        CTFontRef storedFont = TGReusableLabelCreateNamedFont(storedName, CTFontGetSize(font));
+        if (storedFont != NULL)
+        {
+            pthread_mutex_lock(&TGReusableLabelFallbackMutex);
+            coverage = TGReusableLabelCoverageLocked(font, key);
+            it = coverage->fallbacks->find(character);
+            if (it != coverage->fallbacks->end())
+            {
+                CFRelease(storedFont);
+                storedFont = it->second;
+            }
+            else
+                (*coverage->fallbacks)[character] = storedFont;
+            pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+            return storedFont;
+        }
+    }
+
+    UniChar units[2];
+    CFIndex unitCount = OGUnicodeSurrogatePairForScalar(character, units) ? 2 : 1;
+    if (unitCount == 1)
+        units[0] = (UniChar)character;
+    CFStringRef characterString = CFStringCreateWithCharacters(kCFAllocatorDefault, units, unitCount);
+    CTFontRef fallback = characterString != NULL ? CTFontCreateForString(font, characterString, CFRangeMake(0, unitCount)) : NULL;
+    if (characterString != NULL)
+        CFRelease(characterString);
+    if (fallback != NULL)
+    {
+        CFCharacterSetRef fallbackSet = CTFontCopyCharacterSet(fallback);
+        bool covers = fallbackSet != NULL && CFCharacterSetIsLongCharacterMember(fallbackSet, character);
+        if (fallbackSet != NULL)
+            CFRelease(fallbackSet);
+        if (!covers || CFEqual(fallback, font))
+        {
+            CFRelease(fallback);
+            fallback = NULL;
+        }
+    }
+    bool lastResort = false;
+    if (fallback == NULL)
+    {
+        fallback = CTFontCreateWithName(CFSTR("LastResort"), CTFontGetSize(font), NULL);
+        if (fallback != NULL)
+        {
+            CFStringRef lastResortName = CTFontCopyPostScriptName(fallback);
+            lastResort = lastResortName != NULL && CFStringCompare(lastResortName, CFSTR("LastResort"), 0) == kCFCompareEqualTo;
+            if (lastResortName != NULL)
+                CFRelease(lastResortName);
+            if (!lastResort)
+            {
+                CFRelease(fallback);
+                fallback = NULL;
+            }
+        }
+    }
+
+    pthread_mutex_lock(&TGReusableLabelFallbackMutex);
+    coverage = TGReusableLabelCoverageLocked(font, key);
+    it = coverage->fallbacks->find(character);
+    if (it != coverage->fallbacks->end())
+    {
+        if (fallback != NULL)
+            CFRelease(fallback);
+        fallback = it->second;
+    }
+    else
+    {
+        (*coverage->fallbacks)[character] = fallback;
+        if (fallback != NULL)
+        {
+            CFStringRef fallbackPostScriptName = CTFontCopyPostScriptName(fallback);
+            if (fallbackPostScriptName != NULL)
+            {
+                TGReusableLabelFallbackStoreRememberLocked(entryKey, (__bridge NSString *)fallbackPostScriptName);
+                CFRelease(fallbackPostScriptName);
+            }
+        }
+    }
+    pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+    return fallback;
+}
+
+static CFCharacterSetRef TGReusableLabelFontCharacterSet(CTFontRef font, const std::string &key)
+{
+    pthread_mutex_lock(&TGReusableLabelFallbackMutex);
+    CFCharacterSetRef characterSet = TGReusableLabelCoverageLocked(font, key)->characterSet;
+    pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+    return characterSet;
+}
+
+static void TGReusableLabelAssignFallbackFonts(NSMutableAttributedString *string)
+{
+    NSUInteger length = string.length;
+    if (length == 0)
+        return;
+
+    if (OGPlatformTextUsesManagedFallback())
+    {
+        OGPlatformTextApplyManagedFallback((__bridge CFMutableAttributedStringRef)string);
+        return;
+    }
+
+    NSString *text = string.string;
+    std::vector<UniChar> units(length);
+    [text getCharacters:units.data() range:NSMakeRange(0, length)];
+
+    struct FallbackEdit
+    {
+        NSRange range;
+        CTFontRef font;
+    };
+    std::vector<FallbackEdit> edits;
+
+    NSUInteger runStart = 0;
+    while (runStart < length)
+    {
+        NSRange runRange = NSMakeRange(0, 0);
+        CTFontRef runFont = (__bridge CTFontRef)[string attribute:(__bridge NSString *)kCTFontAttributeName atIndex:runStart effectiveRange:&runRange];
+        NSUInteger runEnd = MIN(length, NSMaxRange(runRange));
+        if (runEnd <= runStart)
+            runEnd = runStart + 1;
+        if (runFont != NULL)
+        {
+            bool needsKey = false;
+            for (NSUInteger index = runStart; index < runEnd; index++)
+            {
+                if (units[index] >= 0x0400)
+                {
+                    needsKey = true;
+                    break;
+                }
+            }
+            if (needsKey)
+            {
+                std::string key = TGReusableLabelFontKey(runFont);
+                CFCharacterSetRef characterSet = TGReusableLabelFontCharacterSet(runFont, key);
+                NSUInteger index = runStart;
+                while (index < runEnd)
+                {
+                    UTF32Char character = units[index];
+                    NSUInteger characterLength = 1;
+                    if (OGUnicodeIsHighSurrogate(units[index]) && index + 1 < runEnd && OGUnicodeIsLowSurrogate(units[index + 1]))
+                    {
+                        character = OGUnicodeScalarForSurrogatePair(units[index], units[index + 1]);
+                        characterLength = 2;
+                    }
+                    if (character >= 0x0080 && characterSet != NULL && !CFCharacterSetIsLongCharacterMember(characterSet, character))
+                    {
+                        CTFontRef fallback = TGReusableLabelFallbackFont(runFont, key, character);
+                        if (fallback != NULL)
+                        {
+                            if (!edits.empty() && edits.back().font == fallback && NSMaxRange(edits.back().range) == index)
+                                edits.back().range.length += characterLength;
+                            else
+                            {
+                                FallbackEdit edit;
+                                edit.range = NSMakeRange(index, characterLength);
+                                edit.font = fallback;
+                                edits.push_back(edit);
+                            }
+                        }
+                    }
+                    index += characterLength;
+                }
+            }
+        }
+        runStart = runEnd;
+    }
+
+    for (std::vector<FallbackEdit>::iterator it = edits.begin(); it != edits.end(); ++it)
+        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(it->range.location, it->range.length), kCTFontAttributeName, it->font);
+}
+
 @interface TGReusableLabelLayoutData ()
 {
-    std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > _lineOffsets;
+    TGReusableLabelLineOffsetMap _lineOffsets;
     std::vector<TGLinePosition> _lineOrigins;
     
     std::vector<TGLinkData> _links;
@@ -270,6 +796,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
 }
 
 @property (nonatomic, strong) NSArray *textLines;
+@property (nonatomic) bool hasCustomDrawing;
 @property (nonatomic) CGSize drawingSize;
 @property (nonatomic) CGPoint drawingOffset;
 @property (nonatomic, strong) NSString *text;
@@ -277,10 +804,49 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
 @property (nonatomic) CGFloat fontLineHeight;
 @property (nonatomic) CGFloat fontLineSpacing;
 
-- (std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > *)lineOffsets;
+- (TGReusableLabelLineOffsetMap *)lineOffsets;
 - (std::vector<TGEmojiIndexMapping> *)emojiMappings;
 
 @end
+
+NSString *const TGReusableLabelEmojiImagesLoadedNotification = @"TGReusableLabelEmojiImagesLoadedNotification";
+
+static bool TGReusableLabelMissedEmojiFlag = false;
+
+void TGReusableLabelResetMissedEmoji(void)
+{
+    TGReusableLabelMissedEmojiFlag = false;
+}
+
+bool TGReusableLabelMissedEmoji(void)
+{
+    return TGReusableLabelMissedEmojiFlag;
+}
+
+static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
+{
+    if (!OGRuntimeInteractionActiveFast() || ![NSThread isMainThread])
+        return TGEmojiImageOfSize(emoji, size);
+
+    UIImage *image = TGEmojiCachedImageOfSize(emoji, size);
+    if (image != nil)
+        return image;
+
+    TGReusableLabelMissedEmojiFlag = true;
+    TGPreloadEmojiImageOfSize(emoji, size, ^
+    {
+        static bool notificationPending = false;
+        if (notificationPending)
+            return;
+        notificationPending = true;
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            notificationPending = false;
+            [[NSNotificationCenter defaultCenter] postNotificationName:TGReusableLabelEmojiImagesLoadedNotification object:nil];
+        });
+    });
+    return nil;
+}
 
 @implementation TGReusableLabelLayoutData
 
@@ -289,7 +855,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
     return _drawingSize.width;
 }
 
-- (std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > *)lineOffsets
+- (TGReusableLabelLineOffsetMap *)lineOffsets
 {
     return &_lineOffsets;
 }
@@ -377,55 +943,6 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                 CGFloat startX = 0.0f;
                 CGFloat endX = 0.0f;
                 
-                /*if (resultHadRTL)
-                {
-                    bool appliedAnyPosition = false;
-                    
-                    CFArrayRef glyphRuns = CTLineGetGlyphRuns(line);
-                    int glyphRunCount = (int)CFArrayGetCount(glyphRuns);
-                    for (int iRun = 0; iRun < glyphRunCount; iRun++)
-                    {
-                        CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(glyphRuns, iRun);
-                        CFIndex glyphCount = CTRunGetGlyphCount(run);
-                        if (glyphCount > 0)
-                        {
-                            CFIndex startIndex = 0;
-                            CFIndex endIndex = 0;
-                            
-                            CTRunGetStringIndices(run, CFRangeMake(0, 1), &startIndex);
-                            CTRunGetStringIndices(run, CFRangeMake(glyphCount - 1, 1), &endIndex);
-                            
-                            if (startIndex >= (CFIndex)it->range.location && endIndex < (CFIndex)(it->range.location + it->range.length))
-                            {
-                                CGPoint leftPosition = CGPointZero;
-                                CGPoint rightPosition = CGPointZero;
-                                
-                                CTRunGetPositions(run, CFRangeMake(0, 1), &leftPosition);
-                                float runWidth = (float)CTRunGetTypographicBounds(run, CFRangeMake(0, glyphCount), NULL, NULL, NULL);
-                                rightPosition.x = leftPosition.x + runWidth;
-                                
-                                if (!appliedAnyPosition)
-                                {
-                                    appliedAnyPosition = true;
-                                    
-                                    startX = leftPosition.x;
-                                    endX = rightPosition.x;
-                                }
-                                else
-                                {
-                                    if (leftPosition.x < startX)
-                                        startX = leftPosition.x;
-                                    if (rightPosition.x > endX)
-                                        endX = rightPosition.x;
-                                }
-                            }
-                        }
-                    }
-                    
-                    startX = CGFloor(startX + lineOrigin.x);
-                    endX = CGCeil(endX + lineOrigin.x);
-                }
-                else*/
                 {
                     startX = CGCeil(CTLineGetOffsetForStringIndex(line, intersectionRange.location, NULL) + lineOrigin.x);
                     endX = CGCeil(CTLineGetOffsetForStringIndex(line, intersectionRange.location + intersectionRange.length, NULL) + lineOrigin.x);
@@ -438,12 +955,6 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                     endX = tmp;
                 }
                 
-                /*bool tillEndOfLine = false;
-                if (intersectionRange.location + intersectionRange.length >= (NSUInteger)(lineRange.location + lineRange.length) && ABS(endX - layoutSize.width) < 16)
-                {
-                    tillEndOfLine = true;
-                    endX = layoutSize.width + lineOrigin.x;
-                }*/
                 CGRect region = CGRectMake(CGCeil(startX - 3), CGCeil(lineOrigin.y - _fontLineHeight + _fontLineHeight * 0.1f), CGCeil(endX - startX + 6), CGCeil(_fontLineSpacing));
                 if (block)
                     block(region);
@@ -554,18 +1065,20 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
     CGFloat fontAscent = CTFontGetAscent(font);
     CGFloat fontDescent = CTFontGetDescent(font);
     
-    CGFloat fontLineHeight = CGFloor(fontAscent + fontDescent);
+    CGFloat fontLineHeight = TGReusableLabelFirstBaselineOffset(font);
     CGFloat fontLineSpacing = CGFloor(fontLineHeight * 1.12f + additionalLineSpacing);
     
     layout.fontLineHeight = fontLineHeight;
     layout.fontLineSpacing = fontLineSpacing;
     
-    NSMutableDictionary *attributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)font, (NSString *)kCTFontAttributeName, nil];
+    NSMutableDictionary *attributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)font, (__bridge NSString *)kCTFontAttributeName, nil];
     
     NSMutableAttributedString *string = [[NSMutableAttributedString alloc] initWithString:text attributes:attributes];
     
-    if (textColor != NULL)
-        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(0, string.length), kCTForegroundColorAttributeName, textColor.CGColor);
+    if (flags & TGReusableLabelLayoutForegroundFromContext)
+        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(0, string.length), kCTForegroundColorFromContextAttributeName, kCFBooleanTrue);
+    else if (textColor != NULL)
+        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(0, string.length), kCTForegroundColorAttributeName, textColor.CGColor);
     
     if (additionalAttributes != nil)
     {
@@ -578,7 +1091,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
             
             if (range.location + range.length <= string.length)
             {
-                CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(range.location, range.length), (CFStringRef)[attributes objectAtIndex:1], (CFTypeRef)[attributes objectAtIndex:0]);
+                CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(range.location, range.length), (__bridge CFStringRef)[attributes objectAtIndex:1], (__bridge CFTypeRef)[attributes objectAtIndex:0]);
             }
         }
     }
@@ -620,12 +1133,12 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                 }
                 layout.links->push_back(TGLinkData(linkRange, url, linkText, hidden));
                 
-                if (flags & TGReusableLabelLayoutHighlightLinks && linkColor != NULL)
+                if (flags & TGReusableLabelLayoutHighlightLinks && linkColor != NULL && !TGReusableLabelRangeIsCovered(string, linkRange))
                 {
-                    CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, linkColor.CGColor);
+                    CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, linkColor.CGColor);
                     
                     if (enableUnderline) {
-                        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTUnderlineStyleAttributeName, (CFNumberRef)underlineStyle);
+                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTUnderlineStyleAttributeName, (__bridge CFNumberRef)underlineStyle);
                     }
                 }
                 
@@ -674,7 +1187,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                             fixedFont = TGCoreTextFixedFontOfSize(fontSize);
                         }
                         
-                        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, fixedFont);
+                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, fixedFont);
                         
                         break;
                     }
@@ -684,7 +1197,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                             italicFont = TGCoreTextItalicFontOfSize(fontSize);
                         }
                         
-                        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, italicFont);
+                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, italicFont);
                         
                         break;
                     }
@@ -694,7 +1207,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                             boldFont = TGCoreTextBoldFontOfSize(fontSize);
                         }
                         
-                        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, boldFont);
+                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, boldFont);
                         
                         break;
                     }
@@ -702,7 +1215,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                     {
                         if (((TGTextCheckingResult *)match).value != nil) {
                             UIColor *color = ((TGTextCheckingResult *)match).value;
-                            CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, color.CGColor);
+                            CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, color.CGColor);
                         }
                         
                         break;
@@ -713,7 +1226,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                             ultraBoldFont = TGCoreTextBoldFontOfSize(fontSize);
                         }
                         
-                        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, ultraBoldFont);
+                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTFontAttributeName, ultraBoldFont);
                         
                         break;
                     }
@@ -738,12 +1251,12 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                     }
                     layout.links->push_back(TGLinkData(linkRange, url, linkText, false));
                 
-                    if (flags & TGReusableLabelLayoutHighlightLinks && linkColor != NULL)
+                    if (flags & TGReusableLabelLayoutHighlightLinks && linkColor != NULL && !TGReusableLabelRangeIsCovered(string, linkRange))
                     {
-                        CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, linkColor.CGColor);
+                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, linkColor.CGColor);
                         
                         if (enableUnderline && useRangeUnderline) {
-                            CFAttributedStringSetAttribute((CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTUnderlineStyleAttributeName, (CFNumberRef)underlineStyle);
+                            CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTUnderlineStyleAttributeName, (__bridge CFNumberRef)underlineStyle);
                         }
                     }
                 }
@@ -762,6 +1275,25 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
         }
     }
     
+    if (additionalAttributes != nil)
+    {
+        NSUInteger length = string.length;
+        NSUInteger index = 0;
+        while (index < length)
+        {
+            NSRange effectiveRange = NSMakeRange(index, 1);
+            id value = [string attribute:TGReusableLabelRunDecorationAttributeName atIndex:index effectiveRange:&effectiveRange];
+            if ([value isKindOfClass:[TGReusableLabelRunDecoration class]] && ((TGReusableLabelRunDecoration *)value).drawContent != nil)
+            {
+                layout.hasCustomDrawing = true;
+                if (pLinkRanges == NULL)
+                    break;
+                CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(effectiveRange.location, effectiveRange.length), kCTForegroundColorAttributeName, [UIColor clearColor].CGColor);
+            }
+            index = MAX(index + 1, NSMaxRange(effectiveRange));
+        }
+    }
+
     TGPrepareEmojiAttributedString(string, text, fontSize, fontAscent, fontDescent, [layout emojiMappings]);
     if (pLinkRanges != NULL)
     {
@@ -787,7 +1319,14 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
         
         CGFloat lastLineWidth = 0.0f;
         
+        TGReusableLabelAssignFallbackFonts(string);
+#if defined(ONEGRAM_DIAGNOSTICS)
+        CFAbsoluteTime typesetterStart = CFAbsoluteTimeGetCurrent();
+#endif
         CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)string);
+#if defined(ONEGRAM_DIAGNOSTICS)
+        OGPlatformTextLogSlowLayout("label", (__bridge CFAttributedStringRef)string, CFAbsoluteTimeGetCurrent() - typesetterStart);
+#endif
         
         CFIndex lastIndex = 0;
         float currentLineOffset = 0;
@@ -830,28 +1369,40 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                 
                 if (maxNumberOfLines != 0 && textLines.count == maxNumberOfLines - 1)
                 {
-                    CTLineRef originalLine = CTTypesetterCreateLineWithOffset(typesetter, CFRangeMake(lastIndex, MAX(lineCharacterCount, (CFIndex)string.length - lastIndex)), 100.0);
-                    
-                    if (CTLineGetTypographicBounds(originalLine, NULL, NULL, NULL) - (float)CTLineGetTrailingWhitespaceWidth(originalLine) <= currentMaxWidth)
-                        line = originalLine;
-                    else
+                    NSString *plainString = string.string;
+                    NSUInteger stringLength = plainString.length;
+                    CFIndex remainingCharacterCount = (CFIndex)stringLength - lastIndex;
+                    bool boundedTailTruncation = (OGPlatformUsesConstrainedBackgroundExecution() || (flags & TGReusableLabelLayoutBoundedTail)) && !(flags & TGReusableLabelTruncateInTheMiddle) && remainingCharacterCount > lineCharacterCount;
+
+                    CFIndex truncationLimit = lineCharacterCount;
+                    bool textContinues = boundedTailTruncation;
+                    if (!boundedTailTruncation)
                     {
-                        NSMutableDictionary *truncationTokenAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)font, (NSString *)kCTFontAttributeName, (__bridge id)textColor.CGColor, (NSString *)kCTForegroundColorAttributeName, nil];
-                        
-                        static NSString *tokenString = nil;
-                        if (tokenString == nil)
+                        NSRange paragraphBreak = [plainString rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet] options:0 range:NSMakeRange((NSUInteger)lastIndex, (NSUInteger)remainingCharacterCount)];
+                        if (paragraphBreak.location == NSNotFound)
+                            truncationLimit = remainingCharacterCount;
+                        else
                         {
-                            unichar tokenChar = 0x2026;
-                            tokenString = [[NSString alloc] initWithCharacters:&tokenChar length:1];
+                            truncationLimit = (CFIndex)paragraphBreak.location - lastIndex;
+                            NSUInteger followingIndex = NSMaxRange(paragraphBreak);
+                            textContinues = [plainString rangeOfCharacterFromSet:[[NSCharacterSet whitespaceAndNewlineCharacterSet] invertedSet] options:0 range:NSMakeRange(followingIndex, stringLength - followingIndex)].location != NSNotFound;
                         }
-                        
-                        NSAttributedString *truncationTokenString = [[NSAttributedString alloc] initWithString:ellipsisString == nil ? tokenString : ellipsisString attributes:truncationTokenAttributes];
-                        CTLineRef truncationToken = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)truncationTokenString);
-                        
-                        line = CTLineCreateTruncatedLine(originalLine, currentMaxWidth, (flags & TGReusableLabelTruncateInTheMiddle) ? kCTLineTruncationMiddle : kCTLineTruncationEnd, truncationToken);
-                        CFRelease(originalLine);
-                        CFRelease(truncationToken);
                     }
+
+                    NSMutableDictionary *truncationTokenAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)font, (__bridge NSString *)kCTFontAttributeName, (__bridge id)textColor.CGColor, (__bridge NSString *)kCTForegroundColorAttributeName, nil];
+                    if (flags & TGReusableLabelLayoutForegroundFromContext)
+                        truncationTokenAttributes[(__bridge NSString *)kCTForegroundColorFromContextAttributeName] = @(true);
+
+                    static NSString *tokenString = nil;
+                    static dispatch_once_t tokenOnce;
+                    dispatch_once(&tokenOnce, ^
+                    {
+                        unichar tokenChar = 0x2026;
+                        tokenString = [[NSString alloc] initWithCharacters:&tokenChar length:1];
+                    });
+
+                    NSAttributedString *truncationTokenString = [[NSAttributedString alloc] initWithString:ellipsisString == nil ? tokenString : ellipsisString attributes:truncationTokenAttributes];
+                    line = OGPlatformCreateTruncatedLine(typesetter, (__bridge CFAttributedStringRef)string, CFRangeMake(lastIndex, truncationLimit), 100.0, currentMaxWidth, (flags & TGReusableLabelTruncateInTheMiddle) ? kCTLineTruncationMiddle : kCTLineTruncationEnd, (__bridge CFAttributedStringRef)truncationTokenString, textContinues);
                 }
                 else
                 {
@@ -1004,30 +1555,22 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
         
         NSMutableArray *textLines = [[NSMutableArray alloc] init];
         
-        NSMutableDictionary *truncationTokenAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)font, (NSString *)kCTFontAttributeName, (__bridge id)textColor.CGColor, (NSString *)kCTForegroundColorAttributeName, nil];
-        
+        NSMutableDictionary *truncationTokenAttributes = [[NSMutableDictionary alloc] initWithObjectsAndKeys:(__bridge id)font, (__bridge NSString *)kCTFontAttributeName, (__bridge id)textColor.CGColor, (__bridge NSString *)kCTForegroundColorAttributeName, nil];
+        if (flags & TGReusableLabelLayoutForegroundFromContext)
+            truncationTokenAttributes[(__bridge NSString *)kCTForegroundColorFromContextAttributeName] = @(true);
+
         static NSString *tokenString = nil;
-        if (tokenString == nil)
+        static dispatch_once_t tokenOnce;
+        dispatch_once(&tokenOnce, ^
         {
             unichar tokenChar = 0x2026;
             tokenString = [[NSString alloc] initWithCharacters:&tokenChar length:1];
-        }
-        
-        CTLineRef line = NULL;
+        });
         
         NSAttributedString *truncationTokenString = [[NSAttributedString alloc] initWithString:ellipsisString == nil ? tokenString : ellipsisString attributes:truncationTokenAttributes];
-        CTLineRef truncationToken = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)truncationTokenString);
         
-        CTLineRef originalLine = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)string);
-        if (CTLineGetTypographicBounds(originalLine, NULL, NULL, NULL) - (float)CTLineGetTrailingWhitespaceWidth(originalLine) <= maxWidth)
-            line = originalLine;
-        else
-        {
-            line = CTLineCreateTruncatedLine(originalLine, maxWidth, (flags & TGReusableLabelTruncateInTheMiddle) ? kCTLineTruncationMiddle : kCTLineTruncationEnd, truncationToken);
-            CFRelease(originalLine);
-        }
-        
-        CFRelease(truncationToken);
+        TGReusableLabelAssignFallbackFonts(string);
+        CTLineRef line = OGPlatformCreateTruncatedLine(NULL, (__bridge CFAttributedStringRef)string, CFRangeMake(0, (CFIndex)string.length), 0.0, maxWidth, (flags & TGReusableLabelTruncateInTheMiddle) ? kCTLineTruncationMiddle : kCTLineTruncationEnd, (__bridge CFAttributedStringRef)truncationTokenString, false);
         
         if (line != NULL)
         {
@@ -1239,23 +1782,10 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
     
     const std::vector<TGLinePosition> *pLineOrigins = precalculatedLayout.lineOrigins;
     
-    CGFloat lineHeight = 64.0f;
-    if (pLineOrigins->size() >= 2)
-        lineHeight = ABS(pLineOrigins->at(0).offset - pLineOrigins->at(1).offset);
-    
-    CGFloat upperOriginBound = clipRect.origin.y - lineHeight;
-    CGFloat lowerOriginBound = clipRect.origin.y + clipRect.size.height + lineHeight + lineHeight;
-
-    // Very tall message bodies are rendered by TGModernFlatteningViewModel in
-    // 512-point tiles.  On iOS 6 CGContextGetClipBoundingBox() may report the
-    // tile clip in the bitmap's local coordinates even though the context has
-    // already been translated to the full message coordinate space.  The
-    // optimization below then rejects perfectly visible lines and produces a
-    // message with a blank/missing middle or bottom.  Core Graphics still
-    // clips the actual drawing to the tile, so for tall layouts it is both
-    // correct and memory-safe to submit every CTLine and let the context clip.
-    bool isIOS6TallText = rect.size.height > 1024.0f && [[[UIDevice currentDevice] systemVersion] intValue] <= 6;
-    bool useClipLineCulling = !isIOS6TallText;
+    CGFloat cullingMargin = 4.0f + (shadowColor != nil ? MAX(ABS(shadowOffset.width), ABS(shadowOffset.height)) : 0.0f);
+    CGFloat clipMinY = CGRectGetMinY(clipRect) - cullingMargin;
+    CGFloat clipMaxY = CGRectGetMaxY(clipRect) + cullingMargin;
+    bool useClipLineCulling = !CGRectIsNull(clipRect) && !CGRectIsInfinite(clipRect);
     
     for (CFIndex lineIndex = linesRange.location; lineIndex < (CFIndex)(linesRange.location + linesRange.length); lineIndex++)
     {
@@ -1278,14 +1808,32 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
         
         CGPoint lineOrigin = CGPointMake(horizontalOffset + linePosition.horizontalOffset, linePosition.offset);
         
-        if (useClipLineCulling && (lineOrigin.y < upperOriginBound || lineOrigin.y > lowerOriginBound))
-            continue;
+        if (useClipLineCulling)
+        {
+            CGFloat lineAscent = 0.0f;
+            CGFloat lineDescent = 0.0f;
+            CGFloat lineLeading = 0.0f;
+            CTLineGetTypographicBounds(line, &lineAscent, &lineDescent, &lineLeading);
+            if (lineOrigin.y + lineDescent + lineLeading < clipMinY || lineOrigin.y - lineAscent > clipMaxY)
+                continue;
+        }
         
-        CGContextSetTextPosition(context, lineOrigin.x, lineOrigin.y);
-        CTLineDraw(line, context);
-
         CFArrayRef glyphRuns = CTLineGetGlyphRuns(line);
         CFIndex glyphRunCount = CFArrayGetCount(glyphRuns);
+        TGReusableLabelDrawLineDecorations(context, glyphRuns, lineOrigin, true);
+
+        for (CFIndex runIndex = 0; runIndex < glyphRunCount; runIndex++)
+        {
+            CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(glyphRuns, runIndex);
+            CFDictionaryRef attributes = CTRunGetAttributes(run);
+            if (attributes != NULL && CFDictionaryGetValue(attributes, kCTRunDelegateAttributeName) != NULL)
+                continue;
+            CGContextSaveGState(context);
+            CGContextSetTextPosition(context, lineOrigin.x, lineOrigin.y);
+            CTRunDraw(run, context, CFRangeMake(0, 0));
+            CGContextRestoreGState(context);
+        }
+
         for (CFIndex runIndex = 0; runIndex < glyphRunCount; runIndex++)
         {
             CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(glyphRuns, runIndex);
@@ -1294,6 +1842,8 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
             CFNumberRef trailingSpacingValue = (CFNumberRef)CFDictionaryGetValue(attributes, CFSTR("TGOnegramEmojiTrailingSpacing"));
             CFIndex emojiGlyphCount = CTRunGetGlyphCount(run);
             if (emojiValue == NULL || emojiGlyphCount == 0)
+                continue;
+            if (TGReusableLabelRunDecorationForRun(run).coverColor != nil)
                 continue;
 
             CGPoint runPosition = CGPointZero;
@@ -1306,7 +1856,7 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
             if (trailingSpacingValue != NULL)
                 CFNumberGetValue(trailingSpacingValue, kCFNumberCGFloatType, &trailingSpacing);
             CGFloat contentWidth = MAX(1.0f, runWidth - trailingSpacing);
-            UIImage *emojiImage = TGEmojiImageOfSize((__bridge NSString *)emojiValue, imageSize);
+            UIImage *emojiImage = TGReusableLabelEmojiImage((__bridge NSString *)emojiValue, imageSize);
             if (emojiImage != nil)
             {
                 CGFloat imageX = lineOrigin.x + runPosition.x + (contentWidth - imageSize) / 2.0f;
@@ -1314,6 +1864,8 @@ static void TGPrepareEmojiAttributedString(NSMutableAttributedString *string, NS
                 [emojiImage drawInRect:CGRectMake(imageX, imageY, imageSize, imageSize)];
             }
         }
+
+        TGReusableLabelDrawLineDecorations(context, glyphRuns, lineOrigin, false);
     }
 
     CGContextRestoreGState(context);

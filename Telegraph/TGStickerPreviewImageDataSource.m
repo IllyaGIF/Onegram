@@ -1,8 +1,5 @@
 #import "TGStickerPreviewImageDataSource.h"
 
-#ifndef IOS6_NOOP_LOG
-#define IOS6_NOOP_LOG(...) do { } while (0)
-#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -84,6 +81,11 @@ static ASQueue *taskManagementQueue()
          {
              [previewTask executeWithWorkerTask:workerTask threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool]];
          }
+         else if ([[TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]][@"cacheOnly"] boolValue])
+         {
+             if (completion != nil)
+                 completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
+         }
          else
          {
              NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[TGStickerPreviewImageDataSource uriPrefix].length]];
@@ -93,7 +95,6 @@ static ASQueue *taskManagementQueue()
              
              if ((![args[@"documentId"] respondsToSelector:@selector(longLongValue)] && ![args[@"localDocumentId"] respondsToSelector:@selector(longLongValue)]) || (!hasLegacyThumbnailUri && !hasFullDocumentFallback) || (![args[@"accessHash"] respondsToSelector:@selector(longLongValue)]) || (![args[@"datacenterId"] respondsToSelector:@selector(intValue)]))
              {
-                 IOS6_NOOP_LOG(@"STICKER preview.missingArgs doc=%@ local=%@ hasThumb=%d hasFile=%d access=%d dc=%d", args[@"documentId"], args[@"localDocumentId"], hasLegacyThumbnailUri ? 1 : 0, hasFullDocumentFallback ? 1 : 0, [args[@"accessHash"] respondsToSelector:@selector(longLongValue)] ? 1 : 0, [args[@"datacenterId"] respondsToSelector:@selector(intValue)] ? 1 : 0);
                  if (completion != nil)
                      completion([TGStickerPreviewImageDataSource resultForUnavailableImage]);
              }
@@ -147,14 +148,12 @@ static ASQueue *taskManagementQueue()
                      documentAttachment.mimeType = args[@"mimeType"];
                      documentAttachment.originInfo = [TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]];
 
-                     IOS6_NOOP_LOG(@"STICKER preview.fetchDocument doc=%lld dc=%d size=%d mime=%@ file=%@ target=%@", documentAttachment.documentId, documentAttachment.datacenterId, documentAttachment.size, documentAttachment.mimeType, args[@"fileName"], documentFilePath);
                      [strongPreviewTask executeWithTargetFilePath:documentFilePath document:documentAttachment progress:^(float value)
                      {
                          if (progress)
                              progress(value);
                      } completion:^(bool success)
                      {
-                         IOS6_NOOP_LOG(@"STICKER preview.fetchDocument.done doc=%lld success=%d", documentAttachment.documentId, success ? 1 : 0);
                          __strong TGMediaPreviewTask *completedPreviewTask = weakPreviewTask;
                          if (success && completedPreviewTask != nil)
                          {
@@ -169,14 +168,12 @@ static ASQueue *taskManagementQueue()
 
                  if (hasLegacyThumbnailUri)
                  {
-                     IOS6_NOOP_LOG(@"STICKER preview.fetchThumb doc=%lld uri=%@", identifier, args[@"legacyThumbnailUri"]);
                      [previewTask executeMultipartWithImageUri:args[@"legacyThumbnailUri"] identifier:identifier originInfo:[TGMediaOriginInfo mediaOriginInfoWithStringRepresentation:args[@"origin_info"]] targetFilePath:filePath progress:^(float value)
                      {
                          if (progress)
                              progress(value);
                      } completion:^(bool success)
                      {
-                         IOS6_NOOP_LOG(@"STICKER preview.fetchThumb.done doc=%lld success=%d", identifier, success ? 1 : 0);
                          __strong TGMediaPreviewTask *strongPreviewTask = weakPreviewTask;
                          if (success && strongPreviewTask != nil)
                          {
@@ -341,7 +338,6 @@ static ASQueue *taskManagementQueue()
                 [compressedData writeToFile:cachedFilePath atomically:true];
     }
     
-    IOS6_NOOP_LOG(@"STICKER preview.decode doc=%@ file=%@ image=%d path=%@ high=%d", args[@"documentId"], args[@"fileName"], image != nil ? 1 : 0, filePath, highQuality ? 1 : 0);
     
     if (image != nil)
     {
@@ -367,7 +363,6 @@ static ASQueue *taskManagementQueue()
             CGContextRelease(context);
         } forKey:uri];
         
-        //[[TGMediaStoreContext instance] setMediaImageForKey:uri image:thumbnailImage attributes:nil];
         
         return [[TGDataResource alloc] initWithImage:image decoded:true];
     }

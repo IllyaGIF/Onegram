@@ -46,7 +46,7 @@
         if (peerId != 0) {
             _displayCounter = true;
             __weak TGGroupAvatarGalleryModel *weakSelf = self;
-            _searchDisposable = [[[TGMessageSearchSignals searchPeer:peerId accessHash:accessHash query:@"" filter:TGMessageSearchFilterGroupPhotos maxMessageId:0/*messageId*/ limit:32 around:false/*messageId == 0 ? false : true*/] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *messages) {
+            _searchDisposable = [[[TGMessageSearchSignals searchPeer:peerId accessHash:accessHash query:@"" filter:TGMessageSearchFilterGroupPhotos maxMessageId:0 limit:32 around:false] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *messages) {
                 __strong TGGroupAvatarGalleryModel *strongSelf = weakSelf;
                 if (strongSelf != nil) {
                     NSMutableArray *items = [[NSMutableArray alloc] init];

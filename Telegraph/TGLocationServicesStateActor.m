@@ -4,6 +4,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/SGraphObjectNode.h"
 
 #import <CoreLocation/CoreLocation.h>
+#import "OGPlatformLocation.h"
 
 @interface TGLocationServicesStateActor ()
 
@@ -26,7 +27,7 @@
     
     dispatch_async(dispatch_get_main_queue(), ^
     {
-        bool enabled = [CLLocationManager authorizationStatus] == kCLAuthorizationStatusAuthorized;
+        bool enabled = OGPlatformLocationAuthorizationAllowsWhenInUse();
         bool dispatch = _dispatchResult;
         
         [ActionStageInstance() dispatchOnStageQueue:^

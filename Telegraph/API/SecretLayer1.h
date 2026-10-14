@@ -1,8 +1,5 @@
 #import <Foundation/Foundation.h>
 
-/*
- * Layer 1
- */
 
 @class Secret1_DecryptedMessage;
 @class Secret1_DecryptedMessage_decryptedMessage;
@@ -43,9 +40,6 @@
 
 @end
 
-/*
- * Types 1
- */
 
 @interface Secret1_DecryptedMessage : NSObject
 
@@ -198,10 +192,6 @@
 
 @end
 
-
-/*
- * Functions 1
- */
 
 @interface Secret1: NSObject
 

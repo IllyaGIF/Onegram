@@ -695,7 +695,21 @@
         _html = [aDecoder decodeObjectForKey:@"html"];
         _posterPhotoId = [aDecoder decodeInt64ForKey:@"posterPhotoId"];
         _caption = [aDecoder decodeObjectForKey:@"caption"];
-        _size = [aDecoder decodeCGSizeForKey:@"size"];
+        CGFloat width = (CGFloat)[aDecoder decodeDoubleForKey:@"sizeWidth"];
+        CGFloat height = (CGFloat)[aDecoder decodeDoubleForKey:@"sizeHeight"];
+        if (width == 0.0f && height == 0.0f)
+        {
+            @try
+            {
+                CGSize legacySize = [aDecoder decodeCGSizeForKey:@"size"];
+                width = legacySize.width;
+                height = legacySize.height;
+            }
+            @catch (__unused NSException *exception)
+            {
+            }
+        }
+        _size = CGSizeMake(width, height);
         _fillWidth = [aDecoder decodeBoolForKey:@"fillWidth"];
         _enableScrolling = [aDecoder decodeBoolForKey:@"enableScrolling"];
     }
@@ -707,7 +721,8 @@
     [aCoder encodeObject:_html forKey:@"html"];
     [aCoder encodeInt64:_posterPhotoId forKey:@"posterPhotoId"];
     [aCoder encodeObject:_caption forKey:@"caption"];
-    [aCoder encodeCGSize:_size forKey:@"size"];
+    [aCoder encodeDouble:_size.width forKey:@"sizeWidth"];
+    [aCoder encodeDouble:_size.height forKey:@"sizeHeight"];
     [aCoder encodeBool:_fillWidth forKey:@"fillWidth"];
     [aCoder encodeBool:_enableScrolling forKey:@"enableScrolling"];
 }

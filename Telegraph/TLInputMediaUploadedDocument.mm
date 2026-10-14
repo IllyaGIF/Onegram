@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//inputMediaUploadedDocument flags:# file:InputFile thumb:flags.2?InputFile mime_type:string attributes:Vector<DocumentAttribute> caption:string stickers:flags.0?Vector<InputDocument> ttl_seconds:flags.1?int = InputMedia;
 
 @implementation TLInputMediaUploadedDocument
 

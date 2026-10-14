@@ -1,4 +1,5 @@
 #import "TGShareCollectionCell.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -240,7 +241,7 @@ NSString *const TGShareCollectionCellIdentifier = @"TGShareCollectionCell";
 
         CGFloat titleY = CGRectGetMaxY(_avatarView.frame) + 4.0f;
         if (_singleWord)
-            _titleLabel.frame = CGRectMake((self.bounds.size.width - _titleLabel.frame.size.width) / 2.0f, titleY, _titleLabel.frame.size.width, ceilf(_titleLabel.font.lineHeight));
+            _titleLabel.frame = CGRectMake((self.bounds.size.width - _titleLabel.frame.size.width) / 2.0f, titleY, _titleLabel.frame.size.width, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));
         else
         {
             CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(self.bounds.size.width, CGFLOAT_MAX)];

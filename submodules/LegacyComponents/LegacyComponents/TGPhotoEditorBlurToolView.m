@@ -85,7 +85,9 @@
         _sliderView = [[TGPhotoEditorSliderView alloc] initWithFrame:CGRectZero];
         _sliderView.alpha = 0.0f;
         _sliderView.hidden = true;
-        _sliderView.layer.rasterizationScale = TGScreenScaling();
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+        TGSetLayerRasterizationScale(_sliderView.layer, TGScreenScaling());
+#endif
         _sliderView.minimumValue = editorItem.minimumValue;
         _sliderView.maximumValue = editorItem.maximumValue;
         _sliderView.startValue = 0;
@@ -162,25 +164,7 @@
 
 - (void)blurButtonPressed:(TGPhotoEditorBlurTypeButton *)sender
 {
-//    if (sender.tag != 0 && sender.tag == _currentType)
-//    {
-//        _editingIntensity = true;
-//        _startIntensity = [(PGBlurToolValue *)self.value intensity];
-//        
-//        PGBlurToolValue *value = [(PGBlurToolValue *)self.value copy];
-//        value.editingIntensity = true;
-//        
-//        _value = value;
-//        
-//        if (self.valueChanged != nil)
-//            self.valueChanged(value);
-//        
-//        [self setIntensitySliderHidden:false animated:true];
-//    }
-//    else
-//    {
         [self setSelectedBlurType:(PGBlurToolType)sender.tag update:true];
-//    }
 }
 
 - (void)setValue:(id)value
@@ -226,13 +210,17 @@
         }];
         
         _sliderView.hidden = false;
-        _sliderView.layer.shouldRasterize = true;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+        TGSetLayerShouldRasterize(_sliderView.layer, true);
+#endif
         [UIView animateWithDuration:sliderDuration delay:sliderDelay options:UIViewAnimationOptionCurveLinear animations:^
         {
             _sliderView.alpha = hidden ? 0.0f : 1.0f;
         } completion:^(BOOL finished)
         {
-            _sliderView.layer.shouldRasterize = false;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+            TGSetLayerShouldRasterize(_sliderView.layer, false);
+#endif
             if (finished)
                 _sliderView.hidden = hidden;
         }];

@@ -1,4 +1,5 @@
 #import "TGInstantPageController.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -826,7 +827,7 @@
 }
 
 - (bool)presentationAutoNightTheme {
-    if (iosMajorVersion() >= 11 && UIAccessibilityIsInvertColorsEnabled())
+    if (iosMajorVersion() >= 11 && OGPlatformAccessibilityInvertColorsEnabled())
         return false;
     
     NSNumber *storedAutoNightTheme = [[NSUserDefaults standardUserDefaults] objectForKey:@"instantPage_autoNightTheme_v0"];

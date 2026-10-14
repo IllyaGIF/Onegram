@@ -90,8 +90,6 @@
     int removedReaders = 0;
     rc = mdb_reader_check(_env, &removedReaders);
     
-    if (removedReaders != 0)
-        TGLegacyLog(@"[PSLMDBKeyValueStore removed %d stale readers]", removedReaders);
     
     _table = [self _createTableWithName:@"main"];
     

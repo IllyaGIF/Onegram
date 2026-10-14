@@ -252,12 +252,11 @@ static void initializeMapping()
         mimeToExtension[@"text/h323"] = @"323"; extensionToMime[@"323"] = @"text/h323";
         mimeToExtension[@"text/iuls"] = @"uls"; extensionToMime[@"uls"] = @"text/iuls";
         mimeToExtension[@"text/mathml"] = @"mml"; extensionToMime[@"mml"] = @"text/mathml";
-        // add it first so it will be the default for ExtensionFromMimeType
         mimeToExtension[@"text/plain"] = @"txt"; extensionToMime[@"txt"] = @"text/plain";
         mimeToExtension[@"text/plain"] = @"asc"; extensionToMime[@"asc"] = @"text/plain";
         mimeToExtension[@"text/plain"] = @"text"; extensionToMime[@"text"] = @"text/plain";
         mimeToExtension[@"text/plain"] = @"diff"; extensionToMime[@"diff"] = @"text/plain";
-        mimeToExtension[@"text/plain"] = @"po"; extensionToMime[@"po"] = @"text/plain";     // reserve "pot" for vnd.ms-powerpoint
+        mimeToExtension[@"text/plain"] = @"po"; extensionToMime[@"po"] = @"text/plain";
         mimeToExtension[@"text/richtext"] = @"rtx"; extensionToMime[@"rtx"] = @"text/richtext";
         mimeToExtension[@"text/rtf"] = @"rtf"; extensionToMime[@"rtf"] = @"text/rtf";
         mimeToExtension[@"text/texmacs"] = @"ts"; extensionToMime[@"ts"] = @"text/texmacs";

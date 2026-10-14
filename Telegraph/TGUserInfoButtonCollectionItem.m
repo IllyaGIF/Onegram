@@ -11,6 +11,9 @@
 #import "TGUserInfoButtonCollectionItemView.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGSettingsAppearance.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
 
 @interface TGUserInfoButtonCollectionItem ()
 {
@@ -31,6 +34,7 @@
         
         _title = title;
         _action = action;
+        _showsDisclosureIndicator = true;
         
         _titleColor = TGAccentColor();
     }
@@ -43,7 +47,7 @@
     
     if (!_hasCustomColor)
     {
-        _titleColor = [TGPresentation brandedIOS6Style] ? [UIColor blackColor] : presentation.pallete.collectionMenuAccentColor;
+        _titleColor = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].settingsAppearance.titleColor : presentation.pallete.collectionMenuAccentColor;
         [(TGUserInfoButtonCollectionItemView *)self.boundView setTitleColor:_titleColor];
     }
 }
@@ -61,7 +65,7 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] ? 35.0f : 44.0f);
+    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.actionRowAppearance.rowHeight : 44.0f);
 }
 
 - (void)itemSelected:(id)actionTarget
@@ -83,6 +87,8 @@
     [view setTitleColor:_titleColor];
     [view setIconName:_iconName];
     [view setEditing:_editing];
+    [view setCenteredTitle:_centeredTitle];
+    [view setShowsDisclosureIndicator:_showsDisclosureIndicator];
 }
 
 - (void)setTitle:(NSString *)title
@@ -103,6 +109,18 @@
     _editing = editing;
     
     [((TGUserInfoButtonCollectionItemView *)self.boundView) setEditing:_editing];
+}
+
+- (void)setCenteredTitle:(bool)centeredTitle
+{
+    _centeredTitle = centeredTitle;
+    [((TGUserInfoButtonCollectionItemView *)self.boundView) setCenteredTitle:centeredTitle];
+}
+
+- (void)setShowsDisclosureIndicator:(bool)showsDisclosureIndicator
+{
+    _showsDisclosureIndicator = showsDisclosureIndicator;
+    [((TGUserInfoButtonCollectionItemView *)self.boundView) setShowsDisclosureIndicator:showsDisclosureIndicator];
 }
 
 @end

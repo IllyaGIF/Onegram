@@ -26,36 +26,6 @@
 
 #import "TGTermsOfService.h"
 
-@interface TGFetchHttpHelper : NSObject <TGRawHttpActor> {
-    void (^_completion)(NSData *);
-}
-
-@end
-
-@implementation TGFetchHttpHelper
-
-- (instancetype)initWithCompletion:(void (^)(NSData *))completion {
-    self = [super init];
-    if (self != nil) {
-        _completion = [completion copy];
-    }
-    return self;
-}
-
-- (void)httpRequestSuccess:(NSString *)__unused url response:(NSData *)response {
-    if (_completion) {
-        _completion(response);
-    }
-}
-
-- (void)httpRequestFailed:(NSString *)__unused url {
-    if (_completion) {
-        _completion(nil);
-    }
-}
-
-@end
-
 @implementation TGAccountSignals
 
 + (SSignal *)deleteAccount:(NSString *)reason

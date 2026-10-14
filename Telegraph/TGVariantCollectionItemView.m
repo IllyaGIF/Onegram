@@ -1,8 +1,12 @@
 #import "TGVariantCollectionItemView.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 #import "TGSimpleImageView.h"
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
+#import "../OnegramUI/Core/OGTheme.h"
+
 
 @interface TGVariantCollectionItemView ()
 {
@@ -56,18 +60,20 @@
     _titleLabel.textColor = _customTitleColor ?: (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
     _variantLabel.textColor = _customVariantColor ?: (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
     UIImage *disclosureImage = classicIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
-    if (classicDarkStyle)
+    if ([TGPresentation brandedIOS6Style])
+        disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:[OGTheme brandedTheme]] ?: disclosureImage;
+    else if (classicDarkStyle)
         disclosureImage = [TGPresentation classicIOS6ThemedImage:disclosureImage tintColor:presentation.pallete.collectionMenuAccessoryColor alpha:0.82f];
     _disclosureIndicator.image = disclosureImage;
     if ([TGPresentation brandedIOS6Style] && _brandedSettingsStyle)
     {
-        _titleLabel.font = TGBoldSystemFontOfSize(18.0f);
-        _titleLabel.textColor = UIColorRGB(0x000000);
-        _titleLabel.shadowColor = UIColorRGBA(0x000000, 0.2f);
-        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
+        OGTheme *theme = [OGTheme brandedTheme];
+        [OGSettingsCell applyLegacyBrandedTitleStyleWithTheme:theme titleLabel:_titleLabel];
         _variantLabel.hidden = true;
         _iconView.image = _brandedSettingsIconName.length == 0 ? nil : [TGPresentation brandedIOS6ResourceImage:_brandedSettingsIconName];
-        _disclosureIndicator.image = [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"];
+        if (_iconView.image != nil)
+            [OGSettingsCell applyLegacyBrandedIconStyleWithTheme:theme iconView:_iconView];
+        _disclosureIndicator.image = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme];
     }
     else
     {
@@ -176,22 +182,10 @@
     CGRect bounds = self.bounds;
     if ([TGPresentation brandedIOS6Style] && _brandedSettingsStyle)
     {
-        _iconView.image = _brandedSettingsIconName.length == 0 ? nil : [TGPresentation brandedIOS6ResourceImage:_brandedSettingsIconName];
         _iconView.hidden = _iconView.image == nil;
-        _iconView.contentMode = UIViewContentModeScaleAspectFit;
-        _iconView.frame = CGRectMake(17.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 16.0f) / 2.0f) + 1.0f, 16.0f, 16.0f);
-        _iconView.layer.shadowColor = [UIColor blackColor].CGColor;
-        _iconView.layer.shadowOpacity = 0.1f;
-        _iconView.layer.shadowRadius = 0.5f;
-        _iconView.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
-        _titleLabel.font = TGBoldSystemFontOfSize(18.0f);
-        _titleLabel.textColor = UIColorRGB(0x000000);
-        _titleLabel.shadowColor = UIColorRGBA(0x000000, 0.2f);
-        _titleLabel.shadowOffset = CGSizeMake(0.0f, 1.0f);
-        _titleLabel.frame = CGRectMake(43.0f + self.safeAreaInset.left, 7.0f, MAX(0.0f, bounds.size.width - 90.0f - self.safeAreaInset.left - self.safeAreaInset.right), 22.0f);
         _variantLabel.hidden = true;
         _disclosureIndicator.hidden = false;
-        _disclosureIndicator.frame = CGRectMake(bounds.size.width - _disclosureIndicator.frame.size.width - 23.0f - self.safeAreaInset.right, CGFloor((bounds.size.height - _disclosureIndicator.frame.size.height) / 2.0f) + 1.0f, _disclosureIndicator.frame.size.width, _disclosureIndicator.frame.size.height);
+        [OGSettingsCell applyLegacyBrandedStyleWithTheme:[OGTheme brandedTheme] titleLabel:_titleLabel iconView:_iconView disclosureView:_disclosureIndicator bounds:bounds safeAreaInsets:self.safeAreaInset];
         return;
     }
 
@@ -216,8 +210,8 @@
     CGFloat indicatorSpacing = _disclosureIndicator.hidden ? 0.0f : 10.0f;
     CGFloat labelSpacing = 8.0f;
     CGFloat availableWidth = bounds.size.width - disclosureWidth - 12.0f - startingX - indicatorSpacing - self.safeAreaInset.right;
-    CGFloat titleHeight = MAX(titleSize.height, ceilf(_titleLabel.font.lineHeight));
-    CGFloat variantHeight = MAX(variantSize.height, ceilf(_variantLabel.font.lineHeight));
+    CGFloat titleHeight = MAX(titleSize.height, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));
+    CGFloat variantHeight = MAX(variantSize.height, ceilf(OGPlatformFontLineHeight(_variantLabel.font)));
     CGFloat titleY =  CGFloor((bounds.size.height - titleHeight) / 2.0f) + TGRetinaPixel;
     CGFloat variantY =  CGFloor((bounds.size.height - variantHeight) / 2.0f) + TGRetinaPixel;
     

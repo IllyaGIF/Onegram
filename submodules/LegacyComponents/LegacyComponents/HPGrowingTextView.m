@@ -2,6 +2,7 @@
 
 #import "LegacyComponentsInternal.h"
 #import "TGFont.h"
+#import "OGPlatformText.h"
 
 #import "HPTextViewInternal.h"
 
@@ -32,6 +33,10 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     UIFont *_intrinsicTextFont;
     
     __weak TGKeyCommandController *_keyCommandController;
+    CGFloat _maxLinesMeasurementWidth;
+    CGFloat _minLinesMeasurementWidth;
+    UIFont *_maxLinesMeasurementFont;
+    UIFont *_minLinesMeasurementFont;
 }
 
 @end
@@ -68,12 +73,6 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 
 - (void)commonInitialiser
 {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        [HPTextViewInternal addTextViewMethods];
-    });
-    
     CGRect frame = self.frame;
     frame.origin = CGPointZero;
     _internalTextView = [[HPTextViewInternal alloc] initWithKeyCommandController:_keyCommandController];
@@ -122,7 +121,12 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     [super setFrame:frame];
     
     frame.origin = CGPointZero;
-    _internalTextView.frame = frame;
+    if (!CGRectEqualToRect(_internalTextView.frame, frame)) {
+        bool freezeContentOffset = _internalTextView.freezeContentOffset;
+        _internalTextView.freezeContentOffset = true;
+        _internalTextView.frame = frame;
+        _internalTextView.freezeContentOffset = freezeContentOffset;
+    }
 }
 
 - (CGSize)sizeThatFits:(CGSize)size
@@ -133,49 +137,55 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     return size;
 }
 
+- (CGFloat)heightForNumberOfLines:(int)numberOfLines
+{
+    UIFont *font = _intrinsicTextFont ?: _internalTextView.font;
+    CGFloat verticalPadding = 16.0f;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    if (iosMajorVersion() >= 7)
+        verticalPadding = _internalTextView.textContainerInset.top + _internalTextView.textContainerInset.bottom;
+#endif
+    CGFloat height = CGCeil(OGPlatformFontLineHeight(font) * MAX(1, numberOfLines) + verticalPadding);
+    if (iosMajorVersion() < 6)
+        return height;
+    UITextView *measurementView = [[UITextView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, MAX(1.0f, _internalTextView.bounds.size.width), height)];
+    measurementView.font = font;
+    measurementView.contentInset = _internalTextView.contentInset;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    if (iosMajorVersion() >= 7) {
+        measurementView.textContainerInset = _internalTextView.textContainerInset;
+        measurementView.textContainer.lineFragmentPadding = _internalTextView.textContainer.lineFragmentPadding;
+    }
+#endif
+    NSMutableString *text = [[NSMutableString alloc] initWithString:@"-"];
+    for (int i = 1; i < numberOfLines; i++)
+        [text appendString:@"\n|W|"];
+    if (iosMajorVersion() >= 6)
+        measurementView.attributedText = [[NSAttributedString alloc] initWithString:text attributes:[self defaultAttributes]];
+    else
+        measurementView.text = text;
+    [measurementView setNeedsLayout];
+    [measurementView layoutIfNeeded];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    if (iosMajorVersion() >= 7)
+        return CGCeil([measurementView sizeThatFits:CGSizeMake(measurementView.bounds.size.width, CGFLOAT_MAX)].height);
+#endif
+    return MAX(height, CGCeil(measurementView.contentSize.height));
+}
+
 - (void)setMaxNumberOfLines:(int)maxNumberOfLines
 {
     if (maxNumberOfLines == 0 && _maxHeight > 0)
         return;
-    
-    _internalTextView.delegate = nil;
-    _internalTextView.hidden = YES;
-    
-    if (iosMajorVersion() < 6)
-    {
-        NSString *saveText = _internalTextView.text;
-        
-        NSMutableString *newText = [[NSMutableString alloc] initWithString:@"-"];
-        
-        for (int i = 1; i < maxNumberOfLines; ++i)
-            [newText appendString:@"\n|W|"];
-        
-        _internalTextView.text = newText;
-        _maxHeight = [self measureHeight];
-        _internalTextView.text = saveText;
-    }
-    else
-    {
-        NSAttributedString *saveText = _internalTextView.attributedText;
-        NSMutableAttributedString *newText =
-        [[NSMutableAttributedString alloc] initWithString:@"-"
-                                               attributes:[self defaultAttributes]];
-        
-        for (int i = 1; i < maxNumberOfLines; ++i)
-            [newText appendAttributedString:
-             [[NSAttributedString alloc] initWithString:@"\n|W|"]];
-        
-        _internalTextView.attributedText = newText;
-        _maxHeight = [self measureHeight];
-        _internalTextView.attributedText = saveText;
-    }
-    
-    _internalTextView.hidden = NO;
-    _internalTextView.delegate = self;
-    
-    [self sizeToFit];
-    
+    CGFloat width = _internalTextView.bounds.size.width;
+    UIFont *font = _intrinsicTextFont ?: _internalTextView.font;
+    if (_maxNumberOfLines == maxNumberOfLines && _maxHeight > 0 && _maxLinesMeasurementWidth == width && [_maxLinesMeasurementFont isEqual:font])
+        return;
+    _maxHeight = [self heightForNumberOfLines:maxNumberOfLines];
     _maxNumberOfLines = maxNumberOfLines;
+    _maxLinesMeasurementWidth = width;
+    _maxLinesMeasurementFont = font;
+    [self sizeToFit];
 }
 
 - (void)setMaxHeight:(CGFloat)maxHeight
@@ -188,45 +198,15 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 {
     if (minNumberOfLines == 0 && _minHeight > 0)
         return;
-    
-    _internalTextView.delegate = nil;
-    _internalTextView.hidden = YES;
-    
-    if (iosMajorVersion() < 6)
-    {
-        NSString *saveText = _internalTextView.text;
-        
-        NSMutableString *newText = [[NSMutableString alloc] initWithString:@"-"];
-        
-        for (int i = 1; i < minNumberOfLines; ++i)
-            [newText appendString:@"\n|W|"];
-        
-        _internalTextView.text = newText;
-        _minHeight = [self measureHeight];
-        _internalTextView.text = saveText;
-    }
-    else
-    {
-        NSAttributedString *saveText = _internalTextView.attributedText;
-        NSMutableAttributedString *newText =
-        [[NSMutableAttributedString alloc] initWithString:@"-"
-                                               attributes:[self defaultAttributes]];
-        
-        for (int i = 1; i < minNumberOfLines; ++i)
-            [newText appendAttributedString:
-             [[NSAttributedString alloc] initWithString:@"\n|W|"]];
-        
-        _internalTextView.attributedText = newText;
-        _minHeight = [self measureHeight];
-        _internalTextView.attributedText = saveText;
-    }
-    
-    _internalTextView.hidden = NO;
-    _internalTextView.delegate = self;
-    
-    [self sizeToFit];
-    
+    CGFloat width = _internalTextView.bounds.size.width;
+    UIFont *font = _intrinsicTextFont ?: _internalTextView.font;
+    if (_minNumberOfLines == minNumberOfLines && _minHeight > 0 && _minLinesMeasurementWidth == width && [_minLinesMeasurementFont isEqual:font])
+        return;
+    _minHeight = [self heightForNumberOfLines:minNumberOfLines];
     _minNumberOfLines = minNumberOfLines;
+    _minLinesMeasurementWidth = width;
+    _minLinesMeasurementFont = font;
+    [self sizeToFit];
 }
 
 - (void)setMinHeight:(CGFloat)minHeight
@@ -251,84 +231,42 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     if ([delegate respondsToSelector:@selector(growingTextViewDidChangeSelection:)])
         [delegate growingTextViewDidChangeSelection:self];
     
-    //_internalTextView.typingAttributes = [self defaultAttributes];
-    
-    if ([_internalTextView selectedRange].length == 0) {
-        //[self refreshAttributes];
-    }
+    [_internalTextView textViewEnsureSelectionVisible];
 }
 
 - (void)refreshHeight:(bool)textChanged
 {
-    CGFloat newSizeH = [self measureHeight]; //size of content, so we can set the frame of self
-    
-    if(newSizeH < _minHeight || !_internalTextView.hasText)
-        newSizeH = _minHeight; //not smalles than minHeight
-    
-    if (_internalTextView.frame.size.height > _maxHeight)
-        newSizeH = _maxHeight; // not taller than maxHeight
-    
-    id<HPGrowingTextViewDelegate> delegate = _delegate;
+    CGFloat newSizeH = [self measureHeight];
+    if (newSizeH < _minHeight || !_internalTextView.hasText)
+        newSizeH = _minHeight;
+    if (_maxHeight > 0.0f)
+        newSizeH = MIN(newSizeH, MAX(_minHeight, _maxHeight));
 
-	if (ABS(_internalTextView.frame.size.height - newSizeH) > FLT_EPSILON || _oneTimeLongAnimation)
-	{
-        // [fixed] Pasting too much text into the view failed to fire the height change, 
-        // thanks to Gwynne <http://blog.darkrainfall.org/>
-        
-        if (newSizeH > _maxHeight && _internalTextView.frame.size.height <= _maxHeight)
-            newSizeH = _maxHeight;
-        
-		if (newSizeH <= _maxHeight)
-		{
-            if (_animateHeightChange && !_internalTextView.isPasting)
-            {
-                NSTimeInterval currentAnimationDuration = 0.12;
-                if (_oneTimeLongAnimation)
-                {
-                    _oneTimeLongAnimation = false;
-                    currentAnimationDuration = 0.3;
-                    if (iosMajorVersion() < 7)
-                        currentAnimationDuration *= 0.7;
-                }
-                
-                [UIView animateWithDuration:currentAnimationDuration delay:0 options:(UIViewAnimationOptionAllowUserInteraction| UIViewAnimationOptionBeginFromCurrentState) animations:^
-                {
-                    [self resizeTextView:newSizeH];
-                } completion:nil];
-                
-                if ([delegate respondsToSelector:@selector(growingTextView:willChangeHeight:duration:animationCurve:)])
-                    [delegate growingTextView:self willChangeHeight:newSizeH duration:currentAnimationDuration animationCurve:0];
-            }
-            else
-            {
-                [self resizeTextView:newSizeH];
-                
-                if ([delegate respondsToSelector:@selector(growingTextView:willChangeHeight:duration:animationCurve:)])
-                    [delegate growingTextView:self willChangeHeight:newSizeH duration:0.0 animationCurve:0];
-            }
-		}
-		
-        // scroll to caret (needed on iOS7)
-        if (iosMajorVersion() >= 7)
-        {
-            /*NSRange range = _internalTextView.selectedRange;
-            [_internalTextView _scrollRangeToVisible:range animated:false];
-            
-            CGRect r = [_internalTextView caretRectForPosition:_internalTextView.selectedTextRange.end];
-            CGFloat frameHeight = _internalTextView.frame.size.height;
-            CGFloat caretY = MAX(r.origin.y - frameHeight + r.size.height + 8, 0);
-            if (r.origin.y != INFINITY)
-            {
-                CGPoint contentOffset = _internalTextView.contentOffset;
-                contentOffset.y = caretY;
-                _internalTextView.contentOffset = contentOffset;
-            }*/
+    id<HPGrowingTextViewDelegate> delegate = _delegate;
+    bool heightChanged = ABS(_internalTextView.frame.size.height - newSizeH) > FLT_EPSILON || _oneTimeLongAnimation;
+    if (heightChanged) {
+        NSTimeInterval duration = 0.0;
+        if (_animateHeightChange && !_internalTextView.isPasting) {
+            duration = _oneTimeLongAnimation ? 0.3 : 0.12;
+            if (_oneTimeLongAnimation && iosMajorVersion() < 7)
+                duration *= 0.7;
         }
-	}
-	
-    if (textChanged && [delegate respondsToSelector:@selector(growingTextViewDidChange:afterSetText:afterPastingText:)]) {
-		[delegate growingTextViewDidChange:self afterSetText:_ignoreChangeNotification afterPastingText:_internalTextView.isPasting];
+        _oneTimeLongAnimation = false;
+        if (duration > 0.0) {
+            [UIView animateWithDuration:duration delay:0 options:(UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState) animations:^{
+                [self resizeTextView:newSizeH];
+            } completion:nil];
+        } else {
+            [self resizeTextView:newSizeH];
+        }
+        if ([delegate respondsToSelector:@selector(growingTextView:willChangeHeight:duration:animationCurve:)])
+            [delegate growingTextView:self willChangeHeight:newSizeH duration:duration animationCurve:0];
     }
+
+    if (textChanged && [delegate respondsToSelector:@selector(growingTextViewDidChange:afterSetText:afterPastingText:)])
+        [delegate growingTextViewDidChange:self afterSetText:_ignoreChangeNotification afterPastingText:_internalTextView.isPasting];
+    if (heightChanged || textChanged)
+        [_internalTextView textViewEnsureSelectionVisible];
 
     _oneTimeLongAnimation = false;
 }
@@ -339,38 +277,12 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
         [delegate growingTextView:self willChangeHeight:_internalTextView.frame.size.height duration:0.0 animationCurve:0];
 }
 
-// Code from apple developer forum - @Steve Krulewitz, @Mark Marszal, @Eric Silverberg
 - (CGFloat)measureHeight
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     if (iosMajorVersion() >= 7)
     {
-        CGRect frame = _internalTextView.bounds;
-        CGSize fudgeFactor = CGSizeMake(10.0, 17.0);
-        
-        frame.size.height -= fudgeFactor.height;
-        frame.size.width -= fudgeFactor.width;
-        
-        frame.size.width -= _internalTextView.textContainerInset.right;
-        
-        NSMutableAttributedString *textToMeasure = [[NSMutableAttributedString alloc] initWithAttributedString:_internalTextView.attributedText];
-        if ([textToMeasure.string hasSuffix:@"\n"])
-        {
-            [textToMeasure appendAttributedString:[[NSAttributedString alloc] initWithString:@"-"]];
-        }
-        [textToMeasure removeAttribute:NSFontAttributeName range:NSMakeRange(0, textToMeasure.length)];
-        if (_intrinsicTextFont != nil) {
-            [textToMeasure addAttribute:NSFontAttributeName value:_intrinsicTextFont range:NSMakeRange(0, textToMeasure.length)];
-        }
-        
-        // NSString class method: boundingRectWithSize:options:attributes:context is
-        // available only on ios7.0 sdk.
-        CGRect size = [textToMeasure boundingRectWithSize:CGSizeMake(CGRectGetWidth(frame), MAXFLOAT)
-                                                  options:NSStringDrawingUsesLineFragmentOrigin
-                                               //attributes:attributes
-                                                  context:nil];
-        
-        return CGFloor(CGRectGetHeight(size) + fudgeFactor.height);
+        return CGCeil([_internalTextView sizeThatFits:CGSizeMake(MAX(1.0f, _internalTextView.bounds.size.width), CGFLOAT_MAX)].height);
     }
     else
 #endif
@@ -389,7 +301,6 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     if(!CGRectEqualToRect(_internalTextView.frame, internalTextViewFrame))
         _internalTextView.frame = internalTextViewFrame;
     
-    //[_internalTextView textViewEnsureSelectionVisible];
 }
 
 - (BOOL)becomeFirstResponder
@@ -468,12 +379,8 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     _internalTextView.typingAttributes = [self defaultAttributes];
 #endif
-    [self refreshAttributes];
-    
     _placeholderView.hidden = fixedFontString.length != 0 || [_internalTextView isFirstResponder];
     
-    // include this line to analyze the height of the textview.
-    // fix from Ankit Thakur
     
     bool previousAnimateHeightChange = _animateHeightChange;
     _animateHeightChange = animated;
@@ -556,6 +463,8 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 
 - (void)textViewDidBeginEditing:(UITextView *)__unused textView
 {
+    [_internalTextView textViewEnsureSelectionVisible];
+
     id<HPGrowingTextViewDelegate> delegate = _delegate;
     
 	if ([delegate respondsToSelector:@selector(growingTextViewDidBeginEditing:)])
@@ -601,7 +510,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
         return true;
     
     if (atext.length == 0) {
-        if (range.location != 0 && range.length == 1) {
+        if (range.location != 0 && range.length == 1 && range.location < textView.text.length && [textView.text characterAtIndex:range.location] == 0xfffc) {
             NSAttributedString *string = self.attributedText;
             if ([string attributesAtIndex:range.location effectiveRange:nil][NSAttachmentAttributeName] != nil) {
                 NSMutableAttributedString *mutableString = [[NSMutableAttributedString alloc] initWithAttributedString:string];
@@ -614,7 +523,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                 return false;
             }
         }
-    } else if (range.length == 0) {
+    } else if (range.length == 0 && range.location != 0 && range.location <= textView.text.length && [textView.text characterAtIndex:range.location - 1] == 0xfffc) {
         NSAttributedString *string = self.attributedText;
         if (range.location != 0 && [string attributesAtIndex:range.location - 1 effectiveRange:nil][NSAttachmentAttributeName] != nil) {
             NSMutableAttributedString *mutableString = [[NSMutableAttributedString alloc] initWithAttributedString:string];
@@ -660,7 +569,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
 
     self.internalTextView.typingAttributes = [self defaultAttributes];
     
-    NSAttributedString *string = self.attributedText;
+    NSAttributedString *string = _internalTextView.textStorage;
     if (string.length == 0) {
         return;
     }
@@ -670,13 +579,19 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     _internalTextView.disableContentOffsetAnimation = true;
     _internalTextView.freezeContentOffset = true;
     
-    //NSMutableAttributedString *mutableString = [[NSMutableAttributedString alloc] initWithAttributedString:string];
-    //[mutableString removeAttribute:NSForegroundColorAttributeName range:NSMakeRange(0, string.length)];
-    [_internalTextView.textStorage removeAttribute:NSForegroundColorAttributeName range:NSMakeRange(0, string.length)];
-    
-    if (_intrinsicTextColor != nil) {
-        //[mutableString addAttribute:NSForegroundColorAttributeName value:_intrinsicTextColor == nil ? [UIColor blackColor] : _intrinsicTextColor range:NSMakeRange(0, string.length)];
-        [_internalTextView.textStorage addAttribute:NSForegroundColorAttributeName value:_intrinsicTextColor == nil ? [UIColor blackColor] : _intrinsicTextColor range:NSMakeRange(0, string.length)];
+    NSTextStorage *storage = _internalTextView.textStorage;
+    NSMutableArray *colorRanges = [[NSMutableArray alloc] init];
+    [storage enumerateAttribute:NSForegroundColorAttributeName inRange:NSMakeRange(0, storage.length) options:0 usingBlock:^(id color, NSRange range, __unused BOOL *stop) {
+        if (!((color == nil && _intrinsicTextColor == nil) || [color isEqual:_intrinsicTextColor]))
+            [colorRanges addObject:[NSValue valueWithRange:range]];
+    }];
+    [storage beginEditing];
+    for (NSValue *value in colorRanges) {
+        NSRange range = value.rangeValue;
+        if (_intrinsicTextColor != nil)
+            [storage addAttribute:NSForegroundColorAttributeName value:_intrinsicTextColor range:range];
+        else
+            [storage removeAttribute:NSForegroundColorAttributeName range:range];
     }
 
     __block NSMutableArray *inputTextTags = [[NSMutableArray alloc] init];
@@ -693,9 +608,6 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     }];
     
     if (inputTextTags != nil) {
-        /*if (mutableString == nil) {
-            mutableString = [[NSMutableAttributedString alloc] initWithAttributedString:string];
-        }*/
         
         static NSCharacterSet *alphanumericSet = nil;
         static dispatch_once_t onceToken;
@@ -708,7 +620,6 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
             TGInputTextTagAndRange *tagAndRange = inputTextTags[i];
             if ([removeTags containsObject:@(tagAndRange.tag.uniqueId)]) {
                 [inputTextTags removeObjectAtIndex:i];
-                //[mutableString removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                 [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                 
                 i--;
@@ -724,10 +635,8 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                 
                 if (j != (NSInteger)tagAndRange.range.location) {
                     NSRange updatedRange = NSMakeRange(j, tagAndRange.range.location + tagAndRange.range.length - j);
-                    //[mutableString removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                     [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                     
-                    //[mutableString addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                     [_internalTextView.textStorage addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                     
                     inputTextTags[i] = [[TGInputTextTagAndRange alloc] initWithTag:tagAndRange.tag range:updatedRange];
@@ -746,10 +655,8 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                     
                     if (j < ((NSInteger)tagAndRange.range.location)) {
                         NSRange updatedRange = NSMakeRange(j, tagAndRange.range.location + tagAndRange.range.length - j);
-                        //[mutableString removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                         [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                         
-                        //[mutableString addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                         [_internalTextView.textStorage addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                          
                         inputTextTags[i] = [[TGInputTextTagAndRange alloc] initWithTag:tagAndRange.tag range:updatedRange];
@@ -780,14 +687,11 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                             
                             if (j == candidateStart) {
                                 [removeTags addObject:@(tagAndRange.tag.uniqueId)];
-                                //[mutableString addAttribute:NSForegroundColorAttributeName value:TGAccentColor() range:tagAndRange.range];
                                 [_internalTextView.textStorage addAttribute:NSForegroundColorAttributeName value:self.accentColor range:tagAndRange.range];
                             } else {
-                                //[mutableString removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                                 [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                                 
                                 NSRange updatedRange = NSMakeRange(tagAndRange.range.location, j - tagAndRange.range.location);
-                                //[mutableString addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                                 [_internalTextView.textStorage addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                                 inputTextTags[i] = [[TGInputTextTagAndRange alloc] initWithTag:tagAndRange.tag range:updatedRange];
                                 
@@ -806,15 +710,12 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                             }
                             
                             if (j == candidateEnd) {
-                                //[mutableString removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                                 [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                                 
-                                //[mutableString removeAttribute:TGMentionUidAttributeName range:nextTagAndRange.range];
                                 [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:nextTagAndRange.range];
                                 
                                 NSRange updatedRange = NSMakeRange(tagAndRange.range.location, nextTagAndRange.range.location + nextTagAndRange.range.length - tagAndRange.range.location);
                                 
-                                //[mutableString addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                                 [_internalTextView.textStorage addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                                 
                                 inputTextTags[i] = [[TGInputTextTagAndRange alloc] initWithTag:tagAndRange.tag range:updatedRange];
@@ -822,11 +723,9 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                                 
                                 i--;
                             } else if (j != candidateStart) {
-                                //[mutableString removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                                 [_internalTextView.textStorage removeAttribute:TGMentionUidAttributeName range:tagAndRange.range];
                                 
                                 NSRange updatedRange = NSMakeRange(tagAndRange.range.location, j - tagAndRange.range.location);
-                                //[mutableString addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                                 [_internalTextView.textStorage addAttribute:TGMentionUidAttributeName value:tagAndRange.tag range:updatedRange];
                                 
                                 inputTextTags[i] = [[TGInputTextTagAndRange alloc] initWithTag:tagAndRange.tag range:updatedRange];
@@ -834,7 +733,6 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                                 i--;
                             } else {
                                 [removeTags addObject:@(tagAndRange.tag.uniqueId)];
-                                //[mutableString addAttribute:NSForegroundColorAttributeName value:TGAccentColor() range:tagAndRange.range];
                                 [_internalTextView.textStorage addAttribute:NSForegroundColorAttributeName value:self.accentColor range:tagAndRange.range];
                             }
                         }
@@ -844,25 +742,13 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
         }
     }
     
+    [storage endEditing];
     _internalTextView.freezeContentOffset = false;
     [_internalTextView setContentOffset:contentOffset];
     _internalTextView.disableContentOffsetAnimation = false;
     [_internalTextView setScrollEnabled:true];
     
-    /*if (mutableString != nil && ![mutableString isEqualToAttributedString:_internalTextView.attributedText])*/ {
-        /*[_internalTextView.textStorage removeAttribute:NSForegroundColorAttributeName range:NSMakeRange(0, string.length)];
-        [_internalTextView.textStorage addAttribute:NSForegroundColorAttributeName value:TGAccentColor() range:NSMakeRange(string.length - 1, 1)];
-        
-        return;
-        
-        UITextRange *previousRange = [_internalTextView selectedTextRange];
-        UITextPosition *selStartPos = previousRange.start;
-        NSInteger previousIdx = [_internalTextView offsetFromPosition:_internalTextView.beginningOfDocument toPosition:selStartPos];
-        
-        _internalTextView.attributedText = mutableString;
-        
-        UITextPosition *textPosition = [_internalTextView positionFromPosition:_internalTextView.beginningOfDocument offset:MIN(previousIdx, (NSInteger)mutableString.length)];
-        [_internalTextView setSelectedTextRange:[_internalTextView textRangeFromPosition:textPosition toPosition:textPosition]];*/
+    {
     }
 #endif
 }
@@ -920,6 +806,19 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     return string.string;
 }
 
++ (bool)isMentionCharacter:(unichar)character
+{
+    static NSCharacterSet *characters = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSMutableCharacterSet *set = [[NSCharacterSet alphanumericCharacterSet] mutableCopy];
+        [set formUnionWithCharacterSet:[NSCharacterSet nonBaseCharacterSet]];
+        [set addCharactersInString:@"_"];
+        characters = [set copy];
+    });
+    return [characters characterIsMember:character];
+}
+
 + (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int32_t)userId
 {
     NSString *replacementText = [mention stringByAppendingString:@" "];
@@ -938,7 +837,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                 candidateRange = NSMakeRange(username ? i + 1 : i, username ? index - i : index - i + 1);
                 break;
             }
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'))
+            if (![HPGrowingTextView isMentionCharacter:c])
                 break;
         }
 
@@ -971,7 +870,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
                 break;
             }
             
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'))
+            if (![HPGrowingTextView isMentionCharacter:c])
                 break;
         }
     }

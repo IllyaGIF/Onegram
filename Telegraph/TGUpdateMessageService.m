@@ -159,14 +159,17 @@
         int currentSessionToken = _sessionToken;
         dispatch_async(_queue.nativeQueue, ^
         {
-            _scheduledMessageProcessing = false;
-            
-            if (currentSessionToken != _sessionToken)
-                return;
-            
-            NSArray *messages = [[NSArray alloc] initWithArray:_messagesToProcess];
-            [_messagesToProcess removeAllObjects];
-            [self processMessages:messages];
+            @autoreleasepool
+            {
+                _scheduledMessageProcessing = false;
+
+                if (currentSessionToken != _sessionToken)
+                    return;
+
+                NSArray *messages = [[NSArray alloc] initWithArray:_messagesToProcess];
+                [_messagesToProcess removeAllObjects];
+                [self processMessages:messages];
+            }
         });
     }
 }

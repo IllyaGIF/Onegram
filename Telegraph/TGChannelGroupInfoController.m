@@ -419,7 +419,6 @@ static const NSUInteger loadMoreMemberCount = 100;
                 
                 if (strongSelf->_bannedCount != cachedData.bannedCount) {
                     strongSelf->_bannedCount = cachedData.bannedCount;
-                    //[strongSelf _setupSections:strongSelf->_editing];
                 }
                 
                 strongSelf->_canSetStickerPack = cachedData.canSetStickerPack;
@@ -706,9 +705,6 @@ static const NSUInteger loadMoreMemberCount = 100;
             [self.menuSections addSection:_notificationsAndMediaSection];
         }
         
-        /*if (_conversation.kind == TGConversationKindPersistentChannel && _conversation.channelRole != TGChannelRoleCreator) {
-            [self.menuSections addSection:_leaveSection];
-        }*/
     }
     
     if ([self canInviteToChannel]) {
@@ -1354,7 +1350,6 @@ static const NSUInteger loadMoreMemberCount = 100;
     
     if ([currentUserIds isEqualToSet:updatedUserIds]) {
         NSArray *sortedUsers = [self sortedUsers:filteredUsers];
-        //NSUInteger sectionIndex = [self indexForSection:_usersSection];
         NSInteger index = -1 + headButtonCount;
         bool hadUpdates = false;
         for (TGUser *user in sortedUsers) {
@@ -1380,12 +1375,6 @@ static const NSUInteger loadMoreMemberCount = 100;
                         [_usersSection insertItem:userItem atIndex:index];
                         hadUpdates = true;
                         
-                        /*[self.collectionView layoutSubviews];
-                        [UIView performWithoutAnimation:^{
-                            [self.collectionView performBatchUpdates:^{
-                                [self.collectionView moveItemAtIndexPath:[NSIndexPath indexPathForItem:currentIndex inSection:sectionIndex] toIndexPath:[NSIndexPath indexPathForItem:index inSection:sectionIndex]];
-                            } completion:nil];
-                        }];*/
                     }
                     
                     break;

@@ -22,6 +22,7 @@
 #import "TGBrightnessCollectionItem.h"
 
 #import "TGTimePickerItemView.h"
+#import "OGPlatformLocation.h"
 
 @interface TGAppearanceAutoNightController () <CLLocationManagerDelegate>
 {
@@ -130,6 +131,12 @@
          _nightBlueItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeNightBlue") action:@selector(nightBluePressed)],
          _nightItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeNight") action:@selector(nightPressed)]
         ]];
+
+        if ([TGPresentation brandedIOS6Style])
+        {
+            [_preferredThemeSection deleteItem:_nightBlueItem];
+            _nightItem.title = TGLocalized(@"Appearance.ThemeBlack");
+        }
         
         _disposable = [[[TGPresentation autoNightPreferences] reduceLeftWithPassthrough:@false with:^id(id initial, id value, void (^passthrough)(id))
         {
@@ -359,8 +366,9 @@
         [_locationDisposable setDisposable:nil];
     }
     
-    _nightBlueItem.isChecked = preferences.preferredPalette == 3;
-    _nightItem.isChecked = preferences.preferredPalette == 2;
+    bool fekla = [TGPresentation brandedIOS6Style];
+    _nightBlueItem.isChecked = !fekla && preferences.preferredPalette == 3;
+    _nightItem.isChecked = fekla || preferences.preferredPalette == 2;
     
     if (changed)
     {
@@ -488,34 +496,34 @@
     _locationManager = [[CLLocationManager alloc] init];
     _locationManager.delegate = self;
     _locationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers;
-    _locationManager.activityType = CLActivityTypeOther;
+    OGPlatformSetLocationActivityTypeOther(_locationManager);
     
     if (iosMajorVersion() >= 8)
-        [_locationManager requestAlwaysAuthorization];
+        OGPlatformRequestAlwaysLocationAuthorization(_locationManager);
     
     if (iosMajorVersion() >= 9)
-        [_locationManager requestLocation];
+        OGPlatformRequestSingleLocation(_locationManager);
     else
         [_locationManager startUpdatingLocation];
 }
 
-- (void)locationManager:(CLLocationManager *)__unused manager didChangeAuthorizationStatus:(CLAuthorizationStatus)status
+- (void)locationManager:(CLLocationManager *)__unused manager didChangeAuthorizationStatus:(NSInteger)status
 {
-    if (status == kCLAuthorizationStatusAuthorizedWhenInUse || status == kCLAuthorizationStatusAuthorizedAlways || status == kCLAuthorizationStatusAuthorized)
+    if (OGPlatformLocationAuthorizationStatusAllowsWhenInUse(status))
     {
         if (iosMajorVersion() >= 9)
-            [_locationManager requestLocation];
+            OGPlatformRequestSingleLocation(_locationManager);
         else
             [_locationManager startUpdatingLocation];
     }
 }
 
-- (void)locationManager:(CLLocationManager *)__unused manager didUpdateLocations:(NSArray *)locations
+- (void)applyLocation:(CLLocation *)location
 {
-    if (locations.count == 0)
+    if (location == nil)
         return;
-    
-    CLLocationCoordinate2D coordinate = ((CLLocation *)locations.firstObject).coordinate;
+
+    CLLocationCoordinate2D coordinate = location.coordinate;
     [TGPresentation updateAutoNightPreferences:^TGPresentationAutoNightPreferences *(TGPresentationAutoNightPreferences *preferences)
     {
         return [preferences sunsetSunriseModeWithLatitude:coordinate.latitude longitude:coordinate.longitude cachedLocationName:nil];
@@ -524,6 +532,16 @@
     [_locationManager stopUpdatingLocation];
     _locationManager.delegate = nil;
     _locationManager = nil;
+}
+
+- (void)locationManager:(CLLocationManager *)__unused manager didUpdateLocations:(NSArray *)locations
+{
+    [self applyLocation:locations.firstObject];
+}
+
+- (void)locationManager:(CLLocationManager *)__unused manager didUpdateToLocation:(CLLocation *)newLocation fromLocation:(CLLocation *)__unused oldLocation
+{
+    [self applyLocation:newLocation];
 }
 
 - (void)locationManager:(CLLocationManager *)__unused manager didFailWithError:(NSError *)__unused error

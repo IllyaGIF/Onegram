@@ -7,4 +7,6 @@
 @property (nonatomic, strong) void(^progressChanged)(CGFloat progress);
 @property (nonatomic, strong) void(^transitionAlmostFinished)();
 
+- (void)prepareForLegacyTransitionInCollectionView:(PSUICollectionView *)collectionView;
+
 @end

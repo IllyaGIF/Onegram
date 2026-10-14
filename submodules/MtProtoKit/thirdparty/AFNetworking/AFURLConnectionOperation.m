@@ -21,6 +21,8 @@
 // THE SOFTWARE.
 
 #import "AFURLConnectionOperation.h"
+#import "../../../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../../../OnegramRuntime/OGRuntime.h"
 
 //#import "AFImageRequestOperation.h"
 
@@ -130,9 +132,19 @@ static inline BOOL AFStateTransitionIsValid(AFOperationState fromState, AFOperat
 @synthesize cacheResponse = _cacheResponse;
 @synthesize lock = _lock;
 
+static double AFNetworkRequestThreadPriority(void) {
+    if (OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice())
+        return 0.75;
+    return 0.2;
+}
+
 + (void)networkRequestThreadEntryPoint:(id)__unused object {
     do {
-        [NSThread currentThread].threadPriority = 0.2;
+        #if defined(ONEGRAM_ARMV6)
+        [NSThread setThreadPriority:AFNetworkRequestThreadPriority()];
+#else
+        [NSThread currentThread].threadPriority = AFNetworkRequestThreadPriority();
+#endif
         NSAutoreleasePool *exceptionPool = [[NSAutoreleasePool alloc] init];
         NSException *caughtException = nil;
         @try {
@@ -209,6 +221,9 @@ static inline BOOL AFStateTransitionIsValid(AFOperationState fromState, AFOperat
     [_connection release];
     
     [_lock release];
+#if defined(ONEGRAM_ARMV6)
+    [_onegramCompletionBlock release];
+#endif
     
     [super dealloc];
 }
@@ -223,6 +238,15 @@ static inline BOOL AFStateTransitionIsValid(AFOperationState fromState, AFOperat
     if ([NSThread currentThread] != [AFURLConnectionOperation networkRequestThread])
         NSLog(@"0x%x: setCompletionBlock thread %@", (int)self, [NSThread currentThread]);
 #endif
+#if defined(ONEGRAM_ARMV6)
+    [self.lock lock];
+    if (_onegramCompletionBlock != block)
+    {
+        [_onegramCompletionBlock release];
+        _onegramCompletionBlock = [block copy];
+    }
+    [self.lock unlock];
+#else
     [self.lock lock];
     if (!block) {
         [super setCompletionBlock:nil];
@@ -234,7 +258,17 @@ static inline BOOL AFStateTransitionIsValid(AFOperationState fromState, AFOperat
         }];
     }
     [self.lock unlock];
+#endif
 }
+
+#if defined(ONEGRAM_ARMV6)
+- (void (^)(void))completionBlock {
+    [self.lock lock];
+    void (^block)(void) = [[_onegramCompletionBlock copy] autorelease];
+    [self.lock unlock];
+    return block;
+}
+#endif
 
 - (NSInputStream *)inputStream {
     return self.request.HTTPBodyStream;
@@ -367,7 +401,16 @@ static inline BOOL AFStateTransitionIsValid(AFOperationState fromState, AFOperat
 }
 
 - (void)finish {
+#if defined(ONEGRAM_ARMV6)
+    void (^completionBlock)(void) = [[self completionBlock] copy];
     self.state = AFHTTPOperationFinishedState;
+    [self setCompletionBlock:nil];
+    if (completionBlock != nil)
+        completionBlock();
+    [completionBlock release];
+#else
+    self.state = AFHTTPOperationFinishedState;
+#endif
 }
 
 - (void)cancel {

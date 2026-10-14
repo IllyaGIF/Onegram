@@ -41,6 +41,13 @@ uint32_t TGColorHexCode(UIColor *color);
 uint32_t TGColorHexCodeWithAlpha(UIColor *color);
 
 bool TGScaleARGB8888Buffer(const void *sourceData, size_t sourceWidth, size_t sourceHeight, size_t sourceRowBytes, void *destinationData, size_t destinationWidth, size_t destinationHeight, size_t destinationRowBytes, bool highQuality);
+
+void TGImageRenderingLock(void);
+void TGImageRenderingUnlock(void);
+#if defined(ONEGRAM_ARMV6)
+void TGArmv6DrawImage(CGContextRef context, UIImage *image, CGRect rect);
+UIImage *TGArmv6RenderImage(CGSize size, void (^draw)(CGContextRef context));
+#endif
     
 NSData *TGJPEGRepresentation(UIImage *image, CGFloat compressionRate);
 bool TGWriteJPEGRepresentationToFile(UIImage *image, CGFloat compressionRate, NSString *filePath);

@@ -78,17 +78,18 @@
     }
     
     CGSize checkSize = _checkView.frame.size;
+    CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
     if (_alignToRight)
     {
-        _label.frame = CGRectMake(15.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 26) / 2), bounds.size.width - 44.0f - 16.0f - self.safeAreaInset.left - self.safeAreaInset.right, 26);
+        _label.frame = CGRectMake(15.0f + classicInset + self.safeAreaInset.left, CGFloor((bounds.size.height - 26) / 2), bounds.size.width - 44.0f - 16.0f - classicInset * 2.0f - self.safeAreaInset.left - self.safeAreaInset.right, 26);
         
-        _checkView.frame = CGRectMake(bounds.size.width - 15.0f - checkSize.width - self.safeAreaInset.right, 16.0f, checkSize.width, checkSize.height);
+        _checkView.frame = CGRectMake(bounds.size.width - 15.0f - classicInset - checkSize.width - self.safeAreaInset.right, 16.0f, checkSize.width, checkSize.height);
     }
     else
     {
-        _label.frame = CGRectMake(44.0f + self.safeAreaInset.left, CGFloor((bounds.size.height - 26) / 2), bounds.size.width - 44.0f - 16.0f - self.safeAreaInset.left - self.safeAreaInset.right, 26);
+        _label.frame = CGRectMake(44.0f + classicInset + self.safeAreaInset.left, CGFloor((bounds.size.height - 26) / 2), bounds.size.width - 44.0f - 16.0f - classicInset * 2.0f - self.safeAreaInset.left - self.safeAreaInset.right, 26);
         
-        _checkView.frame = CGRectMake(15.0f + self.safeAreaInset.left, 16.0f, checkSize.width, checkSize.height);
+        _checkView.frame = CGRectMake(15.0f + classicInset + self.safeAreaInset.left, 16.0f, checkSize.width, checkSize.height);
     }
 }
 

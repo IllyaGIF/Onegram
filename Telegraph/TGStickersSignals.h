@@ -18,6 +18,7 @@
 + (SSignal *)updatedFeaturedStickerPacks;
 
 + (NSDictionary *)cachedStickerPacks;
++ (void)prewarmCachedStickerPacks;
 
 + (SSignal *)remoteStickersForEmoticon:(NSString *)emoticon;
 + (SSignal *)stickerPackInfo:(id<TGStickerPackReference>)packReference;

@@ -3,7 +3,9 @@
 #import "TGImageUtils.h"
 #import "TGPhotoEditorUtils.h"
 #import "PGCameraShotMetadata.h"
+#if !defined(ONEGRAM_ARMV6)
 #import <ImageIO/ImageIO.h>
+#endif
 
 @interface TGCameraCapturedPhoto ()
 {
@@ -79,6 +81,15 @@
     CGSize size = TGScaleToSize(image.size, CGSizeMake(thumbnailImageSide, thumbnailImageSide));
     SSignal *thumbnailSignal = [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
+#if defined(ONEGRAM_ARMV6)
+        UIImage *sourceImage = [UIImage imageWithContentsOfFile:[self filePath]];
+        if (sourceImage == nil)
+        {
+            [subscriber putError:nil];
+            return nil;
+        }
+        UIImage *image = TGScaleImageToPixelSize(sourceImage, size);
+#else
         CGImageSourceRef imageSource = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:[self filePath]], NULL);
         if (imageSource == NULL)
         {
@@ -97,6 +108,7 @@
         UIImage *image = [UIImage imageWithCGImage:imageRef];
         CGImageRelease(imageRef);
         CFRelease(imageSource);
+#endif
         
         [subscriber putNext:image];
         [subscriber putCompletion];
@@ -146,6 +158,19 @@
     {
         return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
         {
+#if defined(ONEGRAM_ARMV6)
+            UIImage *image = [UIImage imageWithContentsOfFile:[self filePath]];
+            if (image == nil)
+            {
+                [subscriber putError:nil];
+                return nil;
+            }
+            if (MAX(image.size.width, image.size.height) > 1600.0f)
+            {
+                CGSize size = TGScaleToSize(image.size, CGSizeMake(1600.0f, 1600.0f));
+                image = TGScaleImageToPixelSize(image, size);
+            }
+#else
             CGImageSourceRef imageSource = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:[self filePath]], NULL);
             if (imageSource == NULL)
             {
@@ -166,6 +191,7 @@
             UIImage *image = [UIImage imageWithCGImage:imageRef];
             CGImageRelease(imageRef);
             CFRelease(imageSource);
+#endif
             
             [subscriber putNext:image];
             [subscriber putCompletion];
@@ -185,7 +211,11 @@
     {
         return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
         {
+#if defined(ONEGRAM_ARMV6)
+            NSData *data = [[NSData alloc] initWithContentsOfFile:[self filePath]];
+#else
             NSData *data = [[NSData alloc] initWithContentsOfFile:[self filePath] options:NSDataReadingMappedIfSafe error:NULL];
+#endif
             if (data.length == 0)
             {
                 [subscriber putError:nil];

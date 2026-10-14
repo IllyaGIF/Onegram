@@ -7,7 +7,9 @@
 #import <Foundation/Foundation.h>
 #import "CBCoubAsset.h"
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <AVFoundation/AVFoundation.h>
+#endif
 
 @class CBCoubLoopCompositionMaker;
 @protocol CBCoubAsset;
@@ -25,7 +27,11 @@
 @property (nonatomic, weak) id<CBCoubLoopDelegate> delegate;
 @property (nonatomic, strong) id<CBCoubAsset> asset;
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+@property (nonatomic, strong) NSURL *videoURL;
+#else
 @property (nonatomic, strong) AVAsset *videoAsset;
+#endif
 @property (nonatomic, strong) NSError *error;
 @property (nonatomic, readonly) BOOL hasAudio;
 

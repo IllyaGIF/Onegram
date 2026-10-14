@@ -51,9 +51,6 @@ NSString *const TGShareGoogleProvider = @"google";
 NSString * TGURLEncodedStringFromStringWithEncoding(NSString *string, NSStringEncoding encoding) {
     static NSString * const kAFLegalCharactersToBeEscaped = @"?!@#$^&%*+=,:;'\"`<>()[]{}/\\|~ ";
     
-    /*
-     The documentation for `CFURLCreateStringByAddingPercentEscapes` suggests that one should "pre-process" URL strings with unpredictable sequences that may already contain percent escapes. However, if the string contains an unescaped sequence with '%' appearing without an escape code (such as when representing percentages like "42%"), `stringByReplacingPercentEscapesUsingEncoding` will return `nil`. Thus, the string is only unescaped if there are no invalid percent-escaped sequences.
-    */
     NSString *unescapedString = [string stringByReplacingPercentEscapesUsingEncoding:encoding];
     if (unescapedString) {
         string = unescapedString;
@@ -139,9 +136,16 @@ static NSArray * TGQueryStringComponentsFromKeyAndValue(NSString *key, id value)
 NSArray * TGQueryStringComponentsFromKeyAndDictionaryValue(NSString *key, NSDictionary *value){
     NSMutableArray *mutableQueryStringComponents = [NSMutableArray array];
     
+#if ONEGRAM_ARMV6
+    for (id nestedKey in value) {
+        id nestedValue = [value objectForKey:nestedKey];
+        [mutableQueryStringComponents addObjectsFromArray:TGQueryStringComponentsFromKeyAndValue((key ? [NSString stringWithFormat:@"%@[%@]", key, nestedKey] : nestedKey), nestedValue)];
+    }
+#else
     [value enumerateKeysAndObjectsUsingBlock:^(id nestedKey, id nestedValue, __unused BOOL *stop) {
         [mutableQueryStringComponents addObjectsFromArray:TGQueryStringComponentsFromKeyAndValue((key ? [NSString stringWithFormat:@"%@[%@]", key, nestedKey] : nestedKey), nestedValue)];
     }];
+#endif
     
     return mutableQueryStringComponents;
 }
@@ -149,9 +153,15 @@ NSArray * TGQueryStringComponentsFromKeyAndDictionaryValue(NSString *key, NSDict
 NSArray * TGQueryStringComponentsFromKeyAndArrayValue(NSString *key, NSArray *value) {
     NSMutableArray *mutableQueryStringComponents = [NSMutableArray array];
     
+#if ONEGRAM_ARMV6
+    for (id nestedValue in value) {
+        [mutableQueryStringComponents addObjectsFromArray:TGQueryStringComponentsFromKeyAndValue([NSString stringWithFormat:@"%@[]", key], nestedValue)];
+    }
+#else
     [value enumerateObjectsUsingBlock:^(id nestedValue, __unused NSUInteger idx, __unused BOOL *stop) {
         [mutableQueryStringComponents addObjectsFromArray:TGQueryStringComponentsFromKeyAndValue([NSString stringWithFormat:@"%@[]", key], nestedValue)];
     }];
+#endif
     
     return mutableQueryStringComponents;
 }
@@ -208,7 +218,11 @@ NSArray * TGQueryStringComponentsFromKeyAndArrayValue(NSString *key, NSArray *va
 
 + (SSignal *)_foursquareLocationForURL:(NSURL *)url
 {
+#if ONEGRAM_ARMV6
+    NSArray *pathComponents = [[url path] pathComponents];
+#else
     NSArray *pathComponents = url.pathComponents;
+#endif
     NSString *venueId = nil;
     for (NSString *component in pathComponents)
     {
@@ -278,7 +292,11 @@ NSArray * TGQueryStringComponentsFromKeyAndArrayValue(NSString *key, NSArray *va
     
     SSignal *(^processLongUrl)(NSURL *) = ^SSignal *(NSURL *longUrl)
     {
+#if ONEGRAM_ARMV6
+        NSArray *pathComponents = [[longUrl path] pathComponents];
+#else
         NSArray *pathComponents = longUrl.pathComponents;
+#endif
         
         bool isSearch = false;
         double latitude = 0.0;

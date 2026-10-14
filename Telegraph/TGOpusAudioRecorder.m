@@ -18,22 +18,25 @@
 #import "TGLiveUploadActor.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/ExtendedAudioFile.h>
 #import <AudioUnit/AudioUnit.h>
 
 #import "opus.h"
 #import "opusenc.h"
+#import "TGPCMBuffer.h"
 
 #import "TGDataItem.h"
 
 #import "TGAudioSessionManager.h"
 
 #import "TGTelegramNetworking.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #define kOutputBus 0
 #define kInputBus 1
-static const int TGOpusAudioPlayerSampleRate = 48000; // libopusfile is bound to use 48 kHz
+static const int TGOpusAudioPlayerSampleRate = 48000;
 
-static const int TGOpusAudioRecorderSampleRate = 16000;
+static const int TGOpusAudioRecorderSampleRate = 24000;
 
 typedef struct
 {
@@ -45,13 +48,15 @@ typedef struct
     bool playbackUnitStarted;
     bool playbackUnitInitialized;
     
-    int globalAudioRecorderId;
+    int64_t toneOffset;
+    TGPCMBuffer *pcmBuffer;
+    int16_t *inputSamples;
+    UInt32 maximumFrames;
+    volatile uint32_t acceptingSamples;
+    volatile uint32_t captureFailed;
 } TGOpusAudioRecorderContext;
 
 static NSData *toneAudioBuffer;
-static int64_t toneAudioOffset;
-
-static TGOpusAudioRecorderContext globalRecorderContext = { .audioUnit = NULL, .audioUnitStarted = false, .audioUnitInitialized = false, .playbackUnit = NULL, .playbackUnitStarted = false, .playbackUnitInitialized = false, .globalAudioRecorderId = -1};
 
 @class TGOpusAudioRecorder;
 
@@ -63,26 +68,12 @@ static TGOpusAudioRecorderContext globalRecorderContext = { .audioUnit = NULL, .
 @implementation TGOpusAudioRecorderReference
 @end
 
-static TGOpusAudioRecorderReference *TGOpusAudioRecorderGlobalReference(void)
+static TGOpusAudioRecorder *TGOpusAudioRecorderResolveReference(TGOpusAudioRecorderReference *reference)
 {
-    static TGOpusAudioRecorderReference *reference = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        reference = [[TGOpusAudioRecorderReference alloc] init];
-        reference.recorderId = -1;
-    });
-    return reference;
-}
-
-static TGOpusAudioRecorder *TGOpusAudioRecorderResolveGlobalReference(int recorderId)
-{
-    TGOpusAudioRecorderReference *reference = TGOpusAudioRecorderGlobalReference();
     TGOpusAudioRecorder *result = nil;
     @synchronized (reference)
     {
-        if (reference.recorderId == recorderId)
-            result = reference.value;
+        result = reference.value;
     }
     return result;
 }
@@ -92,6 +83,8 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
 @interface TGOpusAudioRecorder () <ASWatcher>
 {
     TGDataItem *_tempFileItem;
+    TGOpusAudioRecorderContext *_recorderContext;
+    TGOpusAudioRecorderReference *_lifetimeReference;
     
     TGOggOpusWriter *_oggWriter;
     
@@ -105,6 +98,9 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
     bool _waitForTone;
     NSTimeInterval _waitForToneStart;
     bool _stopped;
+    bool _captureFailed;
+    bool _captureFailureReported;
+    dispatch_source_t _captureTimer;
     
     NSMutableData *_waveformSamples;
     int16_t _waveformPeak;
@@ -117,6 +113,8 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
 @property (nonatomic, strong) ASHandle *actionHandle;
 
 @property (nonatomic) int recorderId;
+- (void)drainCapturedPCM;
+- (void)reportCaptureFailure;
 
 @end
 
@@ -127,6 +125,11 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
     self = [super init];
     if (self != nil)
     {
+        _recorderContext = calloc(1, sizeof(TGOpusAudioRecorderContext));
+        if (_recorderContext == NULL)
+            return nil;
+        _lifetimeReference = [[TGOpusAudioRecorderReference alloc] init];
+        _lifetimeReference.value = self;
         _actionHandle = [[ASHandle alloc] initWithDelegate:self];
         
         _tempFileItem = [[TGDataItem alloc] initWithTempFile];
@@ -139,9 +142,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         {
             static int nextRecorderId = 1;
             _recorderId = nextRecorderId++;
-            globalRecorderContext.globalAudioRecorderId = _recorderId;
-            
-            TGOpusAudioRecorderReference *reference = TGOpusAudioRecorderGlobalReference();
+            TGOpusAudioRecorderReference *reference = _lifetimeReference;
             @synchronized (reference)
             {
                 reference.value = self;
@@ -190,8 +191,10 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
 {
     intptr_t objectId = (intptr_t)self;
     int recorderId = _recorderId;
+    TGOpusAudioRecorderContext *context = _recorderContext;
+    _recorderContext = NULL;
     
-    TGOpusAudioRecorderReference *reference = TGOpusAudioRecorderGlobalReference();
+    TGOpusAudioRecorderReference *reference = _lifetimeReference;
     @synchronized (reference)
     {
         if (reference.value == self && reference.recorderId == recorderId)
@@ -202,52 +205,69 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
     }
     
     _oggWriter = nil;
+    if (_captureTimer != NULL)
+    {
+        dispatch_source_cancel(_captureTimer);
+#if !OS_OBJECT_USE_OBJC
+        dispatch_release(_captureTimer);
+#endif
+        _captureTimer = NULL;
+    }
     
     [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^
     {
-        if (globalRecorderContext.globalAudioRecorderId == recorderId)
+        if (context != NULL)
         {
-            globalRecorderContext.globalAudioRecorderId++;
             
-            if (globalRecorderContext.audioUnitStarted && globalRecorderContext.audioUnit != NULL)
+            if (context->audioUnitStarted && context->audioUnit != NULL)
             {
                 OSStatus status = noErr;
-                status = AudioOutputUnitStop(globalRecorderContext.audioUnit);
+                status = AudioOutputUnitStop(context->audioUnit);
                 if (status != noErr)
                     TGLog(@"[TGOpusAudioRecorder#%x AudioOutputUnitStop failed: %d]", objectId, (int)status);
                 
-                globalRecorderContext.audioUnitStarted = false;
+                context->audioUnitStarted = false;
             }
             
-            if (globalRecorderContext.audioUnit != NULL)
+            if (context->audioUnit != NULL)
             {
+                if (context->audioUnitInitialized)
+                    AudioUnitUninitialize(context->audioUnit);
                 OSStatus status = noErr;
-                status = AudioComponentInstanceDispose(globalRecorderContext.audioUnit);
+                status = AudioComponentInstanceDispose(context->audioUnit);
                 if (status != noErr)
                     TGLog(@"[TGOpusAudioRecorder#%x AudioComponentInstanceDispose failed: %d]", objectId, (int)status);
                 
-                globalRecorderContext.audioUnit = NULL;
+                context->audioUnit = NULL;
             }
             
-            if (globalRecorderContext.playbackUnitStarted && globalRecorderContext.playbackUnit != NULL)
+            if (context->playbackUnitStarted && context->playbackUnit != NULL)
             {
                 OSStatus status = noErr;
-                status = AudioOutputUnitStop(globalRecorderContext.playbackUnit);
+                status = AudioOutputUnitStop(context->playbackUnit);
                 if (status != noErr)
                     TGLog(@"[TGOpusAudioRecorder#%x playback AudioOutputUnitStop failed: %d]", objectId, (int)status);
                 
-                globalRecorderContext.playbackUnitStarted = false;
+                context->playbackUnitStarted = false;
             }
             
-            if (globalRecorderContext.playbackUnit != NULL)
+            if (context->playbackUnit != NULL)
             {
+                if (context->playbackUnitInitialized)
+                    AudioUnitUninitialize(context->playbackUnit);
                 OSStatus status = noErr;
-                status = AudioComponentInstanceDispose(globalRecorderContext.playbackUnit);
+                status = AudioComponentInstanceDispose(context->playbackUnit);
                 if (status != noErr)
                     TGLog(@"[TGOpusAudioRecorder#%x playback AudioComponentInstanceDispose failed: %d]", objectId, (int)status);
                 
-                globalRecorderContext.playbackUnit = NULL;
+                context->playbackUnit = NULL;
             }
+            TGPCMBufferDestroy(context->pcmBuffer);
+            context->pcmBuffer = NULL;
+            free(context->inputSamples);
+            context->inputSamples = NULL;
+            context->maximumFrames = 0;
+            free(context);
         }
     }];
     
@@ -259,13 +279,12 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
 {
     [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^
     {
-        int recorderId = _recorderId;
+        TGOpusAudioRecorderReference *reference = _lifetimeReference;
         [_currentAudioSession setDisposable:[[TGAudioSessionManager instance] requestSessionWithType:speaker ? TGAudioSessionTypePlayAndRecordHeadphones : TGAudioSessionTypePlayAndRecord interrupted:^
         {
-            TGOpusAudioRecorder *strongSelf = TGOpusAudioRecorderResolveGlobalReference(recorderId);
+            TGOpusAudioRecorder *strongSelf = TGOpusAudioRecorderResolveReference(reference);
             if (strongSelf != nil)
             {
-                NSLog(@"_beginAudioSession completed");
                 if (strongSelf->_pauseRecording) {
                     strongSelf->_pauseRecording();
                 }
@@ -287,13 +306,12 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
 {
     [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^
     {
-        if (_stopped) {
+        if (_stopped || _recorderContext == NULL) {
             if (completion) {
                 completion();
             }
             return;
         }
-        //[self _beginAudioSession];
         
         AudioComponentDescription desc;
         desc.componentType = kAudioUnitType_Output;
@@ -302,12 +320,15 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         desc.componentFlagsMask = 0;
         desc.componentManufacturer = kAudioUnitManufacturer_Apple;
         AudioComponent inputComponent = AudioComponentFindNext(NULL, &desc);
-        AudioComponentInstanceNew(inputComponent, &globalRecorderContext.audioUnit);
-        
-        OSStatus status = noErr;
+        OSStatus status = inputComponent == NULL ? kAudioUnitErr_InvalidParameter : AudioComponentInstanceNew(inputComponent, &_recorderContext->audioUnit);
+        if (status != noErr)
+        {
+            [self cleanup];
+            return;
+        }
         
         static const UInt32 one = 1;
-        status = AudioUnitSetProperty(globalRecorderContext.audioUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &one, sizeof(one));
+        status = AudioUnitSetProperty(_recorderContext->audioUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &one, sizeof(one));
         if (status != noErr)
         {
             TGLog(@"[TGOpusAudioRecorder#%x AudioUnitSetProperty kAudioOutputUnitProperty_EnableIO failed: %d]", self, (int)status);
@@ -316,7 +337,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             return;
         }
         
-        AudioStreamBasicDescription inputAudioFormat;
+        AudioStreamBasicDescription inputAudioFormat = {0};
         inputAudioFormat.mSampleRate = TGOpusAudioRecorderSampleRate;
         inputAudioFormat.mFormatID = kAudioFormatLinearPCM;
         inputAudioFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
@@ -325,7 +346,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         inputAudioFormat.mBitsPerChannel = 16;
         inputAudioFormat.mBytesPerPacket = 2;
         inputAudioFormat.mBytesPerFrame = 2;
-        status = AudioUnitSetProperty(globalRecorderContext.audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &inputAudioFormat, sizeof(inputAudioFormat));
+        status = AudioUnitSetProperty(_recorderContext->audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &inputAudioFormat, sizeof(inputAudioFormat));
         if (status != noErr)
         {
             TGLog(@"[TGOpusAudioRecorder#%x AudioUnitSetProperty kAudioUnitProperty_StreamFormat failed: %d]", self, (int)status);
@@ -334,7 +355,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             return;
         }
         
-        AudioStreamBasicDescription audioFormat;
+        AudioStreamBasicDescription audioFormat = {0};
         audioFormat.mSampleRate = TGOpusAudioRecorderSampleRate;
         audioFormat.mFormatID = kAudioFormatLinearPCM;
         audioFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
@@ -343,7 +364,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         audioFormat.mBitsPerChannel = 16;
         audioFormat.mBytesPerPacket = 2;
         audioFormat.mBytesPerFrame = 2;
-        status = AudioUnitSetProperty(globalRecorderContext.audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &audioFormat, sizeof(audioFormat));
+        status = AudioUnitSetProperty(_recorderContext->audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &audioFormat, sizeof(audioFormat));
         if (status != noErr)
         {
             TGLog(@"[TGOpusAudioRecorder#%x AudioUnitSetProperty kAudioUnitProperty_StreamFormat failed: %d]", self, (int)status);
@@ -354,8 +375,8 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         
         AURenderCallbackStruct callbackStruct;
         callbackStruct.inputProc = &TGOpusRecordingCallback;
-        callbackStruct.inputProcRefCon = (void *)(intptr_t)_recorderId;
-        if (AudioUnitSetProperty(globalRecorderContext.audioUnit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0, &callbackStruct, sizeof(callbackStruct)) != noErr)
+        callbackStruct.inputProcRefCon = _recorderContext;
+        if (AudioUnitSetProperty(_recorderContext->audioUnit, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitScope_Global, 0, &callbackStruct, sizeof(callbackStruct)) != noErr)
         {
             TGLog(@"[TGOpusAudioRecorder#%x AudioUnitSetProperty kAudioOutputUnitProperty_SetInputCallback failed]", self);
             [self cleanup];
@@ -364,7 +385,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         }
         
         static const UInt32 zero = 0;
-        if (AudioUnitSetProperty(globalRecorderContext.audioUnit, kAudioUnitProperty_ShouldAllocateBuffer, kAudioUnitScope_Output, 0, &zero, sizeof(zero)) != noErr)
+        if (AudioUnitSetProperty(_recorderContext->audioUnit, kAudioUnitProperty_ShouldAllocateBuffer, kAudioUnitScope_Output, kInputBus, &zero, sizeof(zero)) != noErr)
         {
             TGLog(@"[TGOpusAudioRecorder#%x AudioUnitSetProperty kAudioUnitProperty_ShouldAllocateBuffer failed]", self);
             [self cleanup];
@@ -372,8 +393,28 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             return;
         }
         
+        UInt32 maximumFrames = 4096;
+        status = AudioUnitSetProperty(_recorderContext->audioUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maximumFrames, sizeof(maximumFrames));
+        UInt32 maximumFramesSize = sizeof(maximumFrames);
+        if (status == noErr)
+            status = AudioUnitGetProperty(_recorderContext->audioUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maximumFrames, &maximumFramesSize);
+        if (status != noErr || maximumFrames == 0 || maximumFrames > 65536)
+        {
+            [self cleanup];
+            return;
+        }
+        _recorderContext->maximumFrames = maximumFrames;
+        _recorderContext->inputSamples = malloc((size_t)maximumFrames * sizeof(int16_t));
+        _recorderContext->pcmBuffer = TGPCMBufferCreate(65536, 1);
+        TGPCMBufferStore(&_recorderContext->acceptingSamples, 0);
+        TGPCMBufferStore(&_recorderContext->captureFailed, 0);
+        if (_recorderContext->inputSamples == NULL || _recorderContext->pcmBuffer == NULL)
+        {
+            [self cleanup];
+            return;
+        }
         _oggWriter = [[TGOggOpusWriter alloc] init];
-        if (![_oggWriter beginWithDataItem:_tempFileItem])
+        if (![_oggWriter beginWithDataItem:_tempFileItem sampleRate:TGOpusAudioRecorderSampleRate bitrate:32000])
         {
             TGLog(@"[TGOpusAudioRecorder#%x error initializing ogg opus writer]", self);
             [self cleanup];
@@ -381,11 +422,10 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             return;
         }
         
-        CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
         
-        status = AudioUnitInitialize(globalRecorderContext.audioUnit);
+        status = AudioUnitInitialize(_recorderContext->audioUnit);
         if (status == noErr)
-            globalRecorderContext.audioUnitInitialized = true;
+            _recorderContext->audioUnitInitialized = true;
         else
         {
             TGLog(@"[TGOpusAudioRecorder#%x AudioUnitInitialize failed: %d]", self, (int)status);
@@ -394,14 +434,11 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             return;
         }
         
-        TGLog(@"[TGOpusAudioRecorder#%x setup time: %f ms]", self, (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
         
-        status = AudioOutputUnitStart(globalRecorderContext.audioUnit);
+        status = AudioOutputUnitStart(_recorderContext->audioUnit);
         if (status == noErr)
         {
-            TGLog(@"[TGOpusAudioRecorder#%x initialization time: %f ms]", self, (CFAbsoluteTimeGetCurrent() - startTime) * 1000.0);
-            TGLog(@"[TGOpusAudioRecorder#%x started]", self);
-            globalRecorderContext.audioUnitStarted = true;
+            _recorderContext->audioUnitStarted = true;
         }
         else
         {
@@ -414,7 +451,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         if (playTone) {
             [self loadToneBuffer];
             _waitForTone = true;
-            toneAudioOffset = 0;
+            _recorderContext->toneOffset = 0;
             
             AudioComponentDescription desc;
             desc.componentType = kAudioUnitType_Output;
@@ -423,12 +460,12 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             desc.componentFlagsMask = 0;
             desc.componentManufacturer = kAudioUnitManufacturer_Apple;
             AudioComponent inputComponent = AudioComponentFindNext(NULL, &desc);
-            AudioComponentInstanceNew(inputComponent, &globalRecorderContext.playbackUnit);
+            AudioComponentInstanceNew(inputComponent, &_recorderContext->playbackUnit);
             
             OSStatus status = noErr;
             
             static const UInt32 one = 1;
-            status = AudioUnitSetProperty(globalRecorderContext.playbackUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, kOutputBus, &one, sizeof(one));
+            status = AudioUnitSetProperty(_recorderContext->playbackUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, kOutputBus, &one, sizeof(one));
             if (status != noErr)
             {
                 TGLog(@"[TGOpusAudioPlayer#%x AudioUnitSetProperty kAudioOutputUnitProperty_EnableIO failed: %d]", self, (int)status);
@@ -437,7 +474,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
                 return;
             }
             
-            AudioStreamBasicDescription outputAudioFormat;
+            AudioStreamBasicDescription outputAudioFormat = {0};
             outputAudioFormat.mSampleRate = TGOpusAudioPlayerSampleRate;
             outputAudioFormat.mFormatID = kAudioFormatLinearPCM;
             outputAudioFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
@@ -446,7 +483,7 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             outputAudioFormat.mBitsPerChannel = 16;
             outputAudioFormat.mBytesPerPacket = 2;
             outputAudioFormat.mBytesPerFrame = 2;
-            status = AudioUnitSetProperty(globalRecorderContext.playbackUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &outputAudioFormat, sizeof(outputAudioFormat));
+            status = AudioUnitSetProperty(_recorderContext->playbackUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &outputAudioFormat, sizeof(outputAudioFormat));
             if (status != noErr)
             {
                 TGLog(@"[TGOpusAudioPlayer#%x playback AudioUnitSetProperty kAudioUnitProperty_StreamFormat failed: %d]", self, (int)status);
@@ -457,8 +494,8 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
             
             AURenderCallbackStruct callbackStruct;
             callbackStruct.inputProc = &TGOpusAudioPlayerCallback;
-            callbackStruct.inputProcRefCon = (void *)(intptr_t)_recorderId;
-            if (AudioUnitSetProperty(globalRecorderContext.playbackUnit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Global, kOutputBus, &callbackStruct, sizeof(callbackStruct)) != noErr)
+            callbackStruct.inputProcRefCon = _recorderContext;
+            if (AudioUnitSetProperty(_recorderContext->playbackUnit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Global, kOutputBus, &callbackStruct, sizeof(callbackStruct)) != noErr)
             {
                 TGLog(@"[TGOpusAudioPlayer#%x playback AudioUnitSetProperty kAudioUnitProperty_SetRenderCallback failed]", self);
                 [self cleanup];
@@ -466,25 +503,52 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
                 return;
             }
             
-            status = AudioUnitInitialize(globalRecorderContext.playbackUnit);
+            status = AudioUnitInitialize(_recorderContext->playbackUnit);
             if (status == noErr)
             {
-                status = AudioOutputUnitStart(globalRecorderContext.playbackUnit);
+                _recorderContext->playbackUnitInitialized = true;
+                status = AudioOutputUnitStart(_recorderContext->playbackUnit);
                 if (status != noErr)
                 {
                     TGLog(@"[TGOpusAudioRecorder#%x playback AudioOutputUnitStart failed: %d]", self, (int)status);
+                    [self cleanup];
+                    return;
                 }
+                _recorderContext->playbackUnitStarted = true;
             } else {
                 TGLog(@"[TGOpusAudioRecorder#%x playback AudioUnitInitialize failed: %d]", self, (int)status);
                 [self cleanup];
+                return;
             }
             
             _waitForToneStart = CACurrentMediaTime();
         }
         
-        if (completion) {
-            completion();
+        TGOpusAudioRecorderReference *reference = _lifetimeReference;
+        _captureTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, [TGOpusAudioRecorder processingQueue].nativeQueue);
+        dispatch_source_set_timer(_captureTimer, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC), 20 * NSEC_PER_MSEC, 2 * NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(_captureTimer, ^
+        {
+            TGOpusAudioRecorder *recorder = TGOpusAudioRecorderResolveReference(reference);
+            if (recorder != nil && recorder->_recording)
+                [recorder drainCapturedPCM];
+        });
+        dispatch_resume(_captureTimer);
+        dispatch_block_t ready = ^
+        {
+            if (_stopped || _recorderContext == NULL)
+                return;
+            _waitForTone = false;
+            if (completion != nil)
+                completion();
+        };
+        if (_waitForTone)
+        {
+            NSTimeInterval toneDuration = MAX(0.44, toneAudioBuffer.length / (2.0 * TGOpusAudioPlayerSampleRate));
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(toneDuration * NSEC_PER_SEC)), [TGOpusAudioRecorder processingQueue].nativeQueue, ready);
         }
+        else
+            ready();
     }];
 }
 
@@ -492,7 +556,55 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
     if (toneAudioBuffer != nil) {
         return;
     }
-    
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    NSURL *url = OGPlatformBundleResourceURL([NSBundle mainBundle], @"begin_record", @"caf");
+    if (url == nil)
+        return;
+
+    ExtAudioFileRef audioFile = NULL;
+    OSStatus status = ExtAudioFileOpenURL((__bridge CFURLRef)url, &audioFile);
+    if (status != noErr || audioFile == NULL)
+        return;
+
+    AudioStreamBasicDescription outputFormat = {0};
+    memset(&outputFormat, 0, sizeof(outputFormat));
+    outputFormat.mSampleRate = TGOpusAudioPlayerSampleRate;
+    outputFormat.mFormatID = kAudioFormatLinearPCM;
+    outputFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    outputFormat.mFramesPerPacket = 1;
+    outputFormat.mChannelsPerFrame = 1;
+    outputFormat.mBitsPerChannel = 16;
+    outputFormat.mBytesPerPacket = 2;
+    outputFormat.mBytesPerFrame = 2;
+
+    UInt32 formatSize = sizeof(outputFormat);
+    status = ExtAudioFileSetProperty(audioFile, kExtAudioFileProperty_ClientDataFormat, formatSize, &outputFormat);
+    if (status != noErr)
+    {
+        ExtAudioFileDispose(audioFile);
+        return;
+    }
+
+    NSMutableData *data = [[NSMutableData alloc] init];
+    int16_t samples[4096];
+    while (true)
+    {
+        UInt32 frameCount = 4096;
+        AudioBufferList bufferList;
+        bufferList.mNumberBuffers = 1;
+        bufferList.mBuffers[0].mNumberChannels = 1;
+        bufferList.mBuffers[0].mDataByteSize = sizeof(samples);
+        bufferList.mBuffers[0].mData = samples;
+        status = ExtAudioFileRead(audioFile, &frameCount, &bufferList);
+        if (status != noErr || frameCount == 0)
+            break;
+        [data appendBytes:samples length:(NSUInteger)frameCount * sizeof(int16_t)];
+    }
+    ExtAudioFileDispose(audioFile);
+    if (status == noErr)
+        toneAudioBuffer = data;
+#else
     NSDictionary *outputSettings = [NSDictionary dictionaryWithObjectsAndKeys:
                                     [NSNumber numberWithInt:kAudioFormatLinearPCM], AVFormatIDKey,
                                     [NSNumber numberWithFloat:48000.0], AVSampleRateKey,
@@ -502,9 +614,8 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
                                     [NSNumber numberWithBool:NO], AVLinearPCMIsBigEndianKey,
                                     nil];
     
-    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[[NSBundle mainBundle] URLForResource:@"begin_record" withExtension: @"caf"] options:nil];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:OGPlatformBundleResourceURL([NSBundle mainBundle], @"begin_record", @"caf") options:nil];
     if (asset == nil) {
-        NSLog(@"asset is not defined!");
         return;
     }
     
@@ -522,7 +633,6 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
         return;
     }
     
-    // add output reader to reader
     [iPodAssetReader addOutput: readerOutput];
     
     if (! [iPodAssetReader startReading]) {
@@ -532,7 +642,6 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
 
     NSMutableData *data = [[NSMutableData alloc] init];
     while (iPodAssetReader.status == AVAssetReaderStatusReading) {
-        // Check if the available buffer space is enough to hold at least one cycle of the sample data
         CMSampleBufferRef nextBuffer = [readerOutput copyNextSampleBuffer];
         
         if (nextBuffer) {
@@ -555,66 +664,95 @@ static dispatch_semaphore_t playSoundSemaphore = nil;
     }
     
     toneAudioBuffer = data;
+#endif
 }
 
-- (void)record {
-    _recording = true;
+- (void)record
+{
+    [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^
+    {
+        if (_stopped || _recording || _recorderContext == NULL || _recorderContext->pcmBuffer == NULL)
+            return;
+        TGPCMBufferReset(_recorderContext->pcmBuffer);
+        _recording = true;
+        TGPCMBufferStore(&_recorderContext->acceptingSamples, 1);
+    } synchronous:true];
 }
 
 static OSStatus TGOpusRecordingCallback(void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags, const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames, __unused AudioBufferList *ioData)
 {
+    TGOpusAudioRecorderContext *context = inRefCon;
+    if (inNumberFrames > context->maximumFrames || context->inputSamples == NULL)
+    {
+        TGPCMBufferStore(&context->captureFailed, 1);
+        return kAudioUnitErr_TooManyFramesToProcess;
+    }
+    AudioBufferList bufferList = {0};
+    bufferList.mNumberBuffers = 1;
+    bufferList.mBuffers[0].mNumberChannels = 1;
+    bufferList.mBuffers[0].mDataByteSize = inNumberFrames * sizeof(int16_t);
+    bufferList.mBuffers[0].mData = context->inputSamples;
+    OSStatus status = AudioUnitRender(context->audioUnit, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, &bufferList);
+    if (status != noErr)
+    {
+        TGPCMBufferStore(&context->captureFailed, 1);
+        return status;
+    }
+    if (TGPCMBufferLoad(&context->acceptingSamples) != 0)
+    {
+        UInt32 frames = bufferList.mBuffers[0].mDataByteSize / sizeof(int16_t);
+        if (TGPCMBufferWrite(context->pcmBuffer, context->inputSamples, frames) != frames)
+            TGPCMBufferStore(&context->captureFailed, 1);
+    }
+    return noErr;
+}
+
+- (void)reportCaptureFailure
+{
+    _captureFailed = true;
+    if (!_captureFailureReported)
+    {
+        _captureFailureReported = true;
+        TGLog(@"[TGOpusAudioRecorder#%p capture or encoding failed]", self);
+        if (_pauseRecording != nil)
+            _pauseRecording();
+    }
+}
+
+- (void)drainCapturedPCM
+{
+    if (_recorderContext == NULL || _recorderContext->pcmBuffer == NULL)
+        return;
     @autoreleasepool
     {
-        if (globalRecorderContext.globalAudioRecorderId != (intptr_t)inRefCon)
-            return noErr;
-        
-        AudioBuffer buffer;
-        buffer.mNumberChannels = 1;
-        buffer.mDataByteSize = inNumberFrames * 2;
-        buffer.mData = malloc(inNumberFrames * 2);
-        
-        AudioBufferList bufferList;
-        bufferList.mNumberBuffers = 1;
-        bufferList.mBuffers[0] = buffer;
-        OSStatus status = AudioUnitRender(globalRecorderContext.audioUnit, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, &bufferList);
-        if (status == noErr)
+        if (TGPCMBufferLoad(&_recorderContext->captureFailed) != 0)
+            [self reportCaptureFailure];
+        int16_t samples[4096];
+        uint32_t frames;
+        while ((frames = TGPCMBufferRead(_recorderContext->pcmBuffer, samples, 4096)) != 0)
         {
-            [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^
+            if (!_captureFailed && (!_waitForTone || CACurrentMediaTime() - _waitForToneStart > 0.44))
             {
-                TGOpusAudioRecorder *recorder = TGOpusAudioRecorderResolveGlobalReference((int)(intptr_t)inRefCon);
-                if (recorder != nil && recorder.recorderId == (int)(intptr_t)inRefCon && recorder->_recording) {
-                    
-                    if (recorder->_waitForTone) {
-                        if (CACurrentMediaTime() - recorder->_waitForToneStart > 0.44) {
-                            [recorder _processBuffer:&buffer];
-                        }
-                    } else {
-                        [recorder _processBuffer:&buffer];
-                    }
-                }
-                
-                free(buffer.mData);
-            }];
+                AudioBuffer buffer = {1, frames * sizeof(int16_t), samples};
+                [self _processBuffer:&buffer];
+            }
         }
     }
-    
-    return noErr;
 }
 
 static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRenderActionFlags *ioActionFlags, __unused const AudioTimeStamp *inTimeStamp, __unused UInt32 inBusNumber, __unused UInt32 inNumberFrames, AudioBufferList *ioData)
 {
-    if (globalRecorderContext.globalAudioRecorderId != (intptr_t)inRefCon)
-        return noErr;
+    TGOpusAudioRecorderContext *context = inRefCon;
     
     for (int i = 0; i < (int)ioData->mNumberBuffers; i++)
     {
         AudioBuffer *buffer = &ioData->mBuffers[i];
         buffer->mNumberChannels = 1;
         
-        int audioBytesToCopy = MAX(0, MIN((int)buffer->mDataByteSize, ((int)toneAudioBuffer.length) - (int)toneAudioOffset));
+        int audioBytesToCopy = MAX(0, MIN((int)buffer->mDataByteSize, ((int)toneAudioBuffer.length) - (int)context->toneOffset));
         if (audioBytesToCopy != 0) {
-            memcpy(buffer->mData, toneAudioBuffer.bytes + (int)toneAudioOffset, audioBytesToCopy);
-            toneAudioOffset += audioBytesToCopy;
+            memcpy(buffer->mData, toneAudioBuffer.bytes + (int)context->toneOffset, audioBytesToCopy);
+            context->toneOffset += audioBytesToCopy;
         }
         
         int remainingBytes = ((int)buffer->mDataByteSize) - audioBytesToCopy;
@@ -628,10 +766,10 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
 
 - (void)processWaveformPreview:(int16_t const *)samples count:(int)count {
     for (int i = 0; i < count; i++) {
-        int16_t sample = samples[i];
-        if (sample < 0) {
-            sample = -sample;
-        }
+        int32_t magnitude = samples[i];
+        if (magnitude < 0)
+            magnitude = -magnitude;
+        int16_t sample = (int16_t)MIN(magnitude, INT16_MAX);
         
         if (_waveformPeak < sample) {
             _waveformPeak = sample;
@@ -716,15 +854,15 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
             {
                 NSUInteger previousBytesWritten = [_oggWriter encodedBytes];
                 [self processWaveformPreview:(int16_t const *)currentEncoderPacket count:currentEncoderPacketSize / 2];
-                [_oggWriter writeFrame:currentEncoderPacket frameByteCount:(NSUInteger)currentEncoderPacketSize];
+                if (![_oggWriter writeFrame:currentEncoderPacket frameByteCount:(NSUInteger)currentEncoderPacketSize])
+                {
+                    [self reportCaptureFailure];
+                    return;
+                }
                 NSUInteger currentBytesWritten = [_oggWriter encodedBytes];
                 if (currentBytesWritten != previousBytesWritten)
                 {
-                    [ActionStageInstance() dispatchOnStageQueue:^
-                    {
-                        TGLiveUploadActor *actor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:_liveUploadPath];
-                        [actor updateSize:currentBytesWritten];
-                    }];
+                    [TGLiveUploadActor updateSize:currentBytesWritten forActorPath:_liveUploadPath];
                 }
             }
         }
@@ -741,8 +879,25 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
     
     [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^
     {
-        if (_oggWriter != nil && [_oggWriter writeFrame:NULL frameByteCount:0])
+        if (_recorderContext != NULL)
         {
+            if (_recorderContext->audioUnitStarted)
+            {
+                OSStatus status = AudioOutputUnitStop(_recorderContext->audioUnit);
+                if (status == noErr)
+                    _recorderContext->audioUnitStarted = false;
+                else
+                    [self reportCaptureFailure];
+            }
+            TGPCMBufferStore(&_recorderContext->acceptingSamples, 0);
+            [self drainCapturedPCM];
+        }
+        _recording = false;
+        if (_oggWriter != nil && !_captureFailed && [_oggWriter writeFrame:_audioBuffer.mutableBytes frameByteCount:_audioBuffer.length])
+        {
+            if (_audioBuffer.length != 0)
+                [self processWaveformPreview:_audioBuffer.bytes count:(int)(_audioBuffer.length / sizeof(int16_t))];
+            [_audioBuffer setLength:0];
             dataItemResult = _tempFileItem;
             durationResult = [_oggWriter encodedDuration];
             totalBytes = [_oggWriter encodedBytes];
@@ -770,7 +925,7 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
         if (peak < sample) {
             peak = sample;
         }
-        sumSamples += peak;
+        sumSamples += sample;
     }
     uint16_t calculatedPeak = 0;
     calculatedPeak = (uint16_t)(sumSamples * 1.8f / 100);
@@ -780,7 +935,7 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
     }
     
     for (int i = 0; i < 100; i++) {
-        uint16_t sample = (uint16_t)((int64_t)samples[i]);
+        uint16_t sample = (uint16_t)scaledSamples[i];
         if (sample > calculatedPeak) {
             scaledSamples[i] = calculatedPeak;
         }
@@ -799,11 +954,7 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, __unused AudioUnitRend
     
     if (liveData != NULL)
     {
-        dispatch_sync([ActionStageInstance() globalStageDispatchQueue], ^
-        {
-            TGLiveUploadActor *actor = (TGLiveUploadActor *)[ActionStageInstance() executingActorWithPath:_liveUploadPath];
-            *liveData = [actor finishRestOfFile:totalBytes];
-        });
+        *liveData = [TGLiveUploadActor finishRestOfFile:totalBytes forActorPath:_liveUploadPath];
     }
     
     [[TGOpusAudioRecorder processingQueue] dispatchOnQueue:^

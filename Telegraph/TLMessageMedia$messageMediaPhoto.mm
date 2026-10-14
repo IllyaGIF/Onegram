@@ -2,7 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-//messageMediaPhoto flags:# photo:flags.0?Photo caption:flags.1?string ttl_seconds:flags.2?int = MessageMedia;
 
 @implementation TLMessageMedia$messageMediaPhoto
 

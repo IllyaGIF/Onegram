@@ -41,9 +41,6 @@
             
             [disposable setDisposable:[info.signal startWithNext:^(id next)
             {
-                // A file reference is short-lived. Keep concurrent refreshes
-                // coalesced, but discard the completed value so a later
-                // FILE_REFERENCE_EXPIRED error performs a fresh request.
                 [_queue dispatch:^
                 {
                     if (_processedOriginInfos[key] == info)

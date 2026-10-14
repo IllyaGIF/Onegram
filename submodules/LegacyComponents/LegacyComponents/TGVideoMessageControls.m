@@ -4,7 +4,6 @@
 
 #import "TGModernButton.h"
 #import <QuartzCore/QuartzCore.h>
-//#import "TGModernConversationInputMicButton.h"
 #import "TGVideoMessageScrubber.h"
 
 #import "LegacyComponentsInternal.h"
@@ -32,7 +31,7 @@ static CGRect viewFrame(UIView *view)
     return result;
 }
 
-@interface TGVideoMessageControls () //<TGModernConversationInputMicButtonDelegate>
+@interface TGVideoMessageControls ()
 {
     UIImageView *_slideToCancelArrow;
     UILabel *_slideToCancelLabel;

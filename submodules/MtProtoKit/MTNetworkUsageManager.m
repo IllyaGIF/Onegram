@@ -1,6 +1,9 @@
 #import "MTNetworkUsageManager.h"
 
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <string.h>
 
 #if defined(MtProtoKitDynamicFramework)
@@ -134,11 +137,20 @@ static void writeUsageValue(void *map, int key, int64_t value) {
                 if (validUsageKey(keyValue))
                     writeUsageValue(_map, keyValue, 0);
             }
+#if defined(ONEGRAM_ARMV6)
+            for (NSNumber *key in setKeys) {
+                NSNumber *value = [setKeys objectForKey:key];
+                int keyValue = [key intValue];
+                if (validUsageKey(keyValue))
+                    writeUsageValue(_map, keyValue, [value longLongValue]);
+            }
+#else
             [setKeys enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, NSNumber *value, __unused BOOL *stop) {
                 int keyValue = [key intValue];
                 if (validUsageKey(keyValue))
                     writeUsageValue(_map, keyValue, [value longLongValue]);
             }];
+#endif
             if (completion) {
                 completion();
             }

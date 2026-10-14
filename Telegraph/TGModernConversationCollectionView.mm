@@ -1,5 +1,7 @@
 #import "TGModernConversationCollectionView.h"
 
+#import <objc/runtime.h>
+
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGModernCollectionCell.h"
@@ -37,6 +39,8 @@
     
     NSTimeInterval _ignoreBackgroundTouchBeforeDate;
     UIToolbar *_dimView;
+    
+    bool _layoutInProgress;
 }
 
 @property (nonatomic, copy) void (^touchCompletion)();
@@ -93,7 +97,6 @@
     id<TGModernConversationCollectionTouchBehaviour> touchBehaviour = _currentInstantPreviewTarget;
     if (touchBehaviour != nil)
     {
-        //TGLog(@"begin with %p", touchBehaviour);
         
         void (^touchCompletion)() = [touchBehaviour forwardTouchToCollectionWithCompletion];
         if (touchCompletion != nil)
@@ -130,7 +133,6 @@
 
 - (void)endInstantPreviewGesture
 {
-    //TGLog(@"end with %p", _currentInstantPreviewTarget);
     
     if (self.touchCompletion != nil)
     {
@@ -221,6 +223,14 @@
     if (self.delegate != nil && [self.delegate respondsToSelector:@selector(tableTouchesCancelled)])
         [self.delegate performSelector:@selector(tableTouchesCancelled)];
 #pragma clang diagnostic pop
+}
+
+- (bool)itemCountChangesRequireReload
+{
+    static int value = -1;
+    if (value < 0)
+        value = class_getSuperclass([PSUICollectionView class]) != [PSTCollectionView class] ? 1 : 0;
+    return value != 0;
 }
 
 - (void)updateVisibleItemsNow
@@ -396,8 +406,7 @@
     {
         if (currentIndices.find(it->first) == currentIndices.end())
         {
-            [it->second removeFromSuperview];
-            [_viewStorage enqueueView:it->second];
+            [_viewStorage parkView:it->second];
             _currentVisibleDecorationViews.erase(it++);
         }
         else
@@ -406,8 +415,6 @@
     
     [self updateHeaderView];
     
-    //if (_currentVisibleDecorationViews.size() != previousCount)
-    //    TGLog(@"new size: %ld", _currentVisibleDecorationViews.size());
 }
 
 - (void)setHeaderView:(UIView *)headerView
@@ -524,26 +531,28 @@
             [it->second layoutSubviews];
         }
         
+        NSMutableArray *unrestoredViewKeys = [[NSMutableArray alloc] init];
         [removedViews enumerateKeysAndObjectsUsingBlock:^(id key, UIView *view, __unused BOOL *stop)
         {
             if (previousDecorationViewFrames.find([key intValue]) != previousDecorationViewFrames.end())
             {
+                UIView<TGModernView> *restoredView = nil;
                 if ([key intValue] == INT_MIN)
-                {
-                    if (view == [_viewStorage dequeueViewWithIdentifier:@"_unread" viewStateIdentifier:nil])
-                    {
-                        [self insertSubview:view atIndex:0];
-                    }
-                }
+                    restoredView = [_viewStorage dequeueViewWithIdentifier:@"_unread" viewStateIdentifier:nil preferredSuperview:self];
+                else
+                    restoredView = [_viewStorage dequeueViewWithIdentifier:@"_date" viewStateIdentifier:[[NSString alloc] initWithFormat:@"date/%d", [key intValue]] preferredSuperview:self];
+                
+                if (restoredView == view)
+                    [self insertSubview:view atIndex:0];
                 else
                 {
-                    if (view == [_viewStorage dequeueViewWithIdentifier:@"_date" viewStateIdentifier:[[NSString alloc] initWithFormat:@"date/%d", [key intValue]]])
-                    {
-                        [self insertSubview:view atIndex:0];
-                    }
+                    if (restoredView != nil)
+                        [_viewStorage parkView:restoredView];
+                    [unrestoredViewKeys addObject:key];
                 }
             }
         }];
+        [removedViews removeObjectsForKeys:unrestoredViewKeys];
         
         _headerView.frame = previousHeaderViewFrame;
         
@@ -579,10 +588,9 @@
             }
         } completion:^(__unused BOOL finished)
         {
-            [removedViews enumerateKeysAndObjectsUsingBlock:^(__unused id key, UIView *view, __unused BOOL *stop)
+            [removedViews enumerateKeysAndObjectsUsingBlock:^(__unused id key, UIView<TGModernView> *view, __unused BOOL *stop)
             {
-                [_viewStorage enqueueView:view];
-                [view removeFromSuperview];
+                [_viewStorage parkView:view];
             }];
         }];
     }
@@ -592,35 +600,57 @@
 
 - (void)layoutSubviews
 {
+    if (_layoutInProgress)
+        return;
+    
+    CGRect layoutBounds = self.bounds;
+    _layoutInProgress = true;
     [super layoutSubviews];
+    _layoutInProgress = false;
+    
+    if (!CGRectEqualToRect(layoutBounds, self.bounds))
+        [self setNeedsLayout];
     
     CGRect bounds = self.bounds;
     CGFloat relativeBoundsDelta = _lastRelativeBoundsReport == FLT_MAX ? FLT_MAX : ABS(bounds.origin.y - _lastRelativeBoundsReport);
     CGFloat relativeBoundsThreshold = cpuCoreCount() > 1 ? 5.0f : 16.0f;
     bool shouldUpdateRelativeBounds = relativeBoundsDelta > relativeBoundsThreshold;
 
-    if (shouldUpdateRelativeBounds)
-    {
-        if ([self updateRelativeBounds])
-            _lastRelativeBoundsReport = bounds.origin.y;
-    }
+    if ([self _updateRelativeBounds:shouldUpdateRelativeBounds] && shouldUpdateRelativeBounds)
+        _lastRelativeBoundsReport = bounds.origin.y;
     
     [self updateVisibleDecorationViews];
 }
 
 - (bool)updateRelativeBounds
 {
+    return [self _updateRelativeBounds:true];
+}
+
+- (bool)_updateRelativeBounds:(bool)updateAll
+{
     bool anyUpdated = false;
     Class cellClass = [TGModernCollectionCell class];
     CGRect bounds = self.bounds;
+    bool tracksParkedViews = [self respondsToSelector:@selector(isParkedReusableView:)];
     for (UIView *subview in self.subviews)
     {
-        if ([subview isKindOfClass:cellClass] && ((TGModernCollectionCell *)subview)->_needsRelativeBoundsUpdateNotifications)
+        if (![subview isKindOfClass:cellClass])
+            continue;
+        TGModernCollectionCell *cell = (TGModernCollectionCell *)subview;
+        if (!cell->_needsRelativeBoundsUpdateNotifications)
         {
-            anyUpdated = true;
-            CGPoint subviewPosition = subview.frame.origin;
-            [(TGModernCollectionCell *)subview relativeBoundsUpdated:CGRectOffset(bounds, -subviewPosition.x, -subviewPosition.y)];
+            cell->_relativeBoundsUpdatePending = false;
+            continue;
         }
+        if (!updateAll && !cell->_relativeBoundsUpdatePending)
+            continue;
+        if (tracksParkedViews && [self isParkedReusableView:cell])
+            continue;
+        cell->_relativeBoundsUpdatePending = false;
+        anyUpdated = true;
+        CGPoint subviewPosition = cell.frame.origin;
+        [cell relativeBoundsUpdated:CGRectOffset(bounds, -subviewPosition.x, -subviewPosition.y)];
     }
 
     return anyUpdated;

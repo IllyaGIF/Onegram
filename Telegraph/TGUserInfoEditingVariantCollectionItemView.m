@@ -3,6 +3,9 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGPresentation.h"
+#import "../OnegramUI/Core/OGTheme.h"
+#import "../OnegramUI/Core/OGProfileAppearance.h"
+#import "../OnegramUI/Lists/OGSettingsCell.h"
 
 @interface TGUserInfoEditingVariantCollectionItemView ()
 {
@@ -48,10 +51,27 @@
 {
     [super setPresentation:presentation];
     
-    _titleLabel.textColor = presentation.pallete.collectionMenuAccentColor;
-    _variantLabel.textColor = presentation.pallete.collectionMenuVariantColor;
-    _separatorLayer.backgroundColor = presentation.pallete.collectionMenuSeparatorColor.CGColor;
-    _arrowView.image = presentation.images.collectionMenuDisclosureIcon;
+    if ([TGPresentation brandedIOS6Style])
+    {
+        OGTheme *theme = [OGTheme brandedTheme];
+        OGProfileAppearance *appearance = theme.profileAppearance;
+        _titleLabel.font = TGSystemFontOfSize(appearance.detailTitleFontSize);
+        _titleLabel.textColor = appearance.detailTitleColor;
+        _variantLabel.font = TGSystemFontOfSize(appearance.detailVariantFontSize);
+        _variantLabel.textColor = appearance.detailVariantColor;
+        _arrowView.image = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme];
+        _separatorLayer.backgroundColor = appearance.detailSeparatorColor.CGColor;
+    }
+    else
+    {
+        _titleLabel.font = TGSystemFontOfSize(14.0f);
+        _titleLabel.textColor = presentation.pallete.collectionMenuAccentColor;
+        _variantLabel.font = TGSystemFontOfSize(17.0f);
+        _variantLabel.textColor = presentation.pallete.collectionMenuVariantColor;
+        _arrowView.image = presentation.images.collectionMenuDisclosureIcon;
+    }
+    if (![TGPresentation brandedIOS6Style])
+        _separatorLayer.backgroundColor = presentation.pallete.collectionMenuSeparatorColor.CGColor;
 }
 
 - (void)setTitle:(NSString *)title
@@ -72,20 +92,27 @@
     
     CGRect bounds = self.bounds;
     
+    bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
+    OGProfileAppearance *appearance = [OGTheme brandedTheme].profileAppearance;
     CGFloat separatorHeight = TGScreenPixel;
-    CGFloat separatorInset = 15.0f + self.safeAreaInset.left;
+    CGFloat separatorInset = (brandedIOS6Style ? appearance.detailSeparatorInset : 15.0f) + self.safeAreaInset.left;
     _separatorLayer.frame = CGRectMake(separatorInset, bounds.size.height - separatorHeight, bounds.size.width - separatorInset, separatorHeight);
-    
-    CGFloat leftPadding = 15.0f + TGScreenPixel + self.safeAreaInset.left;
-    
-    CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(70.0f, CGFLOAT_MAX)];
-    _titleLabel.frame = CGRectMake(leftPadding, 14.0f, titleSize.width, titleSize.height);
-    
-    CGSize variantSize = [_variantLabel sizeThatFits:CGSizeMake(bounds.size.width - 122.0f - 15.0f, CGFLOAT_MAX)];
-    _variantLabel.frame = CGRectMake(bounds.size.width - variantSize.width - 35.0f - self.safeAreaInset.right, 12.0f, variantSize.width, variantSize.height);
-    
-    CGSize arrowSize = _arrowView.bounds.size;
-    _arrowView.frame = CGRectMake(bounds.size.width - 15.0f - arrowSize.width - self.safeAreaInset.right, (self.frame.size.height - arrowSize.height) / 2.0f, arrowSize.width, arrowSize.height);
+
+    CGFloat leftPadding = (brandedIOS6Style ? appearance.detailLeft : 15.0f + TGScreenPixel) + self.safeAreaInset.left;
+    CGFloat titleMaximumWidth = brandedIOS6Style ? appearance.detailTitleMaximumWidth : 70.0f;
+    CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(titleMaximumWidth, CGFLOAT_MAX)];
+    _titleLabel.frame = CGRectMake(leftPadding, brandedIOS6Style ? appearance.detailTitleTop : 14.0f, titleSize.width, titleSize.height);
+
+    CGFloat variantReservedWidth = brandedIOS6Style ? appearance.detailVariantReservedWidth : 122.0f;
+    CGFloat disclosureRight = brandedIOS6Style ? appearance.detailDisclosureRight : 15.0f;
+    CGFloat variantRight = brandedIOS6Style ? appearance.detailVariantRight : 35.0f;
+    CGSize variantSize = [_variantLabel sizeThatFits:CGSizeMake(bounds.size.width - variantReservedWidth - disclosureRight, CGFLOAT_MAX)];
+    _variantLabel.frame = CGRectMake(bounds.size.width - variantSize.width - variantRight - self.safeAreaInset.right, brandedIOS6Style ? appearance.detailVariantTop : 12.0f, variantSize.width, variantSize.height);
+
+    if (brandedIOS6Style)
+        _arrowView.image = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:[OGTheme brandedTheme]];
+    CGSize arrowSize = _arrowView.image == nil ? _arrowView.bounds.size : _arrowView.image.size;
+    _arrowView.frame = CGRectMake(bounds.size.width - disclosureRight - arrowSize.width - self.safeAreaInset.right, (self.frame.size.height - arrowSize.height) / 2.0f, arrowSize.width, arrowSize.height);
 }
 
 @end

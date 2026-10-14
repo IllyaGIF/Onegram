@@ -1,6 +1,6 @@
 #import "TGSharedMediaFileThumbnailLabelView.h"
 
-#import <CoreText/CoreText.h>
+#import "OGPlatformText.h"
 
 typedef enum {
     TGSharedMediaFileThumbnailLabelViewLineEllipsisNone = 0,
@@ -104,7 +104,7 @@ typedef enum {
         }
         
         NSAttributedString *truncationTokenString = [[NSAttributedString alloc] initWithString:tokenString attributes:attributes];
-        CTLineRef truncationToken = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)truncationTokenString);
+        CTLineRef truncationToken = OGPlatformTextCreateLine((__bridge CFAttributedStringRef)truncationTokenString);
         CGFloat lineWidth = (float)CTLineGetTypographicBounds(truncationToken, NULL, NULL, NULL) - (float)CTLineGetTrailingWhitespaceWidth(truncationToken);
         
         _ellipsisLine = [[TGSharedMediaFileThumbnailLabelViewLine alloc] initWithLine:truncationToken size:CGSizeMake(lineWidth, _lineHeight) ellipsis:TGSharedMediaFileThumbnailLabelViewLineEllipsisNone];
@@ -112,10 +112,9 @@ typedef enum {
         CFRelease(truncationToken);
     }
     
-    CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)_attributedString);
+    CTTypesetterRef typesetter = OGPlatformTextCreateTypesetter((__bridge CFAttributedStringRef)_attributedString);
     
     CFIndex preventClusteredBreakIndex = INT_MAX;
-    //preventClusteredBreakIndex = _attributedString.length - [_attributedString.string pathExtension].length;
     
     NSMutableArray *lines = [[NSMutableArray alloc] init];
     CFIndex lastIndex = 0;
@@ -299,7 +298,6 @@ typedef enum {
             
             if (index == 0)
             {
-                //CGContextAddLineToPoint(context, -100.0f, 100.0f);
                 CGContextAddArcToPoint(context, CGRectGetMinX(lineFrame), CGRectGetMinY(lineFrame), CGRectGetMinX(lineFrame) + radius, CGRectGetMinY(lineFrame), radius);
             }
             

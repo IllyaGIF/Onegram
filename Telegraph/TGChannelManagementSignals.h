@@ -11,6 +11,8 @@
 @class TGStickerPack;
 
 @class TLChannelParticipant;
+@class TLChannelParticipantsFilter;
+@class TLInputChannel;
 
 typedef enum {
     TGChannelHistoryHoleDirectionEarlier,
@@ -37,6 +39,8 @@ typedef struct {
 @interface TGChannelManagementSignals : NSObject
 
 + (SSignal *)makeChannelWithTitle:(NSString *)title about:(NSString *)about group:(bool)group;
++ (TLInputChannel *)inputChannelForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash;
++ (void)storeChannelChats:(NSArray *)chats;
 + (SSignal *)addChannel:(TGConversation *)conversation;
 + (bool)_containsPreloadedHistoryForPeerId:(int64_t)peerId aroundMessageId:(int32_t)messageId;
 + (SSignal *)preloadedHistoryForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash aroundMessageId:(int32_t)messageId;
@@ -71,6 +75,7 @@ typedef struct {
 + (SSignal *)channelBlacklistMembers:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count;
 + (SSignal *)channelBannedMembers:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count;
 + (SSignal *)channelMembers:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count;
++ (SSignal *)channelMembers:(int64_t)peerId accessHash:(int64_t)accessHash filter:(TLChannelParticipantsFilter *)filter offset:(NSUInteger)offset count:(NSUInteger)count;
 + (SSignal *)channelAdmins:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count;
 + (SSignal *)channelAdmins:(int64_t)peerId accessHash:(int64_t)accessHash offset:(NSUInteger)offset count:(NSUInteger)count hash:(int64_t)hash;
 + (SSignal *)channelInviterUser:(int64_t)peerId accessHash:(int64_t)accessHash;

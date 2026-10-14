@@ -29,7 +29,7 @@ NS_ASSUME_NONNULL_BEGIN
  This is a convenience singleton configuration that uses the default values
  for every property
  */
-+ (instancetype)sharedConfiguration;
++ (STPPaymentConfiguration *)sharedConfiguration;
 
 /**
  *  Your Stripe publishable key. You can get this from https://dashboard.stripe.com/account/apikeys .

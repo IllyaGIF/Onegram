@@ -71,7 +71,7 @@
         }];
         return [[SBlockDisposable alloc] initWithBlock:^
         {
-            [helper description]; //keep reference
+            [helper description];
         }];
     }];
     

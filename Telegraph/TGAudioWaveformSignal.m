@@ -21,7 +21,6 @@
         TGLog(@"[waveformForPath op_open_file failed: %d]", openError);
         return nil;
     } else {
-        //_isSeekable = op_seekable(_opusFile);
         int64_t totalSamples = op_pcm_total(opusFile, -1);
         int32_t resultSamples = 100;
         int32_t sampleRate = (int32_t)(MAX(1, totalSamples / resultSamples));

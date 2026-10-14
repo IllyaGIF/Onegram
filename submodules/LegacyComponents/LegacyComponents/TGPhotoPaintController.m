@@ -1,3 +1,4 @@
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 #import "TGPhotoPaintController.h"
 
 #import "LegacyComponentsInternal.h"
@@ -12,7 +13,9 @@
 
 #import "TGMenuView.h"
 #import "TGModernButton.h"
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import "TGModernGalleryVideoView.h"
+#endif
 
 #import "TGMenuSheetController.h"
 
@@ -112,13 +115,19 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     
     TGPaintingData *_resultData;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     AVPlayer *_player;
     SMetaDisposable *_playerItemDisposable;
     id _playerStartedObserver;
     id _playerReachedEndObserver;
+#endif
     
     TGPaintingWrapperView *_paintingWrapperView;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     TGModernGalleryVideoView *_videoView;
+#else
+    UIView *_videoView;
+#endif
     
     SMetaDisposable *_faceDetectorDisposable;
     NSArray *_faces;
@@ -174,7 +183,9 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
 {
     [_actionHandle reset];
     [_faceDetectorDisposable dispose];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_playerItemDisposable dispose];
+#endif
 }
 
 - (void)loadView
@@ -344,7 +355,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     _portraitSettingsView.changedColor = changedColor;
     _portraitSettingsView.finishedColorPicking = finishedColorPicking;
     _portraitSettingsView.settingsPressed = settingsPressed;
-    _portraitSettingsView.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(_portraitSettingsView.layer, TGScreenScaling());
     _portraitSettingsView.interfaceOrientation = UIInterfaceOrientationPortrait;
     [_portraitToolsWrapperView addSubview:_portraitSettingsView];
     
@@ -353,7 +364,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     _landscapeSettingsView.changedColor = changedColor;
     _landscapeSettingsView.finishedColorPicking = finishedColorPicking;
     _landscapeSettingsView.settingsPressed = settingsPressed;
-    _landscapeSettingsView.layer.rasterizationScale = TGScreenScaling();
+    TGSetLayerRasterizationScale(_landscapeSettingsView.layer, TGScreenScaling());
     _landscapeSettingsView.interfaceOrientation = UIInterfaceOrientationLandscapeLeft;
     [_landscapeToolsWrapperView addSubview:_landscapeSettingsView];
     
@@ -1516,8 +1527,8 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
 
 - (void)transitionIn
 {
-    _portraitSettingsView.layer.shouldRasterize = true;
-    _landscapeSettingsView.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(_portraitSettingsView.layer, true);
+    TGSetLayerShouldRasterize(_landscapeSettingsView.layer, true);
     
     [UIView animateWithDuration:0.3f animations:^
     {
@@ -1528,8 +1539,8 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
         _landscapeActionsView.alpha = 1.0f;
     } completion:^(__unused BOOL finished)
     {
-        _portraitSettingsView.layer.shouldRasterize = false;
-        _landscapeSettingsView.layer.shouldRasterize = false;
+        TGSetLayerShouldRasterize(_portraitSettingsView.layer, false);
+        TGSetLayerShouldRasterize(_landscapeSettingsView.layer, false);
     }];
 }
 
@@ -1623,8 +1634,8 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     TGPhotoEditorPreviewView *previewView = self.previewView;
     previewView.interactionEnded = nil;
     
-    _portraitSettingsView.layer.shouldRasterize = true;
-    _landscapeSettingsView.layer.shouldRasterize = true;
+    TGSetLayerShouldRasterize(_portraitSettingsView.layer, true);
+    TGSetLayerShouldRasterize(_landscapeSettingsView.layer, true);
     
     [UIView animateWithDuration:0.3f animations:^
     {
@@ -1639,7 +1650,9 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
             completion();
     }];
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
     [_player pause];
+#endif
 }
 
 - (CGRect)transitionOutSourceFrameForReferenceFrame:(CGRect)referenceFrame orientation:(UIInterfaceOrientation)orientation
@@ -2050,10 +2063,9 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
     
     NSTimeInterval duration = notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] == nil ? 0.3 : [notification.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
     int curve = [notification.userInfo[UIKeyboardAnimationCurveUserInfoKey] intValue];
-    CGRect screenKeyboardFrame = [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
-    CGRect keyboardFrame = [parentView convertRect:screenKeyboardFrame fromView:nil];
+    CGRect keyboardFrame = OGPlatformKeyboardFrameInView(notification, parentView);
     
-    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (parentView.frame.size.height - keyboardFrame.origin.y);
+    CGFloat keyboardHeight = (keyboardFrame.size.height <= FLT_EPSILON || keyboardFrame.size.width <= FLT_EPSILON) ? 0.0f : (parentView.bounds.size.height - keyboardFrame.origin.y);
     keyboardHeight = MAX(keyboardHeight, 0.0f);
     
     _keyboardHeight = keyboardHeight;
@@ -2088,6 +2100,10 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
 
 - (void)setupVideoPlaybackIfNeeded
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    _videoView = nil;
+    return;
+#else
     if ((![self.item isKindOfClass:[TGMediaAsset class]] || !((TGMediaAsset *)self.item).isVideo) && ![self.item isKindOfClass:[AVAsset class]])
         return;
     
@@ -2124,8 +2140,10 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
         
         [strongSelf updateLayout:strongSelf.interfaceOrientation];
     }]];
+#endif
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 - (void)_setupPlaybackStartedObserver
 {
     CMTime startTime = CMTimeMake(10, 100);
@@ -2165,6 +2183,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
             [strongSelf->_player seekToTime:startTime];
     }];
 }
+#endif
 
 #pragma mark - Face Detection
 

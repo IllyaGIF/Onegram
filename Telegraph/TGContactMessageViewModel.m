@@ -470,7 +470,7 @@
         _forwardedHeaderModel.layoutFlags = TGReusableLabelLayoutMultiline;
         if (formatNameRange.location != NSNotFound && title.length != 0)
         {
-            NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (NSString *)kCTFontAttributeName, nil];
+            NSArray *fontAttributes = [[NSArray alloc] initWithObjects:(__bridge id)[[TGTelegraphConversationMessageAssetsSource instance] messageForwardNameFont], (__bridge NSString *)kCTFontAttributeName, nil];
             NSRange range = NSMakeRange(formatNameRange.location, title.length);
             _forwardedHeaderModel.additionalAttributes = [[NSArray alloc] initWithObjects:[[NSValue alloc] initWithBytes:&range objCType:@encode(NSRange)], fontAttributes, nil];
         }
@@ -790,7 +790,6 @@
             contact.lastName = contactMedia.lastName;
             
             if (![_contact isEqualToUser:contact]) {
-                //_contact = contact;
                 
                 if (contact.photoUrlSmall.length != 0)
                     [_contactAvatarModel setAvatarUri:contact.photoFullUrlSmall];

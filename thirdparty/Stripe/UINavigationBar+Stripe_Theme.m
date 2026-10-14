@@ -25,10 +25,24 @@ static NSInteger const STPNavigationBarHairlineViewTag = 787473;
 #endif
     self.barStyle = theme.barStyle;
     self.translucent = theme.translucentNavigationBar;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     self.titleTextAttributes = @{
                                  NSFontAttributeName: theme.emphasisFont,
                                  NSForegroundColorAttributeName: theme.primaryForegroundColor,
                                  };
+#else
+    for (UINavigationItem *item in self.items) {
+        if (item.titleView == nil && item.title.length != 0) {
+            UILabel *titleLabel = [[UILabel alloc] init];
+            titleLabel.backgroundColor = [UIColor clearColor];
+            titleLabel.font = theme.emphasisFont;
+            titleLabel.textColor = theme.primaryForegroundColor;
+            titleLabel.text = item.title;
+            [titleLabel sizeToFit];
+            item.titleView = titleLabel;
+        }
+    }
+#endif
 }
 
 - (UIView *)stp_artificialHairlineView {

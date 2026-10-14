@@ -2,7 +2,6 @@
 
 #import "TLUser.h"
 
-//account.updateProfile flags:# first_name:flags.0?string last_name:flags.1?string about:flags.2?string = User;
 
 @implementation TLaccount_updateProfile$updateProfile
 

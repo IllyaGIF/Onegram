@@ -1,9 +1,12 @@
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGMusicPlayer.h"
 #import "IOS6FeatureProbe.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <MediaPlayer/MediaPlayer.h>
 
 #import "TGPreparedLocalDocumentMessage.h"
@@ -20,9 +23,6 @@
 
 #import "TGAppDelegate.h"
 
-#ifndef IOS6_MUSIC_LOG
-#define IOS6_MUSIC_LOG(...) do { } while (0)
-#endif
 
 static TGMusicPlayerDownloadingStatus TGMusicPlayerDownloadingStatusMake(bool downloaded, bool downloading, CGFloat progress)
 {
@@ -121,7 +121,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     TGObserverProxy *_proximityChangedNotification;
     bool _proximityState;
     bool _changingProximity;
-    UIBackgroundTaskIdentifier _trackTransitionTask;
+    OGPlatformBackgroundTaskIdentifier _trackTransitionTask;
     TGMusicPlayerReference *_ios4LifetimeReference;
 }
 
@@ -137,7 +137,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     if (self != nil)
     {
         _rate = 1.0f;
-        _trackTransitionTask = UIBackgroundTaskInvalid;
+        _trackTransitionTask = OGPlatformBackgroundTaskInvalid;
         _ios4LifetimeReference = [[TGMusicPlayerReference alloc] init];
         _ios4LifetimeReference.value = self;
         
@@ -186,11 +186,11 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     {
         _ios4LifetimeReference.value = nil;
     }
-    if (_trackTransitionTask != UIBackgroundTaskInvalid)
+    if (_trackTransitionTask != OGPlatformBackgroundTaskInvalid)
     {
-        UIBackgroundTaskIdentifier task = _trackTransitionTask;
+        OGPlatformBackgroundTaskIdentifier task = _trackTransitionTask;
         TGDispatchOnMainThread(^{
-            [[UIApplication sharedApplication] endBackgroundTask:task];
+            OGPlatformEndBackgroundTask([UIApplication sharedApplication], task);
         });
     }
     [_currentAudioSession dispose];
@@ -201,14 +201,14 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 
 - (void)beginTrackTransitionTaskIfNeeded
 {
-    if (_trackTransitionTask != UIBackgroundTaskInvalid || [UIApplication sharedApplication].applicationState == UIApplicationStateActive)
+    if (_trackTransitionTask != OGPlatformBackgroundTaskInvalid || [UIApplication sharedApplication].applicationState == UIApplicationStateActive)
         return;
 
     TGMusicPlayerReference *ios4Reference = _ios4LifetimeReference;
-    __block UIBackgroundTaskIdentifier task = UIBackgroundTaskInvalid;
+    __block OGPlatformBackgroundTaskIdentifier task = OGPlatformBackgroundTaskInvalid;
     dispatch_block_t beginBlock = ^
     {
-        task = [[UIApplication sharedApplication] beginBackgroundTaskWithExpirationHandler:^
+        task = OGPlatformBeginBackgroundTask([UIApplication sharedApplication], ^
         {
             TGMusicPlayer *strongSelf = TGIOS4ResolveMusicPlayer(ios4Reference);
             if (strongSelf != nil)
@@ -216,30 +216,28 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
                 [strongSelf->_queue dispatch:^
                 {
                     if (strongSelf->_trackTransitionTask == task)
-                        strongSelf->_trackTransitionTask = UIBackgroundTaskInvalid;
+                        strongSelf->_trackTransitionTask = OGPlatformBackgroundTaskInvalid;
                 }];
             }
-        }];
+        });
     };
     if ([NSThread isMainThread])
         beginBlock();
     else
         dispatch_sync(dispatch_get_main_queue(), beginBlock);
     _trackTransitionTask = task;
-    IOS6_MUSIC_LOG(@"MUSIC transitionTask.begin task=%d", (int)task);
 }
 
 - (void)endTrackTransitionTask
 {
-    UIBackgroundTaskIdentifier task = _trackTransitionTask;
-    _trackTransitionTask = UIBackgroundTaskInvalid;
-    if (task != UIBackgroundTaskInvalid)
+    OGPlatformBackgroundTaskIdentifier task = _trackTransitionTask;
+    _trackTransitionTask = OGPlatformBackgroundTaskInvalid;
+    if (task != OGPlatformBackgroundTaskInvalid)
     {
         TGDispatchOnMainThread(^{
-            [[UIApplication sharedApplication] endBackgroundTask:task];
+            OGPlatformEndBackgroundTask([UIApplication sharedApplication], task);
         });
     }
-    IOS6_MUSIC_LOG(@"MUSIC transitionTask.end task=%d", (int)task);
 }
 
 - (SSignal *)currentPlaylistAsync
@@ -301,6 +299,12 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         } else if (!_currentPlaylist.voice) {
             [TGAppDelegateInstance.deviceProximityListeners removeHolder:_proximityChangeHolder];
             [_currentAudioSession setDisposable:nil];
+            if (_currentStatus != nil && !_currentStatus.paused && _ios6PlaybackSessionLease == nil) {
+                TGMusicPlayer *player = self;
+                _ios6PlaybackSessionLease = [[TGAudioSessionManager instance] requestSessionWithType:TGAudioSessionTypePlayMusic interrupted:^{
+                    [player pauseMedia];
+                }];
+            }
         } else {
             TGMusicPlayer *player = self;
             bool headset = [TGMusicPlayer isHeadsetPluggedIn];
@@ -372,6 +376,11 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 
 - (void)pauseMedia
 {
+    [self pauseMedia:nil];
+}
+
+- (void)pauseMedia:(void (^)(void))completion
+{
     [_queue dispatch:^
     {
         if (_currentStatus != nil && !_currentStatus.paused)
@@ -397,9 +406,23 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
             [self setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:_currentStatus.item player:_player.audioPlayer position:_currentStatus.position paused:true offset:offset duration:duration rate:_currentStatus.rate albumArt:_currentStatus.albumArt albumArtSync:_currentStatus.albumArtSync downloadedStatus:_currentStatus.downloadedStatus isVoice:_currentStatus.isVoice orderType:_currentStatus.orderType repeatType:_currentStatus.repeatType]];
         }
         
-        [_player pause:^{
-            
-        }];
+        void (^paused)(void) = ^{
+            [_queue dispatch:^{
+                if (_currentStatus == nil || _currentStatus.paused)
+                {
+                    [_currentAudioSession setDisposable:nil];
+                    [_ios6PlaybackSessionLease dispose];
+                    _ios6PlaybackSessionLease = nil;
+                    [self requestControlsWithPlay:true];
+                }
+                if (completion != nil)
+                    completion();
+            }];
+        };
+        if (_player != nil)
+            [_player pause:paused];
+        else
+            paused();
     }];
 }
 
@@ -432,9 +455,6 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 {
     [_queue dispatch:^
     {
-        if (iosMajorVersion() < 5)
-            TGLog(@"AUDIO music.playMedia.begin key=%@ force=%d", item.key, force ? 1 : 0);
-        IOS6_MUSIC_LOG(@"MUSIC playMedia key=%@ title=%@ force=%d player=%d paused=%d", item.key, item.title, force ? 1 : 0, _player != nil ? 1 : 0, _currentStatus.paused ? 1 : 0);
         if (_currentStatus != nil && [_currentStatus.item.key isEqual:item.key] && !force)
         {
             if (_currentStatus.downloadedStatus.downloaded)
@@ -459,6 +479,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
                     [self setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:_currentStatus.item player:_player.audioPlayer position:_currentStatus.position paused:false offset:offset duration:duration rate:_currentStatus.rate albumArt:_currentStatus.albumArt albumArtSync:_currentStatus.albumArtSync downloadedStatus:_currentStatus.downloadedStatus isVoice:_currentStatus.isVoice orderType:_currentStatus.orderType repeatType:_currentStatus.repeatType]];
                     
                     [self requestControlsWithPlay:false];
+                    [self updateAudioSession];
                     [_player play];
                     
                     [self startUpdatePositionTimer];
@@ -534,27 +555,19 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
                 
                 if (_currentItemDisposable == nil)
                     _currentItemDisposable = [[SMetaDisposable alloc] init];
-                if (iosMajorVersion() < 5)
-                    TGLog(@"AUDIO music.availability.subscribe key=%@", item.key);
                 [_currentItemDisposable setDisposable:[[[TGMusicPlayerItemSignals itemAvailability:item priority:true] deliverOn:_queue] startWithNext:^(id next)
                 {
                     TGMusicPlayerItemAvailability availability = TGMusicPlayerItemAvailabilityUnpack([next longLongValue]);
-                    if (iosMajorVersion() < 5)
-                        TGLog(@"AUDIO music.availability key=%@ downloaded=%d downloading=%d progress=%.3f", item.key, availability.downloaded ? 1 : 0, availability.downloading ? 1 : 0, availability.progress);
-                    IOS6_MUSIC_LOG(@"MUSIC current.availability key=%@ downloaded=%d downloading=%d progress=%.3f player=%d", item.key, availability.downloaded ? 1 : 0, availability.downloading ? 1 : 0, availability.progress, _player != nil ? 1 : 0);
                     TGMusicPlayer *strongSelf = TGIOS4ResolveMusicPlayer(ios4Reference);
                     if (strongSelf != nil)
                     {
                         NSString *progressivePath = [TGMusicPlayerItemSignals pathForItem:item];
                         unsigned long long progressiveBytes = [[[NSFileManager defaultManager] attributesOfItemAtPath:progressivePath error:nil] fileSize];
-                        bool progressiveReady = availability.downloading && availability.progress >= 0.025f && progressiveBytes >= 96 * 1024;
+                        bool progressiveReady = iosMajorVersion() >= 5 && availability.downloading && availability.progress >= 0.025f && progressiveBytes >= 96 * 1024;
                         if (availability.downloaded || progressiveReady)
                         {
                             if (strongSelf->_player == nil || [strongSelf->_player isFinished])
                             {
-                                IOS6_MUSIC_LOG(@"MUSIC progressive.start key=%@ progress=%.3f bytes=%llu complete=%d", item.key, availability.progress, progressiveBytes, availability.downloaded ? 1 : 0);
-                                if (iosMajorVersion() < 5)
-                                    TGLog(@"AUDIO music.playItem.dispatch key=%@", item.key);
                                 [strongSelf playItem:item];
                             }
                             if (!availability.downloaded && strongSelf->_currentStatus != nil)
@@ -600,17 +613,12 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 
 - (void)playItem:(TGMusicPlayerItem *)item
 {
-    if (iosMajorVersion() < 5)
-        TGLog(@"AUDIO music.playItem.begin key=%@", item.key);
     if (_currentPlaylist.markItemAsViewed) {
         _currentPlaylist.markItemAsViewed(item);
     }
     
     NSString *path = [TGMusicPlayerItemSignals pathForItem:item];
-    if (iosMajorVersion() < 5)
-        TGLog(@"AUDIO music.playItem.path key=%@ path=%@", item.key, path);
     NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
-    IOS6_MUSIC_LOG(@"MUSIC playItem key=%@ title=%@ path=%@ exists=%d bytes=%lld", item.key, item.title, path, [[NSFileManager defaultManager] fileExistsAtPath:path] ? 1 : 0, (long long)[attributes fileSize]);
     if ([path pathExtension].length == 0 && item.isVideo)
     {
         [[NSFileManager defaultManager] createSymbolicLinkAtPath:[path stringByAppendingString:@".mov"] withDestinationPath:[path lastPathComponent] error:nil];
@@ -622,7 +630,6 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         [_player stop];
         _player = [[TGModernConversationAudioPlayer alloc] initWithFilePath:path music:!_currentPlaylist.voice controlAudioSession:false];
     }
-    IOS6_MUSIC_LOG(@"MUSIC playItem.player key=%@ reused=%d", item.key, reusedPlayer ? 1 : 0);
     [_player setRate:_rate];
     _player.delegate = self;
 
@@ -633,7 +640,6 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         {
             [player pauseMedia];
         }];
-        IOS6_MUSIC_LOG(@"MUSIC sessionLease.acquire lease=%d", _ios6PlaybackSessionLease != nil ? 1 : 0);
     }
     
     CGFloat duration = _player.duration;
@@ -695,28 +701,21 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         
         if (_currentNextItem != nil)
         {
-            IOS6_MUSIC_LOG(@"MUSIC next.select current=%@ next=%@ title=%@ count=%d order=%d", _currentStatus.item.key, _currentNextItem.key, _currentNextItem.title, (int)items.count, (int)_currentStatus.orderType);
             if (_nextItemDisposable == nil)
                 _nextItemDisposable = [[SMetaDisposable alloc] init];
             
             [_nextItemDisposable setDisposable:nil];
-            // Keep exactly one following track ready.  A low-priority request is
-            // suspended too aggressively after the screen locks on iOS 6.
-            [_nextItemDisposable setDisposable:[[[TGMusicPlayerItemSignals itemAvailability:_currentNextItem priority:true] deliverOn:_queue] startWithNext:^(id next)
+            [_nextItemDisposable setDisposable:[[[TGMusicPlayerItemSignals itemAvailability:_currentNextItem priority:true allowDownload:!OGPlatformMediaDownloadsRequireUserAction()] deliverOn:_queue] startWithNext:^(id next)
             {
                 TGMusicPlayerItemAvailability availability = TGMusicPlayerItemAvailabilityUnpack([next longLongValue]);
-                if (availability.downloaded || availability.progress < 0.001f)
-                    IOS6_MUSIC_LOG(@"MUSIC next.availability key=%@ downloaded=%d downloading=%d progress=%.3f", _currentNextItem.key, availability.downloaded ? 1 : 0, availability.downloading ? 1 : 0, availability.progress);
                 if (availability.downloaded && _player != nil && _currentNextItem != nil)
                 {
                     NSString *nextPath = [TGMusicPlayerItemSignals pathForItem:_currentNextItem];
                     bool prepared = [_player prepareNextFilePath:nextPath];
-                    IOS6_MUSIC_LOG(@"MUSIC next.queue key=%@ prepared=%d path=%@", _currentNextItem.key, prepared ? 1 : 0, nextPath);
                 }
             }]];
         }
         else {
-            IOS6_MUSIC_LOG(@"MUSIC next.none current=%@ count=%d order=%d", _currentStatus.item.key, (int)items.count, (int)_currentStatus.orderType);
             [_nextItemDisposable setDisposable:nil];
         }
     }
@@ -743,15 +742,11 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 }
 
 - (void)setPlaylist:(SSignal *)playlist initialItemKey:(id<NSCopying>)initialItemKey metadata:(id)metadata {
-    if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-        TGLog(@"AUDIO music.setPlaylist.enqueue playlist=%d", playlist != nil ? 1 : 0);
     @synchronized(self) {
         _playlistMetadata = metadata;
     }
     
     [_queue dispatch:^{
-        if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-            TGLog(@"AUDIO music.setPlaylist.execute playlist=%d", playlist != nil ? 1 : 0);
         [_currentPlaylistDisposable setDisposable:nil];
         
         if (playlist == nil) {
@@ -770,8 +765,6 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
             __block bool firstValue = true;
             [_currentPlaylistDisposable setDisposable:[[playlist deliverOn:_queue] startWithNext:^(TGMusicPlayerPlaylist *value)
             {
-                if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-                    TGLog(@"AUDIO music.setPlaylist.next items=%d voice=%d", (int)value.items.count, value.voice ? 1 : 0);
                 [delayedSwitchItemDisposable dispose];
                 
                 TGMusicPlayer *strongSelf = TGIOS4ResolveMusicPlayer(ios4Reference);
@@ -789,8 +782,6 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 {
     [_queue dispatch:^
     {
-        if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-            TGLog(@"AUDIO music._setPlaylist.begin items=%d restart=%d", (int)playlist.items.count, forceRestart ? 1 : 0);
         if (!TGObjectCompare(_currentPlaylist, playlist))
         {
             TGMusicPlayerPlaylist *previousPlaylist = _currentPlaylist;
@@ -911,13 +902,10 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
             if (playlist == nil) {
                 [_ios6PlaybackSessionLease dispose];
                 _ios6PlaybackSessionLease = nil;
-                IOS6_MUSIC_LOG(@"MUSIC sessionLease.release");
                 [self updateAudioSession];
                 [_currentRemoteControls setDisposable:nil];
             }
             
-            if ([[UIDevice currentDevice].systemVersion intValue] < 6)
-                TGLog(@"AUDIO music._setPlaylist.end current=%@", _currentStatus.item.key);
             _playlistPipe.sink(_currentPlaylist);
         }
     }];
@@ -950,14 +938,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 
 - (void)controlPause:(void (^)())completion
 {
-    [_queue dispatch:^
-    {
-        if (_currentStatus != nil && !_currentStatus.paused)
-            [self playMediaFromItem:_currentStatus.item];
-        if (completion) {
-            completion();
-        }
-    }];
+    [self pauseMedia:completion];
 }
 
 - (NSInteger)nextIndexWithIndex:(NSInteger)index items:(NSArray *)items forward:(bool)forward isVoice:(bool)isVoice allowReturn:(bool)allowReturn orderType:(TGMusicPlayerOrderType)orderType
@@ -1160,18 +1141,20 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         if (currentStatus.item == nil)
         {
             [_currentAlbumArtDisposable dispose];
-            
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
             if (TGIOS4CanUseNowPlayingInfoCenter())
             {
                 TGDispatchOnMainThread(^{
                     [[MPNowPlayingInfoCenter defaultCenter] setNowPlayingInfo:nil];
                 });
             }
+#endif
         }
         else
         {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
             NSDictionary *attributes = [TGMusicPlayer attributesForItem:currentStatus.item];
-            
+
             if (TGIOS4CanUseNowPlayingInfoCenter())
             {
                 if (_currentAlbumArtDisposable == nil)
@@ -1230,12 +1213,14 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
             else
             {
                 [_currentAlbumArtDisposable setDisposable:nil];
-                if (iosMajorVersion() < 5)
-                    TGLog(@"AUDIO nowPlaying.unavailable item=%@", currentStatus.item.key);
             }
+#else
+            [_currentAlbumArtDisposable setDisposable:nil];
+#endif
         }
     }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
     bool itemChanged = !TGObjectCompare(currentStatus.item.key, previousStatus.item.key);
     bool playbackStateChanged = currentStatus != nil && previousStatus != nil && currentStatus.paused != previousStatus.paused;
     if (currentStatus.item != nil && (itemChanged || playbackStateChanged) && TGIOS4CanUseNowPlayingInfoCenter())
@@ -1251,6 +1236,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
             }
         });
     }
+#endif
 }
 
 - (void)_seekToPosition:(NSTimeInterval)position
@@ -1262,6 +1248,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         if (duration > DBL_EPSILON) {
             [_player play:(float)(position / duration)];
             
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50000
             if (TGIOS4CanUseNowPlayingInfoCenter())
             {
                 NSMutableDictionary *info = [[[MPNowPlayingInfoCenter defaultCenter] nowPlayingInfo] mutableCopy];
@@ -1271,6 +1258,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
                     [[MPNowPlayingInfoCenter defaultCenter] setNowPlayingInfo:info];
                 }
             }
+#endif
         }
     }];
 }
@@ -1304,9 +1292,15 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 {
     [_queue dispatch:^
     {
-        IOS6_MUSIC_LOG(@"MUSIC finish current=%@ title=%@ count=%d order=%d repeat=%d next=%@", _currentStatus.item.key, _currentStatus.item.title, (int)_currentPlaylist.items.count, (int)_currentStatus.orderType, (int)_currentStatus.repeatType, _currentNextItem.key);
-        // The position timer is commonly suspended on a locked iOS 6 device,
-        // so start the short hand-off task from the actual audio completion too.
+        if (OGPlatformMediaDownloadsRequireUserAction() && _currentNextItem != nil && _currentStatus.repeatType != TGMusicPlayerRepeatTypeOne)
+        {
+            NSString *nextPath = [TGMusicPlayerItemSignals pathForItem:_currentNextItem];
+            if (nextPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:nextPath])
+            {
+                [self controlPause];
+                return;
+            }
+        }
         [self beginTrackTransitionTaskIfNeeded];
         if (_currentStatus.item != nil)
         {
@@ -1363,15 +1357,9 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
                         }
                         else
                         {
-                            // On iOS 6 the finished AVQueuePlayer reports the
-                            // correct next item but resuming that promoted item
-                            // is silent.  Manual Next is reliable because it
-                            // creates a fresh native player; use exactly that
-                            // path for the automatic hand-off as well.
                             TGModernConversationAudioPlayer *finishedPlayer = _player;
                             _player = nil;
                             [finishedPlayer pause:^{}];
-                            IOS6_MUSIC_LOG(@"MUSIC finish.freshPlayer current=%@ next=%@", _currentStatus.item.key, _currentNextItem.key);
                             [self controlAdvance:true];
                         }
                         break;
@@ -1401,21 +1389,34 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 
 + (bool)isHeadsetPluggedIn
 {
-    if (iosMajorVersion() < 6)
-        return false;
-    
-    AVAudioSessionRouteDescription *route = [[AVAudioSession sharedInstance] currentRoute];
-    
-    for (AVAudioSessionPortDescription *desc in [route outputs])
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    if ([session respondsToSelector:@selector(currentRoute)])
     {
-        if ([[desc portType] isEqualToString:AVAudioSessionPortHeadphones])
-            return true;
-        
-        if ([[desc portType] isEqualToString:AVAudioSessionPortBluetoothA2DP])
-            return true;
+        AVAudioSessionRouteDescription *route = [session currentRoute];
+        for (AVAudioSessionPortDescription *desc in [route outputs])
+        {
+            if ([[desc portType] isEqualToString:AVAudioSessionPortHeadphones])
+                return true;
+            if ([[desc portType] isEqualToString:AVAudioSessionPortBluetoothA2DP])
+                return true;
+        }
+        return false;
     }
-    
+#endif
+#if __IPHONE_OS_VERSION_MIN_REQUIRED < 60000
+    CFStringRef route = NULL;
+    UInt32 routeSize = sizeof(route);
+    if (AudioSessionGetProperty(kAudioSessionProperty_AudioRoute, &routeSize, &route) != noErr || route == NULL)
+        return false;
+    bool pluggedIn = CFStringFind(route, CFSTR("Headphone"), 0).location != kCFNotFound ||
+        CFStringFind(route, CFSTR("Headset"), 0).location != kCFNotFound ||
+        CFStringFind(route, CFSTR("Bluetooth"), 0).location != kCFNotFound;
+    CFRelease(route);
+    return pluggedIn;
+#else
     return false;
+#endif
 }
 
 - (void)proximityChanged:(NSNotification *)__unused notification

@@ -15,6 +15,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGListsTableView.h"
 
 #import "TGPresentation.h"
+#import "../OnegramPlatform/OGPlatformUIKit.h"
 
 static NSDictionary *countryCodes()
 {
@@ -75,7 +76,6 @@ static NSDictionary *countryCodes()
             }
             
             [array addObject:[[NSArray alloc] initWithObjects:[[NSNumber alloc] initWithInt:countryCode], countryId, countryName, nil]];
-            //TGLog(@"%d, %@, %@", countryCode, countryId, countryName);
             
             currentLocation = (int)(mrzRange.location + mrzRange.length);
             if (mrzRange.length > 1)
@@ -371,8 +371,7 @@ static NSDictionary *countryCodes()
     if (self.presentation != nil)
     {
         _tableView.backgroundColor = self.view.backgroundColor;
-        if ([_tableView respondsToSelector:@selector(setSectionIndexColor:)])
-        _tableView.sectionIndexColor = self.presentation.pallete.accentColor;
+        OGPlatformSetTableViewSectionIndexColor(_tableView, self.presentation.pallete.accentColor);
         [_searchBar setPallete:self.presentation.searchBarPallete];
         _tableView.separatorColor = self.presentation.pallete.separatorColor;
     }
@@ -403,8 +402,7 @@ static NSDictionary *countryCodes()
     if (self.isViewLoaded)
         self.view.backgroundColor = presentation.pallete.backgroundColor;
     _tableView.backgroundColor = self.view.backgroundColor;
-    if ([_tableView respondsToSelector:@selector(setSectionIndexColor:)])
-        _tableView.sectionIndexColor = presentation.pallete.accentColor;
+    OGPlatformSetTableViewSectionIndexColor(_tableView, presentation.pallete.accentColor);
     [_searchBar setPallete:presentation.searchBarPallete];
     
     _tableView.separatorColor = presentation.pallete.separatorColor;
@@ -611,8 +609,8 @@ static NSDictionary *countryCodes()
     NSString *string = [searchQuery lowercaseString];
     
     NSMutableString *mutableQuery = [[NSMutableString alloc] initWithString:string];
-    CFStringTransform((CFMutableStringRef)mutableQuery, NULL, kCFStringTransformToLatin, false);
-    CFStringTransform((CFMutableStringRef)mutableQuery, NULL, kCFStringTransformStripCombiningMarks, false);
+    CFStringTransform((__bridge CFMutableStringRef)mutableQuery, NULL, kCFStringTransformToLatin, false);
+    CFStringTransform((__bridge CFMutableStringRef)mutableQuery, NULL, kCFStringTransformStripCombiningMarks, false);
     
     for (TGCountrySection *section in _sections)
     {

@@ -18,6 +18,12 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
     return strstr(value, "GL_APPLE_texture_format_BGRA8888") != NULL || strstr(value, "GL_EXT_texture_format_BGRA8888") != NULL || strstr(value, "GL_IMG_texture_format_BGRA8888") != NULL;
 }
 
+static bool TGVideoCameraGLIsNV12(CVPixelBufferRef pixelBuffer)
+{
+    OSType format = CVPixelBufferGetPixelFormatType(pixelBuffer);
+    return (format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) && CVPixelBufferGetPlaneCount(pixelBuffer) == 2;
+}
+
 @interface TGVideoCameraGLRenderer ()
 {
 	EAGLContext *_context;
@@ -39,6 +45,16 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
 	GLuint _offscreenBufferHandle;
     GLuint _legacySourceTexture;
     GLuint _legacyPreviousTexture;
+    GLuint _legacySourceChromaTexture;
+    GLuint _legacyPreviousChromaTexture;
+    GLsizei _legacySourceChromaWidth;
+    GLsizei _legacySourceChromaHeight;
+    GLsizei _legacyPreviousChromaWidth;
+    GLsizei _legacyPreviousChromaHeight;
+    uint8_t *_planeUploadBuffer;
+    size_t _planeUploadCapacity;
+    OSType _legacySourceFormat;
+    OSType _legacyPreviousFormat;
     GLuint _legacyRenderTexture;
     GLsizei _legacySourceWidth;
     GLsizei _legacySourceHeight;
@@ -73,24 +89,26 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
 
 - (void)dealloc
 {
+    [self setPreviousPixelBuffer:NULL];
 	[self deleteBuffers];
 }
 
-- (void)prepareForInputWithFormatDescription:(CMFormatDescriptionRef)inputFormatDescription outputRetainedBufferCountHint:(size_t)outputRetainedBufferCountHint
+- (void)prepareForInputWithFormatDescription:(CMFormatDescriptionRef)inputFormatDescription outputRetainedBufferCountHint:(size_t)outputRetainedBufferCountHint maximumOutputSide:(CGFloat)maximumOutputSide
 {
     CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(inputFormatDescription);
     CGFloat minSide = MIN(dimensions.width, dimensions.height);
     CGFloat maxSide = MAX(dimensions.width, dimensions.height);
-    CGSize outputSize = CGSizeMake(minSide, minSide);
+    CGFloat outputSide = CGFloor(MIN(minSide, maximumOutputSide));
+    CGSize outputSize = CGSizeMake(outputSide, outputSide);
     
     _aspectRatio = minSide / maxSide;
     [self updateTextureVertices];
     
 	[self deleteBuffers];
     if (iosMajorVersion() < 5)
-        [self initializeLegacyCPUBuffersWithOutputSize:CGSizeMake(240.0f, 240.0f) retainedBufferCountHint:outputRetainedBufferCountHint];
-    else
-        [self initializeBuffersWithOutputSize:outputSize retainedBufferCountHint:outputRetainedBufferCountHint];
+        [self initializeLegacyCPUBuffersWithOutputSize:CGSizeMake(MIN(240.0f, outputSide), MIN(240.0f, outputSide)) retainedBufferCountHint:outputRetainedBufferCountHint];
+    else if (![self initializeBuffersWithOutputSize:outputSize retainedBufferCountHint:outputRetainedBufferCountHint useTextureCache:true])
+        [self initializeBuffersWithOutputSize:outputSize retainedBufferCountHint:outputRetainedBufferCountHint useTextureCache:false];
 }
 
 - (void)setOrientation:(AVCaptureVideoOrientation)orientation
@@ -193,6 +211,7 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
 
 - (void)reset
 {
+    [self setPreviousPixelBuffer:NULL];
 	[self deleteBuffers];
 }
 
@@ -218,7 +237,7 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
 - (bool)initializeLegacyCPUBuffersWithOutputSize:(CGSize)outputSize retainedBufferCountHint:(size_t)retainedBufferCountHint
 {
     size_t bufferCount = MAX((size_t)4, MIN((size_t)8, retainedBufferCountHint));
-    _bufferPool = [TGVideoCameraGLRenderer createPixelBufferPoolWithWidth:(int32_t)outputSize.width height:(int32_t)outputSize.height pixelFormat:kCVPixelFormatType_32BGRA maxBufferCount:(int32_t)bufferCount];
+    _bufferPool = [TGVideoCameraGLRenderer createPixelBufferPoolWithWidth:(int32_t)outputSize.width height:(int32_t)outputSize.height pixelFormat:kCVPixelFormatType_32BGRA maxBufferCount:(int32_t)bufferCount openGLCompatible:false];
 
     CVPixelBufferRef testPixelBuffer = NULL;
     CVReturn result = _bufferPool != NULL ? CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, _bufferPool, &testPixelBuffer) : kCVReturnError;
@@ -256,17 +275,17 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
     size_t height = CVPixelBufferGetHeight(pixelBuffer);
     size_t bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer);
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGContextRef sourceContext = NULL;
     CGImageRef sourceImage = NULL;
     CGImageRef croppedImage = NULL;
     bool success = false;
 
     if (baseAddress != NULL && colorSpace != NULL)
     {
-        sourceContext = CGBitmapContextCreate(baseAddress, width, height, 8, bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
-        if (sourceContext != NULL)
+        CGDataProviderRef sourceProvider = CGDataProviderCreateWithData(NULL, baseAddress, bytesPerRow * height, NULL);
+        if (sourceProvider != NULL)
         {
-            sourceImage = CGBitmapContextCreateImage(sourceContext);
+            sourceImage = CGImageCreate(width, height, 8, 32, bytesPerRow, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst, sourceProvider, NULL, false, kCGRenderingIntentDefault);
+            CGDataProviderRelease(sourceProvider);
             if (sourceImage != NULL)
             {
                 size_t side = MIN(width, height);
@@ -275,6 +294,8 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
                 if (croppedImage != NULL)
                 {
                     CGContextSaveGState(destinationContext);
+                    CGContextSetInterpolationQuality(destinationContext, kCGInterpolationLow);
+                    CGContextSetBlendMode(destinationContext, alpha >= 1.0f ? kCGBlendModeCopy : kCGBlendModeNormal);
                     CGContextSetAlpha(destinationContext, alpha);
                     CGContextTranslateCTM(destinationContext, destinationSize.width / 2.0f, destinationSize.height / 2.0f);
                     if (_mirror)
@@ -308,8 +329,6 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
         CGImageRelease(croppedImage);
     if (sourceImage != NULL)
         CGImageRelease(sourceImage);
-    if (sourceContext != NULL)
-        CGContextRelease(sourceContext);
     if (colorSpace != NULL)
         CGColorSpaceRelease(colorSpace);
 
@@ -448,6 +467,126 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
     return error == GL_NO_ERROR;
 }
 
+- (void)configureColorForPixelBuffer:(CVPixelBufferRef)pixelBuffer previous:(bool)previous
+{
+    bool nv12 = TGVideoCameraGLIsNV12(pixelBuffer);
+    glUniform1f([_shader uniformForKey:previous ? @"previousIsNV12" : @"isNV12"], nv12 ? 1.0f : 0.0f);
+    if (!nv12)
+        return;
+
+    bool fullRange = CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+    CFTypeRef matrix = CVBufferGetAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, NULL);
+    bool bt709 = matrix != NULL && CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+    GLfloat kr = bt709 ? 0.2126f : 0.299f;
+    GLfloat kb = bt709 ? 0.0722f : 0.114f;
+    GLfloat kg = 1.0f - kr - kb;
+    GLfloat yScale = fullRange ? 1.0f : 255.0f / 219.0f;
+    GLfloat cScale = fullRange ? 1.0f : 255.0f / 224.0f;
+    GLfloat conversion[] = {
+        yScale, yScale, yScale,
+        0.0f, -2.0f * kb * (1.0f - kb) / kg * cScale, 2.0f * (1.0f - kb) * cScale,
+        2.0f * (1.0f - kr) * cScale, -2.0f * kr * (1.0f - kr) / kg * cScale, 0.0f
+    };
+    glUniformMatrix3fv([_shader uniformForKey:previous ? @"previousColorConversion" : @"colorConversion"], 1, GL_FALSE, conversion);
+    glUniform3f([_shader uniformForKey:previous ? @"previousColorOffset" : @"colorOffset"], fullRange ? 0.0f : -16.0f / 255.0f, -128.0f / 255.0f, -128.0f / 255.0f);
+}
+
+- (bool)uploadPlaneOfPixelBuffer:(CVPixelBufferRef)pixelBuffer plane:(size_t)plane texture:(GLuint)texture width:(GLsizei *)textureWidth height:(GLsizei *)textureHeight
+{
+    size_t width = CVPixelBufferGetWidthOfPlane(pixelBuffer, plane);
+    size_t height = CVPixelBufferGetHeightOfPlane(pixelBuffer, plane);
+    size_t stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, plane);
+    const uint8_t *baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, plane);
+    size_t rowBytes = width * (plane == 0 ? 1 : 2);
+    if (baseAddress == NULL || width == 0 || height == 0 || stride < rowBytes)
+        return false;
+
+    const void *pixels = baseAddress;
+    if (stride != rowBytes)
+    {
+        size_t capacity = rowBytes * height;
+        if (_planeUploadCapacity < capacity)
+        {
+            uint8_t *buffer = realloc(_planeUploadBuffer, capacity);
+            if (buffer == NULL)
+                return false;
+            _planeUploadBuffer = buffer;
+            _planeUploadCapacity = capacity;
+        }
+        for (size_t y = 0; y < height; y++)
+            memcpy(_planeUploadBuffer + y * rowBytes, baseAddress + y * stride, rowBytes);
+        pixels = _planeUploadBuffer;
+    }
+
+    GLenum format = plane == 0 ? GL_LUMINANCE : GL_LUMINANCE_ALPHA;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    while (glGetError() != GL_NO_ERROR)
+    {
+    }
+    if (*textureWidth != (GLsizei)width || *textureHeight != (GLsizei)height)
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, format, (GLsizei)width, (GLsizei)height, 0, format, GL_UNSIGNED_BYTE, pixels);
+        *textureWidth = (GLsizei)width;
+        *textureHeight = (GLsizei)height;
+    }
+    else
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)width, (GLsizei)height, format, GL_UNSIGNED_BYTE, pixels);
+    GLenum error = glGetError();
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return error == GL_NO_ERROR;
+}
+
+- (bool)uploadPixelBuffer:(CVPixelBufferRef)pixelBuffer previous:(bool)previous
+{
+    GLuint texture = previous ? _legacyPreviousTexture : _legacySourceTexture;
+    GLsizei *width = previous ? &_legacyPreviousWidth : &_legacySourceWidth;
+    GLsizei *height = previous ? &_legacyPreviousHeight : &_legacySourceHeight;
+    OSType *format = previous ? &_legacyPreviousFormat : &_legacySourceFormat;
+    OSType inputFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
+    if (*format != inputFormat)
+    {
+        *width = 0;
+        *height = 0;
+        *format = inputFormat;
+    }
+    if (!TGVideoCameraGLIsNV12(pixelBuffer))
+        return [self _uploadPixelBuffer:pixelBuffer toTexture:texture width:width height:height];
+    if (CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess)
+        return false;
+    bool success = [self uploadPlaneOfPixelBuffer:pixelBuffer plane:0 texture:texture width:width height:height];
+    if (success)
+        success = [self uploadPlaneOfPixelBuffer:pixelBuffer plane:1 texture:previous ? _legacyPreviousChromaTexture : _legacySourceChromaTexture width:previous ? &_legacyPreviousChromaWidth : &_legacySourceChromaWidth height:previous ? &_legacyPreviousChromaHeight : &_legacySourceChromaHeight];
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
+    return success;
+}
+
+- (CVReturn)importPixelBuffer:(CVPixelBufferRef)pixelBuffer cache:(CVOpenGLESTextureCacheRef)cache texture:(CVOpenGLESTextureRef *)texture chroma:(CVOpenGLESTextureRef *)chroma
+{
+    if (!TGVideoCameraGLIsNV12(pixelBuffer))
+        return CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, pixelBuffer, NULL, GL_TEXTURE_2D, GL_RGBA, (GLsizei)CVPixelBufferGetWidth(pixelBuffer), (GLsizei)CVPixelBufferGetHeight(pixelBuffer), GL_BGRA, GL_UNSIGNED_BYTE, 0, texture);
+    CVReturn result = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, pixelBuffer, NULL, GL_TEXTURE_2D, GL_LUMINANCE, (GLsizei)CVPixelBufferGetWidthOfPlane(pixelBuffer, 0), (GLsizei)CVPixelBufferGetHeightOfPlane(pixelBuffer, 0), GL_LUMINANCE, GL_UNSIGNED_BYTE, 0, texture);
+    if (result != kCVReturnSuccess || *texture == NULL)
+        return result != kCVReturnSuccess ? result : kCVReturnError;
+    result = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, pixelBuffer, NULL, GL_TEXTURE_2D, GL_LUMINANCE_ALPHA, (GLsizei)CVPixelBufferGetWidthOfPlane(pixelBuffer, 1), (GLsizei)CVPixelBufferGetHeightOfPlane(pixelBuffer, 1), GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, 1, chroma);
+    return result == kCVReturnSuccess && *chroma == NULL ? kCVReturnError : result;
+}
+
+- (void)bindChromaTexture:(GLuint)texture unit:(GLenum)unit uniform:(NSString *)uniform
+{
+    glActiveTexture(unit);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glUniform1i([_shader uniformForKey:uniform], unit - GL_TEXTURE0);
+}
+
 - (CVPixelBufferRef)_copyLegacyRenderedPixelBuffer:(CVPixelBufferRef)pixelBuffer
 {
     if (_offscreenBufferHandle == 0 || _legacyRenderTexture == 0 || _bufferPool == NULL || pixelBuffer == NULL)
@@ -467,13 +606,13 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
     if (err != kCVReturnSuccess || dstPixelBuffer == NULL)
         goto bail;
 
-    if (![self _uploadPixelBuffer:pixelBuffer toTexture:_legacySourceTexture width:&_legacySourceWidth height:&_legacySourceHeight])
+    if (![self uploadPixelBuffer:pixelBuffer previous:false])
         goto bail;
 
     GLuint previousTexture = _legacySourceTexture;
     if (_previousPixelBuffer != NULL)
     {
-        if (![self _uploadPixelBuffer:_previousPixelBuffer toTexture:_legacyPreviousTexture width:&_legacyPreviousWidth height:&_legacyPreviousHeight])
+        if (![self uploadPixelBuffer:_previousPixelBuffer previous:true])
             goto bail;
         previousTexture = _legacyPreviousTexture;
     }
@@ -501,6 +640,12 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, previousTexture);
     glUniform1i(_previousFrameUniform, 2);
+    [self bindChromaTexture:TGVideoCameraGLIsNV12(pixelBuffer) ? _legacySourceChromaTexture : _legacySourceTexture unit:GL_TEXTURE3 uniform:@"chromaTexture"];
+    CVPixelBufferRef previousBuffer = _previousPixelBuffer != NULL ? _previousPixelBuffer : pixelBuffer;
+    GLuint previousChroma = _previousPixelBuffer != NULL ? _legacyPreviousChromaTexture : _legacySourceChromaTexture;
+    [self bindChromaTexture:TGVideoCameraGLIsNV12(previousBuffer) ? previousChroma : previousTexture unit:GL_TEXTURE4 uniform:@"previousChromaTexture"];
+    [self configureColorForPixelBuffer:pixelBuffer previous:false];
+    [self configureColorForPixelBuffer:previousBuffer previous:true];
 
     glVertexAttribPointer(0, 2, GL_FLOAT, 0, 0, squareVertices);
     glEnableVertexAttribArray(0);
@@ -566,6 +711,10 @@ static bool TGVideoCameraGLSupportsBGRAUpload(void)
     success = true;
 
 bail:
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
@@ -588,6 +737,8 @@ bail:
 {
     if (iosMajorVersion() < 5)
         return [self copyLegacyCPURenderedPixelBuffer:pixelBuffer];
+    if (_legacyRenderTexture != 0)
+        return [self _copyLegacyRenderedPixelBuffer:pixelBuffer];
 
 	static const GLfloat squareVertices[] =
     {
@@ -603,7 +754,7 @@ bail:
 	if (pixelBuffer == NULL)
 		return NULL;
 	
-	const CMVideoDimensions srcDimensions = { (int32_t)CVPixelBufferGetWidth(pixelBuffer), (int32_t)CVPixelBufferGetHeight(pixelBuffer) };
+	
 	const CMVideoDimensions dstDimensions = CMVideoFormatDescriptionGetDimensions(_outputFormatDescription);
 		
 	EAGLContext *oldContext = [EAGLContext currentContext];
@@ -616,21 +767,32 @@ bail:
 	CVReturn err = noErr;
 	CVOpenGLESTextureRef srcTexture = NULL;
     CVOpenGLESTextureRef prevTexture = NULL;
+    CVOpenGLESTextureRef srcChromaTexture = NULL;
+    CVOpenGLESTextureRef prevChromaTexture = NULL;
 	CVOpenGLESTextureRef dstTexture = NULL;
 	CVPixelBufferRef dstPixelBuffer = NULL;
+    bool rendered = false;
+    bool useUploadFallback = false;
 	
-	err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _textureCache, pixelBuffer, NULL, GL_TEXTURE_2D, GL_RGBA, srcDimensions.width, srcDimensions.height, GL_BGRA, GL_UNSIGNED_BYTE, 0, &srcTexture);
+	err = [self importPixelBuffer:pixelBuffer cache:_textureCache texture:&srcTexture chroma:&srcChromaTexture];
     
 	if (!srcTexture || err)
+    {
+        useUploadFallback = true;
+        TGLegacyLog(@"VIDEOMESSAGE texture import failed %d, using texture upload", (int)err);
 		goto bail;
+    }
     
     bool hasPreviousTexture = false;
     if (_previousPixelBuffer != NULL)
     {
-        err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _prevTextureCache, _previousPixelBuffer, NULL, GL_TEXTURE_2D, GL_RGBA, srcDimensions.width, srcDimensions.height, GL_BGRA, GL_UNSIGNED_BYTE, 0, &prevTexture);
+        err = [self importPixelBuffer:_previousPixelBuffer cache:_prevTextureCache texture:&prevTexture chroma:&prevChromaTexture];
         
         if (!prevTexture || err)
+        {
+            useUploadFallback = true;
             goto bail;
+        }
         
         hasPreviousTexture = true;
     }
@@ -648,7 +810,10 @@ bail:
 	err = CVOpenGLESTextureCacheCreateTextureFromImage(kCFAllocatorDefault, _renderTextureCache, dstPixelBuffer, NULL, GL_TEXTURE_2D, GL_RGBA, dstDimensions.width, dstDimensions.height, GL_BGRA, GL_UNSIGNED_BYTE, 0, &dstTexture);
 	
 	if (!dstTexture || err)
+    {
+        useUploadFallback = true;
 		goto bail;
+    }
 	
 	glBindFramebuffer(GL_FRAMEBUFFER, _offscreenBufferHandle);
 	glViewport(0, 0, dstDimensions.width, dstDimensions.height);
@@ -661,6 +826,8 @@ bail:
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, CVOpenGLESTextureGetTarget(dstTexture), CVOpenGLESTextureGetName(dstTexture), 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        goto bail;
 	
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(CVOpenGLESTextureGetTarget(srcTexture), CVOpenGLESTextureGetName(srcTexture));
@@ -671,18 +838,21 @@ bail:
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     
-    if (hasPreviousTexture)
-    {
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(CVOpenGLESTextureGetTarget(prevTexture), CVOpenGLESTextureGetName(prevTexture));
-        glUniform1i(_previousFrameUniform, 2);
-        
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    }
-	
+    glActiveTexture(GL_TEXTURE2);
+    CVOpenGLESTextureRef blendTexture = hasPreviousTexture ? prevTexture : srcTexture;
+    glBindTexture(CVOpenGLESTextureGetTarget(blendTexture), CVOpenGLESTextureGetName(blendTexture));
+    glUniform1i(_previousFrameUniform, 2);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    [self bindChromaTexture:srcChromaTexture != NULL ? CVOpenGLESTextureGetName(srcChromaTexture) : CVOpenGLESTextureGetName(srcTexture) unit:GL_TEXTURE3 uniform:@"chromaTexture"];
+    CVOpenGLESTextureRef blendChroma = hasPreviousTexture ? prevChromaTexture : srcChromaTexture;
+    [self bindChromaTexture:blendChroma != NULL ? CVOpenGLESTextureGetName(blendChroma) : CVOpenGLESTextureGetName(blendTexture) unit:GL_TEXTURE4 uniform:@"previousChromaTexture"];
+    [self configureColorForPixelBuffer:pixelBuffer previous:false];
+    [self configureColorForPixelBuffer:hasPreviousTexture ? _previousPixelBuffer : pixelBuffer previous:true];
+
 	glVertexAttribPointer(0, 2, GL_FLOAT, 0, 0, squareVertices);
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(1, 2, GL_FLOAT, 0, 0, _textureVertices);
@@ -693,18 +863,30 @@ bail:
     glUniform1f(_noMirrorUniform, (GLfloat)(_mirror ? 1 : -1));
 	
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-	
-	glBindTexture(CVOpenGLESTextureGetTarget(srcTexture), 0);
-    if (hasPreviousTexture)
-        glBindTexture(CVOpenGLESTextureGetTarget(prevTexture), 0);
-	glBindTexture(CVOpenGLESTextureGetTarget(dstTexture), 0);
+    rendered = glGetError() == GL_NO_ERROR;
 	
 	glFlush();
-	
+
 bail:
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, _offscreenBufferHandle);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 	if (oldContext != _context)
 		[EAGLContext setCurrentContext:oldContext];
-	
+
+    if (srcChromaTexture != NULL)
+        CFRelease(srcChromaTexture);
+    if (prevChromaTexture != NULL)
+        CFRelease(prevChromaTexture);
 	if (srcTexture)
 		CFRelease(srcTexture);
     
@@ -713,7 +895,17 @@ bail:
 	
 	if (dstTexture)
 		CFRelease(dstTexture);
-	
+    if (!rendered && dstPixelBuffer != NULL)
+    {
+        CFRelease(dstPixelBuffer);
+        dstPixelBuffer = NULL;
+    }
+    if (useUploadFallback)
+    {
+        [self deleteBuffers];
+        if ([self initializeBuffersWithOutputSize:CGSizeMake(dstDimensions.width, dstDimensions.height) retainedBufferCountHint:4 useTextureCache:false])
+            return [self _copyLegacyRenderedPixelBuffer:pixelBuffer];
+    }
 	return dstPixelBuffer;
 }
 
@@ -722,7 +914,7 @@ bail:
 	return _outputFormatDescription;
 }
 
-- (bool)initializeBuffersWithOutputSize:(CGSize)outputSize retainedBufferCountHint:(size_t)clientRetainedBufferCountHint
+- (bool)initializeBuffersWithOutputSize:(CGSize)outputSize retainedBufferCountHint:(size_t)clientRetainedBufferCountHint useTextureCache:(bool)useTextureCache
 {
 	bool success = true;
 	
@@ -739,7 +931,7 @@ bail:
 	glBindFramebuffer(GL_FRAMEBUFFER, _offscreenBufferHandle);
 	
     CVReturn err = kCVReturnSuccess;
-    if (iosMajorVersion() >= 5)
+    if (useTextureCache)
     {
         err = CVOpenGLESTextureCacheCreate(kCFAllocatorDefault, NULL, _context, NULL, &_textureCache);
         if (err)
@@ -766,8 +958,10 @@ bail:
     {
         glGenTextures(1, &_legacySourceTexture);
         glGenTextures(1, &_legacyPreviousTexture);
+        glGenTextures(1, &_legacySourceChromaTexture);
+        glGenTextures(1, &_legacyPreviousChromaTexture);
         glGenTextures(1, &_legacyRenderTexture);
-        if (_legacySourceTexture == 0 || _legacyPreviousTexture == 0 || _legacyRenderTexture == 0)
+        if (_legacySourceTexture == 0 || _legacyPreviousTexture == 0 || _legacyRenderTexture == 0 || _legacySourceChromaTexture == 0 || _legacyPreviousChromaTexture == 0)
         {
             success = false;
             goto bail;
@@ -791,8 +985,13 @@ bail:
         _legacyUploadBGRA = TGVideoCameraGLSupportsBGRAUpload();
     }
 
-    _shader = [[TGPaintShader alloc] initWithVertexShader:@"VideoMessage" fragmentShader:@"VideoMessage" attributes:@[ @"inPosition", @"inTexcoord" ] uniforms:@[ @"texture", @"previousTexture", @"opacity", @"aspectRatio", @"noMirror" ]];
+    _shader = [[TGPaintShader alloc] initWithVertexShader:@"VideoMessage" fragmentShader:@"VideoMessage" attributes:@[ @"inPosition", @"inTexcoord" ] uniforms:@[ @"texture", @"previousTexture", @"opacity", @"aspectRatio", @"noMirror", @"chromaTexture", @"previousChromaTexture", @"isNV12", @"previousIsNV12", @"colorConversion", @"previousColorConversion", @"colorOffset", @"previousColorOffset" ]];
     
+    if (_shader == nil)
+    {
+        success = false;
+        goto bail;
+    }
     _frameUniform = [_shader uniformForKey:@"texture"];
     _previousFrameUniform = [_shader uniformForKey:@"previousTexture"];
     _opacityUniform = [_shader uniformForKey:@"opacity"];
@@ -800,7 +999,7 @@ bail:
     _noMirrorUniform = [_shader uniformForKey:@"noMirror"];
     
 	size_t maxRetainedBufferCount = clientRetainedBufferCountHint + 1;
-    _bufferPool = [TGVideoCameraGLRenderer createPixelBufferPoolWithWidth:(int32_t)outputSize.width height:(int32_t)outputSize.height pixelFormat:kCVPixelFormatType_32BGRA maxBufferCount:(int32_t)maxRetainedBufferCount];
+    _bufferPool = [TGVideoCameraGLRenderer createPixelBufferPoolWithWidth:(int32_t)outputSize.width height:(int32_t)outputSize.height pixelFormat:kCVPixelFormatType_32BGRA maxBufferCount:(int32_t)maxRetainedBufferCount openGLCompatible:useTextureCache];
     
 	if (!_bufferPool)
     {
@@ -809,7 +1008,11 @@ bail:
 	}
 	
     _bufferPoolAuxAttributes = [TGVideoCameraGLRenderer createPixelBufferPoolAuxAttribute:(int32_t)maxRetainedBufferCount];
-    [TGVideoCameraGLRenderer preallocatePixelBuffersInPool:_bufferPool auxAttributes:_bufferPoolAuxAttributes];
+    if (![TGVideoCameraGLRenderer preallocatePixelBuffersInPool:_bufferPool auxAttributes:_bufferPoolAuxAttributes count:maxRetainedBufferCount])
+    {
+        success = false;
+        goto bail;
+    }
 	
 	CMFormatDescriptionRef outputFormatDescription = NULL;
 	CVPixelBufferRef testPixelBuffer = NULL;
@@ -819,9 +1022,11 @@ bail:
 		success = false;
 		goto bail;
 	}
-	CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, testPixelBuffer, &outputFormatDescription);
+	OSStatus formatResult = CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, testPixelBuffer, &outputFormatDescription);
 	_outputFormatDescription = outputFormatDescription;
-	CFRelease( testPixelBuffer );
+	CFRelease(testPixelBuffer);
+    if (formatResult != noErr || outputFormatDescription == NULL)
+        success = false;
 	
 bail:
 	if (!success)
@@ -890,6 +1095,21 @@ bail:
         _legacyRenderTexture = 0;
     }
 
+    if (_legacySourceChromaTexture != 0)
+        glDeleteTextures(1, &_legacySourceChromaTexture);
+    if (_legacyPreviousChromaTexture != 0)
+        glDeleteTextures(1, &_legacyPreviousChromaTexture);
+    _legacySourceChromaTexture = 0;
+    _legacyPreviousChromaTexture = 0;
+    _legacySourceChromaWidth = 0;
+    _legacySourceChromaHeight = 0;
+    _legacyPreviousChromaWidth = 0;
+    _legacyPreviousChromaHeight = 0;
+    free(_planeUploadBuffer);
+    _planeUploadBuffer = NULL;
+    _planeUploadCapacity = 0;
+    _legacySourceFormat = 0;
+    _legacyPreviousFormat = 0;
     _legacySourceWidth = 0;
     _legacySourceHeight = 0;
     _legacyPreviousWidth = 0;
@@ -919,12 +1139,12 @@ bail:
         [EAGLContext setCurrentContext:oldContext];
 }
 
-+ (CVPixelBufferPoolRef)createPixelBufferPoolWithWidth:(int32_t)width height:(int32_t)height pixelFormat:(FourCharCode)pixelFormat maxBufferCount:(int32_t) maxBufferCount
++ (CVPixelBufferPoolRef)createPixelBufferPoolWithWidth:(int32_t)width height:(int32_t)height pixelFormat:(FourCharCode)pixelFormat maxBufferCount:(int32_t) maxBufferCount openGLCompatible:(bool)openGLCompatible
 {
 	CVPixelBufferPoolRef outputPool = NULL;
 	
     NSDictionary *sourcePixelBufferOptions = nil;
-    if (iosMajorVersion() >= 5)
+    if (openGLCompatible)
     {
         sourcePixelBufferOptions = @
         {
@@ -956,22 +1176,18 @@ bail:
 	return CFBridgingRetain( @{ (id)kCVPixelBufferPoolAllocationThresholdKey : @(maxBufferCount) } );
 }
 
-+ (void)preallocatePixelBuffersInPool:(CVPixelBufferPoolRef)pool auxAttributes:(CFDictionaryRef)auxAttributes
++ (bool)preallocatePixelBuffersInPool:(CVPixelBufferPoolRef)pool auxAttributes:(CFDictionaryRef)auxAttributes count:(size_t)count
 {
-	NSMutableArray *pixelBuffers = [[NSMutableArray alloc] init];
-    
-	while (true)
-	{
-		CVPixelBufferRef pixelBuffer = NULL;
-		OSStatus err = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, auxAttributes, &pixelBuffer);
-		
-		if (err == kCVReturnWouldExceedAllocationThreshold)
-			break;
-		
-		[pixelBuffers addObject:CFBridgingRelease(pixelBuffer)];
-	}
-    
-	[pixelBuffers removeAllObjects];
+    NSMutableArray *pixelBuffers = [[NSMutableArray alloc] init];
+    for (size_t i = 0; i < count; i++)
+    {
+        CVPixelBufferRef pixelBuffer = NULL;
+        CVReturn result = CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, auxAttributes, &pixelBuffer);
+        if (result != kCVReturnSuccess || pixelBuffer == NULL)
+            return false;
+        [pixelBuffers addObject:CFBridgingRelease(pixelBuffer)];
+    }
+    return true;
 }
 
 @end

@@ -4,7 +4,9 @@
 #import "TGImageUtils.h"
 
 #import "../Photos/Photos.h"
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <ImageIO/ImageIO.h>
+#endif
 #import "UIImage+TG.h"
 
 #import "TGPhotoEditorUtils.h"
@@ -17,6 +19,19 @@
 #else
 #define TG_ENABLE_HEIC_CI_EXPORT 0
 #endif
+
+#if defined(ONEGRAM_ARMV6)
+
+@implementation TGMediaAssetModernImageSignals
+
++ (bool)usesPhotoFramework
+{
+    return false;
+}
+
+@end
+
+#else
 
 @implementation TGMediaAssetModernImageSignals
 
@@ -360,6 +375,9 @@
 
 + (NSDictionary *)metadataWithImageData:(NSData *)imageData
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    return nil;
+#else
     CGImageSourceRef imageSource = CGImageSourceCreateWithData((__bridge CFDataRef)(imageData), NULL);
     if (imageSource != NULL)
     {
@@ -376,6 +394,7 @@
     }
     
     return nil;
+#endif
 }
 
 + (SSignal *)imageMetadataForAsset:(TGMediaAsset *)asset
@@ -983,3 +1002,5 @@
 }
 
 @end
+
+#endif

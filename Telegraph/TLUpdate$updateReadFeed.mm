@@ -9,7 +9,6 @@
     TGLog(@"***** TLUpdate$updateReadFeed serialization not supported");
 }
 
-//updateReadFeed#6fa68e41 flags:# feed_id:int max_position:FeedPosition unread_count:flags.0?int unread_muted_count:flags.0?int = Update;
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {

@@ -4,6 +4,10 @@
 
 #import <objc/runtime.h>
 
+#if defined(ONEGRAM_ARMV6)
+#import <MediaPlayer/MediaPlayer.h>
+#endif
+
 #import "ASWatcher.h"
 
 #import "../Photos/Photos.h"
@@ -38,7 +42,9 @@
 #import "TGPhotoAvatarCropController.h"
 #import "TGPhotoToolsController.h"
 #import "TGPhotoPaintController.h"
+#if !defined(ONEGRAM_ARMV6)
 #import "TGPhotoQualityController.h"
+#endif
 #import "TGPhotoEditorItemController.h"
 
 #import "TGMessageImageViewOverlayView.h"
@@ -48,7 +54,88 @@
 #import "AVURLAsset+TGMediaItem.h"
 #import "TGCameraCapturedVideo.h"
 
-@interface TGPhotoEditorController () <ASWatcher, TGViewControllerNavigationBarAppearance, UIDocumentInteractionControllerDelegate>
+@protocol TGPhotoEditorDocumentInteractionController <NSObject>
++ (id)interactionControllerWithURL:(NSURL *)url;
+- (void)setDelegate:(id)delegate;
+- (void)setUTI:(NSString *)uti;
+- (void)setAnnotation:(id)annotation;
+- (BOOL)presentOpenInMenuFromRect:(CGRect)rect inView:(UIView *)view animated:(BOOL)animated;
+@end
+
+#if defined(ONEGRAM_ARMV6)
+static UIImage *TGPhotoEditorLegacyVideoFrame(id<TGMediaEditableItem> item, NSTimeInterval position, CGSize *dimensions)
+{
+    NSURL *url = nil;
+    if ([item isKindOfClass:[TGMediaAsset class]])
+    {
+        TGMediaAsset *mediaAsset = (TGMediaAsset *)item;
+        url = mediaAsset.url;
+        if (dimensions != NULL)
+            *dimensions = mediaAsset.dimensions;
+    }
+    else if ([item isKindOfClass:[TGCameraCapturedVideo class]])
+    {
+        AVURLAsset *asset = ((TGCameraCapturedVideo *)item).avAsset;
+        url = asset.URL;
+        if (dimensions != NULL && asset != nil)
+            *dimensions = asset.originalSize;
+    }
+
+    if (url == nil)
+        return nil;
+
+    UIImage *image = nil;
+    SEL thumbnailSelector = NSSelectorFromString(@"thumbnailImageAtTime:timeOption:");
+    if ([MPMoviePlayerController instancesRespondToSelector:thumbnailSelector])
+    {
+        MPMoviePlayerController *player = [[MPMoviePlayerController alloc] initWithContentURL:url];
+        typedef UIImage *(*TGPhotoEditorMovieThumbnailFunction)(id, SEL, NSTimeInterval, NSInteger);
+        TGPhotoEditorMovieThumbnailFunction thumbnailFunction = (TGPhotoEditorMovieThumbnailFunction)[player methodForSelector:thumbnailSelector];
+        if (thumbnailFunction != NULL)
+            image = thumbnailFunction(player, thumbnailSelector, position, 0);
+        [player stop];
+    }
+
+    if (image == nil && [item isKindOfClass:[TGMediaAsset class]])
+    {
+        CGImageRef thumbnailImage = ((TGMediaAsset *)item).backingLegacyAsset.thumbnail;
+        if (thumbnailImage != NULL)
+            image = [UIImage imageWithCGImage:thumbnailImage];
+    }
+
+    if (image != nil && dimensions != NULL && CGSizeEqualToSize(*dimensions, CGSizeZero))
+        *dimensions = image.size;
+
+    return image;
+}
+#endif
+
+static UIImage *TGPhotoEditorVideoThumbnail(UIImage *image, CGSize videoDimensions, UIImage *paintingImage)
+{
+    if (image == nil)
+        return nil;
+
+    if (CGSizeEqualToSize(videoDimensions, CGSizeZero))
+        videoDimensions = image.size;
+
+    CGSize thumbnailSize = TGPhotoThumbnailSizeForCurrentScreen();
+    thumbnailSize.width = CGCeil(thumbnailSize.width);
+    thumbnailSize.height = CGCeil(thumbnailSize.height);
+    CGSize fillSize = TGScaleToFillSize(videoDimensions, thumbnailSize);
+
+    UIGraphicsBeginImageContextWithOptions(fillSize, true, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetInterpolationQuality(context, kCGInterpolationMedium);
+    [image drawInRect:CGRectMake(0, 0, fillSize.width, fillSize.height)];
+    if (paintingImage != nil)
+        [paintingImage drawInRect:CGRectMake(0, 0, fillSize.width, fillSize.height)];
+    UIImage *thumbnailImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    return thumbnailImage;
+}
+
+@interface TGPhotoEditorController () <ASWatcher, TGViewControllerNavigationBarAppearance>
 {
     bool _switchingTab;
     TGPhotoEditorTab _availableTabs;
@@ -82,7 +169,7 @@
     bool _hiddenToolbarView;
     
     TGMenuContainerView *_menuContainerView;
-    UIDocumentInteractionController *_documentController;
+    id<TGPhotoEditorDocumentInteractionController> _documentController;
     
     bool _progressVisible;
     TGMessageImageViewOverlayView *_progressView;
@@ -90,7 +177,11 @@
     id<LegacyComponentsContext> _context;
 }
 
+#if defined(ONEGRAM_ARMV6)
+@property (nonatomic, unsafe_unretained) UIImage *fullSizeImage;
+#else
 @property (nonatomic, weak) UIImage *fullSizeImage;
+#endif
 
 @end
 
@@ -391,9 +482,11 @@
         {
             TGDispatchOnMainThread(^
             {
+#if !defined(ONEGRAM_ARMV6)
                 if ([_currentTabController isKindOfClass:[TGPhotoQualityController class]])
                     [_previewView setSnapshotImageOnTransition:next];
                 else
+#endif
                     [_previewView setSnapshotImage:next];
             });
         }
@@ -494,7 +587,6 @@
 {
     [super viewDidDisappear:animated];
     
-    //strange ios6 crashfix
     if (iosMajorVersion() < 7 && !self.dontHideStatusBar)
     {
         TGDispatchAfter(0.5f, dispatch_get_main_queue(), ^
@@ -1112,6 +1204,7 @@
             
         case TGPhotoEditorQualityTab:
         {
+#if !defined(ONEGRAM_ARMV6)
             _ignoreDefaultPreviewViewTransitionIn = true;
             
             TGPhotoQualityController *qualityController = [[TGPhotoQualityController alloc] initWithContext:_context photoEditor:_photoEditor previewView:_previewView];
@@ -1139,6 +1232,7 @@
             };
 
             controller = qualityController;
+#endif
         }
             break;
             
@@ -1409,6 +1503,7 @@
         if (paintingData != nil)
             [TGPaintingData storePaintingData:paintingData inContext:_editingContext forItem:_item forVideo:(_intent == TGPhotoEditorControllerVideoIntent)];
     }
+#if !defined(ONEGRAM_ARMV6)
     else if ([_currentTabController isKindOfClass:[TGPhotoQualityController class]])
     {
         TGPhotoQualityController *qualityController = (TGPhotoQualityController *)_currentTabController;
@@ -1417,6 +1512,7 @@
         
         [[NSUserDefaults standardUserDefaults] setObject:@(qualityController.preset) forKey:@"TG_preferredVideoPreset_v0"];
     }
+#endif
     
     if (_intent != TGPhotoEditorControllerVideoIntent)
     {
@@ -1450,12 +1546,19 @@
             [[SQueue concurrentDefaultQueue] dispatch:^
             {
                 id<TGMediaEditableItem> item = _item;
+#if defined(ONEGRAM_ARMV6)
+                CGSize videoDimensions = CGSizeZero;
+                UIImage *image = TGPhotoEditorLegacyVideoFrame(item, adjustments.trimStartValue, &videoDimensions);
+                UIImage *thumbnailImage = TGPhotoEditorVideoThumbnail(image, videoDimensions, adjustments.paintingData.image);
+                if (image != nil && thumbnailImage != nil)
+                    [_editingContext setImage:image thumbnailImage:thumbnailImage forItem:_item synchronous:true];
+#else
                 SSignal *assetSignal = [SSignal complete];
                 if ([item isKindOfClass:[TGMediaAsset class]])
                     assetSignal = [TGMediaAssetImageSignals avAssetForVideoAsset:(TGMediaAsset *)item];
                 else if ([item isKindOfClass:[TGCameraCapturedVideo class]])
                     assetSignal = [SSignal single:((TGCameraCapturedVideo *)item).avAsset];
-                
+
                 [assetSignal startWithNext:^(AVAsset *asset)
                 {
                     CGSize videoDimensions = CGSizeZero;
@@ -1463,39 +1566,23 @@
                         videoDimensions = ((TGMediaAsset *)item).dimensions;
                     else if ([asset isKindOfClass:[AVURLAsset class]])
                         videoDimensions = ((AVURLAsset *)asset).originalSize;
-                    
+
                     AVAssetImageGenerator *generator = [[AVAssetImageGenerator alloc] initWithAsset:asset];
                     generator.appliesPreferredTrackTransform = true;
                     generator.maximumSize = TGFitSize(videoDimensions, CGSizeMake(1280.0f, 1280.0f));
                     generator.requestedTimeToleranceAfter = kCMTimeZero;
                     generator.requestedTimeToleranceBefore = kCMTimeZero;
-                    
+
                     CGImageRef imageRef = [generator copyCGImageAtTime:CMTimeMakeWithSeconds(adjustments.trimStartValue, NSEC_PER_SEC) actualTime:nil error:NULL];
-                    UIImage *image = [UIImage imageWithCGImage:imageRef];
-                    CGImageRelease(imageRef);
-                    
-                    CGSize thumbnailSize = TGPhotoThumbnailSizeForCurrentScreen();
-                    thumbnailSize.width = CGCeil(thumbnailSize.width);
-                    thumbnailSize.height = CGCeil(thumbnailSize.height);
-                    
-                    CGSize fillSize = TGScaleToFillSize(videoDimensions, thumbnailSize);
-                    
-                    UIImage *thumbnailImage = nil;
-                    
-                    UIGraphicsBeginImageContextWithOptions(fillSize, true, 0.0f);
-                    CGContextRef context = UIGraphicsGetCurrentContext();
-                    CGContextSetInterpolationQuality(context, kCGInterpolationMedium);
-                    
-                    [image drawInRect:CGRectMake(0, 0, fillSize.width, fillSize.height)];
-                    
-                    if (adjustments.paintingData.image != nil)
-                        [adjustments.paintingData.image drawInRect:CGRectMake(0, 0, fillSize.width, fillSize.height)];
-                    
-                    thumbnailImage = UIGraphicsGetImageFromCurrentImageContext();
-                    UIGraphicsEndImageContext();
-                    
-                    [_editingContext setImage:image thumbnailImage:thumbnailImage forItem:_item synchronous:true];
+                    UIImage *image = imageRef == NULL ? nil : [UIImage imageWithCGImage:imageRef];
+                    if (imageRef != NULL)
+                        CGImageRelease(imageRef);
+
+                    UIImage *thumbnailImage = TGPhotoEditorVideoThumbnail(image, videoDimensions, adjustments.paintingData.image);
+                    if (image != nil && thumbnailImage != nil)
+                        [_editingContext setImage:image thumbnailImage:thumbnailImage forItem:_item synchronous:true];
                 }];
+#endif
             }];
         }
         
@@ -1528,7 +1615,7 @@
     
     NSMutableArray *actions = [[NSMutableArray alloc] init];
     [actions addObject:@{ @"title": @"Save to Camera Roll", @"action": @"save" }];    
-    if ([_context canOpenURL:[NSURL URLWithString:@"instagram://"]])
+    if ([_context canOpenURL:[NSURL URLWithString:@"instagram://"]] && NSClassFromString(@"UIDocumentInteractionController") != Nil)
         [actions addObject:@{ @"title": @"Share on Instagram", @"action": @"instagram" }];
     
     [_menuContainerView.menuView setButtonsAndActions:actions watcherHandle:_actionHandle];
@@ -1577,6 +1664,10 @@
 
 - (void)_openInInstagram
 {
+    Class<TGPhotoEditorDocumentInteractionController> documentControllerClass = (Class<TGPhotoEditorDocumentInteractionController>)NSClassFromString(@"UIDocumentInteractionController");
+    if (documentControllerClass == Nil)
+        return;
+
     TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
     progressWindow.windowLevel = self.view.window.windowLevel + 0.001f;
     [progressWindow performSelector:@selector(showAnimated) withObject:nil afterDelay:0.5];
@@ -1601,8 +1692,8 @@
         
         NSURL *fileURL = [NSURL fileURLWithPath:writePath];
         
-        _documentController = [UIDocumentInteractionController interactionControllerWithURL:fileURL];
-        _documentController.delegate = self;
+        _documentController = [documentControllerClass interactionControllerWithURL:fileURL];
+        [_documentController setDelegate:self];
         [_documentController setUTI:@"com.instagram.exclusivegram"];
         if (_caption.length > 0)
             [_documentController setAnnotation:@{@"InstagramCaption" : _caption}];
@@ -1610,7 +1701,7 @@
     }];
 }
 
-- (void)documentInteractionControllerDidDismissOpenInMenu:(UIDocumentInteractionController *)__unused controller
+- (void)documentInteractionControllerDidDismissOpenInMenu:(id<TGPhotoEditorDocumentInteractionController>)__unused controller
 {
     _documentController = nil;
 }

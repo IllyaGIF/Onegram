@@ -116,7 +116,11 @@
 
 - (bool)itemCanPerformAction:(SEL)action
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
     return action == @selector(copyPhoneNumber:) || (_username.length > 0 && action == @selector(copyUsername:));
+#else
+    return action == @selector(copy:);
+#endif
 }
 
 - (void)itemPerformAction:(SEL)action
@@ -129,6 +133,17 @@
     {
         
     }
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 32000
+    else if (action == @selector(copy:))
+    {
+        NSMutableArray *values = [[NSMutableArray alloc] init];
+        if (_phoneNumber.length != 0)
+            [values addObject:_phoneNumber];
+        if (_username.length != 0)
+            [values addObject:_username];
+        [[UIPasteboard generalPasteboard] setString:[values componentsJoinedByString:@"\n"]];
+    }
+#endif
 }
 
 @end

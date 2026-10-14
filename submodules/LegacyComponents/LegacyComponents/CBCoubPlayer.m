@@ -63,12 +63,20 @@ static BOOL gPlaybackIsInterrupted = NO;
 	}
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (instancetype)initWithVideoLayer:(CALayer *)layer
+#else
 - (instancetype)initWithVideoLayer:(AVPlayerLayer *)layer
+#endif
 {
 	return [self initWithVideoLayer:layer videoPlayMethod:CBCoubPlayerVideoPlayMethodDefault];
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (instancetype)initWithVideoLayer:(CALayer *)layer videoPlayMethod:(CBCoubPlayerVideoPlayMethod)videoPlayMethod
+#else
 - (instancetype)initWithVideoLayer:(AVPlayerLayer *)layer videoPlayMethod:(CBCoubPlayerVideoPlayMethod)videoPlayMethod
+#endif
 {
 	self = [super init];
 
@@ -245,24 +253,33 @@ static BOOL gPlaybackIsInterrupted = NO;
 #pragma mark -
 #pragma mark Private methods
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+- (void)createVideoPlayerWithLayer:(CALayer *)layer
+#else
 - (void)createVideoPlayerWithLayer:(AVPlayerLayer *)layer
+#endif
 {
 	self.videoPlayer = [[CBVideoPlayer alloc] initWithVideoLayer:layer];
 }
 
 - (void)prepareVideoPlayer
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+    [_videoPlayer prepareWithURL:self.loopMaker.videoURL completion:^(NSError *error) {
+#else
 	[_videoPlayer prepareWithAVAsset:self.loopMaker.videoAsset completion:^(NSError *error) {
+#endif
 		if(error)
 			[self failPlaybackWithError:error];
-		else{
+		else
+        {
 			if([_delegate respondsToSelector:@selector(playerReadyToPlay:)])
 				[_delegate playerReadyToPlay:self];
 
 			[self startPlayingIfPossible];
 		}
 	}];
-    
+
     [self.loopMaker cancelPrepareLoop];
 }
 

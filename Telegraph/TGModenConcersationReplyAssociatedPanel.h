@@ -11,6 +11,7 @@
 @property (nonatomic) bool largeDismissButton;
 @property (nonatomic) bool compactMode;
 @property (nonatomic, copy) NSString *compactPrefix;
+@property (nonatomic, readonly) NSString *contentText;
 
 @property (nonatomic, copy) void (^pressed)();
 @property (nonatomic, copy) void (^dismiss)();
