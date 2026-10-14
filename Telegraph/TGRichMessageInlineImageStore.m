@@ -4,6 +4,8 @@
 
 extern void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^completion)(NSString *thumbnailUri));
 
+static NSUInteger TGRichMessagePreparationDepth = 0;
+
 NSString *const TGRichMessageInlineImageLoadedNotification = @"TGRichMessageInlineImageLoadedNotification";
 
 static NSCache *TGRichMessageInlineImageCache(void)
@@ -31,6 +33,15 @@ static NSMutableDictionary *TGRichMessageInlineImageRequests(void)
 
 @implementation TGRichMessageInlineImageStore
 
++ (void)performWithoutStartingRequests:(dispatch_block_t)block
+{
+    if (block == nil) return;
+    if (![NSThread isMainThread]) { block(); return; }
+    TGRichMessagePreparationDepth++;
+    @try { block(); }
+    @finally { TGRichMessagePreparationDepth--; }
+}
+
 + (UIImage *)imageForKey:(NSString *)key
 {
     if (key == nil)
@@ -41,6 +52,8 @@ static NSMutableDictionary *TGRichMessageInlineImageRequests(void)
 + (void)requestImageForKey:(NSString *)key signalGenerator:(SSignal *(^)(void))signalGenerator
 {
     if (key == nil || signalGenerator == nil || [self imageForKey:key] != nil)
+        return;
+    if ([NSThread isMainThread] && TGRichMessagePreparationDepth != 0)
         return;
 
     NSMutableDictionary *requests = TGRichMessageInlineImageRequests();

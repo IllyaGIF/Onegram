@@ -1694,6 +1694,9 @@ typedef NSInteger AVCaptureSessionInterruptionReason;
 @property (nonatomic) CGRect bounds;
 @end
 @interface PSUICollectionView (LegacyComponentsTransitionDeclarations)
+- (UICollectionViewTransitionLayout *)tg_ios6_startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
+- (void)tg_ios6_finishInteractiveTransition;
+- (void)tg_ios6_cancelInteractiveTransition;
 - (UICollectionViewTransitionLayout *)startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
 - (void)finishInteractiveTransition;
 - (void)cancelInteractiveTransition;

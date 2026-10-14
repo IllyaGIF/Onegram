@@ -1,6 +1,15 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+int32_t TGMessageSendFlags(int32_t flags, int32_t replyMessageId, int32_t topicId);
+void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t replyMessageId, int32_t topicId);
+#ifdef __cplusplus
+}
+#endif
+
 @class TLInputPeer;
 @class TLCodexPollValue;
 
@@ -9,6 +18,7 @@
 @property (nonatomic) int32_t flags;
 @property (nonatomic, strong) TLInputPeer *peer;
 @property (nonatomic) int32_t reply_to_msg_id;
+@property (nonatomic) int32_t forumTopicId;
 @property (nonatomic, strong) NSString *message;
 @property (nonatomic) int64_t random_id;
 @property (nonatomic, strong) NSArray *entities;

@@ -141,6 +141,8 @@ CGFloat TGReusableLabelFirstBaselineOffset(CTFontRef font);
 @property (nonatomic, readonly) CGFloat drawingWidth;
 @property (nonatomic, readonly) bool hasCustomDrawing;
 
+- (TGReusableLabelLayoutData *)asynchronousDrawingLayoutForWidth:(CGFloat)width drawingRect:(CGRect)drawingRect shadowColor:(UIColor *)shadowColor shadowOffset:(CGSize)shadowOffset;
+
 - (NSString *)linkAtPoint:(CGPoint)point topRegion:(CGRect *)topRegion middleRegion:(CGRect *)middleRegion bottomRegion:(CGRect *)bottomRegion hiddenLink:(bool *)hiddenLink linkText:(__autoreleasing NSString **)linkText;
 - (void)enumerateSearchRegionsForString:(NSString *)string withBlock:(void (^)(CGRect))block;
 

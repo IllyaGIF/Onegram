@@ -1,6 +1,7 @@
 #import "TGTelegramNetworking.h"
 
 #import <unistd.h>
+#import <Security/Security.h>
 #import <sys/socket.h>
 #import <netdb.h>
 #import <arpa/inet.h>
@@ -18,6 +19,47 @@
 #endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
+
+static NSDictionary *TGShareProtectionQuery(int32_t userId)
+{
+    return @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword, (__bridge id)kSecAttrService: @"Onegram.Core.ShareProtection", (__bridge id)kSecAttrAccount: [NSString stringWithFormat:@"%d", userId]};
+}
+
+static NSDictionary *TGShareReadProtection(int32_t userId, NSData *fingerprint)
+{
+    NSMutableDictionary *query = [TGShareProtectionQuery(userId) mutableCopy];
+    query[(__bridge id)kSecReturnData] = [NSNumber numberWithBool:YES];
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    NSData *data = (__bridge_transfer NSData *)result;
+    if (status != errSecSuccess || ![data isKindOfClass:[NSData class]]) return nil;
+    NSString *error = nil;
+    id value = [NSPropertyListSerialization propertyListFromData:data mutabilityOption:NSPropertyListImmutable format:NULL errorDescription:&error];
+    if (![value isKindOfClass:[NSDictionary class]]) return nil;
+    NSDictionary *record = value;
+    if (![record[@"fingerprint"] isEqual:fingerprint] || ![record[@"key"] isKindOfClass:[NSData class]] || [record[@"key"] length] != 32 || ![record[@"salt"] isKindOfClass:[NSData class]] || [record[@"salt"] length] != 32 || ![record[@"rounds"] isKindOfClass:[NSNumber class]] || [record[@"rounds"] intValue] < 10000 || [record[@"rounds"] intValue] > 2000000) return nil;
+    return record;
+}
+
+static bool TGShareWriteProtection(int32_t userId, NSDictionary *record)
+{
+    NSString *error = nil;
+    NSData *data = [NSPropertyListSerialization dataFromPropertyList:record format:NSPropertyListBinaryFormat_v1_0 errorDescription:&error];
+    if (data == nil) return false;
+    NSDictionary *query = TGShareProtectionQuery(userId);
+    NSMutableDictionary *attributes = [@{(__bridge id)kSecValueData: data} mutableCopy];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    attributes[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly;
+#endif
+    OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attributes);
+    if (status == errSecItemNotFound)
+    {
+        [attributes addEntriesFromDictionary:query];
+        status = SecItemAdd((__bridge CFDictionaryRef)attributes, NULL);
+    }
+    return status == errSecSuccess;
+}
 
 static bool sTGIOS6QRLoginFlowActive = false;
 static const NSInteger TGOnegramTransportCacheVersion = 1;
@@ -265,7 +307,7 @@ static bool TGIOS6FetchNetworkUnixTime(NSTimeInterval *unixTime)
 #import "TLRPCmessages_getHistory.h"
 #import "TLRPCupdates_getChannelDifference.h"
 
-#import "../../config.h"
+#import "../config.h"
 
 #import "TGAccountSignals.h"
 
@@ -959,7 +1001,7 @@ static TGTelegramNetworking *singleton = nil;
     NSURL *groupURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:groupName];
     if (groupURL != nil)
     {
-        NSURL *sharedAuthInfoPath = [groupURL URLByAppendingPathComponent:@"shared-auth-info" isDirectory:true];
+        NSURL *sharedAuthInfoPath = [groupURL URLByAppendingPathComponent:@"shared-auth-info" isDirectory:false];
         return sharedAuthInfoPath;
     }
     
@@ -992,20 +1034,51 @@ static TGTelegramNetworking *singleton = nil;
     if (iosMajorVersion() < 8)
         return;
     
+    NSURL *destination = [self sharedAuthInfoPath];
+    if (destination == nil) return;
+
     [_context performBatchUpdates:^
     {
+        int32_t exportingUserId = TGTelegraphInstance.clientUserId;
+        if (exportingUserId == 0 || !TGTelegraphInstance.clientIsActivated) return;
         bool isStrong = false;
+        bool passwordSet = [TGDatabaseInstance() isPasswordSet:&isStrong];
         NSString *password = nil;
-        if ([TGDatabaseInstance() isPasswordSet:&isStrong])
+        if (passwordSet)
         {
             password = [TGDatabaseInstance() currentPassword];
-            if (password == nil)
-            {
-                [self removeCredentialsForExtensions];
-                return;
-            }
+
         }
         
+        NSData *fingerprint = [TGDatabaseInstance() extensionPasswordFingerprint];
+        if (passwordSet && fingerprint == nil) return;
+        NSDictionary *protection = fingerprint == nil ? nil : TGShareReadProtection(exportingUserId, fingerprint);
+        if (fingerprint != nil && protection == nil)
+        {
+            if (password == nil)
+            {
+                NSData *previous = [NSData dataWithContentsOfURL:destination];
+                NSDictionary *container = nil;
+                @try
+                {
+                    id decoded = previous == nil ? nil : [NSKeyedUnarchiver unarchiveObjectWithData:previous];
+                    if ([decoded isKindOfClass:[NSDictionary class]]) container = decoded;
+                }
+                @catch (__unused NSException *exception)
+                {
+                    container = nil;
+                }
+                if (![container[@"fingerprint"] isEqual:fingerprint] || [container[@"userId"] intValue] != exportingUserId)
+                    [[NSFileManager defaultManager] removeItemAtURL:destination error:nil];
+                return;
+            }
+            NSData *salt = [self generateSalt256];
+            NSData *key = MTPBKDF2HMACSHA256([password dataUsingEncoding:NSUTF8StringEncoding], salt, 100000, 32);
+            if (key == nil) return;
+            protection = @{@"fingerprint": fingerprint, @"salt": salt, @"key": key, @"rounds": @100000};
+            if (!TGShareWriteProtection(exportingUserId, protection)) return;
+        }
+
         NSMutableDictionary *addressSets = [[NSMutableDictionary alloc] init];
         for (NSNumber *dcId in _context.knownDatacenterIds)
         {
@@ -1026,59 +1099,39 @@ static TGTelegramNetworking *singleton = nil;
             NSData *data = [NSKeyedArchiver archivedDataWithRootObject:@{@"datacenterId":@(_mtProto.datacenterId), @"addressSets": addressSets, @"authInfo": sharedAuthInfo, @"version": versionString, @"clientUserId": @(TGTelegraphInstance.clientUserId), @"isTesting": @(_isTestingEnvironment) }];
             
             NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
-            dict[@"protected"] = @(password != nil);
-            if (password != nil)
+            dict[@"protected"] = @(fingerprint != nil);
+            dict[@"userId"] = @(exportingUserId);
+            if (fingerprint != nil) dict[@"fingerprint"] = fingerprint;
+            if (protection != nil)
             {
-                bool touchId = [[[NSUserDefaults standardUserDefaults] objectForKey:@"Passcode_useTouchId"] boolValue];
-                if (isStrong)
+                NSMutableData *iv = [NSMutableData dataWithLength:32];
+                arc4random_buf(iv.mutableBytes, 32);
+                NSMutableData *encryptedData = [[NSMutableData alloc] init];
+                int32_t plainLength = (int32_t)data.length;
+                [encryptedData appendBytes:&plainLength length:4];
+                [encryptedData appendData:data];
+                while (encryptedData.length % 16 != 0)
                 {
-                    NSData *passwordData = [password dataUsingEncoding:NSUTF8StringEncoding];
-                    NSData *salt = [self generateSalt256];
-                    
-                    NSData *key = MTPBKDF2HMACSHA256(passwordData, salt, 1000, 32);
-                    if (key == nil)
-                    {
-                        TGLog(@"Failed to derive keychain password");
-                        [self removeCredentialsForExtensions];
-                        
-                        return;
-                    }
-                    
-                    NSMutableData *iv = [[NSMutableData alloc] initWithBytesNoCopy:malloc(32) length:32 freeWhenDone:true];
-                    arc4random_buf(iv.mutableBytes, 32);
-                    
-                    NSMutableData *encryptedData = [[NSMutableData alloc] init];
-                    int32_t plainLength = (int32_t)data.length;
-                    [encryptedData appendBytes:&plainLength length:4];
-                    [encryptedData appendData:data];
-                    while (encryptedData.length % 16 != 0)
-                    {
-                        uint8_t random = 0;
-                        arc4random_buf(&random, 1);
-                        [encryptedData appendBytes:&random length:1];
-                    }
-                    MTAesEncryptInplace(encryptedData, key, iv);
-                    NSData *plainChecksum = MTSha1(data);
-                    
-                    dict[@"data"] = encryptedData;
-                    dict[@"iv"] = iv;
-                    dict[@"checksum"] = plainChecksum;
-                    dict[@"salt"] = salt;
-                    dict[@"touchId"] = @(touchId);
+                    uint8_t random = (uint8_t)arc4random();
+                    [encryptedData appendBytes:&random length:1];
                 }
-                else
-                {
-                    dict[@"data"] = data;
-                    dict[@"password"] = password;
-                    dict[@"touchId"] = @(touchId);
-                }
+                MTAesEncryptInplace(encryptedData, protection[@"key"], iv);
+                dict[@"data"] = encryptedData;
+                dict[@"iv"] = iv;
+                dict[@"checksum"] = MTSha1(data);
+                dict[@"salt"] = protection[@"salt"];
+                dict[@"rounds"] = protection[@"rounds"];
+                dict[@"simple"] = @(!isStrong);
+                dict[@"touchId"] = @([[[NSUserDefaults standardUserDefaults] objectForKey:@"Passcode_useTouchId"] boolValue]);
             }
             else
                 dict[@"data"] = data;
-            
+            NSData *currentFingerprint = [TGDatabaseInstance() extensionPasswordFingerprint];
+            if (!(currentFingerprint == nil && fingerprint == nil) && ![currentFingerprint isEqual:fingerprint]) return;
+            if (TGTelegraphInstance.clientUserId != exportingUserId || !TGTelegraphInstance.clientIsActivated) return;
+
             NSData *storedData = [NSKeyedArchiver archivedDataWithRootObject:dict];
-            if ([self sharedAuthInfoPath] != nil)
-                [storedData writeToURL:[self sharedAuthInfoPath] atomically:true];
+            [storedData writeToURL:destination atomically:true];
         }
     }];
 }

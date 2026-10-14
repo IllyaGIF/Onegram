@@ -25,6 +25,12 @@
 
 - (void)execute:(NSDictionary *)options
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [ActionStageInstance() actionFailed:self.path reason:-1];
+        return;
+    }
+
     int pts = [[options objectForKey:@"pts"] intValue];
     int date = [[options objectForKey:@"date"] intValue];
     int seq = [[options objectForKey:@"seq"] intValue];

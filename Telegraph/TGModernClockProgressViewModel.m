@@ -100,7 +100,9 @@
         return false;
     if (![self recordBaseDrawing:recording])
         return false;
-    return self.skipDrawInContext;
+    if (!self.skipDrawInContext)
+        return [recording addDrawingSnapshotInRect:self.bounds drawing:^(CGContextRef context) { [self drawInContext:context]; }];
+    return true;
 }
 
 - (void)drawInContext:(CGContextRef)context

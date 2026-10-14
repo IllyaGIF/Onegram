@@ -139,6 +139,22 @@ static void TGRichDrawDust(CGContextRef context, CGRect rect, UIColor *color)
     CGContextRestoreGState(context);
 }
 
+static CGRect TGRichSpoilerTitleRect(NSString *title, CGRect rect)
+{
+    UIFont *font = [UIFont boldSystemFontOfSize:14.0f];
+    CGSize size = [title sizeWithFont:font];
+    return CGRectMake(CGFloor(CGRectGetMidX(rect) - size.width / 2.0f - 10.0f), CGFloor(CGRectGetMidY(rect) - size.height / 2.0f - 4.0f), CGCeil(size.width + 20.0f), CGCeil(size.height + 8.0f));
+}
+
+static void TGRichDrawSpoilerTitle(CGContextRef context, NSString *title, CGRect pill)
+{
+    TGRichFillRounded(context, pill, pill.size.height / 2.0f, UIColorRGBA(0x000000, 0.45f));
+    UIGraphicsPushContext(context);
+    [[UIColor whiteColor] set];
+    [title drawAtPoint:CGPointMake(pill.origin.x + 10.0f, pill.origin.y + 4.0f) withFont:[UIFont boldSystemFontOfSize:14.0f]];
+    UIGraphicsPopContext();
+}
+
 @interface TGRichMessageDecorationViewModel ()
 {
     TGRichMessageTheme *_theme;
@@ -162,6 +178,66 @@ static void TGRichDrawDust(CGContextRef context, CGRect rect, UIColor *color)
 - (CGFloat)highlightOffset
 {
     return _theme.shadowOffset.height >= 0.0f ? 1.0f : -1.0f;
+}
+
+static void TGRichDecorationDrawOperation(CGContextRef context, TGModernDrawingOperation *operation)
+{
+    [(TGRichMessageDecorationViewModel *)operation.object drawInContext:context];
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (self.hidden || self.alpha < FLT_EPSILON)
+        return true;
+    for (TGRichDecoration *decoration in _decorations)
+    {
+        TGRichDecoration *copy = [TGRichDecoration decorationWithKind:decoration.kind rect:decoration.rect];
+        copy.value = decoration.value;
+        copy.flags = decoration.flags;
+        copy.object = [decoration.object isKindOfClass:[NSString class]] ? [decoration.object copy] : decoration.object;
+        copy.clipRect = decoration.clipRect;
+        TGRichMessageDecorationViewModel *snapshot = [[TGRichMessageDecorationViewModel alloc] initWithTheme:_theme];
+        snapshot.decorations = @[copy];
+        if (copy.kind == TGRichDecorationPullquote)
+        {
+            UIFont *font = [UIFont fontWithName:@"Georgia-Bold" size:34.0f] ?: [UIFont boldSystemFontOfSize:34.0f];
+            CGSize openingSize = [@"“" sizeWithFont:font];
+            CGSize closingSize = [@"”" sizeWithFont:font];
+            CGRect opening = CGRectMake(copy.rect.origin.x, copy.rect.origin.y - 8.0f, openingSize.width, openingSize.height);
+            CGRect closing = CGRectMake(CGRectGetMaxX(copy.rect) - closingSize.width, CGRectGetMaxY(copy.rect) - closingSize.height + 14.0f, closingSize.width, closingSize.height);
+            if (![recording addDrawingSnapshotInRect:CGRectInset(opening, -1.0f, -1.0f) drawing:^(CGContextRef context) { [snapshot drawInContext:context]; }] || ![recording addDrawingSnapshotInRect:CGRectInset(closing, -1.0f, -1.0f) drawing:^(CGContextRef context) { [snapshot drawInContext:context]; }])
+                return false;
+        }
+        else if (copy.kind == TGRichDecorationQuoteIcon || copy.kind == TGRichDecorationFileIcon || copy.kind == TGRichDecorationMath)
+        {
+            CGRect rect = CGRectInset(copy.rect, -32.0f, -32.0f);
+            if (![recording addDrawingSnapshotInRect:rect drawing:^(CGContextRef context) { [snapshot drawInContext:context]; }])
+                return false;
+        }
+        else if (copy.kind == TGRichDecorationMediaSpoiler && [copy.object isKindOfClass:[NSString class]] && [(NSString *)copy.object length] != 0)
+        {
+            NSString *title = copy.object;
+            copy.object = nil;
+            [recording addOperationWithFunction:&TGRichDecorationDrawOperation rect:copy.rect object:snapshot secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+            CGRect pill = TGRichSpoilerTitleRect(title, copy.rect);
+            if (![recording addDrawingSnapshotInRect:pill drawing:^(CGContextRef context)
+            {
+                CGContextSaveGState(context);
+                if (!CGRectIsNull(copy.clipRect))
+                {
+                    CGContextBeginPath(context);
+                    OGPlatformAddRoundedRectPath(context, copy.clipRect, _theme.branded ? 6.0f : 7.0f);
+                    CGContextClip(context);
+                }
+                TGRichDrawSpoilerTitle(context, title, pill);
+                CGContextRestoreGState(context);
+            }])
+                return false;
+        }
+        else
+            [recording addOperationWithFunction:&TGRichDecorationDrawOperation rect:copy.rect object:snapshot secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+    }
+    return true;
 }
 
 - (void)drawInContext:(CGContextRef)context
@@ -448,14 +524,7 @@ static void TGRichDrawDust(CGContextRef context, CGRect rect, UIColor *color)
             NSString *title = decoration.object;
             if ([title isKindOfClass:[NSString class]] && title.length != 0)
             {
-                UIFont *font = [UIFont boldSystemFontOfSize:14.0f];
-                CGSize size = [title sizeWithFont:font];
-                CGRect pill = CGRectMake(CGFloor(CGRectGetMidX(rect) - size.width / 2.0f - 10.0f), CGFloor(CGRectGetMidY(rect) - size.height / 2.0f - 4.0f), CGCeil(size.width + 20.0f), CGCeil(size.height + 8.0f));
-                TGRichFillRounded(context, pill, pill.size.height / 2.0f, UIColorRGBA(0x000000, 0.45f));
-                UIGraphicsPushContext(context);
-                [[UIColor whiteColor] set];
-                [title drawAtPoint:CGPointMake(pill.origin.x + 10.0f, pill.origin.y + 4.0f) withFont:font];
-                UIGraphicsPopContext();
+                TGRichDrawSpoilerTitle(context, title, TGRichSpoilerTitleRect(title, rect));
             }
             break;
         }

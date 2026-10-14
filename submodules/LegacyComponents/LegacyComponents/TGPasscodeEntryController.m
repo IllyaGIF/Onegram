@@ -47,6 +47,8 @@ typedef enum {
     UIBarButtonItem *_nextItem;
     bool _usingTouchId;
     bool _alternativeMethodSelected;
+    bool _passcodeCheckPending;
+    NSUInteger _passcodeCheckGeneration;
     
     NSTimer *_shouldWaitTimer;
     bool _keepStatusBarStyle;
@@ -243,6 +245,8 @@ typedef enum {
 
 - (void)prepareForDisappear
 {
+    _passcodeCheckGeneration++;
+    _passcodeCheckPending = false;
     _keepStatusBarStyle = false;
     if (iosMajorVersion() >= 7)
         [self setNeedsStatusBarAppearanceUpdate];
@@ -368,6 +372,9 @@ typedef enum {
 
 - (void)resetMode:(TGPasscodeEntryControllerMode)mode
 {
+    _passcodeCheckGeneration++;
+    _passcodeCheckPending = false;
+    _view.userInteractionEnabled = true;
     _candidatePasscode = nil;
     _mode = mode;
     
@@ -450,6 +457,32 @@ typedef enum {
         [self resetInvalidPasscodeAttempts];
     }
     
+    bool verifying = _mode == TGPasscodeEntryControllerModeVerifySimple || _mode == TGPasscodeEntryControllerModeVerifyComplex || ((_mode == TGPasscodeEntryControllerModeChangeSimpleToSimple || _mode == TGPasscodeEntryControllerModeChangeSimpleToComplex || _mode == TGPasscodeEntryControllerModeChangeComplexToSimple || _mode == TGPasscodeEntryControllerModeChangeComplexToComplex) && _submode == TGPasscodeEntryControllerSubmodeEnteringCurrent);
+    if (verifying && _checkCurrentPasscodeAsync != nil)
+    {
+        if (_passcodeCheckPending) return;
+        _passcodeCheckPending = true;
+        _view.userInteractionEnabled = false;
+        NSUInteger generation = ++_passcodeCheckGeneration;
+        __weak TGPasscodeEntryController *weakSelf = self;
+        _checkCurrentPasscodeAsync(passcode, ^(bool valid)
+        {
+            TGDispatchOnMainThread(^
+            {
+                __strong TGPasscodeEntryController *controller = weakSelf;
+                if (controller == nil || controller->_passcodeCheckGeneration != generation || !controller->_passcodeCheckPending) return;
+                controller->_passcodeCheckPending = false;
+                controller->_view.userInteractionEnabled = true;
+                [controller _processPasscode:passcode verified:valid];
+            });
+        });
+        return;
+    }
+    [self _processPasscode:passcode verified:verifying && _checkCurrentPasscode != nil && _checkCurrentPasscode(passcode)];
+}
+
+- (void)_processPasscode:(NSString *)passcode verified:(bool)verified
+{
     switch (_mode)
     {
         case TGPasscodeEntryControllerModeVerifySimple:
@@ -457,9 +490,9 @@ typedef enum {
         {
             _alternativeMethodSelected = false;
             
-            if (_checkCurrentPasscode)
+            if (_checkCurrentPasscode != nil || _checkCurrentPasscodeAsync != nil)
             {
-                if (_checkCurrentPasscode(passcode))
+                if (verified)
                 {
                     [self resetInvalidPasscodeAttempts];
                     
@@ -525,7 +558,7 @@ typedef enum {
             {
                 case TGPasscodeEntryControllerSubmodeEnteringCurrent:
                 {
-                    if (_checkCurrentPasscode && _checkCurrentPasscode(passcode))
+                    if (verified)
                     {
                         [self resetInvalidPasscodeAttempts];
                         

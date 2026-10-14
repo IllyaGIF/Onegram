@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 import hashlib
 import os
+import sys
 import subprocess
 import tarfile
 import urllib.request
-from generate import OUT
+from xcode_graph import ROOT
 
 URL='https://releases.llvm.org/3.2/clang%2Bllvm-3.2-x86_64-linux-ubuntu-12.04.tar.gz'
 SHA256='5b5a23eef95d88eecf4e2009b9afd17675a5455735fd6e1315a75d7b6543b347'
 DIRECTORY='clang+llvm-3.2-x86_64-linux-ubuntu-12.04'
 
 def main():
-    root=OUT/'toolchains'
+    root=ROOT/'theos'/'generated'/'toolchains'
     compiler=root/DIRECTORY/'bin/clang++'
     c_compiler=root/DIRECTORY/'bin/clang'
     marker=root/DIRECTORY/'.archive.sha256'
@@ -26,7 +27,10 @@ def main():
     if hashlib.sha256(archive.read_bytes()).hexdigest()!=SHA256:
         raise SystemExit('LLVM archive checksum mismatch: '+str(archive))
     with tarfile.open(archive) as tar:
-        tar.extractall(root,filter='data')
+        if sys.version_info >= (3, 12):
+            tar.extractall(root, filter='data')
+        else:
+            tar.extractall(root)
     subprocess.run([str(compiler),'--version'],check=True)
     marker.write_text(SHA256+'\n')
 

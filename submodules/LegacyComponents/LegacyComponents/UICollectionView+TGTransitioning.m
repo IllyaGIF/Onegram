@@ -43,7 +43,12 @@
     CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(updateProgress:)];
     
     __weak PSUICollectionView *weakSelf = self;
-    UICollectionViewTransitionLayout *transitionLayout = [self startInteractiveTransitionToCollectionViewLayout:layout completion:^(BOOL completed, BOOL finish)
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    UICollectionViewTransitionLayout *transitionLayout = [self tg_ios6_startInteractiveTransitionToCollectionViewLayout:layout completion:
+#else
+    UICollectionViewTransitionLayout *transitionLayout = [self startInteractiveTransitionToCollectionViewLayout:layout completion:
+#endif
+    ^(BOOL completed, BOOL finish)
     {
         __strong PSUICollectionView *strongSelf = weakSelf;
         NSMutableDictionary *data = [strongSelf tg_transitionData];
@@ -120,7 +125,11 @@ CGFloat TGQuadraticEaseInOut(CGFloat p)
     [link invalidate];
 
     [data removeObjectForKey:@"link"];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    [self tg_ios6_finishInteractiveTransition];
+#else
     [self finishInteractiveTransition];
+#endif
 }
 
 #pragma mark - Calculating transition values

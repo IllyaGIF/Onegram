@@ -347,7 +347,7 @@
             [self.preparedMessage.postingContext startMediaUploadForPreparedMessage:self.preparedMessage actor:self];
         
         if (self.preparedMessage.botContextResult != nil) {
-            self.cancelToken = [TGTelegraphInstance doConversationBotContextResult:_conversationId accessHash:_accessHash botContextResult:self.preparedMessage.botContextResult tmpId:self.preparedMessage.randomId replyMessageId:self.preparedMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+            self.cancelToken = [TGTelegraphInstance doConversationBotContextResult:_conversationId accessHash:_accessHash botContextResult:self.preparedMessage.botContextResult tmpId:self.preparedMessage.randomId replyMessageId:self.preparedMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
         } else if ([self.preparedMessage isKindOfClass:[TGPreparedTextMessage class]]) {
             TGPreparedTextMessage *textMessage = (TGPreparedTextMessage *)self.preparedMessage;
             
@@ -359,14 +359,14 @@
             
             _shouldPostAlmostDeliveredMessage = true;
             
-            self.cancelToken = [TGTelegraphInstance doConversationSendMessage:_conversationId accessHash:_accessHash messageText:textMessage.text messageGuid:nil tmpId:textMessage.randomId replyMessageId:textMessage.replyMessage.mid disableLinkPreviews:textMessage.disableLinkPreviews postAsChannel:_postAsChannel notifyMembers:_notifyMembers entities:[TGModernSendCommonMessageActor convertEntities:textMessage.entities] actor:self];
+            self.cancelToken = [TGTelegraphInstance doConversationSendMessage:_conversationId accessHash:_accessHash messageText:textMessage.text messageGuid:nil tmpId:textMessage.randomId replyMessageId:textMessage.replyMessageId disableLinkPreviews:textMessage.disableLinkPreviews postAsChannel:_postAsChannel notifyMembers:_notifyMembers entities:[TGModernSendCommonMessageActor convertEntities:textMessage.entities] actor:self];
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedMapMessage class]])
         {
             TGPreparedMapMessage *mapMessage = (TGPreparedMapMessage *)self.preparedMessage;
 
             [self setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-            self.cancelToken = [TGTelegraphInstance doConversationSendLocation:_conversationId accessHash:_accessHash latitude:mapMessage.latitude longitude:mapMessage.longitude venue:mapMessage.venue period:mapMessage.period messageGuid:nil tmpId:mapMessage.randomId replyMessageId:mapMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+            self.cancelToken = [TGTelegraphInstance doConversationSendLocation:_conversationId accessHash:_accessHash latitude:mapMessage.latitude longitude:mapMessage.longitude venue:mapMessage.venue period:mapMessage.period messageGuid:nil tmpId:mapMessage.randomId replyMessageId:mapMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedLocalImageMessage class]])
         {
@@ -397,7 +397,7 @@
             }
             else
             {
-                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remotePhoto messageGuid:nil tmpId:remoteImageMessage.randomId messageText:remoteImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:remoteImageMessage.entities] replyMessageId:remoteImageMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remotePhoto messageGuid:nil tmpId:remoteImageMessage.randomId messageText:remoteImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:remoteImageMessage.entities] replyMessageId:remoteImageMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
             }
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedLocalVideoMessage class]])
@@ -446,7 +446,7 @@
             }
             else
             {
-                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remoteDocument messageGuid:nil tmpId:remoteVideoMessage.randomId messageText:remoteVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:remoteVideoMessage.entities] replyMessageId:remoteVideoMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remoteDocument messageGuid:nil tmpId:remoteVideoMessage.randomId messageText:remoteVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:remoteVideoMessage.entities] replyMessageId:remoteVideoMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
             }
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedLocalDocumentMessage class]])
@@ -516,7 +516,7 @@
                         }
                         else
                         {
-                            strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:remoteDocument messageGuid:nil tmpId:strongSelf.preparedMessage.randomId messageText:localDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localDocumentMessage.entities] replyMessageId:strongSelf.preparedMessage.replyMessage.mid postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
+                            strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:remoteDocument messageGuid:nil tmpId:strongSelf.preparedMessage.randomId messageText:localDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localDocumentMessage.entities] replyMessageId:strongSelf.preparedMessage.replyMessageId postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
                         }
                     } else {
                         [strongSelf setupFailTimeout:[TGModernSendCommonMessageActor defaultTimeoutInterval]];
@@ -578,7 +578,7 @@
             }
             
             [self setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remoteDocument messageGuid:nil tmpId:remoteDocumentMessage.randomId messageText:remoteDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:remoteDocumentMessage.entities] replyMessageId:remoteDocumentMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remoteDocument messageGuid:nil tmpId:remoteDocumentMessage.randomId messageText:remoteDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:remoteDocumentMessage.entities] replyMessageId:remoteDocumentMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedForwardedMessage class]])
         {
@@ -593,7 +593,7 @@
                 [self _fail];
             } else {
                 [self setupFailTimeout:[TGModernSendCommonMessageActor defaultTimeoutInterval]];
-                int32_t topMessageId = forwardedMessage.replyMessage != nil ? forwardedMessage.replyMessage.mid : 0;
+                int32_t topMessageId = forwardedMessage.forumTopicId != 0 ? forwardedMessage.forumTopicId : (forwardedMessage.replyMessage != nil ? forwardedMessage.replyMessageId : 0);
                 self.cancelToken = [TGTelegraphInstance doConversationForwardMessage:_conversationId accessHash:_accessHash messageId:forwardedMessage.forwardMid fromPeer:forwardedMessage.forwardSourcePeerId fromPeerAccessHash:fromPeerAccessHash topMessageId:topMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers tmpId:forwardedMessage.randomId actor:self];
             }
         }
@@ -609,7 +609,7 @@
             inputContact.phone_number = contactMessage.phoneNumber;
             inputContact.vcard = contactMessage.vcard ?: @"";
             
-            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputContact messageGuid:nil tmpId:contactMessage.randomId messageText:nil entities:nil replyMessageId:contactMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputContact messageGuid:nil tmpId:contactMessage.randomId messageText:nil entities:nil replyMessageId:contactMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
         }
         else if ([self.preparedMessage isKindOfClass:[TGPreparedDownloadImageMessage class]])
         {
@@ -706,7 +706,7 @@
                         }
                         
                         [strongSelf setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-                        strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:remoteDocument messageGuid:nil tmpId:externalGifMessage.randomId messageText:externalGifMessage.text entities:[TGModernSendCommonMessageActor convertEntities:externalGifMessage.entities] replyMessageId:externalGifMessage.replyMessage.mid postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
+                        strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:remoteDocument messageGuid:nil tmpId:externalGifMessage.randomId messageText:externalGifMessage.text entities:[TGModernSendCommonMessageActor convertEntities:externalGifMessage.entities] replyMessageId:externalGifMessage.replyMessageId postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
                     } else {
                         TGLog(@"Webpage doesn't contain document");
                         [strongSelf _fail];
@@ -740,7 +740,7 @@
                         }
                         
                         [strongSelf setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-                        strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:remoteDocument messageGuid:nil tmpId:externalDocumentMessage.randomId messageText:externalDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:externalDocumentMessage.entities] replyMessageId:externalDocumentMessage.replyMessage.mid postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
+                        strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:remoteDocument messageGuid:nil tmpId:externalDocumentMessage.randomId messageText:externalDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:externalDocumentMessage.entities] replyMessageId:externalDocumentMessage.replyMessageId postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
                     } else {
                         TGLog(@"Webpage doesn't contain document");
                         [strongSelf _fail];
@@ -774,7 +774,7 @@
                         }
                         
                         [strongSelf setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-                        strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:inputMedia messageGuid:nil tmpId:externalImageMessage.randomId messageText:externalImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:externalImageMessage.entities] replyMessageId:externalImageMessage.replyMessage.mid postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
+                        strongSelf.cancelToken = [TGTelegraphInstance doConversationSendMedia:strongSelf->_conversationId accessHash:strongSelf->_accessHash media:inputMedia messageGuid:nil tmpId:externalImageMessage.randomId messageText:externalImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:externalImageMessage.entities] replyMessageId:externalImageMessage.replyMessageId postAsChannel:strongSelf->_postAsChannel notifyMembers:strongSelf->_notifyMembers actor:strongSelf];
                     } else {
                         TGLog(@"Webpage doesn't contain photo");
                         [strongSelf _fail];
@@ -893,7 +893,7 @@
                                 SSignal *readySignal = assetImageMessage.postingContext ? [assetImageMessage.postingContext readyToPostPreparedMessage:assetImageMessage] : [SSignal complete];
                                 [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                                 {
-                                    self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remotePhoto messageGuid:nil tmpId:assetImageMessage.randomId messageText:assetImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetImageMessage.entities] replyMessageId:assetImageMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                                    self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:remotePhoto messageGuid:nil tmpId:assetImageMessage.randomId messageText:assetImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetImageMessage.entities] replyMessageId:assetImageMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                                     [assetImageMessage.postingContext notifyPostedMessage:assetImageMessage];
                                 }]];
                             }
@@ -1218,7 +1218,7 @@
                                 [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                                 {
                                     [self setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-                                    self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputMediaDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                                    self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputMediaDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                                     [assetVideoMessage.postingContext notifyPostedMessage:assetVideoMessage];
                                 }]];
                             }
@@ -1752,7 +1752,7 @@
         }
         
         [self setupFailTimeout:[TGModernSendMessageActor defaultTimeoutInterval]];
-        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputGameMedia messageGuid:nil tmpId:gameMessage.randomId messageText:nil entities:nil replyMessageId:gameMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:inputGameMedia messageGuid:nil tmpId:gameMessage.randomId messageText:nil entities:nil replyMessageId:gameMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
     }
     else
         [self _fail];
@@ -1956,7 +1956,7 @@
                     SSignal *readySignal = localImageMessage.postingContext ? [localImageMessage.postingContext readyToPostPreparedMessage:localImageMessage] : [SSignal complete];
                     [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                     {
-                        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedPhoto messageGuid:nil tmpId:localImageMessage.randomId messageText:localImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localImageMessage.entities] replyMessageId:localImageMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedPhoto messageGuid:nil tmpId:localImageMessage.randomId messageText:localImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localImageMessage.entities] replyMessageId:localImageMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                         [localImageMessage.postingContext notifyPostedMessage:localImageMessage];
                     }]];
                 }
@@ -2041,7 +2041,7 @@
             }
             else
             {
-                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:localVideoMessage.randomId messageText:localVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localVideoMessage.entities] replyMessageId:localVideoMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:localVideoMessage.randomId messageText:localVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localVideoMessage.entities] replyMessageId:localVideoMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
             }
         }
         else
@@ -2085,7 +2085,7 @@
             }
             else
             {
-                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:localDocumentMessage.randomId messageText:localDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localDocumentMessage.entities] replyMessageId:localDocumentMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:localDocumentMessage.randomId messageText:localDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:localDocumentMessage.entities] replyMessageId:localDocumentMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
             }
         }
         else
@@ -2101,7 +2101,7 @@
             TLInputMediaUploadedPhoto *uploadedPhoto = [[TLInputMediaUploadedPhoto alloc] init];
             uploadedPhoto.file = fileInfo[@"file"];
             
-            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedPhoto messageGuid:nil tmpId:downloadImageMessage.randomId messageText:downloadImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:downloadImageMessage.entities] replyMessageId:downloadImageMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedPhoto messageGuid:nil tmpId:downloadImageMessage.randomId messageText:downloadImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:downloadImageMessage.entities] replyMessageId:downloadImageMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
         }
         else
             [self _fail];
@@ -2133,7 +2133,7 @@
                         SSignal *readySignal = assetImageMessage.postingContext ? [assetImageMessage.postingContext readyToPostPreparedMessage:assetImageMessage] : [SSignal complete];
                         [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                         {
-                            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedPhoto messageGuid:nil tmpId:assetImageMessage.randomId messageText:assetImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetImageMessage.entities] replyMessageId:assetImageMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedPhoto messageGuid:nil tmpId:assetImageMessage.randomId messageText:assetImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetImageMessage.entities] replyMessageId:assetImageMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                             [assetImageMessage.postingContext notifyPostedMessage:assetImageMessage];
                         }]];
                     }
@@ -2218,7 +2218,7 @@
                     SSignal *readySignal = assetImageMessage.postingContext ? [assetImageMessage.postingContext readyToPostPreparedMessage:assetImageMessage] : [SSignal complete];
                     [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                     {
-                        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetImageMessage.randomId messageText:assetImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetImageMessage.entities] replyMessageId:assetImageMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetImageMessage.randomId messageText:assetImageMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetImageMessage.entities] replyMessageId:assetImageMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                         [assetImageMessage.postingContext notifyPostedMessage:assetImageMessage];
                     }]];
                 }
@@ -2282,7 +2282,7 @@
                 
                 if (assetVideoMessage.roundMessage)
                 {
-                    self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                    self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                 }
                 else if (assetVideoMessage.groupedId == 0)
                 {
@@ -2295,7 +2295,7 @@
                         SSignal *readySignal = assetVideoMessage.postingContext ? [assetVideoMessage.postingContext readyToPostPreparedMessage:assetVideoMessage] : [SSignal complete];
                         [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                         {
-                            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                            self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                             [assetVideoMessage.postingContext notifyPostedMessage:assetVideoMessage];
                         }]];
                     }
@@ -2391,7 +2391,7 @@
                     SSignal *readySignal = assetVideoMessage.postingContext ? [assetVideoMessage.postingContext readyToPostPreparedMessage:assetVideoMessage] : [SSignal complete];
                     [self.disposables add:[[readySignal deliverOn:[SQueue wrapConcurrentNativeQueue:[ActionStageInstance() globalStageDispatchQueue]]] startWithNext:nil completed:^
                     {
-                        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                        self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:assetVideoMessage.randomId messageText:assetVideoMessage.text entities:[TGModernSendCommonMessageActor convertEntities:assetVideoMessage.entities] replyMessageId:assetVideoMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
                         [assetVideoMessage.postingContext notifyPostedMessage:assetVideoMessage];
                     }]];
                 }
@@ -2437,7 +2437,7 @@
             }
             else
             {
-                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:downloadDocumentMessage.randomId messageText:downloadDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:downloadDocumentMessage.entities] replyMessageId:downloadDocumentMessage.replyMessage.mid postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
+                self.cancelToken = [TGTelegraphInstance doConversationSendMedia:_conversationId accessHash:_accessHash media:uploadedDocument messageGuid:nil tmpId:downloadDocumentMessage.randomId messageText:downloadDocumentMessage.text entities:[TGModernSendCommonMessageActor convertEntities:downloadDocumentMessage.entities] replyMessageId:downloadDocumentMessage.replyMessageId postAsChannel:_postAsChannel notifyMembers:_notifyMembers actor:self];
             }
         }
         else

@@ -1,4 +1,5 @@
 #import "TGModernConversationController.h"
+#import "TGRichMessageInlineImageStore.h"
 #import "TGPinnedMessageTitlePanel.h"
 #import "../OnegramRuntime/OGRuntime.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
@@ -736,6 +737,12 @@ TGImagePickerControllerDelegate, TGSearchBarDelegate, TGKeyCommandResponder, UID
     bool _historyTargetOffsetValid;
     CGFloat _historyTargetOffset;
     bool _prerenderValid;
+    CGFloat _prerenderContainerWidth;
+    int _prerenderDirection;
+    NSArray *_prerenderPendingItems;
+    NSUInteger _prerenderPendingIndex;
+    NSUInteger _prerenderGeneration;
+    bool _prerenderPreparationScheduled;
     CGFloat _prerenderOffset;
     CGFloat _prerenderPredictionOffset;
     CGFloat _scrollVelocityY;
@@ -2367,6 +2374,11 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
 
 - (void)viewWillDisappear:(BOOL)animated
 {
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     _brandedMusicPlayerVisible = false;
     [self _layoutBrandedMusicPlayer];
     if (_ogRuntimeInteractionActive)
@@ -3644,6 +3656,71 @@ struct TGModernConversationPrerenderCandidateComparator
     }
 };
 
+- (void)_schedulePrerenderModelPreparation
+{
+    if (_prerenderPreparationScheduled || _prerenderPendingIndex >= _prerenderPendingItems.count)
+        return;
+    _prerenderPreparationScheduled = true;
+    NSUInteger generation = _prerenderGeneration;
+    __weak TGModernConversationController *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.008 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        __strong TGModernConversationController *controller = weakSelf;
+        if (controller == nil || controller->_prerenderGeneration != generation)
+            return;
+        controller->_prerenderPreparationScheduled = false;
+        if (controller->_collectionView.window == nil || controller->_prerenderPendingIndex >= controller->_prerenderPendingItems.count)
+            return;
+        NSDictionary *entry = controller->_prerenderPendingItems[controller->_prerenderPendingIndex++];
+        TGMessageModernConversationItem *item = entry[@"item"];
+        NSUInteger index = [entry[@"index"] unsignedIntegerValue];
+        if (index < controller->_items.count && controller->_items[index] == item && [item boundCell] == nil && ABS(controller->_collectionView.bounds.size.width - controller->_prerenderContainerWidth) < FLT_EPSILON)
+        {
+#if defined(ONEGRAM_DIAGNOSTICS)
+            CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+#endif
+            [TGRichMessageInlineImageStore performWithoutStartingRequests:^
+            {
+                TGModernViewModel *viewModel = [item viewModelForContainerSize:CGSizeMake(controller->_prerenderContainerWidth, CGFLOAT_MAX) viewStorage:controller->_viewStorage];
+                if ([viewModel isKindOfClass:[TGMessageViewModel class]])
+                    [(TGMessageViewModel *)viewModel prepareForAsynchronousContentDrawing];
+                NSMutableArray *models = [[NSMutableArray alloc] init];
+                TGModernConversationCollectFlatteningModels(viewModel, models, 0);
+                NSUInteger used = 0;
+                for (TGModernFlatteningViewModel *model in controller->_prerenderModels)
+                    used += [model estimatedContentsBytes];
+                NSUInteger budget = [TGModernFlatteningViewModel prerenderBudgetBytes];
+                for (TGModernFlatteningViewModel *model in models)
+                {
+                    if ([controller->_prerenderModels containsObject:model]) continue;
+                    NSUInteger bytes = [model estimatedContentsBytes];
+                    if (used != 0 && bytes > budget - MIN(budget, used)) break;
+                    used += bytes;
+                    [controller->_prerenderModels addObject:model];
+                    [model prepareContentsAsynchronouslyWithPriority:[entry[@"priority"] doubleValue] fromBottomEdge:[entry[@"bottom"] boolValue]];
+#if defined(ONEGRAM_DIAGNOSTICS)
+                    TGModernConversationScrollStatPrerenderItems++;
+#endif
+                }
+                if (used >= budget)
+                {
+                    controller->_prerenderPendingItems = nil;
+                    controller->_prerenderPendingIndex = 0;
+                }
+            }];
+#if defined(ONEGRAM_DIAGNOSTICS)
+            TGModernConversationScrollStatPrerenderTime += CFAbsoluteTimeGetCurrent() - start;
+#endif
+        }
+        if (controller->_prerenderPendingIndex >= controller->_prerenderPendingItems.count)
+        {
+            controller->_prerenderPendingItems = nil;
+            controller->_prerenderPendingIndex = 0;
+        }
+        [controller _schedulePrerenderModelPreparation];
+    });
+}
+
 - (void)_updateContentPrerendering:(bool)symmetric
 {
     if (_collectionView == nil || _collectionLayout == nil)
@@ -3660,14 +3737,18 @@ struct TGModernConversationPrerenderCandidateComparator
     CGFloat prediction = symmetric ? offsetY : [self _predictedHistoryOffset];
     CGFloat delta = offsetY - _prerenderOffset;
     CGFloat predictedDelta = prediction - _prerenderPredictionOffset;
-    if (!symmetric && _prerenderValid && _prerenderItemCount == itemCount && ABS(delta) < height * 0.55f && ABS(predictedDelta) < height * 0.8f)
+    int direction = symmetric ? 0 : (_scrollVelocityY > 60.0f ? 1 : (_scrollVelocityY < -60.0f ? -1 : (delta >= 0.0f ? 1 : -1)));
+    if (!symmetric && _prerenderValid && _prerenderItemCount == itemCount && _prerenderContainerWidth == bounds.size.width && _prerenderDirection == direction && ABS(delta) < height * 0.55f && ABS(predictedDelta) < height * 0.8f)
         return;
     _prerenderValid = true;
     _prerenderOffset = offsetY;
     _prerenderPredictionOffset = prediction;
     _prerenderItemCount = itemCount;
 
-    int direction = symmetric ? 0 : (_scrollVelocityY > 60.0f ? 1 : (_scrollVelocityY < -60.0f ? -1 : (delta >= 0.0f ? 1 : -1)));
+    _prerenderContainerWidth = bounds.size.width;
+    _prerenderDirection = direction;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
     CGFloat minY = MIN(offsetY, prediction) - height * (direction < 0 ? 2.5f : 0.8f);
     CGFloat maxY = MAX(offsetY, prediction) + height * (direction > 0 ? 2.5f : 0.8f);
     if (direction == 0)
@@ -3714,13 +3795,23 @@ struct TGModernConversationPrerenderCandidateComparator
     std::vector<bool> edges;
     priorities.reserve(MIN((NSUInteger)candidates.size(), maxCandidates));
     edges.reserve(MIN((NSUInteger)candidates.size(), maxCandidates));
-    for (NSUInteger index = 0; index < candidates.size() && index < maxCandidates; index++)
+    NSMutableArray *pendingItems = [[NSMutableArray alloc] init];
+    NSUInteger considered = 0;
+    for (NSUInteger index = 0; index < candidates.size() && considered < maxCandidates; index++)
     {
         TGModernConversationPrerenderCandidate candidate = candidates[index];
         TGModernConversationItem *item = _items[candidate.index];
         TGModernViewModel *viewModel = [item viewModel];
         if (viewModel == nil)
+        {
+            if ([item isKindOfClass:[TGMessageModernConversationItem class]])
+            {
+                [pendingItems addObject:@{@"item": item, @"index": @(candidate.index), @"priority": @(candidate.priority), @"bottom": @(candidate.fromBottomEdge)}];
+                considered++;
+            }
             continue;
+        }
+        considered++;
         if ([viewModel isKindOfClass:[TGMessageViewModel class]])
             [(TGMessageViewModel *)viewModel prepareForAsynchronousContentDrawing];
         NSMutableArray *itemModels = [[NSMutableArray alloc] init];
@@ -3752,10 +3843,18 @@ struct TGModernConversationPrerenderCandidateComparator
     NSUInteger modelIndex = 0;
     for (TGModernFlatteningViewModel *model in models)
     {
-        [model prepareContentsAsynchronouslyWithPriority:priorities[modelIndex] fromBottomEdge:edges[modelIndex]];
+        CGFloat priority = priorities[modelIndex];
+        bool fromBottom = edges[modelIndex];
+        [TGRichMessageInlineImageStore performWithoutStartingRequests:^
+        {
+            [model prepareContentsAsynchronouslyWithPriority:priority fromBottomEdge:fromBottom];
+        }];
         modelIndex++;
     }
     _prerenderModels = models;
+    _prerenderPendingItems = usedBytes >= budget ? nil : [pendingItems copy];
+    _prerenderPendingIndex = 0;
+    [self _schedulePrerenderModelPreparation];
 #if defined(ONEGRAM_DIAGNOSTICS)
     TGModernConversationScrollStatPrerenderTime += CFAbsoluteTimeGetCurrent() - prerenderStart;
     TGModernConversationScrollStatPrerenderCount++;
@@ -4041,6 +4140,12 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)replaceItems:(NSArray *)newItems messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     [self _preloadAuthorsForItems:newItems];
     _messageIdForVisibleHoleDirection = messageIdForVisibleHoleDirection;
     
@@ -4127,6 +4232,12 @@ struct TGModernConversationPrerenderCandidateComparator
 }
 
 - (void)replaceItems:(NSArray *)newItems positionAtMessageId:(int32_t)positionAtMessageId peerId:(int64_t)positionAtPeerId expandAt:(int32_t)expandMessageId jump:(bool)jump top:(bool)top messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection scrollBackMessageId:(int32_t)scrollBackMessageId animated:(bool)animated {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
 #if defined(ONEGRAM_ARMV6)
     _initialMessagePositioningPending = false;
 #endif
@@ -4457,6 +4568,12 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)replaceItemsWithFastScroll:(NSArray *)newItems intent:(TGModernConversationInsertItemIntent)intent scrollToMessageId:(int32_t)scrollToMessageId peerId:(int64_t)scrollToPeerId scrollBackMessageId:(int32_t)scrollBackMessageId animated:(bool)animated
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     bool scrollDown = true;
     if (scrollToMessageId != 0)
     {
@@ -4655,6 +4772,12 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)replaceItems:(NSArray *)items atIndices:(NSIndexSet *)indices
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     [self _preloadAuthorsForItems:items];
     [_items replaceObjectsAtIndexes:indices withObjects:items];
     [_collectionView reloadData];
@@ -4663,6 +4786,12 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)deleteItemsAtIndices:(NSIndexSet *)indexSet animated:(bool)animated
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     [self _deleteItemsAtIndices:indexSet animated:animated animationFactor:0.7f];
 }
 
@@ -4899,11 +5028,23 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)insertItems:(NSArray *)itemsArray atIndices:(NSIndexSet *)indexSet animated:(bool)animated intent:(TGModernConversationInsertItemIntent)intent
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     [self insertItems:itemsArray atIndices:indexSet animated:animated intent:intent removeAtIndices:nil];
 }
 
 - (void)insertItems:(NSArray *)itemsArray atIndices:(NSIndexSet *)indexSet animated:(bool)animated intent:(TGModernConversationInsertItemIntent)intent removeAtIndices:(NSIndexSet *)removeIndexSet
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     if (removeIndexSet.count != 0) {
         [self _deleteItemsAtIndices:removeIndexSet animated:animated animationFactor:0.7f];
     }
@@ -5165,6 +5306,12 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)updateItemAtIndex:(NSUInteger)index toItem:(TGModernConversationItem *)updatedItem delayAvailability:(bool)delayAvailability animated:(bool)animated animateTransition:(bool)__unused animateTransition force:(bool)force
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     if (index == NSNotFound || index >= _items.count || updatedItem == nil) {
         return;
     }
@@ -5485,6 +5632,12 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)updateItems:(NSArray *)updatedItems atIndices:(NSArray *)indices
 {
+    _prerenderValid = false;
+    _prerenderGeneration++;
+    _prerenderPreparationScheduled = false;
+    _prerenderPendingItems = nil;
+    _prerenderPendingIndex = 0;
+
     if (indices.count == 0)
         return;
     

@@ -30,6 +30,7 @@ typedef enum {
 @property (nonatomic, copy) void (^completion)(NSString *);
 @property (nonatomic, copy) void (^touchIdCompletion)();
 @property (nonatomic, copy) bool (^checkCurrentPasscode)(NSString *);
+@property (nonatomic, copy) void (^checkCurrentPasscodeAsync)(NSString *, void (^)(bool));
 @property (nonatomic, copy) void (^updateAttemptData)(TGPasscodeEntryAttemptData *);
 @property (nonatomic) bool allowTouchId;
 

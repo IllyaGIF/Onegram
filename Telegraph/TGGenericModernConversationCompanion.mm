@@ -544,6 +544,17 @@ static TGGenericModernConversationCompanion *TGIOS4ResolveGenericModernConversat
     return nil;
 }
 
+- (TGMessage *)_replyMessageForMessageId:(int32_t)messageId
+{
+    if (messageId == 0)
+        return nil;
+    return [TGDatabaseInstance() loadMessageWithMid:messageId peerId:_conversationId];
+}
+
+- (void)_setupPreparedMessage:(TGPreparedMessage *)__unused message
+{
+}
+
 - (void)_setupOutgoingMessage:(TGMessage *)__unused message {
     
 }
@@ -1945,7 +1956,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     
     TGMessage *replyMessage = nil;
     if (replyMessageId != 0)
-        replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+        replyMessage = [self _replyMessageForMessageId:replyMessageId];
     
     TGReplyMarkupAttachment *replyMarkup = nil;
     if (botReplyMarkup != nil) {
@@ -2086,7 +2097,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     {
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         
         TGPreparedMapMessage *preparedMessage = [[TGPreparedMapMessage alloc] initWithLatitude:latitude longitude:longitude venue:venue period:period replyMessage:replyMessage replyMarkup:botReplyMarkup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:botReplyMarkup]];
         preparedMessage.botContextResult = botContextResult;
@@ -2654,7 +2665,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     {
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         
         NSMutableArray *preparedMessages = [[NSMutableArray alloc] init];
         
@@ -2867,7 +2878,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
 {
     TGMessage *replyMessage = nil;
     if (replyMessageId != 0)
-        replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+        replyMessage = [self _replyMessageForMessageId:replyMessageId];
     
     CGSize thumbnailSize = CGSizeZero;
     if (previewImage != nil)
@@ -2930,7 +2941,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         if (replyMessage != nil)
         {
             TGReplyMessageMediaAttachment *replyMedia = [[TGReplyMessageMediaAttachment alloc] init];
@@ -2964,7 +2975,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         if (replyMessage != nil)
         {
             TGReplyMessageMediaAttachment *replyMedia = [[TGReplyMessageMediaAttachment alloc] init];
@@ -2998,7 +3009,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     {
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         
         NSMutableArray *preparedMessages = [[NSMutableArray alloc] init];
         
@@ -3074,7 +3085,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     {
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         
         TGAudioWaveform *resultWaveform = waveform;
         if (resultWaveform == nil) {
@@ -3095,7 +3106,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     {
         TGMessage *replyMessage = nil;
         if (replyMessageId != 0)
-            replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+            replyMessage = [self _replyMessageForMessageId:replyMessageId];
         
         int32_t fileSize = 0;
         if ([media.videoInfo urlWithQuality:0 actualQuality:NULL actualSize:&fileSize] != nil)
@@ -3119,7 +3130,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     
     TGMessage *replyMessage = nil;
     if (replyMessageId != 0)
-        replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+        replyMessage = [self _replyMessageForMessageId:replyMessageId];
     
     TGPreparedContactMessage *contactMessage = nil;
     
@@ -3150,7 +3161,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     
     TGMessage *replyMessage = nil;
     if (replyMessageId != 0) {
-        replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+        replyMessage = [self _replyMessageForMessageId:replyMessageId];
     }
     
     TGPreparedGameMessage *gameMessage = [[TGPreparedGameMessage alloc] initWithGame:gameMedia replyMessage:replyMessage replyMarkup:botReplyMarkup == nil ? nil : [[TGReplyMarkupAttachment alloc] initWithReplyMarkup:botReplyMarkup]];
@@ -3394,6 +3405,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     
     for (TGMessage *message in messages)
     {
+        NSUInteger preparedStart = preparedMessages.count;
         bool messageAdded = false;
         
         TGBotContextResultAttachment *botContextResult = nil;
@@ -3417,6 +3429,11 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 TGPreparedForwardedMessage *forwardedMessage = [[TGPreparedForwardedMessage alloc] initWithInnerMessage:message];
                 if (!copyAssetsData)
                     forwardedMessage.replacingMid = message.mid;
+                if (!copyAssetsData)
+                {
+                    id topic = message.contentProperties[@"ios6ForumTopicId"];
+                    forwardedMessage.forumTopicId = [topic isKindOfClass:[TGMessageForumTopicContentProperty class]] ? ((TGMessageForumTopicContentProperty *)topic).topicId : ([topic isKindOfClass:[NSNumber class]] ? [topic intValue] : 0);
+                }
                 [preparedMessages addObject:forwardedMessage];
                 
                 messageAdded = true;
@@ -3431,7 +3448,14 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         {
             if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]])
             {
-                replyMessage = ((TGReplyMessageMediaAttachment *)attachment).replyMessage;
+                TGReplyMessageMediaAttachment *reply = (TGReplyMessageMediaAttachment *)attachment;
+                replyMessage = reply.replyMessage != nil ? reply.replyMessage : [self _replyMessageForMessageId:reply.replyMessageId];
+                if (replyMessage == nil && reply.replyMessageId != 0 && message.contentProperties[@"ios6ForumTopicId"] != nil)
+                {
+                    replyMessage = [[TGMessage alloc] init];
+                    replyMessage.mid = reply.replyMessageId;
+                    replyMessage.cid = message.cid;
+                }
                 break;
             }
         }
@@ -3730,6 +3754,13 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
                 textMessage.replacingMid = message.mid;
             [preparedMessages addObject:textMessage];
         }
+        if (!copyAssetsData)
+        {
+            id topic = message.contentProperties[@"ios6ForumTopicId"];
+            int32_t topicId = [topic isKindOfClass:[TGMessageForumTopicContentProperty class]] ? ((TGMessageForumTopicContentProperty *)topic).topicId : ([topic isKindOfClass:[NSNumber class]] ? [topic intValue] : 0);
+            for (NSUInteger index = preparedStart; index < preparedMessages.count; index++)
+                ((TGPreparedMessage *)preparedMessages[index]).forumTopicId = topicId;
+        }
     }
     
     return preparedMessages;
@@ -3828,7 +3859,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
 {
     TGMessage *replyMessage = nil;
     if (replyMessageId != 0)
-        replyMessage = [TGDatabaseInstance() loadMessageWithMid:replyMessageId peerId:_conversationId];
+        replyMessage = [self _replyMessageForMessageId:replyMessageId];
     
     NSMutableArray *preparedMessages = [[NSMutableArray alloc] init];
     
@@ -4009,6 +4040,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
     
     for (TGPreparedMessage *preparedMessage in preparedMessages)
     {
+        [self _setupPreparedMessage:preparedMessage];
         int32_t minLifetime = 0;
         
         if ([preparedMessage isKindOfClass:[TGPreparedLocalDocumentMessage class]]) {
@@ -4140,6 +4172,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
             message.deliveryState = TGMessageDeliveryStatePending;
             message.sortKey = TGMessageSortKeyMake(_conversationId, TGMessageSpaceImportant, (int32_t)message.date, message.mid);
             message.cid = _conversationId;
+            [preparedMessage applyForumTopicToMessage:message];
             [self _setupOutgoingMessage:message];
             
             bool isMedia = false;
@@ -4251,6 +4284,7 @@ static NSArray *TGIOS6MessageEntitiesForPart(NSArray *entities, NSRange partRang
         message.deliveryState = TGMessageDeliveryStatePending;
         message.sortKey = TGMessageSortKeyMake(_conversationId, TGMessageSpaceImportant, (int32_t)message.date, message.mid);
         message.cid = _conversationId;
+        [preparedMessage applyForumTopicToMessage:message];
         [self _setupOutgoingMessage:message];
         
         if ([self _messagesNeedRandomId])

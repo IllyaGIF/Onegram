@@ -1924,6 +1924,8 @@ static NSString *TGRichMessageFormatNumber(NSInteger value, NSString *type)
 
 - (void)bindViewToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage
 {
+    if (_inlineImageKeys.count != 0)
+        [_contentModel setNeedsSubmodelContentsUpdate];
     _viewStorage = viewStorage;
     [super bindViewToContainer:container viewStorage:viewStorage];
     [self bindImageModelsToContainer:[_contentModel boundView] viewStorage:viewStorage offset:CGPointZero];
@@ -1931,6 +1933,8 @@ static NSString *TGRichMessageFormatNumber(NSInteger value, NSString *type)
 
 - (void)bindSpecialViewsToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage atItemPosition:(CGPoint)itemPosition
 {
+    if (_inlineImageKeys.count != 0)
+        [_contentModel setNeedsSubmodelContentsUpdate];
     _viewStorage = viewStorage;
     [super bindSpecialViewsToContainer:container viewStorage:viewStorage atItemPosition:itemPosition];
     [self bindImageModelsToContainer:container viewStorage:viewStorage offset:CGPointMake(itemPosition.x + _contentModel.frame.origin.x, itemPosition.y + _contentModel.frame.origin.y)];

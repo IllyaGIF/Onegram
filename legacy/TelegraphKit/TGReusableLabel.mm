@@ -18,6 +18,8 @@ typedef std::tr1::unordered_map<int, std::tr1::unordered_map<int, int> > TGReusa
 #include <map>
 #include <string>
 #include <pthread.h>
+#include <stdint.h>
+#include <math.h>
 
 typedef struct
 {
@@ -202,7 +204,7 @@ static bool TGReusableLabelRangeIsCovered(NSAttributedString *string, NSRange ra
     return [value isKindOfClass:[TGReusableLabelRunDecoration class]] && ((TGReusableLabelRunDecoration *)value).coverColor != nil;
 }
 
-static void TGReusableLabelDrawLineDecorations(CGContextRef context, CFArrayRef glyphRuns, CGPoint lineOrigin, bool background)
+static void TGReusableLabelDrawLineDecorations(CGContextRef context, CFArrayRef glyphRuns, CGPoint lineOrigin, bool background, NSDictionary *snapshots, CFIndex lineIndex)
 {
     CFIndex count = CFArrayGetCount(glyphRuns);
     TGReusableLabelRunDecoration *current = nil;
@@ -228,7 +230,20 @@ static void TGReusableLabelDrawLineDecorations(CGContextRef context, CFArrayRef 
                 {
                     CGContextSaveGState(context);
                     CGContextSetTextMatrix(context, CGAffineTransformIdentity);
-                    decoration.drawContent(context, runRect);
+                    if (snapshots != nil)
+                    {
+                        NSDictionary *snapshot = snapshots[@(((uint64_t)lineIndex << 32) | (uint32_t)index)];
+                        if (snapshot != nil)
+                        {
+                            CGRect imageRect = [snapshot[@"rect"] CGRectValue];
+                            CGContextSetShadowWithColor(context, CGSizeZero, 0.0f, NULL);
+                            CGContextTranslateCTM(context, imageRect.origin.x, CGRectGetMaxY(imageRect));
+                            CGContextScaleCTM(context, 1.0f, -1.0f);
+                            CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, imageRect.size.width, imageRect.size.height), (__bridge CGImageRef)snapshot[@"image"]);
+                        }
+                    }
+                    else
+                        decoration.drawContent(context, runRect);
                     CGContextSetTextMatrix(context, CGAffineTransformMakeScale(1.0f, -1.0f));
                     CGContextRestoreGState(context);
                 }
@@ -796,6 +811,8 @@ static void TGReusableLabelAssignFallbackFonts(NSMutableAttributedString *string
 }
 
 @property (nonatomic, strong) NSArray *textLines;
+@property (nonatomic, strong) NSDictionary *customDrawingSnapshots;
+@property (nonatomic, strong) TGReusableLabelLayoutData *sourceLayout;
 @property (nonatomic) bool hasCustomDrawing;
 @property (nonatomic) CGSize drawingSize;
 @property (nonatomic) CGPoint drawingOffset;
@@ -849,6 +866,76 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
 }
 
 @implementation TGReusableLabelLayoutData
+
+- (TGReusableLabelLayoutData *)asynchronousDrawingLayoutForWidth:(CGFloat)width drawingRect:(CGRect)drawingRect shadowColor:(UIColor *)shadowColor shadowOffset:(CGSize)shadowOffset
+{
+    if (!_hasCustomDrawing) return self;
+    TGReusableLabelLayoutData *layout = [[TGReusableLabelLayoutData alloc] init];
+    layout->_lineOffsets = _lineOffsets;
+    layout->_lineOrigins = _lineOrigins;
+    layout->_links = _links;
+    layout->_emojiMappings = _emojiMappings;
+    layout.textLines = _textLines;
+    layout.text = _text;
+    layout.size = _size;
+    layout.drawingSize = _drawingSize;
+    layout.drawingOffset = _drawingOffset;
+    layout.fontLineHeight = _fontLineHeight;
+    layout.fontLineSpacing = _fontLineSpacing;
+    layout.hasCustomDrawing = true;
+    layout.sourceLayout = self;
+    NSMutableDictionary *snapshots = [[NSMutableDictionary alloc] init];
+    CGFloat scale = TGScreenScaling();
+    CGFloat padding = 8.0f + MAX(ABS(shadowOffset.width), ABS(shadowOffset.height));
+    for (NSUInteger lineIndex = 0; lineIndex < _textLines.count && lineIndex < _lineOrigins.size(); lineIndex++)
+    {
+        CTLineRef line = (__bridge CTLineRef)_textLines[lineIndex];
+        TGLinePosition const &position = _lineOrigins[lineIndex];
+        CGFloat horizontalOffset = position.alignment == 1 ? CGFloor((width - position.lineWidth) / 2.0f) : (position.alignment == 2 ? width - position.lineWidth : 0.0f);
+        CGPoint origin = CGPointMake(horizontalOffset + position.horizontalOffset, position.offset);
+        CGFloat lineAscent = 0.0f, lineDescent = 0.0f, lineLeading = 0.0f;
+        CTLineGetTypographicBounds(line, &lineAscent, &lineDescent, &lineLeading);
+        if (origin.y + lineDescent + lineLeading + padding < CGRectGetMinY(drawingRect) || origin.y - lineAscent - padding > CGRectGetMaxY(drawingRect)) continue;
+        CFArrayRef runs = CTLineGetGlyphRuns(line);
+        for (CFIndex index = 0; index < CFArrayGetCount(runs); index++)
+        {
+            CTRunRef run = (CTRunRef)CFArrayGetValueAtIndex(runs, index);
+            CFIndex count = CTRunGetGlyphCount(run);
+            TGReusableLabelRunDecoration *decoration = count == 0 ? nil : TGReusableLabelRunDecorationForRun(run);
+            if (decoration.drawContent == nil) continue;
+            CGPoint point = CGPointZero;
+            CTRunGetPositions(run, CFRangeMake(0, 1), &point);
+            CGFloat ascent = 0.0f, descent = 0.0f;
+            CGFloat runWidth = (CGFloat)CTRunGetTypographicBounds(run, CFRangeMake(0, count), &ascent, &descent, NULL);
+            CGRect runRect = CGRectMake(origin.x + point.x, origin.y - ascent, runWidth, ascent + descent);
+            CGRect imageRect = CGRectIntersection(CGRectInset(runRect, -padding, -padding), CGRectMake(-padding, origin.y - ascent - padding, width + padding * 2.0f, ascent + descent + padding * 2.0f));
+            imageRect = CGRectIntersection(imageRect, CGRectInset(drawingRect, -padding, -padding));
+            if (CGRectIsEmpty(imageRect)) continue;
+            size_t pixelWidth = (size_t)ceil(imageRect.size.width * scale);
+            size_t pixelHeight = (size_t)ceil(imageRect.size.height * scale);
+            if (pixelWidth == 0 || pixelHeight == 0 || pixelWidth > (SIZE_MAX - 15) / 4) return nil;
+            size_t bytesPerRow = (pixelWidth * 4 + 15) & ~(size_t)15;
+            if (pixelHeight > SIZE_MAX / bytesPerRow) return nil;
+            CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+            CGContextRef context = CGBitmapContextCreate(NULL, pixelWidth, pixelHeight, 8, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host);
+            CGColorSpaceRelease(colorSpace);
+            if (context == NULL) return nil;
+            CGContextScaleCTM(context, scale, -scale);
+            CGContextTranslateCTM(context, -imageRect.origin.x, -CGRectGetMaxY(imageRect));
+            if (shadowColor != nil) CGContextSetShadowWithColor(context, shadowOffset, 0.0f, shadowColor.CGColor);
+            UIGraphicsPushContext(context);
+            decoration.drawContent(context, runRect);
+            UIGraphicsPopContext();
+            CGImageRef image = CGBitmapContextCreateImage(context);
+            CGContextRelease(context);
+            if (image == NULL) return nil;
+            snapshots[@(((uint64_t)lineIndex << 32) | (uint32_t)index)] = @{@"image": (__bridge_transfer id)image, @"rect": [NSValue valueWithCGRect:imageRect]};
+        }
+    }
+    layout.customDrawingSnapshots = [snapshots copy];
+    return layout;
+}
+
 
 - (CGFloat)drawingWidth
 {
@@ -1820,7 +1907,7 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
         
         CFArrayRef glyphRuns = CTLineGetGlyphRuns(line);
         CFIndex glyphRunCount = CFArrayGetCount(glyphRuns);
-        TGReusableLabelDrawLineDecorations(context, glyphRuns, lineOrigin, true);
+        TGReusableLabelDrawLineDecorations(context, glyphRuns, lineOrigin, true, precalculatedLayout.customDrawingSnapshots, lineIndex);
 
         for (CFIndex runIndex = 0; runIndex < glyphRunCount; runIndex++)
         {
@@ -1865,7 +1952,7 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
             }
         }
 
-        TGReusableLabelDrawLineDecorations(context, glyphRuns, lineOrigin, false);
+        TGReusableLabelDrawLineDecorations(context, glyphRuns, lineOrigin, false, precalculatedLayout.customDrawingSnapshots, lineIndex);
     }
 
     CGContextRestoreGState(context);

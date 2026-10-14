@@ -1,4 +1,5 @@
 #import "TGPasscodeSettingsController.h"
+#import "TGAlertView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -364,10 +365,19 @@
             {
                 TGProgressWindow *progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
                 [progressWindow show:true];
-                [TGDatabaseInstance() setPassword:password isStrong:false completion:^
+                [TGDatabaseInstance() setPassword:password isStrong:false completion:^(NSError *error)
                 {
                     TGDispatchOnMainThread(^
                     {
+                        if (error != nil)
+                        {
+                            [progressWindow dismiss:true];
+                            [TGAlertView presentAlertWithTitle:TGLocalized(@"Database.ErrorTitle") message:error.localizedDescription cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                            __strong TGPasscodeSettingsController *controller = weakSelf;
+                            [controller _updateSections];
+                            return;
+                        }
+
                         [[TGTelegramNetworking instance] exportCredentialsForExtensions];
                         
                         __strong TGPasscodeSettingsController *strongSelf = weakSelf;
@@ -416,10 +426,19 @@
             {
                 TGProgressWindow *progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
                 [progressWindow show:true];
-                [TGDatabaseInstance() setPassword:@"" isStrong:false completion:^
+                [TGDatabaseInstance() setPassword:@"" isStrong:false completion:^(NSError *error)
                 {
                     TGDispatchOnMainThread(^
                     {
+                        if (error != nil)
+                        {
+                            [progressWindow dismiss:true];
+                            [TGAlertView presentAlertWithTitle:TGLocalized(@"Database.ErrorTitle") message:error.localizedDescription cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                            __strong TGPasscodeSettingsController *controller = weakSelf;
+                            [controller _updateSections];
+                            return;
+                        }
+
                         [[TGTelegramNetworking instance] exportCredentialsForExtensions];
                         [TGAppDelegateInstance resetRemoteDeviceLocked];
                         
@@ -443,9 +462,9 @@
         [[NSUserDefaults standardUserDefaults] setObject:@(attemptData.dateOfLastInvalidAttempt) forKey:@"Passcode_invalidAttemptDate"];
     };
     
-    controller.checkCurrentPasscode = ^bool (NSString *passcode)
+    controller.checkCurrentPasscodeAsync = ^(NSString *passcode, void (^result)(bool))
     {
-        return [TGDatabaseInstance() verifyPassword:passcode];
+        [TGDatabaseInstance() verifyPassword:passcode completion:result];
     };
     
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
@@ -472,10 +491,19 @@
             {
                 TGProgressWindow *progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
                 [progressWindow show:true];
-                [TGDatabaseInstance() setPassword:password isStrong:![strongSelf passcodeIsSimple] completion:^
+                [TGDatabaseInstance() setPassword:password isStrong:![strongSelf passcodeIsSimple] completion:^(NSError *error)
                 {
                     TGDispatchOnMainThread(^
                     {
+                        if (error != nil)
+                        {
+                            [progressWindow dismiss:true];
+                            [TGAlertView presentAlertWithTitle:TGLocalized(@"Database.ErrorTitle") message:error.localizedDescription cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                            __strong TGPasscodeSettingsController *controller = weakSelf;
+                            [controller _updateSections];
+                            return;
+                        }
+
                         [[TGTelegramNetworking instance] exportCredentialsForExtensions];
                         
                         __strong TGPasscodeSettingsController *strongSelf = weakSelf;
@@ -499,9 +527,9 @@
         [[NSUserDefaults standardUserDefaults] setObject:@(attemptData.dateOfLastInvalidAttempt) forKey:@"Passcode_invalidAttemptDate"];
     };
     
-    controller.checkCurrentPasscode = ^bool (NSString *passcode)
+    controller.checkCurrentPasscodeAsync = ^(NSString *passcode, void (^result)(bool))
     {
-        return [TGDatabaseInstance() verifyPassword:passcode];
+        [TGDatabaseInstance() verifyPassword:passcode completion:result];
     };
     
     TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
@@ -582,10 +610,19 @@
                 {
                     TGProgressWindow *progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
                     [progressWindow show:true];
-                    [TGDatabaseInstance() setPassword:password isStrong:passwordWillBeComplex completion:^
+                    [TGDatabaseInstance() setPassword:password isStrong:passwordWillBeComplex completion:^(NSError *error)
                     {
                         TGDispatchOnMainThread(^
                         {
+                        if (error != nil)
+                        {
+                            [progressWindow dismiss:true];
+                            [TGAlertView presentAlertWithTitle:TGLocalized(@"Database.ErrorTitle") message:error.localizedDescription cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                            __strong TGPasscodeSettingsController *controller = weakSelf;
+                            [controller _updateSections];
+                            return;
+                        }
+
                             [[TGTelegramNetworking instance] exportCredentialsForExtensions];
                             
                             __strong TGPasscodeSettingsController *strongSelf = weakSelf;
@@ -607,9 +644,9 @@
             [[NSUserDefaults standardUserDefaults] setObject:@(attemptData.dateOfLastInvalidAttempt) forKey:@"Passcode_invalidAttemptDate"];
         };
         
-        controller.checkCurrentPasscode = ^bool (NSString *passcode)
+        controller.checkCurrentPasscodeAsync = ^(NSString *passcode, void (^result)(bool))
         {
-            return [TGDatabaseInstance() verifyPassword:passcode];
+            [TGDatabaseInstance() verifyPassword:passcode completion:result];
         };
         
         TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
@@ -628,10 +665,18 @@
     {
         TGProgressWindow *progressWindow = [[TGProgressWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
         [progressWindow show:true];
-        [TGDatabaseInstance() setEncryptionEnabled:value completion:^
+        [TGDatabaseInstance() setEncryptionEnabled:value completion:^(NSError *error)
         {
             TGDispatchOnMainThread(^
             {
+                if (error != nil)
+                {
+                    [progressWindow dismiss:true];
+                    [TGAlertView presentAlertWithTitle:TGLocalized(@"Database.ErrorTitle") message:error.localizedDescription cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+                    [self _updateSections];
+                    return;
+                }
+
                 [progressWindow dismissWithSuccess];
             });
         }];

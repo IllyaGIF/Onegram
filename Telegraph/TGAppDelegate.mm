@@ -2,6 +2,7 @@
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponentsGlobals.h"
 #import "TGAppDelegate.h"
+#import "TGAlertView.h"
 #import "TGRichMessageMediaAttachment.h"
 #import "TGPollMediaAttachment.h"
 
@@ -23,7 +24,7 @@
 #include <sys/xattr.h>
 
 
-#import "../../config.h"
+#import "../config.h"
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGLegacyComponentsGlobalsProvider.h"
@@ -2987,8 +2988,23 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 }
 
 
+- (void)databaseOpenFailed:(NSNotification *)notification
+{
+    static bool presenting = false;
+    if (presenting) return;
+    presenting = true;
+    NSError *error = notification.object;
+    [TGAlertView presentAlertWithTitle:TGLocalized(@"Database.ErrorTitle") message:error.localizedDescription cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:TGLocalized(@"Database.Retry") completionBlock:^(bool retry)
+    {
+        presenting = false;
+        if (retry) [TGDatabaseInstance() retryOpeningDatabase];
+    }];
+}
+
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(databaseOpenFailed:) name:@"OnegramDatabaseOpenFailed" object:nil];
+
     NSDictionary *buildInfo = [[NSBundle mainBundle] infoDictionary];
     TGLog(@"ONEGRAM build=%@ arch=%@ diagnostics=%d transport=%s",
           [buildInfo objectForKey:@"OGOnegramBuildIdentifier"] ?: @"unrecorded",
@@ -3224,6 +3240,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                     verifyBlock(passcode);
                 };
                 controller.checkCurrentPasscode = nil;
+                controller.checkCurrentPasscodeAsync = nil;
                 [controller resetMode:simple ? TGPasscodeEntryControllerModeVerifySimple : TGPasscodeEntryControllerModeVerifyComplex];
                 [controller prepareForAppear];
             }
@@ -4126,9 +4143,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                         }
                     });
                 };
-                controller.checkCurrentPasscode = ^bool (NSString *passcode)
+                controller.checkCurrentPasscodeAsync = ^(NSString *passcode, void (^result)(bool))
                 {
-                    return [TGDatabaseInstance() verifyPassword:passcode];
+                    [TGDatabaseInstance() verifyPassword:passcode completion:result];
                 };
                 _passcodeWindow.windowLevel = UIWindowLevelStatusBar - 0.0001f;
                 TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[controller]];
@@ -4150,9 +4167,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             else if (_passcodeWindow.hidden)
             {
                 TGPasscodeEntryController *controller = (TGPasscodeEntryController *)(((TGNavigationController *)_passcodeWindow.rootViewController).topViewController);
-                controller.checkCurrentPasscode = ^(NSString *passcode)
+                controller.checkCurrentPasscodeAsync = ^(NSString *passcode, void (^result)(bool))
                 {
-                    return [TGDatabaseInstance() verifyPassword:passcode];
+                    [TGDatabaseInstance() verifyPassword:passcode completion:result];
                 };
                 controller.completion = ^(NSString *passcode)
                 {

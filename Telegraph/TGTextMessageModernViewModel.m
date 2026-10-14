@@ -75,68 +75,6 @@ static CTFontRef textFontForSize(CGFloat size)
     return font;
 }
 
-static NSString *expandedTextAndAttributes(NSString *text, NSArray *textCheckingResults, __autoreleasing NSArray **updatedTextCheckingResults) {
-    return text;
-    
-    if (textCheckingResults.count != 0) {
-        NSMutableArray *stringResults = nil;
-        NSMutableArray *stringValues = nil;
-        NSInteger index = -1;
-        for (id result in textCheckingResults) {
-            index++;
-            if ([result isKindOfClass:[NSTextCheckingResult class]]) {
-                if (((NSTextCheckingResult *)result).resultType == NSTextCheckingTypeLink) {
-                    NSRange range = ((NSTextCheckingResult *)result).range;
-                    if (range.location + range.length <= text.length) {
-                        NSString *link = [text substringWithRange:range];
-                        NSString *decodedLink = [link stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-                        if (![link isEqualToString:decodedLink] && decodedLink.length != 0) {
-                            if (stringResults == nil) {
-                                stringResults = [[NSMutableArray alloc] init];
-                                stringValues = [[NSMutableArray alloc] init];
-                            }
-                            [stringResults addObject:@(index)];
-                            [stringValues addObject:decodedLink];
-                        }
-                    }
-                }
-            }
-        }
-        if (stringResults.count != 0) {
-            NSMutableArray *updatedResults = [[NSMutableArray alloc] initWithArray:textCheckingResults];
-            NSMutableString *updatedString = [[NSMutableString alloc] initWithString:text];
-            
-            NSInteger index = -1;
-            for (NSNumber *resultIndex in stringResults) {
-                index++;
-                NSTextCheckingResult *result = updatedResults[resultIndex.integerValue];
-                NSString *decodedString = stringValues[index];
-                
-                [updatedString replaceCharactersInRange:result.range withString:decodedString];
-                updatedResults[resultIndex.integerValue] = [NSTextCheckingResult linkCheckingResultWithRange:NSMakeRange(result.range.location, decodedString.length) URL:result.URL];
-                NSInteger resultsOffset = ((NSInteger)decodedString.length) - ((NSInteger)result.range.length);
-                for (NSInteger i = 0; i < (NSInteger)updatedResults.count; i++) {
-                    if ([updatedResults[i] isKindOfClass:[NSTextCheckingResult class]]) {
-                        if (((NSTextCheckingResult *)updatedResults[i]).range.location > result.range.location) {
-                            updatedResults[i] = [(NSTextCheckingResult *)updatedResults[i] resultByAdjustingRangesWithOffset:resultsOffset];
-                        }
-                    } else if ([updatedResults[i] isKindOfClass:[TGTextCheckingResult class]]) {
-                        TGTextCheckingResult *current = updatedResults[i];
-                        if (current.range.location > result.range.location) {
-                            updatedResults[i] = [[TGTextCheckingResult alloc] initWithRange:NSMakeRange(current.range.location + resultsOffset, current.range.length) type:current.type contents:current.contents];
-                        }
-                    }
-                }
-            }
-            
-            *updatedTextCheckingResults = updatedResults;
-            
-            return updatedString;
-        }
-    }
-    return text;
-}
-
 - (instancetype)initWithMessage:(TGMessage *)message hasGame:(bool)hasGame hasInvoice:(bool)hasInvoice authorPeer:(id)authorPeer viaUser:(TGUser *)viaUser context:(TGModernViewContext *)context
 {
     self = [super initWithMessage:message authorPeer:authorPeer viaUser:viaUser context:context];
@@ -979,13 +917,8 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
     bool hasGame = false;
     bool hasInvoice = false;
     NSArray *updatedTextCheckingResults = message.textCheckingResults;
-    NSArray *updatedExpandedTextCheckingResults = nil;
-    NSString *updatedText = expandedTextAndAttributes(message.text, message.textCheckingResults, &updatedExpandedTextCheckingResults);
+    NSString *updatedText = message.text;
 
-    if (updatedExpandedTextCheckingResults != nil) {
-        updatedTextCheckingResults = updatedExpandedTextCheckingResults;
-    }
-    
     for (id attachment in message.mediaAttachments) {
         if ([attachment isKindOfClass:[TGGameMediaAttachment class]]) {
             updatedText = @"";
@@ -998,7 +931,7 @@ static NSString *expandedTextAndAttributes(NSString *text, NSArray *textChecking
     }
     
     bool forceUpdateText = false;
-    if (previousEntitiesCount != updatedTextCheckingResults.count) {
+    if (previousEntitiesCount != updatedTextCheckingResults.count || (previousEntitiesCount != 0 && _textModel.textCheckingResults != updatedTextCheckingResults && ![_textModel.textCheckingResults isEqualToArray:updatedTextCheckingResults])) {
         forceUpdateText = true;
     }
     

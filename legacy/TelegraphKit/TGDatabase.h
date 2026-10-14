@@ -470,10 +470,15 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)clearCachedMedia;
 
 - (NSString *)currentPassword;
-- (void)setPassword:(NSString *)password isStrong:(bool)isStrong completion:(void (^)())completion;
+- (NSData *)extensionPasswordFingerprint;
+- (void)setPassword:(NSString *)password isStrong:(bool)isStrong completion:(void (^)(NSError *))completion;
 - (bool)isPasswordSet:(bool *)isStrong;
 - (bool)verifyPassword:(NSString *)password;
-- (void)setEncryptionEnabled:(bool)encryptionEnabled completion:(void (^)())completion;
+- (void)verifyPassword:(NSString *)password completion:(void (^)(bool))completion;
+- (NSError *)databaseError;
+- (bool)isDatabaseAvailable;
+- (void)retryOpeningDatabase;
+- (void)setEncryptionEnabled:(bool)encryptionEnabled completion:(void (^)(NSError *))completion;
 - (bool)isEncryptionEnabled;
 
 - (TGBotInfo *)botInfoForUserId:(int32_t)userId;

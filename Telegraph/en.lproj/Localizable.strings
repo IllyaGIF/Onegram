@@ -3534,3 +3534,8 @@ Unused sets are archived when you add more.";
 "Conversation.StopPollConfirmation" = "If you stop this poll now, nobody will be able to vote in it anymore. This action cannot be undone.";
 "Conversation.StopQuizConfirmationTitle" = "Stop quiz?";
 "Conversation.StopQuizConfirmation" = "If you stop this quiz now, nobody will be able to submit answers. This action cannot be undone.";
+
+"Database.ErrorTitle" = "Local Data Error";
+"Database.AccessError" = "Unable to access or save local data. Existing data has been preserved.";
+"Database.Retry" = "Try Again";
+"Database.CleanupError" = "The new database is ready, but old local files could not be removed. Check storage access and try again.";

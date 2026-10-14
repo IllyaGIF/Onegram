@@ -23,8 +23,8 @@ fi
 
 case "$OS_NAME" in
     Darwin)
-        MAKE="gmake"
-        LIPO="$(xcrun --find lipo 2>/dev/null || command -v lipo || true)"
+        MAKE="make"
+        LIPO=""
         JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 4)"
         ;;
     Linux)
@@ -48,10 +48,14 @@ case "$OS_NAME" in
         ;;
 esac
 
+THEOS="${THEOS:-$HOME/theos}"
+export THEOS
+
 BUILD_DIR="$PROJECT/build"
 INFO_PLIST="$ROOT/Telegraph/Telegraph-Info.plist"
 CONFIG_XCCONFIG="$ROOT/Config.xcconfig"
 
+JOBS="${ONEGRAM_JOBS:-$JOBS}"
 CORE_JOBS="${CORE_JOBS:-8}"
 
 BUILD_LOG=""
@@ -285,74 +289,53 @@ show_ccache_stats() {
 
 get_ipa_architecture() {
     local ipa="$1"
-    local binary
-    local has_armv6=0
-    local has_armv7=0
-    local has_arm64=0
-
-    binary="$(mktemp "${TMPDIR:-/tmp}/onegram-ipa-binary.XXXXXX")"
-
-    if ! python3 - "$ipa" "$binary" <<'PY'
+    python3 - "$ipa" <<'PY'
+import struct
 import sys
 import zipfile
 
-ipa = sys.argv[1]
-output = sys.argv[2]
-
-with zipfile.ZipFile(ipa, "r") as z:
-    candidates = [
-        name
-        for name in z.namelist()
-        if name.startswith("Payload/")
-        and ".app/" in name
-        and name.endswith("/Telegram")
-    ]
-
-    if not candidates:
-        raise SystemExit(1)
-
-    data = z.read(candidates[0])
-
-with open(output, "wb") as f:
-    f.write(data)
+try:
+    with zipfile.ZipFile(sys.argv[1]) as archive:
+        name = next(name for name in archive.namelist()
+                    if name.startswith('Payload/') and '.app/' in name and name.endswith('/Telegram'))
+        with archive.open(name) as binary:
+            header = binary.read(8)
+            magic = header[:4]
+            fat = {b'\xca\xfe\xba\xbe': ('>', 20), b'\xbe\xba\xfe\xca': ('<', 20),
+                   b'\xca\xfe\xba\xbf': ('>', 32), b'\xbf\xba\xfe\xca': ('<', 32)}
+            if magic in fat:
+                endian, size = fat[magic]
+                count = struct.unpack(endian + 'I', header[4:8])[0]
+                if count > 64:
+                    raise ValueError('Invalid architecture count')
+                table = binary.read(count * size)
+                if len(table) != count * size:
+                    raise ValueError('Truncated Mach-O header')
+                entries = [struct.unpack_from(endian + 'II', table, index * size) for index in range(count)]
+            else:
+                thin = {b'\xce\xfa\xed\xfe': '<', b'\xcf\xfa\xed\xfe': '<',
+                        b'\xfe\xed\xfa\xce': '>', b'\xfe\xed\xfa\xcf': '>'}
+                endian = thin[magic]
+                entries = [struct.unpack(endian + 'II', header[4:8] + binary.read(4))]
+    architectures = set()
+    for cpu, subtype in entries:
+        subtype &= 0x00ffffff
+        if cpu == 12 and subtype == 6:
+            architectures.add('armv6')
+        elif cpu == 12 and subtype == 9:
+            architectures.add('armv7')
+        elif cpu == 0x0100000c and subtype in (0, 1):
+            architectures.add('arm64')
+    labels = {
+        frozenset(('armv6', 'armv7', 'arm64')): 'universal3',
+        frozenset(('armv7', 'arm64')): 'universal',
+        frozenset(('armv6', 'armv7')): 'armv6-armv7',
+        frozenset(('armv6', 'arm64')): 'armv6-arm64',
+    }
+    print(labels.get(frozenset(architectures), next(iter(architectures)) if len(architectures) == 1 else 'unknown'))
+except (OSError, ValueError, KeyError, StopIteration, struct.error, zipfile.BadZipFile):
+    print('unknown')
 PY
-    then
-        rm -f "$binary"
-        echo "unknown"
-        return
-    fi
-
-    if "$LIPO" "$binary" -verify_arch armv6 >/dev/null 2>&1; then
-        has_armv6=1
-    fi
-
-    if "$LIPO" "$binary" -verify_arch armv7 >/dev/null 2>&1; then
-        has_armv7=1
-    fi
-
-    if "$LIPO" "$binary" -verify_arch arm64 >/dev/null 2>&1; then
-        has_arm64=1
-    fi
-
-    rm -f "$binary"
-
-    if [ "$has_armv6" -eq 1 ] && [ "$has_armv7" -eq 1 ] && [ "$has_arm64" -eq 1 ]; then
-        echo "universal3"
-    elif [ "$has_armv7" -eq 1 ] && [ "$has_arm64" -eq 1 ]; then
-        echo "universal"
-    elif [ "$has_armv6" -eq 1 ] && [ "$has_armv7" -eq 1 ]; then
-        echo "armv6-armv7"
-    elif [ "$has_armv6" -eq 1 ] && [ "$has_arm64" -eq 1 ]; then
-        echo "armv6-arm64"
-    elif [ "$has_armv6" -eq 1 ]; then
-        echo "armv6"
-    elif [ "$has_armv7" -eq 1 ]; then
-        echo "armv7"
-    elif [ "$has_arm64" -eq 1 ]; then
-        echo "arm64"
-    else
-        echo "unknown"
-    fi
 }
 
 architecture_label() {
@@ -457,12 +440,6 @@ verify_ipa() {
         exit 1
     fi
 
-    if [ -z "$LIPO" ] || [ ! -x "$LIPO" ]; then
-        echo
-        echo "ERROR: lipo not found."
-        exit 1
-    fi
-
     architecture="$(get_ipa_architecture "$ipa")"
 
     if ! architecture_matches "$architecture" "$expected"; then
@@ -513,11 +490,13 @@ select_build_architecture() {
 stream_build() {
     local log="$1"
     shift
+    local interactive=0
+    [ -t 1 ] && interactive=1
 
     "$@" \
         2>&1 |
         tee -a "$log" |
-        awk '
+        awk -v interactive="$interactive" '
         /Compiling|Linking|Merging|Signing|Packaging|Stripping|Copying|Bundling|Creating/ {
             count++
 
@@ -528,16 +507,26 @@ stream_build() {
                 line = substr(line, 1, 107) "..."
             }
 
-            printf "\r[%d] %-110s", count, line
-            fflush()
+            now = systime()
+            if (interactive && now != last_update) {
+                printf "\r[%d] %-110s", count, line
+                fflush()
+                last_update = now
+            } else if (!interactive && count % 100 == 0) {
+                printf "[%d] %s\n", count, line
+                fflush()
+            }
         }
 
         /error:|fatal error:|Unavailable:/ {
-            printf "\n%s\n", $0
-            fflush()
+            if (!seen[$0]++ && errors++ < 8) {
+                printf "\n%s\n", $0
+                fflush()
+            }
         }
 
         END {
+            if (interactive && count) printf "\r[%d] %-110s", count, line
             printf "\n"
         }
         '
@@ -803,6 +792,129 @@ PY
     LAST_BUILT_IPA="$output_ipa"
 }
 
+ensure_python3() {
+    if command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Python 3 is missing; preparing its installation."
+    local command=()
+    if [ "$OS_NAME" = Linux ]; then
+        if command -v apt-get >/dev/null 2>&1; then
+            command=(apt-get install -y python3)
+        elif command -v pacman >/dev/null 2>&1; then
+            command=(pacman -S --needed --noconfirm python)
+        elif command -v dnf >/dev/null 2>&1; then
+            command=(dnf install -y python3)
+        elif command -v zypper >/dev/null 2>&1; then
+            command=(zypper --non-interactive install python3)
+        elif command -v apk >/dev/null 2>&1; then
+            command=(apk add --no-cache python3)
+        elif command -v xbps-install >/dev/null 2>&1; then
+            command=(xbps-install -Sy python3)
+        elif command -v emerge >/dev/null 2>&1; then
+            command=(emerge --noreplace dev-lang/python)
+        elif command -v eopkg >/dev/null 2>&1; then
+            command=(eopkg install -y python3)
+        elif command -v yum >/dev/null 2>&1; then
+            command=(yum install -y python3)
+        else
+            echo "ERROR: No supported package manager found for installing Python 3."
+            return 1
+        fi
+        if [ "$(id -u)" -ne 0 ]; then
+            if ! command -v sudo >/dev/null 2>&1; then
+                echo "ERROR: sudo is required to install Python 3."
+                return 1
+            fi
+            command=(sudo "${command[@]}")
+        fi
+    elif command -v brew >/dev/null 2>&1; then
+        command=(brew install python3)
+    elif command -v port >/dev/null 2>&1; then
+        command=(sudo port install python3)
+    else
+        echo "ERROR: Python 3 requires Homebrew or MacPorts on macOS."
+        return 1
+    fi
+    "${command[@]}" || return 1
+    command -v python3 >/dev/null 2>&1
+}
+
+prepare_build_environment() {
+    local architecture="$1"
+    local setup_log
+    local setup_result
+    local restore_pipefail=0
+
+    if [ "$OS_NAME" = Darwin ]; then
+        prepare_macos_runtime || return 1
+        run_macos_container --prepare "$architecture"
+        return $?
+    fi
+
+    ensure_python3 || return 1
+    setup_log="$(mktemp "${TMPDIR:-/tmp}/onegram-setup.XXXXXX")"
+    echo "Preparing build environment"
+    if ! [[ -o pipefail ]]; then
+        restore_pipefail=1
+        set -o pipefail
+    fi
+    if python3 "$PROJECT/scripts/bootstrap_build.py" --architecture "$architecture" 2>&1 |
+        tee "$setup_log" |
+        awk '
+        /^\[Onegram setup\]/ {
+            if (/Missing system packages:/) print "Installing system packages"
+            else if (/Theos is missing/) print "Installing Theos"
+            else if (/Selecting installed Xcode:/) print "Selecting installed Xcode..."
+            else if (/replacing it/) print "Updating incompatible iOS toolchain"
+            else if (/Linux iOS toolchain is missing/) print "Installing iOS toolchain"
+            else if (/Building corrected Linux iOS linker/) print "Preparing corrected iOS linker..."
+            else if (/Installing iPhoneOS/) {
+                line = $0
+                sub(/^.*Installing /, "Installing ", line)
+                sub(/ from .*/, "...", line)
+                print line
+            }
+            else if (/ERROR:/) print
+            fflush()
+        }
+        '; then
+        [ "$restore_pipefail" -eq 0 ] || set +o pipefail
+        echo "Build environment ready."
+    else
+        setup_result=$?
+        [ "$restore_pipefail" -eq 0 ] || set +o pipefail
+        echo "Environment setup failed. Last output:"
+        tail -n 15 "$setup_log"
+        echo "Full setup log: $setup_log"
+        return "$setup_result"
+    fi
+
+    if ! command -v "$MAKE" >/dev/null 2>&1; then
+        echo "ERROR: GNU Make ($MAKE) is unavailable after bootstrap."
+        return 1
+    fi
+
+    if [ "$OS_NAME" = Darwin ]; then
+        LIPO="$(xcrun --find lipo 2>/dev/null || command -v lipo || true)"
+    else
+        if [ -x "$THEOS/toolchain/linux/iphone/bin/lipo" ]; then
+            LIPO="$THEOS/toolchain/linux/iphone/bin/lipo"
+        else
+            LIPO="$(command -v lipo 2>/dev/null || true)"
+        fi
+    fi
+    if [ -z "$LIPO" ] || [ ! -x "$LIPO" ]; then
+        echo "ERROR: lipo is unavailable after bootstrap."
+        return 1
+    fi
+}
+
+ensure_api_config() {
+    python3 "$PROJECT/scripts/setup_api_config.py" "$ROOT/config.h"
+}
+
 run_build() {
     local architecture="$1"
     local result=0
@@ -814,6 +926,15 @@ run_build() {
     local armv6_ipa
     local universal_ipa
     LAST_BUILT_IPA=""
+
+    ensure_api_config || return 1
+
+    if [ "$OS_NAME" = Darwin ]; then
+        run_macos_build "$architecture"
+        return $?
+    fi
+
+    prepare_build_environment "$architecture" || return 1
 
     echo
     echo "Building Onegram"
@@ -886,7 +1007,7 @@ run_build() {
             result=$?
             ;;
         universal3)
-            echo "Building armv6..."
+            echo "Building armv6"
             echo
 
             stream_build \
@@ -914,7 +1035,7 @@ run_build() {
 
             if [ "$result" -eq 0 ]; then
                 echo
-                echo "Building armv7 + arm64..."
+                echo "Building armv7 + arm64"
                 echo
 
                 stream_build \
@@ -941,7 +1062,7 @@ run_build() {
 
             if [ "$result" -eq 0 ]; then
                 echo
-                echo "Merging armv6 + armv7 + arm64..."
+                echo "Merging armv6 + armv7 + arm64"
                 echo
 
                 create_universal3_ipa "$armv6_ipa" "$universal_ipa"
@@ -965,7 +1086,7 @@ run_build() {
         echo "Last build output:"
         echo
 
-        tail -n 100 "$BUILD_LOG"
+        tail -n 15 "$BUILD_LOG"
 
         echo
         echo "Full build log:"
@@ -1015,21 +1136,29 @@ clean_project() {
     local end_time
     local elapsed
 
+    if [ "$OS_NAME" = Darwin ]; then
+        prepare_macos_runtime || return 1
+        run_macos_container --clean universal3
+        return $?
+    fi
+
     echo
-    echo "Cleaning Onegram..."
+    echo "Cleaning Onegram"
     echo
 
     start_time="$(date +%s)"
 
-    "$MAKE" clean || true
-    "$MAKE" ONEGRAM_ARCH=armv6 clean || true
-    "$MAKE" ONEGRAM_ARCH=arm64 clean || true
+    if command -v "$MAKE" >/dev/null 2>&1 && [ -f "$THEOS/makefiles/common.mk" ]; then
+        "$MAKE" clean || true
+        "$MAKE" ONEGRAM_ARCH=armv6 clean || true
+        "$MAKE" ONEGRAM_ARCH=arm64 clean || true
+    fi
 
     rm -rf "$BUILD_DIR/universal3"
 
     if [ -d "$PROJECT/.theos" ]; then
         echo
-        echo "Removing $PROJECT/.theos..."
+        echo "Removing $PROJECT/.theos"
         rm -rf "$PROJECT/.theos"
     fi
 
@@ -1249,12 +1378,37 @@ device_requires_arm64() {
     esac
 }
 
+post_build_install() {
+    if [ "${ONEGRAM_SKIP_DEVICE_INSTALL:-0}" = 1 ]; then
+        return 0
+    fi
+    if ! command -v idevice_id >/dev/null 2>&1 ||
+       ! command -v ideviceinfo >/dev/null 2>&1 ||
+       ! command -v ideviceinstaller >/dev/null 2>&1; then
+        echo "IPA is ready: $LAST_BUILT_IPA"
+        echo "Device installation tools are not available; installation skipped."
+        return 0
+    fi
+
+    if [ -z "$(idevice_id -l 2>/dev/null || true)" ]; then
+        echo "IPA is ready: $LAST_BUILT_IPA"
+        echo "No connected iOS device; installation skipped."
+        return 0
+    fi
+
+    install_onegram
+}
+
 install_onegram() {
     local result
     local required_arch
     local ipa_architecture
     local ipa_time
     local ipa_mtime
+
+    if [ "$OS_NAME" = Darwin ]; then
+        prepare_macos_device_tools || return 1
+    fi
 
     if ! command -v idevice_id >/dev/null 2>&1; then
         echo
@@ -1393,18 +1547,6 @@ install_onegram() {
     fi
 }
 
-if ! command -v "$MAKE" >/dev/null 2>&1; then
-    echo
-    echo "ERROR: $MAKE not found."
-    exit 1
-fi
-
-if [ -z "$LIPO" ] || [ ! -x "$LIPO" ]; then
-    echo
-    echo "ERROR: lipo not found."
-    exit 1
-fi
-
 if [ ! -d "$PROJECT" ]; then
     echo
     echo "ERROR: Project directory not found:"
@@ -1419,12 +1561,45 @@ if [ ! -f "$INFO_PLIST" ]; then
     exit 1
 fi
 
+if [ "$OS_NAME" = Darwin ]; then
+    source "$PROJECT/scripts/macos_build.sh"
+fi
+
 cd "$PROJECT"
+ensure_python3 || exit 1
 load_settings
 
 VERSION_INFO="$(get_version_info)"
 CURRENT_VERSION="$(printf '%s\n' "$VERSION_INFO" | sed -n '1p')"
 CURRENT_BUILD="$(printf '%s\n' "$VERSION_INFO" | sed -n '2p')"
+
+if [ "$#" -gt 0 ]; then
+    case "$1" in
+        --build|--prepare|--clean)
+            if [ "$#" -ne 2 ]; then
+                echo "Usage: ./build.sh $1 armv6|armv7|universal3"
+                exit 2
+            fi
+            case "$2" in
+                armv6|armv7|universal3) ;;
+                *) echo "ERROR: Unsupported architecture $2"; exit 2 ;;
+            esac
+            if [ "$1" = --clean ]; then
+                clean_project
+            elif [ "$1" = --prepare ]; then
+                prepare_build_environment "$2"
+            else
+                run_build "$2"
+                post_build_install
+            fi
+            exit 0
+            ;;
+        *)
+            echo "Usage: ./build.sh [--prepare|--build|--clean armv6|armv7|universal3]"
+            exit 2
+            ;;
+    esac
+fi
 
 while true; do
     menu_select "Onegram | Version $CURRENT_VERSION ($CURRENT_BUILD) | $(build_mode_label)" 0 \
@@ -1434,13 +1609,14 @@ while true; do
         0)
             select_build_architecture || continue
             run_build "$SELECTED_BUILD_ARCH"
-            install_onegram
+            post_build_install
             ;;
         1)
             select_build_architecture || continue
+            ensure_api_config || continue
             clean_project
             run_build "$SELECTED_BUILD_ARCH"
-            install_onegram
+            post_build_install
             ;;
         2)
             clean_project

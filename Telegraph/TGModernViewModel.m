@@ -1,6 +1,9 @@
 #import "TGModernViewModel.h"
 
 #import "TGModernView.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGImageUtils.h"
+#include <stdint.h>
+#include <math.h>
 
 #import <objc/runtime.h>
 
@@ -39,6 +42,7 @@
     CGSize _size;
     CGFloat _value;
     int _flags;
+    id (^_preparation)(CGRect);
 }
 
 @end
@@ -82,9 +86,19 @@ static bool TGModernDrawingObjectsEqual(id lhs, id rhs)
 {
     NSMutableArray *_operations;
     CGPoint _offset;
+    bool _requiresPreparation;
 }
 
 @end
+
+static void TGModernDrawingSnapshotOperation(CGContextRef context, TGModernDrawingOperation *operation)
+{
+    CGContextSaveGState(context);
+    CGContextTranslateCTM(context, operation.rect.origin.x, CGRectGetMaxY(operation.rect));
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, operation.rect.size.width, operation.rect.size.height), (__bridge CGImageRef)operation.object);
+    CGContextRestoreGState(context);
+}
 
 @implementation TGModernDrawingRecording
 
@@ -123,6 +137,73 @@ static bool TGModernDrawingObjectsEqual(id lhs, id rhs)
     operation->_value = value;
     operation->_flags = flags;
     [_operations addObject:operation];
+}
+
+- (void)prepareLastOperationWithBlock:(id (^)(CGRect))block
+{
+    TGModernDrawingOperation *operation = [_operations lastObject];
+    if (operation == nil) return;
+    operation->_preparation = [block copy];
+    _requiresPreparation = _requiresPreparation || block != nil;
+}
+
+- (TGModernDrawingRecording *)recordingForDrawingRect:(CGRect)rect
+{
+    if (!_requiresPreparation) return self;
+    TGModernDrawingRecording *recording = [[TGModernDrawingRecording alloc] init];
+    for (TGModernDrawingOperation *operation in _operations)
+    {
+        if (operation->_preparation == nil)
+        {
+            [recording->_operations addObject:operation];
+            continue;
+        }
+        id object = operation->_preparation(CGRectOffset(rect, -operation->_origin.x, -operation->_origin.y));
+        if (object == nil) return nil;
+        TGModernDrawingOperation *prepared = [[TGModernDrawingOperation alloc] init];
+        prepared->_function = operation->_function;
+        prepared->_origin = operation->_origin;
+        prepared->_rect = operation->_rect;
+        prepared->_object = object;
+        prepared->_secondaryObject = operation->_secondaryObject;
+        prepared->_color = operation->_color;
+        prepared->_size = operation->_size;
+        prepared->_value = operation->_value;
+        prepared->_flags = operation->_flags;
+        [recording->_operations addObject:prepared];
+    }
+    return recording;
+}
+
+- (bool)addDrawingSnapshotInRect:(CGRect)rect drawing:(void (^)(CGContextRef))drawing
+{
+    if (CGRectIsEmpty(rect))
+        return true;
+    CGFloat scale = TGScreenScaling();
+    size_t width = (size_t)ceil(rect.size.width * scale);
+    size_t height = (size_t)ceil(rect.size.height * scale);
+    if (width == 0 || height == 0 || width > (SIZE_MAX - 15) / 4)
+        return false;
+    size_t bytesPerRow = (width * 4 + 15) & ~(size_t)15;
+    if (height > SIZE_MAX / bytesPerRow)
+        return false;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(NULL, width, height, 8, bytesPerRow, colorSpace, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+        return false;
+    CGContextScaleCTM(context, scale, -scale);
+    CGContextTranslateCTM(context, -rect.origin.x, -CGRectGetMaxY(rect));
+    UIGraphicsPushContext(context);
+    drawing(context);
+    UIGraphicsPopContext();
+    CGImageRef image = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    if (image == NULL)
+        return false;
+    [self addOperationWithFunction:&TGModernDrawingSnapshotOperation rect:rect object:(__bridge id)image secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+    CGImageRelease(image);
+    return true;
 }
 
 - (bool)isEqualToRecording:(TGModernDrawingRecording *)other
@@ -637,7 +718,7 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
 - (bool)recordDrawing:(TGModernDrawingRecording *)recording
 {
     if (![self drawsInContextWithImplementationOfClass:[TGModernViewModel class]])
-        return false;
+        return [recording addDrawingSnapshotInRect:self.bounds drawing:^(CGContextRef context) { [self drawInContext:context]; }];
     return [self recordBaseDrawing:recording];
 }
 

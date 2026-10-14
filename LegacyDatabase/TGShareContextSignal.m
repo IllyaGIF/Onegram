@@ -20,7 +20,7 @@
 
 #import <CommonCrypto/CommonKeyDerivation.h>
 
-#import "../../config.h"
+#import "../config.h"
 
 #import "TGLocalization.h"
 #import "TGNetworkSettings.h"
@@ -29,6 +29,20 @@
 
 #import "TGLegacyDatabase.h"
 #import "TGLegacyUser.h"
+
+static NSDictionary *TGShareDecodeDictionary(NSData *data)
+{
+    if (![data isKindOfClass:[NSData class]]) return nil;
+    @try
+    {
+        id decoded = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+        return [decoded isKindOfClass:[NSDictionary class]] ? decoded : nil;
+    }
+    @catch (__unused NSException *exception)
+    {
+        return nil;
+    }
+}
 
 @implementation TGEncryptedShareContext
 
@@ -71,9 +85,9 @@
     if (groupURL != nil)
     {
 #if ONEGRAM_ARMV6
-        return [NSURL fileURLWithPath:[[groupURL path] stringByAppendingPathComponent:@"shared-auth-info"] isDirectory:true];
+        return [NSURL fileURLWithPath:[[groupURL path] stringByAppendingPathComponent:@"shared-auth-info"] isDirectory:false];
 #else
-        NSURL *sharedAuthInfoPath = [groupURL URLByAppendingPathComponent:@"shared-auth-info" isDirectory:true];
+        NSURL *sharedAuthInfoPath = [groupURL URLByAppendingPathComponent:@"shared-auth-info" isDirectory:false];
         return sharedAuthInfoPath;
 #endif
     }
@@ -156,6 +170,23 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                             databasePath = baseDatabasePath;
                         }
                         
+                        NSData *stateData = [NSData dataWithContentsOfFile:[documentsPath stringByAppendingPathComponent:@"x.y"]];
+                        if (stateData.length >= 8 && memcmp(stateData.bytes, "bplist00", 8) == 0)
+                        {
+                            NSString *error = nil;
+                            id state = [NSPropertyListSerialization propertyListFromData:stateData mutabilityOption:NSPropertyListImmutable format:NULL errorDescription:&error];
+                            if ([state isKindOfClass:[NSDictionary class]] && [state[@"version"] intValue] == 2)
+                            {
+                                NSString *name = state[@"database"];
+                                if (![name isKindOfClass:[NSString class]] || ![name isEqualToString:name.lastPathComponent] || name.length == 0)
+                                {
+                                    [subscriber putError:nil];
+                                    return;
+                                }
+                                databasePath = [documentsPath stringByAppendingPathComponent:name];
+                            }
+                        }
+
                         TGLegacyDatabase *database = [[TGLegacyDatabase alloc] initWithPath:databasePath];
                         
                         MTApiEnvironment *apiEnvironment = [[MTApiEnvironment alloc] init];
@@ -318,7 +349,7 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                 }
             };
             
-            NSDictionary *containerDict = [NSKeyedUnarchiver unarchiveObjectWithData:sharedAuthInfoData];
+            NSDictionary *containerDict = TGShareDecodeDictionary(sharedAuthInfoData);
             if (containerDict == nil || containerDict[@"data"] == nil)
                 [subscriber putError:nil];
             else
@@ -330,18 +361,21 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                     if (password == nil)
                     {
                         NSData *iv = containerDict[@"iv"];
-                        if (iv.length != 32)
+                        if (![iv isKindOfClass:[NSData class]] || iv.length != 32)
                             [subscriber putError:nil];
                         else
                         {
-                            [subscriber putNext:[[TGEncryptedShareContext alloc] initWithSimplePassword:false allowTouchId:allowTouchId verifyPassword:^bool(NSString *passwordCandidate)
+                            [subscriber putNext:[[TGEncryptedShareContext alloc] initWithSimplePassword:[containerDict[@"simple"] boolValue] allowTouchId:allowTouchId verifyPassword:^bool(NSString *passwordCandidate)
                             {
                                 NSData *passwordData = [passwordCandidate dataUsingEncoding:NSUTF8StringEncoding];
                                 NSData *salt = containerDict[@"salt"];
                                 
                                 NSMutableData *key = [[NSMutableData alloc] initWithBytesNoCopy:malloc(32) length:32 freeWhenDone:true];
                                 
-                                int result = CCKeyDerivationPBKDF(kCCPBKDF2, passwordData.bytes, passwordData.length, salt.bytes, salt.length, kCCPRFHmacAlgSHA256, 1000, key.mutableBytes, 32);
+                                int rounds = containerDict[@"rounds"] == nil ? 1000 : [containerDict[@"rounds"] intValue];
+                                if (![salt isKindOfClass:[NSData class]] || salt.length != 32 || rounds < 1000 || rounds > 2000000 || ![containerDict[@"data"] isKindOfClass:[NSData class]] || [containerDict[@"data"] length] % 16 != 0)
+                                    return false;
+                                int result = CCKeyDerivationPBKDF(kCCPBKDF2, passwordData.bytes, passwordData.length, salt.bytes, salt.length, kCCPRFHmacAlgSHA256, rounds, key.mutableBytes, 32);
                                 if (result != 0)
                                     return false;
                                 
@@ -358,7 +392,7 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                                 if (![checksum isEqualToData:containerDict[@"checksum"]])
                                     return false;
                                 
-                                proceedWithAuthInfo([NSKeyedUnarchiver unarchiveObjectWithData:plaintextData]);
+                                proceedWithAuthInfo(TGShareDecodeDictionary(plaintextData));
                                 
                                 return true;
                             }]];
@@ -370,7 +404,7 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                         {
                             if ([password isEqualToString:passwordCandidate])
                             {
-                                proceedWithAuthInfo([NSKeyedUnarchiver unarchiveObjectWithData:containerDict[@"data"]]);
+                                proceedWithAuthInfo(TGShareDecodeDictionary(containerDict[@"data"]));
                                 return true;
                             }
                             
@@ -379,7 +413,7 @@ static void TGShareLoggingFunction(NSString *format, va_list args)
                     }
                 }
                 else
-                    proceedWithAuthInfo([NSKeyedUnarchiver unarchiveObjectWithData:containerDict[@"data"]]);
+                    proceedWithAuthInfo(TGShareDecodeDictionary(containerDict[@"data"]));
             }
         }
         return nil;

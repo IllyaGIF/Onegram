@@ -7,8 +7,25 @@
  */
 
 #import "TGPreparedMessage.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGMessage.h"
 
 @implementation TGPreparedMessage
+
+- (int32_t)replyMessageId
+{
+    if (_replyMessage.mid != 0)
+        return _replyMessage.mid;
+    return _forumTopicId > 1 ? _forumTopicId : 0;
+}
+
+- (void)applyForumTopicToMessage:(TGMessage *)message
+{
+    if (_forumTopicId == 0)
+        return;
+    NSMutableDictionary *properties = message.contentProperties != nil ? [message.contentProperties mutableCopy] : [[NSMutableDictionary alloc] init];
+    properties[@"ios6ForumTopicId"] = [[TGMessageForumTopicContentProperty alloc] initWithTopicId:_forumTopicId];
+    message.contentProperties = properties;
+}
 
 - (TGMessage *)message
 {

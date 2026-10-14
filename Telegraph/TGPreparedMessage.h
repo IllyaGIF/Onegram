@@ -31,6 +31,8 @@
 @property (nonatomic) int32_t messageLifetime;
 
 @property (nonatomic, strong) TGMessage *replyMessage;
+@property (nonatomic) int32_t forumTopicId;
+@property (nonatomic, readonly) int32_t replyMessageId;
 @property (nonatomic, strong) TGBotContextResultAttachment *botContextResult;
 @property (nonatomic, strong) TGReplyMarkupAttachment *replyMarkup;
 
@@ -38,6 +40,7 @@
 
 @property (nonatomic, copy) void (^executeOnAdd)();
 
+- (void)applyForumTopicToMessage:(TGMessage *)message;
 - (TGMessage *)message;
 
 @end

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 import json
-import os
 import sys
-from generate import OUT
+from generate import OUT, source_link
 from xcode_graph import ROOT, actual_path
 
 target=next(t for t in json.loads((OUT/'manifest.json').read_text())['targets'] if t['instance']==sys.argv[1])
@@ -15,5 +14,4 @@ for phase in target['phases']:
         source=actual_path(ROOT/entry['path'])
         if not source.exists():raise FileNotFoundError(source)
         dest=OUT/'products'/phase['dstPath']/source.name
-        dest.parent.mkdir(parents=True,exist_ok=True)
-        if not dest.exists():dest.symlink_to(os.path.relpath(source,dest.parent))
+        source_link(dest, source, replace_generated=True)

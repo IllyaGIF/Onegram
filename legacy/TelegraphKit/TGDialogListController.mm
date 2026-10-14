@@ -782,6 +782,7 @@ typedef enum {
 - (bool)dialogListShouldCoalesceUIUpdates;
 - (void)dialogListBeginRateLimitedUIUpdate;
 - (NSArray *)dialogListDisplayedItems;
+- (void)dialogListRefreshVisibleCellsAnimated:(bool)animated;
 - (void)dialogListCommitDisplayedItems;
 - (void)dialogListCoalesceFullReload:(NSArray *)items;
 - (bool)dialogListApplyDisplayedItems:(NSArray *)items animated:(bool)animated;
@@ -3084,31 +3085,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
         else
         {
-            NSMutableDictionary *itemsByPeerId = [[NSMutableDictionary alloc] initWithCapacity:currentVisibleItems.count];
-            for (id item in currentVisibleItems)
-            {
-                int64_t peerId = 0;
-                if ([item isKindOfClass:[TGConversation class]])
-                    peerId = ((TGConversation *)item).conversationId;
-                else if ([item isKindOfClass:[TGFeed class]])
-                    peerId = ((TGFeed *)item).conversationId;
-                if (peerId != 0)
-                    itemsByPeerId[@(peerId)] = item;
-            }
-
-            for (TGDialogListCell *cell in _tableView.visibleCells)
-            {
-                if (![cell isKindOfClass:[TGDialogListCell class]])
-                    continue;
-
-                id item = itemsByPeerId[@(cell.conversationId)];
-                if ([item isKindOfClass:[TGConversation class]])
-                    [self prepareCell:cell forConversation:(TGConversation *)item animated:true context:TGDialogListCellContextList];
-                else if ([item isKindOfClass:[TGFeed class]])
-                    [self prepareCell:cell forFeed:(TGFeed *)item animated:true];
-            }
-
-            [self updateIsLastCell];
+            [self dialogListRefreshVisibleCellsAnimated:true];
         }
         [self ios6UpdateFolderTabs];
     }
@@ -5962,7 +5939,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     if (_ios6VisibleListCache != nil && _ios6VisibleListCacheFilterId == _ios6SelectedDialogFilterId)
         return _ios6VisibleListCache;
     NSArray *result = [self ios6VisibleItemsForDialogFilter:[self ios6SelectedDialogFilter]];
-    _ios6VisibleListCache = result == nil ? @[] : result;
+    _ios6VisibleListCache = [result copy] ?: @[];
     _ios6VisibleListCacheFilterId = _ios6SelectedDialogFilterId;
     return _ios6VisibleListCache;
 }
@@ -7349,34 +7326,39 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)dialogListRefreshVisibleCells
 {
-    NSArray *currentVisibleItems = [self ios6VisibleListModel];
-    if (![self dialogListVisibleItems:[self dialogListDisplayedItems] haveSameOrderAs:currentVisibleItems])
+    [self dialogListRefreshVisibleCellsAnimated:false];
+}
+
+- (void)dialogListRefreshVisibleCellsAnimated:(bool)animated
+{
+    NSArray *items = [self ios6VisibleListModel];
+    NSArray *displayedItems = [self dialogListDisplayedItems];
+    if (items != displayedItems && ![self dialogListVisibleItems:displayedItems haveSameOrderAs:items])
     {
         [self reloadData:false];
         return;
     }
-    NSMutableDictionary *itemsByPeerId = [[NSMutableDictionary alloc] initWithCapacity:currentVisibleItems.count];
-    for (id item in currentVisibleItems)
-    {
-        int64_t peerId = 0;
-        if ([item isKindOfClass:[TGConversation class]])
-            peerId = ((TGConversation *)item).conversationId;
-        else if ([item isKindOfClass:[TGFeed class]])
-            peerId = ((TGFeed *)item).conversationId;
-        if (peerId != 0)
-            itemsByPeerId[@(peerId)] = item;
-    }
+    _dialogListDisplayedItems = [items copy];
+    items = _dialogListDisplayedItems;
 
     for (TGDialogListCell *cell in _tableView.visibleCells)
     {
         if (![cell isKindOfClass:[TGDialogListCell class]])
             continue;
-
-        id item = itemsByPeerId[@(cell.conversationId)];
+        NSIndexPath *indexPath = [_tableView indexPathForCell:cell];
+        if (indexPath == nil || indexPath.section != 1 || indexPath.row >= items.count)
+            continue;
+        id item = items[indexPath.row];
+        int64_t peerId = [item isKindOfClass:[TGConversation class]] ? ((TGConversation *)item).conversationId : ([item isKindOfClass:[TGFeed class]] ? ((TGFeed *)item).conversationId : 0);
+        if (peerId != cell.conversationId)
+        {
+            [self reloadData:false];
+            return;
+        }
         if ([item isKindOfClass:[TGConversation class]])
-            [self prepareCell:cell forConversation:(TGConversation *)item animated:false context:TGDialogListCellContextList];
+            [self prepareCell:cell forConversation:item animated:animated context:TGDialogListCellContextList];
         else if ([item isKindOfClass:[TGFeed class]])
-            [self prepareCell:cell forFeed:(TGFeed *)item animated:false];
+            [self prepareCell:cell forFeed:item animated:animated];
     }
     [self updateIsLastCell];
     [self updateSearchBarBackground];

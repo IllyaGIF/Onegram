@@ -6,10 +6,10 @@ import hashlib
 import os
 import re
 import shlex
-import subprocess
+import shutil
+import struct
 from pathlib import Path
 from xcode_graph import ROOT, Project, actual_path, graph
-import sys
 
 OUT = ROOT / 'theos' / os.environ.get('ONEGRAM_GENERATED_DIR','generated')
 VARIABLE = re.compile(r'\$\(([^)]+)\)|\$\{([^}]+)\}')
@@ -18,6 +18,92 @@ def write(path, contents):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists() or path.read_text() != contents:
         path.write_text(contents)
+
+def source_link(path, target, directory=False, replace_generated=False):
+    relative = os.path.relpath(target, path.parent)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        if os.readlink(path) == relative:
+            return
+        path.unlink()
+    elif path.exists():
+        parent = path.parent.resolve()
+        generated_parents = ((OUT/'source-files').resolve(), (OUT/'source-dirs').resolve())
+        include_root = (OUT/'products/include').resolve()
+        managed = parent in generated_parents or parent == include_root or include_root in parent.parents
+        if not replace_generated or not managed:
+            raise ValueError('Refusing to replace a non-generated source path: ' + str(path))
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        else:
+            raise ValueError('Generated source alias is not a symbolic link: ' + str(path))
+    path.symlink_to(relative, target_is_directory=directory)
+
+def generation_context(configuration):
+    theos = Path(os.environ.get('THEOS', str(Path.home()/'theos')))
+    sdk_version = os.environ.get('ONEGRAM_SDK_VERSION', '6.1')
+    return {'root': str(ROOT.resolve()), 'output': str(OUT.resolve()),
+            'sdk': str((theos/'sdks'/('iPhoneOS'+sdk_version+'.sdk')).resolve()),
+            'architecture': os.environ.get('ONEGRAM_ARCH', 'armv7'),
+            'configuration': configuration}
+
+def ensure_context(configuration):
+    try:
+        manifest = json.loads((OUT/'manifest.json').read_text())
+        if manifest.get('context') != generation_context(configuration):
+            return False
+        if not (OUT/'dependencies.mk').is_file():
+            return False
+        if any(not (OUT/(target['instance']+'.mk')).is_file() for target in manifest['targets']):
+            return False
+        for directory in ('source-files', 'source-dirs'):
+            aliases = OUT/directory
+            if aliases.is_dir() and any(not path.is_symlink() or not path.exists() for path in aliases.iterdir()):
+                return False
+        return True
+    except (OSError, ValueError, KeyError):
+        return False
+
+def write_header_map(path, mappings):
+    bucket_count = 1 << (max(1, len(mappings) * 3) - 1).bit_length()
+    buckets = [(0, 0, 0)] * bucket_count
+    strings = bytearray(b'\0')
+    offsets = {b'': 0}
+    keys = {}
+    max_value_length = 0
+    def intern(value):
+        if b'\0' in value:
+            raise ValueError('NUL byte in header map string')
+        if value not in offsets:
+            offsets[value] = len(strings)
+            strings.extend(value)
+            strings.append(0)
+        return offsets[value]
+    for key, value in sorted(mappings.items()):
+        encoded_key = key.encode('utf-8')
+        encoded_value = value.encode('utf-8')
+        folded_key = encoded_key.lower()
+        if not encoded_key:
+            raise ValueError('Empty header map key')
+        if folded_key in keys:
+            if keys[folded_key] != encoded_value:
+                raise ValueError('Conflicting header map key: ' + key)
+            continue
+        keys[folded_key] = encoded_value
+        index = sum(byte * 13 for byte in folded_key) & (bucket_count - 1)
+        while buckets[index][0]:
+            index = (index + 1) & (bucket_count - 1)
+        buckets[index] = (intern(encoded_key), 0, intern(encoded_value))
+        max_value_length = max(max_value_length, len(encoded_value))
+    contents = b'pamh' + struct.pack('<HHIIII', 1, 0, 24 + bucket_count * 12,
+                                    len(keys), bucket_count, max_value_length)
+    contents += b''.join(struct.pack('<III', *bucket) for bucket in buckets)
+    contents += strings
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or path.read_bytes() != contents:
+        path.write_bytes(contents)
 
 def expand(value, settings):
     for _ in range(30):
@@ -105,8 +191,19 @@ def shell_flags(flags):
 def generate(configuration):
     data = graph(configuration)
     targets = selected_targets(data)
+    objc_literal_compat = OUT/'build-compat/OnegramObjCLiterals.h'
+    if os.environ.get('ONEGRAM_ARCH') == 'armv6':
+        write(objc_literal_compat, '''#ifdef __OBJC__
+#import <Foundation/Foundation.h>
+#undef YES
+#define YES __objc_yes
+#undef NO
+#define NO __objc_no
+#endif
+''')
     write(OUT/'xcode-graph.json', json.dumps(data, indent=2, sort_keys=True)+'\n')
-    manifest = {'configuration':configuration, 'targets':[], 'case_aliases':[]}
+    manifest = {'configuration':configuration, 'context':generation_context(configuration),
+                'targets':[], 'case_aliases':[]}
     namespace_map = {}
     sdk=Path(os.environ.get('THEOS',str(Path.home()/'theos')))/('sdks/iPhoneOS'+os.environ.get('ONEGRAM_SDK_VERSION','6.1')+'.sdk')
     sdk_frameworks={p.stem.casefold():p for p in (sdk/'System/Library/Frameworks').glob('*.framework')}
@@ -146,14 +243,12 @@ def generate(configuration):
             rel = os.path.relpath(path, ROOT/'theos')
             if any(c in rel for c in '$#;()&'):
                 alias=OUT/'source-files'/(hashlib.sha256(e['path'].encode()).hexdigest()[:16]+path.suffix)
-                alias.parent.mkdir(parents=True,exist_ok=True)
-                if not alias.exists():alias.symlink_to(os.path.relpath(path,alias.parent))
+                source_link(alias, path, replace_generated=True)
                 rel=str(alias.relative_to(ROOT/'theos'))
                 source_includes[rel]=str(path.parent)
             elif any(c.isspace() for c in rel):
                 alias = OUT/'source-dirs'/hashlib.sha256(str(path.parent.relative_to(ROOT)).encode()).hexdigest()[:12]
-                alias.parent.mkdir(parents=True,exist_ok=True)
-                if not alias.exists(): alias.symlink_to(os.path.relpath(path.parent,alias.parent),target_is_directory=True)
+                source_link(alias, path.parent, directory=True, replace_generated=True)
                 rel = str((alias/path.name).relative_to(ROOT/'theos'))
             if path != ROOT/e['path']:
                 manifest['case_aliases'].append({'xcode':e['path'],'actual':str(path.relative_to(ROOT))})
@@ -186,6 +281,8 @@ def generate(configuration):
                 prefix = expand(t['settings']['GCC_PREFIX_HEADER'], settings)
                 if not prefix.startswith('/'): prefix = str(Path(project_dir)/prefix)
                 flags += ['-include',prefix]
+        if os.environ.get('ONEGRAM_ARCH') == 'armv6':
+            flags += ['-include',str(objc_literal_compat)]
         for e,rel in resolved:
             ext = Path(rel).suffix
             local = []
@@ -306,20 +403,11 @@ def generate(configuration):
                 if not e['path']:continue
                 source=actual_path(ROOT/e['path'])
                 dest=OUT/'products'/phase['dstPath']/source.name
-                dest.parent.mkdir(parents=True,exist_ok=True)
-                if not dest.exists():dest.symlink_to(os.path.relpath(source,dest.parent))
+                source_link(dest, source, replace_generated=True)
         write(OUT/'headers'/(name+'.json'),json.dumps({'mappings':header_map},indent=2,sort_keys=True)+'\n')
     write(OUT/'headers/namespaces.json',json.dumps({'mappings':namespace_map},indent=2,sort_keys=True)+'\n')
-    if sys.platform == 'darwin':
-        hmaptool=Path(os.environ.get('HMAPTOOL','/usr/local/opt/llvm/bin/hmaptool'))
-    else:
-        hmaptool=Path(os.environ.get('THEOS',str(Path.home()/'theos')))/'toolchain/linux/iphone/bin/hmaptool'
     for path in sorted((OUT/'headers').glob('*.json')):
-        output=path.with_suffix('.hmap')
-        temporary=path.with_suffix('.hmap.tmp')
-        subprocess.run(['python3',str(hmaptool),'write',str(path),str(temporary)],check=True)
-        if output.exists() and output.read_bytes()==temporary.read_bytes():temporary.unlink()
-        else:temporary.replace(output)
+        write_header_map(path.with_suffix('.hmap'), json.loads(path.read_text())['mappings'])
     manifest['header_maps']={str(p.relative_to(OUT)):hashlib.sha256(p.read_bytes()).hexdigest()
                              for p in sorted((OUT/'headers').iterdir()) if p.is_file()}
     write(OUT/'manifest.json',json.dumps(manifest,indent=2,sort_keys=True)+'\n')
@@ -330,6 +418,9 @@ def generate(configuration):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--configuration',default='Release Hockeyapp')
+    parser.add_argument('--ensure-context', action='store_true')
     args = parser.parse_args()
-    result = generate(args.configuration)
-    print('Generated '+str(len(result['targets']))+' complete targets')
+    if not args.ensure_context or not ensure_context(args.configuration):
+        result = generate(args.configuration)
+        if not args.ensure_context:
+            print('Generated '+str(len(result['targets']))+' complete targets')

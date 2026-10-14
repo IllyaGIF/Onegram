@@ -783,20 +783,37 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
     }
 }
 
+- (TGMessage *)_replyMessageForMessageId:(int32_t)messageId
+{
+    TGMessage *message = [super _replyMessageForMessageId:messageId];
+    if (message == nil && messageId != 0)
+    {
+        message = [[TGMessage alloc] init];
+        message.mid = messageId;
+        message.cid = _conversationId;
+    }
+    return message;
+}
+
+- (void)_setupPreparedMessage:(TGPreparedMessage *)message
+{
+    [super _setupPreparedMessage:message];
+    if (message.forumTopicId == 0)
+        message.forumTopicId = _ios6TopicId;
+}
+
 - (void)_setupOutgoingMessage:(TGMessage *)message
 {
     [super _setupOutgoingMessage:message];
-    NSMutableDictionary *properties = message.contentProperties != nil ? [message.contentProperties mutableCopy] : [[NSMutableDictionary alloc] init];
-    properties[@"ios6ForumTopicId"] = [[TGMessageForumTopicContentProperty alloc] initWithTopicId:_ios6TopicId];
-    message.contentProperties = properties;
-
-    if (_ios6TopicId != 1 && message.mediaAttachments.count != 0)
+    TGMessageForumTopicContentProperty *topic = message.contentProperties[@"ios6ForumTopicId"];
+    int32_t topicId = topic.topicId;
+    if (topicId > 1 && message.mediaAttachments.count != 0)
     {
         NSMutableArray *filteredAttachments = [[NSMutableArray alloc] init];
         for (id attachment in message.mediaAttachments)
         {
             if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]] &&
-                ((TGReplyMessageMediaAttachment *)attachment).replyMessageId == _ios6TopicId)
+                ((TGReplyMessageMediaAttachment *)attachment).replyMessageId == topicId)
                 continue;
             [filteredAttachments addObject:attachment];
         }
@@ -804,107 +821,6 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
     }
 }
 
-- (int32_t)_ios6EffectiveReplyMessageId:(int32_t)replyMessageId
-{
-    if (replyMessageId != 0)
-        return replyMessageId;
-    return _ios6TopicId == 1 ? 0 : _ios6TopicId;
-}
-
-- (NSArray *)_createPreparedMessagesFromFiles:(NSArray *)files asReplyToMessageId:(int32_t)replyMessageId
-{
-    return [super _createPreparedMessagesFromFiles:files asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId]];
-}
-
-- (NSArray *)_createPreparedForwardMessagesFromMessages:(NSArray *)messages
-{
-    NSArray *prepared = [super _createPreparedForwardMessagesFromMessages:messages];
-    int32_t topMessageId = [self _ios6EffectiveReplyMessageId:0];
-    if (topMessageId == 0)
-        return prepared;
-
-    TGMessage *topicRoot = [TGDatabaseInstance() loadMessageWithMid:topMessageId peerId:_conversationId];
-    if (topicRoot == nil)
-    {
-        topicRoot = [[TGMessage alloc] init];
-        topicRoot.mid = topMessageId;
-        topicRoot.cid = _conversationId;
-    }
-
-    for (id item in prepared)
-    {
-        if ([item isKindOfClass:[TGPreparedForwardedMessage class]])
-            ((TGPreparedForwardedMessage *)item).replyMessage = topicRoot;
-    }
-    return prepared;
-}
-
-- (void)controllerWantsToSendTextMessage:(NSString *)text entities:(NSArray *)entities asReplyToMessageId:(int32_t)replyMessageId withAttachedMessages:(NSArray *)withAttachedMessages completeGroups:(NSSet *)completeGroups disableLinkPreviews:(bool)disableLinkPreviews botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    int32_t effectiveReply = [self _ios6EffectiveReplyMessageId:replyMessageId];
-    NSSet *effectiveCompleteGroups = effectiveReply != 0 ? nil : completeGroups;
-    [super controllerWantsToSendTextMessage:text entities:entities asReplyToMessageId:effectiveReply withAttachedMessages:withAttachedMessages completeGroups:effectiveCompleteGroups disableLinkPreviews:disableLinkPreviews botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendMapWithLatitude:(double)latitude longitude:(double)longitude venue:(TGVenueAttachment *)venue period:(int32_t)period asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendMapWithLatitude:latitude longitude:longitude venue:venue period:period asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendImagesWithDescriptions:(NSArray *)imageDescriptions asReplyToMessageId:(int32_t)replyMessageId botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendImagesWithDescriptions:imageDescriptions asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendLocalVideoWithTempFilePath:(NSString *)tempVideoFilePath fileSize:(int32_t)fileSize previewImage:(UIImage *)previewImage duration:(NSTimeInterval)duration dimensions:(CGSize)dimensions caption:(NSString *)caption entities:(NSArray *)entities assetUrl:(NSString *)assetUrl liveUploadData:(TGLiveUploadActorData *)liveUploadData asReplyToMessageId:(int32_t)replyMessageId botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendLocalVideoWithTempFilePath:tempVideoFilePath fileSize:fileSize previewImage:previewImage duration:duration dimensions:dimensions caption:caption entities:entities assetUrl:assetUrl liveUploadData:liveUploadData asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendDocumentWithTempFileUrl:(NSURL *)tempFileUrl fileName:(NSString *)fileName mimeType:(NSString *)mimeType asReplyToMessageId:(int32_t)replyMessageId
-{
-    [super controllerWantsToSendDocumentWithTempFileUrl:tempFileUrl fileName:fileName mimeType:mimeType asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId]];
-}
-
-- (void)controllerWantsToSendDocumentsWithDescriptions:(NSArray *)descriptions asReplyToMessageId:(int32_t)replyMessageId
-{
-    [super controllerWantsToSendDocumentsWithDescriptions:descriptions asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId]];
-}
-
-- (void)controllerWantsToSendRemoteDocument:(TGDocumentMediaAttachment *)document asReplyToMessageId:(int32_t)replyMessageId text:(NSString *)text entities:(NSArray *)entities botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendRemoteDocument:document asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] text:text entities:entities botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendRemoteImage:(TGImageMediaAttachment *)image text:(NSString *)text entities:(NSArray *)entities asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendRemoteImage:image text:text entities:entities asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendCloudDocumentsWithDescriptions:(NSArray *)descriptions asReplyToMessageId:(int32_t)replyMessageId
-{
-    [super controllerWantsToSendCloudDocumentsWithDescriptions:descriptions asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId]];
-}
-
-- (void)controllerWantsToSendLocalAudioWithDataItem:(TGDataItem *)dataItem duration:(NSTimeInterval)duration liveData:(TGLiveUploadActorData *)liveData waveform:(TGAudioWaveform *)waveform asReplyToMessageId:(int32_t)replyMessageId botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendLocalAudioWithDataItem:dataItem duration:duration liveData:liveData waveform:waveform asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendRemoteVideoWithMedia:(TGVideoMediaAttachment *)media asReplyToMessageId:(int32_t)replyMessageId text:(NSString *)text entities:(NSArray *)entities botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendRemoteVideoWithMedia:media asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] text:text entities:entities botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendContact:(TGUser *)contactUser asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendContact:contactUser asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
-
-- (void)controllerWantsToSendGame:(TGGameMediaAttachment *)gameMedia asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup
-{
-    [super controllerWantsToSendGame:gameMedia asReplyToMessageId:[self _ios6EffectiveReplyMessageId:replyMessageId] botContextResult:botContextResult botReplyMarkup:botReplyMarkup];
-}
 
 @end
 

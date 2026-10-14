@@ -179,9 +179,18 @@ static void TGModernTextViewModelDrawOperation(__unused CGContextRef context, TG
         return false;
     if (_layoutData != nil)
     {
-        if (_layoutData.hasCustomDrawing)
-            return false;
-        [recording addOperationWithFunction:&TGModernTextViewModelDrawOperation rect:self.bounds object:_layoutData secondaryObject:nil color:_shadowColor size:_shadowOffset value:0.0f flags:0];
+        TGReusableLabelLayoutData *layout = _layoutData;
+        CGRect bounds = self.bounds;
+        UIColor *shadowColor = _shadowColor;
+        CGSize shadowOffset = _shadowOffset;
+        [recording addOperationWithFunction:&TGModernTextViewModelDrawOperation rect:bounds object:layout secondaryObject:nil color:shadowColor size:shadowOffset value:0.0f flags:0];
+        if (layout.hasCustomDrawing)
+        {
+            [recording prepareLastOperationWithBlock:^id(CGRect rect)
+            {
+                return [layout asynchronousDrawingLayoutForWidth:bounds.size.width drawingRect:rect shadowColor:shadowColor shadowOffset:shadowOffset];
+            }];
+        }
     }
     return true;
 }

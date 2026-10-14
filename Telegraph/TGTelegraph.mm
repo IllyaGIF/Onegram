@@ -145,6 +145,7 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 #import "TGInterfaceManager.h"
 
 #import "TGModernSendCommonMessageActor.h"
+#import "TGPreparedMessage.h"
 #import "TGModernSendSecretMessageActor.h"
 
 #import "TGUpdateConfigActor.h"
@@ -4130,6 +4131,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendMessage.message = messageText;
     sendMessage.random_id = tmpId;
     sendMessage.reply_to_msg_id = replyMessageId;
+    sendMessage.forumTopicId = actor.preparedMessage.forumTopicId;
     CFAbsoluteTime sendStart = CFAbsoluteTimeGetCurrent();
     
     return [[TGTelegramNetworking instance] performRpc:sendMessage completionBlock:^(id result, __unused int64_t responseTime, MTRpcError *error)
@@ -4140,7 +4142,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         }
         else
         {
-            TGLog(@"SEND actor.fail peer=%lld random=%lld ms=%.1f code=%d text=%@", conversationId, tmpId, (CFAbsoluteTimeGetCurrent() - sendStart) * 1000.0, error.errorCode, error.errorDescription);
+            TGLog(@"SEND actor.fail peer=%lld topic=%d reply=%d random=%lld ms=%.1f code=%d text=%@", conversationId, sendMessage.forumTopicId, replyMessageId, tmpId, (CFAbsoluteTimeGetCurrent() - sendStart) * 1000.0, error.errorCode, error.errorDescription);
             [actor conversationSendMessageRequestFailed:[[TGTelegramNetworking instance] extractNetworkErrorType:error] errorCode:[[TGTelegramNetworking instance] extractNetworkErrorCode:error]];
         }
     } progressBlock:nil quickAckBlock:^
@@ -4210,6 +4212,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     
     sendContextBotResult.random_id = tmpId;
     sendContextBotResult.reply_to_msg_id = replyMessageId;
+    sendContextBotResult.forumTopicId = actor.preparedMessage.forumTopicId;
     
     sendContextBotResult.n_id = botContextResult.resultId;
     sendContextBotResult.query_id = botContextResult.queryId;
@@ -4244,6 +4247,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendMedia.media = media;
     sendMedia.random_id = tmpId;
     sendMedia.reply_to_msg_id = replyMessageId;
+    sendMedia.forumTopicId = actor.preparedMessage.forumTopicId;
     sendMedia.message = messageText;
     if (entities.count != 0) {
         sendMedia.entities = entities;
@@ -4259,6 +4263,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         }
         else
         {
+            TGLog(@"SEND media.fail peer=%lld topic=%d reply=%d code=%d type=%@", conversationId, sendMedia.forumTopicId, replyMessageId, [[TGTelegramNetworking instance] extractNetworkErrorCode:error], [[TGTelegramNetworking instance] extractNetworkErrorType:error]);
             [actor conversationSendMessageRequestFailed:[[TGTelegramNetworking instance] extractNetworkErrorType:error] errorCode:[[TGTelegramNetworking instance] extractNetworkErrorCode:error]];
         }
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric | TGRequestClassFailOnServerErrors];
@@ -4280,6 +4285,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendMultiMedia.peer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
     sendMultiMedia.multi_media = multiMedia;
     sendMultiMedia.reply_to_msg_id = replyMessageId;
+    sendMultiMedia.forumTopicId = ((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage.forumTopicId;
     
     
     return [[TGTelegramNetworking instance] performRpc:sendMultiMedia completionBlock:^(id message, __unused int64_t responseTime, TLError *error)

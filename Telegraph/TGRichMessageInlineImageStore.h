@@ -6,6 +6,8 @@ extern NSString *const TGRichMessageInlineImageLoadedNotification;
 
 @interface TGRichMessageInlineImageStore : NSObject
 
++ (void)performWithoutStartingRequests:(dispatch_block_t)block;
+
 + (UIImage *)imageForKey:(NSString *)key;
 + (void)requestImageForKey:(NSString *)key signalGenerator:(SSignal *(^)(void))signalGenerator;
 

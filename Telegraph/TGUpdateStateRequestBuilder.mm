@@ -538,6 +538,8 @@ static bool _initialUpdatesScheduled = false;
 
 - (void)prepare:(NSDictionary *)__unused options
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable]) return;
+
 #if defined(ONEGRAM_DIAGNOSTICS)
     OGStartupDiagnosticsSyncStarted();
 #endif
@@ -560,7 +562,18 @@ static bool _initialUpdatesScheduled = false;
 
 - (void)execute:(NSDictionary *)__unused options
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [self stateDeltaRequestFailed];
+        return;
+    }
+
     TGDatabaseState state = [[TGDatabase instance] databaseState];
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [self stateDeltaRequestFailed];
+        return;
+    }
     if (state.pts != 0)
     {
         if ([TGDatabaseInstance() startupSynchronizationQueueKnownEmpty])
@@ -580,6 +593,12 @@ static bool _initialUpdatesScheduled = false;
 
 - (void)actorCompleted:(int)__unused resultCode path:(NSString *)path result:(id)__unused result
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [self stateDeltaRequestFailed];
+        return;
+    }
+
     if ([path hasPrefix:@"/tg/service/synchronizeactionqueue"])
     {
         TGDatabaseState state = [[TGDatabase instance] databaseState];
@@ -2589,6 +2608,12 @@ static bool _initialUpdatesScheduled = false;
 
 - (void)stateDeltaRequestSuccess:(TLupdates_Difference *)difference
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [self stateDeltaRequestFailed];
+        return;
+    }
+
     if ([difference isKindOfClass:[TLupdates_Difference$updates_differenceTooLong class]])
     {
         TGDatabaseState localState = [[TGDatabase instance] databaseState];
@@ -2878,6 +2903,12 @@ static bool _initialUpdatesScheduled = false;
 
 - (void)stateRequestSuccess:(TLupdates_State *)state
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [self stateDeltaRequestFailed];
+        return;
+    }
+
     _state = state;
 
     [ActionStageInstance() requestActor:@"/tg/dialoglist/(sync)" options:@{@"inline": @true, @"limit": @100, @"fullSync": @true} watcher:self];

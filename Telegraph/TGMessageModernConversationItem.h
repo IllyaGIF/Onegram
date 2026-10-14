@@ -40,6 +40,8 @@ extern int32_t TGMessageModernConversationItemLocalUserId;
 - (instancetype)initWithMessage:(TGMessage *)message context:(TGModernViewContext *)context;
 - (id)deepCopy;
 
+- (TGModernViewModel *)viewModelForContainerSize:(CGSize)containerSize viewStorage:(TGModernViewStorage *)viewStorage;
+
 - (void)updateAssets;
 - (void)refreshMetrics;
 - (void)updateSearchText:(bool)animated;

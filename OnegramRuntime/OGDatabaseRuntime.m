@@ -2,6 +2,7 @@
 #import "OGRuntime.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #include "../thirdparty/sqlcipher/sqlite3.h"
 #include <pthread.h>
 #include <stdint.h>
@@ -41,6 +42,7 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     BOOL _synchronous;
     BOOL _mainThreadWaiter;
     BOOL _startupCritical;
+    CFAbsoluteTime _submittedAt;
 }
 - (instancetype)initWithQueue:(dispatch_queue_t)queue synchronous:(BOOL)synchronous mainThreadWaiter:(BOOL)mainThreadWaiter startupCritical:(BOOL)startupCritical block:(dispatch_block_t)block semaphore:(dispatch_semaphore_t)semaphore;
 @end
@@ -58,6 +60,7 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
         _synchronous = synchronous;
         _mainThreadWaiter = mainThreadWaiter;
         _startupCritical = startupCritical;
+        _submittedAt = CACurrentMediaTime();
     }
     return self;
 }
@@ -73,6 +76,9 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     NSMutableArray *_storageTasks;
     NSUInteger _startupCriticalCount;
     BOOL _running;
+    BOOL _storageWakeScheduled;
+    NSUInteger _priorityTaskBurst;
+    CFAbsoluteTime _runningSubmittedAt;
     volatile int32_t _pendingPriorityTaskCount;
 }
 - (void)dispatchQueue:(dispatch_queue_t)queue synchronous:(BOOL)synchronous block:(dispatch_block_t)block;
@@ -112,6 +118,15 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
 - (OGDatabaseRuntimeTask *)nextTaskLocked
 {
     OGDatabaseRuntimeTask *task = [self takeFirstTaskFromQueue:_mainThreadTasks];
+    if (task == nil && _priorityTaskBurst >= 8 && _startupCriticalCount == 0 && _startupCriticalTasks.count == 0 && _storageTasks.count != 0)
+    {
+        OGDatabaseRuntimeTask *oldest = _storageTasks[0];
+        if (CACurrentMediaTime() - oldest->_submittedAt >= 2.0)
+        {
+            _priorityTaskBurst = 0;
+            return [self takeFirstTaskFromQueue:_storageTasks];
+        }
+    }
     if (task == nil)
         task = [self takeFirstTaskFromQueue:_synchronousTasks];
     if (task == nil)
@@ -119,12 +134,29 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     if (task != nil)
     {
         OSAtomicDecrement32Barrier(&_pendingPriorityTaskCount);
+        _priorityTaskBurst++;
         return task;
     }
 
-    if (OGRuntimeInteractionActiveFast())
-        return nil;
-
+    if (OGRuntimeInteractionActiveFast() && _storageTasks.count != 0)
+    {
+        OGDatabaseRuntimeTask *oldest = _storageTasks[0];
+        CFAbsoluteTime remaining = 1.0 - (CACurrentMediaTime() - oldest->_submittedAt);
+        if (remaining > 0.0)
+        {
+            if (!_storageWakeScheduled)
+            {
+                _storageWakeScheduled = YES;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(remaining * NSEC_PER_SEC)), _stateQueue, ^
+                {
+                    _storageWakeScheduled = NO;
+                    [self scheduleDrainLocked];
+                });
+            }
+            return nil;
+        }
+    }
+    _priorityTaskBurst = 0;
     return [self takeFirstTaskFromQueue:_storageTasks];
 }
 
@@ -138,6 +170,7 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
         return;
 
     _running = YES;
+    _runningSubmittedAt = task->_submittedAt;
 
     dispatch_async(task->_queue, ^
     {
@@ -233,6 +266,8 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     OGDatabaseRuntimeTask *task = [[OGDatabaseRuntimeTask alloc] initWithQueue:queue synchronous:NO mainThreadWaiter:NO startupCritical:NO block:block semaphore:NULL];
     dispatch_async(_stateQueue, ^
     {
+        if (_runningSubmittedAt > 0.0)
+            task->_submittedAt = MIN(task->_submittedAt, _runningSubmittedAt);
         [_storageTasks insertObject:task atIndex:0];
         [self scheduleDrainLocked];
     });
@@ -314,7 +349,7 @@ static const CFTimeInterval OGDatabaseMainPriorityDrainBudget = 0.008;
 
 - (void)drainOnQueue:(dispatch_queue_t)queue
 {
-    CFAbsoluteTime drainStart = CFAbsoluteTimeGetCurrent();
+    CFAbsoluteTime drainStart = CACurrentMediaTime();
     for (;;)
     {
         pthread_mutex_lock(&_lock);
@@ -326,7 +361,7 @@ static const CFTimeInterval OGDatabaseMainPriorityDrainBudget = 0.008;
         }
 
         OGDatabaseMainPriorityTask *task = [_tasks objectAtIndex:0];
-        if (task->_queue != queue || (!task->_mainWaiter && CFAbsoluteTimeGetCurrent() - drainStart >= OGDatabaseMainPriorityDrainBudget))
+        if (task->_queue != queue || (!task->_mainWaiter && CACurrentMediaTime() - drainStart >= OGDatabaseMainPriorityDrainBudget))
         {
             dispatch_queue_t nextQueue = task->_queue;
             pthread_mutex_unlock(&_lock);

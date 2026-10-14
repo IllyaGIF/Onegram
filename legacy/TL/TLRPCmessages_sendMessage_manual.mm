@@ -3,11 +3,39 @@
 #import "TL/TLMetaScheme.h"
 #import "TLMetaClassStore.h"
 
+int32_t TGMessageSendFlags(int32_t flags, int32_t replyMessageId, int32_t topicId)
+{
+    if (topicId == 0)
+        return flags;
+    flags &= ~((1 << 4) | (1 << 0));
+    if (replyMessageId != 0 || topicId > 1)
+        flags |= (1 << 0);
+    return flags;
+}
+
+void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t replyMessageId, int32_t topicId)
+{
+    if ((flags & (1 << 0)) == 0)
+        return;
+    if (topicId == 0)
+    {
+        [stream writeInt32:replyMessageId];
+        return;
+    }
+    int32_t replyId = replyMessageId != 0 ? replyMessageId : topicId;
+    bool includeTopId = topicId > 1 && replyId != topicId;
+    [stream writeInt32:(int32_t)0x3bd4b7c2];
+    [stream writeInt32:includeTopId ? (1 << 0) : 0];
+    [stream writeInt32:replyId];
+    if (includeTopId)
+        [stream writeInt32:topicId];
+}
+
 @implementation TLRPCmessages_sendMessage_manual
 
 - (int32_t)TLconstructorSignature
 {
-    return 0xFA88427A;
+    return _forumTopicId != 0 ? (int32_t)0x545cd15a : (int32_t)0xFA88427A;
 }
 
 - (int32_t)TLconstructorName
@@ -27,17 +55,17 @@
 
 - (int)layerVersion
 {
-    return 26;
+    return _forumTopicId != 0 ? 225 : 26;
 }
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:_flags];
+    int32_t flags = TGMessageSendFlags(_flags, _reply_to_msg_id, _forumTopicId);
+    [os writeInt32:flags];
     
     TLMetaClassStore::serializeObject(os, _peer, true);
     
-    if (_flags & (1 << 0))
-        [os writeInt32:_reply_to_msg_id];
+    TGSerializeMessageReply(os, flags, _reply_to_msg_id, _forumTopicId);
     
     [os writeString:_message];
     [os writeInt64:_random_id];

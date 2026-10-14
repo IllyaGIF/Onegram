@@ -42,6 +42,10 @@
 #include <tr1/memory>
 
 #include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <math.h>
+#import <QuartzCore/QuartzCore.h>
 #import <sys/mman.h>
 
 #import <CommonCrypto/CommonDigest.h>
@@ -368,6 +372,315 @@ static TGDatabase *TGDatabaseSingleton = nil;
 static NSString *databaseName = nil;
 static TGDatabasePasswordCheckResultBlock (^passwordRequiredBlock)(void (^)(NSString *), bool) = nil;
 static TGDatabaseUpgradeCompletedBlock (^upgradeCompletedBlock)() = nil;
+
+static NSError *TGDatabaseOperationError(NSString *operation, int code)
+{
+    return [NSError errorWithDomain:@"Onegram.Database" code:code userInfo:@{NSLocalizedDescriptionKey: TGLocalized([operation hasPrefix:@"migration.cleanup"] ? @"Database.CleanupError" : @"Database.AccessError"), @"operation": operation}];
+}
+
+static bool TGDatabaseConstantTimeEqual(NSData *lhs, NSData *rhs)
+{
+    if (lhs == nil || rhs == nil || lhs.length != rhs.length)
+        return false;
+    const uint8_t *a = (const uint8_t *)lhs.bytes;
+    const uint8_t *b = (const uint8_t *)rhs.bytes;
+    uint8_t difference = 0;
+    for (NSUInteger i = 0; i < lhs.length; i++)
+        difference |= a[i] ^ b[i];
+    return difference == 0;
+}
+
+static NSDictionary *TGDatabaseParsePasswordRecord(NSData *data)
+{
+    if (data == nil)
+        return @{@"version": @1, @"mode": @0};
+    if (data.length == 0)
+        return nil;
+    if (data.length >= 8 && memcmp(data.bytes, "bplist00", 8) == 0)
+    {
+        NSString *description = nil;
+        id object = [NSPropertyListSerialization propertyListFromData:data mutabilityOption:NSPropertyListImmutable format:NULL errorDescription:&description];
+        if (![object isKindOfClass:[NSDictionary class]])
+            return nil;
+        NSDictionary *record = object;
+        if (![record[@"version"] isKindOfClass:[NSNumber class]] || [record[@"version"] intValue] != 2 || ![record[@"mode"] isKindOfClass:[NSNumber class]])
+            return nil;
+        int mode = [record[@"mode"] intValue];
+        if (mode < 0 || mode > 4)
+            return nil;
+        for (NSString *key in @[@"database", @"index"])
+        {
+            NSString *name = record[key];
+            if (![name isKindOfClass:[NSString class]] || name.length == 0 || ![name isEqualToString:name.lastPathComponent] || [name isEqualToString:@"."] || [name isEqualToString:@".."])
+                return nil;
+        }
+        id retired = record[@"retiredDatabases"];
+        if (retired != nil)
+        {
+            if (![retired isKindOfClass:[NSArray class]]) return nil;
+            for (id name in retired)
+            {
+                if (![name isKindOfClass:[NSString class]] || [name length] == 0 || ![name isEqual:[name lastPathComponent]] || [name isEqual:@"."] || [name isEqual:@".."]) return nil;
+            }
+        }
+        if (mode != 0)
+        {
+            if (![record[@"salt"] isKindOfClass:[NSData class]] || [record[@"salt"] length] != 32 || ![record[@"verifier"] isKindOfClass:[NSData class]] || [record[@"verifier"] length] != 32 || ![record[@"rounds"] isKindOfClass:[NSNumber class]])
+                return nil;
+            int rounds = [record[@"rounds"] intValue];
+            if (rounds < 10000 || rounds > 2000000)
+                return nil;
+        }
+        return record;
+    }
+    uint8_t mode = ((const uint8_t *)data.bytes)[0];
+    if (mode > 4)
+        return nil;
+    if (mode <= 2)
+        return data.length == 1 ? @{@"version": @1, @"mode": @(mode)} : nil;
+    if (data.length < 5)
+        return nil;
+    uint32_t length = 0;
+    memcpy(&length, (const uint8_t *)data.bytes + 1, sizeof(length));
+    if (length != data.length - 5)
+        return nil;
+    NSString *password = [[NSString alloc] initWithData:[data subdataWithRange:NSMakeRange(5, length)] encoding:NSUTF8StringEncoding];
+    return password == nil ? nil : @{@"version": @1, @"mode": @(mode), @"legacyPassword": password};
+}
+
+static NSDictionary *TGDatabaseCreatePasswordRecord(NSString *password, bool strong, bool encrypted)
+{
+    NSMutableDictionary *record = [@{@"version": @2, @"mode": @(password.length == 0 ? 0 : (encrypted ? (strong ? 2 : 1) : (strong ? 4 : 3)))} mutableCopy];
+    if (password.length == 0)
+        return record;
+    uint32_t random[8];
+    for (NSUInteger i = 0; i < 8; i++)
+        random[i] = arc4random();
+    NSData *salt = [NSData dataWithBytes:random length:sizeof(random)];
+    NSData *bytes = [password dataUsingEncoding:NSUTF8StringEncoding];
+    if (bytes == nil) return nil;
+    static int rounds = 0;
+    @synchronized([TGDatabase class])
+    {
+        if (rounds == 0)
+        {
+            CFAbsoluteTime start = CACurrentMediaTime();
+            if (MTPBKDF2HMACSHA256(bytes, salt, 1000, 32) == nil)
+                return nil;
+            double duration = MAX(0.001, CACurrentMediaTime() - start);
+            rounds = (int)MAX(10000.0, MIN(600000.0, ceil(1000.0 * 0.15 / duration)));
+        }
+    }
+    NSData *verifier = MTPBKDF2HMACSHA256(bytes, salt, rounds, 32);
+    if (verifier == nil)
+        return nil;
+    record[@"salt"] = salt;
+    record[@"rounds"] = @(rounds);
+    record[@"verifier"] = verifier;
+    return record;
+}
+
+static bool TGDatabaseWriteState(NSData *data, NSString *path, NSError **error)
+{
+    NSString *temporaryPath = [path stringByAppendingString:@".pending"];
+    int descriptor = open(temporaryPath.fileSystemRepresentation, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (descriptor < 0)
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"state.open", errno);
+        return false;
+    }
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger offset = 0;
+    int code = 0;
+    while (offset < data.length)
+    {
+        ssize_t written = write(descriptor, bytes + offset, data.length - offset);
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0) { code = written < 0 ? errno : EIO; break; }
+        offset += (NSUInteger)written;
+    }
+    if (code == 0 && fsync(descriptor) != 0) code = errno;
+    if (close(descriptor) != 0 && code == 0) code = errno;
+    if (code == 0 && rename(temporaryPath.fileSystemRepresentation, path.fileSystemRepresentation) != 0) code = errno;
+    if (code != 0)
+    {
+        unlink(temporaryPath.fileSystemRepresentation);
+        if (error != NULL) *error = TGDatabaseOperationError(@"state.write", code);
+        return false;
+    }
+    int directory = open(path.stringByDeletingLastPathComponent.fileSystemRepresentation, O_RDONLY);
+    if (directory < 0)
+        code = errno;
+    else
+    {
+        if (fsync(directory) != 0 && errno != EINVAL && errno != ENOTSUP) code = errno;
+        close(directory);
+    }
+    if (code != 0 && error != NULL) *error = TGDatabaseOperationError(@"state.sync", code);
+    return true;
+}
+
+static bool TGDatabaseExecute(sqlite3 *handle, const char *sql, NSString *operation, NSError **error)
+{
+    int code = handle == NULL ? SQLITE_MISUSE : sqlite3_exec(handle, sql, NULL, NULL, NULL);
+    if (code == SQLITE_OK)
+        return true;
+    if (error != NULL) *error = TGDatabaseOperationError(operation, code);
+    return false;
+}
+
+static bool TGDatabaseReadInteger(sqlite3 *handle, NSString *query, int64_t *value, NSError **error)
+{
+    sqlite3_stmt *statement = NULL;
+    int code = sqlite3_prepare_v2(handle, query.UTF8String, -1, &statement, NULL);
+    if (code == SQLITE_OK)
+    {
+        code = sqlite3_step(statement);
+        if (code == SQLITE_ROW)
+        {
+            *value = sqlite3_column_int64(statement, 0);
+            code = sqlite3_step(statement);
+            if (code == SQLITE_DONE) code = SQLITE_OK;
+        }
+    }
+    sqlite3_finalize(statement);
+    if (code != SQLITE_OK && error != NULL) *error = TGDatabaseOperationError(@"migration.read", code);
+    return code == SQLITE_OK;
+}
+
+static bool TGDatabaseCheckIntegrity(sqlite3 *handle, NSError **error)
+{
+    sqlite3_stmt *statement = NULL;
+    int code = sqlite3_prepare_v2(handle, "PRAGMA integrity_check", -1, &statement, NULL);
+    if (code == SQLITE_OK)
+    {
+        code = sqlite3_step(statement);
+        const unsigned char *result = code == SQLITE_ROW ? sqlite3_column_text(statement, 0) : NULL;
+        if (result != NULL && strcmp((const char *)result, "ok") == 0 && sqlite3_step(statement) == SQLITE_DONE)
+            code = SQLITE_OK;
+        else if (code == SQLITE_ROW)
+            code = SQLITE_CORRUPT;
+    }
+    sqlite3_finalize(statement);
+    if (code != SQLITE_OK && error != NULL) *error = TGDatabaseOperationError(@"migration.integrity", code);
+    return code == SQLITE_OK;
+}
+
+static FMDatabase *TGDatabaseOpenFile(NSString *path, NSString *hexKey, bool index, NSError **error)
+{
+    FMDatabase *database = [FMDatabase databaseWithPath:path];
+    if (![database open])
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"database.open", database.lastErrorCode);
+        return nil;
+    }
+    sqlite3 *handle = database.sqliteHandle;
+    bool success = true;
+    if (hexKey != nil)
+        success = TGDatabaseExecute(handle, [[NSString stringWithFormat:@"PRAGMA key=\"%@\"", hexKey] UTF8String], @"database.key", error);
+    int64_t schemaCount = 0;
+    success = success && TGDatabaseReadInteger(handle, @"SELECT count(*) FROM sqlite_master", &schemaCount, error);
+    success = success && TGDatabaseExecute(handle, "PRAGMA journal_mode=WAL", @"database.wal", error);
+    success = success && TGDatabaseExecute(handle, "PRAGMA synchronous=NORMAL", @"database.sync", error);
+    if (success && OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        success = TGDatabaseExecute(handle, "PRAGMA temp_store=MEMORY", @"database.temp", error);
+        success = success && TGDatabaseExecute(handle, index ? "PRAGMA cache_size=192" : "PRAGMA cache_size=1024", @"database.cache", error);
+    }
+    if (!success) { [database close]; return nil; }
+    database.shouldCacheStatements = true;
+    database.logsErrors = true;
+    OGDatabaseRuntimeConfigureSQLite(handle);
+    return database;
+}
+
+static FMDatabase *TGDatabaseExport(FMDatabase *source, NSString *path, NSString *hexKey, bool index, bool *created, NSError **error)
+{
+    *created = false;
+    sqlite3 *handle = source.sqliteHandle;
+    if (handle == NULL || source.inTransaction || [[NSFileManager defaultManager] fileExistsAtPath:path])
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"migration.prepare", SQLITE_BUSY);
+        return nil;
+    }
+    int reservation = open(path.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (reservation < 0)
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"migration.reserve", errno);
+        return nil;
+    }
+    *created = true;
+    if (close(reservation) != 0)
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"migration.reserve.close", errno);
+        return nil;
+    }
+    int64_t userVersion = 0;
+    if (!TGDatabaseReadInteger(handle, @"PRAGMA user_version", &userVersion, error))
+        return nil;
+    sqlite3_stmt *statement = NULL;
+    int code = sqlite3_prepare_v2(handle, "ATTACH DATABASE ? AS og_migration KEY ?", -1, &statement, NULL);
+    if (code == SQLITE_OK) code = sqlite3_bind_text(statement, 1, path.UTF8String, -1, SQLITE_TRANSIENT);
+    if (code == SQLITE_OK) code = sqlite3_bind_text(statement, 2, (hexKey ?: @"").UTF8String, -1, SQLITE_TRANSIENT);
+    if (code == SQLITE_OK) code = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    if (code != SQLITE_DONE)
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"migration.attach", code);
+        return nil;
+    }
+    bool success = TGDatabaseExecute(handle, "SELECT sqlcipher_export('og_migration')", @"migration.export", error);
+    if (success)
+        success = TGDatabaseExecute(handle, [[NSString stringWithFormat:@"PRAGMA og_migration.user_version=%lld", (long long)userVersion] UTF8String], @"migration.version", error);
+    if (success)
+    {
+        statement = NULL;
+        code = sqlite3_prepare_v2(handle, "SELECT name FROM main.sqlite_master WHERE type='table'", -1, &statement, NULL);
+        if (code == SQLITE_OK)
+        {
+            while ((code = sqlite3_step(statement)) == SQLITE_ROW)
+            {
+                const unsigned char *name = sqlite3_column_text(statement, 0);
+                if (name == NULL) { success = false; break; }
+                NSString *table = [[NSString stringWithUTF8String:(const char *)name] stringByReplacingOccurrencesOfString:@"\"" withString:@"\"\""];
+                int64_t before = 0, after = 0;
+                success = TGDatabaseReadInteger(handle, [NSString stringWithFormat:@"SELECT count(*) FROM main.\"%@\"", table], &before, error) && TGDatabaseReadInteger(handle, [NSString stringWithFormat:@"SELECT count(*) FROM og_migration.\"%@\"", table], &after, error) && before == after;
+                if (!success) break;
+            }
+            if (code != SQLITE_DONE) success = false;
+        }
+        else success = false;
+        sqlite3_finalize(statement);
+        if (!success && error != NULL && *error == nil) *error = TGDatabaseOperationError(@"migration.contents", SQLITE_CORRUPT);
+    }
+    NSError *detachError = nil;
+    bool detached = TGDatabaseExecute(handle, "DETACH DATABASE og_migration", @"migration.detach", &detachError);
+    if (!detached && error != NULL && *error == nil) *error = detachError;
+    if (!detached) [source close];
+    if (!success || !detached)
+        return nil;
+    FMDatabase *target = TGDatabaseOpenFile(path, hexKey, index, error);
+    if (target != nil && !TGDatabaseCheckIntegrity(target.sqliteHandle, error))
+    {
+        [target close];
+        return nil;
+    }
+    if (target != nil && !TGDatabaseExecute(target.sqliteHandle, "PRAGMA wal_checkpoint(FULL)", @"migration.checkpoint", error))
+    {
+        [target close];
+        return nil;
+    }
+    int descriptor = target == nil ? -1 : open(path.fileSystemRepresentation, O_RDONLY);
+    if (target != nil && (descriptor < 0 || fsync(descriptor) != 0))
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"migration.sync", errno);
+        [target close];
+        target = nil;
+    }
+    if (descriptor >= 0) close(descriptor);
+    return target;
+}
 
 static NSString *_liveMessagesDispatchPath = nil;
 static NSString *_liveUnreadCountDispatchPath = nil;
@@ -734,6 +1047,10 @@ static TGPeerRuntimeState TGPeerRuntimeStateMakeDefault()
     TG_SYNCHRONIZED_DEFINE(_lastReportedToPeerLayers);
     
     NSString *_password;
+    NSDictionary *_passwordRecord;
+    bool _passwordRecordUpgradeScheduled;
+    NSError *_databaseError;
+    bool _databaseAvailable;
     
     TG_SYNCHRONIZED_DEFINE(_ptsWatchers);
     TG_SYNCHRONIZED_DEFINE(_cachedDatabaseState);
@@ -945,6 +1262,13 @@ static TGPeerRuntimeState TGPeerRuntimeStateMakeDefault()
 @property (nonatomic, strong) TGTimer *syncRemoteContactUidsTimer;
 
 - (void)initDatabase;
+- (bool)_reopenDatabase;
+- (bool)_reopenIndexDatabase;
+- (void)_reportDatabaseError:(NSError *)error;
+- (NSError *)_clearRetiredDatabases;
+- (void)_upgradeLegacyPasswordRecord:(NSString *)password record:(NSDictionary *)record;
+- (bool)_commitPasswordRecord:(NSDictionary *)record password:(NSString *)password database:(FMDatabase *)database index:(FMDatabase *)index error:(NSError **)error;
+- (void)_applyPassword:(NSString *)password strong:(bool)strong encrypted:(bool)encrypted completion:(void (^)(NSError *))completion;
 - (void)_dropRedundantIndexes;
 - (void)_preloadStartupSynchronizationState;
 - (void)_loadCustomPropertiesCacheFromDatabase;
@@ -1798,6 +2122,10 @@ static void TGDatabaseConfigureCipherDefaults()
         NSString *baseDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.db", (databaseName == nil ? @"tgdata" : databaseName)]];
         NSString *baseIndexDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_index.db", (databaseName == nil ? @"tgdata" : databaseName)]];
         
+        NSString *passwordPath = [[self documentsPath] stringByAppendingPathComponent:@"x.y"];
+        NSData *passwordData = [NSData dataWithContentsOfFile:passwordPath];
+        _passwordRecord = passwordData == nil && [[NSFileManager defaultManager] fileExistsAtPath:passwordPath] ? nil : TGDatabaseParsePasswordRecord(passwordData);
+
         NSString *encryptedDatabasePath = [baseDatabasePath stringByAppendingString:@".y"];
         NSString *encryptedIndexDatabasePath = [baseIndexDatabasePath stringByAppendingString:@".y"];
         
@@ -1811,6 +2139,28 @@ static void TGDatabaseConfigureCipherDefaults()
         else
             _indexDatabasePath = baseIndexDatabasePath;
         
+        if ([_passwordRecord[@"version"] intValue] == 2)
+        {
+            NSString *stem = databaseName ?: @"tgdata";
+            NSString *mainName = _passwordRecord[@"database"];
+            NSString *indexName = _passwordRecord[@"index"];
+            bool mainMatches = [mainName isEqualToString:baseDatabasePath.lastPathComponent] || [mainName isEqualToString:encryptedDatabasePath.lastPathComponent] || [mainName hasPrefix:[stem stringByAppendingString:@"-m-"]];
+            bool indexMatches = [indexName isEqualToString:baseIndexDatabasePath.lastPathComponent] || [indexName isEqualToString:encryptedIndexDatabasePath.lastPathComponent] || [indexName hasPrefix:[stem stringByAppendingString:@"_index-m-"]];
+            bool retiredMatch = true;
+            for (NSString *name in _passwordRecord[@"retiredDatabases"])
+            {
+                bool matches = [name isEqualToString:baseDatabasePath.lastPathComponent] || [name isEqualToString:encryptedDatabasePath.lastPathComponent] || [name isEqualToString:baseIndexDatabasePath.lastPathComponent] || [name isEqualToString:encryptedIndexDatabasePath.lastPathComponent] || [name hasPrefix:[stem stringByAppendingString:@"-m-"]] || [name hasPrefix:[stem stringByAppendingString:@"_index-m-"]];
+                if (!matches || [name isEqualToString:mainName] || [name isEqualToString:indexName]) retiredMatch = false;
+            }
+            if (!mainMatches || !indexMatches || !retiredMatch)
+                _passwordRecord = nil;
+        }
+        if ([_passwordRecord[@"version"] intValue] == 2)
+        {
+            _databasePath = [[self documentsPath] stringByAppendingPathComponent:_passwordRecord[@"database"]];
+            _indexDatabasePath = [[self documentsPath] stringByAppendingPathComponent:_passwordRecord[@"index"]];
+        }
+
         _serviceLastCleanTimeKey = lastCleanTime_hash;
         _servicePtsKey = pts_hash;
         _serviceLastMidKey = lastMid_hash;
@@ -1996,103 +2346,116 @@ static void TGDatabaseConfigureCipherDefaults()
 
 - (NSString *)currentPassword
 {
-    if (_password == nil)
+    @synchronized(self)
     {
-        NSData *data = [NSData dataWithContentsOfFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"]];
-        if (data.length == 0)
-            return @"";
-        else
-        {
-            uint8_t mode = 0;
-            [data getBytes:&mode length:1];
-            
-            if (mode == 0)
-                return nil;
-            else if (mode == 3 || mode == 4)
-            {
-                uint32_t passwordLength = 0;
-                [data getBytes:&passwordLength range:NSMakeRange(1, 4)];
-                NSData *passwordBytes = [data subdataWithRange:NSMakeRange(5, passwordLength)];
-                NSString *candidatePassword = [[NSString alloc] initWithData:passwordBytes encoding:NSUTF8StringEncoding];
-                return candidatePassword;
-            }
-        }
-        
-        return nil;
+        return _password ?: _passwordRecord[@"legacyPassword"];
     }
-    else
-        return _password;
 }
 
-- (void)setPassword:(NSString *)password isStrong:(bool)isStrong completion:(void (^)())completion
+- (NSData *)extensionPasswordFingerprint
 {
-    [self dispatchOnDatabaseThread:^
+    NSDictionary *record = nil;
+    @synchronized(self) { record = _passwordRecord; }
+    if ([record[@"version"] intValue] != 2 || [record[@"mode"] intValue] == 0) return nil;
+    NSMutableData *bytes = [NSMutableData dataWithData:record[@"salt"]];
+    [bytes appendData:record[@"verifier"]];
+    uint32_t rounds = [record[@"rounds"] unsignedIntValue];
+    uint8_t parameters[5] = {(uint8_t)rounds, (uint8_t)(rounds >> 8), (uint8_t)(rounds >> 16), (uint8_t)(rounds >> 24), (uint8_t)[record[@"mode"] intValue]};
+    [bytes appendBytes:parameters length:sizeof(parameters)];
+    return MTSha256(bytes);
+}
+
+- (void)_upgradeLegacyPasswordRecord:(NSString *)password record:(NSDictionary *)record
+{
+    @synchronized(self)
     {
-        _password = password;
-        
-        if (_password.length == 0)
+        if (!_databaseAvailable || _passwordRecord != record || [record[@"version"] intValue] != 1 || [record[@"mode"] intValue] == 0 || password.length == 0 || _passwordRecordUpgradeScheduled) return;
+        _passwordRecordUpgradeScheduled = true;
+    }
+    dispatch_async(OGPlatformBackgroundQueue(), ^
+    {
+        int mode = [record[@"mode"] intValue];
+        NSDictionary *updated = TGDatabaseCreatePasswordRecord(password, mode == 2 || mode == 4, [self isCurrentDatabaseEncrypted]);
+        [self dispatchOnDatabaseThread:^
         {
-            uint8_t mode = 0;
-            NSData *passwordData = [NSData dataWithBytes:&mode length:1];
-            [passwordData writeToFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] atomically:true];
-            if ([self isCurrentDatabaseEncrypted])
+            @synchronized(self)
             {
-                [self migrateDatabasePlaintext:^
-                {
-                    [ActionStageInstance() dispatchResource:@"/databasePasswordChanged" resource:nil];
-                    if (completion)
-                        completion();
-                }];
+                _passwordRecordUpgradeScheduled = false;
+                if (_passwordRecord != record) return;
             }
-            else
+            if (updated == nil)
             {
-                [ActionStageInstance() dispatchResource:@"/databasePasswordChanged" resource:nil];
-                if (completion)
-                    completion();
+                [self _reportDatabaseError:TGDatabaseOperationError(@"password.derive", SQLITE_NOMEM)];
+                return;
             }
-        }
-        else
+            NSMutableDictionary *state = [updated mutableCopy];
+            state[@"database"] = self.databasePath.lastPathComponent;
+            state[@"index"] = self.indexDatabasePath.lastPathComponent;
+            NSError *error = nil;
+            [self _commitPasswordRecord:state password:password database:nil index:nil error:&error];
+            if (error != nil) [self _reportDatabaseError:error];
+            else [[TGTelegramNetworking maybeInstance] exportCredentialsForExtensions];
+        } synchronous:false];
+    });
+}
+
+- (void)_reportDatabaseError:(NSError *)error
+{
+    @synchronized(self) { _databaseError = error; }
+    TGLog(@"DBERROR operation=%@ code=%ld", error.userInfo[@"operation"], (long)error.code);
+    [ActionStageInstance() dispatchResource:@"/database/error" resource:error];
+}
+
+- (NSError *)databaseError
+{
+    @synchronized(self) { return _databaseError; }
+}
+
+- (bool)isDatabaseAvailable
+{
+    @synchronized(self) { return _databaseAvailable; }
+}
+
+- (bool)_commitPasswordRecord:(NSDictionary *)record password:(NSString *)password database:(FMDatabase *)database index:(FMDatabase *)index error:(NSError **)error
+{
+    NSString *description = nil;
+    NSData *data = [NSPropertyListSerialization dataFromPropertyList:record format:NSPropertyListBinaryFormat_v1_0 errorDescription:&description];
+    if (data == nil)
+    {
+        if (error != NULL) *error = TGDatabaseOperationError(@"state.encode", EINVAL);
+        return false;
+    }
+    if (!TGDatabaseWriteState(data, [[self documentsPath] stringByAppendingPathComponent:@"x.y"], error))
+        return false;
+    @synchronized(self)
+    {
+        _passwordRecord = [record copy];
+        _databaseError = nil;
+        _password = password.length == 0 ? nil : [password copy];
+        if (database != nil && index != nil)
         {
-            NSMutableData *passwordData = [[NSMutableData alloc] init];
-            uint8_t mode = 0;
-            
-            if ([self isEncryptionEnabled])
-                mode = isStrong ? 2 : 1;
-            else
-                mode = isStrong ? 4 : 3;
-            
-            [passwordData appendBytes:&mode length:1];
-            if (![self isEncryptionEnabled])
-            {
-                NSData *passwordBytes = [_password dataUsingEncoding:NSUTF8StringEncoding];
-                uint32_t passwordLength = (uint32_t)passwordBytes.length;
-                [passwordData appendBytes:&passwordLength length:4];
-                [passwordData appendData:passwordBytes];
-            }
-            
-            if ([self isCurrentDatabaseEncrypted])
-                [self rekeyDatabase:[[_password dataUsingEncoding:NSUTF8StringEncoding] stringByEncodingInHex]];
-            
-            [passwordData writeToFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] atomically:true];
-            [ActionStageInstance() dispatchResource:@"/databasePasswordChanged" resource:nil];
-            if (completion)
-                completion();
+            _database = database;
+            _indexDatabase = index;
+            _databasePath = [[self documentsPath] stringByAppendingPathComponent:record[@"database"]];
+            _indexDatabasePath = [[self documentsPath] stringByAppendingPathComponent:record[@"index"]];
         }
-    } synchronous:false];
+    }
+    return true;
+}
+
+- (void)setPassword:(NSString *)password isStrong:(bool)isStrong completion:(void (^)(NSError *))completion
+{
+    [self _applyPassword:password strong:isStrong encrypted:password.length != 0 && [self isEncryptionEnabled] completion:completion];
 }
 
 - (bool)isPasswordSet:(bool *)isStrong
 {
-    NSData *passwordData = [NSData dataWithContentsOfFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"]];
-    if (passwordData.length == 0)
-        return false;
-    
-    uint8_t mode = 0;
-    [passwordData getBytes:&mode length:1];
-    if (isStrong)
-        *isStrong = (mode == 2 || mode == 4);
-    
-    return mode != 0;
+    @synchronized(self)
+    {
+        int mode = [_passwordRecord[@"mode"] intValue];
+        if (isStrong != NULL) *isStrong = _passwordRecord == nil || mode == 2 || mode == 4;
+        return _passwordRecord == nil || mode != 0;
+    }
 }
 
 - (bool)table:(NSString *)table containsField:(NSString *)field
@@ -2664,63 +3027,90 @@ static void TGDatabaseConfigureCipherDefaults()
 
 - (bool)isCurrentDatabaseEncrypted
 {
-    return [_databasePath hasSuffix:@".y"];
+    return [[self databasePath] hasSuffix:@".y"];
 }
 
 - (bool)isCurrentIndexDatabaseEncrypted
 {
-    return [_indexDatabasePath hasSuffix:@".y"];
+    return [[self indexDatabasePath] hasSuffix:@".y"];
 }
 
 - (NSString *)databasePath
 {
-    return _databasePath;
+    @synchronized(self) { return _databasePath; }
 }
 
 - (NSString *)indexDatabasePath
 {
-    return _indexDatabasePath;
+    @synchronized(self) { return _indexDatabasePath; }
 }
 
 - (bool)verifyPassword:(NSString *)password
 {
-    NSData *passwordData = [NSData dataWithContentsOfFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"]];
-    if (passwordData.length != 0)
+    if (password == nil)
+        return false;
+    NSDictionary *record = nil;
+    @synchronized(self)
     {
-        uint8_t mode = 0;
-        [passwordData getBytes:&mode length:1];
-        if (mode == 3 || mode == 4)
-        {
-            uint32_t passwordLength = 0;
-            [passwordData getBytes:&passwordLength range:NSMakeRange(1, 4)];
-            NSData *passwordBytes = [passwordData subdataWithRange:NSMakeRange(5, passwordLength)];
-            NSString *plaintextPassword = [[NSString alloc] initWithData:passwordBytes encoding:NSUTF8StringEncoding];
-            if ([plaintextPassword isEqualToString:password])
-                return true;
-        }
+        record = _passwordRecord;
+        if (_password != nil)
+            return TGDatabaseConstantTimeEqual([_password dataUsingEncoding:NSUTF8StringEncoding], [password dataUsingEncoding:NSUTF8StringEncoding]);
     }
-    
-    return [_password isEqualToString:password];
+    if (record == nil || [record[@"mode"] intValue] == 0)
+        return false;
+    bool valid = false;
+    if (record[@"legacyPassword"] != nil)
+        valid = TGDatabaseConstantTimeEqual([record[@"legacyPassword"] dataUsingEncoding:NSUTF8StringEncoding], [password dataUsingEncoding:NSUTF8StringEncoding]);
+    else if (record[@"verifier"] != nil)
+        valid = TGDatabaseConstantTimeEqual(record[@"verifier"], MTPBKDF2HMACSHA256([password dataUsingEncoding:NSUTF8StringEncoding], record[@"salt"], [record[@"rounds"] intValue], 32));
+    if (!valid)
+        return false;
+    @synchronized(self)
+    {
+        if (_passwordRecord != record)
+            return false;
+        _password = [password copy];
+    }
+    [self _upgradeLegacyPasswordRecord:password record:record];
+    [[TGTelegramNetworking maybeInstance] exportCredentialsForExtensions];
+    return true;
+}
+
+- (void)verifyPassword:(NSString *)password completion:(void (^)(bool))completion
+{
+    dispatch_async(OGPlatformBackgroundQueue(), ^
+    {
+        bool valid = [self verifyPassword:password];
+        TGDispatchOnMainThread(^{ if (completion != nil) completion(valid); });
+    });
 }
 
 - (bool)checkPassword:(NSString *)password isLegacy:(bool *)isLegacy
 {
+    if (password == nil || ![[NSFileManager defaultManager] fileExistsAtPath:self.databasePath])
+        return false;
+
     NSData *data = [password dataUsingEncoding:NSUTF8StringEncoding];
+    if (data == nil) return false;
     NSString *hexKey = [data stringByEncodingInHex];
 
     for (int i = 0; i < 2; i++)
     {
         FMDatabase *database = [FMDatabase databaseWithPath:self.databasePath];
-        [database open];
-        database.logsErrors = true;
+        if (![database openWithFlags:SQLITE_OPEN_READONLY])
+        {
+            [database close];
+            continue;
+        }
         NSString *keyString = nil;
         if (i == 0)
             keyString = [[NSString alloc] initWithFormat:@"PRAGMA key=\"%@\"", hexKey];
         else
             keyString = [[NSString alloc] initWithFormat:@"PRAGMA key=\"x'%@\"", hexKey];
-        sqlite3_exec([database sqliteHandle], keyString.UTF8String, NULL, NULL, NULL);
-        FMResultSet *result = [database executeQuery:@"SELECT count(*) FROM sqlite_master;"];
+        bool keyed = TGDatabaseExecute(database.sqliteHandle, keyString.UTF8String, @"password.key", NULL);
+        FMResultSet *result = keyed ? [database executeQuery:@"SELECT count(*) FROM sqlite_master;"] : nil;
         bool success = [result next];
+        [result close];
         [database close];
         if (success)
         {
@@ -2735,22 +3125,30 @@ static void TGDatabaseConfigureCipherDefaults()
 
 - (bool)checkIndexPassword:(NSString *)password isLegacy:(bool *)isLegacy
 {
+    if (password == nil || ![[NSFileManager defaultManager] fileExistsAtPath:self.indexDatabasePath])
+        return false;
+
     NSData *data = [password dataUsingEncoding:NSUTF8StringEncoding];
+    if (data == nil) return false;
     NSString *hexKey = [data stringByEncodingInHex];
     
     for (int i = 0; i < 2; i++)
     {
         FMDatabase *database = [FMDatabase databaseWithPath:self.indexDatabasePath];
-        [database open];
-        database.logsErrors = true;
+        if (![database openWithFlags:SQLITE_OPEN_READONLY])
+        {
+            [database close];
+            continue;
+        }
         NSString *keyString = nil;
         if (i == 0)
             keyString = [[NSString alloc] initWithFormat:@"PRAGMA key=\"%@\"", hexKey];
         else
             keyString = [[NSString alloc] initWithFormat:@"PRAGMA key=\"x'%@\"", hexKey];
-        sqlite3_exec([database sqliteHandle], keyString.UTF8String, NULL, NULL, NULL);
-        FMResultSet *result = [database executeQuery:@"SELECT count(*) FROM sqlite_master;"];
+        bool keyed = TGDatabaseExecute(database.sqliteHandle, keyString.UTF8String, @"password.key", NULL);
+        FMResultSet *result = keyed ? [database executeQuery:@"SELECT count(*) FROM sqlite_master;"] : nil;
         bool success = [result next];
+        [result close];
         [database close];
         if (success)
         {
@@ -2763,165 +3161,82 @@ static void TGDatabaseConfigureCipherDefaults()
     return false;
 }
 
-- (void)setEncryptionEnabled:(bool)encryptionEnabled completion:(void (^)())completion
+- (void)setEncryptionEnabled:(bool)encryptionEnabled completion:(void (^)(NSError *))completion
 {
-    NSData *passwordData = [NSData dataWithContentsOfFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"]];
-    if (passwordData.length != 0)
+    bool strong = false;
+    bool hasPassword = [self isPasswordSet:&strong];
+    NSString *password = [self currentPassword];
+    if (!hasPassword || password.length == 0)
     {
-        uint8_t mode = 0;
-        [passwordData getBytes:&mode length:1];
-        if (mode == 3 || mode == 4)
-        {
-            uint32_t passwordLength = 0;
-            [passwordData getBytes:&passwordLength range:NSMakeRange(1, 4)];
-            NSData *passwordBytes = [passwordData subdataWithRange:NSMakeRange(5, passwordLength)];
-            _password = [[NSString alloc] initWithData:passwordBytes encoding:NSUTF8StringEncoding];
-        }
-        
-        if (encryptionEnabled)
-        {
-            if (_password.length != 0)
-            {
-                NSMutableData *updatedPasswordData = [[NSMutableData alloc] init];
-                uint8_t updatedMode = mode;
-                if (mode == 3)
-                    updatedMode = 1;
-                else if (mode == 4)
-                    updatedMode = 2;
-                [updatedPasswordData appendBytes:&updatedMode length:1];
-                
-                if (![self isCurrentDatabaseEncrypted])
-                {
-                    [self migrateDatabaseEncrypted:^
-                    {
-                        [updatedPasswordData writeToFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] atomically:true];
-                        if (completion)
-                            completion();
-                    }];
-                }
-                else
-                {
-                    [updatedPasswordData writeToFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] atomically:true];
-                    if (completion)
-                        completion();
-                }
-            }
-            else
-            {
-                if (completion)
-                    completion();
-            }
-        }
-        else
-        {
-            if (_password.length != 0)
-            {
-                NSMutableData *updatedPasswordData = [[NSMutableData alloc] init];
-                uint8_t updatedMode = mode;
-                if (mode == 1)
-                    updatedMode = 3;
-                else if (mode == 2)
-                    updatedMode = 4;
-                [updatedPasswordData appendBytes:&updatedMode length:1];
-                NSData *passwordBytes = [_password dataUsingEncoding:NSUTF8StringEncoding];
-                uint32_t passwordLength = (uint32_t)passwordBytes.length;
-                [updatedPasswordData appendBytes:&passwordLength length:4];
-                [updatedPasswordData appendData:passwordBytes];
-                
-                if ([self isCurrentDatabaseEncrypted])
-                {
-                    [self migrateDatabasePlaintext:^
-                    {
-                        [updatedPasswordData writeToFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] atomically:true];
-                        if (completion)
-                            completion();
-                    }];
-                }
-                else
-                {
-                    [updatedPasswordData writeToFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] atomically:true];
-                    if (completion)
-                        completion();
-                }
-            }
-            else
-            {
-                if (completion)
-                    completion();
-            }
-        }
+        if (completion != nil) completion(TGDatabaseOperationError(@"password.required", SQLITE_AUTH));
+        return;
     }
-    else
-    {
-        if (completion)
-            completion();
-    }
+    [self _applyPassword:password strong:strong encrypted:encryptionEnabled completion:completion];
 }
 
 - (bool)isEncryptionEnabled
 {
-    NSData *passwordData = [NSData dataWithContentsOfFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"]];
-    if (passwordData.length != 0)
+    @synchronized(self)
     {
-        uint8_t mode = 0;
-        [passwordData getBytes:&mode length:1];
-        if (mode == 1 || mode == 2)
-            return true;
+        int mode = [_passwordRecord[@"mode"] intValue];
+        return mode == 1 || mode == 2;
     }
-    return false;
 }
 
 - (NSString *)_hexKey:(bool *)isLegacy
 {
-    if (_password != nil)
+    NSString *password = [self currentPassword];
+    if (password != nil && (![self isCurrentDatabaseEncrypted] || [self checkPassword:password isLegacy:isLegacy]))
     {
-        NSData *data = [_password dataUsingEncoding:NSUTF8StringEncoding];
-        return [data stringByEncodingInHex];
+        @synchronized(self) { _password = password; }
+        return [[password dataUsingEncoding:NSUTF8StringEncoding] stringByEncodingInHex];
     }
-    else
+    password = nil;
+    @synchronized(self) { _password = nil; }
+    if (![[NSFileManager defaultManager] fileExistsAtPath:self.databasePath])
+        return nil;
+    bool strong = false;
+    [self isPasswordSet:&strong];
+    if (passwordRequiredBlock == nil)
+        return nil;
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    while (password == nil)
     {
-        NSData *data = [NSData dataWithContentsOfFile:[[self documentsPath] stringByAppendingPathComponent:@"x.y"]];
-        if (data.length == 0)
-            return @"";
-        else
+        __block NSString *verifiedPassword = nil;
+        __block bool checking = false;
+        __block bool closed = false;
+        NSObject *attempt = [[NSObject alloc] init];
+        TGDatabasePasswordCheckResultBlock resultCheckBlock = [passwordRequiredBlock(^(NSString *candidate)
         {
-            uint8_t mode = 0;
-            [data getBytes:&mode length:1];
-            
-            if (mode == 0)
-                return @"";
-            else if (mode == 3 || mode == 4)
+            @synchronized(attempt)
             {
-                uint32_t passwordLength = 0;
-                [data getBytes:&passwordLength range:NSMakeRange(1, 4)];
-                NSData *passwordBytes = [data subdataWithRange:NSMakeRange(5, passwordLength)];
-                NSString *candidatePassword = [[NSString alloc] initWithData:passwordBytes encoding:NSUTF8StringEncoding];
-                if ([self checkPassword:candidatePassword isLegacy:isLegacy])
-                {
-                    _password = candidatePassword;
-                    return [passwordBytes stringByEncodingInHex];
-                }
+                if (checking || closed) return;
+                checking = true;
             }
-            
-            dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-            while (_password == nil)
+            dispatch_async(OGPlatformBackgroundQueue(), ^
             {
-                TGDatabasePasswordCheckResultBlock resultCheckBlock = [passwordRequiredBlock(^(NSString *password)
+                bool valid = [self checkPassword:candidate isLegacy:isLegacy];
+                @synchronized(attempt)
                 {
-                    if ([self checkPassword:password isLegacy:isLegacy])
-                        _password = password;
+                    if (closed) return;
+                    if (valid) verifiedPassword = [candidate copy];
                     dispatch_semaphore_signal(semaphore);
-                }, mode == 1) copy];
-                dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-                
-                if (resultCheckBlock)
-                    resultCheckBlock(_password != nil);
-            }
-            
-            data = [_password dataUsingEncoding:NSUTF8StringEncoding];
-            return [data stringByEncodingInHex];
+                }
+            });
+        }, !strong) copy];
+        dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+        @synchronized(attempt)
+        {
+            closed = true;
+            password = verifiedPassword;
         }
+        if (resultCheckBlock != nil) resultCheckBlock(password != nil);
     }
+#if !OS_OBJECT_USE_OBJC
+    dispatch_release(semaphore);
+#endif
+    @synchronized(self) { _password = password; }
+    return [[password dataUsingEncoding:NSUTF8StringEncoding] stringByEncodingInHex];
 }
 
 - (NSArray *)backedUpDatabasePaths
@@ -2956,100 +3271,125 @@ static void TGDatabaseRemoveFilesAtPath(NSString *path)
     [fileManager removeItemAtPath:[path stringByAppendingString:@"-journal"] error:nil];
 }
 
-- (void)_reopenDatabase
+- (NSError *)_clearRetiredDatabases
 {
-    _database = [FMDatabase databaseWithPath:self.databasePath];
-    
-    if (![_database open])
+    NSDictionary *record = nil;
+    @synchronized(self) { record = _passwordRecord; }
+    NSArray *retired = record[@"retiredDatabases"];
+    if (retired.count == 0) return nil;
+    NSFileManager *manager = [[NSFileManager alloc] init];
+    for (NSString *name in retired)
     {
-        TGLog(@"***** Error: couldn't open database! *****");
-        TGDatabaseRemoveFilesAtPath(self.databasePath);
-        
-        [self initDatabase];
-        
-        return;
+        NSString *path = [[self documentsPath] stringByAppendingPathComponent:name];
+        if ([path isEqualToString:self.databasePath] || [path isEqualToString:self.indexDatabasePath])
+            return TGDatabaseOperationError(@"migration.cleanup.path", EINVAL);
+        for (NSString *suffix in @[@"", @"-wal", @"-shm", @"-journal"])
+        {
+            NSError *error = nil;
+            if (![manager removeItemAtPath:[path stringByAppendingString:suffix] error:&error] && !([error.domain isEqualToString:NSCocoaErrorDomain] && error.code == NSFileNoSuchFileError))
+                return TGDatabaseOperationError(@"migration.cleanup.remove", (int)error.code);
+        }
     }
-    
+    NSMutableDictionary *state = [record mutableCopy];
+    [state removeObjectForKey:@"retiredDatabases"];
+    NSError *error = nil;
+    [self _commitPasswordRecord:state password:[self currentPassword] database:nil index:nil error:&error];
+    return error;
+}
+
+- (bool)_reopenDatabase
+{
+    @synchronized(self) { _databaseAvailable = false; }
+    NSError *error = nil;
+    if (_passwordRecord == nil || ([_passwordRecord[@"version"] intValue] == 2 && ![[NSFileManager defaultManager] fileExistsAtPath:self.databasePath]))
+        error = TGDatabaseOperationError(@"database.state", SQLITE_CANTOPEN);
+    if (error != nil)
+    {
+        [self _reportDatabaseError:error];
+        return false;
+    }
+    NSString *key = nil;
+    bool legacy = false;
+    if ([self isCurrentDatabaseEncrypted])
+    {
+        key = [self _hexKey:&legacy];
+        if (key == nil)
+        {
+            [self _reportDatabaseError:TGDatabaseOperationError(@"database.password", SQLITE_AUTH)];
+            return false;
+        }
+        if (legacy) key = [@"x'" stringByAppendingString:key];
+    }
+    FMDatabase *database = TGDatabaseOpenFile(self.databasePath, key, false, &error);
+    if (database == nil)
+    {
+        [self _reportDatabaseError:error];
+        return false;
+    }
+    [_database close];
+    _database = database;
+    @synchronized(self)
+    {
+        _databaseError = nil;
+        _databaseAvailable = true;
+    }
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 50100
     if (&NSURLIsExcludedFromBackupKey != NULL)
-        [[NSURL fileURLWithPath:self.databasePath] setResourceValue:[NSNumber numberWithBool:YES] forKey:NSURLIsExcludedFromBackupKey error:nil];
+        [[NSURL fileURLWithPath:self.databasePath] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:nil];
     else
 #endif
     if (iosMajorVersion() == 5)
     {
-        const char *filePath = [self.databasePath fileSystemRepresentation];
-        if (filePath != NULL)
-        {
-            uint8_t attributeValue = 1;
-            setxattr(filePath, "com.apple.MobileBackup", &attributeValue, sizeof(attributeValue), 0, 0);
-        }
+        uint8_t attributeValue = 1;
+        setxattr(self.databasePath.fileSystemRepresentation, "com.apple.MobileBackup", &attributeValue, sizeof(attributeValue), 0, 0);
     }
-    
-    [_database setShouldCacheStatements:true];
-    [_database setLogsErrors:true];
-    
-    if ([self isCurrentDatabaseEncrypted])
-    {
-        bool isLegacy = false;
-        NSString *hexKey = [self _hexKey:&isLegacy];
-        if (isLegacy)
-        {
-            sqlite3_exec([_database sqliteHandle], [[NSString alloc] initWithFormat:@"PRAGMA key=\"x'%@\"", hexKey].UTF8String, NULL, NULL, NULL);
-        }
-        else
-        {
-            sqlite3_exec([_database sqliteHandle], [[NSString alloc] initWithFormat:@"PRAGMA key=\"%@\"", hexKey].UTF8String, NULL, NULL, NULL);
-        }
-    }
-    
-    sqlite3_exec([_database sqliteHandle], "PRAGMA encoding=\"UTF-8\"", NULL, NULL, NULL);
-    sqlite3_exec([_database sqliteHandle], "PRAGMA journal_mode=WAL", NULL, NULL, NULL);
-    sqlite3_exec([_database sqliteHandle], "PRAGMA synchronous=NORMAL", NULL, NULL, NULL);
-    OGDatabaseRuntimeConfigureSQLite([_database sqliteHandle]);
-    if (OGPlatformUsesConstrainedBackgroundExecution())
-    {
-        sqlite3_exec([_database sqliteHandle], "PRAGMA temp_store=MEMORY", NULL, NULL, NULL);
-        sqlite3_exec([_database sqliteHandle], "PRAGMA cache_size=1024", NULL, NULL, NULL);
-    }
+    return true;
 }
 
-- (void)_reopenIndexDatabase
+- (bool)_reopenIndexDatabase
 {
-    _indexDatabase = [FMDatabase databaseWithPath:self.indexDatabasePath];
-    if (![_indexDatabase open])
+    NSError *error = nil;
+    if ([_passwordRecord[@"version"] intValue] == 2 && ![[NSFileManager defaultManager] fileExistsAtPath:self.indexDatabasePath])
     {
-        TGLog(@"***** Error: couldn't open index database! *****");
-        TGDatabaseRemoveFilesAtPath(self.indexDatabasePath);
+        [self _reportDatabaseError:TGDatabaseOperationError(@"index.state", SQLITE_CANTOPEN)];
+        return false;
     }
-    else
+    NSString *key = nil;
+    if ([self isCurrentIndexDatabaseEncrypted])
     {
-        [_indexDatabase setShouldCacheStatements:true];
-        [_indexDatabase setLogsErrors:true];
-        
-        if ([self isCurrentIndexDatabaseEncrypted])
+        NSString *password = [self currentPassword];
+        bool legacy = false;
+        if (password == nil || ![self checkIndexPassword:password isLegacy:&legacy])
         {
-            bool isLegacy = false;
-            NSString *hexKey = [self _hexKey:NULL];
-            [self checkIndexPassword:[[NSString alloc] initWithData:[hexKey dataByDecodingHexString] encoding:NSUTF8StringEncoding] isLegacy:&isLegacy];
-            if (isLegacy)
-            {
-                sqlite3_exec([_indexDatabase sqliteHandle], [[NSString alloc] initWithFormat:@"PRAGMA key=\"x'%@\"", hexKey].UTF8String, NULL, NULL, NULL);
-            }
-            else
-            {
-                sqlite3_exec([_indexDatabase sqliteHandle], [[NSString alloc] initWithFormat:@"PRAGMA key=\"%@\"", hexKey].UTF8String, NULL, NULL, NULL);
-            }
+            [self _reportDatabaseError:TGDatabaseOperationError(@"index.password", SQLITE_AUTH)];
+            return false;
         }
-        
-        sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA encoding=\"UTF-8\"", NULL, NULL, NULL);
-        sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA journal_mode=WAL", NULL, NULL, NULL);
-        sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA synchronous=NORMAL", NULL, NULL, NULL);
-        if (OGPlatformUsesConstrainedBackgroundExecution())
-        {
-            sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA temp_store=MEMORY", NULL, NULL, NULL);
-            sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA cache_size=192", NULL, NULL, NULL);
-        }
+        key = [[password dataUsingEncoding:NSUTF8StringEncoding] stringByEncodingInHex];
+        if (legacy) key = [@"x'" stringByAppendingString:key];
     }
+    FMDatabase *database = TGDatabaseOpenFile(self.indexDatabasePath, key, true, &error);
+    if (database == nil)
+    {
+        [self _reportDatabaseError:error];
+        return false;
+    }
+    [_indexDatabase close];
+    _indexDatabase = database;
+    return true;
+}
+
+- (void)retryOpeningDatabase
+{
+    bool requiresSynchronization = ![self isDatabaseAvailable];
+    [self dispatchOnDatabaseThread:^
+    {
+        TG_SYNCHRONIZED_BEGIN(_cachedDatabaseState);
+        _cachedDatabaseStateLoaded = false;
+        TG_SYNCHRONIZED_END(_cachedDatabaseState);
+        [self initDatabase];
+        if (requiresSynchronization && [self isDatabaseAvailable] && TGTelegraphInstance.clientIsActivated)
+            [ActionStageInstance() requestActor:@"/tg/service/updatestate" options:nil watcher:TGTelegraphInstance];
+    } synchronous:false];
 }
 
 - (void)_loadCustomPropertiesCacheFromDatabase
@@ -3167,12 +3507,41 @@ static void TGDatabaseRemoveFilesAtPath(NSString *path)
     _startupSynchronizationQueueKnownEmpty = false;
     [_startupStateCondition unlock];
 
-    [self _reopenDatabase];
+    if (![self _reopenDatabase])
+    {
+        [_startupStateCondition lock];
+        _databaseInitializationActive = false;
+        _startupStateReady = true;
+        [_startupStateCondition broadcast];
+        [_startupStateCondition unlock];
+        TGDispatchOnMainThread(^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"OnegramDatabaseOpenFailed" object:[self databaseError]]; });
+        return;
+    }
     [self _preloadStartupSynchronizationState];
 
     [self dispatchOnIndexThread:^
     {
-        [self _reopenIndexDatabase];
+        if (![self _reopenIndexDatabase])
+            TGDispatchOnMainThread(^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"OnegramDatabaseOpenFailed" object:[self databaseError]]; });
+        else
+        {
+            NSDictionary *record = nil;
+            @synchronized(self) { record = _passwordRecord; }
+            [self _upgradeLegacyPasswordRecord:[self currentPassword] record:record];
+            NSArray *retiredDatabases = record[@"retiredDatabases"];
+            if ([retiredDatabases count] != 0)
+            {
+                [self dispatchOnDatabaseThread:^
+                {
+                    NSError *error = [self _clearRetiredDatabases];
+                    if (error != nil)
+                    {
+                        [self _reportDatabaseError:error];
+                        TGDispatchOnMainThread(^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"OnegramDatabaseOpenFailed" object:error]; });
+                    }
+                } synchronous:false];
+            }
+        }
     } synchronous:false];
 
     bool fastSchemaStartup = [self _startupSchemaIsCurrent];
@@ -3241,137 +3610,101 @@ static void TGDatabaseRemoveFilesAtPath(NSString *path)
     }
 }
 
-- (void)rekeyDatabase:(NSString *)hexKey
+- (void)_applyPassword:(NSString *)password strong:(bool)strong encrypted:(bool)encrypted completion:(void (^)(NSError *))completion
 {
-    [self dispatchOnDatabaseThread:^
+    NSString *candidate = [password copy];
+    dispatch_async(OGPlatformBackgroundQueue(), ^
     {
-        TG_TIMESTAMP_DEFINE(rekeyDatabase)
-        sqlite3_exec([_database sqliteHandle], "PRAGMA journal_mode=DELETE", NULL, NULL, NULL);
-        sqlite3_exec([_database sqliteHandle], [[NSString alloc] initWithFormat:@"PRAGMA rekey=\"%@\"", hexKey].UTF8String, NULL, NULL, NULL);
-        sqlite3_exec([_database sqliteHandle], "PRAGMA journal_mode=WAL", NULL, NULL, NULL);
-        TG_TIMESTAMP_MEASURE(rekeyDatabase)
-    } synchronous:false];
-    
-    [self dispatchOnIndexThread:^
-    {
-        TG_TIMESTAMP_DEFINE(rekeyIndex)
-        sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA journal_mode=DELETE", NULL, NULL, NULL);
-        sqlite3_exec([_indexDatabase sqliteHandle], [[NSString alloc] initWithFormat:@"PRAGMA rekey=\"%@\"", hexKey].UTF8String, NULL, NULL, NULL);
-        sqlite3_exec([_indexDatabase sqliteHandle], "PRAGMA journal_mode=WAL", NULL, NULL, NULL);
-        TG_TIMESTAMP_MEASURE(rekeyIndex)
-    } synchronous:false];
-}
-
-- (void)migrateDatabaseEncrypted:(void (^)())completion
-{
-    [self dispatchOnDatabaseThread:^
-    {
-        if (![self isCurrentDatabaseEncrypted])
+        NSDictionary *record = candidate == nil ? nil : TGDatabaseCreatePasswordRecord(candidate, strong, encrypted);
+        [self dispatchOnDatabaseThread:^
         {
-            NSString *baseDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.db", (databaseName == nil ? @"tgdata" : databaseName)]];
-            NSString *encryptedDatabasePath = [baseDatabasePath stringByAppendingString:@".y"];
-            
-            TG_TIMESTAMP_DEFINE(exportDatabase)
-            sqlite3_exec([_database sqliteHandle], [[NSString alloc] initWithFormat:@"ATTACH DATABASE '%@' AS encrypted KEY \"%@\"", encryptedDatabasePath, [self _hexKey:NULL]].UTF8String, NULL, NULL, NULL);
-            sqlite3_exec([_database sqliteHandle], "SELECT sqlcipher_export('encrypted')", NULL, NULL, NULL);
-            sqlite3_exec([_database sqliteHandle], "DETACH DATABASE encrypted", NULL, NULL, NULL);
-            TG_TIMESTAMP_MEASURE(exportDatabase)
-            
-            [_database close];
-            
-            _databasePath = encryptedDatabasePath;
-            
-            [self _reopenDatabase];
-
-            [[NSFileManager defaultManager] removeItemAtPath:baseDatabasePath error:nil];
-            [[NSFileManager defaultManager] removeItemAtPath:[baseDatabasePath stringByAppendingString:@"-wal"] error:nil];
-            [[NSFileManager defaultManager] removeItemAtPath:[baseDatabasePath stringByAppendingString:@"-shm"] error:nil];
-        }
-        
-        [self dispatchOnIndexThread:^
-        {
-            if (![self isCurrentIndexDatabaseEncrypted])
+            NSError *error = nil;
+            if (record == nil || _passwordRecord == nil || _database == nil || ![self isDatabaseAvailable])
+                error = TGDatabaseOperationError(@"password.prepare", SQLITE_MISUSE);
+            if (error != nil)
             {
-                NSString *baseIndexDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_index.db", (databaseName == nil ? @"tgdata" : databaseName)]];
-                NSString *encryptedIndexDatabasePath = [baseIndexDatabasePath stringByAppendingString:@".y"];
-                
-                TG_TIMESTAMP_DEFINE(exportIndex)
-                sqlite3_exec([_indexDatabase sqliteHandle], [[NSString alloc] initWithFormat:@"ATTACH DATABASE '%@' AS encrypted_index KEY \"%@\"", encryptedIndexDatabasePath, [self _hexKey:NULL]].UTF8String, NULL, NULL, NULL);
-                sqlite3_exec([_indexDatabase sqliteHandle], "SELECT sqlcipher_export('encrypted_index')", NULL, NULL, NULL);
-                sqlite3_exec([_indexDatabase sqliteHandle], "DETACH DATABASE encrypted_index", NULL, NULL, NULL);
-                TG_TIMESTAMP_MEASURE(exportIndex)
-                
-                [_indexDatabase close];
-                
-                _indexDatabasePath = encryptedIndexDatabasePath;
-                
-                [self _reopenIndexDatabase];
-                
-                [[NSFileManager defaultManager] removeItemAtPath:baseIndexDatabasePath error:nil];
-                [[NSFileManager defaultManager] removeItemAtPath:[baseIndexDatabasePath stringByAppendingString:@"-wal"] error:nil];
-                [[NSFileManager defaultManager] removeItemAtPath:[baseIndexDatabasePath stringByAppendingString:@"-shm"] error:nil];
+                [self _reportDatabaseError:error];
+                if (completion != nil) completion(error);
+                return;
             }
-            
-            if (completion)
-                completion();
-        } synchronous:false];
-    } synchronous:false];
-}
-
-- (void)migrateDatabasePlaintext:(void (^)())completion
-{
-    [self dispatchOnDatabaseThread:^
-    {
-        if ([self isCurrentDatabaseEncrypted])
-        {
-            NSString *baseDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.db", (databaseName == nil ? @"tgdata" : databaseName)]];
-            NSString *encryptedDatabasePath = [baseDatabasePath stringByAppendingString:@".y"];
-            
-            TG_TIMESTAMP_DEFINE(exportDatabase)
-            sqlite3_exec([_database sqliteHandle], [[NSString alloc] initWithFormat:@"ATTACH DATABASE '%@' AS plaintext KEY ''", baseDatabasePath].UTF8String, NULL, NULL, NULL);
-            sqlite3_exec([_database sqliteHandle], "SELECT sqlcipher_export('plaintext')", NULL, NULL, NULL);
-            sqlite3_exec([_database sqliteHandle], "DETACH DATABASE plaintext", NULL, NULL, NULL);
-            TG_TIMESTAMP_MEASURE(exportDatabase)
-            
-            [_database close];
-            
-            _databasePath = baseDatabasePath;
-            
-            [self _reopenDatabase];
-            
-            [[NSFileManager defaultManager] removeItemAtPath:encryptedDatabasePath error:nil];
-            [[NSFileManager defaultManager] removeItemAtPath:[encryptedDatabasePath stringByAppendingString:@"-wal"] error:nil];
-            [[NSFileManager defaultManager] removeItemAtPath:[encryptedDatabasePath stringByAppendingString:@"-shm"] error:nil];
-        }
-        
-        [self dispatchOnIndexThread:^
-        {
-            if ([self isCurrentIndexDatabaseEncrypted])
+            NSString *oldPassword = [self currentPassword];
+            bool changesKey = [self isCurrentDatabaseEncrypted] && ![oldPassword isEqualToString:candidate];
+            bool changesFiles = changesKey || encrypted != [self isCurrentDatabaseEncrypted] || encrypted != [self isCurrentIndexDatabaseEncrypted];
+            __block bool applied = false;
+            NSMutableDictionary *state = [record mutableCopy];
+            if (_passwordRecord[@"retiredDatabases"] != nil)
+                state[@"retiredDatabases"] = _passwordRecord[@"retiredDatabases"];
+            if (!changesFiles)
             {
-                NSString *baseIndexDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_index.db", (databaseName == nil ? @"tgdata" : databaseName)]];
-                NSString *encryptedIndexDatabasePath = [baseIndexDatabasePath stringByAppendingString:@".y"];
-                
-                TG_TIMESTAMP_DEFINE(exportIndex)
-                sqlite3_exec([_indexDatabase sqliteHandle], [[NSString alloc] initWithFormat:@"ATTACH DATABASE '%@' AS plaintext KEY ''", baseIndexDatabasePath].UTF8String, NULL, NULL, NULL);
-                sqlite3_exec([_indexDatabase sqliteHandle], "SELECT sqlcipher_export('plaintext')", NULL, NULL, NULL);
-                sqlite3_exec([_indexDatabase sqliteHandle], "DETACH DATABASE plaintext", NULL, NULL, NULL);
-                TG_TIMESTAMP_MEASURE(exportIndex)
-                
-                [_indexDatabase close];
-                
-                _indexDatabasePath = baseIndexDatabasePath;
-                
-                [self _reopenIndexDatabase];
-                
-                [[NSFileManager defaultManager] removeItemAtPath:encryptedIndexDatabasePath error:nil];
-                [[NSFileManager defaultManager] removeItemAtPath:[encryptedIndexDatabasePath stringByAppendingString:@"-wal"] error:nil];
-                [[NSFileManager defaultManager] removeItemAtPath:[encryptedIndexDatabasePath stringByAppendingString:@"-shm"] error:nil];
+                state[@"database"] = self.databasePath.lastPathComponent;
+                state[@"index"] = self.indexDatabasePath.lastPathComponent;
+                if ([self _commitPasswordRecord:state password:candidate database:nil index:nil error:&error])
+                {
+                    applied = true;
+                    if (error == nil) error = [self _clearRetiredDatabases];
+                }
             }
-            
-            if (completion)
-                completion();
+            else
+            {
+                NSString *identifier = [[NSProcessInfo processInfo] globallyUniqueString];
+                NSString *stem = databaseName ?: @"tgdata";
+                NSString *targetPath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-m-%@.db%@", stem, identifier, encrypted ? @".y" : @""]];
+                NSString *targetIndexPath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@_index-m-%@.db%@", stem, identifier, encrypted ? @".y" : @""]];
+                NSString *hexKey = encrypted ? [[candidate dataUsingEncoding:NSUTF8StringEncoding] stringByEncodingInHex] : nil;
+                bool targetCreated = false;
+                __block bool targetIndexCreated = false;
+                FMDatabase *target = TGDatabaseExport(_database, targetPath, hexKey, false, &targetCreated, &error);
+                if (target == nil && _database.sqliteHandle == NULL)
+                    [self _reopenDatabase];
+                if (target != nil)
+                {
+                    __block NSError *indexError = nil;
+                    [self dispatchOnIndexThread:^
+                    {
+                        FMDatabase *targetIndex = TGDatabaseExport(_indexDatabase, targetIndexPath, hexKey, true, &targetIndexCreated, &indexError);
+                        if (targetIndex == nil)
+                        {
+                            if (_indexDatabase.sqliteHandle == NULL) [self _reopenIndexDatabase];
+                            return;
+                        }
+                        state[@"database"] = targetPath.lastPathComponent;
+                        state[@"index"] = targetIndexPath.lastPathComponent;
+                        FMDatabase *previous = _database;
+                        FMDatabase *previousIndex = _indexDatabase;
+                        NSString *previousPath = _databasePath;
+                        NSString *previousIndexPath = _indexDatabasePath;
+                        NSMutableArray *retired = [state[@"retiredDatabases"] mutableCopy] ?: [[NSMutableArray alloc] init];
+                        if (![retired containsObject:previousPath.lastPathComponent]) [retired addObject:previousPath.lastPathComponent];
+                        if (![retired containsObject:previousIndexPath.lastPathComponent]) [retired addObject:previousIndexPath.lastPathComponent];
+                        state[@"retiredDatabases"] = [retired copy];
+                        if (![self _commitPasswordRecord:state password:candidate database:target index:targetIndex error:&indexError])
+                        {
+                            [targetIndex close];
+                            return;
+                        }
+                        applied = true;
+                        bool closed = [previous close];
+                        bool indexClosed = [previousIndex close];
+                        if (!closed || !indexClosed)
+                            indexError = TGDatabaseOperationError(@"migration.close", SQLITE_BUSY);
+                        if (indexError == nil)
+                            indexError = [self _clearRetiredDatabases];
+                    } synchronous:true];
+                    error = indexError;
+                    if (_database != target) [target close];
+                }
+                if (targetCreated && ![_databasePath isEqualToString:targetPath]) TGDatabaseRemoveFilesAtPath(targetPath);
+                if (targetIndexCreated && ![_indexDatabasePath isEqualToString:targetIndexPath]) TGDatabaseRemoveFilesAtPath(targetIndexPath);
+            }
+            if (applied)
+            {
+                [ActionStageInstance() dispatchResource:@"/databasePasswordChanged" resource:nil];
+                [[TGTelegramNetworking maybeInstance] exportCredentialsForExtensions];
+            }
+            if (error != nil) [self _reportDatabaseError:error];
+            if (completion != nil) completion(error);
         } synchronous:false];
-    } synchronous:false];
+    });
 }
 
 - (void)closeDatabase
@@ -3419,6 +3752,11 @@ static void TGDatabaseRemoveFilesAtPath(NSString *path)
             TGDatabaseRemoveFilesAtPath(self.databasePath);
             
             [[NSFileManager defaultManager] removeItemAtPath:[[self documentsPath] stringByAppendingPathComponent:@"x.y"] error:nil];
+            @synchronized(self)
+            {
+                _password = nil;
+                _passwordRecord = @{@"version": @1, @"mode": @0};
+            }
             
             NSString *baseDatabasePath = [[self documentsPath] stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.db", (databaseName == nil ? @"tgdata" : databaseName)]];
             _databasePath = baseDatabasePath;
@@ -6453,6 +6791,8 @@ static NSMutableDictionary *transliterationPartsCache()
 
 - (void)applyPts:(int)pts date:(int)date seq:(int)seq qts:(int)qts unreadCount:(int)unreadCount
 {
+    if ([self databaseError] != nil && ![self isDatabaseAvailable]) return;
+
     [self databaseState];
 
     TGDatabaseState state;
@@ -6514,6 +6854,8 @@ static NSMutableDictionary *transliterationPartsCache()
 {
     TGDatabaseState stateStorage = {0};
     TGDatabaseState *state = &stateStorage;
+    if ([self databaseError] != nil && ![self isDatabaseAvailable]) return stateStorage;
+
     bool loaded = false;
 
     TG_SYNCHRONIZED_BEGIN(_cachedDatabaseState);
@@ -6530,6 +6872,7 @@ static NSMutableDictionary *transliterationPartsCache()
         [_startupStateCondition wait];
     bool startupStateReady = _startupStateReady;
     [_startupStateCondition unlock];
+    if ([self databaseError] != nil && ![self isDatabaseAvailable]) return stateStorage;
 
     if (startupStateReady)
     {

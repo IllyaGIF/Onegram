@@ -157,7 +157,7 @@ static void TGModernButtonViewModelDrawImageOperation(__unused CGContextRef cont
     if (!self.skipDrawInContext && self.alpha > FLT_EPSILON && !self.hidden)
     {
         if (_title.length != 0)
-            return false;
+            return [recording addDrawingSnapshotInRect:self.bounds drawing:^(CGContextRef context) { [self drawInContext:context]; }];
         if (_backgroundImage != nil)
             [recording addOperationWithFunction:&TGModernButtonViewModelDrawImageOperation rect:self.bounds object:_backgroundImage secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
         if (_image != nil)

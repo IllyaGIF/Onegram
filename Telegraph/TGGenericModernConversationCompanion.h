@@ -57,6 +57,8 @@
 - (NSString *)_sendMessagePathPrefix;
 - (NSDictionary *)_optionsForMessageActions;
 - (void)_setupOutgoingMessage:(TGMessage *)message;
+- (void)_setupPreparedMessage:(TGPreparedMessage *)message;
+- (TGMessage *)_replyMessageForMessageId:(int32_t)messageId;
 - (bool)_messagesNeedRandomId;
 - (bool)canSendStickers;
 - (bool)canSendMedia;

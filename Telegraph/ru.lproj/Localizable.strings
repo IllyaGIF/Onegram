@@ -3005,3 +3005,8 @@ Unused sets are archived when you add more.";
 "Conversation.StopPollConfirmation" = "Если остановить опрос сейчас, в нём больше никто не сможет проголосовать. Это действие нельзя отменить.";
 "Conversation.StopQuizConfirmationTitle" = "Остановить викторину?";
 "Conversation.StopQuizConfirmation" = "Если остановить викторину сейчас, больше никто не сможет ответить. Это действие нельзя отменить.";
+
+"Database.ErrorTitle" = "Ошибка локальных данных";
+"Database.AccessError" = "Не удалось открыть или сохранить локальные данные. Существующие данные сохранены.";
+"Database.Retry" = "Повторить";
+"Database.CleanupError" = "Новая база готова, но старые локальные файлы удалить не удалось. Проверьте доступ к хранилищу и повторите.";

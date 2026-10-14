@@ -415,6 +415,12 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
 - (void)execute:(NSDictionary *)options
 {
+    if ([TGDatabaseInstance() databaseError] != nil && ![TGDatabaseInstance() isDatabaseAvailable])
+    {
+        [ActionStageInstance() actionFailed:self.path reason:-1];
+        return;
+    }
+
     
     [_updateList addObjectsFromArray:[options objectForKey:@"updates"]];
     

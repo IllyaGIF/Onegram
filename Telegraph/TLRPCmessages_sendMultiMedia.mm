@@ -2,12 +2,13 @@
 
 #import "TL/TLMetaScheme.h"
 #import "TLMetaClassStore.h"
+#import "TLRPCmessages_sendMessage_manual.h"
 
 @implementation TLRPCmessages_sendMultiMedia
 
 - (int32_t)TLconstructorSignature
 {
-    return 0x2095512f;
+    return _forumTopicId != 0 ? (int32_t)0x1bf89d74 : (int32_t)0x2095512f;
 }
 
 - (int32_t)TLconstructorName
@@ -27,17 +28,17 @@
 
 - (int)layerVersion
 {
-    return 73;
+    return _forumTopicId != 0 ? 225 : 73;
 }
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:_flags];
+    int32_t flags = TGMessageSendFlags(_flags, _reply_to_msg_id, _forumTopicId);
+    [os writeInt32:flags];
     
     TLMetaClassStore::serializeObject(os, _peer, true);
     
-    if (_flags & (1 << 0))
-        [os writeInt32:_reply_to_msg_id];
+    TGSerializeMessageReply(os, flags, _reply_to_msg_id, _forumTopicId);
     
     int32_t vectorSignature = TL_UNIVERSAL_VECTOR_CONSTRUCTOR;
     [os writeInt32:vectorSignature];

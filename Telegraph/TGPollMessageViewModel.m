@@ -170,6 +170,32 @@ static NSArray *TGPollPercents(NSArray *counts, int32_t total, bool normalize)
     return self;
 }
 
+static void TGPollDecorationDrawOperation(CGContextRef context, TGModernDrawingOperation *operation)
+{
+    [(TGPollDecorationViewModel *)operation.object drawInContext:context];
+}
+
+- (bool)recordDrawing:(TGModernDrawingRecording *)recording
+{
+    if (self.hidden || self.alpha < FLT_EPSILON)
+        return true;
+    TGPollDecorationViewModel *snapshot = [[TGPollDecorationViewModel alloc] initWithTheme:_theme];
+    NSMutableArray *decorations = [[NSMutableArray alloc] initWithCapacity:_decorations.count];
+    for (TGPollDecoration *decoration in _decorations)
+    {
+        TGPollDecoration *copy = [[TGPollDecoration alloc] init];
+        copy.kind = decoration.kind;
+        copy.rect = decoration.rect;
+        copy.color = decoration.color;
+        copy.selected = decoration.selected;
+        copy.cross = decoration.cross;
+        [decorations addObject:copy];
+    }
+    snapshot.decorations = [decorations copy];
+    [recording addOperationWithFunction:&TGPollDecorationDrawOperation rect:self.bounds object:snapshot secondaryObject:nil color:nil size:CGSizeZero value:0.0f flags:0];
+    return true;
+}
+
 - (void)drawInContext:(CGContextRef)context
 {
     if (self.hidden || self.alpha < FLT_EPSILON)

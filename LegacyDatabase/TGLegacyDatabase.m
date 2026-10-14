@@ -171,9 +171,10 @@ int32_t murMurHash32(NSString *string)
     NSAssert([_queue isCurrentQueue], @"queue error");
     _database = [FMDatabase databaseWithPath:_databasePath];
     
-    if (![_database open]) {
+    if (![_database openWithFlags:SQLITE_OPEN_READONLY]) {
         NSLog(@"***** Error: couldn't open database! *****");
-        [[[NSFileManager alloc] init] removeItemAtPath:_databasePath error:nil];
+        [_database close];
+        _database = nil;
         return false;
     }
     
@@ -181,12 +182,10 @@ int32_t murMurHash32(NSString *string)
     [_database setLogsErrors:true];
     
     if ([self _isCurrentDatabaseEncrypted]) {
-        return nil;
+        [_database close];
+        _database = nil;
+        return false;
     }
-    
-    sqlite3_exec([_database sqliteHandle], "PRAGMA encoding=\"UTF-8\"", NULL, NULL, NULL);
-    sqlite3_exec([_database sqliteHandle], "PRAGMA synchronous=NORMAL", NULL, NULL, NULL);
-    sqlite3_exec([_database sqliteHandle], "PRAGMA journal_mode=TRUNCATE", NULL, NULL, NULL);
     
     return true;
 }

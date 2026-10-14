@@ -2,13 +2,14 @@
 
 #import "TL/TLMetaScheme.h"
 #import "TLMetaClassStore.h"
+#import "TLRPCmessages_sendMessage_manual.h"
 
 
 @implementation TLRPCmessages_sendInlineBotResult
 
 - (int32_t)TLconstructorSignature
 {
-    return 0xB16E06FE;
+    return _forumTopicId != 0 ? (int32_t)0xc0cf7646 : (int32_t)0xB16E06FE;
 }
 
 - (int32_t)TLconstructorName
@@ -28,17 +29,17 @@
 
 - (int)layerVersion
 {
-    return 45;
+    return _forumTopicId != 0 ? 225 : 45;
 }
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:_flags];
+    int32_t flags = TGMessageSendFlags(_flags, _reply_to_msg_id, _forumTopicId);
+    [os writeInt32:flags];
     
     TLMetaClassStore::serializeObject(os, _peer, true);
     
-    if (_flags & (1 << 0))
-        [os writeInt32:_reply_to_msg_id];
+    TGSerializeMessageReply(os, flags, _reply_to_msg_id, _forumTopicId);
     
     [os writeInt64:_random_id];
     [os writeInt64:_query_id];

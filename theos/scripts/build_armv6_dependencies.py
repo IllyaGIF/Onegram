@@ -1078,13 +1078,14 @@ _dispatch_continuation_alloc_from_heap(void);
         if not any(line.startswith('"ios-armv6-cross","') for line in lines):
             for index, line in enumerate(lines):
                 if line.startswith('"iphoneos-cross","'):
-                    lines.insert(index + 1, '"ios-armv6-cross","' + str(cc_wrapper) + ':-Os -fno-common::-D_REENTRANT:iOS:-Wl,-search_paths_first%:BN_LLONG RC4_CHAR RC4_CHUNK DES_UNROLL BF_PTR:armcap.o armv4cpuid.o:bn_asm.o armv4-mont.o armv4-gf2m.o:::aes_cbc.o aes-armv4.o:::sha1-armv4-large.o sha256-armv4.o sha512-armv4.o:::::::ghash-armv4.o::ios32:dlfcn:darwin-shared:-fPIC -fno-common:-dynamiclib:.\\$(SHLIB_MAJOR).\\$(SHLIB_MINOR).dylib",')
+                    lines.insert(index + 1, '"ios-armv6-cross","' + cc_wrapper.name + ':-Os -fno-common::-D_REENTRANT:iOS:-Wl,-search_paths_first%:BN_LLONG RC4_CHAR RC4_CHUNK DES_UNROLL BF_PTR:armcap.o armv4cpuid.o:bn_asm.o armv4-mont.o armv4-gf2m.o:::aes_cbc.o aes-armv4.o:::sha1-armv4-large.o sha256-armv4.o sha512-armv4.o:::::::ghash-armv4.o::ios32:dlfcn:darwin-shared:-fPIC -fno-common:-dynamiclib:.\\$(SHLIB_MAJOR).\\$(SHLIB_MINOR).dylib",')
                     break
             else:
                 raise SystemExit('OpenSSL iphoneos-cross target not found')
         configure.write_text('\n'.join(lines) + '\n', encoding='latin-1')
         backport_openssl_ios_arm_perlasm(openssl)
         env = make_env.copy()
+        env['PATH'] = str(wrappers) + os.pathsep + env.get('PATH', '')
         run(['perl', 'Configure', 'ios-armv6-cross', 'no-shared', 'no-dso', 'no-hw', 'no-engine'], cwd=openssl, env=env)
         run(['make', 'depend', 'AR=' + ar + ' r', 'RANLIB=' + ranlib], cwd=openssl, env=env)
         run(['make', '-j' + str(args.jobs), 'build_libs', 'AR=' + ar + ' r', 'RANLIB=' + ranlib], cwd=openssl, env=env)

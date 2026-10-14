@@ -36,6 +36,11 @@ typedef void (*TGModernDrawingFunction)(CGContextRef context, TGModernDrawingOpe
 - (void)popOffset:(CGPoint)offset;
 - (void)addOperationWithFunction:(TGModernDrawingFunction)function rect:(CGRect)rect object:(id)object secondaryObject:(id)secondaryObject color:(UIColor *)color size:(CGSize)size value:(CGFloat)value flags:(int)flags;
 
+- (void)prepareLastOperationWithBlock:(id (^)(CGRect))block;
+- (TGModernDrawingRecording *)recordingForDrawingRect:(CGRect)rect;
+
+- (bool)addDrawingSnapshotInRect:(CGRect)rect drawing:(void (^)(CGContextRef))drawing;
+
 - (bool)isEqualToRecording:(TGModernDrawingRecording *)other;
 - (void)drawInContext:(CGContextRef)context;
 

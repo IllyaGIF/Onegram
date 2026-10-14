@@ -79,6 +79,10 @@ XCODE_ARCLITE := $(ONEGRAM_ROOT)/theos/generated/armv6/products/libarclite_iphon
 XCODE_COMPILER_RT := $(ONEGRAM_ROOT)/theos/generated/armv6/products/libclang_rt.ios.a
 endif
 GRAPH_INPUTS := $(wildcard ../*.xcconfig ../Telegraph.xcodeproj/project.pbxproj ../submodules/*/*.xcodeproj/project.pbxproj ../thirdparty/*/*.xcodeproj/project.pbxproj)
+GENERATION_CONTEXT_CHECK := $(shell python3 scripts/generate.py --ensure-context --configuration "$(XCODE_CONFIGURATION)" || echo ONEGRAM_GENERATION_FAILED)
+ifneq ($(findstring ONEGRAM_GENERATION_FAILED,$(GENERATION_CONTEXT_CHECK)),)
+$(error Unable to prepare generated build files)
+endif
 $(GENERATED_DIR)/dependencies.mk: Makefile $(GRAPH_INPUTS) scripts/generate.py scripts/xcode_graph.py
 	python3 scripts/generate.py --configuration "$(XCODE_CONFIGURATION)"
 	@touch $@
@@ -162,7 +166,7 @@ include $(THEOS_MAKE_PATH)/application.mk
 before-all::
 	@python3 scripts/audit_xcode_target.py
 	@python3 scripts/audit_onegram_ui.py
-	@if ! test -x "$(REAL_TARGET_CC)" || ! test -x "$(REAL_TARGET_CXX)"; then python3 scripts/setup_legacy_clang.py; fi
+	@if ! test -x "$(REAL_TARGET_CC)" || ! test -x "$(REAL_TARGET_CXX)"; then ONEGRAM_GENERATED_DIR=generated python3 scripts/setup_legacy_clang.py; fi
 	@if test "$(ONEGRAM_ARCH)" = armv6; then python3 scripts/build_armv6_dependencies.py --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --cc "$(REAL_TARGET_CC)" --jobs "$(ARMV6_JOBS)"; fi
 	@if test "$(ONEGRAM_ARCH)" = arm64; then python3 scripts/build_arm64_dependencies.py --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)"; fi
 	@if test "$(ONEGRAM_ARCH)" = armv7; then python3 scripts/build_armv7_dependencies.py --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --deployment "$(ONEGRAM_DEPLOYMENT)"; fi

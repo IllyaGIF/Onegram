@@ -84,6 +84,8 @@ enum {
 
     NSMutableArray *_tiles;
     bool _tilesValid;
+    bool _contentsRetryScheduled;
+    NSTimeInterval _contentsRetryDelay;
     TGModernDrawingRecording *_recording;
     CGSize _contentSize;
 
@@ -101,12 +103,8 @@ enum {
 
 static pthread_mutex_t TGModernFlatteningTaskLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t TGModernFlatteningWorkCondition = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t TGModernFlatteningDoneCondition = PTHREAD_COND_INITIALIZER;
 static NSMutableArray *TGModernFlatteningTasks = nil;
 static bool TGModernFlatteningWorkerStarted = false;
-static bool TGModernFlatteningWorkerThreadValid = false;
-static bool TGModernFlatteningWorkerBoosted = false;
-static pthread_t TGModernFlatteningWorkerThread;
 
 static CFMutableArrayRef TGModernFlatteningCacheList = NULL;
 static NSUInteger TGModernFlatteningCacheBytes = 0;
@@ -225,19 +223,16 @@ static CGImageRef TGModernFlatteningCreateRecordedImage(TGModernDrawingRecording
 
 static void TGModernFlatteningSetWorkerPriority(double priority)
 {
-    [NSThread setThreadPriority:priority];
+    static double currentPriority = -1.0;
+    if (currentPriority != priority)
+    {
+        [NSThread setThreadPriority:priority];
+        currentPriority = priority;
+    }
 }
 
 static void TGModernFlatteningWorkerLock(void)
 {
-    pthread_t thread = pthread_self();
-    int policy = 0;
-    struct sched_param param;
-    if (pthread_getschedparam(thread, &policy, &param) == 0)
-    {
-        param.sched_priority = sched_get_priority_max(policy);
-        pthread_setschedparam(thread, policy, &param);
-    }
     pthread_mutex_lock(&TGModernFlatteningTaskLock);
 }
 
@@ -245,19 +240,6 @@ static void TGModernFlatteningWorkerUnlock(double priority)
 {
     pthread_mutex_unlock(&TGModernFlatteningTaskLock);
     TGModernFlatteningSetWorkerPriority(priority);
-}
-
-static void TGModernFlatteningBoostWorkerLocked(void)
-{
-    if (!TGModernFlatteningWorkerThreadValid || TGModernFlatteningWorkerBoosted)
-        return;
-    int policy = 0;
-    struct sched_param param;
-    if (pthread_getschedparam(TGModernFlatteningWorkerThread, &policy, &param) != 0)
-        return;
-    param.sched_priority = sched_get_priority_max(policy);
-    if (pthread_setschedparam(TGModernFlatteningWorkerThread, policy, &param) == 0)
-        TGModernFlatteningWorkerBoosted = true;
 }
 
 static void TGModernFlatteningPurgeCancelledTasksLocked(void)
@@ -307,11 +289,6 @@ static TGModernFlatteningRenderTask *TGModernFlatteningWaitForTaskLocked(void)
 
 + (void)renderThreadMain:(id)__unused object
 {
-    pthread_mutex_lock(&TGModernFlatteningTaskLock);
-    TGModernFlatteningWorkerThread = pthread_self();
-    TGModernFlatteningWorkerThreadValid = true;
-    pthread_mutex_unlock(&TGModernFlatteningTaskLock);
-
     double currentPriority = TGModernFlatteningPrerenderThreadPriority;
     TGModernFlatteningSetWorkerPriority(currentPriority);
 
@@ -322,12 +299,13 @@ static TGModernFlatteningRenderTask *TGModernFlatteningWaitForTaskLocked(void)
             TGModernFlatteningWorkerLock();
             TGModernFlatteningRenderTask *task = TGModernFlatteningWaitForTaskLocked();
             currentPriority = task->_priority < 0.0f ? TGModernFlatteningVisibleThreadPriority : TGModernFlatteningPrerenderThreadPriority;
-            TGModernFlatteningWorkerBoosted = false;
             TGModernDrawingRecording *recording = task->_recording;
             CGRect rect = task->_rect;
             TGModernFlatteningWorkerUnlock(currentPriority);
 
             CGImageRef image = TGModernFlatteningCreateRecordedImage(recording, rect);
+            task->_recording = nil;
+            recording = nil;
 
             TGModernFlatteningWorkerLock();
             bool deliver = false;
@@ -345,7 +323,6 @@ static TGModernFlatteningRenderTask *TGModernFlatteningWaitForTaskLocked(void)
 #if defined(ONEGRAM_DIAGNOSTICS)
             TGModernFlatteningStatsRendered++;
 #endif
-            pthread_cond_broadcast(&TGModernFlatteningDoneCondition);
             TGModernFlatteningWorkerUnlock(currentPriority);
 
             if (deliver)
@@ -370,7 +347,7 @@ static void TGModernFlatteningEnqueueTask(TGModernFlatteningRenderTask *task)
         TGModernFlatteningTasks = [[NSMutableArray alloc] init];
     TGModernFlatteningPurgeCancelledTasksLocked();
     NSUInteger limit = OGRuntimeSingleCoreDevice() ? TGModernFlatteningSingleCorePendingTaskLimit : TGModernFlatteningMultiCorePendingTaskLimit;
-    if (TGModernFlatteningTasks.count >= limit)
+    if (TGModernFlatteningTasks.count >= limit && task->_priority >= 0.0f)
     {
         NSUInteger worstIndex = NSNotFound;
         CGFloat worstPriority = task->_priority;
@@ -466,47 +443,6 @@ static bool TGModernFlatteningCancelQueuedTask(TGModernFlatteningRenderTask *tas
     }
     pthread_mutex_unlock(&TGModernFlatteningTaskLock);
     return cancelled;
-}
-
-static CGImageRef TGModernFlatteningAcquireTaskImage(TGModernFlatteningRenderTask *task)
-{
-    CGImageRef image = NULL;
-    pthread_mutex_lock(&TGModernFlatteningTaskLock);
-    if (!task->_cancelled)
-    {
-        if (task->_state == TGModernFlatteningRenderTaskQueued)
-        {
-            [TGModernFlatteningTasks removeObjectIdenticalTo:task];
-#if defined(ONEGRAM_DIAGNOSTICS)
-            TGModernFlatteningStatsSteals++;
-#endif
-        }
-        else
-        {
-            if (task->_state == TGModernFlatteningRenderTaskRunning)
-            {
-#if defined(ONEGRAM_DIAGNOSTICS)
-                CFAbsoluteTime waitStart = CFAbsoluteTimeGetCurrent();
-                TGModernFlatteningStatsWaits++;
-#endif
-                TGModernFlatteningBoostWorkerLocked();
-                while (task->_state == TGModernFlatteningRenderTaskRunning && !task->_cancelled)
-                    pthread_cond_wait(&TGModernFlatteningDoneCondition, &TGModernFlatteningTaskLock);
-#if defined(ONEGRAM_DIAGNOSTICS)
-                TGModernFlatteningStatsWaitDuration += CFAbsoluteTimeGetCurrent() - waitStart;
-#endif
-            }
-            image = task->_image;
-            task->_image = NULL;
-#if defined(ONEGRAM_DIAGNOSTICS)
-            if (image != NULL)
-                TGModernFlatteningStatsAsyncHits++;
-#endif
-        }
-    }
-    task->_cancelled = true;
-    pthread_mutex_unlock(&TGModernFlatteningTaskLock);
-    return image;
 }
 
 static CGImageRef TGModernFlatteningClaimFinishedTaskImage(TGModernFlatteningRenderTask *task)
@@ -666,10 +602,9 @@ static void TGModernFlatteningCacheListEnsure(void)
         return false;
     }
 
-    TGModernDrawingRecording *recording = [self _contentRecording];
-    if (_tilesValid && recording != nil && _recording != nil && CGSizeEqualToSize(size, _contentSize) && [recording isEqualToRecording:_recording])
+    if (_tilesValid && !_needsContentUpdate && CGSizeEqualToSize(size, _contentSize))
         return true;
-
+    TGModernDrawingRecording *recording = [self _contentRecording];
     [self _resetTiles];
     _recording = recording;
     _contentSize = size;
@@ -712,6 +647,23 @@ static void TGModernFlatteningCacheListEnsure(void)
     return image;
 }
 
+- (void)_scheduleContentsRetry
+{
+    if (_contentsRetryScheduled || [self boundView] == nil) return;
+    _contentsRetryScheduled = true;
+    _contentsRetryDelay = MIN(1.0, MAX(0.05, _contentsRetryDelay * 2.0));
+    __weak TGModernFlatteningViewModel *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_contentsRetryDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        __strong TGModernFlatteningViewModel *model = weakSelf;
+        if (model == nil) return;
+        model->_contentsRetryScheduled = false;
+        if ([model boundView] == nil) return;
+        model->_needsContentUpdate = true;
+        [model _updateSubmodelContents];
+    });
+}
+
 - (void)_scheduleTile:(TGModernFlatteningTile *)tile priority:(CGFloat)priority
 {
     if (_recording == nil)
@@ -728,8 +680,14 @@ static void TGModernFlatteningCacheListEnsure(void)
     if (tile->_image != nil)
         return;
 
+    TGModernDrawingRecording *recording = [_recording recordingForDrawingRect:tile->_rect];
+    if (recording == nil)
+    {
+        [self _scheduleContentsRetry];
+        return;
+    }
     TGModernFlatteningRenderTask *task = [[TGModernFlatteningRenderTask alloc] init];
-    task->_recording = _recording;
+    task->_recording = recording;
     task->_rect = tile->_rect;
     task->_priority = priority;
     task->_model = self;
@@ -743,7 +701,8 @@ static void TGModernFlatteningCacheListEnsure(void)
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
 #endif
     TGReusableLabelResetMissedEmoji();
-    CGImageRef image = _recording != nil ? TGModernFlatteningCreateRecordedImage(_recording, tile->_rect) : [self _createDirectImageForRect:tile->_rect];
+    TGModernDrawingRecording *recording = [_recording recordingForDrawingRect:tile->_rect];
+    CGImageRef image = recording != nil ? TGModernFlatteningCreateRecordedImage(recording, tile->_rect) : [self _createDirectImageForRect:tile->_rect];
     bool missedEmoji = TGReusableLabelMissedEmoji();
 #if defined(ONEGRAM_DIAGNOSTICS)
     TGModernFlatteningStatsSyncRenders++;
@@ -754,7 +713,7 @@ static void TGModernFlatteningCacheListEnsure(void)
     if (missedEmoji && _recording != nil)
     {
         TGModernFlatteningRenderTask *task = [[TGModernFlatteningRenderTask alloc] init];
-        task->_recording = _recording;
+        task->_recording = [_recording recordingForDrawingRect:tile->_rect];
         task->_rect = tile->_rect;
         task->_priority = TGModernFlatteningVisibleTaskPriority;
         task->_model = self;
@@ -772,20 +731,23 @@ static void TGModernFlatteningCacheListEnsure(void)
 #endif
         return;
     }
-
     if (tile->_task != nil)
     {
-        TGModernFlatteningRenderTask *task = tile->_task;
-        tile->_task = nil;
-        CGImageRef image = TGModernFlatteningAcquireTaskImage(task);
+        CGImageRef image = TGModernFlatteningClaimFinishedTaskImage(tile->_task);
         if (image != NULL)
         {
+            tile->_task = nil;
+#if defined(ONEGRAM_DIAGNOSTICS)
+            TGModernFlatteningStatsAsyncHits++;
+#endif
             [self _setTile:tile image:(__bridge_transfer id)image];
             return;
         }
     }
-
-    [self _renderTileSynchronously:tile];
+    if (_recording != nil)
+        [self _scheduleTile:tile priority:TGModernFlatteningVisibleTaskPriority];
+    else
+        [self _renderTileSynchronously:tile];
 }
 
 - (TGModernFlatteningView *)_attachTileView:(TGModernFlatteningTile *)tile
@@ -848,6 +810,8 @@ static void TGModernFlatteningCacheListEnsure(void)
         else
         {
             [self _detachTileView:tile];
+            if (tile->_image != nil)
+                [self _setTile:tile image:nil];
             if (tile->_task != nil && TGModernFlatteningCancelQueuedTask(tile->_task))
                 tile->_task = nil;
         }
@@ -891,11 +855,11 @@ static void TGModernFlatteningCacheListEnsure(void)
         return;
     }
 
-    _needsContentUpdate = false;
     [UIView performWithoutAnimation:^
     {
         [self _displayContents];
     }];
+    _needsContentUpdate = false;
 }
 
 - (void)_renderTaskCompleted:(TGModernFlatteningRenderTask *)task
@@ -911,11 +875,21 @@ static void TGModernFlatteningCacheListEnsure(void)
     }
     if (targetTile == nil)
         return;
+    if (_needsContentUpdate)
+    {
+        targetTile->_task = nil;
+        return;
+    }
 
     CGImageRef image = TGModernFlatteningClaimFinishedTaskImage(task);
     targetTile->_task = nil;
     if (image == NULL)
+    {
+        _needsContentUpdate = true;
+        [self _scheduleContentsRetry];
         return;
+    }
+    _contentsRetryDelay = 0.0;
 
     [self _setTile:targetTile image:(__bridge_transfer id)image];
 
