@@ -187,6 +187,22 @@ static int workerCount = 0;
     [_requestService addRequest:request];
 }
 
+- (void)shutdown
+{
+    [self dispatchOnStateQueue:^
+    {
+        _delegate = nil;
+        _isReadyToBeRemoved = true;
+        if (_timeoutTimer != nil)
+        {
+            [_timeoutTimer invalidate];
+            _timeoutTimer = nil;
+        }
+    }];
+    _requestService.delegate = nil;
+    [_mtProto stop];
+}
+
 - (void)cancelRequestById:(id)requestId
 {
     [_requestService removeRequestByInternalId:requestId askForReconnectionOnDrop:true];

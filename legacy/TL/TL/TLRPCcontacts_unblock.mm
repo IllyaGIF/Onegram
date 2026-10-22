@@ -3,7 +3,7 @@
 #import "../NSInputStream+TL.h"
 #import "../NSOutputStream+TL.h"
 
-#import "TLInputUser.h"
+#import "TLInputPeer.h"
 
 @implementation TLRPCcontacts_unblock
 
@@ -20,7 +20,7 @@
 
 - (int)layerVersion
 {
-    return 8;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -50,7 +50,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xe54100bd;
+    return (int32_t)0xb550d328;
 }
 
 - (int32_t)TLconstructorName
@@ -61,12 +61,19 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCcontacts_unblock$contacts_unblock *object = [[TLRPCcontacts_unblock$contacts_unblock alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.n_id = metaObject->getObject((int32_t)0x7a5601fb);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;

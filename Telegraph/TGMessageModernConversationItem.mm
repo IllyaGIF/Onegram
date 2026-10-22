@@ -225,6 +225,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
 
 - (void)updateMessage:(TGMessage *)message fromMessage:(TGMessage *)__unused fromMessage viewStorage:(TGModernViewStorage *)viewStorage sizeUpdated:(bool *)sizeUpdated containerSize:(CGSize)containerSize
 {
+    [_groupedLayout updateDocumentMessage:message];
     TGModernCollectionCell *rebindCell = nil;
     
     if (message.mid != fromMessage.mid && _groupedLayout != nil)
@@ -1280,6 +1281,8 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                         }
                         
                         TGDocumentMessageViewModel *model = [[TGDocumentMessageViewModel alloc] initWithMessage:_message document:(TGDocumentMediaAttachment *)attachment authorPeer:useAuthor ? [self currentAuthorPeer] : nil viaUser:viaUser context:_context];
+                        model.groupedLayout = _groupedLayout;
+                        model.positionFlags = _positionFlags;
                         if (useAuthor) {
                             [self _setupMessageAuthor:model];
                         }
@@ -1550,7 +1553,7 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
 - (void)updateGroupedLayout:(TGMessageGroupedLayout *)groupedLayout
 {
     TGMessageGroupPositionFlags positionFlags = groupedLayout != nil ? [groupedLayout positionForMessageId:_message.mid] : TGMessageGroupPositionNone;
-    if (groupedLayout == _groupedLayout && positionFlags == _positionFlags && (_viewModel == nil || (_viewModel.groupedLayout == groupedLayout && _viewModel.positionFlags == positionFlags)))
+    if (!groupedLayout.documentGroup && groupedLayout == _groupedLayout && positionFlags == _positionFlags && (_viewModel == nil || (_viewModel.groupedLayout == groupedLayout && _viewModel.positionFlags == positionFlags)))
     {
         if ([self _ios6ApplyDiscussionFooterToModel:_viewModel])
             _layoutIsInvalid = true;

@@ -130,8 +130,16 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
     {
         [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
         [os writeInt32:1];
-        [os writeInt32:(int32_t)0x1b2286b8];
-        [os writeString:_reaction];
+        if ([_reaction hasPrefix:@"◆"] && _reaction.length > 1)
+        {
+            [os writeInt32:(int32_t)0x8935fc73];
+            [os writeInt64:[[_reaction substringFromIndex:1] longLongValue]];
+        }
+        else
+        {
+            [os writeInt32:(int32_t)0x1b2286b8];
+            [os writeString:_reaction];
+        }
     }
 }
 

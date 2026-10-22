@@ -14,6 +14,8 @@ typedef enum {
 @interface TGAudioSessionManager : NSObject
 
 + (TGAudioSessionManager *)instance;
++ (Float64)callPreferredSampleRate;
++ (NSTimeInterval)callPreferredIOBufferDuration;
 
 - (id<SDisposable>)requestSessionWithType:(TGAudioSessionType)type interrupted:(void (^)())interrupted;
 - (void)cancelCurrentSession;

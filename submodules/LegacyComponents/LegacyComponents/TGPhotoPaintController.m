@@ -1655,6 +1655,24 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
 #endif
 }
 
+- (UIView *)_paintingSnapshotViewFromRect:(CGRect)rect
+{
+    if ([UIView instancesRespondToSelector:@selector(drawViewHierarchyInRect:afterScreenUpdates:)])
+        return [_paintingWrapperView resizableSnapshotViewFromRect:rect afterScreenUpdates:false withCapInsets:UIEdgeInsetsZero];
+    
+    UIView *snapshotView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, rect.size.width, rect.size.height)];
+    snapshotView.clipsToBounds = true;
+    if (_canvasView != nil && !_painting.isEmpty)
+    {
+        UIImageView *paintingView = [[UIImageView alloc] initWithImage:[_painting imageWithSize:_painting.size andData:NULL]];
+        paintingView.bounds = _canvasView.bounds;
+        paintingView.center = TGPaintSubtractPoints(_canvasView.center, rect.origin);
+        paintingView.transform = _canvasView.transform;
+        [snapshotView addSubview:paintingView];
+    }
+    return snapshotView;
+}
+
 - (CGRect)transitionOutSourceFrameForReferenceFrame:(CGRect)referenceFrame orientation:(UIInterfaceOrientation)orientation
 {
     CGRect containerFrame = [TGPhotoPaintController photoContainerFrameForParentViewFrame:self.view.frame toolbarLandscapeSize:self.toolbarLandscapeSize orientation:orientation panelSize:TGPhotoPaintTopPanelSize + TGPhotoPaintBottomPanelSize];
@@ -1691,7 +1709,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
         snapshotView = [previewView snapshotViewAfterScreenUpdates:false];
         snapshotView.frame = [_containerView convertRect:previewView.frame toView:parentView];
         
-        UIView *canvasSnapshotView = [_paintingWrapperView resizableSnapshotViewFromRect:[_paintingWrapperView convertRect:previewView.bounds fromView:previewView] afterScreenUpdates:false withCapInsets:UIEdgeInsetsZero];
+        UIView *canvasSnapshotView = [self _paintingSnapshotViewFromRect:[_paintingWrapperView convertRect:previewView.bounds fromView:previewView]];
         canvasSnapshotView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         canvasSnapshotView.transform = _scrollView.transform;
         canvasSnapshotView.frame = snapshotView.bounds;

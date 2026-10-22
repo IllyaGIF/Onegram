@@ -50,6 +50,8 @@
     TGCheckCollectionItem *_emojiStockItem;
     TGCheckCollectionItem *_emojiNewItem;
     TGCheckCollectionItem *_emojiCombinedItem;
+
+    bool _previewRelayoutScheduled;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -105,10 +107,8 @@
         _previewItem = [[TGAppearancePreviewCollectionItem alloc] init],
         _previewItem.heightChanged = ^ {
             __strong TGAppearanceController *strongSelf = weakSelf;
-            if (strongSelf != nil) {
-                [strongSelf.collectionLayout invalidateLayout];
-                [strongSelf.collectionView layoutSubviews];
-            }
+            if (strongSelf != nil)
+                [strongSelf schedulePreviewRelayout];
         };
         _previewItem.messages = [self messages];
         
@@ -171,6 +171,24 @@
         [ActionStageInstance() watchForPaths:@[@"/tg/assets/currentWallpaperInfo"] watcher:self];
     }
     return self;
+}
+
+- (void)schedulePreviewRelayout
+{
+    if (_previewRelayoutScheduled)
+        return;
+    _previewRelayoutScheduled = true;
+
+    __weak TGAppearanceController *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGAppearanceController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf->_previewRelayoutScheduled = false;
+        [strongSelf.collectionLayout invalidateLayout];
+        [strongSelf.collectionView layoutSubviews];
+    });
 }
 
 - (void)dealloc

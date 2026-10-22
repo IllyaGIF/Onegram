@@ -28,6 +28,7 @@
     NSData *_encryptionIv;
     
     int _finalFileSize;
+    bool _thumbnailOnly;
     
     id _workerToken;
     
@@ -93,6 +94,7 @@ static TGFileDownloadActor *TGFileDownloadActorResolve(NSString *path, id token)
 
 - (void)execute:(NSDictionary *)options
 {
+    _thumbnailOnly = [options[@"thumbnailOnly"] boolValue];
     NSString *url = [options objectForKey:@"url"];
     
     if ([url hasPrefix:@"upload/"])
@@ -272,7 +274,7 @@ static TGFileDownloadActor *TGFileDownloadActorResolve(NSString *path, id token)
         TLRPCupload_getCdnFile$upload_getCdnFile *getCdnFile = [[TLRPCupload_getCdnFile$upload_getCdnFile alloc] init];
         getCdnFile.file_token = fileData.token;
         getCdnFile.offset = 0;
-        getCdnFile.limit = 1 * 1024 * 1024;
+        getCdnFile.limit = _thumbnailOnly ? 512 * 1024 : 1024 * 1024;
         requestData = getCdnFile;
     } else {
         TLRPCupload_getFile$upload_getFile *getFile = [[TLRPCupload_getFile$upload_getFile alloc] init];
@@ -284,7 +286,7 @@ static TGFileDownloadActor *TGFileDownloadActorResolve(NSString *path, id token)
         location.file_reference = [originInfo fileReferenceForVolumeId:volumeId localId:fileId] ?: [NSData data];
         
         getFile.location = location;
-        getFile.limit = 1 * 1024 * 1024;
+        getFile.limit = _thumbnailOnly ? 512 * 1024 : 1024 * 1024;
         
         requestData = getFile;
     }

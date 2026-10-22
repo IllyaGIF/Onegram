@@ -39,6 +39,7 @@
 - (void)cancelRequestById:(id)requestId;
 - (void)cancelRequestByIdSoft:(id)requestId;
 - (void)ensureConnection;
+- (void)shutdown;
 
 @end
 

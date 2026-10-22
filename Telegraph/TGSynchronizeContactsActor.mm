@@ -212,7 +212,7 @@ static TGSynchronizeContactsManager *TGSynchronizeContactsManagerInstance = nil;
 
 static const char *addressBookQueueSpecific = "addressBookQueue";
 
-static std::map<int, int> lastPersonModificationDates;
+static std::map<int, int> &lastPersonModificationDates = *new std::map<int, int>();
 
 typedef void (^TGAddressBookCreated)(ABAddressBookRef addressBook, bool denied);
 
@@ -722,6 +722,21 @@ static void CreateAddressBookAsync(TGAddressBookCreated createdBlock)
             block();
         });
     }
+}
+
+- (void)resetForAccountSwitch
+{
+    [self clearState];
+    
+    TG_SYNCHRONIZED_BEGIN(_localSynchronizationPending);
+    _localSynchronizationPending = false;
+    TG_SYNCHRONIZED_END(_localSynchronizationPending);
+    
+    [self dispatchOnAddressBookQueue:^
+    {
+        _startupLocalSynchronizationPending = false;
+        [_startupLocalSynchronizationWaiters removeAllObjects];
+    }];
 }
 
 - (void)beginStartupLocalSynchronization

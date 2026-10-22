@@ -37,8 +37,6 @@ typedef NS_ENUM(NSInteger, PWTransport) {
 
 + (NSArray *)linesFromText:(NSString *)text;
 
-+ (NSArray *)configsFromText:(NSString *)text;
-
 - (BOOL)isSupported;
 - (NSString *)unsupportedReason;
 

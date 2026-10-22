@@ -56,4 +56,8 @@
     self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, size.width, size.height);
 }
 
+- (CGFloat)baselineOffset {
+    return [TGMessageViewsView baselineOffsetForType:_type presentation:_presentation];
+}
+
 @end

@@ -6,16 +6,18 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
+@class TLChatAdminRights;
 @class TLInputChannel;
 @class TLInputUser;
-@class TLChannelAdminRights;
 @class TLUpdates;
 
 @interface TLRPCchannels_editAdmin : TLMetaRpc
 
+@property (nonatomic) int32_t flags;
 @property (nonatomic, retain) TLInputChannel *channel;
 @property (nonatomic, retain) TLInputUser *user_id;
-@property (nonatomic, retain) TLChannelAdminRights *admin_rights;
+@property (nonatomic, retain) TLChatAdminRights *admin_rights;
+@property (nonatomic, retain) NSString *rank;
 
 - (Class)responseClass;
 

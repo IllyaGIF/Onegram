@@ -137,7 +137,7 @@ static const NSUInteger MTMaxUnacknowledgedMessageCount = 64;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[MTQueue alloc] initWithName:"org.mtproto.managerQueue"];
+        queue = [[MTQueue alloc] initWithName:"org.mtproto.managerQueue" targetPriority:DISPATCH_QUEUE_PRIORITY_HIGH];
     });
     return queue;
 }

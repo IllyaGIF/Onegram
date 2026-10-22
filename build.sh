@@ -26,6 +26,10 @@ case "$OS_NAME" in
         MAKE="make"
         LIPO=""
         JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || echo 4)"
+        MAC_MEMORY_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 8589934592)"
+        MAC_MEMORY_JOBS=$((MAC_MEMORY_BYTES / 2147483648))
+        [ "$MAC_MEMORY_JOBS" -ge 1 ] || MAC_MEMORY_JOBS=1
+        [ "$JOBS" -le "$MAC_MEMORY_JOBS" ] || JOBS="$MAC_MEMORY_JOBS"
         ;;
     Linux)
         MAKE="make"
@@ -56,12 +60,26 @@ INFO_PLIST="$ROOT/Telegraph/Telegraph-Info.plist"
 CONFIG_XCCONFIG="$ROOT/Config.xcconfig"
 
 JOBS="${ONEGRAM_JOBS:-$JOBS}"
-CORE_JOBS="${CORE_JOBS:-8}"
+if [ "$OS_NAME" = Darwin ]; then
+    CORE_JOBS="${CORE_JOBS:-$JOBS}"
+else
+    CORE_JOBS="${CORE_JOBS:-8}"
+fi
 
 BUILD_LOG=""
+BUILD_CACHE_LOG=""
 SELECTED_BUILD_ARCH=""
 LAST_BUILT_IPA=""
 SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/onegram/build-mode"
+DEVICE_HOST_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/onegram/device-host"
+PUSH_TRANSPORT=""
+DEVICE_HOST=""
+DEVICE_PORT=22
+DEVICE_HOST_KEY_ALIAS=""
+DEVICE_LABEL=""
+DEVICE_PASSWORD=""
+PUSH_WORK_DIR=""
+IPROXY_PID=""
 MENU_SELECTION=0
 
 load_settings() {
@@ -251,6 +269,9 @@ interrupt_build() {
         echo "$BUILD_LOG"
     fi
 
+    close_device_connection
+    stop_usb_ssh_forward
+
     exit 130
 }
 
@@ -262,9 +283,16 @@ show_ccache_stats() {
     fi
 
     echo
-    echo "ccache:"
+    local stats
+    if [ -n "$BUILD_CACHE_LOG" ] && [ -f "$BUILD_CACHE_LOG" ]; then
+        echo "ccache (this build):"
+        stats="$(ccache --show-log-stats --verbose 2>/dev/null)" || return 0
+    else
+        echo "ccache (all builds):"
+        stats="$(ccache -s)" || return 0
+    fi
 
-    ccache -s | awk '
+    printf '%s\n' "$stats" | awk '
         /Cacheable calls:/ && !cacheable {
             print
             cacheable = 1
@@ -280,11 +308,23 @@ show_ccache_stats() {
             misses = 1
         }
 
+        /Could not use modules/ || /Compilation failed/ || /Uncacheable calls:/ {
+            print
+        }
+
         /^[[:space:]]*Cache size/ && !size {
             print
             size = 1
         }
     '
+}
+
+prepare_ccache_stats() {
+    BUILD_CACHE_LOG=""
+    if command -v ccache >/dev/null 2>&1 && ccache --help 2>/dev/null | grep -q -- '--show-log-stats'; then
+        BUILD_CACHE_LOG="$(create_build_log onegram-ccache)" || return 1
+        export CCACHE_STATSLOG="$BUILD_CACHE_LOG"
+    fi
 }
 
 get_ipa_architecture() {
@@ -534,265 +574,18 @@ stream_build() {
     return "${PIPESTATUS[0]}"
 }
 
-extract_ipa_binary() {
-    local ipa="$1"
-    local output="$2"
-
-    python3 - "$ipa" "$output" <<'PY'
-import os
-import sys
-import zipfile
-
-ipa = sys.argv[1]
-output = sys.argv[2]
-
-with zipfile.ZipFile(ipa, "r") as z:
-    candidates = [
-        name
-        for name in z.namelist()
-        if name.startswith("Payload/")
-        and ".app/" in name
-        and name.endswith("/Telegram")
-    ]
-
-    if not candidates:
-        raise SystemExit("Telegram executable not found in IPA")
-
-    data = z.read(candidates[0])
-
-with open(output, "wb") as f:
-    f.write(data)
-
-os.chmod(output, 0o755)
-PY
-}
-
-find_ldid() {
-    if command -v ldid >/dev/null 2>&1; then
-        command -v ldid
-        return
-    fi
-
-    if [ -n "${THEOS:-}" ] && [ -x "$THEOS/bin/ldid" ]; then
-        echo "$THEOS/bin/ldid"
-        return
-    fi
-
-    if [ -n "${THEOS:-}" ] && [ -x "$THEOS/toolchain/linux/iphone/bin/ldid" ]; then
-        echo "$THEOS/toolchain/linux/iphone/bin/ldid"
-        return
-    fi
-
-    if [ -x "$HOME/theos/bin/ldid" ]; then
-        echo "$HOME/theos/bin/ldid"
-        return
-    fi
-
-    if [ -x "$HOME/theos/toolchain/linux/iphone/bin/ldid" ]; then
-        echo "$HOME/theos/toolchain/linux/iphone/bin/ldid"
-        return
-    fi
-
-    if [ -x "$PROJECT/../theos/bin/ldid" ]; then
-        echo "$PROJECT/../theos/bin/ldid"
-        return
-    fi
-
-    if [ -x "$PROJECT/../theos/toolchain/linux/iphone/bin/ldid" ]; then
-        echo "$PROJECT/../theos/toolchain/linux/iphone/bin/ldid"
-        return
-    fi
-
-    echo ""
-}
-
-create_universal3_ipa() {
-    local armv6_ipa="$1"
-    local universal_ipa="$2"
-    local output_dir
-    local output_ipa
-    local work_dir
-    local universal_root
-    local armv6_binary
-    local app_dir
-    local app_binary
-    local merged_binary
-    local plist
-    local ldid_path
-    local entitlements
-    local have_entitlements=0
-
-    if [ ! -f "$armv6_ipa" ]; then
-        echo
-        echo "ERROR: armv6 IPA not found."
-        exit 1
-    fi
-
-    if [ ! -f "$universal_ipa" ]; then
-        echo
-        echo "ERROR: armv7 + arm64 IPA not found."
-        exit 1
-    fi
-
-    if ! command -v unzip >/dev/null 2>&1; then
-        echo
-        echo "ERROR: unzip not found."
-        exit 1
-    fi
-
-    if ! command -v zip >/dev/null 2>&1; then
-        echo
-        echo "ERROR: zip not found."
-        exit 1
-    fi
-
-    if [ -z "$LIPO" ] || [ ! -x "$LIPO" ]; then
-        echo
-        echo "ERROR: lipo not found."
-        exit 1
-    fi
-
-    ldid_path="$(find_ldid)"
-
-    if [ -z "$ldid_path" ]; then
-        echo
-        echo "ERROR: ldid not found."
-        exit 1
-    fi
-
-    output_dir="$BUILD_DIR/universal3"
-    output_ipa="$output_dir/Onegram-armv6-armv7-arm64.ipa"
-
-    mkdir -p "$output_dir"
-
-    work_dir="$(mktemp -d "${TMPDIR:-/tmp}/onegram-universal3.XXXXXX")"
-    universal_root="$work_dir/universal"
-    armv6_binary="$work_dir/Telegram-armv6"
-    merged_binary="$work_dir/Telegram-universal3"
-    entitlements="$work_dir/entitlements.plist"
-
-    mkdir -p "$universal_root"
-
-    unzip -q "$universal_ipa" -d "$universal_root"
-
-    app_dir="$(
-        find "$universal_root/Payload" \
-            -maxdepth 1 \
-            -type d \
-            -name '*.app' \
-            -print \
-            -quit
-    )"
-
-    if [ -z "$app_dir" ] || [ ! -d "$app_dir" ]; then
-        rm -rf "$work_dir"
-        echo
-        echo "ERROR: Application bundle not found in universal IPA."
-        exit 1
-    fi
-
-    app_binary="$app_dir/Telegram"
-    plist="$app_dir/Info.plist"
-
-    if [ ! -f "$app_binary" ]; then
-        rm -rf "$work_dir"
-        echo
-        echo "ERROR: Telegram binary not found in universal IPA."
-        exit 1
-    fi
-
-    if [ ! -f "$plist" ]; then
-        rm -rf "$work_dir"
-        echo
-        echo "ERROR: Info.plist not found in universal IPA."
-        exit 1
-    fi
-
-    extract_ipa_binary "$armv6_ipa" "$armv6_binary"
-
-    if "$ldid_path" -e "$app_binary" > "$entitlements" 2>/dev/null; then
-        if grep -q "<plist" "$entitlements" 2>/dev/null; then
-            have_entitlements=1
-        fi
-    fi
-
-    "$LIPO" \
-        -create \
-        "$armv6_binary" \
-        "$app_binary" \
-        -output "$merged_binary"
-
-    if ! "$LIPO" "$merged_binary" -verify_arch armv6 >/dev/null 2>&1; then
-        rm -rf "$work_dir"
-        echo
-        echo "ERROR: Merged binary does not contain armv6."
-        exit 1
-    fi
-
-    if ! "$LIPO" "$merged_binary" -verify_arch armv7 >/dev/null 2>&1; then
-        rm -rf "$work_dir"
-        echo
-        echo "ERROR: Merged binary does not contain armv7."
-        exit 1
-    fi
-
-    if ! "$LIPO" "$merged_binary" -verify_arch arm64 >/dev/null 2>&1; then
-        rm -rf "$work_dir"
-        echo
-        echo "ERROR: Merged binary does not contain arm64."
-        exit 1
-    fi
-
-    chmod 755 "$merged_binary"
-    mv "$merged_binary" "$app_binary"
-
-    python3 - "$plist" <<'PY'
-import plistlib
-import sys
-
-path = sys.argv[1]
-
-with open(path, "rb") as f:
-    plist = plistlib.load(f)
-
-plist["MinimumOSVersion"] = "3.1.3"
-plist.pop("UIRequiredDeviceCapabilities", None)
-
-with open(path, "wb") as f:
-    plistlib.dump(
-        plist,
-        f,
-        fmt=plistlib.FMT_XML,
-        sort_keys=False
-    )
-PY
-
-    python3 "$PROJECT/scripts/build_identity.py" --app "$app_dir" --architecture armv6+armv7+arm64
-
-    rm -rf "$app_dir/_CodeSignature"
-    rm -f "$app_dir/CodeResources"
-
-    if [ "$have_entitlements" -eq 1 ]; then
-        "$ldid_path" "-S$entitlements" "$app_binary"
-    else
-        "$ldid_path" -S "$app_binary"
-    fi
-
-    rm -f "$output_ipa"
-
-    (
-        cd "$universal_root"
-        zip -qry "$output_ipa" .
-    )
-
-    rm -rf "$work_dir"
-
-    verify_ipa "$output_ipa" universal3
-
-    LAST_BUILT_IPA="$output_ipa"
+create_build_log() {
+    local directory="${ONEGRAM_LOG_DIR:-${TMPDIR:-/tmp}}"
+    mkdir -p "$directory" || return 1
+    mktemp "$directory/$1.XXXXXX"
 }
 
 ensure_python3() {
+    if [ "$OS_NAME" = Darwin ]; then
+        macos_bootstrap_python || return 1
+        activate_macos_native_tools
+        return 0
+    fi
     if command -v python3 >/dev/null 2>&1; then
         return 0
     fi
@@ -848,13 +641,11 @@ prepare_build_environment() {
     local restore_pipefail=0
 
     if [ "$OS_NAME" = Darwin ]; then
-        prepare_macos_runtime || return 1
-        run_macos_container --prepare "$architecture"
-        return $?
+        prepare_macos_native_tools || return 1
     fi
 
     ensure_python3 || return 1
-    setup_log="$(mktemp "${TMPDIR:-/tmp}/onegram-setup.XXXXXX")"
+    setup_log="$(create_build_log onegram-setup)" || return 1
     echo "Preparing build environment"
     if ! [[ -o pipefail ]]; then
         restore_pipefail=1
@@ -866,10 +657,10 @@ prepare_build_environment() {
         /^\[Onegram setup\]/ {
             if (/Missing system packages:/) print "Installing system packages"
             else if (/Theos is missing/) print "Installing Theos"
-            else if (/Selecting installed Xcode:/) print "Selecting installed Xcode..."
+            else if (/Selecting installed Xcode:/) print "Selecting installed Xcode"
             else if (/replacing it/) print "Updating incompatible iOS toolchain"
             else if (/Linux iOS toolchain is missing/) print "Installing iOS toolchain"
-            else if (/Building corrected Linux iOS linker/) print "Preparing corrected iOS linker..."
+            else if (/Building corrected .* iOS linker/) print "Preparing corrected iOS linker"
             else if (/Installing iPhoneOS/) {
                 line = $0
                 sub(/^.*Installing /, "Installing ", line)
@@ -897,7 +688,7 @@ prepare_build_environment() {
     fi
 
     if [ "$OS_NAME" = Darwin ]; then
-        LIPO="$(xcrun --find lipo 2>/dev/null || command -v lipo || true)"
+        LIPO="$THEOS/toolchain/macos/iphone/bin/lipo"
     else
         if [ -x "$THEOS/toolchain/linux/iphone/bin/lipo" ]; then
             LIPO="$THEOS/toolchain/linux/iphone/bin/lipo"
@@ -923,16 +714,9 @@ run_build() {
     local elapsed
     local minutes
     local seconds
-    local armv6_ipa
-    local universal_ipa
     LAST_BUILT_IPA=""
 
     ensure_api_config || return 1
-
-    if [ "$OS_NAME" = Darwin ]; then
-        run_macos_build "$architecture"
-        return $?
-    fi
 
     prepare_build_environment "$architecture" || return 1
 
@@ -974,7 +758,8 @@ run_build() {
 
     echo
 
-    BUILD_LOG="$(mktemp "${TMPDIR:-/tmp}/onegram-build.XXXXXX")"
+    BUILD_LOG="$(create_build_log onegram-build)" || return 1
+    prepare_ccache_stats || return 1
     start_time="$(date +%s)"
 
     set +e
@@ -1007,9 +792,6 @@ run_build() {
             result=$?
             ;;
         universal3)
-            echo "Building armv6"
-            echo
-
             stream_build \
                 "$BUILD_LOG" \
                 "$MAKE" \
@@ -1017,57 +799,10 @@ run_build() {
                 CORE_JOBS="$CORE_JOBS" \
                 ONEGRAM_DIAGNOSTICS="$ONEGRAM_DIAGNOSTICS" \
                 ARMV6_JOBS="$JOBS" \
-                ONEGRAM_ARCH=armv6 \
                 --output-sync=line \
-                all
+                universal3
 
             result=$?
-
-            if [ "$result" -eq 0 ]; then
-                armv6_ipa="$BUILD_DIR/armv6/Onegram.ipa"
-
-                if [ ! -f "$armv6_ipa" ]; then
-                    echo
-                    echo "ERROR: armv6 IPA could not be found."
-                    result=1
-                fi
-            fi
-
-            if [ "$result" -eq 0 ]; then
-                echo
-                echo "Building armv7 + arm64"
-                echo
-
-                stream_build \
-                    "$BUILD_LOG" \
-                    "$MAKE" \
-                    -j"$JOBS" \
-                    CORE_JOBS="$CORE_JOBS" \
-                    ONEGRAM_DIAGNOSTICS="$ONEGRAM_DIAGNOSTICS" \
-                    --output-sync=line \
-                    universal
-
-                result=$?
-            fi
-
-            if [ "$result" -eq 0 ]; then
-                universal_ipa="$BUILD_DIR/universal/Onegram.ipa"
-
-                if [ ! -f "$universal_ipa" ]; then
-                    echo
-                    echo "ERROR: armv7 + arm64 IPA could not be found."
-                    result=1
-                fi
-            fi
-
-            if [ "$result" -eq 0 ]; then
-                echo
-                echo "Merging armv6 + armv7 + arm64"
-                echo
-
-                create_universal3_ipa "$armv6_ipa" "$universal_ipa"
-                result=$?
-            fi
             ;;
     esac
 
@@ -1083,10 +818,8 @@ run_build() {
         echo "BUILD FAILED"
         printf "Build time: %dm %02ds\n" "$minutes" "$seconds"
         echo
-        echo "Last build output:"
-        echo
-
-        tail -n 15 "$BUILD_LOG"
+        python3 "$PROJECT/scripts/build_diagnostics.py" "$BUILD_LOG" || tail -n 15 "$BUILD_LOG"
+        show_ccache_stats
 
         echo
         echo "Full build log:"
@@ -1103,9 +836,7 @@ run_build() {
             LAST_BUILT_IPA="$BUILD_DIR/Onegram.ipa"
             ;;
         universal3)
-            if [ -z "$LAST_BUILT_IPA" ]; then
-                LAST_BUILT_IPA="$(find_newest_ipa universal3)"
-            fi
+            LAST_BUILT_IPA="$BUILD_DIR/universal3/Onegram-armv6-armv7-arm64.ipa"
             ;;
     esac
 
@@ -1120,6 +851,11 @@ run_build() {
 
     verify_ipa "$LAST_BUILT_IPA" "$architecture"
 
+    end_time="$(date +%s)"
+    elapsed=$((end_time - start_time))
+    minutes=$((elapsed / 60))
+    seconds=$((elapsed % 60))
+
     echo
     echo "Build complete"
     printf "Build time: %dm %02ds\n" "$minutes" "$seconds"
@@ -1127,6 +863,11 @@ run_build() {
 
     show_ccache_stats
 
+    if [ -n "$BUILD_CACHE_LOG" ]; then
+        rm -f "$BUILD_CACHE_LOG"
+        BUILD_CACHE_LOG=""
+        unset CCACHE_STATSLOG
+    fi
     rm -f "$BUILD_LOG"
     BUILD_LOG=""
 }
@@ -1136,11 +877,7 @@ clean_project() {
     local end_time
     local elapsed
 
-    if [ "$OS_NAME" = Darwin ]; then
-        prepare_macos_runtime || return 1
-        run_macos_container --clean universal3
-        return $?
-    fi
+    [ "$OS_NAME" != Darwin ] || activate_macos_native_tools
 
     echo
     echo "Cleaning Onegram"
@@ -1148,7 +885,7 @@ clean_project() {
 
     start_time="$(date +%s)"
 
-    if command -v "$MAKE" >/dev/null 2>&1 && [ -f "$THEOS/makefiles/common.mk" ]; then
+    if command -v "$MAKE" >/dev/null 2>&1 && [ -f "$THEOS/makefiles/common.mk" ] && { [ "$OS_NAME" != Darwin ] || [ -x "$THEOS/toolchain/macos/iphone/bin/clang" ]; }; then
         "$MAKE" clean || true
         "$MAKE" ONEGRAM_ARCH=armv6 clean || true
         "$MAKE" ONEGRAM_ARCH=arm64 clean || true
@@ -1565,6 +1302,945 @@ if [ "$OS_NAME" = Darwin ]; then
     source "$PROJECT/scripts/macos_build.sh"
 fi
 
+make_push_deb() {
+    local binpath="$1"
+    local debarch="$2"
+    local out="$3"
+    local prefix="$4"
+    local firmware="$5"
+    local stage="$BUILD_DIR/push/stage"
+    local data="$stage/data"
+    local daemon_path="$prefix/usr/local/bin/onegramd"
+    local plist_path="$prefix/Library/LaunchDaemons/dev.IllyaGIF.onegramd.plist"
+
+    rm -rf "$stage"
+    mkdir -p "$stage/DEBIAN" "$data$prefix/usr/local/bin" "$data$prefix/Library/LaunchDaemons"
+
+    cat > "$stage/DEBIAN/control" <<CTL
+Package: dev.illyagif.onegramd
+Name: Onegram Push Helper
+Version: $CURRENT_VERSION
+Architecture: $debarch
+Description: Instant push helper daemon for Onegram
+Maintainer: IllyaGIF
+Author: IllyaGIF
+Section: Tweaks
+Depends: firmware (>= $firmware)
+CTL
+
+    cat > "$stage/DEBIAN/postinst" <<PI
+#!/bin/sh
+launchctl unload $plist_path 2>/dev/null
+mkdir -p /var/mobile/Library/Onegram/daemon
+chown -R mobile:mobile /var/mobile/Library/Onegram
+chmod 700 /var/mobile/Library/Onegram/daemon
+for log in /var/mobile/Library/Logs/onegramd.log /var/mobile/Library/Logs/onegramd.log.1 /var/mobile/Library/Logs/onegramd.stderr.log; do
+    [ -e "\$log" ] && chown mobile:mobile "\$log"
+done
+launchctl load $plist_path 2>/dev/null
+exit 0
+PI
+
+    cat > "$stage/DEBIAN/prerm" <<PR
+#!/bin/sh
+launchctl unload $plist_path 2>/dev/null
+exit 0
+PR
+
+    chmod 755 "$stage/DEBIAN/postinst" "$stage/DEBIAN/prerm"
+    cp "$binpath" "$data$daemon_path"
+    chmod 755 "$data$daemon_path"
+    python3 - "$ROOT/OnegramPushHelper/dev.IllyaGIF.onegramd.plist" "$data$plist_path" "$daemon_path" <<'PY' || return 1
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    launchd = plistlib.load(source)
+launchd["Program"] = sys.argv[3]
+launchd["ProgramArguments"] = [sys.argv[3]] + list(launchd.get("ProgramArguments", []))[1:]
+with open(sys.argv[2], "wb") as target:
+    plistlib.dump(launchd, target)
+PY
+    chmod 644 "$data$plist_path"
+
+    assemble_deb "$stage" "$out"
+}
+
+assemble_deb() {
+    local stage="$1"
+    local out="$2"
+
+    rm -f "$out"
+    (
+        cd "$stage"
+        echo "2.0" > debian-binary
+        tar --numeric-owner --group=0 --owner=0 -czf control.tar.gz -C DEBIAN .
+        tar --numeric-owner --group=0 --owner=0 -czf data.tar.gz -C data .
+        ar rc "$out" debian-binary control.tar.gz data.tar.gz
+    )
+}
+
+app_binary_suffix() {
+    sed -n 's/^#define OGSystemApplicationBinarySuffix "\(.*\)"$/\1/p' "$ROOT/OnegramLauncher/OGSystemApplication.h"
+}
+
+build_app_launcher() {
+    local binary="$1"
+    local out="$2"
+    local work="$BUILD_DIR/app-deb/launcher-build"
+    local tcbin="$THEOS/toolchain/linux/iphone"
+    [ "$OS_NAME" = Darwin ] && tcbin="$THEOS/toolchain/macos/iphone"
+    local legacy="$ROOT/theos/generated/toolchains/clang+llvm-3.2-x86_64-linux-ubuntu-12.04/bin/clang"
+    local info
+    local arch
+    local cc
+    local sdk
+    local ctriple
+    local ltriple
+    local startfiles
+    local slices=()
+
+    info="$("$LIPO" -info "$binary" 2>/dev/null)" || {
+        echo "ERROR: Cannot read architectures of $binary"
+        return 1
+    }
+
+    rm -rf "$work"
+    mkdir -p "$work"
+
+    for arch in armv6 armv7 arm64; do
+        printf '%s\n' "$info" | grep -qw "$arch" || continue
+        startfiles=""
+        case "$arch" in
+            armv6)
+                cc="$legacy"
+                sdk="$THEOS/sdks/iPhoneOS3.1.3.sdk"
+                ctriple="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
+                ltriple="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
+                startfiles="-nostartfiles $ROOT/theos/generated/armv6/products/crt1.3.1-armv6.o"
+                ;;
+            armv7)
+                cc="$legacy"
+                sdk="$THEOS/sdks/iPhoneOS6.1.sdk"
+                ctriple="-target armv7-apple-darwin11 -miphoneos-version-min=4.3"
+                ltriple="-target armv7-apple-ios4.3"
+                ;;
+            arm64)
+                cc="$tcbin/bin/clang"
+                sdk="$THEOS/sdks/iPhoneOS11.2.sdk"
+                ctriple="-target arm64-apple-ios7.0"
+                ltriple="-target arm64-apple-ios7.0"
+                ;;
+        esac
+
+        echo "cc [$arch] launcher"
+        LD_LIBRARY_PATH="$tcbin/lib:$LD_LIBRARY_PATH" "$cc" $ctriple -isysroot "$sdk" -std=gnu99 -Os -Wall \
+            -c "$ROOT/OnegramLauncher/main.c" -o "$work/launcher.$arch.o" || return 1
+        echo "ld [$arch] launcher"
+        LD_LIBRARY_PATH="$tcbin/lib:$LD_LIBRARY_PATH" "$tcbin/bin/clang" $ltriple -isysroot "$sdk" $startfiles \
+            "$work/launcher.$arch.o" -o "$work/launcher.$arch" || return 1
+        slices+=("$work/launcher.$arch")
+    done
+
+    if [ "${#slices[@]}" -eq 0 ]; then
+        echo "ERROR: $binary contains no supported architecture: $info"
+        return 1
+    fi
+
+    "$LIPO" -create "${slices[@]}" -output "$out" || return 1
+    LD_LIBRARY_PATH="$tcbin/lib:$LD_LIBRARY_PATH" "$tcbin/bin/ldid" -S "$out"
+}
+
+uicache_command() {
+    local prefix="$1"
+    local action="$2"
+    local application="$prefix/Applications/Onegram.app"
+
+    if [ -n "$prefix" ]; then
+        case "$action" in
+            register) echo "$prefix/usr/bin/uicache -p $application" ;;
+            unregister) echo "$prefix/usr/bin/uicache -u $application" ;;
+        esac
+    else
+        echo "su mobile -c /usr/bin/uicache 2>/dev/null || /usr/bin/uicache"
+    fi
+}
+
+make_app_deb() {
+    local bundle="$1"
+    local executable="$2"
+    local launcher="$3"
+    local prefix="$4"
+    local debarch="$5"
+    local firmware="$6"
+    local thin="$7"
+    local out="$8"
+    local stage="$BUILD_DIR/app-deb/stage"
+    local data="$stage/data"
+    local application="$data$prefix/Applications/Onegram.app"
+    local suffix
+    local binary
+
+    suffix="$(app_binary_suffix)"
+    if [ -z "$suffix" ]; then
+        echo "ERROR: Cannot read the launcher binary suffix."
+        return 1
+    fi
+
+    rm -rf "$stage"
+    mkdir -p "$stage/DEBIAN" "$data$prefix/Applications"
+    cp -R "$bundle" "$application" || return 1
+
+    binary="$application/$executable$suffix"
+    mv "$application/$executable" "$binary" || return 1
+    if [ -n "$thin" ]; then
+        "$LIPO" "$binary" -thin "$thin" -output "$binary.thin" || return 1
+        mv "$binary.thin" "$binary"
+        "$LIPO" "$launcher" -thin "$thin" -output "$application/$executable" || return 1
+    else
+        cp "$launcher" "$application/$executable" || return 1
+    fi
+
+    find "$data" -type d -exec chmod 755 {} +
+    find "$data" -type f -exec chmod 644 {} +
+    chmod 755 "$binary" "$application/$executable"
+
+    cat > "$stage/DEBIAN/control" <<CTL
+Package: dev.illyagif.onegram
+Name: Onegram
+Version: $CURRENT_VERSION-$CURRENT_BUILD
+Architecture: $debarch
+Description: Telegram client for iOS 3 and newer
+Maintainer: IllyaGIF
+Author: IllyaGIF
+Section: Networking
+Depends: firmware (>= $firmware), uikittools
+CTL
+
+    cat > "$stage/DEBIAN/postinst" <<PI
+#!/bin/sh
+$(uicache_command "$prefix" register)
+exit 0
+PI
+
+    if [ -n "$prefix" ]; then
+        cat > "$stage/DEBIAN/prerm" <<PR
+#!/bin/sh
+case "\$1" in
+    remove|purge) $(uicache_command "$prefix" unregister) ;;
+esac
+exit 0
+PR
+        chmod 755 "$stage/DEBIAN/prerm"
+    else
+        cat > "$stage/DEBIAN/postrm" <<PR
+#!/bin/sh
+case "\$1" in
+    remove|purge) $(uicache_command "$prefix" register) ;;
+esac
+exit 0
+PR
+        chmod 755 "$stage/DEBIAN/postrm"
+    fi
+    chmod 755 "$stage/DEBIAN/postinst"
+
+    assemble_deb "$stage" "$out"
+}
+
+package_app_tweak() {
+    local ipa="$1"
+    local pdir="$BUILD_DIR/app-deb"
+    local extracted="$pdir/extracted"
+    local bundle="$extracted/Payload/Telegram.app"
+    local executable
+    local firmware
+    local slices
+    local package="$pdir/onegram_${CURRENT_VERSION}-${CURRENT_BUILD}_iphoneos-arm.deb"
+    local rootless_package="$pdir/onegram_${CURRENT_VERSION}-${CURRENT_BUILD}_iphoneos-arm64.deb"
+
+    if [ ! -f "$ipa" ]; then
+        echo "ERROR: IPA not found: $ipa"
+        return 1
+    fi
+
+    echo
+    echo "Packaging Onegram tweak from $(basename "$ipa")"
+
+    rm -rf "$extracted"
+    mkdir -p "$extracted"
+    python3 - "$ipa" "$extracted" <<'PY' || return 1
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    archive.extractall(sys.argv[2])
+PY
+
+    read -r executable firmware < <(python3 - "$bundle/Info.plist" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    info = plistlib.load(source)
+print(info["CFBundleExecutable"], info.get("MinimumOSVersion", "3.0"))
+PY
+)
+    if [ -z "$executable" ] || [ ! -f "$bundle/$executable" ]; then
+        echo "ERROR: Application executable not found in $ipa"
+        return 1
+    fi
+
+    slices="$("$LIPO" -info "$bundle/$executable" 2>/dev/null || true)"
+    build_app_launcher "$bundle/$executable" "$pdir/Telegram-launcher" || return 1
+
+    rm -f "$pdir"/onegram_*.deb
+    make_app_deb "$bundle" "$executable" "$pdir/Telegram-launcher" "" iphoneos-arm "$firmware" "" "$package" || return 1
+    if printf '%s\n' "$slices" | grep -qw arm64; then
+        make_app_deb "$bundle" "$executable" "$pdir/Telegram-launcher" /var/jb iphoneos-arm64 15.0 arm64 "$rootless_package" || return 1
+    fi
+    rm -rf "$extracted" "$pdir/stage" "$pdir/launcher-build" "$pdir/Telegram-launcher"
+
+    echo
+    echo "Onegram tweak built"
+    echo "Architectures: $(architecture_label "$(get_ipa_architecture "$ipa")")"
+    echo "DEB rootful:   $package (iOS $firmware+)"
+    if [ -f "$rootless_package" ]; then
+        echo "DEB rootless:  $rootless_package (iOS 15+, arm64)"
+    else
+        echo "DEB rootless:  not built, the IPA has no arm64 slice"
+    fi
+    echo "App data:      /var/mobile/Library/Onegram/Home"
+}
+
+build_app_tweak() {
+    run_build "$1"
+    package_app_tweak "$LAST_BUILT_IPA"
+}
+
+push_build_one() {
+    local arch="$1"
+    local out="$2"
+    local tcbin="$THEOS/toolchain/linux/iphone"
+    [ "$OS_NAME" = Darwin ] && tcbin="$THEOS/toolchain/macos/iphone"
+    export LD_LIBRARY_PATH="$tcbin/lib:$LD_LIBRARY_PATH"
+    local LD="$tcbin/bin/clang++"
+    local LDID="$tcbin/bin/ldid"
+    local legacy="$ROOT/theos/generated/toolchains/clang+llvm-3.2-x86_64-linux-ubuntu-12.04/bin/clang"
+    local CC SDK CTRIPLE LTRIPLE PROD SSL ELD FW ARCLITE CRT UNDEF
+
+    case "$arch" in
+        arm64)
+            CC="$tcbin/bin/clang"
+            SDK="$THEOS/sdks/iPhoneOS11.2.sdk"
+            CTRIPLE="-target arm64-apple-ios7.0"
+            LTRIPLE="-target arm64-apple-ios7.0"
+            PROD="$ROOT/theos/generated/arm64/products"
+            SSL="$PROD/libssl.a $PROD/libcrypto.a"
+            ARCLITE="$ROOT/theos/lib/libarclite_iphoneos.a"
+            CRT=""
+            ELD=""
+            FW="-framework CoreTelephony"
+            UNDEF=""
+            ;;
+        armv7)
+            CC="$legacy"
+            SDK="$THEOS/sdks/iPhoneOS6.1.sdk"
+            CTRIPLE="-target armv7-apple-darwin11 -miphoneos-version-min=4.3"
+            LTRIPLE="-target armv7-apple-ios6.0"
+            PROD="$ROOT/theos/generated/products"
+            SSL="$ROOT/submodules/MtProtoKit/openssl/iOS/libcrypto.a"
+            ARCLITE="$ROOT/theos/lib/libarclite_iphoneos.a"
+            CRT="$ROOT/theos/lib/libclang_rt.ios.a"
+            ELD=""
+            FW="-framework CoreTelephony"
+            UNDEF="-Wl,-U,_SSL_CTX_ctrl -Wl,-U,_SSL_CTX_free -Wl,-U,_SSL_CTX_get_cert_store -Wl,-U,_SSL_CTX_new -Wl,-U,_SSL_CTX_set_cipher_list -Wl,-U,_SSL_CTX_set_verify -Wl,-U,_SSL_CTX_set_verify_depth -Wl,-U,_SSL_connect -Wl,-U,_SSL_ctrl -Wl,-U,_SSL_free -Wl,-U,_SSL_get0_param -Wl,-U,_SSL_get_error -Wl,-U,_SSL_get_ex_data -Wl,-U,_SSL_get_ex_data_X509_STORE_CTX_idx -Wl,-U,_SSL_get_verify_result -Wl,-U,_SSL_library_init -Wl,-U,_SSL_load_error_strings -Wl,-U,_SSL_new -Wl,-U,_SSL_pending -Wl,-U,_SSL_read -Wl,-U,_SSL_set_bio -Wl,-U,_SSL_set_connect_state -Wl,-U,_SSL_set_ex_data -Wl,-U,_SSL_set_fd -Wl,-U,_SSL_write -Wl,-U,_TLSv1_2_client_method"
+            ;;
+        armv6)
+            CC="$legacy"
+            SDK="$THEOS/sdks/iPhoneOS3.1.3.sdk"
+            CTRIPLE="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
+            LTRIPLE="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
+            PROD="$ROOT/theos/generated/armv6/products"
+            SSL="$PROD/libssl.a $PROD/libcrypto.a"
+            ARCLITE="$PROD/libarclite_iphoneos.a"
+            CRT="$PROD/libclang_rt.ios.a"
+            UNDEF="-Wl,-U,_objc_storeWeak -Wl,-U,_objc_loadWeak -Wl,-U,_objc_loadWeakRetained -Wl,-U,_objc_initWeak -Wl,-U,_objc_copyWeak -Wl,-U,_objc_destroyWeak"
+            ELD="-nostartfiles $PROD/crt1.3.1-armv6.o $PROD/libdispatch.a -L$PROD -Wl,-alias_list,$ROOT/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt -Wl,-unexported_symbols_list,$ROOT/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt"
+            FW=""
+            ;;
+        *)
+            echo "ERROR: unsupported push arch $arch"
+            return 1
+            ;;
+    esac
+
+    local lib
+    for lib in libMtProtoKit libOnegramPlatform libOnegramRuntime; do
+        if [ ! -f "$PROD/$lib.a" ]; then
+            echo "ERROR: $PROD/$lib.a missing. Build the $arch app once first."
+            return 1
+        fi
+    done
+
+    local gendir="$ROOT/theos/generated"
+    [ "$arch" = armv7 ] || gendir="$ROOT/theos/generated/$arch"
+    local libflags
+    libflags="$(grep '^libLegacyDatabase_CFLAGS = ' "$gendir/libLegacyDatabase.mk" | sed 's/^libLegacyDatabase_CFLAGS = //' | sed "s#\$(ONEGRAM_ROOT)#$ROOT#g" | sed "s#\$(XCODE_DEVELOPER_FRAMEWORKS_DIR)#$SDK/Developer/Library/Frameworks#g")"
+    if [ -z "$libflags" ]; then
+        echo "ERROR: $gendir/libLegacyDatabase.mk missing. Build the $arch app once first."
+        return 1
+    fi
+
+    local od="$BUILD_DIR/push/obj/$arch"
+    mkdir -p "$od"
+
+    local tcbin2="$THEOS/toolchain/linux/iphone"
+    [ "$OS_NAME" = Darwin ] && tcbin2="$THEOS/toolchain/macos/iphone"
+    local MTLIB="$od/libMtProtoKit.a"
+    if [ ! "$MTLIB" -nt "$PROD/libMtProtoKit.a" ]; then
+        "$tcbin2/bin/lipo" "$PROD/libMtProtoKit.a" -thin "$arch" -output "$MTLIB" 2>/dev/null || cp "$PROD/libMtProtoKit.a" "$MTLIB"
+        local pingmember
+        pingmember="$("$tcbin2/bin/llvm-ar" t "$MTLIB" 2>/dev/null | grep -E "PingFoundation" | head -1)"
+        if [ -n "$pingmember" ]; then
+            ( cd "$od" && "$tcbin2/bin/llvm-ar" x "libMtProtoKit.a" "$pingmember" )
+            printf '_BN_init
+_EVP_MD_CTX_init
+_EVP_MD_CTX_cleanup
+' > "$od/ping_hide.txt"
+            if "$tcbin2/bin/ld" -r -arch "$arch" "$od/$pingmember" -unexported_symbols_list "$od/ping_hide.txt" -o "$od/$pingmember.patched"; then
+                mv "$od/$pingmember.patched" "$od/$pingmember"
+                "$tcbin2/bin/llvm-ar" r "$MTLIB" "$od/$pingmember"
+                echo "patched PingFoundation (localized duplicate openssl symbols)"
+            else
+                touch -r "$PROD/libMtProtoKit.a" "$MTLIB"
+                echo "WARN: PingFoundation patch failed; link may hit duplicate symbols"
+            fi
+        fi
+    fi
+    local CF="-fobjc-arc -std=gnu99 -Os $CTRIPLE -isysroot $SDK -DTARGET_OS_IPHONE=1 -I$ROOT -I$ROOT/submodules/MtProtoKit $libflags"
+
+    local launcher=""
+    if command -v ccache >/dev/null 2>&1; then
+        launcher="ccache"
+        local headermaps="" flag
+        for flag in $libflags; do
+            case "$flag" in
+                -I*.hmap) headermaps="${headermaps:+$headermaps:}${flag#-I}" ;;
+            esac
+        done
+        export CCACHE_DIRECT=true
+        export CCACHE_DEPEND=true
+        export CCACHE_SLOPPINESS=modules
+        export CCACHE_EXTRAFILES="$headermaps"
+    fi
+
+    local srcs=("$ROOT/OnegramPushHelper/main.m" "$ROOT/OnegramPushHelper/OGPushDaemon.m" "$ROOT/OnegramPushHelper/OGPushDispatchCompat.m" "$ROOT/OnegramPushHelper/OGPushSerialization.m")
+    local objs=()
+    local pids=()
+    local f o pid failed=0
+    for f in "${srcs[@]}"; do
+        o="$od/$(basename "${f%.m}").o"
+        echo "cc [$arch] $(basename "$f")"
+        $launcher $CC $CF -MD -MF "$o.d" -c "$f" -o "$o" &
+        pids+=("$!")
+        objs+=("$o")
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid" || failed=1
+    done
+    [ "$failed" -eq 0 ] || return 1
+
+    echo "ld [$arch] onegramd"
+    LD_LIBRARY_PATH="$tcbin/lib:$LD_LIBRARY_PATH" $LD $LTRIPLE -isysroot "$SDK" -stdlib=libstdc++ \
+        "${objs[@]}" \
+        -force_load "$MTLIB" \
+        "$PROD/libOnegramPlatform.a" \
+        "$PROD/libOnegramRuntime.a" \
+        $SSL \
+        -force_load "$ARCLITE" $CRT \
+        -framework Foundation -framework UIKit -framework Security -framework CFNetwork \
+        -framework SystemConfiguration -framework CoreGraphics -framework QuartzCore $FW \
+        -lz -lresolv -lstdc++ -lsqlite3 -Wl,-multiply_defined,suppress $UNDEF $ELD \
+        -o "$out" || return 1
+
+    "$LDID" -S"$ROOT/OnegramPushHelper/onegramd.entitlements" "$out"
+}
+
+build_push_tweak() {
+    local pdir="$BUILD_DIR/push"
+    local tcbin="$THEOS/toolchain/linux/iphone"
+    [ "$OS_NAME" = Darwin ] && tcbin="$THEOS/toolchain/macos/iphone"
+    local slices
+    local slice
+
+    ensure_api_config || return 1
+    prepare_build_environment universal3 || return 1
+    mkdir -p "$pdir"
+
+    echo
+    echo "Building Onegram push helper ($(architecture_label universal3))"
+    if command -v ccache >/dev/null 2>&1; then
+        echo "ccache:        ENABLED"
+    else
+        echo "ccache:        NOT FOUND"
+    fi
+    prepare_ccache_stats || return 1
+
+    push_build_one armv6 "$pdir/onegramd.armv6" || return 1
+    push_build_one armv7 "$pdir/onegramd.armv7" || return 1
+    push_build_one arm64 "$pdir/onegramd.arm64" || return 1
+    "$LIPO" -create "$pdir/onegramd.armv6" "$pdir/onegramd.armv7" "$pdir/onegramd.arm64" -output "$pdir/onegramd" || return 1
+    "$tcbin/bin/ldid" -S"$ROOT/OnegramPushHelper/onegramd.entitlements" "$pdir/onegramd"
+
+    slices="$("$LIPO" -info "$pdir/onegramd" 2>/dev/null || true)"
+    for slice in armv6 armv7 arm64; do
+        if ! printf '%s\n' "$slices" | grep -qw "$slice"; then
+            echo "ERROR: Push helper binary is missing the $slice slice: $slices"
+            return 1
+        fi
+    done
+
+    local package="$pdir/onegramd_${CURRENT_VERSION}_iphoneos-arm.deb"
+    local rootless_package="$pdir/onegramd_${CURRENT_VERSION}_iphoneos-arm64.deb"
+    make_push_deb "$pdir/onegramd" iphoneos-arm "$package" "" 3.0 || return 1
+    make_push_deb "$pdir/onegramd.arm64" iphoneos-arm64 "$rootless_package" /var/jb 15.0 || return 1
+
+    echo
+    echo "Push helper built"
+    echo "Binary:       $pdir/onegramd"
+    echo "DEB rootful:  $package"
+    echo "DEB rootless: $rootless_package"
+
+    show_ccache_stats
+    if [ -n "$BUILD_CACHE_LOG" ]; then
+        rm -f "$BUILD_CACHE_LOG"
+        BUILD_CACHE_LOG=""
+        unset CCACHE_STATSLOG
+    fi
+}
+
+read_device_host() {
+    local saved=""
+    local host
+
+    if [ -n "${ONEGRAM_DEVICE_HOST:-}" ]; then
+        DEVICE_HOST="$ONEGRAM_DEVICE_HOST"
+        return 0
+    fi
+
+    if [ -f "$DEVICE_HOST_FILE" ]; then
+        IFS= read -r saved < "$DEVICE_HOST_FILE" || true
+    fi
+
+    echo
+    if [ -n "$saved" ]; then
+        printf 'Device IP [%s]: ' "$saved"
+    else
+        printf 'Device IP: '
+    fi
+    IFS= read -r host || return 1
+    host="${host:-$saved}"
+    [ -n "$host" ] || return 1
+    DEVICE_HOST="$host"
+}
+
+device_ssh() {
+    local target_options=(-p "$DEVICE_PORT")
+    if [ -n "$DEVICE_HOST_KEY_ALIAS" ]; then
+        target_options+=(-o HostKeyAlias="$DEVICE_HOST_KEY_ALIAS")
+    fi
+
+    OPENSSL_ENABLE_SHA1_SIGNATURES=1 \
+    SSH_ASKPASS="$PUSH_WORK_DIR/askpass" \
+    SSH_ASKPASS_REQUIRE=force \
+    ONEGRAM_DEVICE_PASSWORD="$DEVICE_PASSWORD" \
+    ssh \
+        "${target_options[@]}" \
+        -o ControlPath="$PUSH_WORK_DIR/control" \
+        -o ConnectTimeout=10 \
+        -o ServerAliveInterval=15 \
+        -o StrictHostKeyChecking=accept-new \
+        -o KexAlgorithms=+diffie-hellman-group14-sha1 \
+        -o HostKeyAlgorithms=+ssh-rsa \
+        -o NumberOfPasswordPrompts=1 \
+        -o LogLevel=ERROR \
+        "$@"
+}
+
+open_device_connection() {
+    local output
+
+    if output="$(device_ssh -o ControlMaster=yes -o ControlPersist=120 -f -N "root@$DEVICE_HOST" 2>&1)"; then
+        return 0
+    fi
+
+    if printf '%s\n' "$output" | grep -q 'Permission denied'; then
+        return 2
+    fi
+
+    printf '%s\n' "$output" >&2
+    if printf '%s\n' "$output" | grep -q -e 'Connection refused' -e 'Connection reset by peer' -e 'Connection closed by remote host'; then
+        return 3
+    fi
+    return 1
+}
+
+device_run() {
+    device_ssh "root@$DEVICE_HOST" "export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin; $1"
+}
+
+close_device_connection() {
+    if [ -n "$PUSH_WORK_DIR" ] && [ -S "$PUSH_WORK_DIR/control" ]; then
+        device_ssh -O exit "root@$DEVICE_HOST" >/dev/null 2>&1 || true
+    fi
+    if [ -n "$PUSH_WORK_DIR" ]; then
+        rm -rf "$PUSH_WORK_DIR"
+    fi
+    PUSH_WORK_DIR=""
+}
+
+deb_requires_respring() {
+    ar p "$1" data.tar.gz | tar -tzf - | grep -q 'Library/MobileSubstrate/DynamicLibraries/'
+}
+
+package_name() {
+    case "$1" in
+        push) echo "onegramd" ;;
+        app) echo "onegram" ;;
+    esac
+}
+
+package_label() {
+    case "$1" in
+        push) echo "push helper" ;;
+        app) echo "Onegram" ;;
+    esac
+}
+
+package_directory() {
+    case "$1" in
+        push) echo "$BUILD_DIR/push" ;;
+        app) echo "$BUILD_DIR/app-deb" ;;
+    esac
+}
+
+deploy_package() {
+    local kind="$1"
+    local deb
+    local deb_time
+    local layout
+    local dpkg_path
+    local status
+
+    if ! command -v ssh >/dev/null 2>&1; then
+        echo "ERROR: ssh not found."
+        return 1
+    fi
+
+    DEVICE_PASSWORD="${ONEGRAM_DEVICE_PASSWORD:-alpine}"
+
+    PUSH_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/onegram-push.XXXXXX")" || return 1
+    cat > "$PUSH_WORK_DIR/askpass" <<'ASKPASS'
+#!/bin/sh
+printf '%s\n' "$ONEGRAM_DEVICE_PASSWORD"
+ASKPASS
+    chmod 700 "$PUSH_WORK_DIR/askpass"
+
+    echo
+    echo "Connecting to $DEVICE_LABEL"
+
+    status=0
+    open_device_connection || status=$?
+    if [ "$status" -eq 2 ]; then
+        printf 'Password for %s: ' "$DEVICE_LABEL"
+        IFS= read -r -s DEVICE_PASSWORD || DEVICE_PASSWORD=""
+        echo
+        status=0
+        open_device_connection || status=$?
+    fi
+    if [ "$status" -ne 0 ]; then
+        case "$status" in
+            2) echo "ERROR: Authentication failed for $DEVICE_LABEL." ;;
+            3) echo "ERROR: No SSH server is listening on port 22 of $DEVICE_LABEL. Install OpenSSH on the device and make sure the jailbreak is active." ;;
+            *) echo "ERROR: Could not connect to $DEVICE_LABEL." ;;
+        esac
+        close_device_connection
+        return 1
+    fi
+
+    layout="$(device_run 'if [ -x /var/jb/usr/bin/dpkg ]; then echo rootless; elif [ -x /usr/bin/dpkg ]; then echo rootful; fi' 2>/dev/null || true)"
+    case "$layout" in
+        rootless)
+            deb="$(find_newest_deb "$kind" iphoneos-arm64)"
+            dpkg_path=/var/jb/usr/bin/dpkg
+            ;;
+        rootful)
+            deb="$(find_newest_deb "$kind" iphoneos-arm)"
+            dpkg_path=/usr/bin/dpkg
+            ;;
+        *)
+            echo "ERROR: dpkg not found on $DEVICE_LABEL."
+            close_device_connection
+            return 1
+            ;;
+    esac
+
+    if [ -z "$deb" ]; then
+        echo "ERROR: No $layout $(package_label "$kind") package found. Build it first."
+        close_device_connection
+        return 1
+    fi
+
+    deb_time="$(format_timestamp "$(file_mtime "$deb")" 2>/dev/null || true)"
+    echo "Jailbreak:    $layout"
+    echo "DEB:          $(basename "$deb")"
+    [ -n "$deb_time" ] && echo "DEB modified: $deb_time"
+
+    echo "Uploading"
+    if ! device_ssh "root@$DEVICE_HOST" "cat > /tmp/$(package_name "$kind").deb" < "$deb"; then
+        echo "ERROR: Upload failed."
+        close_device_connection
+        return 1
+    fi
+
+    echo "Installing"
+    status=0
+    device_run "$dpkg_path -i /tmp/$(package_name "$kind").deb; result=\$?; rm -f /tmp/$(package_name "$kind").deb; exit \$result" || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "ERROR: Installation failed on device (exit $status)."
+        close_device_connection
+        return 1
+    fi
+
+    if deb_requires_respring "$deb"; then
+        echo "Restarting SpringBoard"
+        device_run 'sbreload >/dev/null 2>&1 || killall -9 SpringBoard' || true
+    fi
+
+    if [ "$kind" = push ]; then
+        sleep 2
+        if device_run 'launchctl list | grep -q dev.IllyaGIF.onegramd'; then
+            echo
+            echo "Push helper installed and loaded on $DEVICE_LABEL"
+            device_run 'tail -n 3 /var/mobile/Library/Logs/onegramd.log 2>/dev/null' || true
+        else
+            echo
+            echo "WARNING: Package installed, but dev.IllyaGIF.onegramd is not loaded."
+        fi
+    else
+        echo
+        echo "Onegram installed on $DEVICE_LABEL"
+    fi
+
+    close_device_connection
+}
+
+local_port_open() {
+    python3 - "$1" <<'PY'
+import socket
+import sys
+
+connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+connection.settimeout(0.5)
+try:
+    connection.connect(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    connection.close()
+PY
+}
+
+find_free_usb_port() {
+    local port="${ONEGRAM_USB_SSH_PORT:-2222}"
+    local last=$((port + 50))
+
+    while [ "$port" -le "$last" ]; do
+        if ! local_port_open "$port"; then
+            printf '%s\n' "$port"
+            return 0
+        fi
+        port=$((port + 1))
+    done
+    return 1
+}
+
+stop_usb_ssh_forward() {
+    if [ -n "$IPROXY_PID" ]; then
+        kill "$IPROXY_PID" 2>/dev/null || true
+        wait "$IPROXY_PID" 2>/dev/null || true
+    fi
+    IPROXY_PID=""
+}
+
+start_usb_ssh_forward() {
+    local port
+    local attempt
+
+    if [ "$OS_NAME" = Darwin ]; then
+        prepare_macos_device_tools || return 1
+    fi
+
+    if ! command -v iproxy >/dev/null 2>&1 || ! command -v idevice_id >/dev/null 2>&1; then
+        echo "ERROR: iproxy and idevice_id are required for USB installation (libusbmuxd, libimobiledevice)."
+        return 1
+    fi
+
+    if [ -z "$(idevice_id -l 2>/dev/null || true)" ]; then
+        echo "ERROR: No iOS device connected over USB."
+        return 1
+    fi
+
+    select_device || return 1
+
+    if ! port="$(find_free_usb_port)"; then
+        echo "ERROR: No free local port for the USB SSH forward."
+        return 1
+    fi
+
+    if iproxy --help 2>&1 | grep -q -- '--udid'; then
+        iproxy -u "$UDID" "$port" 22 >/dev/null 2>&1 &
+    else
+        iproxy "$port" 22 "$UDID" >/dev/null 2>&1 &
+    fi
+    IPROXY_PID=$!
+
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if local_port_open "$port"; then
+            DEVICE_HOST=127.0.0.1
+            DEVICE_PORT="$port"
+            DEVICE_HOST_KEY_ALIAS="onegram-usb-$UDID"
+            DEVICE_LABEL="USB device $UDID (127.0.0.1:$port)"
+            return 0
+        fi
+        kill -0 "$IPROXY_PID" 2>/dev/null || break
+        sleep 0.5
+    done
+
+    echo "ERROR: iproxy did not start forwarding on port $port."
+    stop_usb_ssh_forward
+    return 1
+}
+
+reset_device_target() {
+    DEVICE_PORT=22
+    DEVICE_HOST_KEY_ALIAS=""
+    DEVICE_LABEL=""
+}
+
+deploy_package_wifi() {
+    local kind="$1"
+
+    reset_device_target
+    read_device_host || return 0
+    DEVICE_LABEL="root@$DEVICE_HOST"
+
+    deploy_package "$kind" || return 1
+
+    mkdir -p "$(dirname "$DEVICE_HOST_FILE")"
+    printf '%s\n' "$DEVICE_HOST" > "$DEVICE_HOST_FILE"
+}
+
+deploy_package_usb() {
+    local kind="$1"
+    local status=0
+
+    reset_device_target
+    start_usb_ssh_forward || return 1
+
+    deploy_package "$kind" || status=$?
+
+    stop_usb_ssh_forward
+    reset_device_target
+    return "$status"
+}
+
+select_push_transport() {
+    menu_select "Connection" 0 "USB" "Wi-Fi" || return 1
+
+    case "$MENU_SELECTION" in
+        0) PUSH_TRANSPORT=usb ;;
+        1) PUSH_TRANSPORT=wifi ;;
+    esac
+}
+
+deploy_package_over() {
+    case "$1" in
+        usb) deploy_package_usb "$2" ;;
+        wifi) deploy_package_wifi "$2" ;;
+    esac
+}
+
+offer_package_deploy() {
+    local kind="$1"
+
+    menu_select "Install $(package_label "$kind")" 0 "Install over USB" "Install over Wi-Fi" "Skip" || return 0
+
+    case "$MENU_SELECTION" in
+        0) deploy_package_usb "$kind" || true ;;
+        1) deploy_package_wifi "$kind" || true ;;
+    esac
+}
+
+find_newest_deb() {
+    local kind="$1"
+    local architecture="$2"
+    local directory
+    local newest=""
+    local newest_time=0
+    local deb
+    local mtime
+
+    directory="$(package_directory "$kind")"
+    [ -d "$directory" ] || return 0
+
+    while IFS= read -r -d '' deb; do
+        mtime="$(file_mtime "$deb" 2>/dev/null || echo 0)"
+        if [ "$mtime" -gt "$newest_time" ]; then
+            newest_time="$mtime"
+            newest="$deb"
+        fi
+    done < <(
+        find "$directory" \
+            -maxdepth 1 \
+            -type f \
+            -name "$(package_name "$kind")_*_${architecture}.deb" \
+            -print0 \
+            2>/dev/null
+    )
+
+    printf '%s\n' "$newest"
+}
+
+install_package() {
+    local kind="$1"
+
+    if [ -z "$(find_newest_deb "$kind" iphoneos-arm)" ] && [ -z "$(find_newest_deb "$kind" iphoneos-arm64)" ]; then
+        echo
+        echo "ERROR: $(package_label "$kind") package not found. Build it first."
+        return 1
+    fi
+
+    select_push_transport || return 0
+    deploy_package_over "$PUSH_TRANSPORT" "$kind"
+}
+
+install_menu() {
+    menu_select "Install" 0 "IPA" "DEB (Onegram)" "DEB (push helper)" || return 0
+
+    case "$MENU_SELECTION" in
+        0)
+            install_onegram
+            ;;
+        1)
+            install_package app || true
+            ;;
+        2)
+            install_package push || true
+            ;;
+    esac
+}
+
 cd "$PROJECT"
 ensure_python3 || exit 1
 load_settings
@@ -1594,8 +2270,40 @@ if [ "$#" -gt 0 ]; then
             fi
             exit 0
             ;;
+        --tweak)
+            if [ "$#" -gt 2 ]; then
+                echo "Usage: ./build.sh --tweak [DEVICE_IP|usb]"
+                exit 2
+            fi
+            build_push_tweak
+            if [ "$#" -eq 2 ] && [ "$2" = usb ]; then
+                deploy_package_usb push
+            elif [ "$#" -eq 2 ]; then
+                ONEGRAM_DEVICE_HOST="$2" deploy_package_wifi push
+            fi
+            exit 0
+            ;;
+        --app-tweak)
+            if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+                echo "Usage: ./build.sh --app-tweak armv6|armv7|universal3 [DEVICE_IP|usb]"
+                exit 2
+            fi
+            case "$2" in
+                armv6|armv7|universal3) ;;
+                *) echo "ERROR: Unsupported architecture $2"; exit 2 ;;
+            esac
+            build_app_tweak "$2"
+            if [ "$#" -eq 3 ] && [ "$3" = usb ]; then
+                deploy_package_usb app
+            elif [ "$#" -eq 3 ]; then
+                ONEGRAM_DEVICE_HOST="$3" deploy_package_wifi app
+            fi
+            exit 0
+            ;;
         *)
-            echo "Usage: ./build.sh [--prepare|--build|--clean armv6|armv7|universal3]"
+            echo "Usage: ./build.sh --prepare|--build|--clean armv6|armv7|universal3"
+            echo "       ./build.sh --app-tweak armv6|armv7|universal3 [DEVICE_IP|usb]"
+            echo "       ./build.sh --tweak [DEVICE_IP|usb]"
             exit 2
             ;;
     esac
@@ -1603,7 +2311,7 @@ fi
 
 while true; do
     menu_select "Onegram | Version $CURRENT_VERSION ($CURRENT_BUILD) | $(build_mode_label)" 0 \
-        "Build" "Clean Build" "Clean" "Settings" "Install IPA" "Exit" || break
+        "Build" "Clean Build" "Clean" "Settings" "Install" "Build App Tweak" "Build Push Tweak" "Exit" || break
 
     case "$MENU_SELECTION" in
         0)
@@ -1625,9 +2333,16 @@ while true; do
             settings_menu
             ;;
         4)
-            install_onegram
+            install_menu
             ;;
         5)
+            select_build_architecture || continue
+            build_app_tweak "$SELECTED_BUILD_ARCH" && offer_package_deploy app
+            ;;
+        6)
+            build_push_tweak && offer_package_deploy push
+            ;;
+        7)
             break
             ;;
     esac

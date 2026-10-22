@@ -17,6 +17,7 @@
 @class MTSessionInfo;
 @class MTApiEnvironment;
 @class MTSignal;
+@class MTQueue;
 
 @protocol MTContextChangeListener <NSObject>
 
@@ -54,6 +55,9 @@
 - (instancetype)initWithSerialization:(id<MTSerialization>)serialization apiEnvironment:(MTApiEnvironment *)apiEnvironment isTestingEnvironment:(bool)isTestingEnvironment useTempAuthKeys:(bool)useTempAuthKeys;
 
 - (void)performBatchUpdates:(void (^)())block;
++ (MTQueue *)contextQueue;
+
+- (void)cleanup;
 
 - (void)addChangeListener:(id<MTContextChangeListener>)changeListener;
 - (void)removeChangeListener:(id<MTContextChangeListener>)changeListener;

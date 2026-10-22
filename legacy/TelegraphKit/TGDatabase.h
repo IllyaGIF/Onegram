@@ -166,6 +166,8 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 + (void)setLiveUnreadCountDispatchPath:(NSString *)path;
 
 + (TGDatabase *)instance;
++ (void)closeInstanceForAccountSwitch;
++ (void)openInstanceAfterAccountSwitch;
 
 - (dispatch_queue_t)databaseQueue;
 
@@ -248,7 +250,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)storeConversationList:(NSArray *)conversations replace:(bool)replace folderId:(int32_t)folderId;
 - (void)loadDialogListSynchronizationPeerIdsForFolder:(int32_t)folderId completion:(void (^)(NSSet *peerIds))completion;
 - (NSSet *)reconcileDialogListForFolder:(int32_t)folderId initialPeerIds:(NSSet *)initialPeerIds receivedPeerIds:(NSSet *)receivedPeerIds beforeDate:(int32_t)beforeDate;
-- (void)setConversationArchived:(int64_t)conversationId archived:(bool)archived;
+- (void)setConversationsArchiveState:(NSDictionary *)archivedByPeerId;
 
 - (void)loadConversationListFromDate:(int)date limit:(int)limit excludeConversationIds:(NSArray *)excludeConversationIds completion:(void (^)(NSArray *result, bool loadedAllRegular))completion;
 - (void)loadConversationListFromDate:(int)date limit:(int)limit excludeConversationIds:(NSArray *)excludeConversationIds folderId:(int32_t)folderId completion:(void (^)(NSArray *result, bool loadedAllRegular))completion;
@@ -369,6 +371,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)clearPeerNotificationSettings:(bool)writeToActionQueue;
 - (void)addConversationHistoryHole:(int64_t)peerId minMessageId:(int32_t)minMessageId maxMessageId:(int32_t)maxMessageId;
 - (void)addConversationHistoryHoleToLoadedLaterMessages:(int64_t)peerId maxMessageId:(int32_t)maxMessageId;
+- (void)addConversationHistoryHoleToLoadedEarlierMessages:(int64_t)peerId minMessageId:(int32_t)minMessageId;
 - (void)fillConversationHistoryHole:(int64_t)peerId indexSet:(NSIndexSet *)indexSet;
 - (bool)conversationContainsHole:(int64_t)peerId minMessageId:(int32_t)minMessageId maxMessageId:(int32_t)maxMessageId;
 - (NSArray *)excludeMessagesWithHolesFromArray:(NSArray *)messages peerId:(int64_t)peerId aroundMessageId:(int32_t)aroundMessageId;
@@ -495,6 +498,7 @@ typedef void (^TGDatabaseCleanupEverythingBlock)();
 - (void)storeSynchronizedChannels:(NSArray *)channels replace:(bool)replace folderId:(int32_t)folderId;
 - (void)updateChannels:(NSArray *)channels;
 - (void)updateChannels:(NSArray *)channels updateFeeds:(bool)updateFeeds;
+- (void)updateDialogChannels:(NSArray *)channels;
 
 - (void)updateChannelDisplayVariant:(int64_t)peerId displayVariant:(int32_t)displayVariant;
 

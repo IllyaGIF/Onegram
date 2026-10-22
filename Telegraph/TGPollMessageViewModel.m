@@ -655,13 +655,8 @@ static void TGPollDecorationDrawOperation(CGContextRef context, TGModernDrawingO
             *needsContentsUpdate = true;
     }
     CGSize size = CGSizeMake(_layoutWidth, _contentHeight);
-    if ([TGPresentation brandedIOS6Style])
-    {
-        if (![self brandedReactionsShareTimeRow])
-            size.height += [TGPresentation brandedIOS6ConversationAppearance].bubbleTimeRowHeight;
-    }
-    else
-        size.height += 16.0f;
+    if (![self reactionsShareTimeRow])
+        size.height += [TGPresentation brandedIOS6Style] ? [TGPresentation brandedIOS6ConversationAppearance].bubbleTimeRowHeight : 16.0f;
     size.height += 2.0f;
     return size;
 }

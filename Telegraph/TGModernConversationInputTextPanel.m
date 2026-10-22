@@ -3496,7 +3496,7 @@ static CGRect viewFrame(UIView *view)
     if (forceLayout)
         [self layoutSubviews];
     
-    if (iosMajorVersion() >= 7 && !forceLayout) {
+    if ([HPTextViewInternal textKitAvailable] && !forceLayout) {
         UIEdgeInsets insets = _inputField.internalTextView.textContainerInset;
         if (ABS(inset - insets.right) > FLT_EPSILON) {
             insets.right = inset;

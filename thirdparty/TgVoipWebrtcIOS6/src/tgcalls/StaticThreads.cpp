@@ -71,9 +71,6 @@ public:
     worker_ = create("tgc-work" + suffix);
     network_ = create_network("tgc-net" + suffix);
       
-    media_->AllowInvokesToThread(worker_.get());
-    media_->AllowInvokesToThread(network_.get());
-    worker_->AllowInvokesToThread(network_.get());
       
     //network_->DisallowAllInvokes();
     //worker_->DisallowAllInvokes();

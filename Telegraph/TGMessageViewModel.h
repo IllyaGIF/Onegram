@@ -45,6 +45,10 @@ extern "C" {
     
 void TGMessageViewModelLayoutSetPreferredTextFontSize(CGFloat fontSize);
 const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants();
+CGFloat TGMessageDesktopScale(void);
+CGFloat TGMessageDesktopMetric(CGFloat desktopPixels);
+CGFloat TGMessageFontScale(void);
+CGFloat TGMessageFontMetric(CGFloat points);
 void TGUpdateMessageViewModelLayoutConstants(CGFloat baseFontPointSize);
 bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, TGModernViewContext *context);
     
@@ -144,6 +148,7 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
 - (void)updateMessageVisibility;
 - (void)updateMessageAttributes;
 - (void)prepareForAsynchronousContentDrawing;
+- (TGModernLetteredAvatarViewModel *)conversationAvatarModel;
 - (void)updateEditingState:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage animationDelay:(NSTimeInterval)animationDelay;
 - (void)updateInlineMediaContext;
 - (void)updateAnimationsEnabled;

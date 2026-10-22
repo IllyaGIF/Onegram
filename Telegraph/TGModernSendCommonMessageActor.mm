@@ -114,18 +114,34 @@
 
 @end
 
+static PSLMDBKeyValueStore *TGModernSendCommonMessageUploadedMediaStore = nil;
+static PSLMDBKeyValueStore *TGModernSendCommonMessageRetiredUploadedMediaStore = nil;
+
 @implementation TGModernSendCommonMessageActor
 
 + (PSLMDBKeyValueStore *)uploadedMediaStore
 {
-    static PSLMDBKeyValueStore *store = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
+    PSLMDBKeyValueStore *store = nil;
+    @synchronized (self)
     {
-        NSString *documentsPath = [TGAppDelegate documentsPath];
-        store = [PSLMDBKeyValueStore storeWithPath:[documentsPath stringByAppendingPathComponent:@"misc/remotefiles"] size:4 * 1024 * 1024];
-    });
+        if (TGModernSendCommonMessageUploadedMediaStore == nil)
+        {
+            NSString *documentsPath = [TGAppDelegate documentsPath];
+            TGModernSendCommonMessageUploadedMediaStore = [PSLMDBKeyValueStore storeWithPath:[documentsPath stringByAppendingPathComponent:@"misc/remotefiles"] size:4 * 1024 * 1024];
+        }
+        store = TGModernSendCommonMessageUploadedMediaStore;
+    }
     return store;
+}
+
++ (void)reloadForAccountSwitch
+{
+    @synchronized (self)
+    {
+        [TGModernSendCommonMessageRetiredUploadedMediaStore close];
+        TGModernSendCommonMessageRetiredUploadedMediaStore = TGModernSendCommonMessageUploadedMediaStore;
+        TGModernSendCommonMessageUploadedMediaStore = nil;
+    }
 }
 
 + (TGDocumentMediaAttachment *)remoteDocumentByGiphyId:(NSString *)giphyId

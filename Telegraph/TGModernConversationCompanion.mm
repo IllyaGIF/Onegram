@@ -294,6 +294,19 @@ static void TGUnsupportedMessageRequestFailed(int64_t peerId, int32_t messageId)
 
 @implementation TGModernConversationCompanion
 
++ (void)reloadForAccountSwitch
+{
+    OSSpinLockLock(&_messagesViewedLock);
+    [messagesViewedByPeerId() removeAllObjects];
+    OSSpinLockUnlock(&_messagesViewedLock);
+
+    NSMutableSet *keys = TGUnsupportedMessageRequestKeys();
+    @synchronized (keys)
+    {
+        [keys removeAllObjects];
+    }
+}
+
 - (instancetype)init
 {
     self = [super init];
@@ -4299,7 +4312,7 @@ static const NSUInteger TGModernConversationStreamedInsertionChunk = 22;
     return [SSignal complete];
 }
 
-- (SSignal *)updatePinnedMessage:(int32_t)__unused messageId {
+- (SSignal *)updatePinnedMessage:(int32_t)__unused messageId unpin:(bool)__unused unpin {
     return [SSignal complete];
 }
 

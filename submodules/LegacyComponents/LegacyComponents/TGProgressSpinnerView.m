@@ -305,11 +305,13 @@
 
 @end
 
+static NSString *const TGActivityIndicatorStepAnimationKey = @"steppedRotation";
+static const NSInteger TGActivityIndicatorStepCount = 12;
+static const CFTimeInterval TGActivityIndicatorRevolutionDuration = 0.8;
+
 @implementation TGActivityIndicatorView
 {
     BOOL _animating;
-    NSTimer *_stepTimer;
-    NSInteger _step;
     CALayer *_spokesLayer;
     CGSize _spokesSize;
 }
@@ -400,37 +402,41 @@
 
     _animating = YES;
     self.hidden = NO;
-    [self updateStepTimer];
+    [self updateStepAnimation];
 }
 
-- (void)updateStepTimer
+- (void)updateStepAnimation
 {
     bool shouldRun = _animating && self.window != nil;
-    if (shouldRun && _stepTimer == nil)
+    bool running = [_spokesLayer animationForKey:TGActivityIndicatorStepAnimationKey] != nil;
+    if (shouldRun && !running)
     {
-        _stepTimer = [NSTimer timerWithTimeInterval:0.8 / 12.0 target:self selector:@selector(stepTimerFired) userInfo:nil repeats:true];
-        [[NSRunLoop mainRunLoop] addTimer:_stepTimer forMode:NSRunLoopCommonModes];
-    }
-    else if (!shouldRun && _stepTimer != nil)
-    {
-        [_stepTimer invalidate];
-        _stepTimer = nil;
-    }
-}
+        NSMutableArray *values = [[NSMutableArray alloc] initWithCapacity:TGActivityIndicatorStepCount];
+        NSMutableArray *keyTimes = [[NSMutableArray alloc] initWithCapacity:TGActivityIndicatorStepCount + 1];
+        for (NSInteger step = 0; step < TGActivityIndicatorStepCount; step++)
+        {
+            [values addObject:[NSNumber numberWithFloat:(float)((double)step * M_PI * 2.0 / (double)TGActivityIndicatorStepCount)]];
+            [keyTimes addObject:[NSNumber numberWithFloat:(float)step / (float)TGActivityIndicatorStepCount]];
+        }
+        [keyTimes addObject:[NSNumber numberWithFloat:1.0f]];
 
-- (void)stepTimerFired
-{
-    _step = (_step + 1) % 12;
-    [CATransaction begin];
-    [CATransaction setDisableActions:true];
-    _spokesLayer.transform = CATransform3DMakeRotation((CGFloat)_step * (CGFloat)(M_PI * 2.0 / 12.0), 0.0f, 0.0f, 1.0f);
-    [CATransaction commit];
+        CAKeyframeAnimation *animation = [CAKeyframeAnimation animationWithKeyPath:@"transform.rotation.z"];
+        animation.values = values;
+        animation.keyTimes = keyTimes;
+        animation.calculationMode = kCAAnimationDiscrete;
+        animation.duration = TGActivityIndicatorRevolutionDuration;
+        animation.repeatCount = HUGE_VALF;
+        animation.removedOnCompletion = false;
+        [_spokesLayer addAnimation:animation forKey:TGActivityIndicatorStepAnimationKey];
+    }
+    else if (!shouldRun && running)
+        [_spokesLayer removeAnimationForKey:TGActivityIndicatorStepAnimationKey];
 }
 
 - (void)didMoveToWindow
 {
     [super didMoveToWindow];
-    [self updateStepTimer];
+    [self updateStepAnimation];
 }
 
 - (void)stopAnimating
@@ -443,7 +449,7 @@
     }
 
     _animating = NO;
-    [self updateStepTimer];
+    [self updateStepAnimation];
     if (_hidesWhenStopped)
         self.hidden = YES;
 }

@@ -588,6 +588,16 @@
 #import "TLRPCmessages_getRecentLocations.h"
 #import "TLRPCchannels_getParticipants.h"
 #import "TLRPCmessages_uploadMedia.h"
+#import "TLRPCmessages_updatePinnedMessage.h"
+#import "TLRPCmessages_editChatAbout.h"
+#import "TLRPCmessages_editChatDefaultBannedRights.h"
+#import "TLRPCchannels_deleteParticipantHistory.h"
+#import "TLRPCmessages_hidePeerSettingsBar.h"
+#import "TLChatAdminRights.h"
+#import "TLChatBannedRights.h"
+#import "TLInputReplyTo.h"
+#import "TLhelp_PromoData.h"
+#import "TLRPChelp_getPromoData.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -1414,13 +1414,19 @@ static unsigned char strToChar (char a, char b)
     if (dataBuffer == NULL)
         return [NSString string];
     
-    NSUInteger dataLength  = [self length];
-    NSMutableString *hexString  = [NSMutableString stringWithCapacity:(dataLength * 2)];
-    
-    for (int i = 0; i < (int)dataLength; ++i)
-        [hexString appendString:[NSString stringWithFormat:@"%02lx", (unsigned long)dataBuffer[i]]];
-    
-    return hexString;
+    NSUInteger dataLength = [self length];
+    if (dataLength == 0)
+        return [NSString string];
+    char *characters = (char *)malloc(dataLength * 2);
+    if (characters == NULL)
+        return [NSString string];
+    static const char digits[] = "0123456789abcdef";
+    for (NSUInteger i = 0; i < dataLength; i++)
+    {
+        characters[i * 2] = digits[dataBuffer[i] >> 4];
+        characters[i * 2 + 1] = digits[dataBuffer[i] & 0x0f];
+    }
+    return [[NSString alloc] initWithBytesNoCopy:characters length:dataLength * 2 encoding:NSASCIIStringEncoding freeWhenDone:YES];
 }
 
 - (NSString *)stringByEncodingInHexSeparatedByString:(NSString *)string

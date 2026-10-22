@@ -17,6 +17,8 @@
 
 #import "TGTelegramNetworking.h"
 #import "TGOnegramCoreController.h"
+#import "TGAccountSwitcher.h"
+#import "TGAccountSwitcherPanel.h"
 #import "TGTelegraph.h"
 #import <CoreImage/CoreImage.h>
 
@@ -73,6 +75,7 @@
     
     TGModernButton *_alternativeLanguageButton;
     UIButton *_onegramCoreButton;
+    UIButton *_cancelAddingAccountButton;
     bool _onegramCoreButtonVisible;
     
     SMetaDisposable *_localizationsDisposable;
@@ -154,6 +157,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     UIWebView *_qrWebView;
     UILabel *_statusLabel;
     TGModernButton *_phoneButton;
+    UIButton *_onegramCoreButton;
     NSTimer *_refreshTimer;
     NSObject *_requestToken;
     id _loginTokenObserver;
@@ -181,6 +185,10 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         // flow and installs a normal password controller.
         TGIOS6SetQRLoginFlowActive(true);
 
+        _onegramCoreButton = [TGOnegramCoreController lockButtonWithTarget:self action:@selector(onegramCoreButtonPressed)];
+        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:_onegramCoreButton];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramCoreStateChanged:) name:OGOnegramCoreDidChangeNotification object:nil];
+
         __unsafe_unretained TGIOS6QRLoginController *weakSelf = self;
         _loginTokenObserver = [[NSNotificationCenter defaultCenter] addObserverForName:TGLoginTokenUpdatedNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(__unused NSNotification *notification)
         {
@@ -200,7 +208,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     if (_qrWebView != nil || _qrContainerView == nil)
         return;
 
-    _qrWebView = [[UIWebView alloc] init];
+    _qrWebView = [[UIWebView alloc] initWithFrame:_qrContainerView.bounds];
     _qrWebView.backgroundColor = [UIColor whiteColor];
     _qrWebView.opaque = false;
     _qrWebView.userInteractionEnabled = false;
@@ -346,8 +354,9 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         return false;
 
     [self ensureLegacyQrWebView];
-    if (_qrWebView == nil)
+    if (_qrWebView == nil || _qrContainerView.bounds.size.width < 1.0f || _qrContainerView.bounds.size.height < 1.0f)
         return false;
+    _qrWebView.frame = _qrContainerView.bounds;
 
     NSString *payload = [NSString stringWithFormat:@"tg://login?token=%@", TGIOS6Base64UrlString(token)];
     NSString *script = TGIOS6QRCodeJavaScript();
@@ -530,6 +539,16 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         _requestToken = nil;
     }
     _requestInProgress = false;
+}
+
+- (void)onegramCoreButtonPressed
+{
+    [TGOnegramCoreController presentFromViewController:self];
+}
+
+- (void)onegramCoreStateChanged:(NSNotification *)__unused notification
+{
+    [TGOnegramCoreController updateLockButton:_onegramCoreButton];
 }
 
 - (void)phoneButtonPressed
@@ -1073,21 +1092,25 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [self.view addSubview:_pageControl];
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramCoreStateChanged:) name:OGOnegramCoreDidChangeNotification object:nil];
-    _onegramCoreButton = [[UIButton alloc] initWithFrame:CGRectZero];
-    _onegramCoreButton.adjustsImageWhenHighlighted = false;
-    [_onegramCoreButton addTarget:self action:@selector(onegramCoreButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+    _onegramCoreButton = [TGOnegramCoreController lockButtonWithTarget:self action:@selector(onegramCoreButtonPressed)];
     [self.view addSubview:_onegramCoreButton];
+    _cancelAddingAccountButton = [TGAccountSwitcherPanel cancelAddingAccountButtonWithTarget:self action:@selector(cancelAddingAccountPressed)];
+    [self.view addSubview:_cancelAddingAccountButton];
     [self updateOnegramCoreButton];
 }
 
 - (void)updateOnegramCoreButton
 {
     _onegramCoreButton.hidden = !_onegramCoreButtonVisible || _displayingQrLogin || TGTelegraphInstance.clientUserId != 0;
-    bool enabled = [[TGTelegramNetworking instance] onegramCoreMode] != OGOnegramCoreModeNone;
-    [_onegramCoreButton setImage:[TGOnegramCoreController lockImageEnabled:enabled highlighted:false] forState:UIControlStateNormal];
-    [_onegramCoreButton setImage:[TGOnegramCoreController lockImageEnabled:enabled highlighted:true] forState:UIControlStateHighlighted];
-    _onegramCoreButton.accessibilityLabel = @"Onegram Core";
-    _onegramCoreButton.accessibilityValue = [TGOnegramCoreController statusText];
+    _cancelAddingAccountButton.hidden = !_onegramCoreButtonVisible || _displayingQrLogin || ![[TGAccountSwitcher instance] canCancelAddingAccount];
+    [TGOnegramCoreController updateLockButton:_onegramCoreButton];
+}
+
+- (void)cancelAddingAccountPressed
+{
+    if (_cancelAddingAccountButton.hidden)
+        return;
+    [[TGAccountSwitcher instance] cancelAddingAccount];
 }
 
 - (void)onegramCoreButtonPressed
@@ -1269,6 +1292,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     }
     
     _onegramCoreButton.frame = CGRectMake(self.view.bounds.size.width - 52.0f, statusBarHeight + 4.0f, 44.0f, 44.0f);
+    _cancelAddingAccountButton.frame = CGRectMake(8.0f, statusBarHeight + 4.0f, _cancelAddingAccountButton.frame.size.width, 44.0f);
     _glkView.frame = CGRectChangedOriginY(_glkView.frame, glViewY - statusBarHeight);
     
     [_startButton sizeToFit];
@@ -1389,6 +1413,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [super viewWillDisappear:animated];
     _onegramCoreButtonVisible = false;
     _onegramCoreButton.hidden = true;
+    _cancelAddingAccountButton.hidden = true;
     [self.navigationController setNavigationBarHidden:false animated:false];
 }
 

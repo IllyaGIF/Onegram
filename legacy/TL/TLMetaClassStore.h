@@ -58,16 +58,16 @@ struct TLManualObjectParser
 class TLMetaClassStore
 {
 private:
-    static std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > constructorsBySignature;
-    static std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > constructorsByName;
-    static std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > typesByName;
-    static std::tr1::unordered_map<int32_t, TLMetaTypeArgument> vectorElementTypesByConstructor;
+    static std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > &constructorsBySignature;
+    static std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > &constructorsByName;
+    static std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > &typesByName;
+    static std::tr1::unordered_map<int32_t, TLMetaTypeArgument> &vectorElementTypesByConstructor;
     
-    static std::tr1::unordered_map<int32_t, id<TLObject> > objectClassesByConstructorNames;
-    static std::tr1::unordered_map<int32_t, id<TLVector> > vectorClassesBySignature;
+    static std::tr1::unordered_map<int32_t, id<TLObject> > &objectClassesByConstructorNames;
+    static std::tr1::unordered_map<int32_t, id<TLVector> > &vectorClassesBySignature;
     
-    static std::map<int32_t, TLManualObjectParser> manualObjectParsers;
-    static std::map<int32_t, id<TLObject> > manualObjectSerializers;
+    static std::map<int32_t, TLManualObjectParser> &manualObjectParsers;
+    static std::map<int32_t, id<TLObject> > &manualObjectSerializers;
     
     static void registerObjectClassForName(int32_t name, id<TLObject> objectClass);
     static void mergeSchemeEntries(TLMetaSchemeEntries &entries, bool materialize);

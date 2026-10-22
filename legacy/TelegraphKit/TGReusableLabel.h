@@ -139,6 +139,8 @@ CGFloat TGReusableLabelFirstBaselineOffset(CTFontRef font);
 
 @property (nonatomic) CGSize size;
 @property (nonatomic, readonly) CGFloat drawingWidth;
+@property (nonatomic, readonly) CGFloat lastLineBaseline;
+@property (nonatomic, readonly) CGFloat trailingBaseline;
 @property (nonatomic, readonly) bool hasCustomDrawing;
 
 - (TGReusableLabelLayoutData *)asynchronousDrawingLayoutForWidth:(CGFloat)width drawingRect:(CGRect)drawingRect shadowColor:(UIColor *)shadowColor shadowOffset:(CGSize)shadowOffset;

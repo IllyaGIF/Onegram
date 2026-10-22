@@ -36,6 +36,12 @@ FOUNDATION_EXPORT bool TGIOS6QRLoginFlowActive(void);
 
 #import "../submodules/MtProtoKit/MTProtoKit/MTRequest.h"
 
+typedef enum {
+    TGPushHelperApplicationStateReceiving,
+    TGPushHelperApplicationStateFinishing,
+    TGPushHelperApplicationStateSuspended
+} TGPushHelperApplicationState;
+
 @class MTContext;
 @class MTProto;
 @class MTRequest;
@@ -95,10 +101,11 @@ typedef enum {
 
 @interface TGTelegramNetworking : NSObject
 
-+ (void)preload;
 + (TGTelegramNetworking *)instance;
 + (void)prepareInstanceWithCompletion:(dispatch_block_t)completion;
 + (TGTelegramNetworking *)maybeInstance;
++ (void)suspendInstanceForAccountSwitch;
++ (void)resumeInstanceCreationAfterAccountSwitch;
 
 - (SMulticastSignalManager *)genericTasksSignalManager;
 
@@ -110,6 +117,12 @@ typedef enum {
 
 - (void)removeCredentialsForExtensions;
 - (void)exportCredentialsForExtensions;
+- (void)exportHelperAuthInfo;
+- (void)removeHelperAuthInfo;
++ (NSString *)helperAuthInfoPath;
++ (void)updatePushHelperApplicationState:(TGPushHelperApplicationState)state;
++ (void)notifyPushHelperApplicationTerminating;
++ (bool)pushHelperAvailable;
 
 - (NSTimeInterval)globalTime;
 - (NSTimeInterval)timeOffset;

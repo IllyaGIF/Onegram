@@ -41,7 +41,6 @@
 @class TGLoginRequestBuilder;
 @class TGLogoutRequestBuilder;
 @class TGSendCodeRequestBuilder;
-@class TGSendInvitesActor;
 @class TGSignInRequestBuilder;
 @class TGSignUpRequestBuilder;
 @class TGDialogListRequestBuilder;
@@ -86,7 +85,6 @@
 
 @class TGProfilePhotoListActor;
 
-@class TGSaveGeocodingResultActor;
 
 @class TGVideoDownloadActor;
 
@@ -148,6 +146,7 @@ extern NSString *const TGAuthorizationReadyNotification;
 - (void)doLogout:(NSString *)presetPhoneNumber soft:(bool)soft;
 - (void)doLogout:(NSString *)currentPhoneNumber;
 - (void)doLogout;
+- (void)suspendAccountSessionForSwitch;
 - (void)updatePresenceNow;
 - (void)startPresenceUpdates;
 
@@ -197,7 +196,6 @@ extern NSString *const TGAuthorizationReadyNotification;
 - (void)processUnauthorized;
 - (NSObject *)doRequestLogout:(TGLogoutRequestBuilder *)actor;
 
-- (NSObject *)doSendInvites:(NSArray *)phones text:(NSString *)text actor:(TGSendInvitesActor *)actor;
 
 - (id)doCheckUpdates:(TGCheckUpdatesActor *)actor;
 
@@ -255,7 +253,6 @@ extern NSString *const TGAuthorizationReadyNotification;
 - (NSObject *)doDeleteProfilePhotos:(NSArray *)items actor:(TGSynchronizeServiceActionsActor *)actor;
 - (NSObject *)doAssignProfilePhoto:(int64_t)itemId accessHash:(int64_t)accessHash actor:(TGTimelineAssignProfilePhotoActor *)actor;
 
-- (NSObject *)doSaveGeocodingResult:(double)latitude longitude:(double)longitude components:(NSDictionary *)components actor:(TGSaveGeocodingResultActor *)actor;
 
 - (NSObject *)doRequestPeerNotificationSettings:(int64_t)peerId accessHash:(int64_t)accessHash actor:(id<TGPeerSettingsActorProtocol>)actor;
 - (NSObject *)doChangePeerNotificationSettings:(int64_t)peerId accessHash:(int64_t)accessHash muteUntil:(NSNumber *)muteUntil soundId:(NSNumber *)soundId previewText:(NSNumber *)previewText messagesMuted:(NSNumber *)messagesMuted actor:(TGSynchronizeServiceActionsActor *)actor;

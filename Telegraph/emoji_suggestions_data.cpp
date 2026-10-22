@@ -6302,9 +6302,9 @@ const ReplacementIndexStruct ReplacementIndexData[] = {
 	{ utf16char(122), medium(11) },
 };
 
-std::vector<Replacement> Replacements;
-std::map<utf16char, std::vector<const Replacement*>> ReplacementsMap;
-std::map<internal::checksum, const Replacement*> ReplacementsHash;
+std::vector<Replacement> &Replacements = *new std::vector<Replacement>();
+std::map<utf16char, std::vector<const Replacement*>> &ReplacementsMap = *new std::map<utf16char, std::vector<const Replacement*>>();
+std::map<internal::checksum, const Replacement*> &ReplacementsHash = *new std::map<internal::checksum, const Replacement*>();
 
 }
 

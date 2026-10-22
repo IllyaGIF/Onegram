@@ -52,6 +52,7 @@
 
 @property (nonatomic) bool previewEnabled;
 @property (nonatomic) bool isSecret;
+@property (nonatomic, readonly) CGFloat mediaBoundingWidth;
 
 - (instancetype)initWithMessage:(TGMessage *)message imageInfo:(TGImageInfo *)imageInfo authorPeer:(id)authorPeer context:(TGModernViewContext *)context forwardPeer:(id)forwardPeer forwardAuthor:(id)forwardAuthor forwardMessageId:(int32_t)forwardMessageId replyHeader:(TGMessage *)replyHeader replyAuthor:(id)replyAuthor viaUser:(TGUser *)viaUser;
 - (instancetype)initWithMessage:(TGMessage *)message imageInfo:(TGImageInfo *)imageInfo authorPeer:(id)authorPeer context:(TGModernViewContext *)context forwardPeer:(id)forwardPeer forwardAuthor:(id)forwardAuthor forwardMessageId:(int32_t)forwardMessageId replyHeader:(TGMessage *)replyHeader replyAuthor:(id)replyAuthor viaUser:(TGUser *)viaUser caption:(NSString *)caption textCheckingResults:(NSArray *)textCheckingResults;
@@ -59,11 +60,14 @@
 
 + (void)calculateImageSizesForImageSize:(in CGSize)imageSize thumbnailSize:(out CGSize *)thumbnailSize renderSize:(out CGSize *)renderSize squareAspect:(bool)squareAspect;
 + (void)calculateImageSizesForImageSize:(in CGSize)imageSize thumbnailSize:(out CGSize *)thumbnailSize renderSize:(out CGSize *)renderSize squareAspect:(bool)squareAspect larger:(bool)larger;
++ (void)calculateImageSizesForImageSize:(in CGSize)imageSize boundingWidth:(CGFloat)boundingWidth thumbnailSize:(out CGSize *)thumbnailSize renderSize:(out CGSize *)renderSize squareAspect:(bool)squareAspect larger:(bool)larger;
++ (CGSize)maximumMediaSizeLarger:(bool)larger;
 
 
 - (CGSize)contentSizeForContainerSize:(CGSize)containerSize needsContentsUpdate:(bool *)needsContentsUpdate infoWidth:(CGFloat)infoWidth;
 
 - (NSString *)updatedImageUri;
+- (CGSize)mediaSourceSize;
 - (NSString *)updatedImageUriForMessage:(TGMessage *)message outImageInfo:(TGImageInfo **)outImageInfo;
 - (NSString *)updatedImageUriForInfo:(TGImageInfo *)imageInfo;
 - (void)setAuthorNameColor:(UIColor *)authorNameColor;

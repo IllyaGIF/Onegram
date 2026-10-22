@@ -10,6 +10,7 @@ import tarfile
 import urllib.request
 from generate import OUT
 from xcode_graph import ROOT
+from build_pst import build_pst
 
 
 def main():
@@ -23,7 +24,7 @@ def main():
         make_env.pop(name, None)
     if sys.platform == 'darwin':
         def find_tool(name):
-            return subprocess.check_output(['xcrun', '--find', name], text=True).strip()
+            return str(tools / name)
         clang = find_tool('clang')
         archive_tool = find_tool('ar')
         ranlib = find_tool('ranlib')
@@ -89,7 +90,8 @@ def main():
     products.mkdir(parents=True, exist_ok=True)
     signature = hashlib.sha256((str(args) + Path(__file__).read_text()).encode()).hexdigest()
     stamp = openssl / 'onegram-signature'
-    if not stamp.exists() or stamp.read_text() != signature:
+    rebuilt = not stamp.exists() or stamp.read_text() != signature or any(not (openssl / name).is_file() for name in ('libssl.a', 'libcrypto.a'))
+    if rebuilt:
         prepare_openssl()
         stamp = openssl / 'onegram-signature'
         subprocess.run([
@@ -112,10 +114,11 @@ def main():
                 raise SystemExit('OpenSSL build did not produce ' + name)
         stamp.write_text(signature)
     for name in ('libssl.a', 'libcrypto.a'):
-        if sys.platform == 'darwin':
-            subprocess.run([ranlib, str(openssl / name)], check=True)
-        else:
-            subprocess.run([archive_tool, '--format=darwin', 's', str(openssl / name)], check=True)
+        if rebuilt:
+            if sys.platform == 'darwin':
+                subprocess.run([ranlib, str(openssl / name)], check=True)
+            else:
+                subprocess.run([archive_tool, '--format=darwin', 's', str(openssl / name)], check=True)
         destination = products / name
         if destination.is_symlink() and not destination.exists():
             destination.unlink()
@@ -125,14 +128,11 @@ def main():
     pst = ROOT / 'thirdparty/PSTCollectionView'
     if "s.source_files = 'PSTCollectionView/'" not in (pst / 'PSTCollectionView.podspec').read_text():
         raise SystemExit('PSTCollectionView source specification changed')
-    objects = []
     output = OUT / 'pst'
-    output.mkdir(parents=True, exist_ok=True)
-    for source in sorted((pst / 'PSTCollectionView').glob('*.m')):
-        obj = output / (source.stem + '.o')
-        subprocess.run(compiler + ['-fobjc-arc', '-std=gnu99', '-Os', '-c', str(source), '-o', str(obj)], check=True)
-        objects.append(str(obj))
-    subprocess.run([libtool, '-static', '-o', str(products / 'libPSTCollectionView.a')] + objects, check=True)
+    build_pst(sorted((pst / 'PSTCollectionView').glob('*.m')),
+              compiler + ['-fobjc-arc', '-std=gnu99', '-Os'], libtool, lipo, 'arm64',
+              products / 'libPSTCollectionView.a', output,
+              sorted((pst / 'PSTCollectionView').glob('*.h')) + [pst / 'PSTCollectionView.podspec'])
 
 
 if __name__ == '__main__':

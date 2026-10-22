@@ -43,8 +43,15 @@ XCODE_CONFIGURATION ?= Release Hockeyapp
 XCODE_TARGET ?= Telegram
 HOST_OS := $(shell uname -s)
 ifeq ($(HOST_OS),Darwin)
-XCODE_TOOLCHAIN_DIR ?= $(shell dirname $$(dirname "$$(xcrun --find clang)"))
+XCODE_TOOLCHAIN_DIR ?= $(THEOS)/toolchain/macos/iphone
 LEGACY_CLANG_DIR ?= $(XCODE_TOOLCHAIN_DIR)
+THEOS_PLATFORM_SDK_ROOT := $(XCODE_TOOLCHAIN_DIR)
+PREFIX := $(XCODE_TOOLCHAIN_DIR)/bin/
+TARGET_LIBTOOL := $(XCODE_TOOLCHAIN_DIR)/bin/libtool
+TARGET_LIPO := $(XCODE_TOOLCHAIN_DIR)/bin/lipo
+TARGET_STRIP := $(XCODE_TOOLCHAIN_DIR)/bin/strip
+TARGET_CODESIGN := $(XCODE_TOOLCHAIN_DIR)/bin/ldid
+TARGET_DSYMUTIL := $(XCODE_TOOLCHAIN_DIR)/bin/dsymutil
 else
 XCODE_TOOLCHAIN_DIR ?= $(THEOS)/toolchain/linux/iphone
 LEGACY_CLANG_DIR ?= $(ONEGRAM_ROOT)/theos/generated/toolchains/clang+llvm-3.2-x86_64-linux-ubuntu-12.04
@@ -61,13 +68,15 @@ endif
 TARGET_CC := ccache $(REAL_TARGET_CC)
 TARGET_CXX := ccache $(REAL_TARGET_CXX)
 ifeq ($(ONEGRAM_ARCH),armv6)
-ifneq ($(HOST_OS),Darwin)
 ARMV6_TARGET_TRIPLE := armv6-apple-ios$(ONEGRAM_DEPLOYMENT)
 ARMV6_PLATFORM_FLAGS := -target $(ARMV6_TARGET_TRIPLE) -miphoneos-version-min=$(ONEGRAM_DEPLOYMENT)
 export IPHONEOS_DEPLOYMENT_TARGET := $(ONEGRAM_DEPLOYMENT)
 TARGET_CC += $(ARMV6_PLATFORM_FLAGS)
 TARGET_CXX += $(ARMV6_PLATFORM_FLAGS)
 endif
+ifeq ($(HOST_OS),Darwin)
+TARGET_CC += -target $(ONEGRAM_ARCH)-apple-ios$(ONEGRAM_DEPLOYMENT)
+TARGET_CXX += -target $(ONEGRAM_ARCH)-apple-ios$(ONEGRAM_DEPLOYMENT)
 endif
 CORE_CXX := ccache $(REAL_TARGET_CXX)
 CORE_JOBS ?= 8
@@ -79,9 +88,21 @@ XCODE_ARCLITE := $(ONEGRAM_ROOT)/theos/generated/armv6/products/libarclite_iphon
 XCODE_COMPILER_RT := $(ONEGRAM_ROOT)/theos/generated/armv6/products/libclang_rt.ios.a
 endif
 GRAPH_INPUTS := $(wildcard ../*.xcconfig ../Telegraph.xcodeproj/project.pbxproj ../submodules/*/*.xcodeproj/project.pbxproj ../thirdparty/*/*.xcodeproj/project.pbxproj)
+ONEGRAM_GENERATION_CONTEXT := $(ONEGRAM_ROOT)|$(abspath $(GENERATED_DIR))|$(ONEGRAM_ARCH)|$(ONEGRAM_SDK_VERSION)|$(XCODE_CONFIGURATION)|$(THEOS)
+ifneq ($(_ONEGRAM_VALIDATED_CONTEXT),$(ONEGRAM_GENERATION_CONTEXT))
 GENERATION_CONTEXT_CHECK := $(shell python3 scripts/generate.py --ensure-context --configuration "$(XCODE_CONFIGURATION)" || echo ONEGRAM_GENERATION_FAILED)
 ifneq ($(findstring ONEGRAM_GENERATION_FAILED,$(GENERATION_CONTEXT_CHECK)),)
 $(error Unable to prepare generated build files)
+endif
+ifneq ($(HOST_OS),Darwin)
+ifneq ($(ONEGRAM_ARCH),arm64)
+LEGACY_DEPENDENCY_CHECK := $(shell python3 scripts/fix_legacy_dependencies.py --compiler "$(REAL_TARGET_CC)" --objects "$(abspath .theos/$(THEOS_OBJ_DIR_NAME))" || echo ONEGRAM_DEPENDENCIES_FAILED)
+ifneq ($(findstring ONEGRAM_DEPENDENCIES_FAILED,$(LEGACY_DEPENDENCY_CHECK)),)
+$(error Unable to prepare legacy compiler dependencies)
+endif
+endif
+endif
+export _ONEGRAM_VALIDATED_CONTEXT := $(ONEGRAM_GENERATION_CONTEXT)
 endif
 $(GENERATED_DIR)/dependencies.mk: Makefile $(GRAPH_INPUTS) scripts/generate.py scripts/xcode_graph.py
 	python3 scripts/generate.py --configuration "$(XCODE_CONFIGURATION)"
@@ -123,9 +144,9 @@ endif
 ifeq ($(ONEGRAM_ARCH),armv6)
 ARMV6_CRT := $(GENERATED_DIR)/products/crt1.3.1-armv6.o
 Telegram_LDFLAGS := -L$(GENERATED_DIR)/products $(Telegram_LDFLAGS)
-ifneq ($(HOST_OS),Darwin)
 Telegram_LDFLAGS += -Wl,-alias_list,$(ONEGRAM_ROOT)/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt
-endif
+Telegram_LDFLAGS += -Wl,-unexported_symbols_list,$(ONEGRAM_ROOT)/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt
+Telegram_LINK_INPUTS += $(ONEGRAM_ROOT)/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt $(ONEGRAM_ROOT)/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt
 Telegram_LDFLAGS += -nostartfiles $(ARMV6_CRT) $(GENERATED_DIR)/products/libdispatch.a
 Telegram_LINK_INPUTS += $(ARMV6_CRT) $(GENERATED_DIR)/products/libdispatch.a
 endif
@@ -142,6 +163,14 @@ $(XCODE_TARGET)_LINKAGE_TYPE := static
 $(XCODE_TARGET)_INSTALL := 0
 endif
 include $(THEOS)/makefiles/common.mk
+ifeq ($(ONEGRAM_ARCH),arm64)
+MODULESFLAGS := $(filter-out -fbuild-session-file=% -fbuild-session-timestamp=% -fmodules-validate-once-per-build-session,$(MODULESFLAGS))
+export CCACHE_DIRECT := true
+export CCACHE_DEPEND := true
+export CCACHE_SLOPPINESS := modules
+ONEGRAM_CACHE_HEADER_MAPS := $(patsubst -I%,%,$(filter -I%.hmap,$($(XCODE_TARGET)_CFLAGS)))
+export CCACHE_EXTRAFILES := $(subst $(space),:,$(strip $(ONEGRAM_CACHE_HEADER_MAPS)))
+endif
 ifeq ($(HOST_OS),Darwin)
 $(XCODE_TARGET)_CFLAGS += -I$(ONEGRAM_ROOT)/theos/compat/libstdcxx
 $(XCODE_TARGET)_CFLAGS += -Wno-error=parentheses -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=incompatible-pointer-types
@@ -164,6 +193,7 @@ include $(THEOS_MAKE_PATH)/rules.mk
 include response-link.mk
 include $(THEOS_MAKE_PATH)/application.mk
 before-all::
+	@if test "$(ONEGRAM_ARCH)" = arm64; then mkdir -p "$(abspath .theos/$(THEOS_OBJ_DIR_NAME)/modules)"; fi
 	@python3 scripts/audit_xcode_target.py
 	@python3 scripts/audit_onegram_ui.py
 	@if ! test -x "$(REAL_TARGET_CC)" || ! test -x "$(REAL_TARGET_CXX)"; then ONEGRAM_GENERATED_DIR=generated python3 scripts/setup_legacy_clang.py; fi
@@ -174,17 +204,19 @@ before-all::
 	@for target in $(XCODE_LIBRARIES); do $(MAKE) --no-print-directory XCODE_TARGET=$$target all || exit $$?; done
 	@python3 scripts/build_core.py --cc "$(CORE_CXX)" --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --jobs "$(CORE_JOBS)"
 after-all::
-	@python3 scripts/package_app.py --app "$(THEOS_OBJ_DIR)/Telegram.app" --ldid "$(TARGET_CODESIGN)"
-	@python3 scripts/verify_binary.py $(APPLICATION_OUTPUT)/Payload/Telegram.app/Telegram
+	@python3 scripts/package_app.py --app "$(THEOS_OBJ_DIR)/Telegram.app" --ldid "$(TARGET_CODESIGN)" $(if $(filter 0,$(ONEGRAM_PACKAGE_IPA)),--stage-only)
+ifneq ($(ONEGRAM_PACKAGE_IPA),0)
+	@python3 scripts/verify_binary.py $(APPLICATION_OUTPUT)/Payload/Telegram.app/Telegram --tools "$(XCODE_TOOLCHAIN_DIR)/bin"
+endif
 else
 include $(THEOS_MAKE_PATH)/library.mk
 after-all::
 	@mkdir -p $(GENERATED_DIR)/products
-	@cp "$(THEOS_OBJ_DIR)/$(XCODE_TARGET).a" "$(GENERATED_DIR)/products/$(XCODE_TARGET).a"
+	@cmp -s "$(THEOS_OBJ_DIR)/$(XCODE_TARGET).a" "$(GENERATED_DIR)/products/$(XCODE_TARGET).a" || cp "$(THEOS_OBJ_DIR)/$(XCODE_TARGET).a" "$(GENERATED_DIR)/products/$(XCODE_TARGET).a"
 	@case "$(XCODE_TARGET)" in libOnegram*) ;; *) python3 scripts/export_headers.py "$(XCODE_TARGET)" ;; esac
 endif
 ifeq ($(HOST_OS),Darwin)
-TARGET_LD = $(XCODE_TOOLCHAIN_DIR)/bin/clang++
+TARGET_LD = $(XCODE_TOOLCHAIN_DIR)/bin/clang++ -target $(ONEGRAM_ARCH)-apple-ios$(ONEGRAM_DEPLOYMENT)
 else
 TARGET_LD = $(THEOS)/toolchain/linux/iphone/bin/clang++
 ifeq ($(ONEGRAM_ARCH),armv6)
@@ -192,6 +224,9 @@ TARGET_LD += $(ARMV6_PLATFORM_FLAGS)
 endif
 endif
 _THEOS_INTERNAL_LDFLAGS := $(filter-out -lroot%,$(_THEOS_INTERNAL_LDFLAGS))
+ifeq ($(ONEGRAM_ARCH),arm64)
+ALL_DEPFLAGS = -MT $@ -MD -MP -MF "$(THEOS_OBJ_DIR)/$<.$(_THEOS_OBJ_FILE_TAG).Td"
+endif
 .PHONY: generate audit ipa preflight
 generate:
 	python3 scripts/generate.py --configuration "$(XCODE_CONFIGURATION)"
@@ -202,9 +237,15 @@ preflight:
 ipa: all
 .PHONY: universal
 universal:
-	$(MAKE) ONEGRAM_ARCH=armv7 all
-	$(MAKE) ONEGRAM_ARCH=arm64 all
+	$(MAKE) ONEGRAM_ARCH=armv7 ONEGRAM_PACKAGE_IPA=0 all
+	$(MAKE) ONEGRAM_ARCH=arm64 ONEGRAM_PACKAGE_IPA=0 all
 	python3 scripts/package_universal.py --ldid "$(TARGET_CODESIGN)" --toolchain "$(XCODE_TOOLCHAIN_DIR)"
+.PHONY: universal3
+universal3:
+	$(MAKE) ONEGRAM_ARCH=armv6 ONEGRAM_PACKAGE_IPA=0 all
+	$(MAKE) ONEGRAM_ARCH=armv7 ONEGRAM_PACKAGE_IPA=0 all
+	$(MAKE) ONEGRAM_ARCH=arm64 ONEGRAM_PACKAGE_IPA=0 all
+	python3 scripts/package_universal.py --ldid "$(TARGET_CODESIGN)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --architectures armv6 armv7 arm64
 .PHONY: armv6
 armv6:
 	$(MAKE) ONEGRAM_ARCH=armv6 all

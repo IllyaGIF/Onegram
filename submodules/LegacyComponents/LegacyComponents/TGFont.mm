@@ -789,6 +789,8 @@ bool TGEmojiNeedsPack(NSString *emoji)
     TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
     if (mode == TGEmojiRenderModeStockOnly)
         return false;
+    if (mode == TGEmojiRenderModeCombined && TGEmojiStringUsesEmojiPresentation(emoji) && TGEmojiNativeGlyphSupported(emoji))
+        return false;
 
     return true;
 }
@@ -1015,9 +1017,15 @@ static UIImage *TGPackEmojiImageFromData(NSData *pngData, CGFloat size)
     if (pngData.length == 0 || size <= 0.0f)
         return nil;
 
-    UIImage *sourceImage = [UIImage imageWithData:pngData];
-    if (sourceImage == nil)
+    CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)pngData);
+    if (provider == NULL)
         return nil;
+    CGImageRef image = CGImageCreateWithPNGDataProvider(provider, NULL, false, kCGRenderingIntentDefault);
+    CGDataProviderRelease(provider);
+    if (image == NULL)
+        return nil;
+    UIImage *sourceImage = [UIImage imageWithCGImage:image];
+    CGImageRelease(image);
 
     return TGNormalizeEmojiImage(sourceImage, size);
 }
@@ -1094,9 +1102,9 @@ UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size)
     }
     else
     {
-        result = TGPackEmojiImageOfSize(emoji, size);
+        result = TGNativeEmojiImageOfSize(emoji, size);
         if (result == nil)
-            result = TGNativeEmojiImageOfSize(emoji, size);
+            result = TGPackEmojiImageOfSize(emoji, size);
     }
 
     if (result != nil)
@@ -1125,7 +1133,30 @@ static void TGEmojiRunImageWorkCompletions(NSArray *completions)
         block();
 }
 
-static void TGEmojiScheduleLegacyImageRender(NSString *emoji, CGFloat size, NSString *cacheKey, NSData *packData)
+static void TGEmojiFinishLegacyImageRender(NSString *cacheKey, UIImage *image)
+{
+    OGPlatformDispatchOnMainThread(^
+    {
+        if (image != nil)
+            [TGEmojiImageCache setObject:image forKey:cacheKey];
+        NSArray *completions = TGEmojiFinishImageWork(cacheKey);
+        if (image != nil)
+            TGEmojiRunImageWorkCompletions(completions);
+    });
+}
+
+static void TGEmojiRenderLegacyPackImage(CGFloat size, NSString *cacheKey, NSData *packData)
+{
+    OGRuntimeDispatch(OGRuntimePriorityUtility, ^
+    {
+        @autoreleasepool
+        {
+            TGEmojiFinishLegacyImageRender(cacheKey, TGPackEmojiImageFromData(packData, size));
+        }
+    });
+}
+
+static void TGEmojiScheduleLegacyNativeImageRender(NSString *emoji, CGFloat size, NSString *cacheKey, NSData *packData)
 {
     OGPlatformDispatchOnMainThread(^
     {
@@ -1133,38 +1164,38 @@ static void TGEmojiScheduleLegacyImageRender(NSString *emoji, CGFloat size, NSSt
         {
             OGPlatformDispatchOnMainThreadAfter(0.08, ^
             {
-                TGEmojiScheduleLegacyImageRender(emoji, size, cacheKey, packData);
+                TGEmojiScheduleLegacyNativeImageRender(emoji, size, cacheKey, packData);
             });
             return;
         }
 
-        UIImage *result = [TGEmojiImageCache objectForKey:cacheKey];
-        if (result == nil)
+        UIImage *result = TGNativeEmojiImageOfSizeCurrentThread(emoji, size);
+        if (result == nil && TGCurrentEmojiRenderMode() != TGEmojiRenderModeStockOnly)
         {
-            TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
-            if (mode == TGEmojiRenderModeStockOnly)
-            {
-                result = TGNativeEmojiImageOfSizeCurrentThread(emoji, size);
-            }
-            else if (mode == TGEmojiRenderModeNewOnly)
-            {
-                result = TGPackEmojiImageFromData(packData, size);
-            }
-            else
-            {
-                result = TGPackEmojiImageFromData(packData, size);
-                if (result == nil)
-                    result = TGNativeEmojiImageOfSizeCurrentThread(emoji, size);
-            }
-
-            if (result != nil)
-                [TGEmojiImageCache setObject:result forKey:cacheKey];
+            TGEmojiRenderLegacyPackImage(size, cacheKey, packData);
+            return;
         }
-
-        NSArray *completions = TGEmojiFinishImageWork(cacheKey);
-        if (result != nil)
-            TGEmojiRunImageWorkCompletions(completions);
+        TGEmojiFinishLegacyImageRender(cacheKey, result);
     });
+}
+
+static void TGEmojiScheduleLegacyImageRender(NSString *emoji, CGFloat size, NSString *cacheKey, NSData *packData)
+{
+    UIImage *cached = [TGEmojiImageCache objectForKey:cacheKey];
+    if (cached != nil)
+    {
+        TGEmojiFinishLegacyImageRender(cacheKey, cached);
+        return;
+    }
+
+    TGEmojiRenderMode mode = TGCurrentEmojiRenderMode();
+    if (mode != TGEmojiRenderModeNewOnly && TGEmojiStringUsesEmojiPresentation(emoji) && TGEmojiNativeGlyphSupported(emoji))
+    {
+        TGEmojiScheduleLegacyNativeImageRender(emoji, size, cacheKey, packData);
+        return;
+    }
+
+    TGEmojiFinishLegacyImageRender(cacheKey, mode == TGEmojiRenderModeStockOnly ? nil : TGPackEmojiImageFromData(packData, size));
 }
 
 void TGPreloadEmojiImageOfSize(NSString *emoji, CGFloat size, void (^completion)(void))

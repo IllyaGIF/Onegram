@@ -23,4 +23,6 @@
 - (void)videoPartDownloadFailed:(int)offset length:(int)length;
 - (void)videoPartDownloadProgress:(int)offset packetLength:(int)packetLength progress:(float)progress;
 
++ (void)reloadForAccountSwitch;
+
 @end

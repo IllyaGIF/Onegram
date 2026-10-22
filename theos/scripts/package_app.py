@@ -12,6 +12,8 @@ from pathlib import Path
 from generate import OUT, expand, VARIABLE
 from xcode_graph import ROOT, actual_path, parse_text
 from build_identity import write_build_identity
+from artifact_cache import cache_matches, cache_record, fingerprint
+from app_signing import sign_app, verify_app, verify_ipa
 
 STARTUP_LOCALIZATION_KEYS = (
     'Contacts.TabTitle',
@@ -52,6 +54,7 @@ def main():
     p.add_argument('--app',required=True,type=Path)
     p.add_argument('--ldid',required=True)
     p.add_argument('--resources-only',action='store_true')
+    p.add_argument('--stage-only',action='store_true')
     args=p.parse_args()
     target=next(t for t in json.loads((OUT/'manifest.json').read_text())['targets'] if t['instance']=='Telegram')
     settings=dict(target['settings'], EXECUTABLE_NAME='Telegram', PRODUCT_NAME='Telegram')
@@ -62,6 +65,42 @@ def main():
     if arch!='armv7':output=output/arch
     app=source_app if args.resources_only else output/'Payload/Telegram.app'
     if args.resources_only and OUT not in app.parents:raise ValueError('Resource audit must be inside generated/')
+    ipa=output/'Onegram.ipa'
+    state=OUT/'package-state.json'
+    entitlement=settings.get('CODE_SIGN_ENTITLEMENTS','') or 'theos/Telegram.entitlements'
+    package_outputs=[app] + ([OUT/'signing.entitlements'] if entitlement else [])
+    def finish_package():
+        verify_app(app, OUT/'signing.entitlements' if entitlement else None)
+        if args.stage_only:
+            print('Staged '+str(app))
+            return
+        zip_state=OUT/'ipa-state.json'
+        zip_signature=fingerprint([app,Path(__file__)])
+        needs_archive=not cache_matches(zip_state,zip_signature,[ipa])
+        if needs_archive:
+            with zipfile.ZipFile(ipa,'w',zipfile.ZIP_DEFLATED) as z:
+                for path in sorted(app.rglob('*')):
+                    if path.is_file():z.write(path,path.relative_to(output))
+        verify_ipa(ipa, OUT/'signing.entitlements' if entitlement else None)
+        if needs_archive:
+            cache_record(zip_state,zip_signature,[ipa])
+        print('IPA ready: '+str(ipa))
+    if not args.resources_only:
+        inputs=[source_app/'Telegram',ROOT/settings['INFOPLIST_FILE'],
+                ROOT/'thirdparty/quirc/LICENSE',ROOT/'OnegramDante/LICENSE.Monocypher',
+                Path(__file__),ROOT/'theos/scripts/generate.py',ROOT/'theos/scripts/xcode_graph.py',
+                ROOT/'theos/scripts/build_identity.py',ROOT/'theos/scripts/artifact_cache.py',
+                ROOT/'theos/scripts/app_signing.py',
+                ROOT/'tools/patch_ios7_sdk_version.py',
+                Path(shutil.which(shlex.split(args.ldid)[0]) or shlex.split(args.ldid)[0])]
+        inputs += [actual_path(ROOT/entry['path']) for entry in target['resources'] if entry['path'] is not None]
+        if entitlement:inputs.append(ROOT/entitlement)
+        signature=fingerprint(inputs,values=[settings,target['resources'],arch,args.ldid,
+                                            os.environ.get('ONEGRAM_DEPLOYMENT'),os.environ.get('ONEGRAM_DIAGNOSTICS')=='1',
+                                            os.environ.get('IBTOOL')])
+        if cache_matches(state,signature,package_outputs):
+            finish_package()
+            return
     if app.exists():shutil.rmtree(app)
     app.mkdir(parents=True)
     if not args.resources_only:shutil.copy2(source_app/'Telegram',app/'Telegram')
@@ -153,19 +192,15 @@ def main():
     if os.environ.get('ONEGRAM_ARCH','armv7')=='armv7':
         subprocess.run(['python3',str(ROOT/'tools/patch_ios7_sdk_version.py'),str(app/'Telegram')],check=True)
     build_identifier = write_build_identity(app, arch, os.environ.get('ONEGRAM_DIAGNOSTICS') == '1')
-    entitlement=settings.get('CODE_SIGN_ENTITLEMENTS','') or 'theos/Telegram.entitlements'
-    signing_flag='-S'
+    signing_entitlements=None
     if entitlement:
         original=plistlib.loads((ROOT/entitlement).read_bytes())
         processed=resolve(original)
         path=OUT/'signing.entitlements'
         path.write_bytes(plistlib.dumps(processed))
-        signing_flag+=''+str(path)
-    subprocess.run(shlex.split(args.ldid)+['-Hsha1','-Hsha256',signing_flag,str(app/'Telegram')],check=True)
-    ipa=app.parents[1]/'Onegram.ipa'
-    with zipfile.ZipFile(ipa,'w',zipfile.ZIP_DEFLATED) as z:
-        for path in sorted(app.rglob('*')):
-            if path.is_file():z.write(path,path.relative_to(app.parents[1]))
-    print('Created '+str(app)+' and '+str(ipa)+' (build '+build_identifier+')')
+        signing_entitlements=path
+    sign_app(app,args.ldid,signing_entitlements)
+    cache_record(state,signature,package_outputs)
+    finish_package()
 
 if __name__=='__main__':main()

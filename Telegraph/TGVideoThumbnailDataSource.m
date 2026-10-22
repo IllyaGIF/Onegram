@@ -48,71 +48,9 @@ static ASQueue *taskManagementQueue()
     return queue;
 }
 
-static bool TGIOS6ImageLooksBlack(UIImage *image)
-{
-    CGImageRef imageRef = image.CGImage;
-    if (imageRef == NULL)
-        return false;
-    
-    NSUInteger width = 8;
-    NSUInteger height = 8;
-    unsigned char pixels[8 * 8 * 4];
-    memset(pixels, 0, sizeof(pixels));
-    
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(pixels, width, height, 8, width * 4, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-    CGColorSpaceRelease(colorSpace);
-    
-    if (context == NULL)
-        return false;
-    
-    CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, width, height), imageRef);
-    CGContextRelease(context);
-    
-    NSUInteger darkCount = 0;
-    NSUInteger alphaCount = 0;
-    for (NSUInteger i = 0; i < width * height; i++)
-    {
-        unsigned char r = pixels[i * 4];
-        unsigned char g = pixels[i * 4 + 1];
-        unsigned char b = pixels[i * 4 + 2];
-        unsigned char a = pixels[i * 4 + 3];
-        if (a > 16)
-        {
-            alphaCount++;
-            if (r < 14 && g < 14 && b < 14)
-                darkCount++;
-        }
-    }
-    
-    return alphaCount != 0 && darkCount * 100 / alphaCount > 92;
-}
-
 static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
 {
-    NSTimeInterval duration = 0.0;
-    OGPlatformReadVideoMetadataAtURL(url, &duration, NULL);
-    NSTimeInterval candidates[] = {0.0, 0.15, 0.5, 1.0};
-    UIImage *fallbackImage = nil;
-    
-    for (NSUInteger i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
-    {
-        NSTimeInterval seconds = candidates[i];
-        if (duration > 0.01)
-            seconds = MIN(seconds, MAX(0.0, duration - 0.01));
-        
-        UIImage *image = OGPlatformVideoThumbnailAtURL(url, seconds, maximumSize);
-        if (image == nil)
-            continue;
-        
-        if (fallbackImage == nil)
-            fallbackImage = image;
-        
-        if (!TGIOS6ImageLooksBlack(image))
-            return image;
-    }
-    
-    return fallbackImage;
+    return OGPlatformVideoThumbnailAtURL(url, 0.0, maximumSize);
 }
 
 @implementation TGVideoThumbnailDataSource
@@ -138,6 +76,7 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
 - (id)loadDataAsyncWithUri:(NSString *)uri progress:(void (^)(float))progress partialCompletion:(void (^)(TGDataResource *resource))__unused partialCompletion completion:(void (^)(TGDataResource *))completion
 {
     TGMediaPreviewTask *previewTask = [[TGMediaPreviewTask alloc] init];
+    __weak TGMediaPreviewTask *weakPreviewTask = previewTask;
     
     NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:@"video-thumbnail://?".length]];
     bool isFlat = [args[@"flat"] boolValue];
@@ -162,18 +101,13 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
         
         if ([TGVideoThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
-            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-        }
-        else if (OGPlatformMediaDownloadsRequireUserAction())
-        {
-            if (completion != nil)
-                completion([TGVideoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
+            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
         }
         else
         {
             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:@"video-thumbnail://?".length]];
             
-            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
+            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)] || ([args[@"cid"] longLongValue] != 0 && [args[@"mid"] intValue] != 0))
             {
                 static NSString *filesDirectory = nil;
                 static dispatch_once_t onceToken;
@@ -198,6 +132,7 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
                 NSString *temporaryThumbnailImagePath = [videoDirectory stringByAppendingPathComponent:@"video-thumb.jpg"];
                 
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
+                options[@"thumbnailContext"] = args;
                 TGMediaOriginInfo *originInfo = nil;
                 if (args[@"origin_info"] != nil)
                 {
@@ -213,13 +148,13 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
                 if (originInfo != nil)
                     options[@"originInfo"] = originInfo;
                 
-                [previewTask executeWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
+                [previewTask executeThumbnailWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
                 {
                     if (success)
                     {
                         dispatch_async([TGCache diskCacheQueue], ^
                         {
-                            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+                            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                         });
                     }
                     else
@@ -280,11 +215,10 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
         return true;
     
     NSString *videoPath = [videoDirectory stringByAppendingPathComponent:@"video.mov"];
-    bool canGenerateThumbnail = !OGPlatformMediaDownloadsRequireUserAction() || args[@"local-id"] != nil;
-    if (canGenerateThumbnail && [[NSFileManager defaultManager] fileExistsAtPath:videoPath isDirectory:NULL])
+    if ([[NSFileManager defaultManager] fileExistsAtPath:videoPath isDirectory:NULL])
         return true;
     
-    if (canGenerateThumbnail && [args[@"legacy-video-file-path"] respondsToSelector:@selector(characterAtIndex:)])
+    if ([args[@"legacy-video-file-path"] respondsToSelector:@selector(characterAtIndex:)])
     {
         NSString *legacyVideoFilePath = args[@"legacy-video-file-path"];
         if ([[NSFileManager defaultManager] fileExistsAtPath:legacyVideoFilePath isDirectory:NULL])
@@ -406,13 +340,8 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
     
     UIImage *cachedImage = [[TGMediaStoreContext instance] mediaImage:uri attributes:nil];
     if (cachedImage != nil)
-    {
-        if (OGPlatformMediaDownloadsRequireUserAction() || !TGIOS6ImageLooksBlack(cachedImage))
-            return [[TGDataResource alloc] initWithImage:cachedImage decoded:true];
-        else if (!canWait)
-            return nil;
-    }
-    
+        return [[TGDataResource alloc] initWithImage:cachedImage decoded:true];
+
     if (!canWait)
         return nil;
     
@@ -441,7 +370,6 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
     });
     
     NSString *videoDirectoryName = nil;
-    bool isLocal = false;
     if (args[@"id"] != nil)
     {
         videoDirectoryName = [[NSString alloc] initWithFormat:@"video-remote-%" PRIx64 "", (int64_t)[args[@"id"] longLongValue]];
@@ -449,7 +377,6 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
     else
     {
         videoDirectoryName = [[NSString alloc] initWithFormat:@"video-local-%" PRIx64 "", (int64_t)[args[@"local-id"] longLongValue]];
-        isLocal = true;
     }
     NSString *videoDirectory = [filesDirectory stringByAppendingPathComponent:videoDirectoryName];
     
@@ -459,11 +386,6 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
     NSString *thumbnailPath = [videoDirectory stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"thumbnail-%dx%d-%dx%d.jpg", (int)size.width, (int)size.height, (int)renderSize.width, (int)renderSize.height]];
     
     UIImage *thumbnailSourceImage = [[UIImage alloc] initWithContentsOfFile:thumbnailPath];
-    if (thumbnailSourceImage != nil && !OGPlatformMediaDownloadsRequireUserAction() && TGIOS6ImageLooksBlack(thumbnailSourceImage))
-    {
-        thumbnailSourceImage = nil;
-        [[NSFileManager defaultManager] removeItemAtPath:thumbnailPath error:nil];
-    }
     bool lowQualityThumbnail = false;
     
     if (thumbnailSourceImage == nil)
@@ -485,8 +407,6 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
         UIImage *image = nil;
         
         image = [[UIImage alloc] initWithContentsOfFile:temporaryThumbnailImagePath];
-        if (image != nil && !OGPlatformMediaDownloadsRequireUserAction() && TGIOS6ImageLooksBlack(image))
-            image = nil;
         if (image == nil)
         {
             if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
@@ -494,13 +414,11 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
                 NSString *legacyThumbnailUrl = args[@"legacy-thumbnail-cache-url"];
                 NSString *legacyThumbnailImagePath = [legacyThumbnailUrl hasPrefix:@"file://"] ? [legacyThumbnailUrl substringFromIndex:@"file://".length] : [[TGRemoteImageView sharedCache] pathForCachedData:legacyThumbnailUrl];
                 image = [[UIImage alloc] initWithContentsOfFile:legacyThumbnailImagePath];
-                if (image != nil && !OGPlatformMediaDownloadsRequireUserAction() && TGIOS6ImageLooksBlack(image))
-                    image = nil;
             }
         }
-        lowQualityThumbnail = image != nil && (!isLocal || image.size.width < 70);
+        lowQualityThumbnail = image != nil && MAX(image.size.width, image.size.height) < 70.0f;
 
-        if ((image == nil || !OGPlatformMediaDownloadsRequireUserAction()) && ![args[@"secret"] boolValue] && (!OGPlatformMediaDownloadsRequireUserAction() || isLocal) && [[NSFileManager defaultManager] fileExistsAtPath:videoPath isDirectory:NULL])
+        if (image == nil && ![args[@"secret"] boolValue] && [[NSFileManager defaultManager] fileExistsAtPath:videoPath isDirectory:NULL])
         {
             CGFloat requestedSide = MAX(size.width, size.height) * 2.0f;
             CGFloat maximumSide = MAX(240.0f, MIN(480.0f, requestedSide));
@@ -566,20 +484,10 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
         }
         else
         {
-            if (lowQualityThumbnail)
-            {
-                if (isFlat && cornerRadius > 0)
-                    thumbnailImage = TGBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
-                else
-                    thumbnailImage = TGBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
-            }
+            if (isFlat && cornerRadius > 0)
+                thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, inset, position);
             else
-            {
-                if (isFlat && cornerRadius > 0)
-                    thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, inset, position);
-                else
-                    thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
-            }
+                thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
         }
         
         if (thumbnailImage != nil)
@@ -594,7 +502,7 @@ static UIImage *TGIOS6VideoFrameImage(NSURL *url, CGSize maximumSize)
             {
                 __autoreleasing NSDictionary *attributes = nil;
                 UIImage *existingReducedImage = [[TGMediaStoreContext instance] mediaReducedImage:uri attributes:&attributes];
-                bool alreadyCached = existingReducedImage != nil && !TGIOS6ImageLooksBlack(existingReducedImage);
+                bool alreadyCached = existingReducedImage != nil;
                 bool cachedLowQualityThumbnail = [attributes isKindOfClass:[NSDictionary class]] && [[attributes objectForKey:@"lowQuality"] boolValue];
                 
                 if (!alreadyCached || (cachedLowQualityThumbnail && !lowQualityThumbnail))

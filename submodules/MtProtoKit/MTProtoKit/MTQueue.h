@@ -5,6 +5,7 @@
 @interface MTQueue : NSObject
 
 - (instancetype)initWithName:(const char *)name;
+- (instancetype)initWithName:(const char *)name targetPriority:(long)targetPriority;
 
 + (MTQueue *)mainQueue;
 + (MTQueue *)concurrentDefaultQueue;

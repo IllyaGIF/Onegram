@@ -8,6 +8,7 @@
 
 @class TLInputFile;
 @class TLInputPhoto;
+@class TLVideoSize;
 
 @interface TLInputChatPhoto : NSObject <TLObject>
 
@@ -21,7 +22,11 @@
 
 @interface TLInputChatPhoto$inputChatUploadedPhoto : TLInputChatPhoto
 
+@property (nonatomic) int32_t flags;
 @property (nonatomic, retain) TLInputFile *file;
+@property (nonatomic, retain) TLInputFile *video;
+@property (nonatomic) double video_start_ts;
+@property (nonatomic, retain) TLVideoSize *video_emoji_markup;
 
 @end
 

@@ -83,7 +83,7 @@ def package_definitions(manager):
 
 def missing_packages():
     if sys.platform == 'darwin':
-        commands = {'gmake': 'make', 'git': 'git', 'rsync': 'rsync', 'ccache': 'ccache', 'ldid': 'ldid', 'xz': 'xz', 'pkg-config': 'pkg-config', 'idevice_id': 'libimobiledevice', 'ideviceinfo': 'libimobiledevice', 'ideviceinstaller': 'ideviceinstaller'}
+        commands = {'make': 'make', 'git': 'git', 'rsync': 'rsync', 'ccache': 'ccache', 'ldid': 'ldid', 'xz': 'xz', 'pkg-config': 'pkg-config'}
         return sorted({pkg for cmd, pkg in commands.items() if not available(cmd)})
     mapping = package_definitions(package_manager())
     return sorted({pkg for cmd, pkg in mapping.items() if not available(cmd)})
@@ -326,7 +326,8 @@ def install_linux_toolchain(theos, sdk, architecture, deployment, dry_run):
 
 
 def ensure_signer(theos, dry_run):
-    for candidate in (theos / 'bin/ldid', theos / 'toolchain/linux/iphone/bin/ldid'):
+    host = 'macos' if sys.platform == 'darwin' else 'linux'
+    for candidate in (theos / ('toolchain/' + host + '/iphone/bin/ldid'), theos / 'bin/ldid'):
         if candidate.is_file() and os.access(candidate, os.X_OK):
             report('Code signer: ' + str(candidate))
             return
@@ -444,29 +445,6 @@ def ensure_sdks(theos, versions, dry_run):
             raise RuntimeError('SDK installation did not produce valid ' + sdk_label(version))
 
 
-def verify_macos(dry_run=False):
-    if not available('xcode-select') or not available('xcrun'):
-        raise RuntimeError('Full Xcode is required on macOS. Install Xcode from Apple')
-    selected = subprocess.run(['xcode-select', '-p'], capture_output=True, text=True)
-    if selected.returncode != 0 or not (Path(selected.stdout.strip()) / 'Platforms/iPhoneOS.platform').is_dir():
-        candidates = []
-        for directory in (Path('/Applications'), Path.home() / 'Applications'):
-            preferred = directory / 'Xcode.app/Contents/Developer'
-            if (preferred / 'Platforms/iPhoneOS.platform').is_dir():
-                candidates.append(preferred)
-            for app in sorted(directory.glob('Xcode*.app')):
-                developer = app / 'Contents/Developer'
-                if developer not in candidates and (developer / 'Platforms/iPhoneOS.platform').is_dir():
-                    candidates.append(developer)
-        if not candidates:
-            raise RuntimeError('Full Xcode with the iOS platform is missing. Command Line Tools alone are insufficient. Install an Xcode version compatible with your macOS, then run ./build.sh again')
-        report('Selecting installed Xcode: ' + str(candidates[0]))
-        if dry_run:
-            return
-        run(as_admin(['xcode-select', '--switch', str(candidates[0])]))
-    result = subprocess.run(['xcrun', '--find', 'lipo'], capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError('Xcode tools are unavailable: ' + result.stderr.strip())
 
 
 def main():
@@ -477,8 +455,10 @@ def main():
     theos = Path(os.environ.get('THEOS') or Path.home() / 'theos').expanduser().resolve()
     if sys.platform not in ('linux', 'darwin'):
         raise RuntimeError('Only Linux and macOS are supported')
-    if sys.platform == 'darwin':
-        verify_macos(args.dry_run)
+    if sys.platform == 'darwin' and not args.dry_run:
+        from setup_macos_toolchain import ensure_native_packages
+        tools = ensure_native_packages()
+        os.environ['PATH'] = str(tools / 'bin') + os.pathsep + os.environ.get('PATH', '')
     packages = missing_packages()
     install_system_packages(packages, args.dry_run)
     install_theos(theos, args.dry_run)
@@ -493,6 +473,9 @@ def main():
         if not args.dry_run:
             from setup_linux_linker import ensure_linux_linker
             ensure_linux_linker(theos / 'toolchain/linux/iphone')
+    elif not args.dry_run:
+        from setup_macos_toolchain import ensure_macos_toolchain
+        ensure_macos_toolchain(theos, SDK_BY_ARCH[args.architecture])
     ensure_signer(theos, args.dry_run)
     report('Dry run complete; no changes made' if args.dry_run else 'Prerequisites ready; Makefile will generate files and build libraries as needed')
     return 0

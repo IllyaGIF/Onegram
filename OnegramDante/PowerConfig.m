@@ -144,27 +144,6 @@ static NSDictionary *PWParseQuery(NSString *query) {
     return out;
 }
 
-+ (NSArray *)configsFromText:(NSString *)text {
-    if (!text.length) return @[];
-    NSString *body = [text stringByTrimmingCharactersInSet:
-                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-
-    if ([body rangeOfString:@"://"].location == NSNotFound && body.length > 16) {
-        NSData *decoded = PWDecodeBase64(body);
-        NSString *inner = decoded ? [[[NSString alloc] initWithData:decoded
-                                                          encoding:NSUTF8StringEncoding] autorelease] : nil;
-        if (inner.length) body = inner;
-    }
-
-    NSMutableArray *out = [NSMutableArray array];
-    for (NSString *line in [body componentsSeparatedByCharactersInSet:
-                            [NSCharacterSet newlineCharacterSet]]) {
-        PowerConfig *c = [PowerConfig configFromURI:line];
-        if (c) [out addObject:c];
-    }
-    return out;
-}
-
 - (BOOL)isSupported {
     return [self unsupportedReason] == nil;
 }

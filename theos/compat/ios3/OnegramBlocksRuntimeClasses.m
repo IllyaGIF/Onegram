@@ -17,10 +17,10 @@ __attribute__((constructor)) static void OnegramInitializeBlocksRuntime(void)
     _Block_use_RR(OnegramBlockRetainObject, OnegramBlockReleaseObject);
 }
 
-@interface __NSStackBlock__ : NSObject <NSCopying>
+@interface OnegramIOS3StackBlock : NSObject <NSCopying>
 @end
 
-@implementation __NSStackBlock__
+@implementation OnegramIOS3StackBlock
 
 - (id)copy
 {
@@ -53,10 +53,10 @@ __attribute__((constructor)) static void OnegramInitializeBlocksRuntime(void)
 
 @end
 
-@interface __NSMallocBlock__ : NSObject <NSCopying>
+@interface OnegramIOS3MallocBlock : NSObject <NSCopying>
 @end
 
-@implementation __NSMallocBlock__
+@implementation OnegramIOS3MallocBlock
 
 - (id)copy
 {
@@ -90,10 +90,10 @@ __attribute__((constructor)) static void OnegramInitializeBlocksRuntime(void)
 
 @end
 
-@interface __NSAutoBlock__ : NSObject <NSCopying>
+@interface OnegramIOS3AutoBlock : NSObject <NSCopying>
 @end
 
-@implementation __NSAutoBlock__
+@implementation OnegramIOS3AutoBlock
 
 - (id)copy
 {
@@ -107,16 +107,16 @@ __attribute__((constructor)) static void OnegramInitializeBlocksRuntime(void)
 
 @end
 
-@interface __NSFinalizingBlock__ : __NSAutoBlock__
+@interface OnegramIOS3FinalizingBlock : OnegramIOS3AutoBlock
 @end
 
-@implementation __NSFinalizingBlock__
+@implementation OnegramIOS3FinalizingBlock
 @end
 
-@interface __NSGlobalBlock__ : NSObject <NSCopying>
+@interface OnegramIOS3GlobalBlock : NSObject <NSCopying>
 @end
 
-@implementation __NSGlobalBlock__
+@implementation OnegramIOS3GlobalBlock
 
 - (id)copy
 {
@@ -149,25 +149,25 @@ __attribute__((constructor)) static void OnegramInitializeBlocksRuntime(void)
 
 @end
 
-@interface __NSBlockVariable__ : NSObject
+@interface OnegramIOS3BlockVariable : NSObject
 @end
 
-@implementation __NSBlockVariable__
+@implementation OnegramIOS3BlockVariable
 @end
 
 #if !defined(ONEGRAM_LINKER_BLOCK_ALIASES)
 __asm__(
 ".globl __NSConcreteStackBlock\n"
-".set __NSConcreteStackBlock, _OBJC_CLASS_$___NSStackBlock__\n"
+".set __NSConcreteStackBlock, _OBJC_CLASS_$_OnegramIOS3StackBlock\n"
 ".globl __NSConcreteMallocBlock\n"
-".set __NSConcreteMallocBlock, _OBJC_CLASS_$___NSMallocBlock__\n"
+".set __NSConcreteMallocBlock, _OBJC_CLASS_$_OnegramIOS3MallocBlock\n"
 ".globl __NSConcreteAutoBlock\n"
-".set __NSConcreteAutoBlock, _OBJC_CLASS_$___NSAutoBlock__\n"
+".set __NSConcreteAutoBlock, _OBJC_CLASS_$_OnegramIOS3AutoBlock\n"
 ".globl __NSConcreteFinalizingBlock\n"
-".set __NSConcreteFinalizingBlock, _OBJC_CLASS_$___NSFinalizingBlock__\n"
+".set __NSConcreteFinalizingBlock, _OBJC_CLASS_$_OnegramIOS3FinalizingBlock\n"
 ".globl __NSConcreteGlobalBlock\n"
-".set __NSConcreteGlobalBlock, _OBJC_CLASS_$___NSGlobalBlock__\n"
+".set __NSConcreteGlobalBlock, _OBJC_CLASS_$_OnegramIOS3GlobalBlock\n"
 ".globl __NSConcreteWeakBlockVariable\n"
-".set __NSConcreteWeakBlockVariable, _OBJC_CLASS_$___NSBlockVariable__\n"
+".set __NSConcreteWeakBlockVariable, _OBJC_CLASS_$_OnegramIOS3BlockVariable\n"
 );
 #endif

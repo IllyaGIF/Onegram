@@ -30,6 +30,15 @@ static CGPoint HPTextViewClampedContentOffset(CGPoint offset, CGSize contentSize
 
 @implementation HPTextViewInternal
 
++ (bool)textKitAvailable
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    return iosMajorVersion() >= 7;
+#else
+    return false;
+#endif
+}
+
 - (instancetype)initWithKeyCommandController:(TGKeyCommandController *)keyCommandController {
     self = [super initWithFrame:CGRectZero];
     if (self != nil) {

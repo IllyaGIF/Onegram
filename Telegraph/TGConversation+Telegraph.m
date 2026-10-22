@@ -176,8 +176,8 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             
             self.chatParticipantCount = concreteChat.participants_count;
             self.chatVersion = concreteChat.version;
-            self.hasAdmins = concreteChat.flags & (1 << 3);
-            self.isAdmin = concreteChat.flags & (1 << 4);
+            self.hasAdmins = (concreteChat.default_banned_rights.flags & (TGChatBannedRightsChangeInfoFlag | TGChatBannedRightsInviteUsersFlag | TGChatBannedRightsPinMessagesFlag)) != 0;
+            self.isAdmin = concreteChat.admin_rights != nil;
             self.isCreator = concreteChat.flags & (1 << 0);
             self.isDeactivated = concreteChat.deactivated;
             if (concreteChat.flags & (1 << 6)) {
@@ -257,7 +257,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             else
                 self.flags &= ~TGConversationFlagIsForum;
 
-            self.everybodyCanAddMembers = channel.flags & (1 << 10);
+            self.everybodyCanAddMembers = channel.default_banned_rights != nil && (channel.default_banned_rights.flags & TGChatBannedRightsInviteUsersFlag) == 0;
             self.signaturesEnabled = channel.flags & (1 << 11);
             self.isMin = channel.flags & (1 << 12);
             self.canNotSetUsername = (channel.flags & (1 << 6)) == 0;

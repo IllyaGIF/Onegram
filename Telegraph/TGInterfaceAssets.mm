@@ -10,10 +10,10 @@
 #define TGStretchableImageInCenterWithName(s,t) { UIImage *rawImage = [UIImage imageNamed:s]; t = [rawImage stretchableImageWithLeftCapWidth:(int)((rawImage.size.width / 2)) topCapHeight:(int)((rawImage.size.height / 2))]; }
 
 static TG_SYNCHRONIZED_DEFINE(uidToColor) = PTHREAD_MUTEX_INITIALIZER;
-static std::map<int64_t, int> uidToColor;
+static std::map<int64_t, int> &uidToColor = *new std::map<int64_t, int>();
 
 static TG_SYNCHRONIZED_DEFINE(gidToColor) = PTHREAD_MUTEX_INITIALIZER;
-static std::map<int64_t, int> gidToColor;
+static std::map<int64_t, int> &gidToColor = *new std::map<int64_t, int>();
 
 @implementation TGInterfaceAssets
 

@@ -139,6 +139,8 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 - (void)performPhoneCall:(NSURL *)url;
 
 - (void)presentMainController;
+- (void)prepareInterfaceForAccountSwitch;
+- (void)startSessionAfterAccountSwitch:(bool)inheritSettings;
 
 - (void)presentLoginController:(bool)clearControllerStates animated:(bool)animated phoneNumber:(NSString *)phoneNumber phoneCode:(NSString *)phoneCode phoneCodeHash:(NSString *)phoneCodeHash codeSentToTelegram:(bool)codeSentToTelegram codeSentViaPhone:(bool)codeSentViaPhone profileFirstName:(NSString *)profileFirstName profileLastName:(NSString *)profileLastName resetAccountState:(TGResetAccountState *)resetAccountState termsOfService:(TGTermsOfService *)termsOfService;
 - (void)presentContentController:(UIViewController *)controller;

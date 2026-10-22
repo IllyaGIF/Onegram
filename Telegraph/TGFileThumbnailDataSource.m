@@ -216,6 +216,7 @@ static ASQueue *taskManagementQueue()
 - (id)loadDataAsyncWithUri:(NSString *)uri progress:(void (^)(float))progress partialCompletion:(void (^)(TGDataResource *resource))__unused partialCompletion completion:(void (^)(TGDataResource *))completion
 {
     TGMediaPreviewTask *previewTask = [[TGMediaPreviewTask alloc] init];
+    __weak TGMediaPreviewTask *weakPreviewTask = previewTask;
     
     [taskManagementQueue() dispatchOnQueue:^
     {
@@ -235,18 +236,13 @@ static ASQueue *taskManagementQueue()
         
         if ([TGFileThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
-            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-        }
-        else if (OGPlatformMediaDownloadsRequireUserAction())
-        {
-            if (completion != nil)
-                completion([TGFileThumbnailDataSource resultForUnavailableImage]);
+            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
         }
         else
         {
             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:@"file-thumbnail://?".length]];
             
-            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
+            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)] || ([args[@"cid"] longLongValue] != 0 && [args[@"mid"] intValue] != 0))
             {
                 static NSString *filesDirectory = nil;
                 static dispatch_once_t onceToken;
@@ -267,6 +263,7 @@ static ASQueue *taskManagementQueue()
                 NSString *temporaryThumbnailImagePath = [fileDirectory stringByAppendingPathComponent:@"file-thumb.jpg"];
                 
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
+                options[@"thumbnailContext"] = args;
                 TGMediaOriginInfo *originInfo = nil;
                 if (args[@"origin_info"] != nil)
                 {
@@ -282,13 +279,13 @@ static ASQueue *taskManagementQueue()
                 if (originInfo != nil)
                     options[@"originInfo"] = originInfo;
                 
-                [previewTask executeWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
+                [previewTask executeThumbnailWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
                 {
                     if (success)
                     {
                         dispatch_async([TGCache diskCacheQueue], ^
                         {
-                            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+                            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                         });
                     }
                     else
@@ -526,7 +523,7 @@ static ASQueue *taskManagementQueue()
                 }
             }
             
-            lowQualityThumbnail = true;
+            lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
         }
         
         if (image == nil)
@@ -541,7 +538,7 @@ static ASQueue *taskManagementQueue()
                     {
                         image = [[UIImage alloc] initWithData:imageData];
                         if (image != nil)
-                            lowQualityThumbnail = true;
+                            lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
                     }
                 }
             }
@@ -606,10 +603,7 @@ static ASQueue *taskManagementQueue()
         bool needsAverageColor = averageColor == nil;
         uint32_t averageColorValue = [averageColor intValue];
         
-        if (lowQualityThumbnail)
-            thumbnailImage = TGBlurredFileImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, isRounded ? 8 : 0);
-        else
-            thumbnailImage = TGLoadedFileImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, isRounded ? 8 : 0);
+        thumbnailImage = TGLoadedFileImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, isRounded ? 8 : 0);
         
         if (thumbnailImage != nil)
         {

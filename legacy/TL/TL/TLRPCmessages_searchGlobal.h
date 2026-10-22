@@ -6,13 +6,21 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
+@class TLInputChannel;
 @class TLInputPeer;
+@class TLMessagesFilter;
 @class TLmessages_Messages;
 
 @interface TLRPCmessages_searchGlobal : TLMetaRpc
 
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int32_t folder_id;
+@property (nonatomic, retain) TLInputChannel *community;
 @property (nonatomic, retain) NSString *q;
-@property (nonatomic) int32_t offset_date;
+@property (nonatomic, retain) TLMessagesFilter *filter;
+@property (nonatomic) int32_t min_date;
+@property (nonatomic) int32_t max_date;
+@property (nonatomic) int32_t offset_rate;
 @property (nonatomic, retain) TLInputPeer *offset_peer;
 @property (nonatomic) int32_t offset_id;
 @property (nonatomic) int32_t limit;

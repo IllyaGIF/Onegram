@@ -16,6 +16,7 @@
 
 NSString * const OGOnegramCoreDidChangeNotification = @"OGOnegramCoreDidChangeNotification";
 static NSString * const OGCoreModeKey = @"OGOnegramCoreMode";
+static NSString * const OGCorePreferredModeKey = @"OGOnegramCorePreferredMode";
 
 static NSMutableDictionary *OGWarpKeychainQuery(void)
 {
@@ -75,6 +76,7 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
 @interface OGOnegramCore () {
     NSCondition *_condition;
     OGOnegramCoreMode _mode;
+    OGOnegramCoreMode _preferredMode;
     OGOnegramCoreState _state;
     NSError *_lastError;
     AWGTunnel *_activeTunnel;
@@ -84,7 +86,11 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
     int _listener;
     uint16_t _socksPort;
     NSUInteger _clientCount;
+    BOOL _powerProbeRequested;
+    NSMutableSet *_webSocketConnections;
+    NSError *_webSocketError;
 }
+- (void)updateWebSocketStateLocked;
 @end
 
 @implementation OGOnegramCore
@@ -104,6 +110,7 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
     if (self) {
         _condition = [[NSCondition alloc] init];
         _listener = -1;
+        _webSocketConnections = [[NSMutableSet alloc] init];
         NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
         if (![defaults objectForKey:OGCoreModeKey]) {
             NSNumber *previousMode = [defaults objectForKey:@"OGOnegramProxyMode"];
@@ -113,8 +120,9 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
         }
         NSInteger stored = [defaults integerForKey:OGCoreModeKey];
         _mode = stored >= OGOnegramCoreModeNone && stored <= OGOnegramCoreModeDantePower ? stored : OGOnegramCoreModeNone;
-        _state = _mode == OGOnegramCoreModeNone ? OGOnegramCoreStateDisabled :
-            (_mode == OGOnegramCoreModeWebSocket ? OGOnegramCoreStateConnected : OGOnegramCoreStateConnecting);
+        NSInteger preferred = [defaults objectForKey:OGCorePreferredModeKey] != nil ? [defaults integerForKey:OGCorePreferredModeKey] : _mode;
+        _preferredMode = preferred > OGOnegramCoreModeNone && preferred <= OGOnegramCoreModeDantePower ? preferred : OGOnegramCoreModeWebSocket;
+        _state = _mode == OGOnegramCoreModeNone ? OGOnegramCoreStateDisabled : OGOnegramCoreStateConnecting;
         if (_mode == OGOnegramCoreModeDanteWARP || _mode == OGOnegramCoreModeDantePower) [self startListener];
         NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
         [center addObserver:self selector:@selector(powerSettingsChanged:) name:PowerSubscriptionsDidChangeNotification object:nil];
@@ -125,6 +133,7 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
 }
 
 - (OGOnegramCoreMode)mode { [_condition lock]; OGOnegramCoreMode value = _mode; [_condition unlock]; return value; }
+- (OGOnegramCoreMode)preferredMode { [_condition lock]; OGOnegramCoreMode value = _preferredMode; [_condition unlock]; return value; }
 - (OGOnegramCoreState)state { [_condition lock]; OGOnegramCoreState value = _state; [_condition unlock]; return value; }
 - (uint16_t)socksPort { [_condition lock]; uint16_t value = _socksPort; [_condition unlock]; return value; }
 - (NSError *)lastError { [_condition lock]; NSError *value = [[_lastError retain] autorelease]; [_condition unlock]; return value; }
@@ -153,11 +162,17 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
     _activeTunnel = nil;
     [_lastError release];
     _lastError = nil;
-    _state = mode == OGOnegramCoreModeNone ? OGOnegramCoreStateDisabled :
-        (mode == OGOnegramCoreModeWebSocket ? OGOnegramCoreStateConnected : OGOnegramCoreStateConnecting);
+    [_webSocketError release];
+    _webSocketError = nil;
+    _state = mode == OGOnegramCoreModeNone ? OGOnegramCoreStateDisabled : OGOnegramCoreStateConnecting;
+    if (mode == OGOnegramCoreModeWebSocket) [self updateWebSocketStateLocked];
     if (mode == OGOnegramCoreModeDanteWARP || mode == OGOnegramCoreModeDantePower) [self startListener];
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults setInteger:mode forKey:OGCoreModeKey];
+    if (mode != OGOnegramCoreModeNone) {
+        _preferredMode = mode;
+        [defaults setInteger:mode forKey:OGCorePreferredModeKey];
+    }
     [defaults setBool:mode == OGOnegramCoreModeWebSocket forKey:@"TGOnegramWebSocketEnabled"];
     [defaults synchronize];
     [_condition broadcast];
@@ -167,6 +182,54 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
 
 - (void)reconnect { [self setMode:self.mode]; }
 
+- (void)updateWebSocketStateLocked
+{
+    if (_mode != OGOnegramCoreModeWebSocket) return;
+    [_lastError release];
+    if (_webSocketConnections.count != 0) {
+        _state = OGOnegramCoreStateConnected;
+        _lastError = nil;
+    } else if (_webSocketError != nil) {
+        _state = OGOnegramCoreStateFailed;
+        _lastError = [_webSocketError retain];
+    } else {
+        _state = OGOnegramCoreStateConnecting;
+        _lastError = nil;
+    }
+}
+
+- (void)webSocketConnectionOpened:(id)connection
+{
+    if (connection == nil) return;
+    [_condition lock];
+    [_webSocketConnections addObject:connection];
+    [_webSocketError release];
+    _webSocketError = nil;
+    [self updateWebSocketStateLocked];
+    [_condition unlock];
+    [self notifyChange];
+}
+
+- (void)webSocketConnectionClosed:(id)connection
+{
+    if (connection == nil) return;
+    [_condition lock];
+    [_webSocketConnections removeObject:connection];
+    [self updateWebSocketStateLocked];
+    [_condition unlock];
+    [self notifyChange];
+}
+
+- (void)webSocketUnavailableWithError:(NSError *)error
+{
+    [_condition lock];
+    [_webSocketError release];
+    _webSocketError = [error retain];
+    [self updateWebSocketStateLocked];
+    [_condition unlock];
+    [self notifyChange];
+}
+
 - (void)powerSettingsChanged:(NSNotification *)notification {
     if (self.mode == OGOnegramCoreModeDantePower) [self reconnect];
 }
@@ -174,6 +237,10 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
 - (void)foreground:(NSNotification *)notification
 {
     [_condition lock];
+    if (_mode == OGOnegramCoreModeDantePower) {
+        _powerProbeRequested = YES;
+        [_condition broadcast];
+    }
     if (_mode == OGOnegramCoreModeDanteWARP &&
         ((_activeTunnel && (_activeTunnel.handshakeAge >= 110 || _activeTunnel.state != AWGTunnelStateConnected)) || _state == OGOnegramCoreStateFailed)) {
         _generation++;
@@ -279,6 +346,7 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
     [self startListener];
     NSError *error = _socksPort ? nil : [[_lastError retain] autorelease];
     _state = OGOnegramCoreStateConnecting;
+    _powerProbeRequested = NO;
     [_condition unlock];
     [self notifyChange];
     OGPowerTunnel *power = [[OGPowerTunnel alloc] init];
@@ -307,7 +375,8 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
     NSDate *nextProbe = [NSDate dateWithTimeIntervalSinceNow:30];
     while (connected && generation == _generation && _mode == OGOnegramCoreModeDantePower && power.connected) {
         [_condition waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
-        if ([nextProbe timeIntervalSinceNow] <= 0 && generation == _generation) {
+        if ((_powerProbeRequested || [nextProbe timeIntervalSinceNow] <= 0) && generation == _generation) {
+            _powerProbeRequested = NO;
             [_condition unlock];
             [power checkHealth];
             nextProbe = [NSDate dateWithTimeIntervalSinceNow:30];
@@ -328,8 +397,10 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
     [power release];
     [self notifyChange];
     [_condition lock];
-    if (generation == _generation && _mode == OGOnegramCoreModeDantePower)
-        [_condition waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:10]];
+    NSDate *retryAt = [NSDate dateWithTimeIntervalSinceNow:10];
+    while (generation == _generation && _mode == OGOnegramCoreModeDantePower && !_powerProbeRequested && [retryAt timeIntervalSinceNow] > 0)
+        [_condition waitUntilDate:retryAt];
+    _powerProbeRequested = NO;
     [_condition unlock];
 }
 
@@ -390,6 +461,7 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
         }
         [_condition unlock];
         [self notifyChange];
+        if (tunnel) attempts = 0;
         [_condition lock];
         while (tunnel && generation == _generation && _mode == OGOnegramCoreModeDanteWARP &&
                tunnel.state == AWGTunnelStateConnected) {
@@ -408,8 +480,11 @@ static BOOL OGSaveWarpConfig(AWGConfig *config, NSError **error)
         [_condition lock];
         if (generation == _generation && _mode == OGOnegramCoreModeDanteWARP) {
             attempts++;
-            [_condition waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:MIN(30, 2 * MIN(attempts, 15))]];
-        } else attempts = 0;
+            NSDate *retryAt = [NSDate dateWithTimeIntervalSinceNow:MIN(30, 2 * MIN(attempts, 15))];
+            while (generation == _generation && _mode == OGOnegramCoreModeDanteWARP && [retryAt timeIntervalSinceNow] > 0)
+                [_condition waitUntilDate:retryAt];
+        }
+        if (generation != _generation || _mode != OGOnegramCoreModeDanteWARP) attempts = 0;
         [_condition unlock];
         [iteration drain];
     }

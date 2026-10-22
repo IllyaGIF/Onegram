@@ -1,4 +1,5 @@
 #import "TGCameraPhotoPreviewController.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "LegacyComponentsInternal.h"
 
@@ -24,6 +25,7 @@
 #import "TGMediaAssetsLibrary.h"
 #import "UIImage+TGMediaEditableItem.h"
 #import "TGPaintingData.h"
+#import "TGPainting.h"
 
 #import "TGPhotoCaptionInputMixin.h"
 
@@ -313,12 +315,11 @@
             [strongSelf presentPhotoEditorWithTab:tab];
     };
     
-    TGPhotoEditorTab tabs = TGPhotoEditorCropTab;    
-    if (iosMajorVersion() >= 7)
-    {
+    TGPhotoEditorTab tabs = TGPhotoEditorCropTab;
+    if ([TGPainting isSupported])
         tabs |= TGPhotoEditorPaintTab;
+    if (iosMajorVersion() >= 7)
         tabs |= TGPhotoEditorToolsTab;
-    }
     
     if (self.hasTimer)
         tabs |= TGPhotoEditorTimerTab;
@@ -544,16 +545,18 @@
 
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures
 {
-    if (self.childViewControllers.count > 0)
-        return [self.childViewControllers.lastObject preferredScreenEdgesDeferringSystemGestures];
+    NSArray *children = OGPlatformChildViewControllers(self);
+    if (children.count > 0)
+        return [[children lastObject] preferredScreenEdgesDeferringSystemGestures];
     
     return [super preferredScreenEdgesDeferringSystemGestures];
 }
 
 - (BOOL)prefersStatusBarHidden
 {
-    if (self.childViewControllers.count > 0)
-        return [self.childViewControllers.lastObject prefersStatusBarHidden];
+    NSArray *children = OGPlatformChildViewControllers(self);
+    if (children.count > 0)
+        return [[children lastObject] prefersStatusBarHidden];
     
     return [super prefersStatusBarHidden];
 }

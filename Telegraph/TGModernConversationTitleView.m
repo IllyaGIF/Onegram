@@ -845,6 +845,8 @@ static UIView *findNavigationBar(UIView *view)
     CGFloat titleLandscapeOffset = 0.0f;
     CGFloat statusLandscapeOffset = 0.0f;
     
+    CGFloat titleWithoutStatusPortraitShift = 8.0f;
+    
     if (iosMajorVersion() >= 7)
     {
         modalProgressPortraitOffset = 1.0f;
@@ -873,6 +875,8 @@ static UIView *findNavigationBar(UIView *view)
         
         titleLandscapeOffset = 1.0f;
         statusLandscapeOffset = 2.0f;
+        
+        titleWithoutStatusPortraitShift = 6.0f;
     }
     
     if ([TGPresentation brandedIOS6Style] && !TGIsPad())
@@ -880,6 +884,7 @@ static UIView *findNavigationBar(UIView *view)
         OGConversationAppearance *appearance = [TGPresentation brandedIOS6ConversationAppearance];
         titlePortraitOffset = appearance.titlePortraitOffset;
         statusPortraitOffset = appearance.subtitlePortraitOffset;
+        titleWithoutStatusPortraitShift = 2.0f;
     }
     
     CGRect bounds = self.bounds;
@@ -958,7 +963,7 @@ static UIView *findNavigationBar(UIView *view)
             
             CGPoint titleOrigin = CGPointMake(titleHorizontalAdjustment + CGFloor((bounds.size.width - titleTotalWidth) / 2.0f), -17.0f + titlePortraitOffset);
             if (!_showStatus) {
-                titleOrigin.y += [TGPresentation brandedIOS6Style] ? 2.0f : 8.0f;
+                titleOrigin.y += titleWithoutStatusPortraitShift;
             }
             
             for (TGModernConversationTitleIcon *icon in _icons)

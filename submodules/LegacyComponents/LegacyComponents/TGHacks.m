@@ -2,7 +2,6 @@
 
 #import "LegacyComponentsInternal.h"
 #import "TGAnimationBlockDelegate.h"
-#import "TGTransitionLayout.h"
 
 #import "FreedomUIKit.h"
 
@@ -314,16 +313,38 @@ id TGWeakObjectHashTable(void)
     return [[TGWeakObjectSet alloc] init];
 }
 
-static void TGInstallCompatibilityInstanceMethod(Class cls, SEL selector, SEL fallbackSelector)
+static void TGInstallCompatibilityInstanceMethodFromClass(Class cls, SEL selector, Class sourceClass, SEL fallbackSelector)
 {
-    if (class_getInstanceMethod(cls, selector) != NULL)
+    if (cls == Nil || class_getInstanceMethod(cls, selector) != NULL)
         return;
     
-    Method fallbackMethod = class_getInstanceMethod(cls, fallbackSelector);
+    Method fallbackMethod = class_getInstanceMethod(sourceClass, fallbackSelector);
     if (fallbackMethod != NULL)
     {
         class_addMethod(cls, selector, method_getImplementation(fallbackMethod), method_getTypeEncoding(fallbackMethod));
     }
+}
+
+static void TGInstallCompatibilityInstanceMethod(Class cls, SEL selector, SEL fallbackSelector)
+{
+    TGInstallCompatibilityInstanceMethodFromClass(cls, selector, cls, fallbackSelector);
+}
+
+static void TGInstallTextViewCompatibility(Class cls)
+{
+    Class textViewClass = [UITextView class];
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(layoutManager), textViewClass, @selector(tg_ios6_layoutManager));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(attributedText), textViewClass, @selector(tg_ios5_attributedText));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setAttributedText:), textViewClass, @selector(tg_ios5_setAttributedText:));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(typingAttributes), textViewClass, @selector(tg_ios5_typingAttributes));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setTypingAttributes:), textViewClass, @selector(tg_ios5_setTypingAttributes:));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(textContainer), textViewClass, @selector(tg_ios6_textContainer));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(textStorage), textViewClass, @selector(tg_ios6_textStorage));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(textContainerInset), textViewClass, @selector(tg_ios6_textContainerInset));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setTextContainerInset:), textViewClass, @selector(tg_ios6_setTextContainerInset:));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(isSelectable), textViewClass, @selector(tg_ios6_isSelectable));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(setSelectable:), textViewClass, @selector(tg_ios6_setSelectable:));
+    TGInstallCompatibilityInstanceMethodFromClass(cls, @selector(initWithFrame:textContainer:), textViewClass, @selector(tg_ios6_initWithFrame:textContainer:));
 }
 
 static void TGInstallCompatibilityClassMethod(Class cls, SEL selector, SEL fallbackSelector)
@@ -820,10 +841,6 @@ static TGIOS4ResizableAxis TGIOS4ResizableAxisMake(CGFloat leading, CGFloat trai
         TGInstallCompatibilityInstanceMethod([UITextField class], @selector(attributedPlaceholder), @selector(tg_ios5_attributedPlaceholder));
         TGInstallCompatibilityInstanceMethod([UITextField class], @selector(setAttributedPlaceholder:), @selector(tg_ios5_setAttributedPlaceholder:));
     
-        TGInstallCompatibilityInstanceMethod([PSUICollectionView class], @selector(startInteractiveTransitionToCollectionViewLayout:completion:), @selector(tg_ios6_startInteractiveTransitionToCollectionViewLayout:completion:));
-        TGInstallCompatibilityInstanceMethod([PSUICollectionView class], @selector(finishInteractiveTransition), @selector(tg_ios6_finishInteractiveTransition));
-        TGInstallCompatibilityInstanceMethod([PSUICollectionView class], @selector(cancelInteractiveTransition), @selector(tg_ios6_cancelInteractiveTransition));
-    
         TGInstallCompatibilityInstanceMethod([UIScrollView class], @selector(setContentInsetAdjustmentBehavior:), @selector(tg_ios6_setContentInsetAdjustmentBehavior:));
         TGInstallCompatibilityInstanceMethod([UIScrollView class], @selector(contentInsetAdjustmentBehavior), @selector(tg_ios6_contentInsetAdjustmentBehavior));
 
@@ -856,18 +873,10 @@ static TGIOS4ResizableAxis TGIOS4ResizableAxisMake(CGFloat leading, CGFloat trai
         TGInstallCompatibilityInstanceMethod([NSData class], @selector(initWithBase64Encoding:), @selector(tg_ios6_initWithBase64Encoding:));
         TGInstallCompatibilityInstanceMethod([NSData class], @selector(base64Encoding), @selector(tg_ios6_base64Encoding));
     
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(layoutManager), @selector(tg_ios6_layoutManager));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(attributedText), @selector(tg_ios5_attributedText));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(setAttributedText:), @selector(tg_ios5_setAttributedText:));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(typingAttributes), @selector(tg_ios5_typingAttributes));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(setTypingAttributes:), @selector(tg_ios5_setTypingAttributes:));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(textContainer), @selector(tg_ios6_textContainer));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(textStorage), @selector(tg_ios6_textStorage));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(textContainerInset), @selector(tg_ios6_textContainerInset));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(setTextContainerInset:), @selector(tg_ios6_setTextContainerInset:));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(isSelectable), @selector(tg_ios6_isSelectable));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(setSelectable:), @selector(tg_ios6_setSelectable:));
-        TGInstallCompatibilityInstanceMethod([UITextView class], @selector(initWithFrame:textContainer:), @selector(tg_ios6_initWithFrame:textContainer:));
+        TGInstallTextViewCompatibility([UITextView class]);
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+        TGInstallTextViewCompatibility(NSClassFromString(@"_UICompatibilityTextView"));
+#endif
     }
 }
 
@@ -1487,90 +1496,6 @@ CGFloat TGAnimationSpeedFactor()
 - (CGRect)tg_ios6_boundingRectWithSize:(CGSize)size options:(NSStringDrawingOptions)options attributes:(NSDictionary *)attributes context:(id)context
 {
     return [self.string boundingRectWithSize:size options:options attributes:attributes context:context];
-}
-
-@end
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
-@implementation UICollectionViewTransitionLayout
-
-@synthesize currentLayout = _currentLayout;
-@synthesize nextLayout = _nextLayout;
-@synthesize transitionProgress = _transitionProgress;
-
-- (instancetype)initWithCurrentLayout:(PSUICollectionViewLayout *)currentLayout nextLayout:(PSUICollectionViewLayout *)newLayout
-{
-    self = [super init];
-    
-    if (self != nil)
-    {
-        _currentLayout = currentLayout;
-        _nextLayout = newLayout;
-    }
-    
-    return self;
-}
-
-@end
-#endif
-
-@protocol TGCollectionViewTransitionLayoutProviding <NSObject>
-- (UICollectionViewTransitionLayout *)collectionView:(PSUICollectionView *)collectionView transitionLayoutForOldLayout:(PSUICollectionViewLayout *)fromLayout newLayout:(PSUICollectionViewLayout *)toLayout;
-@end
-
-static char TGCollectionViewLegacyTransitionStateKey;
-
-@interface PSUICollectionView (LegacyComponentsTransitionCompatibility)
-- (void)tg_ios6_completeInteractiveTransition:(bool)finish;
-@end
-
-@implementation PSUICollectionView (LegacyComponentsTransitionCompatibility)
-
-- (UICollectionViewTransitionLayout *)tg_ios6_startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion
-{
-    UICollectionViewTransitionLayout *transitionLayout = nil;
-    id<TGCollectionViewTransitionLayoutProviding> delegate = (id<TGCollectionViewTransitionLayoutProviding>)self.delegate;
-    if ([delegate respondsToSelector:@selector(collectionView:transitionLayoutForOldLayout:newLayout:)])
-        transitionLayout = [delegate collectionView:self transitionLayoutForOldLayout:self.collectionViewLayout newLayout:layout];
-    if (transitionLayout == nil)
-        transitionLayout = [[TGTransitionLayout alloc] initWithCurrentLayout:self.collectionViewLayout nextLayout:layout];
-    NSMutableDictionary *state = [[NSMutableDictionary alloc] init];
-    state[@"layout"] = transitionLayout;
-    state[@"contentOffset"] = [NSValue valueWithCGPoint:self.contentOffset];
-    if (completion != nil)
-        state[@"completion"] = [completion copy];
-    objc_setAssociatedObject(self, &TGCollectionViewLegacyTransitionStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if ([transitionLayout isKindOfClass:[TGTransitionLayout class]])
-        [(TGTransitionLayout *)transitionLayout prepareForLegacyTransitionInCollectionView:self];
-    else
-        [self setCollectionViewLayout:transitionLayout animated:false];
-    return transitionLayout;
-}
-
-- (void)tg_ios6_finishInteractiveTransition
-{
-    [self tg_ios6_completeInteractiveTransition:true];
-}
-
-- (void)tg_ios6_cancelInteractiveTransition
-{
-    [self tg_ios6_completeInteractiveTransition:false];
-}
-
-- (void)tg_ios6_completeInteractiveTransition:(bool)finish
-{
-    NSDictionary *state = objc_getAssociatedObject(self, &TGCollectionViewLegacyTransitionStateKey);
-    if (state == nil)
-        return;
-    objc_setAssociatedObject(self, &TGCollectionViewLegacyTransitionStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    UICollectionViewTransitionLayout *transitionLayout = state[@"layout"];
-    transitionLayout.transitionProgress = finish ? 1.0f : 0.0f;
-    [self setCollectionViewLayout:finish ? transitionLayout.nextLayout : transitionLayout.currentLayout animated:false];
-    if (!finish)
-        self.contentOffset = [state[@"contentOffset"] CGPointValue];
-    UICollectionViewLayoutInteractiveTransitionCompletion completion = state[@"completion"];
-    if (completion != nil)
-        completion(true, finish);
 }
 
 @end

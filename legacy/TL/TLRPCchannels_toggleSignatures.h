@@ -11,8 +11,8 @@
 
 @interface TLRPCchannels_toggleSignatures : TLMetaRpc
 
+@property (nonatomic) int32_t flags;
 @property (nonatomic, retain) TLInputChannel *channel;
-@property (nonatomic) bool enabled;
 
 - (Class)responseClass;
 

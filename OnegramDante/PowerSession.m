@@ -44,19 +44,6 @@ typedef struct {
     PWVision vision;
 } PWLink;
 
-static volatile unsigned gPWBoundIf = 0;
-
-void PWSetBoundInterface(unsigned ifindex) { gPWBoundIf = ifindex; }
-
-void PWBindSocket(int fd) {
-    unsigned idx = gPWBoundIf;
-    if (!idx || fd < 0) return;
-    
-    if (setsockopt(fd, IPPROTO_IP, 25, &idx, sizeof(idx)) != 0) {
-        DLog(@"[power] IP_BOUND_IF %u: %s", idx, strerror(errno));
-    }
-}
-
 static int PWConnectTCP(NSString *host, uint16_t port, NSTimeInterval timeout) {
     struct addrinfo hints, *addresses = NULL;
     memset(&hints, 0, sizeof(hints));
@@ -73,7 +60,6 @@ static int PWConnectTCP(NSString *host, uint16_t port, NSTimeInterval timeout) {
         int fd = socket(address->ai_family, address->ai_socktype, address->ai_protocol);
         if (fd < 0) continue;
         if (OGDanteSocketPrepare(fd) < 0 || fd >= FD_SETSIZE) { close(fd); continue; }
-        PWBindSocket(fd);
         int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) { close(fd); continue; }
         int yes = 1;
@@ -235,10 +221,10 @@ static ssize_t PWLinkReadRaw(PWLink *link, uint8_t *bytes, size_t capacity);
 #define PW_AGAIN (-2)
 
 static ssize_t PWLinkRead(PWLink *link, uint8_t *bytes, size_t capacity) {
-    
     if (link->vision.directIn) {
-        ssize_t n = recv(link->fd, bytes, capacity, 0);
-        return n;
+        if (link->kind == 2 && pwRealityPending(&link->real)) return pwRealityRead(&link->real, bytes, capacity);
+        if (link->ssl && SSL_pending(link->ssl) > 0) return PWLinkReadRaw(link, bytes, capacity);
+        return recv(link->fd, bytes, capacity, 0);
     }
     for (;;) {
         ssize_t n = PWLinkReadRaw(link, bytes, capacity);
@@ -623,20 +609,11 @@ static BOOL PWDecodeHex(NSString *text, uint8_t *out, size_t outLen) {
     return PWProbeOK;
 }
 
-- (void)relayClient:(int)clientFd host:(NSString *)host port:(uint16_t)port {
-    if (![self relayClient:clientFd host:host port:port okReply:nil initialData:nil]) {
-        close(clientFd);
-    }
-}
-
 - (BOOL)relayClient:(int)clientFd host:(NSString *)host port:(uint16_t)port
             okReply:(NSData *)okReply initialData:(NSData *)initialData {
     PWLink link;
     PWProbeResult failure;
-    if (![self openLink:&link timeout:10.0 failure:&failure]) {
-        
-        return NO;
-    }
+    if (![self openLink:&link timeout:10.0 failure:&failure]) return NO;
 
     if (okReply.length) {
         const uint8_t *reply = okReply.bytes;
@@ -681,12 +658,10 @@ static BOOL PWDecodeHex(NSString *text, uint8_t *out, size_t outLen) {
         FD_SET(clientFd, &r);
         FD_SET(link.fd, &r);
         int maxFd = clientFd > link.fd ? clientFd : link.fd;
-        struct timeval tv = { 60, 0 };
         BOOL pending = (link.ssl && SSL_pending(link.ssl) > 0) || (link.kind == 2 && pwRealityPending(&link.real) > 0);
-        int ready = pending ? 1 : select(maxFd + 1, &r, NULL, NULL, &tv);
+        int ready = pending ? 1 : select(maxFd + 1, &r, NULL, NULL, NULL);
         if (pending) { FD_ZERO(&r); FD_SET(link.fd, &r); }
         if (ready < 0) { if (errno == EINTR) continue; break; }
-        if (ready == 0) break;
 
         if (FD_ISSET(clientFd, &r)) {
             ssize_t n = recv(clientFd, buffer, sizeof(buffer), 0);
@@ -725,70 +700,6 @@ static BOOL PWDecodeHex(NSString *text, uint8_t *out, size_t outLen) {
     PWLinkClose(&link);
     close(clientFd);
     return YES;
-}
-
-- (NSData *)resolveTCPDNSQuery:(NSData *)query
-                  resolverHost:(NSString *)host
-                          port:(uint16_t)port
-                       timeout:(NSTimeInterval)timeout {
-    if (query.length < 12 || query.length > 65000) return nil;
-
-    PWLink link;
-    PWProbeResult failure;
-    if (![self openLink:&link timeout:timeout failure:&failure]) return nil;
-
-    uint8_t lengthPrefix[2] = { (uint8_t)(query.length >> 8), (uint8_t)query.length };
-    NSMutableData *payload = [NSMutableData dataWithBytes:lengthPrefix length:2];
-    [payload appendData:query];
-    if (![self sendHeaderOn:&link host:host port:port
-                    payload:payload.bytes length:payload.length]) {
-        PWLinkClose(&link);
-        return nil;
-    }
-
-    struct timeval tv = { (time_t)timeout, 0 };
-    setsockopt(link.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    uint8_t buffer[4096];
-    size_t have = 0;
-    size_t headerLength = 0;
-    size_t answerLength = 0;
-    BOOL headerParsed = NO;
-    NSTimeInterval deadline = [NSDate timeIntervalSinceReferenceDate] + timeout;
-    while ([NSDate timeIntervalSinceReferenceDate] < deadline) {
-        if (have >= sizeof(buffer)) break;
-        ssize_t n = PWLinkRead(&link, buffer + have, sizeof(buffer) - have);
-        if (n == PW_AGAIN) continue;
-        if (n <= 0) break;
-        have += (size_t)n;
-        if (!headerParsed) {
-            PWVLESSStatus parsed = PWParseResponse(buffer, have, &headerLength);
-            if (parsed == PWVLESSNeedMoreData) continue;
-            if (parsed != PWVLESSOk) { PWLinkClose(&link); return nil; }
-            headerParsed = YES;
-            memmove(buffer, buffer + headerLength, have - headerLength);
-            have -= headerLength;
-            have = PWLinkAfterVLESSHeader(&link, buffer, have);
-            headerLength = 0;
-        }
-        if (have <= headerLength + 2) continue;
-        const uint8_t *body = buffer + headerLength;
-        size_t bodyLength = have - headerLength;
-        if (!answerLength) {
-            answerLength = ((size_t)body[0] << 8) | body[1];
-            if (answerLength < 12 || answerLength > sizeof(buffer) - 2) {
-                PWLinkClose(&link);
-                return nil;
-            }
-        }
-        if (bodyLength >= 2 + answerLength) {
-            NSData *answer = [NSData dataWithBytes:body + 2 length:answerLength];
-            PWLinkClose(&link);
-            return answer;
-        }
-    }
-    PWLinkClose(&link);
-    return nil;
 }
 
 @end

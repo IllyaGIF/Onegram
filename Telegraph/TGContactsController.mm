@@ -3073,7 +3073,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }
 }
 
-- (void)messageComposeViewController:(id)controller didFinishWithResult:(NSInteger)result
+- (void)messageComposeViewController:(id)__unused controller didFinishWithResult:(NSInteger)result
 {
     _messageComposer = nil;
     
@@ -3088,15 +3088,6 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }
     else if (result == OGPlatformMessageComposeResultSent)
     {
-        @try
-        {
-            static int inviteAction = 0;
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:OGPlatformTextMessageComposerBody(controller), @"text", OGPlatformTextMessageComposerRecipients(controller), @"phones", nil] watcher:TGTelegraphInstance];
-        }
-        @catch (NSException *exception)
-        {
-        }
-        
         if ((_contactsMode & TGContactsModeModalInviteWithBack) == TGContactsModeModalInviteWithBack)
         {
             [self.navigationController popViewControllerAnimated:false];

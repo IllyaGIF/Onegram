@@ -6,16 +6,16 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
+@class TLChatBannedRights;
 @class TLInputChannel;
-@class TLInputUser;
-@class TLChannelBannedRights;
+@class TLInputPeer;
 @class TLUpdates;
 
 @interface TLRPCchannels_editBanned : TLMetaRpc
 
 @property (nonatomic, retain) TLInputChannel *channel;
-@property (nonatomic, retain) TLInputUser *user_id;
-@property (nonatomic, retain) TLChannelBannedRights *banned_rights;
+@property (nonatomic, retain) TLInputPeer *participant;
+@property (nonatomic, retain) TLChatBannedRights *banned_rights;
 
 - (Class)responseClass;
 

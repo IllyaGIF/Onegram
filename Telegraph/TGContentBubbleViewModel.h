@@ -23,6 +23,7 @@
 @class TGMessageViewCountContentProperty;
 @class TGMessageViewsViewModel;
 @class TGModernLabelViewModel;
+@class TGMessageReactionsModel;
 
 @class TGPresentation;
 
@@ -44,7 +45,6 @@ extern bool debugShowMessageIds;
     
     TGModernDateViewModel *_dateModel;
     TGModernLabelViewModel *_editedLabelModel;
-    TGModernLabelViewModel *_reactionLabelModel;
     TGModernClockProgressViewModel *_progressModel;
     TGModernImageViewModel *_checkFirstModel;
     TGModernImageViewModel *_checkSecondModel;
@@ -56,7 +56,7 @@ extern bool debugShowMessageIds;
     int _deliveryState;
     bool _read;
     int32_t _date;
-    NSString *_reactionSummary;
+    TGMessageReactionsModel *_reactionsModel;
     bool _byAdmin;
     bool _savedMessage;
     
@@ -96,8 +96,9 @@ extern bool debugShowMessageIds;
 
 - (void)layoutContentForHeaderHeight:(CGFloat)headerHeight;
 - (void)layoutContentForHeaderHeight:(CGFloat)headerHeight containerSize:(CGSize)containerSize;
+- (bool)usesInlineMessageLayout;
 - (CGSize)contentSizeForContainerSize:(CGSize)containerSize needsContentsUpdate:(bool *)needsContentsUpdate infoWidth:(CGFloat)infoWidth;
-- (bool)brandedReactionsShareTimeRow;
+- (bool)reactionsShareTimeRow;
 
 + (TGReplyHeaderModel *)replyHeaderModelFromMessage:(TGMessage *)replyHeader peer:(id)peer incoming:(bool)incoming system:(bool)system presentation:(TGPresentation *)presentation;
 

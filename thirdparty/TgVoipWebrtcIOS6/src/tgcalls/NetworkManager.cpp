@@ -5,6 +5,7 @@
 #include "Message.h"
 #include "rtc_base/logging.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -21,6 +22,9 @@
 #include "Ios6DiagnosticLog.h"
 
 namespace tgcalls {
+
+static const double kIos6ConnectTimeoutMs = 20000.0;
+static const double kIos6IceCheckWindowMs = 7000.0;
 
 static double Ios6LatencyNowMs() {
     struct timeval tv;
@@ -166,6 +170,7 @@ void NetworkManager::ios56ScheduleTurnMaintenance() {
     uint32_t delaySeconds = lifetime / 3;
     if (delaySeconds < 15) delaySeconds = 15;
     if (delaySeconds > 30) delaySeconds = 30;
+    if (_ios6Relay && _ios6Relay->isReflector()) delaySeconds = 10;
 
     const int64_t ns = (int64_t)delaySeconds * 1000000000LL;
     const std::weak_ptr<NetworkManager> weak(shared_from_this());
@@ -192,6 +197,15 @@ void NetworkManager::ios56ScheduleTurnMaintenance() {
 }
 
 void NetworkManager::ios56PerformTurnMaintenance() {
+    if (_ios6Relay && _ios6Relay->isReflector()) {
+        std::string error;
+        if (!_ios6Relay->sendHello(&error)) {
+            syslog(LOG_NOTICE, "IOS6WEBRTC reflector.keepalive.fail error=%s", error.c_str());
+        }
+        ios56ScheduleTurnMaintenance();
+        return;
+    }
+
     if (_ios6TurnFd < 0 ||
         _ios6TurnRealm.empty() ||
         _ios6TurnNonce.empty()) {
@@ -202,7 +216,7 @@ void NetworkManager::ios56PerformTurnMaintenance() {
 
     std::string refreshError;
     const bool refreshSent = Ios6TurnRefreshAllocationNoWait(
-        _ios6TurnFd,
+        *_ios6TurnSocket,
         _ios6TurnServer,
         _ios6TurnRealm,
         _ios6TurnNonce,
@@ -217,7 +231,7 @@ void NetworkManager::ios56PerformTurnMaintenance() {
         !_ios6SelectedPeerHost.empty() &&
         _ios6SelectedPeerPort != 0) {
         permissionSent = Ios6TurnRefreshPermissionNoWait(
-            _ios6TurnFd,
+            *_ios6TurnSocket,
             _ios6TurnServer,
             _ios6TurnRealm,
             _ios6TurnNonce,
@@ -293,8 +307,8 @@ void NetworkManager::setIos6DtlsParameters(
                     );
 
                     const bool sent =
-                        Ios6TurnSendData(
-                            _ios6TurnFd,
+                        Ios6RelaySendData(
+                            *_ios6Relay,
                             _ios6SelectedPeerHost,
                             _ios6SelectedPeerPort,
                             data,
@@ -505,8 +519,8 @@ void NetworkManager::ios56StartTransportReceiver() {
 
     _ios6ReceiverStarted = true;
 
-    const int fd =
-        _ios6TurnFd;
+    const std::shared_ptr<Ios6RelayConnection> connection = _ios6Relay;
+    const int fd = connection->socket().descriptor();
 
     const std::string selectedPeerHost =
         _ios6SelectedPeerHost;
@@ -557,9 +571,9 @@ void NetworkManager::ios56StartTransportReceiver() {
                     break;
                 }
 
-                Ios6TurnReceiveResult received =
-                    Ios6TurnReceivePacket(
-                        fd,
+                Ios6RelayReceiveResult received =
+                    Ios6RelayReceivePacket(
+                        *connection,
                         selectedPeerHost,
                         selectedPeerPort,
                         localUfrag,
@@ -585,7 +599,7 @@ void NetworkManager::ios56StartTransportReceiver() {
                 }
 
                 if (received.kind ==
-                    Ios6TurnReceiveResult::KindInnerStun) {
+                    Ios6RelayReceiveResult::KindInnerStun) {
 
                     syslog(
                         LOG_NOTICE,
@@ -599,7 +613,7 @@ void NetworkManager::ios56StartTransportReceiver() {
                 }
 
                 if (received.kind !=
-                        Ios6TurnReceiveResult::KindTransport ||
+                        Ios6RelayReceiveResult::KindTransport ||
                     received.data.empty()) {
 
                     continue;
@@ -914,112 +928,15 @@ NetworkManager::~NetworkManager() {
             (unsigned int)_ios6TurnRelayPort
         );
 
-        shutdown(_ios6TurnFd, SHUT_RDWR);
-        close(_ios6TurnFd);
+        _ios6TurnSocket->stop();
+        _ios6TurnSocket.reset();
         _ios6TurnFd = -1;
     }
 }
 
 void NetworkManager::start() {
-    for (size_t i = 0; i < _rtcServers.size(); ++i) {
-        const RtcServer &server = _rtcServers[i];
-
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC turn.server index=%lu id=%u host=%s port=%u login=%s passLen=%lu turn=%d tcp=%d",
-            (unsigned long)i,
-            (unsigned int)server.id,
-            server.host.c_str(),
-            (unsigned int)server.port,
-            server.login.c_str(),
-            (unsigned long)server.password.size(),
-            server.isTurn ? 1 : 0,
-            server.isTcp ? 1 : 0
-        );
-
-        if (!server.isTurn ||
-            server.isTcp ||
-            server.login == "reflector") {
-            continue;
-        }
-
-        int liveTurnFd = -1;
-        Ios6TurnProbeResult probe;
-
-        for (int fullAttempt = 0;
-             fullAttempt < 3;
-             ++fullAttempt) {
-            liveTurnFd = -1;
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.fullAttempt.begin attempt=%d host=%s port=%u",
-                fullAttempt + 1,
-                server.host.c_str(),
-                (unsigned int)server.port
-            );
-
-            probe =
-                Ios6TurnAllocateProbe(
-                    server,
-                    true,
-                    &liveTurnFd
-                );
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.fullAttempt.result attempt=%d ok=%d fd=%d relay=%s:%u error=%s",
-                fullAttempt + 1,
-                probe.ok ? 1 : 0,
-                liveTurnFd,
-                probe.relayHost.c_str(),
-                (unsigned int)probe.relayPort,
-                probe.error.c_str()
-            );
-
-            if (probe.ok &&
-                liveTurnFd >= 0) {
-                break;
-            }
-        }
-
-        if (probe.ok &&
-            liveTurnFd >= 0) {
-            _ios6TurnFd = liveTurnFd;
-            _ios6TurnServer = server;
-            _ios6TurnRealm = probe.realm;
-            _ios6TurnNonce = probe.nonce;
-            _ios6TurnRelayHost = probe.relayHost;
-            _ios6TurnRelayPort = probe.relayPort;
-            _ios6TurnLifetimeSeconds =
-                probe.lifetimeSeconds != 0
-                    ? probe.lifetimeSeconds
-                    : 60;
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.live.ready fd=%d relay=%s:%u",
-                _ios6TurnFd,
-                _ios6TurnRelayHost.c_str(),
-                (unsigned int)_ios6TurnRelayPort
-            );
-
-            break;
-        }
-    }
-
-    if (_ios6TurnFd >= 0 &&
-        !_ios6TurnRealm.empty() &&
-        !_ios6TurnNonce.empty()) {
-        syslog(
-            LOG_NOTICE,
-            "IOS6LAT turn.lifecycle.start lifetime=%u relay=%s:%u",
-            (unsigned int)_ios6TurnLifetimeSeconds,
-            _ios6TurnRelayHost.c_str(),
-            (unsigned int)_ios6TurnRelayPort
-        );
-        ios56ScheduleTurnMaintenance();
-    }
+    _ios6ConnectStartMs = Ios6LatencyNowMs();
+    _ios6RelayRetryDelayMs = 1000;
 
     static const char iceAlphabet[] =
         "abcdefghijklmnopqrstuvwxyz"
@@ -1056,6 +973,103 @@ void NetworkManager::start() {
         _isOutgoing ? 1 : 0,
         (unsigned long long)_ios6IceTieBreaker
     );
+
+    ios56ScheduleConnectionTimeout();
+    ios56AttemptRelayAllocation();
+}
+
+bool NetworkManager::ios56AllocateRelay() {
+    std::vector<RtcServer> endpoints;
+    for (int tcp = 0; tcp <= (_enableTCP ? 1 : 0); ++tcp) {
+        for (size_t i = 0; i < _rtcServers.size(); ++i) {
+            const RtcServer &configured = _rtcServers[i];
+            if (!configured.isTurn || configured.isTcp != (tcp != 0)) continue;
+            endpoints.push_back(configured);
+        }
+    }
+    for (size_t i = 0; i < endpoints.size(); ++i) {
+        const RtcServer &server = endpoints[i];
+        syslog(LOG_NOTICE, "IOS6WEBRTC relay.server index=%lu id=%u host=%s port=%u reflector=%d tcp=%d", (unsigned long)i, (unsigned int)server.id, server.host.c_str(), (unsigned int)server.port, server.login == "reflector" ? 1 : 0, server.isTcp ? 1 : 0);
+        std::shared_ptr<Ios6TurnSocket> connection;
+        if (server.login == "reflector") {
+            std::string error;
+            connection = Ios6TurnSocket::connect(server.host, server.port, server.isTcp, &error, Ios6TurnSocket::FramingReflector);
+            if (connection) {
+                uint32_t tag = 0;
+                while (tag == 0) tag = arc4random();
+                std::shared_ptr<Ios6RelayConnection> relay = Ios6RelayConnection::reflector(connection, server.id, server.host, server.port, server.password, tag, &error);
+                if (relay && relay->probe(&error)) {
+                    _ios6Relay = relay;
+                    _ios6TurnRelayHost = relay->localHost();
+                    _ios6TurnRelayPort = relay->localPort();
+                }
+            }
+            if (!_ios6Relay) {
+                syslog(LOG_NOTICE, "IOS6WEBRTC reflector.open.fail tcp=%d error=%s", server.isTcp ? 1 : 0, error.c_str());
+                continue;
+            }
+        } else {
+            const Ios6TurnProbeResult probe = Ios6TurnAllocateProbe(server, true, &connection);
+            syslog(LOG_NOTICE, "IOS6WEBRTC turn.allocate.result tcp=%d ok=%d relay=%s:%u error=%s", server.isTcp ? 1 : 0, probe.ok ? 1 : 0, probe.relayHost.c_str(), (unsigned int)probe.relayPort, probe.error.c_str());
+            if (!probe.ok || !connection) continue;
+            _ios6Relay = Ios6RelayConnection::turn(connection);
+            _ios6TurnRealm = probe.realm;
+            _ios6TurnNonce = probe.nonce;
+            _ios6TurnRelayHost = probe.relayHost;
+            _ios6TurnRelayPort = probe.relayPort;
+            _ios6TurnLifetimeSeconds = probe.lifetimeSeconds != 0 ? probe.lifetimeSeconds : 60;
+        }
+        _ios6TurnSocket = connection;
+        _ios6TurnFd = connection->descriptor();
+        _ios6TurnServer = server;
+        syslog(LOG_NOTICE, "IOS6WEBRTC relay.ready fd=%d reflector=%d tcp=%d candidate=%s:%u", _ios6TurnFd, _ios6Relay->isReflector() ? 1 : 0, server.isTcp ? 1 : 0, _ios6TurnRelayHost.c_str(), (unsigned int)_ios6TurnRelayPort);
+        break;
+    }
+
+    if (!_ios6TurnSocket) {
+        syslog(LOG_NOTICE, "IOS6WEBRTC turn.allocate.exhausted endpoints=%lu tcpAllowed=%d retryMs=%d", (unsigned long)endpoints.size(), _enableTCP ? 1 : 0, _ios6RelayRetryDelayMs);
+        return false;
+    }
+    return true;
+}
+
+void NetworkManager::ios56AttemptRelayAllocation() {
+    if (_ios6Relay || _ios6ConnectionFailed) {
+        return;
+    }
+    if (ios56AllocateRelay()) {
+        ios56RelayDidBecomeReady();
+        return;
+    }
+
+    const int delayMs = _ios6RelayRetryDelayMs;
+    _ios6RelayRetryDelayMs = std::min(_ios6RelayRetryDelayMs * 2, 8000);
+    const std::weak_ptr<NetworkManager> weak(shared_from_this());
+    rtc::Thread *thread = _thread;
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)delayMs * 1000000LL),
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+        ^{
+            thread->PostTask([weak]() {
+                const std::shared_ptr<NetworkManager> strong = weak.lock();
+                if (!strong) return;
+                strong->ios56AttemptRelayAllocation();
+            });
+        }
+    );
+}
+
+void NetworkManager::ios56RelayDidBecomeReady() {
+    if (_ios6Relay && (_ios6Relay->isReflector() || (!_ios6TurnRealm.empty() && !_ios6TurnNonce.empty()))) {
+        syslog(
+            LOG_NOTICE,
+            "IOS6LAT turn.lifecycle.start lifetime=%u relay=%s:%u",
+            (unsigned int)_ios6TurnLifetimeSeconds,
+            _ios6TurnRelayHost.c_str(),
+            (unsigned int)_ios6TurnRelayPort
+        );
+        ios56ScheduleTurnMaintenance();
+    }
 
     if (_sendSignalingMessage) {
         CandidatesListMessage candidates;
@@ -1097,7 +1111,7 @@ void NetworkManager::start() {
 
         syslog(
             LOG_NOTICE,
-            "IOS6WEBRTC cxx.network.stub.start candidates=%lu servers=%lu",
+            "IOS6WEBRTC cxx.network.start candidates=%lu servers=%lu",
             (unsigned long)candidates.candidates.size(),
             (unsigned long)_rtcServers.size()
         );
@@ -1107,242 +1121,299 @@ void NetworkManager::start() {
         _sendSignalingMessage(std::move(message));
     }
 
+    if (_ios6RemoteCandidates) {
+        ios56ProcessRemoteCandidates();
+    }
+}
+
+bool NetworkManager::ios56IsConnected() const {
+    if (!_ios6TransportReady) {
+        return false;
+    }
+    if (_ios6DtlsTransport && _ios6DtlsTransport->isConfigured()) {
+        return _ios6DtlsTransport->isReady();
+    }
+    return true;
+}
+
+void NetworkManager::ios56ScheduleConnectionTimeout() {
+    const std::weak_ptr<NetworkManager> weak(shared_from_this());
+    rtc::Thread *thread = _thread;
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, 1000000000LL),
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+        ^{
+            thread->PostTask([weak]() {
+                const std::shared_ptr<NetworkManager> strong = weak.lock();
+                if (!strong) return;
+                strong->checkConnectionTimeout();
+            });
+        }
+    );
 }
 
 void NetworkManager::receiveSignalingMessage(
         DecryptedMessage &&message) {
-    const auto tryIos6IceProbe = [this]() {
-        if (_ios6TransportReady) {
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC cxx.network.iceProbe.skipSelected selected=%s:%u",
-                _ios6SelectedPeerHost.c_str(),
-                (unsigned int)_ios6SelectedPeerPort
-            );
-            return;
-        }
+    if (const CandidatesListMessage *candidates =
+            absl::get_if<CandidatesListMessage>(
+                &message.message.data
+            )) {
+        _ios6RemoteCandidates = *candidates;
+        ios56ProcessRemoteCandidates();
+        return;
+    }
 
-        const bool hasPeer =
-            !_ios6TurnPeerHost.empty() &&
-            _ios6TurnPeerPort != 0;
+    RTC_LOG(LS_INFO)
+        << "IOS6WEBRTC network.stub.unexpectedSignaling";
+}
 
-        const bool hasLocalIce =
-            !_localIceParameters.ufrag.empty() &&
-            !_localIceParameters.pwd.empty();
+void NetworkManager::ios56RunIceProbe() {
+    if (_ios6TransportReady) {
+        syslog(
+            LOG_NOTICE,
+            "IOS6WEBRTC cxx.network.iceProbe.skipSelected selected=%s:%u",
+            _ios6SelectedPeerHost.c_str(),
+            (unsigned int)_ios6SelectedPeerPort
+        );
+        return;
+    }
 
-        const bool hasRemoteIce =
-            _remoteIceParameters.has_value() &&
-            !_remoteIceParameters->ufrag.empty() &&
-            !_remoteIceParameters->pwd.empty();
+    const bool hasPeer =
+        !_ios6TurnPeerHost.empty() &&
+        _ios6TurnPeerPort != 0;
 
-        if (_ios6TurnFd < 0 ||
-            !_ios6TurnPermissionReady ||
-            !hasPeer ||
-            !hasLocalIce ||
-            !hasRemoteIce) {
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC cxx.network.iceProbe.defer fd=%d permission=%d peer=%d localIce=%d remoteIce=%d",
-                _ios6TurnFd,
-                _ios6TurnPermissionReady ? 1 : 0,
-                hasPeer ? 1 : 0,
-                hasLocalIce ? 1 : 0,
-                hasRemoteIce ? 1 : 0
-            );
-            return;
-        }
+    const bool hasLocalIce =
+        !_localIceParameters.ufrag.empty() &&
+        !_localIceParameters.pwd.empty();
 
-        if (_ios6IceProbeDone) {
-            return;
-        }
+    const bool hasRemoteIce =
+        _remoteIceParameters.has_value() &&
+        !_remoteIceParameters->ufrag.empty() &&
+        !_remoteIceParameters->pwd.empty();
 
-        _ios6IceProbeDone = true;
+    if (_ios6TurnFd < 0 ||
+        !_ios6TurnPermissionReady ||
+        !hasPeer ||
+        !hasLocalIce ||
+        !hasRemoteIce) {
+        syslog(
+            LOG_NOTICE,
+            "IOS6WEBRTC cxx.network.iceProbe.defer fd=%d permission=%d peer=%d localIce=%d remoteIce=%d",
+            _ios6TurnFd,
+            _ios6TurnPermissionReady ? 1 : 0,
+            hasPeer ? 1 : 0,
+            hasLocalIce ? 1 : 0,
+            hasRemoteIce ? 1 : 0
+        );
+        return;
+    }
 
-        std::string iceProbeError;
-        std::string selectedPeerHost;
-        uint16_t selectedPeerPort = 0;
+    if (_ios6IceProbeDone) {
+        return;
+    }
+
+    const double iceCheckWindowMs =
+        std::min(
+            kIos6IceCheckWindowMs,
+            kIos6ConnectTimeoutMs - (Ios6LatencyNowMs() - _ios6ConnectStartMs)
+        );
+
+    if (iceCheckWindowMs <= 0.0) {
+        return;
+    }
+
+    _ios6IceProbeDone = true;
+
+    std::string iceProbeError;
+    std::string selectedPeerHost;
+    uint16_t selectedPeerPort = 0;
+
+    syslog(
+        LOG_NOTICE,
+        "IOS6WEBRTC cxx.network.iceProbe.begin peer=%s:%u localUfrag=%s remoteUfrag=%s controlling=%d",
+        _ios6TurnPeerHost.c_str(),
+        (unsigned int)_ios6TurnPeerPort,
+        _localIceParameters.ufrag.c_str(),
+        _remoteIceParameters->ufrag.c_str(),
+        _isOutgoing ? 1 : 0
+    );
+
+    const double iceProbeStartMs = Ios6LatencyNowMs();
+    const bool iceProbeOk =
+        Ios6RelayIceBindingProbe(
+            *_ios6Relay,
+            _ios6TurnPeerHost,
+            _ios6TurnPeerPort,
+            _localIceParameters.ufrag,
+            _localIceParameters.pwd,
+            _remoteIceParameters->ufrag,
+            _remoteIceParameters->pwd,
+            _ios6IceTieBreaker,
+            _isOutgoing,
+            false,
+            iceCheckWindowMs,
+            &selectedPeerHost,
+            &selectedPeerPort,
+            &iceProbeError
+        );
+    const double iceProbeRttMs = Ios6LatencyNowMs() - iceProbeStartMs;
+
+    syslog(
+        LOG_NOTICE,
+        "IOS6WEBRTC cxx.network.iceProbe ok=%d peer=%s:%u selected=%s:%u localUfrag=%s remoteUfrag=%s controlling=%d error=%s",
+        iceProbeOk ? 1 : 0,
+        _ios6TurnPeerHost.c_str(),
+        (unsigned int)_ios6TurnPeerPort,
+        selectedPeerHost.c_str(),
+        (unsigned int)selectedPeerPort,
+        _localIceParameters.ufrag.c_str(),
+        _remoteIceParameters->ufrag.c_str(),
+        _isOutgoing ? 1 : 0,
+        iceProbeError.c_str()
+    );
+    syslog(
+        LOG_NOTICE,
+        "IOS6LAT ice probeRttMs=%.1f peer=%s:%u ok=%d",
+        iceProbeRttMs,
+        _ios6TurnPeerHost.c_str(),
+        (unsigned int)_ios6TurnPeerPort,
+        iceProbeOk ? 1 : 0
+    );
+
+    if (!iceProbeOk) {
+        _ios6IceProbeDone = false;
+        return;
+    }
+
+    if (_isOutgoing) {
+        std::string iceNominateError;
+        std::string nominatedPeerHost;
+        uint16_t nominatedPeerPort = 0;
+
+        const std::string nominationHost =
+            selectedPeerHost.empty()
+                ? _ios6TurnPeerHost
+                : selectedPeerHost;
+
+        const uint16_t nominationPort =
+            selectedPeerPort == 0
+                ? _ios6TurnPeerPort
+                : selectedPeerPort;
 
         syslog(
             LOG_NOTICE,
-            "IOS6WEBRTC cxx.network.iceProbe.begin peer=%s:%u localUfrag=%s remoteUfrag=%s controlling=%d",
-            _ios6TurnPeerHost.c_str(),
-            (unsigned int)_ios6TurnPeerPort,
-            _localIceParameters.ufrag.c_str(),
-            _remoteIceParameters->ufrag.c_str(),
-            _isOutgoing ? 1 : 0
+            "IOS6WEBRTC cxx.network.iceNominate.begin peer=%s:%u",
+            nominationHost.c_str(),
+            (unsigned int)nominationPort
         );
 
-        const double iceProbeStartMs = Ios6LatencyNowMs();
-        const bool iceProbeOk =
-            Ios6TurnIceBindingProbe(
-                _ios6TurnFd,
-                _ios6TurnPeerHost,
-                _ios6TurnPeerPort,
+        const double iceNominateStartMs = Ios6LatencyNowMs();
+        const bool iceNominateOk =
+            Ios6RelayIceBindingProbe(
+                *_ios6Relay,
+                nominationHost,
+                nominationPort,
                 _localIceParameters.ufrag,
                 _localIceParameters.pwd,
                 _remoteIceParameters->ufrag,
                 _remoteIceParameters->pwd,
                 _ios6IceTieBreaker,
-                _isOutgoing,
-                false,
-                &selectedPeerHost,
-                &selectedPeerPort,
-                &iceProbeError
+                true,
+                true,
+                iceCheckWindowMs,
+                &nominatedPeerHost,
+                &nominatedPeerPort,
+                &iceNominateError
             );
-        const double iceProbeRttMs = Ios6LatencyNowMs() - iceProbeStartMs;
+        const double iceNominateRttMs = Ios6LatencyNowMs() - iceNominateStartMs;
 
         syslog(
             LOG_NOTICE,
-            "IOS6WEBRTC cxx.network.iceProbe ok=%d peer=%s:%u selected=%s:%u localUfrag=%s remoteUfrag=%s controlling=%d error=%s",
-            iceProbeOk ? 1 : 0,
-            _ios6TurnPeerHost.c_str(),
-            (unsigned int)_ios6TurnPeerPort,
-            selectedPeerHost.c_str(),
-            (unsigned int)selectedPeerPort,
-            _localIceParameters.ufrag.c_str(),
-            _remoteIceParameters->ufrag.c_str(),
-            _isOutgoing ? 1 : 0,
-            iceProbeError.c_str()
+            "IOS6WEBRTC cxx.network.iceNominate ok=%d peer=%s:%u selected=%s:%u error=%s",
+            iceNominateOk ? 1 : 0,
+            nominationHost.c_str(),
+            (unsigned int)nominationPort,
+            nominatedPeerHost.c_str(),
+            (unsigned int)nominatedPeerPort,
+            iceNominateError.c_str()
         );
         syslog(
             LOG_NOTICE,
-            "IOS6LAT ice probeRttMs=%.1f peer=%s:%u ok=%d",
-            iceProbeRttMs,
-            _ios6TurnPeerHost.c_str(),
-            (unsigned int)_ios6TurnPeerPort,
-            iceProbeOk ? 1 : 0
+            "IOS6LAT ice nominateRttMs=%.1f peer=%s:%u ok=%d",
+            iceNominateRttMs,
+            nominationHost.c_str(),
+            (unsigned int)nominationPort,
+            iceNominateOk ? 1 : 0
         );
 
-        if (!iceProbeOk) {
+        if (!iceNominateOk) {
             _ios6IceProbeDone = false;
             return;
         }
 
-        if (_isOutgoing) {
-            std::string iceNominateError;
-            std::string nominatedPeerHost;
-            uint16_t nominatedPeerPort = 0;
+        selectedPeerHost = nominatedPeerHost.empty()
+            ? nominationHost
+            : nominatedPeerHost;
+        selectedPeerPort = nominatedPeerPort == 0
+            ? nominationPort
+            : nominatedPeerPort;
+    }
 
-            const std::string nominationHost =
-                selectedPeerHost.empty()
-                    ? _ios6TurnPeerHost
-                    : selectedPeerHost;
+    if (selectedPeerHost.empty() ||
+        selectedPeerPort == 0) {
+        _ios6IceProbeDone = false;
+        return;
+    }
 
-            const uint16_t nominationPort =
-                selectedPeerPort == 0
-                    ? _ios6TurnPeerPort
-                    : selectedPeerPort;
+    syslog(
+        LOG_NOTICE,
+        "IOS6WEBRTC cxx.network.iceSelected peer=%s:%u nominated=1 controlling=%d",
+        selectedPeerHost.c_str(),
+        (unsigned int)selectedPeerPort,
+        _isOutgoing ? 1 : 0
+    );
 
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC cxx.network.iceNominate.begin peer=%s:%u",
-                nominationHost.c_str(),
-                (unsigned int)nominationPort
-            );
+    _ios6SelectedPeerHost =
+        selectedPeerHost;
 
-            const double iceNominateStartMs = Ios6LatencyNowMs();
-            const bool iceNominateOk =
-                Ios6TurnIceBindingProbe(
-                    _ios6TurnFd,
-                    nominationHost,
-                    nominationPort,
-                    _localIceParameters.ufrag,
-                    _localIceParameters.pwd,
-                    _remoteIceParameters->ufrag,
-                    _remoteIceParameters->pwd,
-                    _ios6IceTieBreaker,
-                    true,
-                    true,
-                    &nominatedPeerHost,
-                    &nominatedPeerPort,
-                    &iceNominateError
-                );
-            const double iceNominateRttMs = Ios6LatencyNowMs() - iceNominateStartMs;
+    _ios6SelectedPeerPort =
+        selectedPeerPort;
 
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC cxx.network.iceNominate ok=%d peer=%s:%u selected=%s:%u error=%s",
-                iceNominateOk ? 1 : 0,
-                nominationHost.c_str(),
-                (unsigned int)nominationPort,
-                nominatedPeerHost.c_str(),
-                (unsigned int)nominatedPeerPort,
-                iceNominateError.c_str()
-            );
-            syslog(
-                LOG_NOTICE,
-                "IOS6LAT ice nominateRttMs=%.1f peer=%s:%u ok=%d",
-                iceNominateRttMs,
-                nominationHost.c_str(),
-                (unsigned int)nominationPort,
-                iceNominateOk ? 1 : 0
-            );
+    _ios6TransportReady = true;
 
-            if (!iceNominateOk) {
-                _ios6IceProbeDone = false;
-                return;
-            }
+    ios56StartTransportReceiver();
 
-            selectedPeerHost = nominatedPeerHost.empty()
-                ? nominationHost
-                : nominatedPeerHost;
-            selectedPeerPort = nominatedPeerPort == 0
-                ? nominationPort
-                : nominatedPeerPort;
-        }
-
-        if (selectedPeerHost.empty() ||
-            selectedPeerPort == 0) {
-            _ios6IceProbeDone = false;
-            return;
-        }
+    syslog(
+        LOG_NOTICE,
+        "IOS6WEBRTC transport.ready fd=%d peer=%s:%u",
+        _ios6TurnFd,
+        _ios6SelectedPeerHost.c_str(),
+        (unsigned int)_ios6SelectedPeerPort
+    );
+    if (_ios6DtlsTransport &&
+        _ios6DtlsTransport->isConfigured()) {
 
         syslog(
             LOG_NOTICE,
-            "IOS6WEBRTC cxx.network.iceSelected peer=%s:%u nominated=1 controlling=%d",
-            selectedPeerHost.c_str(),
-            (unsigned int)selectedPeerPort,
-            _isOutgoing ? 1 : 0
+            "IOS6WEBRTC transport.iceReady.waitDtls"
         );
 
-        _ios6SelectedPeerHost =
-            selectedPeerHost;
+        ios56MaybeStartDtls();
+    } else if (_stateUpdated) {
+        State state;
+        state.isReadyToSendData = true;
+        state.isFailed = false;
+        _stateUpdated(state);
+    }
+}
 
-        _ios6SelectedPeerPort =
-            selectedPeerPort;
+void NetworkManager::ios56ProcessRemoteCandidates() {
+    if (!_ios6RemoteCandidates) {
+        return;
+    }
 
-        _ios6TransportReady = true;
-
-        ios56StartTransportReceiver();
-
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC transport.ready fd=%d peer=%s:%u",
-            _ios6TurnFd,
-            _ios6SelectedPeerHost.c_str(),
-            (unsigned int)_ios6SelectedPeerPort
-        );
-        if (_ios6DtlsTransport &&
-            _ios6DtlsTransport->isConfigured()) {
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC transport.iceReady.waitDtls"
-            );
-
-            ios56MaybeStartDtls();
-        } else if (_stateUpdated) {
-            State state;
-            state.isReadyToSendData = true;
-            state.isFailed = false;
-            _stateUpdated(state);
-        }
-    };
-
-    if (const CandidatesListMessage *candidates =
-            absl::get_if<CandidatesListMessage>(
-                &message.message.data
-            )) {
+    {
+        const CandidatesListMessage *candidates = &*_ios6RemoteCandidates;
         if (!candidates->iceParameters.ufrag.empty() &&
             !candidates->iceParameters.pwd.empty()) {
             _remoteIceParameters =
@@ -1355,11 +1426,11 @@ void NetworkManager::receiveSignalingMessage(
                 (unsigned long)_remoteIceParameters->pwd.size()
             );
 
-            tryIos6IceProbe();
+            ios56RunIceProbe();
         }
 
         RTC_LOG(LS_INFO)
-            << "IOS6WEBRTC network.stub.remoteCandidates count="
+            << "IOS6WEBRTC network.remoteCandidates count="
             << candidates->candidates.size()
             << " ufragLen="
             << candidates->iceParameters.ufrag.size()
@@ -1388,7 +1459,7 @@ void NetworkManager::receiveSignalingMessage(
                 fields.push_back(field);
             }
 
-            if (fields.size() >= 6) {
+            if (fields.size() >= 6 && fields[1] == "1" && fields[2] == "udp") {
                 const std::string peerHost =
                     fields[4];
 
@@ -1399,18 +1470,7 @@ void NetworkManager::receiveSignalingMessage(
                         10
                     );
 
-                struct in_addr peerAddress;
-
-                const bool numericIpv4 =
-                    inet_pton(
-                        AF_INET,
-                        peerHost.c_str(),
-                        &peerAddress
-                    ) == 1;
-
-                if (numericIpv4 &&
-                    parsedPort > 0 &&
-                    parsedPort <= 65535UL) {
+                if (parsedPort > 0 && parsedPort <= 65535UL && _ios6Relay && _ios6Relay->acceptsPeer(peerHost, static_cast<uint16_t>(parsedPort))) {
                     const uint16_t peerPort =
                         (uint16_t)parsedPort;
 
@@ -1444,9 +1504,9 @@ void NetworkManager::receiveSignalingMessage(
                         !_ios6TurnPermissionReady) {
                         std::string permissionError;
 
-                        const bool permissionOk =
+                        const bool permissionOk = _ios6Relay->isReflector() ||
                             Ios6TurnCreatePermission(
-                                _ios6TurnFd,
+                                *_ios6TurnSocket,
                                 _ios6TurnServer,
                                 _ios6TurnRealm,
                                 &_ios6TurnNonce,
@@ -1474,10 +1534,10 @@ void NetworkManager::receiveSignalingMessage(
                                 (unsigned int)_ios6TurnPeerPort
                             );
 
-                            tryIos6IceProbe();
+                            ios56RunIceProbe();
                         }
                     } else if (_ios6TurnPermissionReady) {
-                        tryIos6IceProbe();
+                        ios56RunIceProbe();
                     }
                 } else {
                     syslog(
@@ -1519,9 +1579,6 @@ void NetworkManager::receiveSignalingMessage(
 
         return;
     }
-
-    RTC_LOG(LS_INFO)
-        << "IOS6WEBRTC network.stub.unexpectedSignaling";
 }
 
 uint32_t NetworkManager::sendMessage(
@@ -1633,8 +1690,8 @@ uint32_t NetworkManager::sendMessage(
         std::string sendError;
 
         const bool sent =
-            Ios6TurnSendData(
-                _ios6TurnFd,
+            Ios6RelaySendData(
+                *_ios6Relay,
                 _ios6SelectedPeerHost,
                 _ios6SelectedPeerPort,
                 &packet[0],
@@ -1689,8 +1746,8 @@ uint32_t NetworkManager::sendMessage(
         std::string sendError;
 
         const bool sent =
-            Ios6TurnSendData(
-                _ios6TurnFd,
+            Ios6RelaySendData(
+                *_ios6Relay,
                 _ios6SelectedPeerHost,
                 _ios6SelectedPeerPort,
                 prepared->bytes.data(),
@@ -1765,8 +1822,8 @@ void NetworkManager::sendTransportService(
         std::string sendError;
 
         const bool sent =
-            Ios6TurnSendData(
-                _ios6TurnFd,
+            Ios6RelaySendData(
+                *_ios6Relay,
                 _ios6SelectedPeerHost,
                 _ios6SelectedPeerPort,
                 prepared->bytes.data(),
@@ -1828,6 +1885,27 @@ void NetworkManager::logCurrentNetworkState() {
 }
 
 void NetworkManager::checkConnectionTimeout() {
+    if (_ios6ConnectionFailed || ios56IsConnected()) {
+        return;
+    }
+    const double elapsedMs = Ios6LatencyNowMs() - _ios6ConnectStartMs;
+    if (elapsedMs < kIos6ConnectTimeoutMs) {
+        if (!_ios6TransportReady && !_ios6IceProbeDone && _remoteIceParameters.has_value()) {
+            ios56RunIceProbe();
+        }
+        if (!_ios6ConnectionFailed && !ios56IsConnected()) {
+            ios56ScheduleConnectionTimeout();
+        }
+        return;
+    }
+    _ios6ConnectionFailed = true;
+    syslog(LOG_NOTICE, "IOS6WEBRTC network.connect.timeout elapsedMs=%.0f relay=%d transport=%d", elapsedMs, _ios6Relay ? 1 : 0, _ios6TransportReady ? 1 : 0);
+    if (_stateUpdated) {
+        State state;
+        state.isReadyToSendData = false;
+        state.isFailed = true;
+        _stateUpdated(state);
+    }
 }
 
 void NetworkManager::candidateGathered(

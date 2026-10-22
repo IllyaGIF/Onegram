@@ -14,6 +14,7 @@
 - (TGLocalization *)mergedWith:(NSDictionary *)other version:(int32_t)version;
     
 - (TGLocalization *)withUpdatedIsActive:(bool)isActive;
+- (TGLocalization *)withUpdatedVersion:(int32_t)version;
 
 - (NSLocale *)locale;
 

@@ -1154,7 +1154,6 @@
     self.everybodyCanAddMembers = channel.everybodyCanAddMembers;
     _channelIsReadOnly = channel.channelIsReadOnly;
     self.isVerified = channel.isVerified;
-    self.isArchived = channel.isArchived;
 }
 
 - (void)mergeDraft:(TGDatabaseMessageDraft *)draft {

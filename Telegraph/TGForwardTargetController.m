@@ -567,8 +567,8 @@
 
 - (UIStatusBarStyle)preferredStatusBarStyle
 {
-    if (self.childViewControllers.count != 0)
-        return [self.childViewControllers[0] preferredStatusBarStyle];
+    if (_currentViewController != nil)
+        return [_currentViewController preferredStatusBarStyle];
     
     return [super preferredStatusBarStyle];
 }

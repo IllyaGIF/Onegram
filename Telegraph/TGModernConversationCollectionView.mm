@@ -225,12 +225,14 @@
 #pragma clang diagnostic pop
 }
 
+- (bool)usesNativeCollectionView
+{
+    return ![self isKindOfClass:[PSTCollectionView class]];
+}
+
 - (bool)itemCountChangesRequireReload
 {
-    static int value = -1;
-    if (value < 0)
-        value = class_getSuperclass([PSUICollectionView class]) != [PSTCollectionView class] ? 1 : 0;
-    return value != 0;
+    return [self usesNativeCollectionView];
 }
 
 - (void)updateVisibleItemsNow

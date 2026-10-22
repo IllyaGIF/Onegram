@@ -48,6 +48,9 @@
 }
 @end
 
+static PSLMDBKeyValueStore *TGEmbedCoubMetaStore = nil;
+static PSLMDBKeyValueStore *TGEmbedCoubRetiredMetaStore = nil;
+
 @implementation TGEmbedCoubPlayerView
 
 - (instancetype)initWithWebPageAttachment:(TGWebPageMediaAttachment *)webPage thumbnailSignal:(SSignal *)thumbnailSignal alternateCachePathSignal:(SSignal *)alternateCachePathSignal
@@ -479,14 +482,27 @@
 
 + (PSLMDBKeyValueStore *)coubMetaStore
 {
-    static PSLMDBKeyValueStore *store = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
+    PSLMDBKeyValueStore *store = nil;
+    @synchronized (self)
     {
-        NSString *documentsPath = [[LegacyComponentsGlobals provider] dataStoragePath];
-        store = [PSLMDBKeyValueStore storeWithPath:[documentsPath stringByAppendingPathComponent:@"misc/coubmetadata"] size:1 * 1024 * 1024];
-    });
+        if (TGEmbedCoubMetaStore == nil)
+        {
+            NSString *documentsPath = [[LegacyComponentsGlobals provider] dataStoragePath];
+            TGEmbedCoubMetaStore = [PSLMDBKeyValueStore storeWithPath:[documentsPath stringByAppendingPathComponent:@"misc/coubmetadata"] size:1 * 1024 * 1024];
+        }
+        store = TGEmbedCoubMetaStore;
+    }
     return store;
+}
+
++ (void)reloadForAccountSwitch
+{
+    @synchronized (self)
+    {
+        [TGEmbedCoubRetiredMetaStore close];
+        TGEmbedCoubRetiredMetaStore = TGEmbedCoubMetaStore;
+        TGEmbedCoubMetaStore = nil;
+    }
 }
 
 + (NSDictionary *)coubJSONByPermalink:(NSString *)permalink

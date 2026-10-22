@@ -8,10 +8,21 @@
                               port:(int32_t)port
                            peerTag:(NSData *)peerTag
 {
+    return [self initWithIdentifier:identifier flags:0 ipv4:ipv4 ipv6:ipv6 port:port peerTag:peerTag];
+}
+
+- (instancetype)initWithIdentifier:(int64_t)identifier
+                             flags:(int32_t)flags
+                              ipv4:(NSString *)ipv4
+                              ipv6:(NSString *)ipv6
+                              port:(int32_t)port
+                           peerTag:(NSData *)peerTag
+{
     self = [super init];
     if (self != nil)
     {
         _identifier = identifier;
+        _isTcp = (flags & 1) != 0;
         _ipv4 = ipv4 ?: @"";
         _ipv6 = ipv6 ?: @"";
         _port = port;

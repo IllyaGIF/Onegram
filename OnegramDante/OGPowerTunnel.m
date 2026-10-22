@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 
+static const NSUInteger OGPowerRelayFailureLimit = 3;
+
 @implementation OGPowerTunnel {
     PowerConfig *_config;
     PowerSelector *_selector;
@@ -15,6 +17,7 @@
     NSMutableSet *_clients;
     BOOL _connected;
     BOOL _stopped;
+    NSUInteger _relayFailures;
 }
 
 - (id)init {
@@ -72,9 +75,12 @@
         [_sessions addObject:session];
     }
     PWProbeResult result = [session probeThroughHost:@"www.google.com" port:80 timeout:8 latencyMillis:NULL];
+    if (result != PWProbeOK && result != PWProbeUnsupported)
+        result = [session probeThroughHost:@"www.google.com" port:80 timeout:8 latencyMillis:NULL];
     @synchronized (self) {
         [_sessions removeObject:session];
-        if (result != PWProbeOK) _connected = NO;
+        if (result == PWProbeOK) _relayFailures = 0;
+        else _connected = NO;
     }
     [session release];
     return result == PWProbeOK;
@@ -100,8 +106,9 @@
     }
     OGDanteSOCKSRequest request;
     if (OGDanteReadSOCKSRequest(fd, &request)) {
-        PowerSession *session = [[PowerSession alloc] initWithConfig:_config];
+        PowerSession *session;
         @synchronized (self) {
+            session = [[PowerSession alloc] initWithConfig:_config];
             [_sessions addObject:session];
             if (_stopped) [session cancel];
         }
@@ -109,13 +116,16 @@
         NSData *reply = [NSData dataWithBytes:success length:sizeof(success)];
         BOOL handled = [session relayClient:fd host:[NSString stringWithUTF8String:request.host]
                                       port:request.port okReply:reply initialData:nil];
-        @synchronized (self) { [_sessions removeObject:session]; }
+        @synchronized (self) {
+            [_sessions removeObject:session];
+            if (handled) _relayFailures = 0;
+            else if (!_stopped && ++_relayFailures >= OGPowerRelayFailureLimit) _connected = NO;
+        }
         [session release];
         if (!handled) {
             const uint8_t failure[] = {5, 1, 0, 1, 0, 0, 0, 0, 0, 0};
             OGDanteSocketSend(fd, failure, sizeof(failure));
             close(fd);
-            @synchronized (self) { _connected = NO; }
         }
     } else close(fd);
     @synchronized (self) {

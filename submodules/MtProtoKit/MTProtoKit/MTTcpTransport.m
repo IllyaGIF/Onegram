@@ -79,7 +79,7 @@ static const NSTimeInterval MTTcpTransportSleepWatchdogTimeout = 60.0;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[MTQueue alloc] initWithName:"org.mtproto.tcpTransportQueue"];
+        queue = [[MTQueue alloc] initWithName:"org.mtproto.tcpTransportQueue" targetPriority:DISPATCH_QUEUE_PRIORITY_HIGH];
     });
     return queue;
 }

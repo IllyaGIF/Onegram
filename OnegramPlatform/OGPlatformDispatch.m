@@ -1,6 +1,5 @@
 #import "OGPlatformDispatch.h"
 #import "OGPlatformVersion.h"
-#import <CoreFoundation/CoreFoundation.h>
 #import <dispatch/dispatch.h>
 
 void OGPlatformDispatchOnMainThread(void (^block)(void))
@@ -12,13 +11,6 @@ void OGPlatformDispatchOnMainThread(void (^block)(void))
         block();
         return;
     }
-    if (OGPlatformMajorVersion() <= 3)
-    {
-        CFRunLoopRef runLoop = CFRunLoopGetMain();
-        CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, block);
-        CFRunLoopWakeUp(runLoop);
-        return;
-    }
     dispatch_async(dispatch_get_main_queue(), block);
 }
 
@@ -26,13 +18,6 @@ void OGPlatformDispatchAfterCurrentMainRunLoop(void (^block)(void))
 {
     if (block == nil)
         return;
-    if (OGPlatformMajorVersion() <= 3)
-    {
-        CFRunLoopRef runLoop = CFRunLoopGetMain();
-        CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, block);
-        CFRunLoopWakeUp(runLoop);
-        return;
-    }
     dispatch_async(dispatch_get_main_queue(), block);
 }
 

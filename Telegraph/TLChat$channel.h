@@ -32,6 +32,7 @@
 @property (nonatomic, strong) NSString *restriction_reason;
 @property (nonatomic, strong) TLChannelAdminRights *admin_rights;
 @property (nonatomic, strong) TLChannelBannedRights *banned_rights;
+@property (nonatomic, strong) TLChannelBannedRights *default_banned_rights;
 @property (nonatomic) int32_t banned_until;
 @property (nonatomic) int32_t participants_count;
 

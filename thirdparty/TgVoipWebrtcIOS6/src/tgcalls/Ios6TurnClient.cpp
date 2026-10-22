@@ -451,106 +451,8 @@ static std::vector<uint8_t> MakeAuthenticatedAllocateRequest(
     return message;
 }
 
-static bool OpenConnectedUdpSocket(
-    const std::string &host,
-    uint16_t port,
-    int *fdOut,
-    std::string *error
-) {
-    char portString[16];
-    snprintf(
-        portString,
-        sizeof(portString),
-        "%u",
-        (unsigned int)port
-    );
-
-    struct addrinfo hints;
-    memset(&hints, 0, sizeof(hints));
-
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-    hints.ai_protocol = IPPROTO_UDP;
-
-    struct addrinfo *result = NULL;
-
-    const int gaiResult =
-        getaddrinfo(
-            host.c_str(),
-            portString,
-            &hints,
-            &result
-        );
-
-    if (gaiResult != 0 || result == NULL) {
-        if (error != NULL) {
-            *error = "getaddrinfo failed";
-        }
-
-        if (result != NULL) {
-            freeaddrinfo(result);
-        }
-
-        return false;
-    }
-
-    int fd = socket(
-        result->ai_family,
-        result->ai_socktype,
-        result->ai_protocol
-    );
-
-    if (fd < 0) {
-        if (error != NULL) {
-            *error = strerror(errno);
-        }
-
-        freeaddrinfo(result);
-        return false;
-    }
-
-    struct timeval timeout;
-    timeout.tv_sec = 3;
-    timeout.tv_usec = 0;
-
-    setsockopt(
-        fd,
-        SOL_SOCKET,
-        SO_RCVTIMEO,
-        &timeout,
-        sizeof(timeout)
-    );
-
-    setsockopt(
-        fd,
-        SOL_SOCKET,
-        SO_SNDTIMEO,
-        &timeout,
-        sizeof(timeout)
-    );
-
-    if (connect(
-            fd,
-            result->ai_addr,
-            result->ai_addrlen
-        ) != 0) {
-        if (error != NULL) {
-            *error = strerror(errno);
-        }
-
-        close(fd);
-        freeaddrinfo(result);
-        return false;
-    }
-
-    freeaddrinfo(result);
-
-    *fdOut = fd;
-    return true;
-}
-
 static bool SendAndReceive(
-    int fd,
+    Ios6TurnSocket &socket,
     const std::vector<uint8_t> &request,
     const uint8_t expectedTxid[12],
     std::vector<uint8_t> *response,
@@ -565,7 +467,7 @@ static bool SendAndReceive(
     }
 
     for (int sendAttempt = 0;
-         sendAttempt < 3;
+         sendAttempt < (socket.isTcp() ? 1 : 3);
          ++sendAttempt) {
 
         if (sendAttempt != 0) {
@@ -580,12 +482,7 @@ static bool SendAndReceive(
         ssize_t sent;
 
         do {
-            sent = send(
-                fd,
-                request.empty() ? NULL : &request[0],
-                request.size(),
-                0
-            );
+            sent = socket.sendPacket(request.empty() ? NULL : &request[0], request.size());
         } while (sent < 0 && errno == EINTR);
 
         if (sent < 0) {
@@ -613,12 +510,7 @@ static bool SendAndReceive(
             ssize_t received;
 
             do {
-                received = recv(
-                    fd,
-                    buffer,
-                    sizeof(buffer),
-                    0
-                );
+                received = socket.receivePacket(buffer, sizeof(buffer));
             } while (received < 0 && errno == EINTR);
 
             if (received < 0) {
@@ -916,12 +808,12 @@ static std::vector<uint8_t> MakeCreatePermissionRequest(
 Ios6TurnProbeResult Ios6TurnAllocateProbe(
     const RtcServer &server,
     bool keepSocket,
-    int *outSocketFd
+    std::shared_ptr<Ios6TurnSocket> *outSocket
 ) {
     Ios6TurnProbeResult result;
 
-    if (outSocketFd != NULL) {
-        *outSocketFd = -1;
+    if (outSocket != NULL) {
+        outSocket->reset();
     }
 
     syslog(
@@ -940,33 +832,18 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
         return result;
     }
 
-    if (server.isTcp) {
-        result.error = "TCP TURN not supported by probe";
-        return result;
-    }
-
     if (server.login == "reflector") {
         result.error = "custom reflector endpoint";
         return result;
     }
 
-    int fd = -1;
-
-    if (!OpenConnectedUdpSocket(
-            server.host,
-            server.port,
-            &fd,
-            &result.error
-        )) {
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC turn.socket.fail error=%s",
-            result.error.c_str()
-        );
-
+    std::shared_ptr<Ios6TurnSocket> connection = Ios6TurnSocket::connect(server.host, server.port, server.isTcp, &result.error);
+    if (!connection) {
+        syslog(LOG_NOTICE, "IOS6WEBRTC turn.socket.fail tcp=%d error=%s", server.isTcp ? 1 : 0, result.error.c_str());
         return result;
     }
-
+    Ios6TurnSocket &socket = *connection;
+    const int fd = socket.descriptor();
     LogLocalSocket(fd);
 
     uint8_t tx1[12];
@@ -984,7 +861,7 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
     std::vector<uint8_t> response1;
 
     if (!SendAndReceive(
-            fd,
+            socket,
             request1,
             tx1,
             &response1,
@@ -996,7 +873,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
             result.error.c_str()
         );
 
-        close(fd);
         return result;
     }
 
@@ -1037,12 +913,12 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
                 "IOS6WEBRTC turn.allocate.postsuccess keep=%d fd=%d outNull=%d",
                 keepSocket ? 1 : 0,
                 fd,
-                outSocketFd == NULL ? 1 : 0
+                outSocket == NULL ? 1 : 0
             );
 
             if (keepSocket) {
-                if (outSocketFd != NULL) {
-                    *outSocketFd = fd;
+                if (outSocket != NULL) {
+                    *outSocket = connection;
                 }
 
                 syslog(
@@ -1056,9 +932,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
                 "success without IPv4 XOR-RELAYED-ADDRESS";
         }
 
-        if (!keepSocket || !result.ok) {
-            close(fd);
-        }
 
         return result;
     }
@@ -1067,7 +940,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
         result.error =
             "unexpected initial TURN response";
 
-        close(fd);
         return result;
     }
 
@@ -1107,7 +979,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
         result.error =
             "initial Allocate did not return 401";
 
-        close(fd);
         return result;
     }
 
@@ -1116,7 +987,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
         result.error =
             "401 missing REALM/NONCE";
 
-        close(fd);
         return result;
     }
 
@@ -1145,7 +1015,7 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
         std::vector<uint8_t> response2;
 
         if (!SendAndReceive(
-                fd,
+                socket,
                 request2,
                 tx2,
                 &response2,
@@ -1158,7 +1028,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
                 result.error.c_str()
             );
 
-            close(fd);
             return result;
         }
 
@@ -1183,7 +1052,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
                 result.error =
                     "Allocate success missing IPv4 XOR-RELAYED-ADDRESS";
 
-                close(fd);
                 return result;
             }
 
@@ -1210,12 +1078,12 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
                 "IOS6WEBRTC turn.allocate.postsuccess keep=%d fd=%d outNull=%d",
                 keepSocket ? 1 : 0,
                 fd,
-                outSocketFd == NULL ? 1 : 0
+                outSocket == NULL ? 1 : 0
             );
 
             if (keepSocket) {
-                if (outSocketFd != NULL) {
-                    *outSocketFd = fd;
+                if (outSocket != NULL) {
+                    *outSocket = connection;
                 }
 
                 syslog(
@@ -1223,8 +1091,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
                     "IOS6WEBRTC turn.socket.keep fd=%d",
                     fd
                 );
-            } else {
-                close(fd);
             }
 
             return result;
@@ -1235,7 +1101,6 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
             result.error =
                 "unexpected authenticated TURN response";
 
-            close(fd);
             return result;
         }
 
@@ -1276,14 +1141,12 @@ Ios6TurnProbeResult Ios6TurnAllocateProbe(
         result.error =
             "authenticated Allocate rejected";
 
-        close(fd);
         return result;
     }
 
     result.error =
         "TURN Allocate attempts exhausted";
 
-    close(fd);
     return result;
 }
 
@@ -1293,8 +1156,10 @@ static const uint16_t kIos6StunBindingRequest = 0x0001;
 static const uint16_t kIos6StunBindingSuccess = 0x0101;
 static const uint16_t kIos6StunBindingError = 0x0111;
 
-static const uint16_t kIos6TurnSendIndication = 0x0016;
-static const uint16_t kIos6TurnDataIndication = 0x0017;
+static const double kIos6IceRetransmitInitialMs = 500.0;
+static const double kIos6IceRetransmitMaxMs = 1600.0;
+static const double kIos6IceTriggeredCheckIntervalMs = 48.0;
+
 
 static const uint16_t kIos6AttrUsername = 0x0006;
 static const uint16_t kIos6AttrMessageIntegrity = 0x0008;
@@ -1783,131 +1648,8 @@ static std::vector<uint8_t> Ios6MakeIceBindingRequest(
 }
 
 
-static std::vector<uint8_t> Ios6MakeTurnSendIndication(
-    const std::string &peerHost,
-    uint16_t peerPort,
-    const std::vector<uint8_t> &payload
-) {
-    uint8_t txid[12];
-    MakeTransactionId(txid);
-
-    std::vector<uint8_t> message =
-        Ios6MakeStunHeader(
-            kIos6TurnSendIndication,
-            txid
-        );
-
-    uint8_t peerValue[8];
-
-    if (!Ios6MakeXorPeerAddressValue(
-            peerHost,
-            peerPort,
-            peerValue
-        )) {
-
-        return std::vector<uint8_t>();
-    }
-
-    Ios6AppendAttribute(
-        &message,
-        kIos6AttrXorPeerAddress,
-        peerValue,
-        sizeof(peerValue)
-    );
-
-    Ios6AppendAttribute(
-        &message,
-        kIos6AttrData,
-        payload.empty()
-            ? NULL
-            : &payload[0],
-        payload.size()
-    );
-
-    Ios6SetStunLength(
-        &message,
-        message.size() - 20
-    );
-
-    return message;
-}
 
 
-
-static bool Ios6ParseXorAddressValue(
-    const uint8_t *value,
-    size_t valueSize,
-    std::string *host,
-    uint16_t *port
-) {
-    if (value == NULL ||
-        valueSize < 8 ||
-        value[1] != 1) {
-
-        return false;
-    }
-
-    const uint16_t encodedPort =
-        Ios6Read16(value + 2);
-
-    const uint16_t decodedPort =
-        (uint16_t)(
-            encodedPort ^
-            (uint16_t)(kIos6StunCookie >> 16)
-        );
-
-    uint8_t addressBytes[4];
-
-    addressBytes[0] =
-        value[4] ^ 0x21;
-
-    addressBytes[1] =
-        value[5] ^ 0x12;
-
-    addressBytes[2] =
-        value[6] ^ 0xa4;
-
-    addressBytes[3] =
-        value[7] ^ 0x42;
-
-    struct in_addr address;
-
-    memcpy(
-        &address.s_addr,
-        addressBytes,
-        4
-    );
-
-    char addressString[INET_ADDRSTRLEN];
-
-    memset(
-        addressString,
-        0,
-        sizeof(addressString)
-    );
-
-    if (inet_ntop(
-            AF_INET,
-            &address,
-            addressString,
-            sizeof(addressString)
-        ) == NULL) {
-
-        return false;
-    }
-
-    if (host != NULL) {
-        *host =
-            addressString;
-    }
-
-    if (port != NULL) {
-        *port =
-            decodedPort;
-    }
-
-    return true;
-}
 
 
 static bool Ios6VerifyShortTermIntegrity(
@@ -2017,23 +1759,23 @@ Ios6MakeIceBindingSuccessResponse(
             txid
         );
 
-    uint8_t mappedValue[8];
-
-    if (!Ios6MakeXorPeerAddressValue(
-            mappedHost,
-            mappedPort,
-            mappedValue
-        )) {
-
-        return std::vector<uint8_t>();
+    uint8_t mappedValue[20];
+    size_t mappedSize = 8;
+    if (!Ios6MakeXorPeerAddressValue(mappedHost, mappedPort, mappedValue)) {
+        struct in6_addr address;
+        if (inet_pton(AF_INET6, mappedHost.c_str(), &address) != 1)
+            return std::vector<uint8_t>();
+        mappedValue[0] = 0;
+        mappedValue[1] = 2;
+        const uint16_t port = mappedPort ^ 0x2112;
+        mappedValue[2] = static_cast<uint8_t>(port >> 8);
+        mappedValue[3] = static_cast<uint8_t>(port & 255);
+        const uint8_t cookie[] = {0x21, 0x12, 0xa4, 0x42};
+        for (size_t i = 0; i < 16; ++i)
+            mappedValue[4 + i] = address.s6_addr[i] ^ (i < 4 ? cookie[i] : txid[i - 4]);
+        mappedSize = 20;
     }
-
-    Ios6AppendAttribute(
-        &message,
-        kIos6AttrXorMappedAddress,
-        mappedValue,
-        sizeof(mappedValue)
-    );
+    Ios6AppendAttribute(&message, kIos6AttrXorMappedAddress, mappedValue, mappedSize);
 
     const size_t lengthThroughIntegrity =
         (message.size() - 20) +
@@ -2131,14 +1873,16 @@ Ios6MakeIceBindingSuccessResponse(
 
 
 
-bool Ios6TurnSendData(
-    int fd,
+bool Ios6RelaySendData(
+    Ios6RelayConnection &relay,
     const std::string &peerHost,
     uint16_t peerPort,
     const uint8_t *data,
     size_t size,
     std::string *error
 ) {
+    Ios6TurnSocket &socket = relay.socket();
+    const int fd = socket.descriptor();
     if (error != NULL) {
         error->clear();
     }
@@ -2178,7 +1922,7 @@ bool Ios6TurnSendData(
     }
 
     const std::vector<uint8_t> indication =
-        Ios6MakeTurnSendIndication(
+        relay.encodePacket(
             peerHost,
             peerPort,
             payload
@@ -2196,12 +1940,7 @@ bool Ios6TurnSendData(
     ssize_t sent;
 
     do {
-        sent = send(
-            fd,
-            &indication[0],
-            indication.size(),
-            0
-        );
+        sent = socket.sendPacket(&indication[0], indication.size());
     } while (
         sent < 0 &&
         errno == EINTR
@@ -2242,15 +1981,17 @@ bool Ios6TurnSendData(
 
 
 
-Ios6TurnReceiveResult Ios6TurnReceivePacket(
-    int fd,
+Ios6RelayReceiveResult Ios6RelayReceivePacket(
+    Ios6RelayConnection &relay,
     const std::string &selectedPeerHost,
     uint16_t selectedPeerPort,
     const std::string &localUfrag,
     const std::string &localPassword,
     const std::string &remoteUfrag
 ) {
-    Ios6TurnReceiveResult result;
+    Ios6TurnSocket &socket = relay.socket();
+    const int fd = socket.descriptor();
+    Ios6RelayReceiveResult result;
 
     if (fd < 0) {
         result.error = "TURN socket is not open";
@@ -2262,12 +2003,7 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
     ssize_t received;
 
     do {
-        received = recv(
-            fd,
-            buffer,
-            sizeof(buffer),
-            0
-        );
+        received = socket.receivePacket(buffer, sizeof(buffer));
     } while (received < 0 &&
              errno == EINTR);
 
@@ -2285,112 +2021,14 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
 
     if (received == 0) {
         result.kind =
-            Ios6TurnReceiveResult::KindOther;
+            Ios6RelayReceiveResult::KindOther;
         return result;
-    }
-
-    if (received < 20) {
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC turn.transport.recv.short bytes=%ld",
-            (long)received
-        );
-
-        result.kind =
-            Ios6TurnReceiveResult::KindOther;
-
-        return result;
-    }
-
-    if (Ios6Read32(buffer + 4) !=
-        kIos6StunCookie) {
-
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC turn.transport.recv.nonStunOuter bytes=%ld",
-            (long)received
-        );
-
-        result.kind =
-            Ios6TurnReceiveResult::KindOther;
-
-        return result;
-    }
-
-    const uint16_t outerType =
-        Ios6Read16(buffer);
-
-    if (outerType !=
-        kIos6TurnDataIndication) {
-
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC turn.transport.recv.otherOuter type=0x%04x bytes=%ld",
-            (unsigned int)outerType,
-            (long)received
-        );
-
-        result.kind =
-            Ios6TurnReceiveResult::KindOther;
-
-        return result;
-    }
-
-    result.peerHost =
-        selectedPeerHost;
-
-    result.peerPort =
-        selectedPeerPort;
-
-    const uint8_t *peerValue = NULL;
-    size_t peerValueSize = 0;
-
-    if (Ios6FindAttribute(
-            buffer,
-            (size_t)received,
-            kIos6AttrXorPeerAddress,
-            &peerValue,
-            &peerValueSize
-        )) {
-
-        std::string parsedHost;
-        uint16_t parsedPort = 0;
-
-        if (Ios6ParseXorAddressValue(
-                peerValue,
-                peerValueSize,
-                &parsedHost,
-                &parsedPort
-            )) {
-
-            result.peerHost =
-                parsedHost;
-
-            result.peerPort =
-                parsedPort;
-        }
     }
 
     const uint8_t *dataValue = NULL;
     size_t dataSize = 0;
-
-    if (!Ios6FindAttribute(
-            buffer,
-            (size_t)received,
-            kIos6AttrData,
-            &dataValue,
-            &dataSize
-        )) {
-
-        syslog(
-            LOG_NOTICE,
-            "IOS6WEBRTC turn.transport.recv.missingData bytes=%ld",
-            (long)received
-        );
-
-        result.kind =
-            Ios6TurnReceiveResult::KindOther;
-
+    if (!relay.decodePacket(buffer, static_cast<size_t>(received), &result.peerHost, &result.peerPort, &dataValue, &dataSize)) {
+        result.kind = Ios6RelayReceiveResult::KindOther;
         return result;
     }
 
@@ -2402,7 +2040,7 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
 
     if (looksLikeStun) {
         result.kind =
-            Ios6TurnReceiveResult::KindInnerStun;
+            Ios6RelayReceiveResult::KindInnerStun;
 
         result.innerStunType =
             Ios6Read16(dataValue);
@@ -2530,7 +2168,7 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
             const std::vector<uint8_t> response =
                 Ios6MakeIceBindingSuccessResponse(
                     dataValue + 8,
-                    result.peerHost,
+                    relay.mappedHost(result.peerHost),
                     result.peerPort,
                     localPassword
                 );
@@ -2547,7 +2185,7 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
             }
 
             const std::vector<uint8_t> indication =
-                Ios6MakeTurnSendIndication(
+                relay.encodePacket(
                     result.peerHost,
                     result.peerPort,
                     response
@@ -2576,12 +2214,7 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
             ssize_t sent;
 
             do {
-                sent = send(
-                    fd,
-                    &indication[0],
-                    indication.size(),
-                    0
-                );
+                sent = socket.sendPacket(&indication[0], indication.size());
             } while (sent < 0 &&
                      errno == EINTR);
 
@@ -2648,7 +2281,7 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
         );
 
         result.kind =
-            Ios6TurnReceiveResult::KindOther;
+            Ios6RelayReceiveResult::KindOther;
 
         return result;
     }
@@ -2668,13 +2301,13 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
 
     if (dataSize == 0) {
         result.kind =
-            Ios6TurnReceiveResult::KindOther;
+            Ios6RelayReceiveResult::KindOther;
 
         return result;
     }
 
     result.kind =
-        Ios6TurnReceiveResult::KindTransport;
+        Ios6RelayReceiveResult::KindTransport;
 
     result.data.assign(
         dataValue,
@@ -2685,8 +2318,8 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
 }
 
 
-bool Ios6TurnIceBindingProbe(
-    int fd,
+bool Ios6RelayIceBindingProbe(
+    Ios6RelayConnection &relay,
     const std::string &peerHost,
     uint16_t peerPort,
     const std::string &localUfrag,
@@ -2696,10 +2329,13 @@ bool Ios6TurnIceBindingProbe(
     uint64_t tieBreaker,
     bool controlling,
     bool useCandidate,
+    double timeoutMs,
     std::string *selectedPeerHost,
     uint16_t *selectedPeerPort,
     std::string *error
 ) {
+    Ios6TurnSocket &socket = relay.socket();
+    const int fd = socket.descriptor();
     if (selectedPeerHost != NULL) {
         selectedPeerHost->clear();
     }
@@ -2742,16 +2378,9 @@ bool Ios6TurnIceBindingProbe(
         return false;
     }
 
-    struct in_addr initialAddress;
-
-    if (inet_pton(
-            AF_INET,
-            peerHost.c_str(),
-            &initialAddress
-        ) != 1) {
-
+    if (!relay.acceptsPeer(peerHost, peerPort)) {
         if (error != NULL) {
-            *error = "ICE peer is not numeric IPv4";
+            *error = "ICE peer is not reachable through the relay";
         }
 
         return false;
@@ -2765,7 +2394,9 @@ bool Ios6TurnIceBindingProbe(
         std::vector<uint8_t> indication;
         double nextSendMs;
         double retransmitMs;
+        double lastSendMs;
         int sendAttempt;
+        bool triggeredSend;
         bool succeeded;
     };
 
@@ -2777,7 +2408,7 @@ bool Ios6TurnIceBindingProbe(
         ((double)startedTv.tv_usec / 1000.0);
 
     const double deadlineMs =
-        startedMs + 7000.0;
+        startedMs + timeoutMs;
 
     std::vector<Ios6IceProbeTransaction>
         transactions;
@@ -2797,14 +2428,16 @@ bool Ios6TurnIceBindingProbe(
             useCandidate
         );
     initial.indication =
-        Ios6MakeTurnSendIndication(
+        relay.encodePacket(
             initial.host,
             initial.port,
             initial.binding
         );
     initial.nextSendMs = startedMs;
-    initial.retransmitMs = 500.0;
+    initial.retransmitMs = kIos6IceRetransmitInitialMs;
+    initial.lastSendMs = 0.0;
     initial.sendAttempt = 0;
+    initial.triggeredSend = false;
     initial.succeeded = false;
 
     if (initial.indication.empty()) {
@@ -2856,7 +2489,6 @@ bool Ios6TurnIceBindingProbe(
                 transactions[transactionIndex];
 
             if (transaction.succeeded ||
-                transaction.sendAttempt >= 5 ||
                 nowMs < transaction.nextSendMs) {
                 continue;
             }
@@ -2875,12 +2507,7 @@ bool Ios6TurnIceBindingProbe(
             ssize_t sent;
 
             do {
-                sent = send(
-                    fd,
-                    &transaction.indication[0],
-                    transaction.indication.size(),
-                    0
-                );
+                sent = socket.sendPacket(&transaction.indication[0], transaction.indication.size());
             } while (sent < 0 &&
                      errno == EINTR);
 
@@ -2904,12 +2531,18 @@ bool Ios6TurnIceBindingProbe(
             }
 
             ++transaction.sendAttempt;
+            transaction.lastSendMs = nowMs;
             transaction.nextSendMs =
                 nowMs + transaction.retransmitMs;
-            transaction.retransmitMs *= 2.0;
 
-            if (transaction.retransmitMs > 1600.0) {
-                transaction.retransmitMs = 1600.0;
+            if (transaction.triggeredSend) {
+                transaction.triggeredSend = false;
+            } else {
+                transaction.retransmitMs *= 2.0;
+
+                if (transaction.retransmitMs > kIos6IceRetransmitMaxMs) {
+                    transaction.retransmitMs = kIos6IceRetransmitMaxMs;
+                }
             }
         }
 
@@ -2929,7 +2562,6 @@ bool Ios6TurnIceBindingProbe(
                 transactions[transactionIndex];
 
             if (!transaction.succeeded &&
-                transaction.sendAttempt < 5 &&
                 transaction.nextSendMs < wakeMs) {
 
                 wakeMs = transaction.nextSendMs;
@@ -2984,12 +2616,7 @@ bool Ios6TurnIceBindingProbe(
         ssize_t received;
 
         do {
-            received = recv(
-                fd,
-                buffer,
-                sizeof(buffer),
-                0
-            );
+            received = socket.receivePacket(buffer, sizeof(buffer));
         } while (received < 0 &&
                  errno == EINTR);
 
@@ -3006,98 +2633,12 @@ bool Ios6TurnIceBindingProbe(
             return false;
         }
 
-        if (received < 20) {
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.data.short bytes=%ld",
-                (long)received
-            );
-
-            continue;
-        }
-
-        if (Ios6Read32(buffer + 4) !=
-            kIos6StunCookie) {
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.data.nonStun bytes=%ld",
-                (long)received
-            );
-
-            continue;
-        }
-
-        const uint16_t outerType =
-            Ios6Read16(buffer);
-
-        if (outerType !=
-            kIos6TurnDataIndication) {
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.data.otherOuter type=0x%04x bytes=%ld",
-                (unsigned int)outerType,
-                (long)received
-            );
-
-            continue;
-        }
-
-        std::string indicationPeerHost =
-            peerHost;
-
-        uint16_t indicationPeerPort =
-            peerPort;
-
-        const uint8_t *outerPeerValue = NULL;
-        size_t outerPeerSize = 0;
-
-        if (Ios6FindAttribute(
-                buffer,
-                (size_t)received,
-                kIos6AttrXorPeerAddress,
-                &outerPeerValue,
-                &outerPeerSize
-            )) {
-
-            std::string parsedPeerHost;
-            uint16_t parsedPeerPort = 0;
-
-            if (Ios6ParseXorAddressValue(
-                    outerPeerValue,
-                    outerPeerSize,
-                    &parsedPeerHost,
-                    &parsedPeerPort
-                )) {
-
-                indicationPeerHost =
-                    parsedPeerHost;
-
-                indicationPeerPort =
-                    parsedPeerPort;
-            }
-        }
-
+        std::string indicationPeerHost;
+        uint16_t indicationPeerPort = 0;
         const uint8_t *dataValue = NULL;
         size_t dataSize = 0;
-
-        if (!Ios6FindAttribute(
-                buffer,
-                (size_t)received,
-                kIos6AttrData,
-                &dataValue,
-                &dataSize
-            )) {
-
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC turn.dataIndication.missingData bytes=%ld",
-                (long)received
-            );
-
+        if (!relay.decodePacket(buffer, static_cast<size_t>(received), &indicationPeerHost, &indicationPeerPort, &dataValue, &dataSize))
             continue;
-        }
 
         if (dataSize < 20) {
             syslog(
@@ -3260,7 +2801,7 @@ bool Ios6TurnIceBindingProbe(
             std::vector<uint8_t> bindingResponse =
                 Ios6MakeIceBindingSuccessResponse(
                     dataValue + 8,
-                    indicationPeerHost,
+                    relay.mappedHost(indicationPeerHost),
                     indicationPeerPort,
                     localPassword
                 );
@@ -3275,7 +2816,7 @@ bool Ios6TurnIceBindingProbe(
             }
 
             std::vector<uint8_t> turnResponse =
-                Ios6MakeTurnSendIndication(
+                relay.encodePacket(
                     indicationPeerHost,
                     indicationPeerPort,
                     bindingResponse
@@ -3293,12 +2834,7 @@ bool Ios6TurnIceBindingProbe(
             ssize_t responseSent;
 
             do {
-                responseSent = send(
-                    fd,
-                    &turnResponse[0],
-                    turnResponse.size(),
-                    0
-                );
+                responseSent = socket.sendPacket(&turnResponse[0], turnResponse.size());
             } while (responseSent < 0 &&
                      errno == EINTR);
 
@@ -3361,13 +2897,29 @@ bool Ios6TurnIceBindingProbe(
 
                     hasTriggeredTransaction = true;
 
-                    if (!transactions[transactionIndex].succeeded) {
+                    Ios6IceProbeTransaction &existing =
+                        transactions[transactionIndex];
+
+                    if (!existing.succeeded) {
                         struct timeval triggerTv;
                         gettimeofday(&triggerTv, NULL);
 
-                        transactions[transactionIndex].nextSendMs =
+                        const double triggerNowMs =
                             ((double)triggerTv.tv_sec * 1000.0) +
                             ((double)triggerTv.tv_usec / 1000.0);
+
+                        double triggerMs =
+                            existing.lastSendMs +
+                            kIos6IceTriggeredCheckIntervalMs;
+
+                        if (triggerMs < triggerNowMs) {
+                            triggerMs = triggerNowMs;
+                        }
+
+                        if (triggerMs < existing.nextSendMs) {
+                            existing.nextSendMs = triggerMs;
+                            existing.triggeredSend = true;
+                        }
                     }
 
                     break;
@@ -3375,14 +2927,10 @@ bool Ios6TurnIceBindingProbe(
             }
 
             if (!hasTriggeredTransaction) {
-                struct in_addr triggeredAddress;
-
-                if (inet_pton(
-                        AF_INET,
-                        indicationPeerHost.c_str(),
-                        &triggeredAddress
-                    ) == 1 &&
-                    indicationPeerPort != 0) {
+                if (relay.acceptsPeer(
+                        indicationPeerHost,
+                        indicationPeerPort
+                    )) {
 
                     Ios6IceProbeTransaction triggered;
                     triggered.host = indicationPeerHost;
@@ -3399,7 +2947,7 @@ bool Ios6TurnIceBindingProbe(
                             useCandidate
                         );
                     triggered.indication =
-                        Ios6MakeTurnSendIndication(
+                        relay.encodePacket(
                             triggered.host,
                             triggered.port,
                             triggered.binding
@@ -3411,8 +2959,10 @@ bool Ios6TurnIceBindingProbe(
                     triggered.nextSendMs =
                         ((double)triggerTv.tv_sec * 1000.0) +
                         ((double)triggerTv.tv_usec / 1000.0);
-                    triggered.retransmitMs = 500.0;
+                    triggered.retransmitMs = kIos6IceRetransmitInitialMs;
+                    triggered.lastSendMs = 0.0;
                     triggered.sendAttempt = 0;
+                    triggered.triggeredSend = false;
                     triggered.succeeded = false;
 
                     if (!triggered.indication.empty()) {
@@ -3587,13 +3137,14 @@ bool Ios6TurnIceBindingProbe(
 
 
 bool Ios6TurnRefreshAllocationNoWait(
-    int fd,
+    Ios6TurnSocket &socket,
     const RtcServer &server,
     const std::string &realm,
     const std::string &nonce,
     uint32_t requestedLifetimeSeconds,
     std::string *error
 ) {
+    const int fd = socket.descriptor();
     if (fd < 0 || realm.empty() || nonce.empty()) {
         if (error != NULL) *error = "TURN refresh auth state missing";
         return false;
@@ -3606,7 +3157,7 @@ bool Ios6TurnRefreshAllocationNoWait(
 
     ssize_t sent;
     do {
-        sent = send(fd, request.empty() ? NULL : &request[0], request.size(), 0);
+        sent = socket.sendPacket(request.empty() ? NULL : &request[0], request.size());
     } while (sent < 0 && errno == EINTR);
 
     const bool ok = sent >= 0 && (size_t)sent == request.size();
@@ -3628,7 +3179,7 @@ bool Ios6TurnRefreshAllocationNoWait(
 }
 
 bool Ios6TurnRefreshPermissionNoWait(
-    int fd,
+    Ios6TurnSocket &socket,
     const RtcServer &server,
     const std::string &realm,
     const std::string &nonce,
@@ -3636,6 +3187,7 @@ bool Ios6TurnRefreshPermissionNoWait(
     uint16_t peerPort,
     std::string *error
 ) {
+    const int fd = socket.descriptor();
     if (fd < 0 || realm.empty() || nonce.empty() ||
         peerHost.empty() || peerPort == 0) {
         if (error != NULL) *error = "TURN permission refresh state missing";
@@ -3649,7 +3201,7 @@ bool Ios6TurnRefreshPermissionNoWait(
 
     ssize_t sent;
     do {
-        sent = send(fd, request.empty() ? NULL : &request[0], request.size(), 0);
+        sent = socket.sendPacket(request.empty() ? NULL : &request[0], request.size());
     } while (sent < 0 && errno == EINTR);
 
     const bool ok = sent >= 0 && (size_t)sent == request.size();
@@ -3672,7 +3224,7 @@ bool Ios6TurnRefreshPermissionNoWait(
 }
 
 bool Ios6TurnCreatePermission(
-    int fd,
+    Ios6TurnSocket &socket,
     const RtcServer &server,
     const std::string &realm,
     std::string *nonce,
@@ -3680,6 +3232,7 @@ bool Ios6TurnCreatePermission(
     uint16_t peerPort,
     std::string *error
 ) {
+    const int fd = socket.descriptor();
     if (fd < 0) {
         if (error != NULL) {
             *error = "TURN socket is not open";
@@ -3742,7 +3295,7 @@ bool Ios6TurnCreatePermission(
         std::string receiveError;
 
         if (!SendAndReceive(
-                fd,
+                socket,
                 request,
                 txid,
                 &response,

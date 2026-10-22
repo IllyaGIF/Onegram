@@ -12,7 +12,9 @@
 
 @interface TGTimelineAssignProfilePhotoActor : TGActor
 
-- (void)assignProfilePhotoRequestSuccess:(TLUserProfilePhoto *)photo;
++ (TLUserProfilePhoto *)selfProfilePhotoFromResult:(TLphotos_Photo *)result;
+
+- (void)assignProfilePhotoRequestSuccess:(TLphotos_Photo *)result;
 - (void)assignProfilePhotoRequestFailed;
 
 @end

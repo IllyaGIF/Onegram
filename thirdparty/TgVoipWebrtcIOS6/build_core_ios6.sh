@@ -31,6 +31,8 @@ tgcalls/Manager.cpp
 tgcalls/Message.cpp
 tgcalls/NetworkManager.cpp
 tgcalls/Ios6TurnClient.cpp
+tgcalls/Ios6TurnSocket.cpp
+tgcalls/Ios6RelayConnection.cpp
 tgcalls/StaticThreads.cpp
 tgcalls/v2/ExternalSignalingConnection.cpp
 tgcalls/v2/Signaling.cpp

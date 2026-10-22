@@ -1,5 +1,7 @@
 #import "TGAccountSignals.h"
 
+#import "TGAccountSwitcher.h"
+
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGTelegramNetworking.h"
@@ -58,7 +60,7 @@
             break;
         case TGReportPeerReasonOther:
             reportPeer.reason = [[TLReportReason$inputReportReasonOther alloc] init];
-            ((TLReportReason$inputReportReasonOther *)reportPeer.reason).text = otherText;
+            reportPeer.message = otherText;
             break;
     }
     
@@ -121,9 +123,9 @@
     if (TGPeerIdIsSecretChat(peerId)) {
         return [SSignal complete];
     } else {
-        TLRPCmessages_hideReportSpam$messages_hideReportSpam *hideReportSpam = [[TLRPCmessages_hideReportSpam$messages_hideReportSpam alloc] init];
-        hideReportSpam.peer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
-        return [[[TGTelegramNetworking instance] requestSignal:hideReportSpam] mapToSignal:^SSignal *(__unused id next) {
+        TLRPCmessages_hidePeerSettingsBar$messages_hidePeerSettingsBar *hidePeerSettingsBar = [[TLRPCmessages_hidePeerSettingsBar$messages_hidePeerSettingsBar alloc] init];
+        hidePeerSettingsBar.peer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
+        return [[[TGTelegramNetworking instance] requestSignal:hidePeerSettingsBar] mapToSignal:^SSignal *(__unused id next) {
             return [SSignal complete];
         }];
     }
@@ -218,7 +220,7 @@
     registerDevice.app_sandbox = false;
 #endif
     registerDevice.secret = [NSData data];
-    registerDevice.other_uids = @[];
+    registerDevice.other_uids = [[TGAccountSwitcher instance] otherAuthorizedUserIds];
     return [[TGTelegramNetworking instance] requestSignal:registerDevice];
 }
 
@@ -226,7 +228,7 @@
     TLRPCaccount_unregisterDevice$account_unregisterDevice *unregisterDevice = [[TLRPCaccount_unregisterDevice$account_unregisterDevice alloc] init];
     unregisterDevice.token_type = voip ? 9 : 1;
     unregisterDevice.token = deviceToken;
-    unregisterDevice.other_uids = @[];
+    unregisterDevice.other_uids = [[TGAccountSwitcher instance] otherAuthorizedUserIds];
     return [[TGTelegramNetworking instance] requestSignal:unregisterDevice];
 }
 

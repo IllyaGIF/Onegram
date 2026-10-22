@@ -4,6 +4,30 @@
 #import "LegacyComponentsInternal.h"
 
 #import <zlib.h>
+#import <OpenGLES/EAGL.h>
+#include <string.h>
+
+bool TGPaintVertexArrayObjectsSupported(void)
+{
+#if defined(ONEGRAM_ARMV6)
+    return false;
+#else
+    static bool supported = false;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        EAGLContext *previousContext = [EAGLContext currentContext];
+        EAGLContext *context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+        if (context != nil && [EAGLContext setCurrentContext:context])
+        {
+            const char *extensions = (const char *)glGetString(GL_EXTENSIONS);
+            supported = extensions != NULL && strstr(extensions, "GL_OES_vertex_array_object") != NULL;
+        }
+        [EAGLContext setCurrentContext:previousContext];
+    });
+    return supported;
+#endif
+}
 
 void TGPaintHasGLError_(const char* file, int line) {
     GLenum error = glGetError();

@@ -4,6 +4,11 @@
 
 @implementation TGPhoneUtils
 
++ (void)prepareFormatter
+{
+    [RMPhoneFormat instance];
+}
+
 + (NSString *)formatPhone:(NSString *)phone forceInternational:(bool)forceInternational
 {
     if (phone == nil)

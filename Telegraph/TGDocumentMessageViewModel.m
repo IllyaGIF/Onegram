@@ -1,3 +1,4 @@
+#import "TGImageInfo+Telegraph.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGDocumentMessageViewModel.h"
 
@@ -30,6 +31,10 @@
 #import "TGReusableLabel.h"
 
 #import "TGPresentation.h"
+#import "TGMessageGroupedLayout.h"
+#import "TGMessageReactionsLayout.h"
+#import "TGMessageViewsViewModel.h"
+#import "TGModernDateViewModel.h"
 
 @interface TGDocumentMessageViewModel () <TGMessageImageViewDelegate>
 {
@@ -49,6 +54,9 @@
     
     NSArray *_currentLinkSelectionViews;
     NSArray *_textCheckingResults;
+    TGMessage *_documentMessage;
+    TGDocumentMediaAttachment *_document;
+    NSArray *_suppressedGroupModels;
 }
 
 @end
@@ -117,6 +125,34 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
     return fileName;
 }
 
+static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document, TGMessage *message, NSString *legacyThumbnailCacheUri, CGSize dimensions)
+{
+    if ((document.documentId == 0 && document.localDocumentId == 0) || (legacyThumbnailCacheUri.length == 0 && !document.isImageFile))
+        return nil;
+
+    NSMutableString *uri = [[NSMutableString alloc] initWithString:@"file-thumbnail://?"];
+    if (document.documentId != 0)
+    {
+        [uri appendFormat:@"id=%" PRId64 "&cid=%" PRId64 "&mid=%" PRId32, document.documentId, message.cid, message.mid];
+        if (document.originInfo != nil)
+            [uri appendFormat:@"&origin_info=%@", [document.originInfo stringRepresentation]];
+    }
+    else
+        [uri appendFormat:@"local-id=%" PRId64, document.localDocumentId];
+
+    [uri appendFormat:@"&file-name=%@", [TGStringUtils stringByEscapingForURL:document.safeFileName]];
+    CGSize renderSize = CGSizeMake(86.0f, 86.0f);
+    if (dimensions.width > FLT_EPSILON && dimensions.height > FLT_EPSILON)
+    {
+        CGFloat scale = 86.0f / MIN(dimensions.width, dimensions.height);
+        renderSize = CGSizeMake(CGFloor(dimensions.width * scale), CGFloor(dimensions.height * scale));
+    }
+    [uri appendFormat:@"&width=86&height=86&renderWidth=%d&renderHeight=%d&rounded=1", (int)renderSize.width, (int)renderSize.height];
+    if (legacyThumbnailCacheUri.length != 0)
+        [uri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailCacheUri]];
+    return uri;
+}
+
 @implementation TGDocumentMessageViewModel
 
 - (instancetype)initWithMessage:(TGMessage *)message document:(TGDocumentMediaAttachment *)document authorPeer:(id)authorPeer viaUser:(TGUser *)viaUser context:(TGModernViewContext *)context
@@ -124,56 +160,15 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
     self = [super initWithMessage:message authorPeer:authorPeer viaUser:viaUser context:context];
     if (self != nil)
     {
+        _documentMessage = message;
+        _document = document;
+        _textCheckingResults = message.textCheckingResults;
         _authorPeerId = message.fromUid;
         _textCheckingResults = message.textCheckingResults;
         
         CGSize dimensions = CGSizeZero;
-        _legacyThumbnailCacheUri = [document.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:&dimensions];
-        dimensions.width *= 10.0f;
-        dimensions.height *= 10.0f;
-        
-        NSString *filePreviewUri = nil;
-        
-        if ((document.documentId != 0 || document.localDocumentId != 0) && _legacyThumbnailCacheUri.length != 0)
-        {
-            NSMutableString *previewUri = [[NSMutableString alloc] initWithString:@"file-thumbnail://?"];
-            if (document.documentId != 0)
-            {
-                [previewUri appendFormat:@"id=%" PRId64 "", document.documentId];
-                
-                [previewUri appendFormat:@"&cid=%" PRId64 "", message.cid];
-                [previewUri appendFormat:@"&mid=%" PRId32 "", message.mid];
-                
-                if (document.originInfo != nil)
-                    [previewUri appendFormat:@"&origin_info=%@", [document.originInfo stringRepresentation]];
-            }
-            else
-                [previewUri appendFormat:@"local-id=%" PRId64 "", document.localDocumentId];
-            
-            [previewUri appendFormat:@"&file-name=%@", [TGIOS6DisplayFileNameForDocument(document) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
-            
-            CGSize thumbnailSize = CGSizeMake(86.0f, 86.0f);
-            CGSize renderSize = CGSizeZero;
-            if (dimensions.width < dimensions.height)
-            {
-                renderSize.height = CGFloor((dimensions.height * thumbnailSize.width / dimensions.width));
-                renderSize.width = thumbnailSize.width;
-            }
-            else
-            {
-                renderSize.width = CGFloor((dimensions.width * thumbnailSize.height / dimensions.height));
-                renderSize.height = thumbnailSize.height;
-            }
-            
-            [previewUri appendFormat:@"&width=%d&height=%d&renderWidth=%d&renderHeight=%d", (int)thumbnailSize.width, (int)thumbnailSize.height, (int)renderSize.width, (int)renderSize.height];
-            
-            [previewUri appendString:@"&rounded=1"];
-            
-            if (_legacyThumbnailCacheUri != nil)
-                [previewUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:_legacyThumbnailCacheUri]];
-            
-            filePreviewUri = previewUri;
-        }
+        _legacyThumbnailCacheUri = [document.thumbnailInfo imageUrlForPreviewWithSize:&dimensions];
+        NSString *filePreviewUri = TGDocumentMessagePreviewUri(document, message, _legacyThumbnailCacheUri, dimensions);
         
         _titleText = TGIOS6DisplayFileNameForDocument(document);
         
@@ -215,6 +210,42 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
         [self updateIconWithUri:filePreviewUri];
     }
     return self;
+}
+
+- (void)setGroupedLayout:(TGMessageGroupedLayout *)groupedLayout
+{
+    [super setGroupedLayout:groupedLayout];
+    bool primary = groupedLayout.documentGroup && groupedLayout.mainMessageId == _mid;
+    _backgroundModel.drawsBubble = !groupedLayout.documentGroup || primary;
+    _textModel.text = groupedLayout.documentGroup ? (primary ? groupedLayout.caption : @"") : _documentMessage.caption;
+    _textModel.textCheckingResults = groupedLayout.documentGroup ? groupedLayout.captionTextCheckingResults : _documentMessage.textCheckingResults;
+    if (groupedLayout.documentGroup) {
+        [_reactionsModel updateWithSummary:primary ? groupedLayout.reactionSummary : nil chosenReaction:primary ? groupedLayout.chosenReaction : nil parent:self viewStorage:nil container:[_contentModel boundView].superview];
+        if (primary) {
+            TGMessage *status = groupedLayout.statusMessage;
+            int variant = 0;
+            [_dateModel setText:[TGDateUtils stringForShortTime:(int)status.date daytimeVariant:&variant] daytimeVariant:variant];
+            _messageViewsModel.count = status.viewCount.viewCount;
+            if (status.isEdited && _editedLabelModel == nil) {
+                _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGLocalized(@"Conversation.MessageEditedLabel") textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
+                [_contentModel addSubmodel:_editedLabelModel];
+            }
+        }
+    } else {
+        [_reactionsModel updateWithMessage:_documentMessage parent:self viewStorage:nil container:[_contentModel boundView].superview];
+    }
+    [_contentModel setNeedsSubmodelContentsUpdate];
+}
+
+- (void)layoutDocumentRowAtOrigin:(CGPoint)origin width:(CGFloat)width
+{
+    CGFloat nameX = (_imageModel != nil ? 74.0f : 60.0f) + 8.0f;
+    [_documentNameModel setText:_titleText maxWidth:MAX(1.0f, width - nameX)];
+    [_documentSizeModel setText:_sizeText maxWidth:MAX(1.0f, width - nameX)];
+    _documentNameModel.frame = CGRectMake(origin.x - _contentModel.frame.origin.x + nameX, origin.y - _contentModel.frame.origin.y + 3.0f, _documentNameModel.frame.size.width, _documentNameModel.frame.size.height);
+    _documentSizeModel.frame = CGRectMake(origin.x - _contentModel.frame.origin.x + nameX, origin.y - _contentModel.frame.origin.y + 28.0f, _documentSizeModel.frame.size.width, _documentSizeModel.frame.size.height);
+    _imageModel.frame = CGRectMake(origin.x, origin.y, 74.0f, 74.0f);
+    _iconModel.frame = CGRectMake(origin.x, origin.y, 60.0f, 60.0f);
 }
 
 - (bool)updateIconWithUri:(NSString *)filePreviewUri
@@ -260,6 +291,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 
 - (void)updateMessage:(TGMessage *)message viewStorage:(TGModernViewStorage *)viewStorage sizeUpdated:(bool *)sizeUpdated
 {
+    _documentMessage = message;
     [super updateMessage:message viewStorage:viewStorage sizeUpdated:sizeUpdated];
     
     NSArray *currentTextCheckingResults = nil;
@@ -269,6 +301,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
         if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]])
         {
             document = (TGDocumentMediaAttachment *)attachment;
+            _document = document;
             currentTextCheckingResults = message.textCheckingResults;
             break;
         }
@@ -305,11 +338,13 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
     }
     
     _sizeText = sizeString;
+    _titleText = TGIOS6DisplayFileNameForDocument(document);
     
     bool rebind = false;
-    CGSize dimensions;
-    NSString *newLegacyThumbnailCacheUri = [document.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:&dimensions];
-    if (![newLegacyThumbnailCacheUri isEqualToString:_legacyThumbnailCacheUri])
+    CGSize dimensions = CGSizeZero;
+    NSString *newLegacyThumbnailCacheUri = [document.thumbnailInfo imageUrlForPreviewWithSize:&dimensions];
+    NSString *previewUri = TGDocumentMessagePreviewUri(document, message, newLegacyThumbnailCacheUri, dimensions);
+    if (!TGStringCompare(newLegacyThumbnailCacheUri, _legacyThumbnailCacheUri) || !TGStringCompare(previewUri, _imageModel.uri))
     {
         _titleText = TGIOS6DisplayFileNameForDocument(document);
         
@@ -333,56 +368,15 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
     
     if (sizeUpdated != NULL)
        *sizeUpdated = true;
+    if (self.groupedLayout.documentGroup)
+        [self setGroupedLayout:self.groupedLayout];
 }
 
 - (bool)updateImage:(TGDocumentMediaAttachment *)document message:(TGMessage *)message dimensions:(CGSize)dimensions
 {
-    bool rebind = false;
-    if ((document.documentId != 0 || document.localDocumentId != 0) && _legacyThumbnailCacheUri.length != 0)
-    {
-        NSMutableString *previewUri = [[NSMutableString alloc] initWithString:@"file-thumbnail://?"];
-        if (document.documentId != 0)
-        {
-            [previewUri appendFormat:@"id=%" PRId64 "", document.documentId];
-            
-            [previewUri appendFormat:@"&cid=%" PRId64 "", message.cid];
-            [previewUri appendFormat:@"&mid=%" PRId32 "", message.mid];
-            
-            if (document.originInfo != nil)
-                [previewUri appendFormat:@"&origin_info=%@", [document.originInfo stringRepresentation]];
-        }
-        else
-            [previewUri appendFormat:@"local-id=%" PRId64 "", document.localDocumentId];
-        
-        [previewUri appendFormat:@"&file-name=%@", [TGIOS6DisplayFileNameForDocument(document) stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
-        
-        CGSize thumbnailSize = CGSizeMake(86.0f, 86.0f);
-        CGSize renderSize = CGSizeZero;
-        if (dimensions.width < dimensions.height)
-        {
-            renderSize.height = CGFloor((dimensions.height * thumbnailSize.width / dimensions.width));
-            renderSize.width = thumbnailSize.width;
-        }
-        else
-        {
-            renderSize.width = CGFloor((dimensions.width * thumbnailSize.height / dimensions.height));
-            renderSize.height = thumbnailSize.height;
-        }
-        
-        [previewUri appendFormat:@"&width=%d&height=%d&renderWidth=%d&renderHeight=%d", (int)thumbnailSize.width, (int)thumbnailSize.height, (int)renderSize.width, (int)renderSize.height];
-        
-        [previewUri appendString:@"&rounded=1"];
-        
-        if (_legacyThumbnailCacheUri != nil)
-            [previewUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:_legacyThumbnailCacheUri]];
-        
-        _imageModel.uri = previewUri;
-        
-        rebind = [self updateIconWithUri:previewUri];
-    }
-    else if (_legacyThumbnailCacheUri.length == 0) {
-        rebind = [self updateIconWithUri:nil];
-    }
+    NSString *previewUri = TGDocumentMessagePreviewUri(document, message, _legacyThumbnailCacheUri, dimensions);
+    bool rebind = [self updateIconWithUri:previewUri];
+    _imageModel.uri = previewUri;
     return rebind;
 }
 
@@ -390,7 +384,7 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 {   
     [super updateMediaAvailability:mediaIsAvailable viewStorage:viewStorage delayDisplay:delayDisplay];
     
-    if (mediaIsAvailable && !_mediaIsAvailable && OGPlatformMediaDownloadsRequireUserAction())
+    if (mediaIsAvailable && !_mediaIsAvailable && (OGPlatformMediaDownloadsRequireUserAction() || _legacyThumbnailCacheUri.length == 0))
         [_imageModel reloadImage:false];
 
     _mediaIsAvailable = mediaIsAvailable;
@@ -484,6 +478,13 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 
 - (void)layoutContentForHeaderHeight:(CGFloat)headerHeight
 {
+    if (self.groupedLayout.documentGroup) {
+        CGPoint origin = CGPointMake(_contentModel.frame.origin.x + 1.0f, _contentModel.frame.origin.y + headerHeight);
+        self.groupedLayout.mediaOrigin = origin;
+        [self layoutDocumentRowAtOrigin:origin width:self.groupedLayout.documentContentWidth];
+        _textModel.frame = CGRectMake(1.0f, headerHeight + self.groupedLayout.dimensions.height + 4.0f, _textModel.frame.size.width, _textModel.frame.size.height);
+        return;
+    }
     CGSize previewSize = CGSizeZero;
     if (_imageModel != nil)
         previewSize = _imageModel.frame.size;
@@ -513,9 +514,9 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
         
         CGFloat textInset = 0.0f;
         if (_imageModel != nil) {
-            textInset = CGRectGetMaxY(_imageModel.frame) - 2.0f;
+            textInset = CGRectGetMaxY(_imageModel.frame) - _contentModel.frame.origin.y - 2.0f;
         } else {
-            textInset = CGRectGetMaxY(_iconModel.frame) - 8.0f;
+            textInset = CGRectGetMaxY(_iconModel.frame) - _contentModel.frame.origin.y - 8.0f;
         }
         textFrame.origin = CGPointMake(1, textInset);
         _textModel.frame = textFrame;
@@ -527,6 +528,21 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 
 - (CGSize)contentSizeForContainerSize:(CGSize)containerSize needsContentsUpdate:(bool *)needsContentsUpdate infoWidth:(CGFloat)infoWidth
 {
+    if (self.groupedLayout.documentGroup) {
+        self.groupedLayout.documentContentWidth = containerSize.width;
+        bool hasCaption = self.groupedLayout.caption.length != 0;
+        if (hasCaption) {
+            _textModel.layoutFlags = TGReusableLabelLayoutMultiline | TGReusableLabelLayoutHighlightLinks;
+            _textModel.additionalTrailingWidth = infoWidth;
+            [_textModel layoutForContainerSize:containerSize];
+        } else {
+            _textModel.frame = CGRectZero;
+        }
+        if (needsContentsUpdate != NULL)
+            *needsContentsUpdate = true;
+        CGFloat captionHeight = hasCaption ? _textModel.frame.size.height + 4.0f : (infoWidth > FLT_EPSILON ? _dateModel.frame.size.height + 3.0f : 0.0f);
+        return CGSizeMake(containerSize.width, self.groupedLayout.dimensions.height + captionHeight);
+    }
     CGSize textSize = CGSizeZero;
     
     int layoutFlags = TGReusableLabelLayoutMultiline | TGReusableLabelLayoutHighlightLinks;
@@ -622,7 +638,49 @@ static NSString *TGIOS6DisplayFileNameForDocument(TGDocumentMediaAttachment *doc
 
 - (void)layoutForContainerSize:(CGSize)containerSize
 {
+    for (NSArray *entry in _suppressedGroupModels) {
+        TGModernViewModel *model = entry[0];
+        model.hidden = [entry[1] boolValue];
+    }
+    _suppressedGroupModels = nil;
+    _backgroundModel.drawsBubble = !self.groupedLayout.documentGroup || self.groupedLayout.mainMessageId == _mid;
+    if (self.groupedLayout.documentGroup && self.groupedLayout.mainMessageId != _mid) {
+        CGRect row = [self.groupedLayout frameForMessageId:_mid];
+        CGPoint origin = CGPointMake(self.groupedLayout.mediaOrigin.x, self.groupedLayout.mediaOrigin.y + row.origin.y);
+        CGFloat width = self.groupedLayout.documentContentWidth;
+        _backgroundModel.frame = CGRectMake(origin.x, origin.y, width, row.size.height);
+        _contentModel.frame = CGRectMake(origin.x, origin.y, width, row.size.height);
+        _textModel.frame = CGRectZero;
+        [self layoutDocumentRowAtOrigin:origin width:width];
+        NSMutableArray *suppressed = [[NSMutableArray alloc] init];
+        for (TGModernViewModel *model in self.submodels) {
+            if (model == _backgroundModel || model == _contentModel || model == _imageModel || model == _iconModel)
+                continue;
+            [suppressed addObject:@[model, @(model.hidden)]];
+            model.hidden = true;
+        }
+        for (TGModernViewModel *model in _contentModel.submodels) {
+            if (model == _documentNameModel || model == _documentSizeModel)
+                continue;
+            [suppressed addObject:@[model, @(model.hidden)]];
+            model.hidden = true;
+        }
+        _suppressedGroupModels = suppressed;
+        self.frame = CGRectMake(0.0f, 0.0f, containerSize.width, CGRectGetMaxY(_backgroundModel.frame));
+        [_contentModel setNeedsSubmodelContentsUpdate];
+        [_contentModel updateSubmodelContentsIfNeeded];
+        return;
+    }
     [super layoutForContainerSize:containerSize];
+}
+
+- (bool (^)(CGPoint))pointInside
+{
+    if (self.groupedLayout.documentGroup && self.groupedLayout.mainMessageId != _mid) {
+        CGRect frame = _backgroundModel.frame;
+        return ^bool(CGPoint point) { return CGRectContainsPoint(frame, point); };
+    }
+    return [super pointInside];
 }
 
 - (void)clearLinkSelection

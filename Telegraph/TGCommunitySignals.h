@@ -17,4 +17,6 @@
 
 + (NSString *)serviceTextForCommunityAction:(TGActionMediaAttachment *)action isChannel:(bool)isChannel authorName:(NSString *)authorName;
 
++ (void)reloadForAccountSwitch;
+
 @end

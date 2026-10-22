@@ -433,8 +433,9 @@ static uint32_t dnsParseAnswer(const uint8_t *buf, size_t len, uint16_t expectID
 
     [_dnsLock lock];
     NSNumber *cached = [_dnsCache objectForKey:host];
+    uint32_t cachedAddress = cached != nil ? (uint32_t)[cached unsignedIntValue] : 0;
     [_dnsLock unlock];
-    if (cached) return (uint32_t)[cached unsignedIntValue];
+    if (cached != nil) return cachedAddress;
 
     uint32_t serverIP = 0;
     if (inet_pton(AF_INET, [(self.dnsServerIPv4 ?: @"1.1.1.1") UTF8String], &serverIP) != 1) {
@@ -1367,17 +1368,20 @@ static uint32_t dnsParseAnswer(const uint8_t *buf, size_t len, uint16_t expectID
                 [conn.pendingDeliverData appendBytes:payloadBytes length:payloadLen];
 
                 while (conn.outOfOrder.count > 0) {
-                    NSData *next = [conn.outOfOrder objectForKey:[NSNumber numberWithUnsignedInt:conn.remoteSeq]];
+                    NSNumber *nextKey = [NSNumber numberWithUnsignedInt:conn.remoteSeq];
+                    NSData *next = [[conn.outOfOrder objectForKey:nextKey] retain];
                     if (!next) break;
-                    [conn.outOfOrder removeObjectForKey:[NSNumber numberWithUnsignedInt:conn.remoteSeq]];
-                    if (conn.outOfOrderBytes >= next.length) {
-                        conn.outOfOrderBytes -= next.length;
+                    [conn.outOfOrder removeObjectForKey:nextKey];
+                    NSUInteger nextLen = next.length;
+                    if (conn.outOfOrderBytes >= nextLen) {
+                        conn.outOfOrderBytes -= nextLen;
                     } else {
                         conn.outOfOrderBytes = 0;
                     }
-                    conn.remoteSeq += (uint32_t)next.length;
+                    conn.remoteSeq += (uint32_t)nextLen;
                     [conn.pendingDeliverData appendData:next];
-                    conn.bytesIn += next.length;
+                    conn.bytesIn += nextLen;
+                    [next release];
                 }
 
                 conn.bytesIn += payloadLen;

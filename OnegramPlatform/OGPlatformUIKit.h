@@ -42,6 +42,7 @@ typedef NSUInteger OGPlatformBackgroundTaskIdentifier;
 FOUNDATION_EXPORT OGPlatformBackgroundTaskIdentifier OGPlatformBeginBackgroundTask(UIApplication *application, void (^expirationHandler)(void));
 FOUNDATION_EXPORT void OGPlatformEndBackgroundTask(UIApplication *application, OGPlatformBackgroundTaskIdentifier identifier);
 FOUNDATION_EXPORT BOOL OGPlatformViewControllerIsTransitioning(UIViewController *viewController);
+FOUNDATION_EXPORT NSArray *OGPlatformChildViewControllers(UIViewController *viewController);
 FOUNDATION_EXPORT BOOL OGPlatformAccessibilityInvertColorsEnabled(void);
 FOUNDATION_EXPORT void OGPlatformHideAccessibilityElements(UIView *view);
 FOUNDATION_EXPORT BOOL OGPlatformSupportsModernLoginIntro(void);
@@ -77,6 +78,7 @@ FOUNDATION_EXPORT void OGPlatformSetLocalNotificationCategory(id notification, N
 FOUNDATION_EXPORT void OGPlatformSetLocalNotificationAlertTitle(id notification, NSString *alertTitle);
 FOUNDATION_EXPORT NSString *OGPlatformDefaultLocalNotificationSoundName(void);
 FOUNDATION_EXPORT void OGPlatformPresentLocalNotificationNow(UIApplication *application, id notification);
+FOUNDATION_EXPORT BOOL OGPlatformSetBackgroundFetchEnabled(UIApplication *application, BOOL enabled);
 FOUNDATION_EXPORT void OGPlatformScheduleLocalNotification(UIApplication *application, id notification);
 FOUNDATION_EXPORT void OGPlatformCancelLocalNotification(UIApplication *application, id notification);
 FOUNDATION_EXPORT void OGPlatformCancelAllLocalNotifications(UIApplication *application);

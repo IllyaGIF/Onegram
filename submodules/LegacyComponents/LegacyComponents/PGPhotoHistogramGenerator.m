@@ -28,6 +28,10 @@
             
             NSInteger width = (NSInteger)strongSelf.imageSize.width;
             NSInteger height = (NSInteger)strongSelf.imageSize.height;
+            PGByteColorVector *pixels = (PGByteColorVector *)strongSelf.rawBytesForImage;
+            if (pixels == NULL)
+                return;
+            bool swapRedBlue = [GPUImageContext supportsFastTextureUpload];
             
             for (NSInteger y = 0; y < height; y++)
             {
@@ -35,8 +39,8 @@
                 
                 for (NSInteger x = 0; x < width; x++)
                 {
-                    PGByteColorVector color = ((PGByteColorVector *)strongSelf.rawBytesForImage)[offset + x];
-                    if ([GPUImageContext supportsFastTextureUpload])
+                    PGByteColorVector color = pixels[offset + x];
+                    if (swapRedBlue)
                     {
                         GLubyte tmp = color.red;
                         color.red = color.blue;

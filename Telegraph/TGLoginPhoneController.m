@@ -405,6 +405,16 @@ static UIImage *TGLoginPhoneImageNamed(NSString *name)
     [self updateInterface:toInterfaceOrientation];
 }
 
+- (CGFloat)contentViewTopOffset
+{
+    UINavigationController *navigationController = self.navigationController;
+    UINavigationBar *navigationBar = navigationController.navigationBar;
+    if (navigationController == nil || navigationController.navigationBarHidden || navigationBar.superview == nil || ![self.view isDescendantOfView:navigationController.view] || ![navigationBar isDescendantOfView:navigationController.view])
+        return 0.0f;
+    CGFloat navigationBarBottom = [navigationBar convertPoint:CGPointMake(0.0f, navigationBar.bounds.size.height) toView:self.view].y;
+    return MAX(0.0f, 20.0f + 44.0f - navigationBarBottom);
+}
+
 - (void)updateInterface:(UIInterfaceOrientation)orientation
 {
     CGSize screenSize = [self referenceViewSizeForOrientation:orientation];
@@ -445,7 +455,12 @@ static UIImage *TGLoginPhoneImageNamed(NSString *name)
     if (keyboardHeight < FLT_EPSILON && iosMajorVersion() <= 3 && (_phoneField.isFirstResponder || _countryCodeField.isFirstResponder))
         keyboardHeight = UIInterfaceOrientationIsPortrait(orientation) ? 216.0f : 162.0f;
     
-    CGFloat topOrigin = 20.0f + 44.0f + 10.0f + titleAdditionalOffset;
+    CGFloat viewTopOffset = [self contentViewTopOffset];
+    screenSize.height -= viewTopOffset;
+    
+    CGFloat topOrigin = 20.0f + 44.0f + 10.0f + titleAdditionalOffset - viewTopOffset;
+    CGFloat minimumTitleTop = viewTopOffset > FLT_EPSILON ? 8.0f : -CGFLOAT_MAX;
+    topOrigin = MAX(topOrigin, minimumTitleTop);
     CGFloat bottomOffset = screenSize.height - keyboardHeight - 10.0f;
     
     CGFloat titlePlusNoticeHeight = titleSize.height + noticeSize.height;
@@ -472,6 +487,16 @@ static UIImage *TGLoginPhoneImageNamed(NSString *name)
             _noticeLabel.frame = CGRectOffset(_noticeLabel.frame, 0.0f, -overlap);
         }
     }
+    
+    bool noticeFits = _titleLabel.frame.origin.y >= minimumTitleTop;
+    if (!noticeFits)
+    {
+        CGRect titleFrame = _titleLabel.frame;
+        titleFrame.origin.y = minimumTitleTop;
+        _titleLabel.frame = titleFrame;
+        countryButtonOffset = MAX(countryButtonOffset, CGRectGetMaxY(titleFrame) + 10.0f);
+    }
+    _noticeLabel.hidden = !noticeFits;
 
     if (!_termsOfServiceLabel.hidden) {
         CGSize termsOfServiceSize = [_termsOfServiceLabel sizeThatFits:CGSizeMake(278.0f, CGFLOAT_MAX)];
@@ -909,8 +934,6 @@ static UIImage *TGLoginPhoneImageNamed(NSString *name)
 
 - (void)_commitNextButtonPressed
 {
-    [TGUpdateStateRequestBuilder updateNotifiedVersionUpdate];
-    
     if (_inProgress)
         return;
     

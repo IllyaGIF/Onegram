@@ -4,6 +4,8 @@
 #import <objc/runtime.h>
 #import "TGTransitionLayout.h"
 
+static char TGCollectionViewTransitionStateKey;
+
 @implementation PSUICollectionView (TGTransitioning)
 
 - (BOOL)isTransitionInProgress
@@ -34,7 +36,36 @@
 
 #pragma mark - Transition logic
 
-- (UICollectionViewTransitionLayout *)transitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout duration:(NSTimeInterval)duration completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion
+- (TGTransitionLayout *)tg_beginTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion
+{
+    TGTransitionLayout *transitionLayout = [[TGTransitionLayout alloc] initWithCurrentLayout:self.collectionViewLayout nextLayout:layout];
+    NSMutableDictionary *state = [[NSMutableDictionary alloc] init];
+    state[@"layout"] = transitionLayout;
+    state[@"contentOffset"] = [NSValue valueWithCGPoint:self.contentOffset];
+    if (completion != nil)
+        state[@"completion"] = [completion copy];
+    objc_setAssociatedObject(self, &TGCollectionViewTransitionStateKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    [transitionLayout prepareForTransitionInCollectionView:self];
+    return transitionLayout;
+}
+
+- (void)tg_completeTransition:(bool)finish
+{
+    NSDictionary *state = objc_getAssociatedObject(self, &TGCollectionViewTransitionStateKey);
+    if (state == nil)
+        return;
+    objc_setAssociatedObject(self, &TGCollectionViewTransitionStateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    TGCollectionViewTransitionLayout *transitionLayout = state[@"layout"];
+    transitionLayout.transitionProgress = finish ? 1.0f : 0.0f;
+    [self setCollectionViewLayout:finish ? transitionLayout.nextLayout : transitionLayout.currentLayout animated:false];
+    if (!finish)
+        self.contentOffset = [state[@"contentOffset"] CGPointValue];
+    UICollectionViewLayoutInteractiveTransitionCompletion completion = state[@"completion"];
+    if (completion != nil)
+        completion(true, finish);
+}
+
+- (TGCollectionViewTransitionLayout *)transitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout duration:(NSTimeInterval)duration completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion
 {
     NSMutableDictionary *data = [[NSMutableDictionary alloc] init];
     data[@"duration"] = @(duration);
@@ -43,17 +74,13 @@
     CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(updateProgress:)];
     
     __weak PSUICollectionView *weakSelf = self;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
-    UICollectionViewTransitionLayout *transitionLayout = [self tg_ios6_startInteractiveTransitionToCollectionViewLayout:layout completion:
-#else
-    UICollectionViewTransitionLayout *transitionLayout = [self startInteractiveTransitionToCollectionViewLayout:layout completion:
-#endif
+    TGCollectionViewTransitionLayout *transitionLayout = [self tg_beginTransitionToCollectionViewLayout:layout completion:
     ^(BOOL completed, BOOL finish)
     {
         __strong PSUICollectionView *strongSelf = weakSelf;
         NSMutableDictionary *data = [strongSelf tg_transitionData];
         [data[@"link"] invalidate];
-        UICollectionViewTransitionLayout *transitionLayout = data[@"transitionLayout"];
+        TGCollectionViewTransitionLayout *transitionLayout = data[@"transitionLayout"];
         if ([transitionLayout conformsToProtocol:@protocol(TGTransitionAnimatorLayout)])
         {
             id<TGTransitionAnimatorLayout>layout = (id<TGTransitionAnimatorLayout>)transitionLayout;
@@ -90,7 +117,7 @@ CGFloat TGQuadraticEaseInOut(CGFloat p)
     NSMutableDictionary *data = [self tg_transitionData];
     PSUICollectionViewLayout *layout = self.collectionViewLayout;
     
-    if ([layout isKindOfClass:[UICollectionViewTransitionLayout class]])
+    if ([layout isKindOfClass:[TGCollectionViewTransitionLayout class]])
     {
         CFTimeInterval startTime = [data[@"startTime"] doubleValue];
         NSTimeInterval duration = [data[@"duration"] doubleValue];
@@ -99,7 +126,7 @@ CGFloat TGQuadraticEaseInOut(CGFloat p)
         time = MAX(0, time);
         
         CGFloat progress = TGQuadraticEaseInOut(time);
-        UICollectionViewTransitionLayout *l = (UICollectionViewTransitionLayout *)layout;
+        TGCollectionViewTransitionLayout *l = (TGCollectionViewTransitionLayout *)layout;
         [l setTransitionProgress:progress];
         [l invalidateLayout];
         
@@ -115,7 +142,7 @@ CGFloat TGQuadraticEaseInOut(CGFloat p)
 - (void)finishTransition:(CADisplayLink *)link
 {
     NSMutableDictionary *data = [self tg_transitionData];
-    UICollectionViewTransitionLayout *transitionLayout = data[@"transitionLayout"];
+    TGCollectionViewTransitionLayout *transitionLayout = data[@"transitionLayout"];
     if ([transitionLayout conformsToProtocol:@protocol(TGTransitionAnimatorLayout)])
     {
         id<TGTransitionAnimatorLayout>layout = (id<TGTransitionAnimatorLayout>)transitionLayout;
@@ -125,16 +152,12 @@ CGFloat TGQuadraticEaseInOut(CGFloat p)
     [link invalidate];
 
     [data removeObjectForKey:@"link"];
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
-    [self tg_ios6_finishInteractiveTransition];
-#else
-    [self finishInteractiveTransition];
-#endif
+    [self tg_completeTransition:true];
 }
 
 #pragma mark - Calculating transition values
 
-- (CGPoint)toContentOffsetForLayout:(UICollectionViewTransitionLayout *)layout indexPath:(NSIndexPath *)indexPath toSize:(CGSize)toSize toContentInset:(UIEdgeInsets)toContentInset
+- (CGPoint)toContentOffsetForLayout:(TGCollectionViewTransitionLayout *)layout indexPath:(NSIndexPath *)indexPath toSize:(CGSize)toSize toContentInset:(UIEdgeInsets)toContentInset
 {
     CGRect fromFrame = CGRectNull;
     CGRect toFrame = CGRectNull;

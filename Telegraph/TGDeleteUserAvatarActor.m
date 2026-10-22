@@ -9,6 +9,7 @@
 #import "TGImageInfo+Telegraph.h"
 
 #import "TGUserDataRequestBuilder.h"
+#import "TGTimelineAssignProfilePhotoActor.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
 
@@ -39,9 +40,11 @@
     self.cancelToken = [TGTelegraphInstance doAssignProfilePhoto:0 accessHash:0 actor:(TGTimelineAssignProfilePhotoActor *)self];
 }
 
-- (void)assignProfilePhotoRequestSuccess:(TLUserProfilePhoto *)photo
+- (void)assignProfilePhotoRequestSuccess:(TLphotos_Photo *)result
 {
     [TGDatabaseInstance() clearPeerProfilePhotos:_uid];
+    
+    TLUserProfilePhoto *photo = [TGTimelineAssignProfilePhotoActor selfProfilePhotoFromResult:result];
     
     if ([photo isKindOfClass:[TLUserProfilePhoto$userProfilePhoto class]])
     {

@@ -31,6 +31,14 @@ const CGFloat TGPhotoEditorToolbarSize = 49.0f;
 
 @implementation TGPhotoEditorTabController
 
+- (id)initWithContext:(id<LegacyComponentsContext>)context
+{
+    self = [super initWithContext:context];
+    if (self != nil)
+        self.autoManageStatusBarBackground = false;
+    return self;
+}
+
 - (void)handleTabAction:(TGPhotoEditorTab)__unused tab
 {
 }

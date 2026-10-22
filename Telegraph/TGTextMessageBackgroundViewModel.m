@@ -26,6 +26,7 @@
     {
         _type = type;
         _context = context;
+        _drawsBubble = true;
     }
     return self;
 }
@@ -96,6 +97,8 @@
 
 - (UIImage *)currentImage
 {
+    if (!_drawsBubble)
+        return nil;
     if (_voiceMessage && [TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6BubbleImageOutgoing:_type == TGTextMessageBackgroundOutgoing highlighted:_highlighted voice:true];
     UIImage *newImage = nil;
@@ -115,6 +118,19 @@
     }
     
     return newImage;
+}
+
+- (void)setDrawsBubble:(bool)drawsBubble
+{
+    if (_drawsBubble != drawsBubble)
+    {
+        _drawsBubble = drawsBubble;
+        [_animatingHighligtedView removeFromSuperview];
+        _animatingHighligtedView = nil;
+        self.image = [self currentImage];
+        _imageIsValid = true;
+        ((UIImageView *)self.boundView).image = self.image;
+    }
 }
 
 - (void)setVoiceMessage:(bool)voiceMessage

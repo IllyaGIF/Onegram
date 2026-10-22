@@ -1427,6 +1427,8 @@ static TGIOS6ForumTopicsController *TGIOS6ResolveForumTopicsController(TGIOS6For
     [super loadView];
 
     _tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStylePlain];
+    if (iosMajorVersion() >= 11)
+        _tableView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     _tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _tableView.delegate = self;
     _tableView.dataSource = self;
@@ -3243,6 +3245,13 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
 - (void)dismissBannerForConversationId:(int64_t)conversationId
 {
     [_notificationController dismissNotificationsForConversationId:conversationId];
+}
+
+- (void)resetForAccountSwitch
+{
+    _feedContr = nil;
+    _preloadWindow = nil;
+    [self dismissAllBanners];
 }
 
 - (void)dismissAllBanners

@@ -39,6 +39,52 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
 }
 
 static TGMessageViewModelLayoutConstants currentMessageViewModelLayoutConstants;
+static CGFloat currentMessageViewModelDefaultTextFontSize = 17.0f;
+
+static CGFloat TGMessageDesktopDeviceScale(void)
+{
+    static CGFloat deviceScale = 1.0f;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
+            deviceScale = 1.1f;
+        else
+        {
+            CGSize screenSize = [UIScreen mainScreen].bounds.size;
+            CGFloat shortSide = MIN(screenSize.width, screenSize.height);
+            if (shortSide <= 320.0f)
+                deviceScale = 0.9f;
+            else if (shortSide <= 375.0f)
+                deviceScale = 0.95f;
+            else
+                deviceScale = 1.0f;
+        }
+    });
+    return deviceScale;
+}
+
+CGFloat TGMessageDesktopScale(void)
+{
+    const TGMessageViewModelLayoutConstants *constants = TGGetMessageViewModelLayoutConstants();
+    CGFloat textFactor = constants->textFontSize / MAX(1.0f, currentMessageViewModelDefaultTextFontSize);
+    return TGMessageDesktopDeviceScale() * MAX(0.8f, MIN(1.4f, textFactor));
+}
+
+CGFloat TGMessageDesktopMetric(CGFloat desktopPixels)
+{
+    return TGRetinaFloor(desktopPixels * TGMessageDesktopScale());
+}
+
+CGFloat TGMessageFontScale(void)
+{
+    return TGGetMessageViewModelLayoutConstants()->textFontSize / 17.0f;
+}
+
+CGFloat TGMessageFontMetric(CGFloat points)
+{
+    return TGRetinaFloor(points * TGMessageFontScale());
+}
 
 const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants()
 {
@@ -118,6 +164,7 @@ const TGMessageViewModelLayoutConstants *TGGetMessageViewModelLayoutConstants()
         }
         
         currentMessageViewModelLayoutConstants = constants;
+        currentMessageViewModelDefaultTextFontSize = defaultTextFontSize;
     });
     
     return &currentMessageViewModelLayoutConstants;
@@ -700,6 +747,11 @@ static char TGMessageViewModelAvatarTapRecognizerPoolKey;
 
 - (void)prepareForAsynchronousContentDrawing
 {
+}
+
+- (TGModernLetteredAvatarViewModel *)conversationAvatarModel
+{
+    return (_collapseFlags & TGModernConversationItemCollapseBottom) ? nil : _avatarModel;
 }
 
 - (void)updateMessageAttributes

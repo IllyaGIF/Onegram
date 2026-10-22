@@ -13,4 +13,6 @@
 
 + (SSignal *)remoteRecentGifs;
 
++ (void)reloadForAccountSwitch;
+
 @end

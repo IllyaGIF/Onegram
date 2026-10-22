@@ -106,7 +106,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     _type = TGMessageImageViewOverlayViewTypeNone;
     
     [self pop_removeAnimationForKey:@"progress"];
-    [self pop_removeAnimationForKey:@"progressAmbient"];
+    [self removeAnimationForKey:@"progressAmbient"];
     [self pop_removeAnimationForKey:@"completion"];
     _progress = 0.0f;
     _checkProgress = 0.0f;
@@ -119,7 +119,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != TGMessageImageViewOverlayViewTypeDownload)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         
         _type = TGMessageImageViewOverlayViewTypeDownload;
         [self setNeedsDisplay];
@@ -131,7 +131,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != TGMessageImageViewOverlayViewTypePlay)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         [self pop_removeAnimationForKey:@"comlpetion"];
         
         _type = TGMessageImageViewOverlayViewTypePlay;
@@ -144,7 +144,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != TGMessageImageViewOverlayViewTypePlayMedia)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         
         _type = TGMessageImageViewOverlayViewTypePlayMedia;
         [self setNeedsDisplay];
@@ -156,7 +156,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != TGMessageImageViewOverlayViewTypePauseMedia)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         
         _type = TGMessageImageViewOverlayViewTypePauseMedia;
         [self setNeedsDisplay];
@@ -168,7 +168,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != TGMessageImageViewOverlayViewTypeProgressCancel)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         
         _type = TGMessageImageViewOverlayViewTypeProgressCancel;
         [self setNeedsDisplay];
@@ -180,7 +180,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != TGMessageImageViewOverlayViewTypeProgressNoCancel)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         
         _type = TGMessageImageViewOverlayViewTypeProgressNoCancel;
         [self setNeedsDisplay];
@@ -198,7 +198,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
     if (_type != newType)
     {
         [self pop_removeAnimationForKey:@"progress"];
-        [self pop_removeAnimationForKey:@"progressAmbient"];
+        [self removeAnimationForKey:@"progressAmbient"];
         
         _type = newType;
         [self setNeedsDisplay];
@@ -213,16 +213,15 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
 
 + (void)_addAmbientProgressAnimation:(TGMessageImageViewOverlayLayer *)layer
 {
-    POPBasicAnimation *ambientProgress = [self pop_animationForKey:@"progressAmbient"];
-    
-    ambientProgress = [POPBasicAnimation animationWithPropertyNamed:kPOPLayerRotation];
+    CABasicAnimation *ambientProgress = [CABasicAnimation animationWithKeyPath:@"transform.rotation.z"];
     ambientProgress.fromValue = @((CGFloat)0.0f);
     ambientProgress.toValue = @((CGFloat)M_PI * 2.0f);
     ambientProgress.duration = 3.0;
     ambientProgress.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
-    ambientProgress.repeatForever = true;
+    ambientProgress.repeatCount = HUGE_VALF;
+    ambientProgress.removedOnCompletion = false;
     
-    [layer pop_addAnimation:ambientProgress forKey:@"progressAmbient"];
+    [layer addAnimation:ambientProgress forKey:@"progressAmbient"];
 }
 
 - (void)setProgress:(CGFloat)progress animated:(bool)animated
@@ -237,7 +236,7 @@ const NSInteger TGMessageImageViewOverlayParticlesCount = 40;
         if (_type != TGMessageImageViewOverlayViewTypeProgress)
             _progress = 0.0f;
         
-        if ([self pop_animationForKey:@"progressAmbient"] == nil)
+        if ([self animationForKey:@"progressAmbient"] == nil)
             [TGMessageImageViewOverlayLayer _addAmbientProgressAnimation:self];
         
         _type = TGMessageImageViewOverlayViewTypeProgress;

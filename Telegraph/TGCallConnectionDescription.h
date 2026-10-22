@@ -2,6 +2,7 @@
 
 @interface TGCallConnectionDescription : NSObject
 
+@property (nonatomic, readonly) bool isTcp;
 @property (nonatomic, readonly) int64_t identifier;
 @property (nonatomic, strong, readonly) NSString *ipv4;
 @property (nonatomic, strong, readonly) NSString *ipv6;
@@ -9,6 +10,13 @@
 @property (nonatomic, strong, readonly) NSData *peerTag;
 
 - (instancetype)initWithIdentifier:(int64_t)identifier
+                              ipv4:(NSString *)ipv4
+                              ipv6:(NSString *)ipv6
+                              port:(int32_t)port
+                           peerTag:(NSData *)peerTag;
+
+- (instancetype)initWithIdentifier:(int64_t)identifier
+                             flags:(int32_t)flags
                               ipv4:(NSString *)ipv4
                               ipv6:(NSString *)ipv6
                               port:(int32_t)port

@@ -21,7 +21,7 @@
 
 - (int)layerVersion
 {
-    return 70;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -51,7 +51,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xc97df020;
+    return (int32_t)0xa1405817;
 }
 
 - (int32_t)TLconstructorName
@@ -63,7 +63,7 @@
 {
     TLRPCmessages_sendScreenshotNotification$messages_sendScreenshotNotification *object = [[TLRPCmessages_sendScreenshotNotification$messages_sendScreenshotNotification alloc] init];
     object.peer = metaObject->getObject((int32_t)0x9344c37d);
-    object.reply_to_msg_id = metaObject->getInt32((int32_t)0x598ed37b);
+    object.reply_to = metaObject->getObject((int32_t)0x5776d75a);
     object.random_id = metaObject->getInt64((int32_t)0xca5a160a);
     return object;
 }
@@ -78,9 +78,9 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.reply_to_msg_id;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x598ed37b, value));
+        value.type = TLConstructedValueTypeObject;
+        value.nativeObject = self.reply_to;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x5776d75a, value));
     }
     {
         TLConstructedValue value;

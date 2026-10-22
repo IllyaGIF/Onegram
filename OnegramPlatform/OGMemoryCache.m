@@ -1,4 +1,5 @@
 #import "OGMemoryCache.h"
+#import "OGStructuralKey.h"
 #import <UIKit/UIKit.h>
 
 @interface OGMemoryCacheEntry : NSObject
@@ -40,7 +41,7 @@
     if (self != nil)
     {
         _lock = [[NSRecursiveLock alloc] init];
-        _entries = [[NSMutableDictionary alloc] init];
+        _entries = OGStructuralKeyDictionaryCreate();
         _countLimit = countLimit;
         _costLimit = costLimit;
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(memoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];

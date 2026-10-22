@@ -35,13 +35,13 @@
 + (instancetype)defaultPreferences
 {
     TGAutoDownloadPreferences *preferences = [[TGAutoDownloadPreferences alloc] init];
-    preferences->_photos = TGAutoDownloadModeAll;
+    preferences->_photos = TGAutoDownloadModeNone;
     preferences->_videos = TGAutoDownloadModeNone;
     preferences->_maximumVideoSize = 10;
     preferences->_documents = TGAutoDownloadModeNone;
     preferences->_maximumDocumentSize = 10;
     preferences->_voiceMessages = TGAutoDownloadModeAll;
-    preferences->_videoMessages = TGAutoDownloadModeAll;
+    preferences->_videoMessages = TGAutoDownloadModeNone;
     return preferences;
 }
 

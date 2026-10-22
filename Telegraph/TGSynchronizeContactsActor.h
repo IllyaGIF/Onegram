@@ -39,6 +39,7 @@ typedef enum {
 
 - (void)scheduleContactPhoneAddition:(int32_t)userId;
 - (void)clearState;
+- (void)resetForAccountSwitch;
 - (void)beginStartupLocalSynchronization;
 - (void)finishStartupLocalSynchronization;
 - (void)dispatchAfterStartupLocalSynchronization:(dispatch_block_t)block;

@@ -368,6 +368,7 @@ static dispatch_queue_t databaseIndexDispatchQueue = nil;
 static dispatch_queue_t databasePtsWatcherDispatchQueue = nil;
 
 static TGDatabase *TGDatabaseSingleton = nil;
+static TGDatabase *TGDatabaseRetiredSingleton = nil;
 
 static NSString *databaseName = nil;
 static TGDatabasePasswordCheckResultBlock (^passwordRequiredBlock)(void (^)(NSString *), bool) = nil;
@@ -1002,6 +1003,7 @@ static TGPeerRuntimeState TGPeerRuntimeStateMakeDefault()
     TG_SYNCHRONIZED_DEFINE(_unpinnedLiveLocations);
     
     std::tr1::unordered_map<int, TGUser *> _userByUid;
+    std::set<int> _missingUserUids;
     std::map<int, TGContactBinding *> _contactsByPhoneId;
     std::map<int, int> _phoneIdByUid;
     std::map<int, int> _importersByPhoneId;
@@ -1262,6 +1264,7 @@ static TGPeerRuntimeState TGPeerRuntimeStateMakeDefault()
 @property (nonatomic, strong) TGTimer *syncRemoteContactUidsTimer;
 
 - (void)initDatabase;
+- (void)closeForAccountSwitch;
 - (bool)_reopenDatabase;
 - (bool)_reopenIndexDatabase;
 - (void)_reportDatabaseError:(NSError *)error;
@@ -1276,7 +1279,8 @@ static TGPeerRuntimeState TGPeerRuntimeStateMakeDefault()
 - (void)_markStartupSchemaCurrent;
 - (void)_cacheExistingChannelConversation:(TGConversation *)conversation peerId:(int64_t)peerId;
 - (TGConversation *)_cachedOrLoadExistingChannel:(int64_t)peerId;
-- (TGConversation *)_updateChannelConversation:(int64_t)peerId conversation:(TGConversation *)conversation mergeReadState:(bool)mergeReadState updateFeeds:(bool)updateFeeds notifyPipe:(bool)notifyPipe;
+- (TGConversation *)_updateChannelConversation:(int64_t)peerId conversation:(TGConversation *)conversation mergeReadState:(bool)mergeReadState updateFeeds:(bool)updateFeeds notifyPipe:(bool)notifyPipe applyArchiveState:(bool)applyArchiveState;
+- (void)_updateChannels:(NSArray *)channels updateFeeds:(bool)updateFeeds applyArchiveState:(bool)applyArchiveState;
 - (void)_preloadConversationRenderStateForConversations:(NSArray *)conversations;
 - (bool)_conversationHasUnreadNotifications:(TGConversation *)conversation;
 - (void)_scheduleUnreadDialogsRecalculation;
@@ -1364,6 +1368,44 @@ static double TGDatabaseDiagnosticThreadTime(void)
 + (TGDatabase *)instance
 {
     return TGDatabaseInstance();
+}
+
++ (void)closeInstanceForAccountSwitch
+{
+    [TGDatabaseInstance() closeForAccountSwitch];
+}
+
++ (void)openInstanceAfterAccountSwitch
+{
+    TGDatabaseRetiredSingleton = TGDatabaseInstance();
+    TGDatabase *database = [[TGDatabase alloc] init];
+    TGDatabaseSingleton = database;
+    [database dispatchOnDatabaseThread:^
+    {
+        [database initDatabase];
+    } synchronous:false];
+}
+
+- (void)closeForAccountSwitch
+{
+    [_spotlightIndexDisposable dispose];
+    [_fileDeletionQueue dispatch:^
+    {
+    } synchronous:true];
+    [self dispatchOnDatabaseThread:^
+    {
+        [_database close];
+        [TGIOS6DeferredConversations() removeAllObjects];
+        [TGIOS6DeferredMessagesByPeerId() removeAllObjects];
+        TGIOS6DeferredUnreadNotification = false;
+    } synchronous:true];
+    [self dispatchOnIndexThread:^
+    {
+        [_indexDatabase close];
+    } synchronous:true];
+    [self dispatchOnDatabaseThread:^
+    {
+    } synchronous:true];
 }
 
 - (dispatch_queue_t)databaseQueue
@@ -3863,6 +3905,7 @@ static void TGDatabaseRemoveFilesAtPath(NSString *path)
         
         TG_SYNCHRONIZED_BEGIN(_userByUid);
         _userByUid.clear();
+        _missingUserUids.clear();
         TG_SYNCHRONIZED_END(_userByUid);
 
         TG_SYNCHRONIZED_BEGIN(_contactsByPhoneId);
@@ -4067,6 +4110,7 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
         for (TGUser *user in userList)
         {
             _userByUid[user.uid] = user;
+            _missingUserUids.erase(user.uid);
             if (user.contactId != 0)
                 _phoneIdByUid.insert(std::pair<int, int>(user.uid, user.contactId));
         }
@@ -4203,19 +4247,19 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
 - (TGUser *)loadUser:(int)uid
 {
     __block TGUser *user = nil;
+    bool knownMissing = false;
     
     TG_SYNCHRONIZED_BEGIN(_userByUid);
     {
-        
         std::tr1::unordered_map<int, TGUser *>::iterator it = _userByUid.find(uid);
         if (it != _userByUid.end())
-        {
             user = [it->second copy];
-        }
+        else
+            knownMissing = _missingUserUids.find(uid) != _missingUserUids.end();
     }
     TG_SYNCHRONIZED_END(_userByUid);
     
-    if (user == nil)
+    if (user == nil && !knownMissing)
     {
         __block int32_t localUserId = 0;
         [self dispatchOnDatabaseThread:^
@@ -4229,7 +4273,14 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
              }
         } synchronous:true];
         
-        if (user != nil)
+        if (user == nil)
+        {
+            TG_SYNCHRONIZED_BEGIN(_userByUid);
+            if (_userByUid.find(uid) == _userByUid.end())
+                _missingUserUids.insert(uid);
+            TG_SYNCHRONIZED_END(_userByUid);
+        }
+        else
         {
             NSTimeInterval currentTime = (CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970 + _timeDifferenceFromUTC);
             user = [user applyPrivacyRules:_privacySettings currentTime:currentTime];
@@ -4328,7 +4379,7 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
                 if (userIt->second.presence.online)
                     count++;
             }
-            else
+            else if (_missingUserUids.find(uid) == _missingUserUids.end())
                 unknownUsers.push_back(uid);
         }
     }
@@ -4386,6 +4437,11 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
                 if (user.contactId != 0)
                     _phoneIdByUid.insert(std::pair<int, int>(user.uid, user.contactId));
             }
+            for (std::vector<int>::const_iterator it = unknownUsers.begin(); it != unknownUsers.end(); it++)
+            {
+                if (_userByUid.find(*it) == _userByUid.end())
+                    _missingUserUids.insert(*it);
+            }
             TG_SYNCHRONIZED_END(_userByUid);
          } synchronous:true];
         
@@ -4409,7 +4465,7 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
         {
             users->insert(std::pair<int, TGUser *>(*it, userIt->second));
         }
-        else
+        else if (*it != 0 && _missingUserUids.find(*it) == _missingUserUids.end())
             unknownUsers.push_back(*it);
     }
     TG_SYNCHRONIZED_END(_userByUid);
@@ -4507,6 +4563,11 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
                 if (user.contactId != 0)
                     _phoneIdByUid.insert(std::pair<int, int>(user.uid, user.contactId));
             }
+            for (std::vector<int>::const_iterator it = unknownUsers.begin(); it != unknownUsers.end(); it++)
+            {
+                if (_userByUid.find(*it) == _userByUid.end())
+                    _missingUserUids.insert(*it);
+            }
             TG_SYNCHRONIZED_END(_userByUid);
         } synchronous:true];
 #if defined(ONEGRAM_DIAGNOSTICS)
@@ -4536,7 +4597,7 @@ inline static TGUser *loadUserFromDatabase(FMResultSet *result, PSKeyValueDecode
         for (NSNumber *identifier in identifiers)
         {
             int uid = [identifier intValue];
-            if (uid != 0 && _userByUid.find(uid) == _userByUid.end())
+            if (uid != 0 && _userByUid.find(uid) == _userByUid.end() && _missingUserUids.find(uid) == _missingUserUids.end())
                 unknownUsers.push_back(uid);
         }
         TG_SYNCHRONIZED_END(_userByUid);
@@ -4817,41 +4878,61 @@ static inline TGConversation *loadConversationFromDatabase(FMResultSet *result)
     return removedPeerIds;
 }
 
-- (void)setConversationArchived:(int64_t)conversationId archived:(bool)archived
+- (void)setConversationsArchiveState:(NSDictionary *)archivedByPeerId
 {
+    if (archivedByPeerId.count == 0)
+        return;
+
     [self dispatchOnDatabaseThread:^
     {
-        if (TGPeerIdIsChannel(conversationId))
+        NSMutableArray *updatedConversations = [[NSMutableArray alloc] init];
+        BOOL startedTransaction = ![_database inTransaction];
+        if (startedTransaction)
+            [_database beginTransaction];
+        [archivedByPeerId enumerateKeysAndObjectsUsingBlock:^(NSNumber *nPeerId, NSNumber *nArchived, __unused BOOL *stop)
         {
-            FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE cid=?", _channelListTableName], @(conversationId)];
-            if ([result next])
+            int64_t conversationId = [nPeerId longLongValue];
+            bool archived = [nArchived boolValue];
+            if (TGPeerIdIsChannel(conversationId))
             {
-                TGConversation *conversation = [[TGConversation alloc] initWithKeyValueCoder:[[PSKeyValueDecoder alloc] initWithData:[result dataForColumnIndex:0]]];
+                TGConversation *conversation = [[self _cachedOrLoadExistingChannel:conversationId] copy];
+                if (conversation == nil)
+                    return;
                 conversation.isArchived = archived;
+                [self _renderConversations:@[conversation]];
                 PSKeyValueEncoder *encoder = [[PSKeyValueEncoder alloc] init];
                 [conversation encodeWithKeyValueCoder:encoder];
-                [_database executeUpdate:[NSString stringWithFormat:@"UPDATE %@ SET data=? WHERE cid=?", _channelListTableName], encoder.data, @(conversationId)];
-                [_existingChannelMemoryCache removeObjectForKey:@(conversationId)];
+                [_database executeUpdate:[NSString stringWithFormat:@"UPDATE %@ SET data=? WHERE cid=?", _channelListTableName], encoder.data, nPeerId];
+                [self _cacheExistingChannelConversation:conversation peerId:conversationId];
                 if (_storedChannelList != nil)
                     [_storedChannelList updateChannel:conversation];
-                if (_storedChannelList != nil)
-                    [_storedChannelList commitUpdatedChannels];
+                [updatedConversations addObject:[conversation copy]];
             }
-        }
-        else
-        {
-            NSString *query = archived
-                ? [NSString stringWithFormat:@"UPDATE %@ SET flags=(flags | 512) WHERE cid=?", _conversationListTableName]
-                : [NSString stringWithFormat:@"UPDATE %@ SET flags=(flags & -513) WHERE cid=?", _conversationListTableName];
-            [_database executeUpdate:query, @(conversationId)];
-        }
-        
-        TG_SYNCHRONIZED_BEGIN(_cachedConversations);
-        std::map<int64_t, TGConversation *>::iterator it = _cachedConversations.find(conversationId);
-        if (it != _cachedConversations.end())
-            it->second.isArchived = archived;
-        TG_SYNCHRONIZED_END(_cachedConversations);
-        
+            else
+            {
+                NSString *query = archived
+                    ? [NSString stringWithFormat:@"UPDATE %@ SET flags=(flags | 512) WHERE cid=?", _conversationListTableName]
+                    : [NSString stringWithFormat:@"UPDATE %@ SET flags=(flags & -513) WHERE cid=?", _conversationListTableName];
+                [_database executeUpdate:query, nPeerId];
+
+                TGConversation *conversation = [[self loadConversationWithId:conversationId] copy];
+                if (conversation == nil)
+                    return;
+                conversation.isArchived = archived;
+                TG_SYNCHRONIZED_BEGIN(_cachedConversations);
+                _cachedConversations[conversationId] = conversation;
+                TG_SYNCHRONIZED_END(_cachedConversations);
+                [updatedConversations addObject:[conversation copy]];
+            }
+        }];
+        if (startedTransaction)
+            [_database commit];
+
+        if (_storedChannelList != nil)
+            [_storedChannelList commitUpdatedChannels];
+
+        if (updatedConversations.count != 0)
+            [ActionStageInstance() dispatchResource:_liveMessagesDispatchPath resource:[[SGraphObjectNode alloc] initWithObject:updatedConversations]];
         [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
     } synchronous:false];
 }
@@ -4895,6 +4976,30 @@ static inline TGConversation *loadConversationFromDatabase(FMResultSet *result)
     });
 }
 
+- (int)_countChannelsWithUnreadNotifications
+{
+    PSKeyValueDecoder *decoder = [[PSKeyValueDecoder alloc] init];
+    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE variant_sort_key > ? AND variant_sort_key < ?", _channelListTableName], TGConversationSortKeyData(TGConversationSortKeyLowerBound(TGConversationKindPersistentChannel)), TGConversationSortKeyData(TGConversationSortKeyUpperBound(TGConversationKindPersistentChannel))];
+    int count = 0;
+    while ([result next]) {
+        [decoder resetData:[result dataNoCopyForColumnIndex:0]];
+        int64_t peerId = [decoder decodeInt64ForCKey:"i"];
+        uint8_t kind = (uint8_t)[decoder decodeInt32ForCKey:"kind"];
+        int32_t unreadCount = [decoder decodeInt32ForCKey:"ucount"];
+        int32_t serviceUnreadCount = [decoder decodeInt32ForCKey:"sucount"];
+        int64_t flags = [decoder decodeInt64ForCKey:"flags"];
+        bool leftChat = [decoder decodeInt32ForCKey:"lef"] != 0;
+        bool kickedFromChat = [decoder decodeInt32ForCKey:"kk"] != 0;
+        bool unreadMark = [decoder decodeInt32ForCKey:"unrm"] != 0;
+        if (peerId == 0 || kind != TGConversationKindPersistentChannel || leftChat || kickedFromChat || (flags & (TGConversationFlagIsDeactivated | TGConversationFlagIsMin)) != 0)
+            continue;
+        if ((unreadMark || unreadCount > 0 || serviceUnreadCount > 0) && ![self isPeerMuted:peerId])
+            count++;
+    }
+    [decoder resetData:nil];
+    return count;
+}
+
 - (void)calculateUnreadChats:(int *)outChatsCount channels:(int *)outChannelsCount
 {
     int chatsCount = 0;
@@ -4905,11 +5010,7 @@ static inline TGConversation *loadConversationFromDatabase(FMResultSet *result)
             chatsCount++;
     }
     
-    int channelsCount = 0;
-    for (TGConversation *conversation in [self _loadChannelsWithLowerBound:TGConversationSortKeyLowerBound(TGConversationKindPersistentChannel) upperBound:TGConversationSortKeyUpperBound(TGConversationKindPersistentChannel) count:0]) {
-        if ([self _conversationHasUnreadNotifications:conversation])
-            channelsCount++;
-    }
+    int channelsCount = [self _countChannelsWithUnreadNotifications];
     
     if (outChatsCount != NULL)
         *outChatsCount = chatsCount;
@@ -10673,6 +10774,20 @@ static inline TGFutureAction *loadFutureActionFromQueryResult(FMResultSet *resul
     } synchronous:false];
 }
 
+- (void)addConversationHistoryHoleToLoadedEarlierMessages:(int64_t)peerId minMessageId:(int32_t)minMessageId
+{
+    [self dispatchOnDatabaseThread:^
+    {
+        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT MAX(mid) FROM %@ WHERE cid = ? AND mid < ?", _messagesTableName], @(peerId), @(minMessageId)];
+        if ([result next])
+        {
+            int32_t previousMessage = [result intForColumn:@"MAX(mid)"];
+            if (previousMessage > 0 && previousMessage + 1 < minMessageId)
+                [self addConversationHistoryHole:peerId minMessageId:previousMessage + 1 maxMessageId:minMessageId - 1];
+        }
+    } synchronous:false];
+}
+
 - (void)fillConversationHistoryHole:(int64_t)peerId indexSet:(NSIndexSet *)filledIndexSet
 {
     [self dispatchOnDatabaseThread:^
@@ -14584,14 +14699,14 @@ static TGBotReplyMarkup *TGDatabaseDecodeBotReplyMarkup(NSData *data)
 }
 
 - (TGConversation *)_updateChannelConversation:(int64_t)peerId conversation:(TGConversation *)conversation mergeReadState:(bool)mergeReadState {
-    return [self _updateChannelConversation:peerId conversation:conversation mergeReadState:mergeReadState updateFeeds:false notifyPipe:true];
+    return [self _updateChannelConversation:peerId conversation:conversation mergeReadState:mergeReadState updateFeeds:false notifyPipe:true applyArchiveState:false];
 }
 
 - (TGConversation *)_updateChannelConversation:(int64_t)peerId conversation:(TGConversation *)conversation mergeReadState:(bool)mergeReadState updateFeeds:(bool)updateFeeds {
-    return [self _updateChannelConversation:peerId conversation:conversation mergeReadState:mergeReadState updateFeeds:updateFeeds notifyPipe:true];
+    return [self _updateChannelConversation:peerId conversation:conversation mergeReadState:mergeReadState updateFeeds:updateFeeds notifyPipe:true applyArchiveState:false];
 }
 
-- (TGConversation *)_updateChannelConversation:(int64_t)peerId conversation:(TGConversation *)conversation mergeReadState:(bool)mergeReadState updateFeeds:(bool)updateFeeds notifyPipe:(bool)notifyPipe {
+- (TGConversation *)_updateChannelConversation:(int64_t)peerId conversation:(TGConversation *)conversation mergeReadState:(bool)mergeReadState updateFeeds:(bool)updateFeeds notifyPipe:(bool)notifyPipe applyArchiveState:(bool)applyArchiveState {
     FMResultSet *existingResult = [_database executeQuery:[NSString stringWithFormat:@"SELECT data FROM %@ WHERE cid=?", _channelListTableName], @(peerId)];
     if ([existingResult next]) {
         TGConversation *currentConversation = [[TGConversation alloc] initWithKeyValueCoder:[[PSKeyValueDecoder alloc] initWithData:[existingResult dataForColumnIndex:0]]];
@@ -14603,6 +14718,8 @@ static TGBotReplyMarkup *TGDatabaseDecodeBotReplyMarkup(NSData *data)
         
         PSKeyValueEncoder *encoder = [[PSKeyValueEncoder alloc] init];
         [currentConversation mergeChannel:conversation];
+        if (applyArchiveState)
+            currentConversation.isArchived = conversation.isArchived;
         [self _renderConversations:@[currentConversation]];
         
         if (mergeReadState) {
@@ -14886,7 +15003,7 @@ static TGBotReplyMarkup *TGDatabaseDecodeBotReplyMarkup(NSData *data)
                 _storedChannelList = nil;
         }
 
-        [self updateChannels:channels];
+        [self updateDialogChannels:channels];
         int32_t one = 1;
         [self setCustomProperty:@"channelListSynchronized_v2" value:[NSData dataWithBytes:&one length:4]];
         [_database commit];
@@ -14898,6 +15015,14 @@ static TGBotReplyMarkup *TGDatabaseDecodeBotReplyMarkup(NSData *data)
 }
 
 - (void)updateChannels:(NSArray *)channels updateFeeds:(bool)updateFeeds {
+    [self _updateChannels:channels updateFeeds:updateFeeds applyArchiveState:false];
+}
+
+- (void)updateDialogChannels:(NSArray *)channels {
+    [self _updateChannels:channels updateFeeds:false applyArchiveState:true];
+}
+
+- (void)_updateChannels:(NSArray *)channels updateFeeds:(bool)updateFeeds applyArchiveState:(bool)applyArchiveState {
     [self dispatchOnDatabaseThread:^{
         [self _preloadConversationRenderStateForConversations:channels];
         BOOL startedTransaction = channels.count > 1 && ![_database inTransaction];
@@ -14907,7 +15032,7 @@ static TGBotReplyMarkup *TGDatabaseDecodeBotReplyMarkup(NSData *data)
         NSMutableArray *updatedConversations = [[NSMutableArray alloc] init];
         bool updatedFeedChannels = false;
         for (TGConversation *conversation in channels) {
-            TGConversation *updatedConversation = [self _updateChannelConversation:conversation.conversationId conversation:conversation mergeReadState:false updateFeeds:updateFeeds notifyPipe:false];
+            TGConversation *updatedConversation = [self _updateChannelConversation:conversation.conversationId conversation:conversation mergeReadState:false updateFeeds:updateFeeds notifyPipe:false applyArchiveState:applyArchiveState];
             if (updatedConversation != nil) {
                 [updatedConversations addObject:updatedConversation];
                 if (updatedConversation.feedId.intValue != 0)

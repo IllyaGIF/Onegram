@@ -5,6 +5,7 @@
 {
     NSString *_path;
     NSDictionary *_dictionary;
+    bool _suspended;
     
     OSSpinLock _lock;
 }
@@ -72,6 +73,11 @@
     }
     
     OSSpinLockLock(&_lock);
+    if (_suspended)
+    {
+        OSSpinLockUnlock(&_lock);
+        return;
+    }
     NSMutableDictionary *dictionary = [_dictionary mutableCopy];
     dictionary[key] = value;
     _dictionary = dictionary;
@@ -84,6 +90,11 @@
         return;
     
     OSSpinLockLock(&_lock);
+    if (_suspended)
+    {
+        OSSpinLockUnlock(&_lock);
+        return;
+    }
     NSMutableDictionary *dictionary = [_dictionary mutableCopy];
     [dictionary removeObjectForKey:key];
     _dictionary = dictionary;
@@ -119,12 +130,41 @@
             _dictionary = [[NSDictionary alloc] init];
         }
     }
-    else
+    else if (!_suspended)
     {
-        NSData *data = [NSKeyedArchiver archivedDataWithRootObject:_dictionary];
-        if (data != nil)
-            [data writeToFile:_path atomically:true];
+        [self _writeDictionary];
     }
+    OSSpinLockUnlock(&_lock);
+}
+
+- (void)_writeDictionary
+{
+    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:_dictionary];
+    if (data != nil)
+        [data writeToFile:_path atomically:true];
+}
+
+- (void)suspendForAccountSwitch
+{
+    OSSpinLockLock(&_lock);
+    if (_dictionary != nil && !_suspended)
+        [self _writeDictionary];
+    _suspended = true;
+    OSSpinLockUnlock(&_lock);
+}
+
+- (void)reloadAfterAccountSwitch
+{
+    OSSpinLockLock(&_lock);
+    _dictionary = nil;
+    OSSpinLockUnlock(&_lock);
+    [self synchronize];
+}
+
+- (void)resumeAfterAccountSwitch
+{
+    OSSpinLockLock(&_lock);
+    _suspended = false;
     OSSpinLockUnlock(&_lock);
 }
 

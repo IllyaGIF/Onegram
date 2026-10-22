@@ -898,8 +898,8 @@ static CTFontRef textFontForSize(CGFloat size)
         }
     }
     
-    size.width = MAX(size.width, infoWidth - 5.0f);
-    if ([TGPresentation brandedIOS6Style] && ![self brandedReactionsShareTimeRow] && !_isGame && !_isInvoice && !(_text.length == 0 && _webPage != nil))
+    size.width = MAX(size.width, infoWidth - (([TGPresentation brandedIOS6Style] || [self usesInlineMessageLayout]) ? 5.0f : 0.0f));
+    if ([TGPresentation brandedIOS6Style] && ![self reactionsShareTimeRow] && !_isGame && !_isInvoice && !(_text.length == 0 && _webPage != nil))
         size.height += [TGPresentation brandedIOS6ConversationAppearance].bubbleTimeRowHeight;
     
     if (_isGame || _isInvoice || (_text.length == 0 && _webPage != nil)) {

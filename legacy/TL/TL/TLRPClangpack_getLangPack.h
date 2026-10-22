@@ -10,6 +10,7 @@
 
 @interface TLRPClangpack_getLangPack : TLMetaRpc
 
+@property (nonatomic, retain) NSString *lang_pack;
 @property (nonatomic, retain) NSString *lang_code;
 
 - (Class)responseClass;

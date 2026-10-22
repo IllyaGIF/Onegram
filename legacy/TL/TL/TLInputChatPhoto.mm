@@ -62,7 +62,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x927c55b4;
+    return (int32_t)0xbdcdaec0;
 }
 
 - (int32_t)TLconstructorName
@@ -73,7 +73,11 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLInputChatPhoto$inputChatUploadedPhoto *object = [[TLInputChatPhoto$inputChatUploadedPhoto alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.file = metaObject->getObject((int32_t)0x3187ec9);
+    object.video = metaObject->getObject((int32_t)0x2182fe3c);
+    object.video_start_ts = metaObject->getDouble((int32_t)0xb3e89406);
+    object.video_emoji_markup = metaObject->getObject((int32_t)0xfd2a65a4);
     return object;
 }
 
@@ -81,9 +85,37 @@
 {
     {
         TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    if (self.flags & (1 << 0))
+    {
+        TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
         value.nativeObject = self.file;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x3187ec9, value));
+    }
+    if (self.flags & (1 << 1))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeObject;
+        value.nativeObject = self.video;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x2182fe3c, value));
+    }
+    if (self.flags & (1 << 2))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveDouble;
+        value.primitive.doubleValue = self.video_start_ts;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xb3e89406, value));
+    }
+    if (self.flags & (1 << 3))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeObject;
+        value.nativeObject = self.video_emoji_markup;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xfd2a65a4, value));
     }
 }
 

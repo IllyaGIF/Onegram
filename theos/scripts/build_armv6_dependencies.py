@@ -14,16 +14,25 @@ import tarfile
 import urllib.request
 from generate import OUT
 from xcode_graph import ROOT
+from artifact_cache import cache_matches, cache_record, fingerprint
+
+
+def install_archive(source, destination, ranlib):
+    signature = fingerprint([source, Path(ranlib)])
+    stamp = destination.with_suffix('.install-state.json')
+    if cache_matches(stamp, signature, [destination]):
+        return
+    shutil.copy2(source, destination)
+    run([ranlib, destination])
+    cache_record(stamp, signature, [destination])
 
 
 def tool(name, tools):
-    if sys.platform == 'darwin':
-        return subprocess.check_output(['xcrun', '--find', name], text=True).strip()
     candidates = [tools / name, tools / ('llvm-' + name)]
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
-    return name
+    raise SystemExit('Missing toolchain utility: ' + str(tools / name))
 
 
 def clang_resource_dir(clang):
@@ -449,7 +458,7 @@ def main():
             raise SystemExit('Missing Darwin linker: ' + str(darwin_ld))
         ld = str(darwin_ld)
         driver_tool_flags = ['-B' + str(tools) + os.sep]
-    mig = tool('mig', tools) if sys.platform == 'darwin' else None
+    mig = tool('mig', tools) if (tools / 'mig').is_file() else None
     sources = OUT / 'dependency-sources'
     products = OUT / 'products'
     objects = OUT / 'dependency-objects'
@@ -495,7 +504,7 @@ def main():
     arclite = products / 'libarclite_iphoneos.a'
     arclite_stamp = objects / '.onegram-armv6-arclite.signature'
     arclite_sources = (compat / 'OnegramBlocksRuntimeClasses.m', compat / 'OnegramARCRuntime.m', compat / 'OnegramIOS3Compatibility.m')
-    arclite_compile_flags = ['-DONEGRAM_LINKER_BLOCK_ALIASES=1'] if sys.platform != 'darwin' else []
+    arclite_compile_flags = ['-DONEGRAM_LINKER_BLOCK_ALIASES=1']
     if os.environ.get('ONEGRAM_DIAGNOSTICS') == '1':
         arclite_compile_flags.append('-DONEGRAM_DIAGNOSTICS=1')
     arclite_signature = build_signature(
@@ -922,6 +931,59 @@ _dispatch_continuation_free(dispatch_continuation_t dc)
             else:
                 raise SystemExit('libdispatch continuation pop code changed unexpectedly')
 
+        worker_priority_original = """
+	r = _dispatch_pthread_sigmask(SIG_BLOCK, &mask, NULL);
+	(void)dispatch_assume_zero(r);
+
+	do {
+		_dispatch_worker_thread2(context);
+"""
+        worker_priority_applied = """
+	r = _dispatch_pthread_sigmask(SIG_BLOCK, &mask, NULL);
+	(void)dispatch_assume_zero(r);
+
+	_dispatch_worker_thread_apply_priority(dq);
+
+	do {
+		_dispatch_worker_thread2(context);
+"""
+        worker_priority_function = """
+static void
+_dispatch_worker_thread_apply_priority(dispatch_queue_t dq)
+{
+	thread_precedence_policy_data_t policy;
+	switch (dq - _dispatch_root_queues) {
+	case DISPATCH_ROOT_QUEUE_IDX_HIGH_PRIORITY:
+	case DISPATCH_ROOT_QUEUE_IDX_HIGH_OVERCOMMIT_PRIORITY:
+		policy.importance = 4;
+		break;
+	default:
+		return;
+	}
+	(void)dispatch_assume_zero(thread_policy_set(
+			pthread_mach_thread_np(pthread_self()), THREAD_PRECEDENCE_POLICY,
+			(thread_policy_t)&policy, THREAD_PRECEDENCE_POLICY_COUNT));
+}
+
+// 6618342 Contact the team that owns the Instrument DTrace probe before
+//         renaming this symbol
+static void *
+_dispatch_worker_thread(void *context)
+"""
+        worker_thread_declaration = """
+// 6618342 Contact the team that owns the Instrument DTrace probe before
+//         renaming this symbol
+static void *
+_dispatch_worker_thread(void *context)
+"""
+        if worker_priority_applied not in queue_text:
+            if worker_priority_original not in queue_text or queue_text.count(worker_thread_declaration) != 1:
+                raise SystemExit('libdispatch worker thread code changed unexpectedly')
+            queue_text = queue_text.replace(worker_priority_original, worker_priority_applied, 1)
+            queue_text = queue_text.replace(worker_thread_declaration, worker_priority_function, 1)
+            if '#include <mach/thread_policy.h>' not in queue_text:
+                queue_text = '#include <mach/thread_policy.h>\n' + queue_text
+
         queue.write_text(queue_text)
 
         dispatch_init = dispatch_src / 'init.c'
@@ -1037,7 +1099,8 @@ _dispatch_continuation_alloc_from_heap(void);
             env = make_env.copy()
             env.update(CC=str(configure_cc_wrapper), CXX=str(configure_cxx_wrapper), AR=ar, RANLIB=ranlib, CFLAGS='-Os', CXXFLAGS='-Os', LDFLAGS='')
             try:
-                run([source / 'configure', '--host=arm-apple-darwin', '--build=' + platform.machine() + '-apple-darwin', '--disable-shared', '--enable-static'] + arguments, cwd=source, env=env)
+                build_system = 'apple-darwin' if sys.platform == 'darwin' else 'unknown-linux-gnu'
+                run([source / 'configure', '--host=arm-apple-darwin', '--build=' + platform.machine() + '-' + build_system, '--disable-shared', '--enable-static'] + arguments, cwd=source, env=env)
             except subprocess.CalledProcessError:
                 config_log = source / 'config.log'
                 if config_log.is_file():
@@ -1049,8 +1112,7 @@ _dispatch_continuation_alloc_from_heap(void);
                 raise SystemExit('Build did not produce ' + output_name)
             cache_store(stamp, signature)
         destination = products / output_name
-        shutil.copy2(result, destination)
-        run([ranlib, destination])
+        install_archive(result, destination, ranlib)
         verify_archive(destination, lipo)
 
     configure_static(sources / 'opus-1.0.3', sources / 'opus-1.0.3.tar.gz', 'opus', [], 'libopus.a', ['.libs/libopus.a', 'libopus.a'])
@@ -1110,8 +1172,7 @@ _dispatch_continuation_alloc_from_heap(void);
         if not source.is_file():
             raise SystemExit('OpenSSL build did not produce ' + name)
         destination = products / name
-        shutil.copy2(source, destination)
-        run([ranlib, destination])
+        install_archive(source, destination, ranlib)
         verify_archive(destination, lipo)
 
     pst = ROOT / 'thirdparty/PSTCollectionView/PSTCollectionView'

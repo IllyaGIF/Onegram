@@ -4,6 +4,7 @@
 
 @interface TGPhoneUtils : NSObject
 
++ (void)prepareFormatter;
 + (NSString *)formatPhone:(NSString *)phone forceInternational:(bool)forceInternational;
 + (NSString *)formatPhoneUrl:(NSString *)phone;
 

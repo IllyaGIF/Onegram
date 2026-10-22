@@ -12,6 +12,7 @@
 #import "../../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
 #import "../../submodules/LegacyComponents/LegacyComponents/TGCache.h"
 #import "TGPresentation.h"
+#import "../../OnegramRuntime/OGRuntime.h"
 
 @interface TGModernLetteredAvatarViewModel ()
 {
@@ -50,6 +51,16 @@
     return [TGModernLetteredAvatarView class];
 }
 
+- (NSString *)avatarUri
+{
+    return _avatarUri;
+}
+
+- (NSString *)avatarFilter
+{
+    return _filter;
+}
+
 - (void)_prepareLetters
 {
     if (_avatarUri.length != 0 || [NSThread isMainThread])
@@ -80,7 +91,7 @@
     
     TGModernLetteredAvatarView *view = (TGModernLetteredAvatarView *)[self boundView];
     [view setSingleFontSize:_fontSize doubleFontSize:_fontSize useBoldFont:false];
-    view.fadeTransition = true;
+    view.fadeTransition = !(OGRuntimeSingleCoreDevice() && OGRuntimeInteractionActiveFast());
     
     if (_avatarUri.length == 0) {
         if (_uid != 0) {

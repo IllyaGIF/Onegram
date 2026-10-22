@@ -23,6 +23,9 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
 @interface TGRemoteImageView ()
 {
     NSUInteger _loadGeneration;
+#if defined(ONEGRAM_DIAGNOSTICS)
+    CFAbsoluteTime _avatarRequestedAt;
+#endif
     int _peerPhotoRetryCount;
     NSString *_peerPhotoRetryUrl;
     UIImage *_peerPhotoRetryPlaceholder;
@@ -35,32 +38,75 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
 
 @end
 
+#if defined(ONEGRAM_DIAGNOSTICS)
+static NSUInteger TGRemoteAvatarMemoryHits = 0;
+static NSUInteger TGRemoteAvatarColdLoads = 0;
+static NSUInteger TGRemoteAvatarCancelledLoads = 0;
+static double TGRemoteAvatarVisibleDuration = 0.0;
+static double TGRemoteAvatarMaximumVisibleDuration = 0.0;
+static CFAbsoluteTime TGRemoteAvatarLastReport = 0.0;
+
+static void TGRemoteAvatarReportStatistics(void)
+{
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - TGRemoteAvatarLastReport < 3.0)
+        return;
+    TGRemoteAvatarLastReport = now;
+    OGPlatformDiagnosticLog(@"AVATARSTAT memory=%lu cold=%lu cancelled=%lu visibleMs=%.1f visibleMaxMs=%.1f", (unsigned long)TGRemoteAvatarMemoryHits, (unsigned long)TGRemoteAvatarColdLoads, (unsigned long)TGRemoteAvatarCancelledLoads, TGRemoteAvatarVisibleDuration * 1000.0, TGRemoteAvatarMaximumVisibleDuration * 1000.0);
+    TGRemoteAvatarMemoryHits = 0;
+    TGRemoteAvatarColdLoads = 0;
+    TGRemoteAvatarCancelledLoads = 0;
+    TGRemoteAvatarVisibleDuration = 0.0;
+    TGRemoteAvatarMaximumVisibleDuration = 0.0;
+}
+#endif
+
 @implementation TGRemoteImageView
+
+static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
+{
+    NSUInteger length = url.length;
+    CFStringInlineBuffer buffer;
+    CFStringInitInlineBuffer((__bridge CFStringRef)url, &buffer, CFRangeMake(0, (CFIndex)length));
+    CFCharacterSetRef whitespace = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
+    NSUInteger index = 0;
+    for (NSUInteger component = 0; component < 4; component++)
+    {
+        while (index < length && CFCharacterSetIsCharacterMember(whitespace, CFStringGetCharacterFromInlineBuffer(&buffer, (CFIndex)index)))
+            index++;
+        if (index < length)
+        {
+            UniChar sign = CFStringGetCharacterFromInlineBuffer(&buffer, (CFIndex)index);
+            if (sign == '+' || sign == '-')
+                index++;
+        }
+        NSUInteger digitsStart = index;
+        while (index < length)
+        {
+            UniChar value = CFStringGetCharacterFromInlineBuffer(&buffer, (CFIndex)index);
+            if (value < '0' || value > '9')
+                break;
+            index++;
+        }
+        if (index == digitsStart)
+            return NSNotFound;
+        while (index < length && CFCharacterSetIsCharacterMember(whitespace, CFStringGetCharacterFromInlineBuffer(&buffer, (CFIndex)index)))
+            index++;
+        if (index >= length || CFStringGetCharacterFromInlineBuffer(&buffer, (CFIndex)index) != '_')
+            return NSNotFound;
+        if (component < 3)
+            index++;
+    }
+    return index;
+}
 
 + (NSString *)cacheKeyForUrl:(NSString *)url filter:(NSString *)filter
 {
     if (url.length == 0)
         return nil;
-    NSString *normalizedUrl = url;
-    NSArray *components = [url componentsSeparatedByString:@"_"];
-    if (components.count >= 5)
-    {
-        BOOL legacyLocation = YES;
-        for (NSUInteger index = 0; index < 4; index++)
-        {
-            NSString *component = components[index];
-            NSScanner *scanner = [NSScanner scannerWithString:component];
-            long long value = 0;
-            if (![scanner scanLongLong:&value] || !scanner.isAtEnd)
-            {
-                legacyLocation = NO;
-                break;
-            }
-        }
-        if (legacyLocation)
-            normalizedUrl = [[components subarrayWithRange:NSMakeRange(0, 4)] componentsJoinedByString:@"_"];
-    }
-    return filter.length == 0 ? normalizedUrl : [NSString stringWithFormat:@"{filter:%@}%@", filter, normalizedUrl];
+    NSUInteger legacyPrefixLength = TGRemoteImageLegacyLocationPrefixLength(url);
+    NSString *normalizedUrl = legacyPrefixLength == NSNotFound ? url : [url substringToIndex:legacyPrefixLength];
+    return filter.length == 0 ? normalizedUrl : [[NSString alloc] initWithFormat:@"{filter:%@}%@", filter, normalizedUrl];
 }
 
 + (NSMutableDictionary *)imageProcessors
@@ -297,6 +343,18 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
     NSString *cacheUrl = [TGRemoteImageView cacheKeyForUrl:url filter:filter];
     self.currentCacheUrl = cacheUrl;
     UIImage *image = [cache cachedImage:cacheUrl availability:TGCacheMemory];
+#if defined(ONEGRAM_DIAGNOSTICS)
+    if ([cache isRenderedAvatarKey:cacheUrl])
+    {
+        if (image != nil)
+        {
+            TGRemoteAvatarMemoryHits++;
+            TGRemoteAvatarReportStatistics();
+        }
+        else
+            _avatarRequestedAt = CFAbsoluteTimeGetCurrent();
+    }
+#endif
 
 #if defined(ONEGRAM_ARMV6)
     bool onegramPeerPhoto = [url hasPrefix:@"peerphoto:"];
@@ -356,6 +414,9 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
     
     if (image != nil)
     {
+#if defined(ONEGRAM_DIAGNOSTICS)
+        [self recordAvatarReady];
+#endif
         if (_contentHints & TGRemoteImageContentHintSaveToGallery)
         {
             [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/checkImageStored/(%lu)", (unsigned long)[url hash]] options:[[NSDictionary alloc] initWithObjectsAndKeys:url, @"url", nil] watcher:self];
@@ -474,8 +535,26 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
     }
 }
 
+#if defined(ONEGRAM_DIAGNOSTICS)
+- (void)recordAvatarReady
+{
+    if (_avatarRequestedAt == 0.0)
+        return;
+    double duration = CFAbsoluteTimeGetCurrent() - _avatarRequestedAt;
+    _avatarRequestedAt = 0.0;
+    TGRemoteAvatarColdLoads++;
+    TGRemoteAvatarVisibleDuration += duration;
+    TGRemoteAvatarMaximumVisibleDuration = MAX(TGRemoteAvatarMaximumVisibleDuration, duration);
+    TGRemoteAvatarReportStatistics();
+}
+#endif
+
 - (void)applyLoadedImage:(UIImage *)image animated:(bool)animated
 {
+#if defined(ONEGRAM_DIAGNOSTICS)
+    if (image != nil)
+        [self recordAvatarReady];
+#endif
     self.image = image;
     
     if (_placeholderView != nil)
@@ -509,6 +588,13 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
 
 - (void)cancelLoading
 {
+#if defined(ONEGRAM_DIAGNOSTICS)
+    if (_avatarRequestedAt != 0.0)
+    {
+        _avatarRequestedAt = 0.0;
+        TGRemoteAvatarCancelledLoads++;
+    }
+#endif
     _loadGeneration++;
     if (self.path != nil)
     {

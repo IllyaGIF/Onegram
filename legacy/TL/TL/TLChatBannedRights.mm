@@ -1,0 +1,71 @@
+#import "TLChatBannedRights.h"
+
+#import "../NSInputStream+TL.h"
+#import "../NSOutputStream+TL.h"
+
+
+@implementation TLChatBannedRights
+
+
+- (int32_t)TLconstructorSignature
+{
+    return 0;
+}
+
+- (int32_t)TLconstructorName
+{
+    return 0;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
+{
+    return nil;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
+{
+}
+
+
+@end
+
+@implementation TLChatBannedRights$chatBannedRights : TLChatBannedRights
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0x9f120418;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0x8ec123bb;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLChatBannedRights$chatBannedRights *object = [[TLChatBannedRights$chatBannedRights alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
+    object.until_date = metaObject->getInt32((int32_t)0xbf578ee4);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.until_date;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xbf578ee4, value));
+    }
+}
+
+
+@end
+

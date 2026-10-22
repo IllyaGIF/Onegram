@@ -2,6 +2,8 @@
 
 @class TLChatPhoto;
 @class TLInputChannel;
+@class TLChannelAdminRights;
+@class TLChannelBannedRights;
 
 
 @interface TLChat$chat : TLChat
@@ -21,5 +23,7 @@
 @property (nonatomic) int32_t date;
 @property (nonatomic) int32_t version;
 @property (nonatomic, strong) TLInputChannel *migrated_to;
+@property (nonatomic, strong) TLChannelAdminRights *admin_rights;
+@property (nonatomic, strong) TLChannelBannedRights *default_banned_rights;
 
 @end

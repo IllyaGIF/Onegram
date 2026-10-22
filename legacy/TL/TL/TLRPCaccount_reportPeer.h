@@ -13,6 +13,7 @@
 
 @property (nonatomic, retain) TLInputPeer *peer;
 @property (nonatomic, retain) TLReportReason *reason;
+@property (nonatomic, retain) NSString *message;
 
 - (Class)responseClass;
 

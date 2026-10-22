@@ -880,7 +880,7 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
                                     TGChannelConversationCompanion *strongSelf = TGIOS4ResolveChannelConversationCompanion(ios4Reference);
                                     if (strongSelf != nil) {
                                         if ([strongSelf canPinMessage:message]) {
-                                            [[[[strongSelf updatePinnedMessage:0] deliverOn:[SQueue mainQueue]] onDispose:^{
+                                            [[[[strongSelf updatePinnedMessage:message.mid unpin:true] deliverOn:[SQueue mainQueue]] onDispose:^{
                                             }] startWithNext:nil error:^(__unused id error) {
                                                 NSString *errorText = TGLocalized(@"Login.UnknownError");
                                                 [TGCustomAlertView presentAlertWithTitle:nil message:errorText cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
@@ -3166,11 +3166,11 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     }];
 }
 
-- (SSignal *)updatePinnedMessage:(int32_t)messageId {
+- (SSignal *)updatePinnedMessage:(int32_t)messageId unpin:(bool)unpin {
     SSignal *askSignal = [SSignal single:@true];
     bool isChannelGroup = _isGroup;
     
-    if (messageId == 0) {
+    if (unpin) {
         askSignal = [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
             [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Conversation.UnpinMessageAlert") cancelButtonTitle:TGLocalized(@"Common.No") okButtonTitle:TGLocalized(@"Common.Yes") completionBlock:^(bool okButtonPressed) {
                 [subscriber putNext:@(okButtonPressed)];
@@ -3202,12 +3202,12 @@ static TGChannelConversationCompanion *TGIOS4ResolveChannelConversationCompanion
     }
     
     return [[askSignal deliverOn:[SQueue mainQueue]] mapToSignal:^SSignal *(NSNumber *update) {
-        if ([update boolValue] || messageId != 0) {
+        if ([update boolValue] || !unpin) {
             return [SSignal defer:^SSignal *{
                 TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
                 [progressWindow showWithDelay:0.2];
                 
-                return [[[[TGChannelManagementSignals updatePinnedMessage:_conversationId accessHash:_accessHash messageId:messageId notify:[update boolValue]] catch:^SSignal *(id error) {
+                return [[[[TGChannelManagementSignals updatePinnedMessage:_conversationId accessHash:_accessHash messageId:messageId unpin:unpin notify:[update boolValue]] catch:^SSignal *(id error) {
                     NSString *errorType = [[TGTelegramNetworking instance] extractNetworkErrorType:error];
                     if ([errorType isEqualToString:@"CHAT_NOT_MODIFIED"]) {
                         return [SSignal complete];

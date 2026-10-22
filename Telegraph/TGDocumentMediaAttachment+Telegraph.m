@@ -34,6 +34,8 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
         fileSize = (int32_t)concreteSize.bytes.length;
     }
     
+    if (thumbSize.length == 0)
+        return nil;
     NSString *fileReference = document.file_reference.length == 0 ? @"" : [document.file_reference stringByEncodingInHex];
     return [[NSString alloc] initWithFormat:@"documentthumb:%d:%lld:%lld:%d:%@:%@", document.dc_id, document.n_id, document.access_hash, fileSize, thumbSize, fileReference];
 }
@@ -191,6 +193,11 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
                     NSString *filePath = [fileDirectory stringByAppendingPathComponent:@"thumbnail"];
                     
                     [cachedData writeToFile:filePath atomically:true];
+                    CGSize thumbnailSize = CGSizeZero;
+                    [self.thumbnailInfo imageUrlForLargestSize:&thumbnailSize];
+                    TGImageInfo *localThumbnailInfo = [[TGImageInfo alloc] init];
+                    [localThumbnailInfo addImageWithSize:thumbnailSize url:[@"file://" stringByAppendingString:filePath] fileSize:(int)cachedData.length];
+                    self.thumbnailInfo = localThumbnailInfo;
                 }
             }
         }

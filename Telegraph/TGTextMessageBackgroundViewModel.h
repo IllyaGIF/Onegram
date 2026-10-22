@@ -22,6 +22,7 @@ typedef enum {
 }
 
 @property (nonatomic) bool voiceMessage;
+@property (nonatomic) bool drawsBubble;
 
 - (instancetype)initWithType:(TGTextMessageBackgroundType)type context:(TGModernViewContext *)context;
 - (void)setPartialMode:(bool)partialMode;

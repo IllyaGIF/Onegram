@@ -77,13 +77,18 @@ static NSArray *TGIOS6FavoriteStaticStickerDocuments(NSArray *documents)
 
 static bool _syncedStickers = false;
 
-+ (SVariable *)_favedStickers {
++ (SVariable *)_favedStickersVariable {
     static SVariable *variable = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         variable = [[SVariable alloc] init];
         [variable set:[self _loadFavedStickers]];
     });
+    return variable;
+}
+
++ (SVariable *)_favedStickers {
+    SVariable *variable = [self _favedStickersVariable];
     [[self queue] dispatch:^{
         if (!_syncedStickers) {
             _syncedStickers = true;
@@ -91,6 +96,14 @@ static bool _syncedStickers = false;
         }
     }];
     return variable;
+}
+
++ (void)reloadForAccountSwitch {
+    [[self queue] dispatch:^{
+        [[self _stickerActions] removeAllObjects];
+        _syncedStickers = false;
+        [[self _favedStickersVariable] set:[self _loadFavedStickers]];
+    }];
 }
 
 + (NSMutableArray *)_stickerActions {

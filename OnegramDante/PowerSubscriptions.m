@@ -154,7 +154,6 @@ static const NSTimeInterval kPWRetryAfterFailure = 10 * 60;
         [state setObject:manual forKey:@"manual"];
         return [self saveState:state error:error];
     }
-    return YES;
 }
 
 - (BOOL)removeManualLine:(NSString *)line error:(NSString **)error {
@@ -250,11 +249,11 @@ static NSArray *PWFetchLines(NSString *urlText, NSString **error) {
         if (![self saveState:state error:error]) return nil;
         total = subs.count;
     }
-    OGDanteLog(@"repo: source added, %lu payloads", (unsigned long)lines.count);
+    OGDanteLog(@"[power] subscription added, %lu servers", (unsigned long)lines.count);
     return [NSString stringWithFormat:@"серверов %lu, подписок %lu", (unsigned long)lines.count, (unsigned long)total];
 }
 
-- (NSString *)refreshIndex:(NSUInteger)i added:(NSUInteger *)addedOut removed:(NSUInteger *)removedOut {
+- (NSString *)refreshIndex:(NSUInteger)i added:(NSUInteger *)addedOut removed:(NSUInteger *)removedOut failed:(BOOL *)failedOut {
     NSDictionary *sub;
     @synchronized (self) {
         NSArray *subs = [self stored];
@@ -276,6 +275,7 @@ static NSArray *PWFetchLines(NSString *urlText, NSString **error) {
         NSMutableDictionary *d = [NSMutableDictionary dictionaryWithDictionary:[subs objectAtIndex:at]];
         [d setObject:@(now) forKey:@"triedAt"];
         if (!lines) {
+            if (failedOut) *failedOut = YES;
             [d setObject:err ?: @"ошибка" forKey:@"lastError"];
             [subs replaceObjectAtIndex:at withObject:d];
             if (![self store:subs error:&err]) return err;
@@ -300,22 +300,22 @@ static NSArray *PWFetchLines(NSString *urlText, NSString **error) {
 - (NSString *)refreshAllOnQueue {
     NSUInteger count;
     @synchronized (self) { count = [self stored].count; }
-    if (!count) return @"repo: no sources";
+    if (!count) return @"Подписок нет";
     NSMutableArray *report = [NSMutableArray array];
     NSUInteger added = 0, removed = 0, failed = 0;
     for (NSUInteger i = 0; i < count; i++) {
-        NSString *r = [self refreshIndex:i added:&added removed:&removed];
+        BOOL subscriptionFailed = NO;
+        NSString *r = [self refreshIndex:i added:&added removed:&removed failed:&subscriptionFailed];
         if (r) [report addObject:r];
-        if ([r rangeOfString:@"не обновилась"].location != NSNotFound) failed++;
+        if (subscriptionFailed) failed++;
     }
     NSUInteger total = [self allLines].count;
-    OGDanteLog(@"repo: %lu/%lu sources synced, %lu payloads (+%lu -%lu)", (unsigned long)(count - failed),
+    OGDanteLog(@"[power] %lu/%lu subscriptions synced, %lu servers (+%lu -%lu)", (unsigned long)(count - failed),
          (unsigned long)count, (unsigned long)total, (unsigned long)added, (unsigned long)removed);
     DLog(@"[power] подписки обновлены: %@", [report componentsJoinedByString:@"; "]);
-    
     NSString *summary = failed == count
-        ? @"repo: sync failed"
-        : [NSString stringWithFormat:@"repo: %lu payloads (+%lu -%lu)", (unsigned long)total,
+        ? @"Подписки не обновились"
+        : [NSString stringWithFormat:@"Серверов %lu (+%lu −%lu)", (unsigned long)total,
            (unsigned long)added, (unsigned long)removed];
     return [[@[summary] arrayByAddingObjectsFromArray:report] componentsJoinedByString:@"\n"];
 }

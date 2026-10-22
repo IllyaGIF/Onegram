@@ -2,6 +2,8 @@
 #define TGCALLS_IOS6_TURN_CLIENT_H
 
 #include "Instance.h"
+#include "Ios6TurnSocket.h"
+#include "Ios6RelayConnection.h"
 
 #include <stdint.h>
 #include <string>
@@ -32,11 +34,11 @@ struct Ios6TurnProbeResult {
 Ios6TurnProbeResult Ios6TurnAllocateProbe(
     const RtcServer &server,
     bool keepSocket = false,
-    int *outSocketFd = 0
+    std::shared_ptr<Ios6TurnSocket> *outSocket = NULL
 );
 
 bool Ios6TurnRefreshAllocationNoWait(
-    int fd,
+    Ios6TurnSocket &socket,
     const RtcServer &server,
     const std::string &realm,
     const std::string &nonce,
@@ -45,7 +47,7 @@ bool Ios6TurnRefreshAllocationNoWait(
 );
 
 bool Ios6TurnRefreshPermissionNoWait(
-    int fd,
+    Ios6TurnSocket &socket,
     const RtcServer &server,
     const std::string &realm,
     const std::string &nonce,
@@ -55,7 +57,7 @@ bool Ios6TurnRefreshPermissionNoWait(
 );
 
 bool Ios6TurnCreatePermission(
-    int fd,
+    Ios6TurnSocket &socket,
     const RtcServer &server,
     const std::string &realm,
     std::string *nonce,
@@ -66,7 +68,7 @@ bool Ios6TurnCreatePermission(
 
 
 
-struct Ios6TurnReceiveResult {
+struct Ios6RelayReceiveResult {
     enum Kind {
         KindNone = 0,
         KindTransport = 1,
@@ -85,7 +87,7 @@ struct Ios6TurnReceiveResult {
 
     std::vector<uint8_t> data;
 
-    Ios6TurnReceiveResult()
+    Ios6RelayReceiveResult()
     : kind(KindNone),
       timeout(false),
       peerPort(0),
@@ -93,8 +95,8 @@ struct Ios6TurnReceiveResult {
     }
 };
 
-Ios6TurnReceiveResult Ios6TurnReceivePacket(
-    int fd,
+Ios6RelayReceiveResult Ios6RelayReceivePacket(
+    Ios6RelayConnection &relay,
     const std::string &selectedPeerHost,
     uint16_t selectedPeerPort,
     const std::string &localUfrag,
@@ -102,8 +104,8 @@ Ios6TurnReceiveResult Ios6TurnReceivePacket(
     const std::string &remoteUfrag
 );
 
-bool Ios6TurnSendData(
-    int fd,
+bool Ios6RelaySendData(
+    Ios6RelayConnection &relay,
     const std::string &peerHost,
     uint16_t peerPort,
     const uint8_t *data,
@@ -111,8 +113,8 @@ bool Ios6TurnSendData(
     std::string *error
 );
 
-bool Ios6TurnIceBindingProbe(
-    int fd,
+bool Ios6RelayIceBindingProbe(
+    Ios6RelayConnection &relay,
     const std::string &peerHost,
     uint16_t peerPort,
     const std::string &localUfrag,
@@ -122,6 +124,7 @@ bool Ios6TurnIceBindingProbe(
     uint64_t tieBreaker,
     bool controlling,
     bool useCandidate,
+    double timeoutMs,
     std::string *selectedPeerHost,
     uint16_t *selectedPeerPort,
     std::string *error

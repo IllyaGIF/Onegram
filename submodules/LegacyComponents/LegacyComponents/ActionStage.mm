@@ -1314,6 +1314,38 @@ ActionStage *ActionStageInstance()
     }
 }
 
+- (void)cancelAllActors
+{
+    [self dispatchOnStageQueue:^
+    {
+        NSArray *activeRequestInfos = [_activeRequests allValues];
+        [_activeRequests removeAllObjects];
+        for (NSMutableDictionary *requestInfo in activeRequestInfos)
+        {
+            [[requestInfo objectForKey:@"watchers"] removeAllObjects];
+            [(ASActor *)[requestInfo objectForKey:@"requestBuilder"] cancel];
+        }
+        
+        NSArray *cancelRequestInfos = [_cancelRequestTimers allValues];
+        [_cancelRequestTimers removeAllObjects];
+        for (NSDictionary *cancelRequestInfo in cancelRequestInfos)
+        {
+            [(STimer *)[cancelRequestInfo objectForKey:@"timer"] invalidate];
+            [(ASActor *)[[cancelRequestInfo objectForKey:@"requestInfo"] objectForKey:@"requestBuilder"] cancel];
+        }
+        
+        NSArray *requestQueues = [_requestQueues allValues];
+        [_requestQueues removeAllObjects];
+        for (NSArray *requestQueue in requestQueues)
+        {
+            for (ASActor *actor in requestQueue)
+            {
+                [actor cancel];
+            }
+        }
+    }];
+}
+
 - (void)performCancelRequest:(NSDictionary *)cancelDict
 {
     NSString *path = [cancelDict objectForKey:@"path"];

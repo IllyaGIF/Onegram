@@ -17,4 +17,6 @@
 + (NSArray *)messageUpdatesForPollUpdates:(NSArray *)updates baseMessages:(NSArray *)baseMessages;
 + (TGMessage *)message:(TGMessage *)message byApplyingPoll:(TGPollMediaAttachment *)poll pollId:(int64_t)pollId results:(TGPollResults *)results;
 
++ (void)reloadForAccountSwitch;
+
 @end

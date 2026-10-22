@@ -202,17 +202,17 @@ struct TLMetaTypeArgumentWithName : public TLMetaTypeArgument
     std::vector<char> name;
 };
 
-static std::tr1::unordered_map<int32_t, NSString *> hashToStringMap;
+static std::tr1::unordered_map<int32_t, NSString *> &hashToStringMap = *new std::tr1::unordered_map<int32_t, NSString *>();
 
-std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > TLMetaClassStore::constructorsBySignature;
-std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > TLMetaClassStore::constructorsByName;
-std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > TLMetaClassStore::typesByName;
-std::tr1::unordered_map<int32_t, TLMetaTypeArgument> TLMetaClassStore::vectorElementTypesByConstructor;
+std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > &TLMetaClassStore::constructorsBySignature = *new std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >();
+std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> > &TLMetaClassStore::constructorsByName = *new std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaConstructor> >();
+std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> > &TLMetaClassStore::typesByName = *new std::tr1::unordered_map<int32_t, std::tr1::shared_ptr<TLMetaType> >();
+std::tr1::unordered_map<int32_t, TLMetaTypeArgument> &TLMetaClassStore::vectorElementTypesByConstructor = *new std::tr1::unordered_map<int32_t, TLMetaTypeArgument>();
 
-std::tr1::unordered_map<int32_t, id<TLObject> > TLMetaClassStore::objectClassesByConstructorNames;
-std::tr1::unordered_map<int32_t, id<TLVector> > TLMetaClassStore::vectorClassesBySignature;
+std::tr1::unordered_map<int32_t, id<TLObject> > &TLMetaClassStore::objectClassesByConstructorNames = *new std::tr1::unordered_map<int32_t, id<TLObject> >();
+std::tr1::unordered_map<int32_t, id<TLVector> > &TLMetaClassStore::vectorClassesBySignature = *new std::tr1::unordered_map<int32_t, id<TLVector> >();
 
-std::map<int32_t, TLManualObjectParser> TLMetaClassStore::manualObjectParsers;
+std::map<int32_t, TLManualObjectParser> &TLMetaClassStore::manualObjectParsers = *new std::map<int32_t, TLManualObjectParser>();
 
 #define TLLazyManualObjectParser(parserClass) TLManualObjectParser(#parserClass)
 
@@ -226,7 +226,7 @@ static id<TLObject> TLInstantiateManualObjectParser(const char *parserClassName)
     }
     return [[parserClass alloc] init];
 }
-std::map<int32_t, id<TLObject> > TLMetaClassStore::manualObjectSerializers;
+std::map<int32_t, id<TLObject> > &TLMetaClassStore::manualObjectSerializers = *new std::map<int32_t, id<TLObject> >();
 
 static pthread_mutex_t *TGIOS3TLParserMutex()
 {
@@ -7613,34 +7613,33 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             return nil;
 
         TLPhotoSize *bestThumbnail = nil;
-        int64_t bestThumbnailArea = -1;
+        int bestThumbnailDistance = INT_MAX;
         for (id thumbnail in thumbs)
         {
             if ([thumbnail isKindOfClass:[TLPhotoSize$photoCachedSize class]])
             {
                 TLPhotoSize$photoCachedSize *cachedSize = (TLPhotoSize$photoCachedSize *)thumbnail;
-                int64_t area = (int64_t)cachedSize.w * (int64_t)cachedSize.h;
-                if (cachedSize.bytes.length != 0 && cachedSize.w > 0 && cachedSize.h > 0 && area > bestThumbnailArea)
+                int side = MAX(cachedSize.w, cachedSize.h);
+                int distance = ABS(side - 320);
+                if (cachedSize.bytes.length != 0 && cachedSize.bytes.length <= 512 * 1024 && cachedSize.w > 0 && cachedSize.h > 0 && side <= 640 && distance < bestThumbnailDistance)
                 {
                     bestThumbnail = cachedSize;
-                    bestThumbnailArea = area;
+                    bestThumbnailDistance = distance;
                 }
             }
         }
 
-        if (bestThumbnail == nil)
+        for (id thumbnail in thumbs)
         {
-            for (id thumbnail in thumbs)
+            if ([thumbnail isKindOfClass:[TLPhotoSize$photoSize class]])
             {
-                if ([thumbnail isKindOfClass:[TLPhotoSize$photoSize class]])
+                TLPhotoSize$photoSize *photoSize = (TLPhotoSize$photoSize *)thumbnail;
+                int side = MAX(photoSize.w, photoSize.h);
+                int distance = ABS(side - 320);
+                if (photoSize.type.length != 0 && photoSize.size <= 512 * 1024 && photoSize.w > 0 && photoSize.h > 0 && side <= 640 && distance < bestThumbnailDistance)
                 {
-                    TLPhotoSize$photoSize *photoSize = (TLPhotoSize$photoSize *)thumbnail;
-                    int64_t area = (int64_t)photoSize.w * (int64_t)photoSize.h;
-                    if (photoSize.type.length != 0 && photoSize.w > 0 && photoSize.h > 0 && area > bestThumbnailArea)
-                    {
-                        bestThumbnail = photoSize;
-                        bestThumbnailArea = area;
-                    }
+                    bestThumbnail = photoSize;
+                    bestThumbnailDistance = distance;
                 }
             }
         }
@@ -7864,9 +7863,9 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     if (flags & (1 << 6))
         result.migrated_to = (TLInputChannel *)CodexReadObject(is, environment, error);
     if (flags & (1 << 14))
-        CodexReadObject(is, environment, error);
+        result.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
     if (flags & (1 << 18))
-        CodexReadObject(is, environment, error);
+        result.default_banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
     return result;
 }
 
@@ -7903,6 +7902,21 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 
 @end
 
+@interface TLCodexModernChatBannedRightsParser : TLChannelBannedRights$channelBannedRights
+@end
+
+@implementation TLCodexModernChatBannedRightsParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    TLChannelBannedRights$channelBannedRights *result = [[TLChannelBannedRights$channelBannedRights alloc] init];
+    result.flags = [is readInt32];
+    result.until_date = [is readInt32];
+    return result;
+}
+
+@end
+
 @interface TLCodexModernChannelParser : TLChat$channel
 @end
 
@@ -7933,7 +7947,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     if (flags & (1 << 15))
         result.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
     if (flags & (1 << 18))
-        CodexReadObject(is, environment, error);
+        result.default_banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
     if (flags & (1 << 17))
         result.participants_count = [is readInt32];
     if (flags2 & (1 << 0))
@@ -8450,10 +8464,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         if (reactionSignature == (int32_t)0x1b2286b8)
             reaction = [is readString];
         else if (reactionSignature == (int32_t)0x8935fc73)
-        {
-            [is readInt64];
-            reaction = @"◆";
-        }
+            reaction = [NSString stringWithFormat:@"◆%lld", [is readInt64]];
         else if (reactionSignature == (int32_t)0x523da4eb)
             reaction = @"★";
         else if (reactionSignature != (int32_t)0x79f5d419)
@@ -8462,7 +8473,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
         int32_t reactionCount = [is readInt32];
         if (chosen && reaction.length != 0 && chosenReaction != NULL)
             *chosenReaction = reaction;
-        if (reaction.length != 0 && reactionCount > 0 && parts.count < 3)
+        if (reaction.length != 0 && reactionCount > 0)
             [parts addObject:[NSString stringWithFormat:@"%@ %d", reaction, reactionCount]];
     }
 
@@ -10435,9 +10446,11 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x1c6e1c11, TLLazyManualObjectParser(TLCodexModernChatPhotoParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xB08FBB93, TLLazyManualObjectParser(TLWebPage$webPageExternal)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x947ca848, TLLazyManualObjectParser(TLMessages_BotResults$botResults)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xe021f2f6, TLLazyManualObjectParser(TLMessages_BotResults$botResults)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x764cf810, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaAuto)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x8c7f65e2, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageText)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0xb722de65, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaGeo)));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x051846fd, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaGeo)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x8a86659c, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaVenue)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x18d1cdc2, TLLazyManualObjectParser(TLBotInlineMessage$botInlineMessageMediaContact)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>(0x11965f3a, TLLazyManualObjectParser(TLBotInlineResult$botInlineResult)));
@@ -10722,7 +10735,7 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0xc13e3c50, TLLazyManualObjectParser(TLCodexModernImportedContactParser)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5ce14175, TLLazyManualObjectParser(TLPopularContact$popularContact)));
     manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x5fb224d5, TLLazyManualObjectParser(TLCodexModernChatAdminRightsParser)));
-    manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0x9f120418, sharedSkipObjectParser));
+    manualObjectParsers.insert(std::pair<int32_t, TLManualObjectParser>((int32_t)0x9f120418, TLLazyManualObjectParser(TLCodexModernChatBannedRightsParser)));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xd072acb4, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb4073647, sharedSkipObjectParser));
     manualObjectParsers.insert(std::pair<int32_t, id<TLObject> >((int32_t)0xb54b5acf, sharedSkipObjectParser));

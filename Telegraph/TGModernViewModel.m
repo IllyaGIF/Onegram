@@ -231,13 +231,21 @@ static void TGModernDrawingSnapshotOperation(CGContextRef context, TGModernDrawi
 
 - (void)drawInContext:(CGContextRef)context
 {
+    [self drawInContext:context shouldContinue:nil];
+}
+
+- (bool)drawInContext:(CGContextRef)context shouldContinue:(bool (^)(void))shouldContinue
+{
     for (TGModernDrawingOperation *operation in _operations)
     {
+        if (shouldContinue != nil && !shouldContinue())
+            return false;
         CGPoint origin = operation->_origin;
         CGContextTranslateCTM(context, origin.x, origin.y);
         operation->_function(context, operation);
         CGContextTranslateCTM(context, -origin.x, -origin.y);
     }
+    return true;
 }
 
 @end
@@ -698,6 +706,8 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
 {
     for (TGModernViewModel *submodel in self.submodels)
     {
+        if (submodel.hidden)
+            continue;
         CGRect frame = submodel.frame;
         CGContextTranslateCTM(context, frame.origin.x, frame.origin.y);
         [submodel drawInContext:context];
@@ -733,6 +743,8 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
 {
     for (TGModernViewModel *submodel in self.submodels)
     {
+        if (submodel.hidden)
+            continue;
         CGPoint origin = submodel.frame.origin;
         [recording pushOffset:origin];
         bool recorded = [submodel recordDrawing:recording];

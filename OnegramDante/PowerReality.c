@@ -562,7 +562,7 @@ PWRealityResult pwRealityConnect(PWReality *r, int fd,
         if (shLen < 4 + 2 + 32 + 1) { free(sh); PWBufFree(&transcript); return PWR_PROTOCOL; }
         c.pos += 2 + 32;                             
         uint8_t sidEcho = sh[c.pos++];
-        if (c.pos + sidEcho + 3 > shLen) { free(sh); PWBufFree(&transcript); return PWR_PROTOCOL; }
+        if (c.pos + sidEcho + 5 > shLen) { free(sh); PWBufFree(&transcript); return PWR_PROTOCOL; }
         c.pos += sidEcho;
         uint16_t suite = ((uint16_t)sh[c.pos] << 8) | sh[c.pos + 1];
         c.pos += 2;
@@ -593,7 +593,7 @@ PWRealityResult pwRealityConnect(PWReality *r, int fd,
         free(sh);
         if (!cipher || !haveKey || !haveVersion) {
             PWBufFree(&transcript);
-            return cipher ? PWR_PROTOCOL : PWR_PROTOCOL;
+            return PWR_PROTOCOL;
         }
     }
 

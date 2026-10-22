@@ -293,8 +293,6 @@ static void TGIOS6StoreHydratedDialogMessages(NSArray *messages, NSDictionary *c
                 self.cancelToken = nil;
                 [ActionStageInstance() dispatchResource:self.path resource:node];
                 [ActionStageInstance() nodeRetrieved:self.path node:node];
-                if (_folderId == 1)
-                    TGDispatchOnMainThread(^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ArchivePeerIdsUpdated" object:nil]; });
             }
             else
             {
@@ -1131,10 +1129,6 @@ static void TGIOS6StoreHydratedDialogMessages(NSArray *messages, NSDictionary *c
             _synchronizationPageNode = pageNode;
             if (_folderId == 1 && _synchronizationFinalPage)
             {
-                [TGDatabaseInstance() loadDialogListSynchronizationPeerIdsForFolder:1 completion:^(NSSet *peerIds)
-                {
-                    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:peerIds.allObjects]];
-                }];
                 uint8_t loaded = 1;
                 [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:[NSData dataWithBytes:&loaded length:1]];
             }

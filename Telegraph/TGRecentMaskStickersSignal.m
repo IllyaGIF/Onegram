@@ -53,13 +53,18 @@ typedef enum {
 
 static bool _syncedStickers = false;
 
-+ (SVariable *)_recentStickers {
++ (SVariable *)_recentStickersVariable {
     static SVariable *variable = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         variable = [[SVariable alloc] init];
         [variable set:[self _loadRecentStickers]];
     });
+    return variable;
+}
+
++ (SVariable *)_recentStickers {
+    SVariable *variable = [self _recentStickersVariable];
     [[self queue] dispatch:^{
         if (!_syncedStickers) {
             _syncedStickers = true;
@@ -67,6 +72,14 @@ static bool _syncedStickers = false;
         }
     }];
     return variable;
+}
+
++ (void)reloadForAccountSwitch {
+    [[self queue] dispatch:^{
+        [[self _stickerActions] removeAllObjects];
+        _syncedStickers = false;
+        [[self _recentStickersVariable] set:[self _loadRecentStickers]];
+    }];
 }
 
 + (NSMutableArray *)_stickerActions {

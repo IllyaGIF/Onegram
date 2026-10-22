@@ -7,10 +7,17 @@
 #import "TLMetaRpc.h"
 
 @class TLExportedChatInvite;
+@class TLInputPeer;
+@class TLStarsSubscriptionPricing;
 
 @interface TLRPCmessages_exportChatInvite : TLMetaRpc
 
-@property (nonatomic) int32_t chat_id;
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) TLInputPeer *peer;
+@property (nonatomic) int32_t expire_date;
+@property (nonatomic) int32_t usage_limit;
+@property (nonatomic, retain) NSString *title;
+@property (nonatomic, retain) TLStarsSubscriptionPricing *subscription_pricing;
 
 - (Class)responseClass;
 

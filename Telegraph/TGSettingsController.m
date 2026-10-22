@@ -440,7 +440,6 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
     [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
-    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCacheVersion" value:nil];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ClearChatListCacheRequested" object:nil];
 }

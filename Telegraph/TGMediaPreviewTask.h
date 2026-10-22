@@ -20,6 +20,8 @@
 
 @interface TGMediaPreviewTask : NSObject
 
+- (void)executeThumbnailWithTargetFilePath:(NSString *)targetFilePath uri:(NSString *)uri options:(NSDictionary *)options completion:(void (^)(bool))completion workerTask:(TGWorkerTask *)workerTask;
+
 - (void)executeWithWorkerTask:(TGWorkerTask *)workerTask workerPool:(TGWorkerPool *)workerPool;
 - (void)executeWithWorkerTask:(TGWorkerTask *)workerTask threadPool:(SThreadPool *)workerPool;
 

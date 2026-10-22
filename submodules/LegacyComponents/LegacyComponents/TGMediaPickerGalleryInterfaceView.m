@@ -27,6 +27,7 @@
 #import "TGMessageImageViewOverlayView.h"
 
 #import "TGPhotoEditorTabController.h"
+#import "TGPainting.h"
 #import "TGPhotoToolbarView.h"
 #import "TGPhotoEditorButton.h"
 #import "TGCheckButtonView.h"
@@ -699,11 +700,11 @@
     if ([item conformsToProtocol:@protocol(TGModernGalleryEditableItem)])
         tabs = [(id<TGModernGalleryEditableItem>)item toolbarTabs];
         
-    if (iosMajorVersion() < 7 || self.onlyCrop)
-    {
+    if (self.onlyCrop || ![TGPainting isSupported])
         tabs &= ~ TGPhotoEditorPaintTab;
+    
+    if (iosMajorVersion() < 7 || self.onlyCrop)
         tabs &= ~ TGPhotoEditorToolsTab;
-    }
     
     if (iosMajorVersion() < 8)
         tabs &= ~ TGPhotoEditorQualityTab;

@@ -15,8 +15,21 @@ typedef void (*TGWeakMoveFunction)(id *, id *);
 
 typedef struct
 {
-    CFMutableDictionaryRef releaseClasses;
-    CFMutableDictionaryRef deallocClasses;
+    const void *target;
+    Class implementationClass;
+} TGWeakDispatchFrame;
+
+typedef struct
+{
+    TGWeakDispatchFrame *frames;
+    CFIndex count;
+    CFIndex capacity;
+} TGWeakDispatchStack;
+
+typedef struct
+{
+    TGWeakDispatchStack releaseFrames;
+    TGWeakDispatchStack deallocFrames;
 } TGWeakThreadState;
 
 static pthread_once_t TGWeakRuntimeOnce = PTHREAD_ONCE_INIT;
@@ -26,6 +39,8 @@ static pthread_key_t TGWeakRuntimeThreadKey;
 static CFMutableDictionaryRef TGWeakRuntimeReferences;
 static CFMutableSetRef TGWeakRuntimeSwizzledClasses;
 static CFMutableBagRef TGWeakRuntimeReleasing;
+static CFMutableDictionaryRef TGWeakRuntimeReleaseImplementationClasses;
+static CFMutableDictionaryRef TGWeakRuntimeDeallocImplementationClasses;
 static TGWeakLoadRetainedFunction TGNativeLoadWeakRetained;
 static TGWeakLoadFunction TGNativeLoadWeak;
 static TGWeakStoreFunction TGNativeStoreWeak;
@@ -46,11 +61,35 @@ static void TGWeakThreadStateDestroy(void *pointer)
     TGWeakThreadState *state = (TGWeakThreadState *)pointer;
     if (state == NULL)
         return;
-    if (state->releaseClasses != NULL)
-        CFRelease(state->releaseClasses);
-    if (state->deallocClasses != NULL)
-        CFRelease(state->deallocClasses);
+    free(state->releaseFrames.frames);
+    free(state->deallocFrames.frames);
     free(state);
+}
+
+static Class TGWeakDispatchStackLookup(const TGWeakDispatchStack *stack, const void *target)
+{
+    for (CFIndex index = stack->count; index > 0; index--)
+    {
+        if (stack->frames[index - 1].target == target)
+            return stack->frames[index - 1].implementationClass;
+    }
+    return Nil;
+}
+
+static void TGWeakDispatchStackPush(TGWeakDispatchStack *stack, const void *target, Class implementationClass)
+{
+    if (stack->count == stack->capacity)
+    {
+        CFIndex capacity = stack->capacity == 0 ? 16 : stack->capacity * 2;
+        TGWeakDispatchFrame *frames = (TGWeakDispatchFrame *)realloc(stack->frames, (size_t)capacity * sizeof(TGWeakDispatchFrame));
+        if (frames == NULL)
+            abort();
+        stack->frames = frames;
+        stack->capacity = capacity;
+    }
+    stack->frames[stack->count].target = target;
+    stack->frames[stack->count].implementationClass = implementationClass;
+    stack->count++;
 }
 
 static TGWeakThreadState *TGWeakGetThreadState(void)
@@ -60,10 +99,6 @@ static TGWeakThreadState *TGWeakGetThreadState(void)
     {
         state = (TGWeakThreadState *)calloc(1, sizeof(TGWeakThreadState));
         if (state == NULL)
-            abort();
-        state->releaseClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-        state->deallocClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-        if (state->releaseClasses == NULL || state->deallocClasses == NULL)
             abort();
         if (pthread_setspecific(TGWeakRuntimeThreadKey, state) != 0)
             abort();
@@ -87,6 +122,33 @@ static Class TGWeakTopClassImplementingMethod(Class startClass, SEL selector)
         currentClass = class_getSuperclass(currentClass);
     }
     return previousClass;
+}
+
+static Class TGWeakResolveImplementationClass(Class startClass, SEL selector, IMP hook)
+{
+    Class currentClass = startClass;
+    while (currentClass != Nil)
+    {
+        Class implementationClass = TGWeakTopClassImplementingMethod(currentClass, selector);
+        if (!class_respondsToSelector(implementationClass, selector))
+            return Nil;
+        if (class_getMethodImplementation(implementationClass, selector) != hook)
+            return implementationClass;
+        currentClass = class_getSuperclass(implementationClass);
+    }
+    return Nil;
+}
+
+static Class TGWeakCachedImplementationClassLocked(CFMutableDictionaryRef cache, Class cls, SEL selector, IMP hook)
+{
+    Class implementationClass = (Class)CFDictionaryGetValue(cache, cls);
+    if (implementationClass == Nil)
+    {
+        implementationClass = TGWeakResolveImplementationClass(cls, selector, hook);
+        if (implementationClass != Nil)
+            CFDictionarySetValue(cache, cls, implementationClass);
+    }
+    return implementationClass;
 }
 
 static void TGWeakSwizzleClassLocked(Class cls, SEL selector, SEL originalSelector, IMP hook)
@@ -117,6 +179,8 @@ static void TGWeakEnsureHooksLocked(id object)
     TGWeakSwizzleClassLocked(cls, TGWeakReleaseSelector, TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
     TGWeakSwizzleClassLocked(cls, TGWeakDeallocSelector, TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
     CFSetAddValue(TGWeakRuntimeSwizzledClasses, cls);
+    CFDictionaryRemoveAllValues(TGWeakRuntimeReleaseImplementationClasses);
+    CFDictionaryRemoveAllValues(TGWeakRuntimeDeallocImplementationClasses);
 }
 
 static void TGWeakClearLocation(const void *value, void *context)
@@ -129,34 +193,32 @@ static void TGWeakClearLocation(const void *value, void *context)
 static void TGWeakReleaseHook(id target, SEL selector)
 {
     TGWeakThreadState *state = TGWeakGetThreadState();
+    Class lastClass = TGWeakDispatchStackLookup(&state->releaseFrames, target);
+    Class targetClass = Nil;
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
     CFBagAddValue(TGWeakRuntimeReleasing, target);
+    if (lastClass == Nil)
+        targetClass = TGWeakCachedImplementationClassLocked(TGWeakRuntimeReleaseImplementationClasses, object_getClass(target), TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
     pthread_mutex_unlock(&TGWeakRuntimeMutex);
 
-    Class lastClass = (Class)CFDictionaryGetValue(state->releaseClasses, target);
-    Class targetClass = lastClass == Nil ? object_getClass(target) : class_getSuperclass(lastClass);
-    if (targetClass != Nil)
-        targetClass = TGWeakTopClassImplementingMethod(targetClass, TGWeakOriginalReleaseSelector);
-
-    if (targetClass == Nil || !class_respondsToSelector(targetClass, TGWeakOriginalReleaseSelector))
+    if (lastClass != Nil)
     {
-        targetClass = object_getClass(target);
-        if (targetClass != Nil)
-            targetClass = TGWeakTopClassImplementingMethod(targetClass, TGWeakOriginalReleaseSelector);
+        targetClass = TGWeakResolveImplementationClass(class_getSuperclass(lastClass), TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
+        if (targetClass == Nil)
+            targetClass = TGWeakResolveImplementationClass(object_getClass(target), TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
     }
-
-    if (targetClass == Nil || !class_respondsToSelector(targetClass, TGWeakOriginalReleaseSelector))
+    if (targetClass == Nil)
         abort();
-
-    CFDictionarySetValue(state->releaseClasses, target, targetClass);
 
     IMP implementation = class_getMethodImplementation(targetClass, TGWeakOriginalReleaseSelector);
     if (implementation == NULL)
         abort();
-    ((void (*)(id, SEL))implementation)(target, selector);
 
-    CFDictionaryRemoveValue(state->releaseClasses, target);
+    CFIndex depth = state->releaseFrames.count;
+    TGWeakDispatchStackPush(&state->releaseFrames, target, targetClass);
+    ((void (*)(id, SEL))implementation)(target, selector);
+    state->releaseFrames.count = depth;
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
     CFBagRemoveValue(TGWeakRuntimeReleasing, target);
@@ -167,28 +229,34 @@ static void TGWeakReleaseHook(id target, SEL selector)
 static void TGWeakDeallocHook(id target, SEL selector)
 {
     TGWeakThreadState *state = TGWeakGetThreadState();
+    Class lastClass = TGWeakDispatchStackLookup(&state->deallocFrames, target);
+    Class targetClass = Nil;
 
     pthread_mutex_lock(&TGWeakRuntimeMutex);
     CFSetRef locations = (CFSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, target);
     if (locations != NULL)
+    {
         CFSetApplyFunction(locations, TGWeakClearLocation, NULL);
-    CFDictionaryRemoveValue(TGWeakRuntimeReferences, target);
-    pthread_cond_broadcast(&TGWeakRuntimeCondition);
+        CFDictionaryRemoveValue(TGWeakRuntimeReferences, target);
+        pthread_cond_broadcast(&TGWeakRuntimeCondition);
+    }
+    if (lastClass == Nil)
+        targetClass = TGWeakCachedImplementationClassLocked(TGWeakRuntimeDeallocImplementationClasses, object_getClass(target), TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
     pthread_mutex_unlock(&TGWeakRuntimeMutex);
 
-    Class lastClass = (Class)CFDictionaryGetValue(state->deallocClasses, target);
-    Class targetClass = lastClass == Nil ? object_getClass(target) : class_getSuperclass(lastClass);
-    targetClass = TGWeakTopClassImplementingMethod(targetClass, TGWeakOriginalDeallocSelector);
+    if (lastClass != Nil)
+        targetClass = TGWeakResolveImplementationClass(class_getSuperclass(lastClass), TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
     if (targetClass == Nil)
         abort();
-    CFDictionarySetValue(state->deallocClasses, target, targetClass);
 
     IMP implementation = class_getMethodImplementation(targetClass, TGWeakOriginalDeallocSelector);
     if (implementation == NULL)
         abort();
-    ((void (*)(id, SEL))implementation)(target, selector);
 
-    CFDictionaryRemoveValue(state->deallocClasses, target);
+    CFIndex depth = state->deallocFrames.count;
+    TGWeakDispatchStackPush(&state->deallocFrames, target, targetClass);
+    ((void (*)(id, SEL))implementation)(target, selector);
+    state->deallocFrames.count = depth;
 }
 
 static void TGWeakRuntimeInitialize(void)
@@ -228,7 +296,9 @@ static void TGWeakRuntimeInitialize(void)
     TGWeakRuntimeReferences = CFDictionaryCreateMutable(NULL, 0, NULL, &kCFTypeDictionaryValueCallBacks);
     TGWeakRuntimeSwizzledClasses = CFSetCreateMutable(NULL, 0, NULL);
     TGWeakRuntimeReleasing = CFBagCreateMutable(NULL, 0, NULL);
-    if (TGWeakRuntimeReferences == NULL || TGWeakRuntimeSwizzledClasses == NULL || TGWeakRuntimeReleasing == NULL)
+    TGWeakRuntimeReleaseImplementationClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+    TGWeakRuntimeDeallocImplementationClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
+    if (TGWeakRuntimeReferences == NULL || TGWeakRuntimeSwizzledClasses == NULL || TGWeakRuntimeReleasing == NULL || TGWeakRuntimeReleaseImplementationClasses == NULL || TGWeakRuntimeDeallocImplementationClasses == NULL)
         abort();
 
     TGWeakReleaseSelector = sel_registerName("release");

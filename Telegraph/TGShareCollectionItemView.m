@@ -849,7 +849,7 @@ const CGFloat TGShareCollectionRegularSizeClassHeight = 360.0f;
         return height;
     }
     
-    _smallActivated = fabs(screenHeight - _smallActivationHeight) < FLT_EPSILON;
+    _smallActivated = !TGIsPad() && fabs(screenHeight - _smallActivationHeight) < FLT_EPSILON;
 
     CGFloat collapsedHeight = 260.0f;
     

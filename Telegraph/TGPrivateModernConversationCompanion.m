@@ -169,6 +169,11 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 
 @implementation TGPrivateModernConversationCompanion
 
++ (void)reloadForAccountSwitch
+{
+    [dismissedContactLinkPanelsByUserId() removeAllObjects];
+}
+
 - (instancetype)initWithConversation:(TGConversation *)conversation activity:(NSString *)activity mayHaveUnreadMessages:(bool)mayHaveUnreadMessages
 {
     return [self initWithConversation:conversation uid:(int32_t)conversation.conversationId activity:activity mayHaveUnreadMessages:mayHaveUnreadMessages];

@@ -122,21 +122,48 @@ static inline CMTime CMTimeSubtract(CMTime a, CMTime b) { CMTimeScale scale = a.
 #import <OpenGLES/EAGL.h>
 #import <OpenGLES/ES2/gl.h>
 #import <dlfcn.h>
+#include <dispatch/dispatch.h>
 
-static inline void *TGIOS4CoreVideoSymbol(const char *name)
+typedef CVReturn (*TGIOS4CVOpenGLESTextureCacheCreateFunction)(CFAllocatorRef, CFDictionaryRef, EAGLContext *, CFDictionaryRef, CVOpenGLESTextureCacheRef *);
+typedef CVReturn (*TGIOS4CVOpenGLESTextureCacheCreateTextureFromImageFunction)(CFAllocatorRef, CVOpenGLESTextureCacheRef, CVImageBufferRef, CFDictionaryRef, GLenum, GLint, GLsizei, GLsizei, GLenum, GLenum, size_t, CVOpenGLESTextureRef *);
+typedef void (*TGIOS4CVOpenGLESTextureCacheFlushFunction)(CVOpenGLESTextureCacheRef, CVOptionFlags);
+typedef GLenum (*TGIOS4CVOpenGLESTextureGetTargetFunction)(CVOpenGLESTextureRef);
+typedef GLuint (*TGIOS4CVOpenGLESTextureGetNameFunction)(CVOpenGLESTextureRef);
+
+typedef struct
 {
-    return dlsym(RTLD_DEFAULT, name);
+    TGIOS4CVOpenGLESTextureCacheCreateFunction textureCacheCreate;
+    TGIOS4CVOpenGLESTextureCacheCreateTextureFromImageFunction textureCacheCreateTextureFromImage;
+    TGIOS4CVOpenGLESTextureCacheFlushFunction textureCacheFlush;
+    TGIOS4CVOpenGLESTextureGetTargetFunction textureGetTarget;
+    TGIOS4CVOpenGLESTextureGetNameFunction textureGetName;
+    bool textureCacheAvailable;
+} TGIOS4CoreVideoFunctions;
+
+static inline const TGIOS4CoreVideoFunctions *TGIOS4CoreVideo(void)
+{
+    static TGIOS4CoreVideoFunctions functions;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        functions.textureCacheCreate = (TGIOS4CVOpenGLESTextureCacheCreateFunction)dlsym(RTLD_DEFAULT, "CVOpenGLESTextureCacheCreate");
+        functions.textureCacheCreateTextureFromImage = (TGIOS4CVOpenGLESTextureCacheCreateTextureFromImageFunction)dlsym(RTLD_DEFAULT, "CVOpenGLESTextureCacheCreateTextureFromImage");
+        functions.textureCacheFlush = (TGIOS4CVOpenGLESTextureCacheFlushFunction)dlsym(RTLD_DEFAULT, "CVOpenGLESTextureCacheFlush");
+        functions.textureGetTarget = (TGIOS4CVOpenGLESTextureGetTargetFunction)dlsym(RTLD_DEFAULT, "CVOpenGLESTextureGetTarget");
+        functions.textureGetName = (TGIOS4CVOpenGLESTextureGetNameFunction)dlsym(RTLD_DEFAULT, "CVOpenGLESTextureGetName");
+        functions.textureCacheAvailable = functions.textureCacheCreate != NULL && functions.textureCacheCreateTextureFromImage != NULL && functions.textureCacheFlush != NULL && functions.textureGetTarget != NULL && functions.textureGetName != NULL;
+    });
+    return &functions;
 }
 
 static inline bool TGIOS4CVOpenGLESTextureCacheAvailable(void)
 {
-    return TGIOS4CoreVideoSymbol("CVOpenGLESTextureCacheCreate") != NULL && TGIOS4CoreVideoSymbol("CVOpenGLESTextureCacheCreateTextureFromImage") != NULL && TGIOS4CoreVideoSymbol("CVOpenGLESTextureCacheFlush") != NULL && TGIOS4CoreVideoSymbol("CVOpenGLESTextureGetTarget") != NULL && TGIOS4CoreVideoSymbol("CVOpenGLESTextureGetName") != NULL;
+    return TGIOS4CoreVideo()->textureCacheAvailable;
 }
 
 static inline CVReturn TGIOS4CVOpenGLESTextureCacheCreate(CFAllocatorRef allocator, CFDictionaryRef cacheAttributes, EAGLContext *context, CFDictionaryRef textureAttributes, CVOpenGLESTextureCacheRef *cacheOut)
 {
-    typedef CVReturn (*Function)(CFAllocatorRef, CFDictionaryRef, EAGLContext *, CFDictionaryRef, CVOpenGLESTextureCacheRef *);
-    Function function = (Function)TGIOS4CoreVideoSymbol("CVOpenGLESTextureCacheCreate");
+    TGIOS4CVOpenGLESTextureCacheCreateFunction function = TGIOS4CoreVideo()->textureCacheCreate;
     if (function == NULL)
     {
         if (cacheOut != NULL)
@@ -148,8 +175,7 @@ static inline CVReturn TGIOS4CVOpenGLESTextureCacheCreate(CFAllocatorRef allocat
 
 static inline CVReturn TGIOS4CVOpenGLESTextureCacheCreateTextureFromImage(CFAllocatorRef allocator, CVOpenGLESTextureCacheRef textureCache, CVImageBufferRef sourceImage, CFDictionaryRef textureAttributes, GLenum target, GLint internalFormat, GLsizei width, GLsizei height, GLenum format, GLenum type, size_t planeIndex, CVOpenGLESTextureRef *textureOut)
 {
-    typedef CVReturn (*Function)(CFAllocatorRef, CVOpenGLESTextureCacheRef, CVImageBufferRef, CFDictionaryRef, GLenum, GLint, GLsizei, GLsizei, GLenum, GLenum, size_t, CVOpenGLESTextureRef *);
-    Function function = (Function)TGIOS4CoreVideoSymbol("CVOpenGLESTextureCacheCreateTextureFromImage");
+    TGIOS4CVOpenGLESTextureCacheCreateTextureFromImageFunction function = TGIOS4CoreVideo()->textureCacheCreateTextureFromImage;
     if (function == NULL)
     {
         if (textureOut != NULL)
@@ -161,23 +187,20 @@ static inline CVReturn TGIOS4CVOpenGLESTextureCacheCreateTextureFromImage(CFAllo
 
 static inline void TGIOS4CVOpenGLESTextureCacheFlush(CVOpenGLESTextureCacheRef textureCache, CVOptionFlags options)
 {
-    typedef void (*Function)(CVOpenGLESTextureCacheRef, CVOptionFlags);
-    Function function = (Function)TGIOS4CoreVideoSymbol("CVOpenGLESTextureCacheFlush");
+    TGIOS4CVOpenGLESTextureCacheFlushFunction function = TGIOS4CoreVideo()->textureCacheFlush;
     if (function != NULL)
         function(textureCache, options);
 }
 
 static inline GLenum TGIOS4CVOpenGLESTextureGetTarget(CVOpenGLESTextureRef texture)
 {
-    typedef GLenum (*Function)(CVOpenGLESTextureRef);
-    Function function = (Function)TGIOS4CoreVideoSymbol("CVOpenGLESTextureGetTarget");
+    TGIOS4CVOpenGLESTextureGetTargetFunction function = TGIOS4CoreVideo()->textureGetTarget;
     return function != NULL ? function(texture) : GL_TEXTURE_2D;
 }
 
 static inline GLuint TGIOS4CVOpenGLESTextureGetName(CVOpenGLESTextureRef texture)
 {
-    typedef GLuint (*Function)(CVOpenGLESTextureRef);
-    Function function = (Function)TGIOS4CoreVideoSymbol("CVOpenGLESTextureGetName");
+    TGIOS4CVOpenGLESTextureGetNameFunction function = TGIOS4CoreVideo()->textureGetName;
     return function != NULL ? function(texture) : 0;
 }
 
@@ -239,7 +262,6 @@ typedef PSTCollectionElementCategory UICollectionElementCategory;
 #define NSURLSessionTask TGIOS6URLSessionTask
 #define NSURLSessionDataTask TGIOS6URLSessionDataTask
 #define UIKeyCommand TGIOS6KeyCommand
-#define UICollectionViewTransitionLayout TGIOS6CollectionViewTransitionLayout
 #define NSTextAttachment TGIOS6TextAttachment
 #define NSLayoutManager TGIOS6LayoutManager
 #define NSTextStorage TGIOS6TextStorage
@@ -1513,12 +1535,6 @@ typedef NSInteger UIScrollViewContentInsetAdjustmentBehavior;
 #define UISemanticContentAttributeForceLeftToRight 3
 #define UISemanticContentAttributeForceRightToLeft 4
 #endif
-@interface UICollectionViewTransitionLayout : PSUICollectionViewLayout
-@property (nonatomic, readonly) PSUICollectionViewLayout *currentLayout;
-@property (nonatomic, readonly) PSUICollectionViewLayout *nextLayout;
-@property (nonatomic) CGFloat transitionProgress;
-- (instancetype)initWithCurrentLayout:(PSUICollectionViewLayout *)currentLayout nextLayout:(PSUICollectionViewLayout *)newLayout;
-@end
 
 
 @interface UIScrollView (LegacyComponentsContentInsetAdjustmentDeclarations)
@@ -1690,17 +1706,6 @@ typedef NSInteger AVCaptureSessionInterruptionReason;
 
 #endif
 
-@interface PSUICollectionViewLayoutAttributes (LegacyComponentsBoundsDeclarations)
-@property (nonatomic) CGRect bounds;
-@end
-@interface PSUICollectionView (LegacyComponentsTransitionDeclarations)
-- (UICollectionViewTransitionLayout *)tg_ios6_startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
-- (void)tg_ios6_finishInteractiveTransition;
-- (void)tg_ios6_cancelInteractiveTransition;
-- (UICollectionViewTransitionLayout *)startInteractiveTransitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
-- (void)finishInteractiveTransition;
-- (void)cancelInteractiveTransition;
-@end
 
 #endif
 #endif

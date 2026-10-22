@@ -11,4 +11,6 @@
 + (SSignal *)favoriteStickers;
 + (SSignal *)remoteFavedStickers;
 
++ (void)reloadForAccountSwitch;
+
 @end

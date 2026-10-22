@@ -79,10 +79,13 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
     NSData *_aesKey;
     NSData *_aesIv;
     NSString *_documentsPath;
+    bool _invalidated;
     
     TG_SYNCHRONIZED_DEFINE(_dictByGroup);
     NSMutableDictionary *_dictByGroup;
 }
+
+- (void)invalidate;
 
 @end
 
@@ -103,6 +106,26 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
     TG_SYNCHRONIZED_END(_keychains);
     
     return keychain;
+}
+
++ (void)invalidateAllKeychains
+{
+    TG_SYNCHRONIZED_BEGIN(_keychains);
+    NSArray *currentKeychains = [keychains() allValues];
+    [keychains() removeAllObjects];
+    TG_SYNCHRONIZED_END(_keychains);
+    
+    for (MTFileBasedKeychain *keychain in currentKeychains)
+    {
+        [keychain invalidate];
+    }
+}
+
+- (void)invalidate
+{
+    TG_SYNCHRONIZED_BEGIN(_dictByGroup);
+    _invalidated = true;
+    TG_SYNCHRONIZED_END(_dictByGroup);
 }
 
 + (instancetype)keychainWithName:(NSString *)name documentsPath:(NSString *)documentsPath
@@ -243,32 +266,22 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
     return self;
 }
 
-- (NSString *)filePathForName:(NSString *)name group:(NSString *)group
+- (NSString *)dataDirectory
 {
-    static NSString *dataDirectory = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-                  {
 #if TARGET_OS_IPHONE
-                      dataDirectory = [_documentsPath stringByAppendingPathComponent:@"mtkeychain"];
+    return [_documentsPath stringByAppendingPathComponent:@"mtkeychain"];
 #elif TARGET_OS_MAC
-                      NSString *applicationSupportPath = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES)[0];
-                      NSString *applicationName = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleName"];
-                      dataDirectory = [[applicationSupportPath stringByAppendingPathComponent:applicationName] stringByAppendingPathComponent:@"mtkeychain"];
+    NSString *applicationSupportPath = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES)[0];
+    NSString *applicationName = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleName"];
+    return [[applicationSupportPath stringByAppendingPathComponent:applicationName] stringByAppendingPathComponent:@"mtkeychain"];
 #else
 #   error "Unsupported OS"
 #endif
-                      
-                      __autoreleasing NSError *error = nil;
-                      [[NSFileManager defaultManager] createDirectoryAtPath:dataDirectory withIntermediateDirectories:true attributes:nil error:&error];
-                      if (error != nil) {
-                          if (MTLogEnabled()) {
-                              MTLog(@"[MTKeychain error creating keychain directory: %@]", error);
-                          }
-                      }
-                  });
-    
-    return [dataDirectory stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%@_%@.bin", name, group]];
+}
+
+- (NSString *)filePathForName:(NSString *)name group:(NSString *)group
+{
+    return [[self dataDirectory] stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%@_%@.bin", name, group]];
 }
 
 - (void)_loadKeychainIfNeeded:(NSString *)group
@@ -378,6 +391,10 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
             [encryptedData replaceBytesInRange:NSMakeRange(0, 0) withBytes:&length length:4];
             [encryptedData appendBytes:&hash length:4];
             
+            __autoreleasing NSError *directoryError = nil;
+            if (![[NSFileManager defaultManager] createDirectoryAtPath:[self dataDirectory] withIntermediateDirectories:true attributes:nil error:&directoryError] && MTLogEnabled())
+                MTLog(@"[MTKeychain error creating keychain directory: %@]", directoryError);
+
             NSString *filePath = [self filePathForName:_name group:group];
             if (![encryptedData writeToFile:filePath atomically:true]) {
                 if (MTLogEnabled()) {
@@ -420,10 +437,13 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
         return;
     
     TG_SYNCHRONIZED_BEGIN(_dictByGroup);
-    [self _loadKeychainIfNeeded:group];
-    
-    _dictByGroup[group][aKey] = object;
-    [self _storeKeychain:group];
+    if (!_invalidated)
+    {
+        [self _loadKeychainIfNeeded:group];
+        
+        _dictByGroup[group][aKey] = object;
+        [self _storeKeychain:group];
+    }
     TG_SYNCHRONIZED_END(_dictByGroup);
 }
 
@@ -447,10 +467,13 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
         return;
     
     TG_SYNCHRONIZED_BEGIN(_dictByGroup);
-    [self _loadKeychainIfNeeded:group];
-    
-    [_dictByGroup[group] removeObjectForKey:aKey];
-    [self _storeKeychain:group];
+    if (!_invalidated)
+    {
+        [self _loadKeychainIfNeeded:group];
+        
+        [_dictByGroup[group] removeObjectForKey:aKey];
+        [self _storeKeychain:group];
+    }
     TG_SYNCHRONIZED_END(_dictByGroup);
 }
 
@@ -460,8 +483,11 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
         return;
     
     TG_SYNCHRONIZED_BEGIN(_dictByGroup);
-    _dictByGroup[group] = [[NSMutableDictionary alloc] init];
-    [self _storeKeychain:group];
+    if (!_invalidated)
+    {
+        _dictByGroup[group] = [[NSMutableDictionary alloc] init];
+        [self _storeKeychain:group];
+    }
     TG_SYNCHRONIZED_END(_dictByGroup);
 }
 

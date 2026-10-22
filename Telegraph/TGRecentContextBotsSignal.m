@@ -25,6 +25,12 @@
     return variable;
 }
 
++ (void)reloadForAccountSwitch {
+    [[self queue] dispatch:^{
+        [[self _recentBots] set:[self _loadRecentBots]];
+    }];
+}
+
 + (SSignal *)_loadRecentBots {
     return [[[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
         NSData *data = [[NSUserDefaults standardUserDefaults] objectForKey:@"recentBots_v0"];

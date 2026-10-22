@@ -82,6 +82,7 @@ def write_header_map(path, mappings):
             strings.append(0)
         return offsets[value]
     for key, value in sorted(mappings.items()):
+        value = str(actual_path(value))
         encoded_key = key.encode('utf-8')
         encoded_value = value.encode('utf-8')
         folded_key = encoded_key.lower()
@@ -89,7 +90,9 @@ def write_header_map(path, mappings):
             raise ValueError('Empty header map key')
         if folded_key in keys:
             if keys[folded_key] != encoded_value:
-                raise ValueError('Conflicting header map key: ' + key)
+                previous = keys[folded_key].decode('utf-8')
+                if not os.path.samefile(previous, value):
+                    raise ValueError('Conflicting header map key: ' + key + ': ' + previous + ' and ' + value)
             continue
         keys[folded_key] = encoded_value
         index = sum(byte * 13 for byte in folded_key) & (bucket_count - 1)

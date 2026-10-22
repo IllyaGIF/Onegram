@@ -105,6 +105,15 @@ static NSMutableDictionary *TGLiveUploadActiveActors(void)
 
 @implementation TGLiveUploadActor
 
++ (void)reloadForAccountSwitch
+{
+    NSMutableDictionary *actors = TGLiveUploadActiveActors();
+    @synchronized (actors)
+    {
+        [actors removeAllObjects];
+    }
+}
+
 + (void)load
 {
     @autoreleasepool

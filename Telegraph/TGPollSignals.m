@@ -80,6 +80,15 @@ static NSString *TGPollMessageKey(int64_t peerId, int32_t messageId)
     return [self updatesSignalForRequest:request];
 }
 
++ (void)reloadForAccountSwitch
+{
+    NSMutableDictionary *index = TGPollMessageIndex();
+    @synchronized (index)
+    {
+        [index removeAllObjects];
+    }
+}
+
 + (void)registerPollId:(int64_t)pollId peerId:(int64_t)peerId messageId:(int32_t)messageId
 {
     if (pollId == 0 || peerId == 0 || messageId <= 0)

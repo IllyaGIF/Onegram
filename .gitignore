@@ -28,3 +28,8 @@ xcuserdata/
 *.tmp
 *.swp
 *.swo
+
+/Config.xcconfig
+
+__pycache__/
+*.py[cod]

@@ -191,7 +191,7 @@
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[MTQueue alloc] initWithName:"com.mtproto.MTContextQueue"];
+        queue = [[MTQueue alloc] initWithName:"com.mtproto.MTContextQueue" targetPriority:DISPATCH_QUEUE_PRIORITY_HIGH];
     });
     return queue;
 }
@@ -967,7 +967,7 @@
         if (selectedAddress != nil) {
             Class transportClass = [MTTcpTransport class];
             MTDatacenterAddress *transportAddress = selectedAddress;
-            if (_apiEnvironment.preferHttpTransport && !isProxy && !selectedAddress.restrictToTcp && selectedAddress.secret == nil && ![selectedAddress isIpv6]) {
+            if (_apiEnvironment.preferHttpTransport && !_apiEnvironment.onegramWebSocketEnabled && !isProxy && !selectedAddress.restrictToTcp && selectedAddress.secret == nil && ![selectedAddress isIpv6]) {
                 transportClass = [MTHttpTransport class];
                 if (selectedAddress.port != 80) {
                     transportAddress = [[MTDatacenterAddress alloc] initWithIp:selectedAddress.ip port:80 preferForMedia:selectedAddress.preferForMedia restrictToTcp:false cdn:selectedAddress.cdn preferForProxy:selectedAddress.preferForProxy secret:nil];
@@ -994,7 +994,12 @@
 {
     [[MTContext contextQueue] dispatchOnQueue:^
     {
-        if (_apiEnvironment.preferHttpTransport && !isProxy) {
+        if (_apiEnvironment.onegramWebSocketEnabled || (_apiEnvironment.preferHttpTransport && !isProxy)) {
+            id<MTDisposable> discoveryDisposable = _transportSchemeDisposableByDatacenterId[@(datacenterId)];
+            if (discoveryDisposable != nil) {
+                [_transportSchemeDisposableByDatacenterId removeObjectForKey:@(datacenterId)];
+                [discoveryDisposable dispose];
+            }
             MTTransportScheme *transportScheme = [self defaultTransportSchemeForDatacenterWithId:datacenterId media:media isProxy:false];
             if (transportScheme != nil) {
                 [self updateTransportSchemeForDatacenterWithId:datacenterId transportScheme:transportScheme media:media isProxy:false];

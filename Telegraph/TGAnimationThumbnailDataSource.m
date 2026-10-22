@@ -92,6 +92,7 @@ static ASQueue *taskManagementQueue()
     int position = [args[@"position"] intValue];
     
     TGMediaPreviewTask *previewTask = [[TGMediaPreviewTask alloc] init];
+    __weak TGMediaPreviewTask *weakPreviewTask = previewTask;
     
     [taskManagementQueue() dispatchOnQueue:^
     {
@@ -111,16 +112,11 @@ static ASQueue *taskManagementQueue()
         
         if ([TGAnimationThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
-            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-        }
-        else if (OGPlatformMediaDownloadsRequireUserAction())
-        {
-            if (completion != nil)
-                completion([TGAnimationThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
+            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
         }
         else
         {
-            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
+            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)] || ([args[@"cid"] longLongValue] != 0 && [args[@"mid"] intValue] != 0))
             {
                 static NSString *filesDirectory = nil;
                 static dispatch_once_t onceToken;
@@ -141,6 +137,7 @@ static ASQueue *taskManagementQueue()
                 NSString *temporaryThumbnailImagePath = [fileDirectory stringByAppendingPathComponent:@"file-thumb.jpg"];
                 
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
+                options[@"thumbnailContext"] = args;
                 TGMediaOriginInfo *originInfo = nil;
                 if (args[@"origin_info"] != nil)
                 {
@@ -156,13 +153,13 @@ static ASQueue *taskManagementQueue()
                 if (originInfo != nil)
                     options[@"originInfo"] = originInfo;
                 
-                [previewTask executeWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
+                [previewTask executeThumbnailWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
                 {
                     if (success)
                     {
                         dispatch_async([TGCache diskCacheQueue], ^
                         {
-                            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+                            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                         });
                     }
                     else
@@ -430,7 +427,7 @@ static ASQueue *taskManagementQueue()
             image = [[UIImage alloc] initWithContentsOfFile:temporaryThumbnailImagePath];
             
             if (image != nil)
-                lowQualityThumbnail = true;
+                lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
         }
         
         if (image == nil)
@@ -447,7 +444,7 @@ static ASQueue *taskManagementQueue()
             }
             
             if (image != nil)
-                lowQualityThumbnail = true;
+                lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
         }
         
         if (image == nil)
@@ -464,7 +461,7 @@ static ASQueue *taskManagementQueue()
             }
             
             if (image != nil)
-                lowQualityThumbnail = true;
+                lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
         }
         
         if (image != nil)
@@ -510,18 +507,10 @@ static ASQueue *taskManagementQueue()
         bool needsAverageColor = averageColor == nil;
         uint32_t averageColorValue = [averageColor intValue];
         
-        if (lowQualityThumbnail) {
-            if (isFlat && cornerRadius != 0)
-                thumbnailImage = TGBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, !isFlat, cornerRadius, position);
-            else
-                thumbnailImage = TGBlurredAttachmentImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, !isFlat, position);
-        }
-        else {
-            if (isFlat && cornerRadius != 0)
-                thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, !isFlat, cornerRadius, 0, position);
-            else
-                thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, !isFlat, position);
-        }
+        if (isFlat && cornerRadius != 0)
+            thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, !isFlat, cornerRadius, 0, position);
+        else
+            thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, !isFlat, position);
         
         if (thumbnailImage != nil)
         {

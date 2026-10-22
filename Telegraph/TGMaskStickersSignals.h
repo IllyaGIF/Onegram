@@ -32,4 +32,6 @@
 
 + (void)markFeaturedStickersAsRead;
 
++ (void)reloadForAccountSwitch;
+
 @end

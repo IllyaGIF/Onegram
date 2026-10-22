@@ -468,6 +468,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                             
                             return [[TGCallConnectionDescription alloc]
                                     initWithIdentifier:concreteConnection.n_id
+                                    flags:concreteConnection.flags
                                     ipv4:concreteConnection.ip
                                     ipv6:concreteConnection.ipv6
                                     port:concreteConnection.port

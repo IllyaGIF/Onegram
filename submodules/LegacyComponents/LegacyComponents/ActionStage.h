@@ -43,6 +43,7 @@ typedef enum {
 - (bool)isCurrentQueueStageQueue;
 
 - (void)cancelActorTimeout:(NSString *)path;
+- (void)cancelAllActors;
 
 - (NSString *)genericStringForParametrizedPath:(NSString *)path;
 

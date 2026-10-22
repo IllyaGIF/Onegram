@@ -44,6 +44,8 @@
 
 @property (nonatomic) bool enableFirstResponder;
 
++ (bool)textKitAvailable;
+
 - (instancetype)initWithKeyCommandController:(TGKeyCommandController *)keyCommandController;
 
 

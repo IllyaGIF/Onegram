@@ -87,7 +87,7 @@ typedef struct {
 
 + (SSignal *)messageEditData:(int64_t)peerId accessHash:(int64_t)accessHash messageId:(int32_t)messageId;
 
-+ (SSignal *)updatePinnedMessage:(int64_t)peerId accessHash:(int64_t)accessHash messageId:(int32_t)messageId notify:(bool)notify;
++ (SSignal *)updatePinnedMessage:(int64_t)peerId accessHash:(int64_t)accessHash messageId:(int32_t)messageId unpin:(bool)unpin notify:(bool)notify;
 + (SSignal *)removeAllUserMessages:(int64_t)peerId accessHash:(int64_t)accessHash user:(TGUser *)user;
 + (SSignal *)reportUserSpam:(int64_t)peerId accessHash:(int64_t)accessHash user:(TGUser *)user messageIds:(NSArray *)messageIds;
 
@@ -100,5 +100,7 @@ typedef struct {
 + (SSignal *)updatedChannelAdmins:(int64_t)peerId accessHash:(int64_t)accessHash;
 
 + (SSignal *)pollQueuedChannels;
+
++ (void)reloadForAccountSwitch;
 
 @end

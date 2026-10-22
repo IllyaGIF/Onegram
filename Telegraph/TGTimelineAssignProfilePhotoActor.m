@@ -9,6 +9,7 @@
 #import "TGUserDataRequestBuilder.h"
 
 #import "TGImageInfo+Telegraph.h"
+#import "TLUser$modernUser.h"
 
 @implementation TGTimelineAssignProfilePhotoActor
 
@@ -35,8 +36,19 @@
     [ActionStageInstance() actionFailed:self.path reason:-1];
 }
 
-- (void)assignProfilePhotoRequestSuccess:(TLUserProfilePhoto *)photo
++ (TLUserProfilePhoto *)selfProfilePhotoFromResult:(TLphotos_Photo *)result
 {
+    for (TLUser *userDesc in result.users)
+    {
+        if ([userDesc isKindOfClass:[TLUser$modernUser class]] && ((TLUser$modernUser *)userDesc).n_id == TGTelegraphInstance.clientUserId)
+            return ((TLUser$modernUser *)userDesc).photo;
+    }
+    return nil;
+}
+
+- (void)assignProfilePhotoRequestSuccess:(TLphotos_Photo *)result
+{
+    TLUserProfilePhoto *photo = [TGTimelineAssignProfilePhotoActor selfProfilePhotoFromResult:result];
     if ([photo isKindOfClass:[TLUserProfilePhoto$userProfilePhoto class]])
     {
         TLUserProfilePhoto$userProfilePhoto *concretePhoto = (TLUserProfilePhoto$userProfilePhoto *)photo;

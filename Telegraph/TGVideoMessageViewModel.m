@@ -1,3 +1,4 @@
+#import "TGImageInfo+Telegraph.h"
 #import "TGVideoMessageViewModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -59,7 +60,7 @@
     TGImageInfo *previewImageInfo = imageInfo;
     
     NSString *legacyVideoFilePath = [TGVideoMessageViewModel filePathForVideoId:video.videoId != 0 ? video.videoId : video.localVideoId local:video.videoId == 0];
-    NSString *legacyThumbnailCacheUri = [imageInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL];
+    NSString *legacyThumbnailCacheUri = [imageInfo imageUrlForPreviewWithSize:NULL];
     
     if (video.videoId != 0 || video.localVideoId != 0)
     {
@@ -136,7 +137,9 @@
     
     CGSize largestSize = CGSizeZero;
     NSString *legacyVideoFilePath = [TGVideoMessageViewModel filePathForVideoId:video.videoId != 0 ? video.videoId : video.localVideoId local:video.videoId == 0];
-    NSString *legacyThumbnailCacheUri = [previewImageInfo closestImageUrlWithSize:CGSizeZero resultingSize:&largestSize];
+    NSString *legacyThumbnailCacheUri = [previewImageInfo imageUrlForPreviewWithSize:&largestSize];
+    if (largestSize.width <= 0.0f || largestSize.height <= 0.0f)
+        largestSize = video.dimensions;
     
     if (video.videoId != 0 || video.localVideoId != 0)
     {
@@ -167,7 +170,7 @@
         }
         else
         {
-            [TGImageMessageViewModel calculateImageSizesForImageSize:video.dimensions thumbnailSize:&thumbnailSize renderSize:&renderSize squareAspect:message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17];
+            [TGImageMessageViewModel calculateImageSizesForImageSize:video.dimensions boundingWidth:self.mediaBoundingWidth thumbnailSize:&thumbnailSize renderSize:&renderSize squareAspect:message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17 larger:false];
         }
         
         [previewUri appendFormat:@"&width=%d&height=%d&renderWidth=%d&renderHeight=%d", (int)thumbnailSize.width, (int)thumbnailSize.height, (int)renderSize.width, (int)renderSize.height];
@@ -258,6 +261,11 @@
     
     if (_positionFlags != TGMessageGroupPositionNone)
         [self.imageModel setAdditionalDataString:nil];
+}
+
+- (CGSize)mediaSourceSize
+{
+    return _video.dimensions;
 }
 
 - (bool)instantPreviewGesture

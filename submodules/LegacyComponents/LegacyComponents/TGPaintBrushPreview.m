@@ -113,7 +113,8 @@ const NSUInteger TGPaintBrushPreviewSegmentsCount = 100;
     
     glDeleteBuffers(1, &_quadVBO);
 #if !defined(ONEGRAM_ARMV6)
-    glDeleteVertexArraysOES(1, &_quadVAO);
+    if (_quadVAO != 0)
+        glDeleteVertexArraysOES(1, &_quadVAO);
 #endif
     
     if (_framebuffer != 0)
@@ -328,34 +329,37 @@ const NSUInteger TGPaintBrushPreviewSegmentsCount = 100;
 
 - (void)_bindQuad
 {
-#if defined(ONEGRAM_ARMV6)
     [self _quad];
+#if !defined(ONEGRAM_ARMV6)
+    if (_quadVAO != 0)
+    {
+        glBindVertexArrayOES(_quadVAO);
+        return;
+    }
+#endif
     glBindBuffer(GL_ARRAY_BUFFER, _quadVBO);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void *)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void *)(sizeof(GLfloat) * 2));
     glEnableVertexAttribArray(1);
-#else
-    glBindVertexArrayOES([self _quad]);
-#endif
+    glDisableVertexAttribArray(2);
 }
 
 - (void)_unbindQuad
 {
-#if defined(ONEGRAM_ARMV6)
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-#else
-    glBindVertexArrayOES(0);
+#if !defined(ONEGRAM_ARMV6)
+    if (_quadVAO != 0)
+    {
+        glBindVertexArrayOES(0);
+        return;
+    }
 #endif
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
 - (GLuint)_quad
 {
-#if defined(ONEGRAM_ARMV6)
     if (_quadVBO == 0)
-#else
-    if (_quadVAO == 0)
-#endif
     {
         [EAGLContext setCurrentContext:_context];
         CGFloat scale = MIN(2.0f, TGScreenScaling());
@@ -375,30 +379,25 @@ const NSUInteger TGPaintBrushPreviewSegmentsCount = 100;
             (GLfloat)corners[2].x, (GLfloat)corners[2].y, 1.0, 1.0,
         };
         
-#if !defined(ONEGRAM_ARMV6)
-        glGenVertexArraysOES(1, &_quadVAO);
-        glBindVertexArrayOES(_quadVAO);
-#endif
         glGenBuffers(1, &_quadVBO);
         glBindBuffer(GL_ARRAY_BUFFER, _quadVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 16, vertices, GL_STATIC_DRAW);
 #if !defined(ONEGRAM_ARMV6)
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void*)8);
-        glEnableVertexAttribArray(1);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArrayOES(0);
-#else
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        if (TGPaintVertexArrayObjectsSupported())
+        {
+            glGenVertexArraysOES(1, &_quadVAO);
+            glBindVertexArrayOES(_quadVAO);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void *)0);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat) * 4, (void *)(sizeof(GLfloat) * 2));
+            glEnableVertexAttribArray(1);
+            glBindVertexArrayOES(0);
+        }
 #endif
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
     
-#if defined(ONEGRAM_ARMV6)
     return _quadVBO;
-#else
-    return _quadVAO;
-#endif
 }
 
 @end

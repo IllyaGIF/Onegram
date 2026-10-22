@@ -54,7 +54,7 @@
 
 - (int32_t)TLconstructorName
 {
-    return (int32_t)0xbb3e9f0e;
+    return -1;
 }
 
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject
@@ -64,6 +64,10 @@
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)__unused values
+{
+}
+
+- (void)TLserialize:(NSOutputStream *)__unused os
 {
 }
 

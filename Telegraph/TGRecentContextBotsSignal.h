@@ -6,4 +6,6 @@
 + (void)addRecentBot:(int32_t)userId;
 + (SSignal *)recentBots;
 
++ (void)reloadForAccountSwitch;
+
 @end

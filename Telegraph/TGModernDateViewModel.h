@@ -10,6 +10,9 @@
 
 @interface TGModernDateViewModel : TGModernLabelViewModel
 
++ (CTFontRef)dateFont;
++ (CTFontRef)inlineDateFont;
+
 - (instancetype)initWithText:(NSString *)text textColor:(UIColor *)textColor daytimeVariant:(int)daytimeVariant;
 - (void)setText:(NSString *)text daytimeVariant:(int)daytimeVariant;
 

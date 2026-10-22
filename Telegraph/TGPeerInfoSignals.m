@@ -20,6 +20,13 @@
 
 @implementation TGPeerInfoSignals
 
++ (void)reloadForAccountSwitch {
+    NSMutableDictionary *dict = [self cachedDomains];
+    @synchronized(dict) {
+        [dict removeAllObjects];
+    }
+}
+
 + (NSMutableDictionary *)cachedDomains {
     static NSMutableDictionary *dict = nil;
     static dispatch_once_t onceToken;

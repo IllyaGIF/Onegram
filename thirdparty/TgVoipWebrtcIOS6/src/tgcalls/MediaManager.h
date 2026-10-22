@@ -25,7 +25,10 @@ extern "C" {
 #include <memory>
 #include <pthread.h>
 #include <syslog.h>
+#include <sys/time.h>
 #include <vector>
+
+#include "Ios6DiagnosticLog.h"
 
 namespace tgcalls {
 
@@ -169,6 +172,8 @@ public:
 				_audioOutput->Start();
 			}
 
+			logAudioFormat();
+
 			RTC_LOG(LS_INFO)
 				<< "IOS6WEBRTC media.audio.io.started inputOk="
 				<< ((_audioInput && _audioInput->IsInitialized()) ? 1 : 0)
@@ -290,6 +295,7 @@ private:
 
 	size_t handleInputPcm(unsigned char *data, size_t length) {
 		tickPlayoutJitter();
+		measureCaptureRate(length);
 		if (_shuttingDown || !_isConnected || _muted || _opusEncoder == NULL || !_sendTransportMessage || length != kPcmFrameSamples * 2) {
 			return 0;
 		}
@@ -352,6 +358,61 @@ private:
 				(unsigned int)(absSum / (uint64_t)kPcmFrameSamples));
 		}
 		return 0;
+	}
+
+	static double monotonicMs() {
+		struct timeval now;
+		gettimeofday(&now, NULL);
+		return ((double)now.tv_sec * 1000.0) + ((double)now.tv_usec / 1000.0);
+	}
+
+	void measureCaptureRate(size_t length) {
+		const double nowMs = monotonicMs();
+		if (_captureWindowFrames == 0) {
+			_captureWindowStartMs = nowMs;
+		}
+		++_captureWindowFrames;
+		if (length != kPcmFrameSamples * 2) {
+			++_captureRejectedFrames;
+			_captureLastRejectedLength = length;
+		}
+		if (_captureWindowFrames < 50) {
+			return;
+		}
+		syslog(LOG_NOTICE,
+			"IOS6LAT capture.rate callbacks=%u elapsedMs=%.0f expectedMs=%u rejected=%u rejectedLength=%lu",
+			(unsigned int)_captureWindowFrames,
+			nowMs - _captureWindowStartMs,
+			(unsigned int)(_captureWindowFrames * 20U),
+			(unsigned int)_captureRejectedFrames,
+			(unsigned long)_captureLastRejectedLength);
+		_captureWindowFrames = 0;
+		_captureRejectedFrames = 0;
+		_captureLastRejectedLength = 0;
+	}
+
+	void logAudioFormat() {
+		double inputRate = 0.0;
+		double outputRate = 0.0;
+		if (_audioUnit) {
+			_audioUnit->GetStreamSampleRates(&inputRate, &outputRate);
+		}
+		Float64 hardwareRate = 0.0;
+		UInt32 hardwareRateSize = sizeof(hardwareRate);
+		const OSStatus hardwareRateStatus = AudioSessionGetProperty(kAudioSessionProperty_CurrentHardwareSampleRate, &hardwareRateSize, &hardwareRate);
+		Float32 ioBufferDuration = 0.0f;
+		UInt32 ioBufferDurationSize = sizeof(ioBufferDuration);
+		const OSStatus ioBufferStatus = AudioSessionGetProperty(kAudioSessionProperty_CurrentHardwareIOBufferDuration, &ioBufferDurationSize, &ioBufferDuration);
+		syslog(LOG_NOTICE,
+			"IOS6LAT audio.format pcmRate=%u inRate=%.0f outRate=%.0f hwRate=%.0f hwStatus=%d ioBufferMs=%.1f ioStatus=%d unitFailed=%d",
+			(unsigned int)kPcmSampleRate,
+			inputRate,
+			outputRate,
+			(double)hardwareRate,
+			(int)hardwareRateStatus,
+			(double)ioBufferDuration * 1000.0,
+			(int)ioBufferStatus,
+			(_audioUnit && _audioUnit->IsFailed()) ? 1 : 0);
 	}
 
 	static void *OutgoingPacketsThreadEntry(void *param) {
@@ -569,6 +630,10 @@ private:
 	uint32_t _outgoingDroppedPackets = 0;
 	uint32_t _decodeErrors = 0;
 	uint32_t _jitterTickCounter = 0;
+	double _captureWindowStartMs = 0.0;
+	uint32_t _captureWindowFrames = 0;
+	uint32_t _captureRejectedFrames = 0;
+	size_t _captureLastRejectedLength = 0;
 	OpusEncoder *_opusEncoder = NULL;
 	std::tr1::shared_ptr<tgvoip::JitterBuffer> _jitterBuffer;
 	std::tr1::shared_ptr<tgvoip::OpusDecoder> _opusPlayoutDecoder;

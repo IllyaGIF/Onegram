@@ -6,7 +6,32 @@
 #include <math.h>
 #include <regex.h>
 #include <mach/mach.h>
+#include <pthread.h>
 
+static void OnegramIOS3InstallFallbackMethodsIntoClass(Class targetClass)
+{
+    static const char prefix[] = "onegramIOS3Fallback_";
+    size_t prefixLength = sizeof(prefix) - 1;
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(targetClass, &count);
+    for (unsigned int index = 0; index < count; index++)
+    {
+        const char *name = sel_getName(method_getName(methods[index]));
+        if (strncmp(name, prefix, prefixLength) != 0)
+            continue;
+        SEL selector = sel_registerName(name + prefixLength);
+        if (class_getInstanceMethod(targetClass, selector) != NULL)
+            continue;
+        class_addMethod(targetClass, selector, method_getImplementation(methods[index]), method_getTypeEncoding(methods[index]));
+    }
+    free(methods);
+}
+
+static void OnegramIOS3InstallFallbackMethods(Class targetClass)
+{
+    OnegramIOS3InstallFallbackMethodsIntoClass(targetClass);
+    OnegramIOS3InstallFallbackMethodsIntoClass(object_getClass(targetClass));
+}
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
 
@@ -14,14 +39,14 @@ static char OnegramIOS3WindowRootViewControllerKey;
 static char OnegramIOS3OperationThreadPriorityKey;
 static UIApplicationState OnegramIOS3ApplicationState = UIApplicationStateInactive;
 
-@implementation UIWindow (OnegramIOS3RootViewControllerCompatibility)
+@implementation UIWindow (OnegramIOS3RootViewControllerCompatibilityFallback)
 
-- (UIViewController *)rootViewController
+- (UIViewController *)onegramIOS3Fallback_rootViewController
 {
     return objc_getAssociatedObject(self, &OnegramIOS3WindowRootViewControllerKey);
 }
 
-- (void)setRootViewController:(UIViewController *)rootViewController
+- (void)onegramIOS3Fallback_setRootViewController:(UIViewController *)rootViewController
 {
     UIViewController *currentController = objc_getAssociatedObject(self, &OnegramIOS3WindowRootViewControllerKey);
     if (currentController == rootViewController)
@@ -43,13 +68,13 @@ static UIApplicationState OnegramIOS3ApplicationState = UIApplicationStateInacti
 
 @end
 
-@implementation UIViewController (OnegramIOS3LayoutLifecycleCompatibility)
+@implementation UIViewController (OnegramIOS3LayoutLifecycleCompatibilityFallback)
 
-- (void)viewWillLayoutSubviews
+- (void)onegramIOS3Fallback_viewWillLayoutSubviews
 {
 }
 
-- (void)viewDidLayoutSubviews
+- (void)onegramIOS3Fallback_viewDidLayoutSubviews
 {
 }
 
@@ -121,16 +146,16 @@ static UIBarButtonItem *OnegramIOS3CombinedRightBarButtonItem(NSArray *items)
     return result;
 }
 
-@implementation UINavigationItem (OnegramIOS3ModernBarButtonCompatibility)
+@implementation UINavigationItem (OnegramIOS3ModernBarButtonCompatibilityFallback)
 
-- (void)setRightBarButtonItems:(NSArray *)items animated:(BOOL)animated
+- (void)onegramIOS3Fallback_setRightBarButtonItems:(NSArray *)items animated:(BOOL)animated
 {
     [self setRightBarButtonItem:OnegramIOS3CombinedRightBarButtonItem(items) animated:animated];
 }
 
 @end
 
-@implementation UIApplication (OnegramIOS3ApplicationStateCompatibility)
+@implementation UIApplication (OnegramIOS3ApplicationStateCompatibilityFallback)
 
 + (void)load
 {
@@ -149,7 +174,7 @@ static UIBarButtonItem *OnegramIOS3CombinedRightBarButtonItem(NSArray *items)
     OnegramIOS3ApplicationState = UIApplicationStateInactive;
 }
 
-- (UIApplicationState)applicationState
+- (UIApplicationState)onegramIOS3Fallback_applicationState
 {
     return OnegramIOS3ApplicationState;
 }
@@ -186,9 +211,9 @@ static UIBarButtonItem *OnegramIOS3CombinedRightBarButtonItem(NSArray *items)
 
 @end
 
-@implementation NSOperationQueue (OnegramIOS3MainQueueCompatibility)
+@implementation NSOperationQueue (OnegramIOS3MainQueueCompatibilityFallback)
 
-+ (NSOperationQueue *)mainQueue
++ (NSOperationQueue *)onegramIOS3Fallback_mainQueue
 {
     static OnegramIOS3MainOperationQueue *queue = nil;
     @synchronized(self)
@@ -201,15 +226,15 @@ static UIBarButtonItem *OnegramIOS3CombinedRightBarButtonItem(NSArray *items)
 
 @end
 
-@implementation NSOperation (OnegramIOS3ThreadPriorityCompatibility)
+@implementation NSOperation (OnegramIOS3ThreadPriorityCompatibilityFallback)
 
-- (double)threadPriority
+- (double)onegramIOS3Fallback_threadPriority
 {
     NSNumber *value = objc_getAssociatedObject(self, &OnegramIOS3OperationThreadPriorityKey);
     return value == nil ? 0.5 : [value doubleValue];
 }
 
-- (void)setThreadPriority:(double)threadPriority
+- (void)onegramIOS3Fallback_setThreadPriority:(double)threadPriority
 {
     double value = MIN(1.0, MAX(0.0, threadPriority));
     objc_setAssociatedObject(self, &OnegramIOS3OperationThreadPriorityKey, [NSNumber numberWithDouble:value], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -389,9 +414,9 @@ static UIBarButtonItem *OnegramIOS3CombinedRightBarButtonItem(NSArray *items)
 
 @end
 
-@implementation NSURLConnection (OnegramIOS3AsyncCompatibility)
+@implementation NSURLConnection (OnegramIOS3AsyncCompatibilityFallback)
 
-+ (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(void (^)(NSURLResponse *, NSData *, NSError *))handler
++ (void)onegramIOS3Fallback_sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(void (^)(NSURLResponse *, NSData *, NSError *))handler
 {
     if (request == nil)
         return;
@@ -1003,14 +1028,46 @@ static NSInteger OnegramIOS3CompareArrayObjects(id lhs, id rhs, void *context)
     return comparator(lhs, rhs);
 }
 
-@implementation NSMutableArray (OnegramIOS3SortingCompatibility)
+static NSInteger OnegramIOS3CompareStableArrayObjects(id lhs, id rhs, void *context)
+{
+    NSComparisonResult (^comparator)(id, id) = context;
+    NSComparisonResult result = comparator([lhs objectAtIndex:0], [rhs objectAtIndex:0]);
+    return result == NSOrderedSame ? [[lhs objectAtIndex:1] compare:[rhs objectAtIndex:1]] : result;
+}
 
-- (void)sortUsingComparator:(NSComparisonResult (^)(id obj1, id obj2))cmptr
+@implementation NSMutableArray (OnegramIOS3SortingCompatibilityFallback)
+
+- (void)onegramIOS3Fallback_sortUsingComparator:(NSComparisonResult (^)(id obj1, id obj2))cmptr
+{
+    [self sortWithOptions:0 usingComparator:cmptr];
+}
+
+- (void)onegramIOS3Fallback_sortWithOptions:(NSSortOptions)opts usingComparator:(NSComparisonResult (^)(id obj1, id obj2))cmptr
 {
     if (cmptr == nil || self.count < 2)
         return;
 
-    [self sortUsingFunction:OnegramIOS3CompareArrayObjects context:cmptr];
+    if ((opts & NSSortStable) == 0)
+    {
+        [self sortUsingFunction:OnegramIOS3CompareArrayObjects context:cmptr];
+        return;
+    }
+
+    NSMutableArray *indexed = [[NSMutableArray alloc] initWithCapacity:self.count];
+    @try
+    {
+        NSUInteger index = 0;
+        for (id object in self)
+            [indexed addObject:[NSArray arrayWithObjects:object, [NSNumber numberWithUnsignedInteger:index++], nil]];
+        [indexed sortUsingFunction:OnegramIOS3CompareStableArrayObjects context:cmptr];
+        index = 0;
+        for (NSArray *entry in indexed)
+            [self replaceObjectAtIndex:index++ withObject:[entry objectAtIndex:0]];
+    }
+    @finally
+    {
+        [indexed release];
+    }
 }
 
 @end
@@ -2877,9 +2934,9 @@ static void OnegramIOS3DispatchGestureTouches(UIView *view, NSSet *touches, UIEv
 @end
 
 
-@implementation UIView (OnegramIOS3AnimationCompatibility)
+@implementation UIView (OnegramIOS3AnimationCompatibilityFallback)
 
-+ (void)performWithoutAnimation:(void (^)(void))actionsWithoutAnimation
++ (void)onegramIOS3Fallback_performWithoutAnimation:(void (^)(void))actionsWithoutAnimation
 {
     BOOL animationsEnabled = [self areAnimationsEnabled];
     [self setAnimationsEnabled:NO];
@@ -2894,7 +2951,7 @@ static void OnegramIOS3DispatchGestureTouches(UIView *view, NSSet *touches, UIEv
     }
 }
 
-+ (void)animateWithDuration:(NSTimeInterval)duration animations:(void (^)(void))animations
++ (void)onegramIOS3Fallback_animateWithDuration:(NSTimeInterval)duration animations:(void (^)(void))animations
 {
     [self beginAnimations:nil context:NULL];
     [self setAnimationDuration:duration];
@@ -2903,12 +2960,12 @@ static void OnegramIOS3DispatchGestureTouches(UIView *view, NSSet *touches, UIEv
     [self commitAnimations];
 }
 
-+ (void)animateWithDuration:(NSTimeInterval)duration animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
++ (void)onegramIOS3Fallback_animateWithDuration:(NSTimeInterval)duration animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
 {
     [self animateWithDuration:duration delay:0.0 options:0 animations:animations completion:completion];
 }
 
-+ (void)animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
++ (void)onegramIOS3Fallback_animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
 {
     [self beginAnimations:nil context:NULL];
     [self setAnimationDuration:duration];
@@ -2938,12 +2995,12 @@ static void OnegramIOS3DispatchGestureTouches(UIView *view, NSSet *touches, UIEv
     }
 }
 
-+ (void)animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay usingSpringWithDamping:(CGFloat)__unused dampingRatio initialSpringVelocity:(CGFloat)__unused velocity options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
++ (void)onegramIOS3Fallback_animateWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay usingSpringWithDamping:(CGFloat)__unused dampingRatio initialSpringVelocity:(CGFloat)__unused velocity options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
 {
     [self animateWithDuration:duration delay:delay options:options animations:animations completion:completion];
 }
 
-+ (void)animateKeyframesWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
++ (void)onegramIOS3Fallback_animateKeyframesWithDuration:(NSTimeInterval)duration delay:(NSTimeInterval)delay options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
 {
     NSMutableArray *stack = OnegramIOS3KeyframeAnimationStack();
     NSDictionary *context = [NSDictionary dictionaryWithObjectsAndKeys:
@@ -2969,7 +3026,7 @@ static void OnegramIOS3DispatchGestureTouches(UIView *view, NSSet *touches, UIEv
     }
 }
 
-+ (void)addKeyframeWithRelativeStartTime:(double)frameStartTime relativeDuration:(double)frameDuration animations:(void (^)(void))animations
++ (void)onegramIOS3Fallback_addKeyframeWithRelativeStartTime:(double)frameStartTime relativeDuration:(double)frameDuration animations:(void (^)(void))animations
 {
     NSArray *stack = OnegramIOS3KeyframeAnimationStack();
     NSDictionary *context = [stack lastObject];
@@ -2986,7 +3043,7 @@ static void OnegramIOS3DispatchGestureTouches(UIView *view, NSSet *touches, UIEv
     [self animateWithDuration:MAX(0.0, duration * frameDuration) delay:MAX(0.0, delay + duration * frameStartTime) options:options animations:animations completion:nil];
 }
 
-+ (void)transitionWithView:(UIView *)view duration:(NSTimeInterval)duration options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
++ (void)onegramIOS3Fallback_transitionWithView:(UIView *)view duration:(NSTimeInterval)duration options:(NSUInteger)options animations:(void (^)(void))animations completion:(void (^)(BOOL))completion
 {
     [self beginAnimations:nil context:NULL];
     [self setAnimationDuration:duration];
@@ -3031,6 +3088,7 @@ static const void *OnegramIOS3AppearanceTransitionStackKey = &OnegramIOS3Appeara
 static BOOL OnegramIOS3HasOriginalParentViewController = NO;
 
 @interface UIViewController (OnegramIOS3ContainmentCompatibilityImplementation)
+- (void)removeChildViewController:(UIViewController *)childController;
 - (NSArray *)onegramIOS3_childViewControllers;
 - (void)onegramIOS3_addChildViewController:(UIViewController *)childController;
 - (void)onegramIOS3_removeFromParentViewController;
@@ -3132,12 +3190,14 @@ static BOOL OnegramIOS3HasOriginalParentViewController = NO;
 
 - (void)onegramIOS3_removeFromParentViewController
 {
-    UIViewController *parent = objc_getAssociatedObject(self, OnegramIOS3ParentViewControllerKey);
+    UIViewController *parent = [self parentViewController];
     if (parent == nil)
         return;
     [self willMoveToParentViewController:nil];
     NSMutableArray *children = objc_getAssociatedObject(parent, OnegramIOS3ChildViewControllersKey);
-    [children removeObject:self];
+    [children removeObjectIdenticalTo:self];
+    if ([parent respondsToSelector:@selector(removeChildViewController:)])
+        [parent removeChildViewController:self];
     objc_setAssociatedObject(self, OnegramIOS3ParentViewControllerKey, nil, OBJC_ASSOCIATION_ASSIGN);
     [self didMoveToParentViewController:nil];
 }
@@ -3191,13 +3251,14 @@ static BOOL OnegramIOS3HasOriginalParentViewController = NO;
 
 static const void *OnegramIOS3PopoverContentSizeKey = &OnegramIOS3PopoverContentSizeKey;
 
-@implementation UIViewController (OnegramIOS3PopoverCompatibility)
-- (CGSize)contentSizeForViewInPopover
+@implementation UIViewController (OnegramIOS3PopoverCompatibilityFallback)
+
+- (CGSize)onegramIOS3Fallback_contentSizeForViewInPopover
 {
     NSValue *value = objc_getAssociatedObject(self, OnegramIOS3PopoverContentSizeKey);
     return value == nil ? CGSizeZero : [value CGSizeValue];
 }
-- (void)setContentSizeForViewInPopover:(CGSize)size
+- (void)onegramIOS3Fallback_setContentSizeForViewInPopover:(CGSize)size
 {
     objc_setAssociatedObject(self, OnegramIOS3PopoverContentSizeKey, [NSValue valueWithCGSize:size], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
@@ -3296,8 +3357,12 @@ static const void *OnegramIOS3PopoverContentSizeKey = &OnegramIOS3PopoverContent
 @end
 #endif
 
+void (*OnegramIOS3OffMainGraphicsHandler)(const void *caller) = NULL;
+
 void UIGraphicsBeginImageContextWithOptions(CGSize size, BOOL opaque, CGFloat scale)
 {
+    if (OnegramIOS3OffMainGraphicsHandler != NULL && !pthread_main_np())
+        OnegramIOS3OffMainGraphicsHandler(__builtin_return_address(0));
     UIGraphicsBeginImageContext(size);
 }
 
@@ -3351,19 +3416,19 @@ static UIImage *OnegramIOS3ImageWithCGImageOrientation(CGImageRef cgImage, UIIma
     return result;
 }
 
-@implementation UIImage (OnegramIOS3ScaleCompatibility)
+@implementation UIImage (OnegramIOS3ScaleCompatibilityFallback)
 
-- (CGFloat)scale
+- (CGFloat)onegramIOS3Fallback_scale
 {
     return 1.0f;
 }
 
-+ (UIImage *)imageWithCGImage:(CGImageRef)cgImage scale:(CGFloat)scale orientation:(UIImageOrientation)orientation
++ (UIImage *)onegramIOS3Fallback_imageWithCGImage:(CGImageRef)cgImage scale:(CGFloat)scale orientation:(UIImageOrientation)orientation
 {
     return [[[self alloc] initWithCGImage:cgImage scale:scale orientation:orientation] autorelease];
 }
 
-- (instancetype)initWithCGImage:(CGImageRef)cgImage scale:(CGFloat)scale orientation:(UIImageOrientation)orientation
+- (instancetype)onegramIOS3Fallback_initWithCGImage:(CGImageRef)cgImage scale:(CGFloat)scale orientation:(UIImageOrientation)orientation
 {
     if (cgImage == NULL)
     {
@@ -3401,7 +3466,7 @@ static UIImage *OnegramIOS3ImageWithCGImageOrientation(CGImageRef cgImage, UIIma
     return [self initWithCGImage:scaledImage.CGImage];
 }
 
-- (UIImage *)resizableImageWithCapInsets:(UIEdgeInsets)capInsets
+- (UIImage *)onegramIOS3Fallback_resizableImageWithCapInsets:(UIEdgeInsets)capInsets
 {
     NSInteger left = (NSInteger)floor(capInsets.left);
     NSInteger top = (NSInteger)floor(capInsets.top);
@@ -3414,9 +3479,9 @@ static UIImage *OnegramIOS3ImageWithCGImageOrientation(CGImageRef cgImage, UIIma
 
 @end
 
-@implementation UIScreen (OnegramIOS3ScaleCompatibility)
+@implementation UIScreen (OnegramIOS3ScaleCompatibilityFallback)
 
-- (CGFloat)scale
+- (CGFloat)onegramIOS3Fallback_scale
 {
     return 1.0f;
 }
@@ -3424,9 +3489,9 @@ static UIImage *OnegramIOS3ImageWithCGImageOrientation(CGImageRef cgImage, UIIma
 @end
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
-@implementation UIDevice (OnegramIOS3InterfaceIdiomCompatibility)
+@implementation UIDevice (OnegramIOS3InterfaceIdiomCompatibilityFallback)
 
-- (UIUserInterfaceIdiom)userInterfaceIdiom
+- (UIUserInterfaceIdiom)onegramIOS3Fallback_userInterfaceIdiom
 {
     return UIUserInterfaceIdiomPhone;
 }
@@ -3436,25 +3501,25 @@ static UIImage *OnegramIOS3ImageWithCGImageOrientation(CGImageRef cgImage, UIIma
 static char OnegramIOS3ModalPresentationStyleKey;
 static char OnegramIOS3PresentingViewControllerKey;
 
-@implementation UIViewController (OnegramIOS3PresentationCompatibility)
+@implementation UIViewController (OnegramIOS3PresentationCompatibilityFallback)
 
-- (void)setModalPresentationStyle:(UIModalPresentationStyle)modalPresentationStyle
+- (void)onegramIOS3Fallback_setModalPresentationStyle:(UIModalPresentationStyle)modalPresentationStyle
 {
     objc_setAssociatedObject(self, &OnegramIOS3ModalPresentationStyleKey, [NSNumber numberWithInteger:modalPresentationStyle], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-- (UIModalPresentationStyle)modalPresentationStyle
+- (UIModalPresentationStyle)onegramIOS3Fallback_modalPresentationStyle
 {
     NSNumber *value = objc_getAssociatedObject(self, &OnegramIOS3ModalPresentationStyleKey);
     return value == nil ? UIModalPresentationFullScreen : (UIModalPresentationStyle)[value integerValue];
 }
 
-- (UIViewController *)presentedViewController
+- (UIViewController *)onegramIOS3Fallback_presentedViewController
 {
     return self.modalViewController;
 }
 
-- (UIViewController *)presentingViewController
+- (UIViewController *)onegramIOS3Fallback_presentingViewController
 {
     UIViewController *presenter = objc_getAssociatedObject(self, &OnegramIOS3PresentingViewControllerKey);
     if (presenter != nil)
@@ -3475,7 +3540,7 @@ static char OnegramIOS3PresentingViewControllerKey;
     return nil;
 }
 
-- (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)animated completion:(void (^)(void))completion
+- (void)onegramIOS3Fallback_presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)animated completion:(void (^)(void))completion
 {
     if (viewControllerToPresent != nil)
         objc_setAssociatedObject(viewControllerToPresent, &OnegramIOS3PresentingViewControllerKey, self, OBJC_ASSOCIATION_ASSIGN);
@@ -3484,7 +3549,7 @@ static char OnegramIOS3PresentingViewControllerKey;
         completion();
 }
 
-- (void)dismissViewControllerAnimated:(BOOL)animated completion:(void (^)(void))completion
+- (void)onegramIOS3Fallback_dismissViewControllerAnimated:(BOOL)animated completion:(void (^)(void))completion
 {
     UIViewController *presenter = [self presentingViewController];
     if (presenter != nil)
@@ -3610,6 +3675,24 @@ static char OnegramIOS3PresentingViewControllerKey;
 @end
 #endif
 
+@interface TGIOS3AttributedString ()
+{
+@protected
+    NSUInteger _onegramRunCount;
+    NSUInteger _onegramRunCapacity;
+    NSUInteger *_onegramRunStarts;
+    NSDictionary **_onegramRunAttributes;
+}
+- (void)onegram_ensureRunCapacity:(NSUInteger)capacity;
+- (void)onegram_insertRunAtIndex:(NSUInteger)index start:(NSUInteger)start attributes:(NSDictionary *)attributes;
+- (void)onegram_removeRunsInRange:(NSRange)runRange;
+- (NSUInteger)onegram_runEnd:(NSUInteger)index;
+- (NSUInteger)onegram_runIndexForLocation:(NSUInteger)location;
+- (NSUInteger)onegram_splitAtLocation:(NSUInteger)location;
+- (void)onegram_normalizeRuns;
+- (void)onegram_replaceCharactersInRange:(NSRange)range withString:(NSString *)string attributes:(NSDictionary *)attributes;
+@end
+
 @implementation TGIOS3AttributedString
 
 - (instancetype)init
@@ -3628,34 +3711,152 @@ static char OnegramIOS3PresentingViewControllerKey;
     if (self != nil)
     {
         _onegramString = [(string == nil ? @"" : string) mutableCopy];
-        _onegramAttributes = [[NSMutableArray alloc] initWithCapacity:[_onegramString length]];
-        NSDictionary *value = attributes == nil ? [NSDictionary dictionary] : attributes;
-        for (NSUInteger i = 0; i < [_onegramString length]; i++)
-            [_onegramAttributes addObject:[[value copy] autorelease]];
+        if ([_onegramString length] != 0)
+            [self onegram_insertRunAtIndex:0 start:0 attributes:attributes];
     }
     return self;
 }
 
 - (instancetype)initWithAttributedString:(TGIOS3AttributedString *)attributedString
 {
-    self = [self initWithString:[attributedString string]];
+    self = [self initWithString:[attributedString string] attributes:nil];
     if (self != nil)
     {
-        [_onegramAttributes removeAllObjects];
-        for (NSUInteger i = 0; i < [attributedString length]; i++)
+        [self onegram_removeRunsInRange:NSMakeRange(0, _onegramRunCount)];
+        NSUInteger index = 0;
+        NSUInteger length = [attributedString length];
+        while (index < length)
         {
-            NSDictionary *attributes = [attributedString attributesAtIndex:i effectiveRange:NULL];
-            [_onegramAttributes addObject:[[attributes copy] autorelease]];
+            NSRange range = NSMakeRange(index, 1);
+            NSDictionary *attributes = [attributedString attributesAtIndex:index effectiveRange:&range];
+            if (range.location != index || range.length == 0)
+                range = NSMakeRange(index, 1);
+            [self onegram_insertRunAtIndex:_onegramRunCount start:index attributes:attributes];
+            index = NSMaxRange(range);
         }
+        [self onegram_normalizeRuns];
     }
     return self;
 }
 
 - (void)dealloc
 {
+    [self onegram_removeRunsInRange:NSMakeRange(0, _onegramRunCount)];
+    free(_onegramRunStarts);
+    free(_onegramRunAttributes);
     [_onegramString release];
-    [_onegramAttributes release];
     [super dealloc];
+}
+
+- (void)onegram_ensureRunCapacity:(NSUInteger)capacity
+{
+    if (capacity <= _onegramRunCapacity)
+        return;
+    NSUInteger newCapacity = MAX(capacity, MAX((NSUInteger)4, _onegramRunCapacity * 2));
+    NSUInteger *starts = (NSUInteger *)realloc(_onegramRunStarts, newCapacity * sizeof(NSUInteger));
+    if (starts == NULL)
+        return;
+    _onegramRunStarts = starts;
+    NSDictionary **attributes = (NSDictionary **)realloc(_onegramRunAttributes, newCapacity * sizeof(NSDictionary *));
+    if (attributes == NULL)
+        return;
+    _onegramRunAttributes = attributes;
+    _onegramRunCapacity = newCapacity;
+}
+
+- (void)onegram_insertRunAtIndex:(NSUInteger)index start:(NSUInteger)start attributes:(NSDictionary *)attributes
+{
+    [self onegram_ensureRunCapacity:_onegramRunCount + 1];
+    if (_onegramRunCount + 1 > _onegramRunCapacity)
+        return;
+    memmove(_onegramRunStarts + index + 1, _onegramRunStarts + index, (_onegramRunCount - index) * sizeof(NSUInteger));
+    memmove(_onegramRunAttributes + index + 1, _onegramRunAttributes + index, (_onegramRunCount - index) * sizeof(NSDictionary *));
+    _onegramRunStarts[index] = start;
+    _onegramRunAttributes[index] = [(attributes == nil ? [NSDictionary dictionary] : attributes) copy];
+    _onegramRunCount++;
+}
+
+- (void)onegram_removeRunsInRange:(NSRange)runRange
+{
+    if (runRange.length == 0)
+        return;
+    for (NSUInteger index = runRange.location; index < NSMaxRange(runRange); index++)
+        [_onegramRunAttributes[index] release];
+    NSUInteger tail = _onegramRunCount - NSMaxRange(runRange);
+    memmove(_onegramRunStarts + runRange.location, _onegramRunStarts + NSMaxRange(runRange), tail * sizeof(NSUInteger));
+    memmove(_onegramRunAttributes + runRange.location, _onegramRunAttributes + NSMaxRange(runRange), tail * sizeof(NSDictionary *));
+    _onegramRunCount -= runRange.length;
+}
+
+- (NSUInteger)onegram_runEnd:(NSUInteger)index
+{
+    return index + 1 < _onegramRunCount ? _onegramRunStarts[index + 1] : [_onegramString length];
+}
+
+- (NSUInteger)onegram_runIndexForLocation:(NSUInteger)location
+{
+    NSUInteger low = 0;
+    NSUInteger high = _onegramRunCount;
+    while (high - low > 1)
+    {
+        NSUInteger middle = low + (high - low) / 2;
+        if (_onegramRunStarts[middle] <= location)
+            low = middle;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+- (NSUInteger)onegram_splitAtLocation:(NSUInteger)location
+{
+    if (location >= [_onegramString length] || _onegramRunCount == 0)
+        return _onegramRunCount;
+    NSUInteger index = [self onegram_runIndexForLocation:location];
+    if (_onegramRunStarts[index] == location)
+        return index;
+    [self onegram_insertRunAtIndex:index + 1 start:location attributes:_onegramRunAttributes[index]];
+    return index + 1;
+}
+
+- (void)onegram_normalizeRuns
+{
+    NSUInteger index = 0;
+    while (index < _onegramRunCount)
+    {
+        if ([self onegram_runEnd:index] <= _onegramRunStarts[index])
+        {
+            [self onegram_removeRunsInRange:NSMakeRange(index, 1)];
+            continue;
+        }
+        if (index > 0 && [_onegramRunAttributes[index - 1] isEqual:_onegramRunAttributes[index]])
+        {
+            [self onegram_removeRunsInRange:NSMakeRange(index, 1)];
+            continue;
+        }
+        index++;
+    }
+}
+
+- (void)onegram_replaceCharactersInRange:(NSRange)range withString:(NSString *)string attributes:(NSDictionary *)attributes
+{
+    NSDictionary *runAttributes = [(attributes == nil ? [NSDictionary dictionary] : attributes) copy];
+    NSString *replacement = [(string == nil ? @"" : string) copy];
+    NSUInteger length = [_onegramString length];
+    NSUInteger location = MIN(range.location, length);
+    NSUInteger end = MIN(MAX(NSMaxRange(range), location), length);
+    NSUInteger first = [self onegram_splitAtLocation:location];
+    NSUInteger last = [self onegram_splitAtLocation:end];
+    [self onegram_removeRunsInRange:NSMakeRange(first, last - first)];
+    [_onegramString replaceCharactersInRange:NSMakeRange(location, end - location) withString:replacement];
+    NSUInteger replacementLength = [replacement length];
+    for (NSUInteger index = first; index < _onegramRunCount; index++)
+        _onegramRunStarts[index] = _onegramRunStarts[index] - (end - location) + replacementLength;
+    if (replacementLength != 0)
+        [self onegram_insertRunAtIndex:first start:location attributes:runAttributes];
+    [self onegram_normalizeRuns];
+    [replacement release];
+    [runAttributes release];
 }
 
 - (NSString *)string
@@ -3712,24 +3913,16 @@ static char OnegramIOS3PresentingViewControllerKey;
 
 - (NSDictionary *)attributesAtIndex:(NSUInteger)location effectiveRange:(NSRangePointer)range
 {
-    if (location >= [_onegramAttributes count])
+    if (location >= [_onegramString length] || _onegramRunCount == 0)
     {
         if (range != NULL)
             *range = NSMakeRange(NSNotFound, 0);
         return [NSDictionary dictionary];
     }
-    NSDictionary *attributes = [_onegramAttributes objectAtIndex:location];
+    NSUInteger index = [self onegram_runIndexForLocation:location];
     if (range != NULL)
-    {
-        NSUInteger start = location;
-        NSUInteger end = location + 1;
-        while (start > 0 && [[_onegramAttributes objectAtIndex:start - 1] isEqual:attributes])
-            start--;
-        while (end < [_onegramAttributes count] && [[_onegramAttributes objectAtIndex:end] isEqual:attributes])
-            end++;
-        *range = NSMakeRange(start, end - start);
-    }
-    return attributes;
+        *range = NSMakeRange(_onegramRunStarts[index], [self onegram_runEnd:index] - _onegramRunStarts[index]);
+    return _onegramRunAttributes[index];
 }
 
 - (id)attribute:(NSString *)attributeName atIndex:(NSUInteger)location effectiveRange:(NSRangePointer)range
@@ -3748,33 +3941,38 @@ static char OnegramIOS3PresentingViewControllerKey;
 
 - (id)attribute:(NSString *)attributeName atIndex:(NSUInteger)location longestEffectiveRange:(NSRangePointer)range inRange:(NSRange)rangeLimit
 {
-    if (location >= [_onegramAttributes count])
+    if (location >= [_onegramString length] || _onegramRunCount == 0)
     {
         if (range != NULL)
             *range = NSMakeRange(NSNotFound, 0);
         return nil;
     }
-    id value = [[_onegramAttributes objectAtIndex:location] objectForKey:attributeName];
-    NSUInteger start = location;
-    NSUInteger end = location + 1;
-    NSUInteger lowerBound = MIN(rangeLimit.location, [_onegramAttributes count]);
-    NSUInteger upperBound = MIN(NSMaxRange(rangeLimit), [_onegramAttributes count]);
-    while (start > lowerBound)
-    {
-        id candidate = [[_onegramAttributes objectAtIndex:start - 1] objectForKey:attributeName];
-        if (candidate != value && ![candidate isEqual:value])
-            break;
-        start--;
-    }
-    while (end < upperBound)
-    {
-        id candidate = [[_onegramAttributes objectAtIndex:end] objectForKey:attributeName];
-        if (candidate != value && ![candidate isEqual:value])
-            break;
-        end++;
-    }
+    NSUInteger index = [self onegram_runIndexForLocation:location];
+    id value = [_onegramRunAttributes[index] objectForKey:attributeName];
     if (range != NULL)
-        *range = NSMakeRange(start, end - start);
+    {
+        NSUInteger first = index;
+        while (first > 0)
+        {
+            id candidate = [_onegramRunAttributes[first - 1] objectForKey:attributeName];
+            if (candidate != value && ![candidate isEqual:value])
+                break;
+            first--;
+        }
+        NSUInteger last = index;
+        while (last + 1 < _onegramRunCount)
+        {
+            id candidate = [_onegramRunAttributes[last + 1] objectForKey:attributeName];
+            if (candidate != value && ![candidate isEqual:value])
+                break;
+            last++;
+        }
+        NSUInteger lowerBound = MIN(rangeLimit.location, [_onegramString length]);
+        NSUInteger upperBound = MIN(NSMaxRange(rangeLimit), [_onegramString length]);
+        NSUInteger start = MAX(_onegramRunStarts[first], lowerBound);
+        NSUInteger end = MIN([self onegram_runEnd:last], upperBound);
+        *range = NSMakeRange(start, end > start ? end - start : 0);
+    }
     return value;
 }
 
@@ -3782,19 +3980,34 @@ static char OnegramIOS3PresentingViewControllerKey;
 {
     NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
     TGIOS3MutableAttributedString *result = [[[TGIOS3MutableAttributedString alloc] initWithString:[_onegramString substringWithRange:validRange]] autorelease];
-    for (NSUInteger i = 0; i < validRange.length; i++)
-        [result setAttributes:[_onegramAttributes objectAtIndex:validRange.location + i] range:NSMakeRange(i, 1)];
+    NSUInteger index = validRange.location;
+    while (index < NSMaxRange(validRange))
+    {
+        NSRange runRange = NSMakeRange(index, 1);
+        NSDictionary *attributes = [self attributesAtIndex:index effectiveRange:&runRange];
+        NSRange intersection = NSIntersectionRange(runRange, validRange);
+        if (intersection.length == 0)
+            break;
+        [result setAttributes:attributes range:NSMakeRange(intersection.location - validRange.location, intersection.length)];
+        index = NSMaxRange(intersection);
+    }
     return result;
 }
 
 - (BOOL)isEqualToAttributedString:(TGIOS3AttributedString *)other
 {
-    if (other == nil || ![[self string] isEqualToString:[other string]] || [self length] != [other length])
+    if (other == nil || [self length] != [other length] || ![[self string] isEqualToString:[other string]])
         return NO;
-    for (NSUInteger i = 0; i < [self length]; i++)
+    NSUInteger index = 0;
+    while (index < [self length])
     {
-        if (![[self attributesAtIndex:i effectiveRange:NULL] isEqual:[other attributesAtIndex:i effectiveRange:NULL]])
+        NSRange range = NSMakeRange(index, 1);
+        NSRange otherRange = NSMakeRange(index, 1);
+        NSDictionary *attributes = [self attributesAtIndex:index effectiveRange:&range];
+        NSDictionary *otherAttributes = [other attributesAtIndex:index effectiveRange:&otherRange];
+        if (![attributes isEqual:otherAttributes])
             return NO;
+        index = MIN(NSMaxRange(range), NSMaxRange(otherRange));
     }
     return YES;
 }
@@ -3857,53 +4070,71 @@ static char OnegramIOS3PresentingViewControllerKey;
 
 - (void)replaceCharactersInRange:(NSRange)range withString:(NSString *)string
 {
-    NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
-    NSDictionary *attributes = validRange.location < [_onegramAttributes count] ? [_onegramAttributes objectAtIndex:validRange.location] : [NSDictionary dictionary];
-    [_onegramString replaceCharactersInRange:validRange withString:(string == nil ? @"" : string)];
-    for (NSUInteger i = 0; i < validRange.length; i++)
-        [_onegramAttributes removeObjectAtIndex:validRange.location];
-    for (NSUInteger i = 0; i < [string length]; i++)
-        [_onegramAttributes insertObject:[[attributes copy] autorelease] atIndex:validRange.location + i];
+    NSUInteger location = MIN(range.location, [self length]);
+    NSDictionary *attributes = location < [self length] ? [self attributesAtIndex:location effectiveRange:NULL] : [NSDictionary dictionary];
+    [self onegram_replaceCharactersInRange:range withString:string attributes:attributes];
 }
 
 - (void)setAttributes:(NSDictionary *)attributes range:(NSRange)range
 {
     NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
-    NSDictionary *value = attributes == nil ? [NSDictionary dictionary] : attributes;
-    for (NSUInteger i = validRange.location; i < NSMaxRange(validRange); i++)
-        [_onegramAttributes replaceObjectAtIndex:i withObject:[[value copy] autorelease]];
+    if (validRange.length == 0)
+        return;
+    NSDictionary *runAttributes = [(attributes == nil ? [NSDictionary dictionary] : attributes) copy];
+    NSUInteger first = [self onegram_splitAtLocation:validRange.location];
+    NSUInteger last = [self onegram_splitAtLocation:NSMaxRange(validRange)];
+    [self onegram_removeRunsInRange:NSMakeRange(first, last - first)];
+    [self onegram_insertRunAtIndex:first start:validRange.location attributes:runAttributes];
+    [self onegram_normalizeRuns];
+    [runAttributes release];
+}
+
+- (void)onegram_updateAttributesInRange:(NSRange)range usingBlock:(void (^)(NSMutableDictionary *attributes))block
+{
+    NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
+    if (validRange.length == 0)
+        return;
+    NSUInteger first = [self onegram_splitAtLocation:validRange.location];
+    NSUInteger last = [self onegram_splitAtLocation:NSMaxRange(validRange)];
+    for (NSUInteger index = first; index < last; index++)
+    {
+        NSMutableDictionary *attributes = [_onegramRunAttributes[index] mutableCopy];
+        block(attributes);
+        [_onegramRunAttributes[index] release];
+        _onegramRunAttributes[index] = [attributes copy];
+        [attributes release];
+    }
+    [self onegram_normalizeRuns];
 }
 
 - (void)addAttribute:(NSString *)name value:(id)value range:(NSRange)range
 {
     if (name == nil || value == nil)
         return;
-    NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
-    for (NSUInteger i = validRange.location; i < NSMaxRange(validRange); i++)
+    [self onegram_updateAttributesInRange:range usingBlock:^(NSMutableDictionary *attributes)
     {
-        NSMutableDictionary *attributes = [NSMutableDictionary dictionaryWithDictionary:[_onegramAttributes objectAtIndex:i]];
         [attributes setObject:value forKey:name];
-        [_onegramAttributes replaceObjectAtIndex:i withObject:[[attributes copy] autorelease]];
-    }
+    }];
 }
 
 - (void)addAttributes:(NSDictionary *)attributes range:(NSRange)range
 {
-    for (NSString *key in attributes)
-        [self addAttribute:key value:[attributes objectForKey:key] range:range];
+    if ([attributes count] == 0)
+        return;
+    [self onegram_updateAttributesInRange:range usingBlock:^(NSMutableDictionary *current)
+    {
+        [current addEntriesFromDictionary:attributes];
+    }];
 }
 
 - (void)removeAttribute:(NSString *)name range:(NSRange)range
 {
     if (name == nil)
         return;
-    NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
-    for (NSUInteger i = validRange.location; i < NSMaxRange(validRange); i++)
+    [self onegram_updateAttributesInRange:range usingBlock:^(NSMutableDictionary *attributes)
     {
-        NSMutableDictionary *attributes = [NSMutableDictionary dictionaryWithDictionary:[_onegramAttributes objectAtIndex:i]];
         [attributes removeObjectForKey:name];
-        [_onegramAttributes replaceObjectAtIndex:i withObject:[[attributes copy] autorelease]];
-    }
+    }];
 }
 
 - (void)appendAttributedString:(TGIOS3AttributedString *)attributedString
@@ -3915,9 +4146,20 @@ static char OnegramIOS3PresentingViewControllerKey;
 {
     if (attributedString == nil || index > [self length])
         return;
-    [_onegramString insertString:[attributedString string] atIndex:index];
-    for (NSUInteger i = 0; i < [attributedString length]; i++)
-        [_onegramAttributes insertObject:[[[attributedString attributesAtIndex:i effectiveRange:NULL] copy] autorelease] atIndex:index + i];
+    TGIOS3AttributedString *source = attributedString == self ? [[self copy] autorelease] : attributedString;
+    [self onegram_replaceCharactersInRange:NSMakeRange(index, 0) withString:[source string] attributes:nil];
+    NSUInteger offset = 0;
+    NSUInteger length = [source length];
+    while (offset < length)
+    {
+        NSRange range = NSMakeRange(offset, 1);
+        NSDictionary *attributes = [source attributesAtIndex:offset effectiveRange:&range];
+        if (range.location != offset || range.length == 0)
+            range = NSMakeRange(offset, 1);
+        NSUInteger end = MIN(NSMaxRange(range), length);
+        [self setAttributes:attributes range:NSMakeRange(index + offset, end - offset)];
+        offset = end;
+    }
 }
 
 - (void)deleteCharactersInRange:(NSRange)range
@@ -3927,9 +4169,11 @@ static char OnegramIOS3PresentingViewControllerKey;
 
 - (void)replaceCharactersInRange:(NSRange)range withAttributedString:(TGIOS3AttributedString *)attributedString
 {
-    NSRange validRange = NSIntersectionRange(range, NSMakeRange(0, [self length]));
-    [self deleteCharactersInRange:validRange];
-    [self insertAttributedString:attributedString atIndex:validRange.location];
+    TGIOS3AttributedString *source = attributedString == self ? [[self copy] autorelease] : attributedString;
+    NSUInteger location = MIN(range.location, [self length]);
+    NSUInteger end = MIN(MAX(NSMaxRange(range), location), [self length]);
+    [self deleteCharactersInRange:NSMakeRange(location, end - location)];
+    [self insertAttributedString:source atIndex:location];
 }
 
 - (id)copyWithZone:(NSZone *)zone
@@ -4011,9 +4255,9 @@ static NSRange OnegramIOS3ComposedRange(NSString *string, NSUInteger index, NSUI
     return NSMakeRange(index, end - index);
 }
 
-@implementation NSString (OnegramIOS3EnumerationCompatibility)
+@implementation NSString (OnegramIOS3EnumerationCompatibilityFallback)
 
-- (void)enumerateSubstringsInRange:(NSRange)range options:(NSStringEnumerationOptions)opts usingBlock:(void (^)(NSString *, NSRange, NSRange, BOOL *))block
+- (void)onegramIOS3Fallback_enumerateSubstringsInRange:(NSRange)range options:(NSStringEnumerationOptions)opts usingBlock:(void (^)(NSString *, NSRange, NSRange, BOOL *))block
 {
     if (block == nil)
         return;
@@ -4061,7 +4305,7 @@ static NSRange OnegramIOS3ComposedRange(NSString *string, NSUInteger index, NSUI
     }
 }
 
-- (void)enumerateLinesUsingBlock:(void (^)(NSString *, BOOL *))block
+- (void)onegramIOS3Fallback_enumerateLinesUsingBlock:(void (^)(NSString *, BOOL *))block
 {
     if (block == nil)
         return;
@@ -4096,14 +4340,14 @@ static NSRange OnegramIOS3ComposedRange(NSString *string, NSUInteger index, NSUI
 
 static char OnegramIOS3LabelAttributedTextKey;
 
-@implementation UILabel (OnegramIOS3AttributedTextCompatibility)
+@implementation UILabel (OnegramIOS3AttributedTextCompatibilityFallback)
 
-- (TGIOS3AttributedString *)attributedText
+- (TGIOS3AttributedString *)onegramIOS3Fallback_attributedText
 {
     return objc_getAssociatedObject(self, &OnegramIOS3LabelAttributedTextKey);
 }
 
-- (void)setAttributedText:(TGIOS3AttributedString *)attributedText
+- (void)onegramIOS3Fallback_setAttributedText:(TGIOS3AttributedString *)attributedText
 {
     objc_setAssociatedObject(self, &OnegramIOS3LabelAttributedTextKey, attributedText, OBJC_ASSOCIATION_COPY);
     self.text = [attributedText string];
@@ -4757,9 +5001,9 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
 
 @end
 
-@implementation NSFileManager (OnegramIOS3URLCompatibility)
+@implementation NSFileManager (OnegramIOS3URLCompatibilityFallback)
 
-- (BOOL)removeItemAtURL:(NSURL *)URL error:(NSError **)error
+- (BOOL)onegramIOS3Fallback_removeItemAtURL:(NSURL *)URL error:(NSError **)error
 {
     NSString *path = [URL path];
     if (path == nil)
@@ -4767,7 +5011,7 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
     return [self removeItemAtPath:path error:error];
 }
 
-- (BOOL)createDirectoryAtURL:(NSURL *)url withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary *)attributes error:(NSError **)error
+- (BOOL)onegramIOS3Fallback_createDirectoryAtURL:(NSURL *)url withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary *)attributes error:(NSError **)error
 {
     NSString *path = [url path];
     if (path == nil)
@@ -4775,16 +5019,16 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
     return [self createDirectoryAtPath:path withIntermediateDirectories:createIntermediates attributes:attributes error:error];
 }
 
-- (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier
+- (NSURL *)onegramIOS3Fallback_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier
 {
     return nil;
 }
 
 @end
 
-@implementation NSURL (OnegramIOS3PathCompatibility)
+@implementation NSURL (OnegramIOS3PathCompatibilityFallback)
 
-- (NSURL *)URLByAppendingPathComponent:(NSString *)pathComponent
+- (NSURL *)onegramIOS3Fallback_URLByAppendingPathComponent:(NSString *)pathComponent
 {
     if (pathComponent == nil)
         return self;
@@ -4804,7 +5048,7 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
     return [NSURL URLWithString:[base stringByAppendingString:escaped != nil ? escaped : pathComponent]];
 }
 
-- (NSURL *)URLByAppendingPathComponent:(NSString *)pathComponent isDirectory:(BOOL)isDirectory
+- (NSURL *)onegramIOS3Fallback_URLByAppendingPathComponent:(NSString *)pathComponent isDirectory:(BOOL)isDirectory
 {
     if (pathComponent == nil || [pathComponent length] == 0)
         return self;
@@ -4822,26 +5066,26 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
     return [self URLByAppendingPathComponent:component];
 }
 
-- (NSString *)pathExtension
+- (NSString *)onegramIOS3Fallback_pathExtension
 {
     return [[self path] pathExtension];
 }
 
-- (NSString *)lastPathComponent
+- (NSString *)onegramIOS3Fallback_lastPathComponent
 {
     return [[self path] lastPathComponent];
 }
 
-- (NSArray *)pathComponents
+- (NSArray *)onegramIOS3Fallback_pathComponents
 {
     return [[self path] pathComponents];
 }
 
 @end
 
-@implementation NSData (OnegramIOS3ReadingWritingCompatibility)
+@implementation NSData (OnegramIOS3ReadingWritingCompatibilityFallback)
 
-- (instancetype)initWithContentsOfURL:(NSURL *)url options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
+- (instancetype)onegramIOS3Fallback_initWithContentsOfURL:(NSURL *)url options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
 {
     (void)readOptionsMask;
     id result = [self initWithContentsOfURL:url];
@@ -4850,7 +5094,7 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
     return result;
 }
 
-- (instancetype)initWithContentsOfFile:(NSString *)path options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
+- (instancetype)onegramIOS3Fallback_initWithContentsOfFile:(NSString *)path options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
 {
     (void)readOptionsMask;
     id result = [self initWithContentsOfFile:path];
@@ -4859,17 +5103,17 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
     return result;
 }
 
-+ (NSData *)dataWithContentsOfURL:(NSURL *)url options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
++ (NSData *)onegramIOS3Fallback_dataWithContentsOfURL:(NSURL *)url options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
 {
     return [[[self alloc] initWithContentsOfURL:url options:readOptionsMask error:errorPtr] autorelease];
 }
 
-+ (NSData *)dataWithContentsOfFile:(NSString *)path options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
++ (NSData *)onegramIOS3Fallback_dataWithContentsOfFile:(NSString *)path options:(NSDataReadingOptions)readOptionsMask error:(NSError **)errorPtr
 {
     return [[[self alloc] initWithContentsOfFile:path options:readOptionsMask error:errorPtr] autorelease];
 }
 
-- (BOOL)writeToURL:(NSURL *)url options:(NSDataWritingOptions)writeOptionsMask error:(NSError **)errorPtr
+- (BOOL)onegramIOS3Fallback_writeToURL:(NSURL *)url options:(NSDataWritingOptions)writeOptionsMask error:(NSError **)errorPtr
 {
     BOOL result = [self writeToURL:url atomically:(writeOptionsMask & NSDataWritingAtomic) != 0];
     if (!result && errorPtr != NULL)
@@ -4881,9 +5125,9 @@ static BOOL OnegramIOS3JSONAppendObject(NSMutableString *output, id object, NSJS
 
 static char OnegramIOS3ButtonAttributedTitlesKey;
 
-@implementation UIButton (OnegramIOS3AttributedTitleCompatibility)
+@implementation UIButton (OnegramIOS3AttributedTitleCompatibilityFallback)
 
-- (void)setAttributedTitle:(id)title forState:(UIControlState)state
+- (void)onegramIOS3Fallback_setAttributedTitle:(id)title forState:(UIControlState)state
 {
     NSMutableDictionary *titles = objc_getAssociatedObject(self, &OnegramIOS3ButtonAttributedTitlesKey);
     if (titles == nil)
@@ -4913,7 +5157,7 @@ static char OnegramIOS3ButtonAttributedTitlesKey;
     }
 }
 
-- (id)attributedTitleForState:(UIControlState)state
+- (id)onegramIOS3Fallback_attributedTitleForState:(UIControlState)state
 {
     NSDictionary *titles = objc_getAssociatedObject(self, &OnegramIOS3ButtonAttributedTitlesKey);
     return [titles objectForKey:[NSNumber numberWithUnsignedInteger:state]];
@@ -4922,3 +5166,36 @@ static char OnegramIOS3ButtonAttributedTitlesKey;
 @end
 
 #endif
+
+@interface OnegramIOS3FallbackMethodInstaller : NSObject
+@end
+
+@implementation OnegramIOS3FallbackMethodInstaller
+
++ (void)load
+{
+    Class classes[] = {
+        [NSOperationQueue class],
+        [NSOperation class],
+        [NSURLConnection class],
+        [NSMutableArray class],
+        [NSString class],
+        [NSFileManager class],
+        [NSURL class],
+        [NSData class],
+        [UIApplication class],
+        [UIWindow class],
+        [UIViewController class],
+        [UINavigationItem class],
+        [UIView class],
+        [UIDevice class],
+        [UILabel class],
+        [UIImage class],
+        [UIScreen class],
+        [UIButton class]
+    };
+    for (NSUInteger index = 0; index < sizeof(classes) / sizeof(classes[0]); index++)
+        OnegramIOS3InstallFallbackMethods(classes[index]);
+}
+
+@end

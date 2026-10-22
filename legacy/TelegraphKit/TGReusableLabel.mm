@@ -626,6 +626,18 @@ static CTFontRef TGReusableLabelFallbackFont(CTFontRef font, const std::string &
     NSString *storedName = TGReusableLabelFallbackStoreLocked()[entryKey];
     pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
 
+    if (storedName != nil && storedName.length == 0)
+    {
+        pthread_mutex_lock(&TGReusableLabelFallbackMutex);
+        coverage = TGReusableLabelCoverageLocked(font, key);
+        it = coverage->fallbacks->find(character);
+        CTFontRef known = it != coverage->fallbacks->end() ? it->second : NULL;
+        if (it == coverage->fallbacks->end())
+            (*coverage->fallbacks)[character] = NULL;
+        pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
+        return known;
+    }
+
     if (storedName != nil)
     {
         CTFontRef storedFont = TGReusableLabelCreateNamedFont(storedName, CTFontGetSize(font));
@@ -705,6 +717,8 @@ static CTFontRef TGReusableLabelFallbackFont(CTFontRef font, const std::string &
                 CFRelease(fallbackPostScriptName);
             }
         }
+        else
+            TGReusableLabelFallbackStoreRememberLocked(entryKey, @"");
     }
     pthread_mutex_unlock(&TGReusableLabelFallbackMutex);
     return fallback;
@@ -820,6 +834,7 @@ static void TGReusableLabelAssignFallbackFonts(NSMutableAttributedString *string
 
 @property (nonatomic) CGFloat fontLineHeight;
 @property (nonatomic) CGFloat fontLineSpacing;
+@property (nonatomic) CGFloat trailingBaseline;
 
 - (TGReusableLabelLineOffsetMap *)lineOffsets;
 - (std::vector<TGEmojiIndexMapping> *)emojiMappings;
@@ -867,6 +882,11 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
 
 @implementation TGReusableLabelLayoutData
 
+- (CGFloat)lastLineBaseline
+{
+    return _lineOrigins.empty() ? 0.0f : _lineOrigins.back().offset;
+}
+
 - (TGReusableLabelLayoutData *)asynchronousDrawingLayoutForWidth:(CGFloat)width drawingRect:(CGRect)drawingRect shadowColor:(UIColor *)shadowColor shadowOffset:(CGSize)shadowOffset
 {
     if (!_hasCustomDrawing) return self;
@@ -882,6 +902,7 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
     layout.drawingOffset = _drawingOffset;
     layout.fontLineHeight = _fontLineHeight;
     layout.fontLineSpacing = _fontLineSpacing;
+    layout.trailingBaseline = _trailingBaseline;
     layout.hasCustomDrawing = true;
     layout.sourceLayout = self;
     NSMutableDictionary *snapshots = [[NSMutableDictionary alloc] init];
@@ -1112,7 +1133,10 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
         }
     }
 
-    CGSize result = [_text sizeWithFont:_font constrainedToSize:size lineBreakMode:(_numberOfLines == 1 ? NSLineBreakByTruncatingTail : NSLineBreakByWordWrapping)];
+    CGSize constrainedSize = size;
+    if (_numberOfLines > 0)
+        constrainedSize.height = MIN(size.height, CGCeil(OGPlatformFontLineHeight(_font) * _numberOfLines));
+    CGSize result = [_text sizeWithFont:_font constrainedToSize:constrainedSize lineBreakMode:(_numberOfLines == 1 ? NSLineBreakByTruncatingTail : NSLineBreakByWordWrapping)];
     return CGSizeMake(CGCeil(result.width), CGCeil(result.height));
 }
 
@@ -1593,11 +1617,13 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
             }
         }
         
+        CGFloat trailingLineHeight = rect.size.height - textLines.count * fontLineSpacing;
         if ((flags & TGReusableLabelLayoutOffsetLastLine) && textLines.count != 0) {
             pLineOrigins->at(textLines.count - 1).offset += 2.0f;
             rect.size.height += 3.0f;
         }
         
+        layout.trailingBaseline = layout.lastLineBaseline + trailingLineHeight;
         layout.size = CGSizeMake(CGFloor(rect.size.width), CGFloor(rect.size.height + fontLineHeight * 0.1f));
         layout.drawingSize = rect.size;
         
@@ -1667,6 +1693,7 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
             pLineOrigins->push_back(linePosition);
             
             layout.size = CGSizeMake(lineWidth, fontLineSpacing);
+            layout.trailingBaseline = fontLineHeight;
             layout.drawingSize = layout.size;
             
             [textLines addObject:(__bridge id)line];
@@ -1835,6 +1862,8 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
             CGContextSetShadowWithColor(context, shadowOffset, 0, shadow.CGColor);
 
         CGRect textRect = rect;
+        if (numberOfLines > 0)
+            textRect.size.height = MIN(rect.size.height, CGCeil(OGPlatformFontLineHeight(font) * numberOfLines));
         [text drawInRect:textRect withFont:font lineBreakMode:(numberOfLines == 0 ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail)];
     }
 }

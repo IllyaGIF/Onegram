@@ -53,13 +53,18 @@ typedef enum {
 
 static bool _syncedGifs = false;
 
-+ (SVariable *)_recentGifs {
++ (SVariable *)_recentGifsVariable {
     static SVariable *variable = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         variable = [[SVariable alloc] init];
         [variable set:[self _loadRecentGifs]];
     });
+    return variable;
+}
+
++ (SVariable *)_recentGifs {
+    SVariable *variable = [self _recentGifsVariable];
     [[self queue] dispatch:^{
         if (!_syncedGifs) {
             _syncedGifs = true;
@@ -67,6 +72,14 @@ static bool _syncedGifs = false;
         }
     }];
     return variable;
+}
+
++ (void)reloadForAccountSwitch {
+    [[self queue] dispatch:^{
+        [[self _gifActions] removeAllObjects];
+        _syncedGifs = false;
+        [[self _recentGifsVariable] set:[self _loadRecentGifs]];
+    }];
 }
 
 + (NSMutableArray *)_gifActions {

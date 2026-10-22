@@ -31,8 +31,29 @@
 
 @interface TGPhotoTextView : UITextView
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 @property (nonatomic, strong) UIColor *strokeColor;
 @property (nonatomic, assign) CGFloat strokeWidth;
 @property (nonatomic, assign) CGPoint strokeOffset;
+#endif
 
 @end
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+
+@interface TGPhotoTextRenderView : UIView
+
+@property (nonatomic, copy) NSString *text;
+@property (nonatomic, strong) UIFont *font;
+@property (nonatomic, strong) UIColor *textColor;
+@property (nonatomic, strong) UIColor *strokeColor;
+@property (nonatomic, assign) CGFloat strokeWidth;
+@property (nonatomic, assign) CGPoint strokeOffset;
+@property (nonatomic, assign) bool shadowEnabled;
+@property (nonatomic, assign) CGFloat textWidth;
+
+- (CGSize)textSize;
+
+@end
+
+#endif

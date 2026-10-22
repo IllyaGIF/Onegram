@@ -23,6 +23,7 @@
 - (instancetype)initWithText:(NSString *)text textColor:(UIColor *)textColor font:(CTFontRef)font maxWidth:(CGFloat)maxWidth truncateInTheMiddle:(bool)truncateInTheMiddle;
 
 - (void)setText:(NSString *)text maxWidth:(CGFloat)maxWidth;
+- (bool)updateFont:(CTFontRef)font;
 - (void)setText:(NSString *)text maxWidth:(CGFloat)maxWidth needsContentUpdate:(bool *)needsContentUpdate;
 - (NSString *)text;
 - (void)setMaxWidth:(CGFloat)maxWidth;

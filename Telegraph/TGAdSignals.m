@@ -9,8 +9,6 @@
 #import "TGUserDataRequestBuilder.h"
 #import "TGConversation+Telegraph.h"
 
-#import "TLRPChelp_getProxyData.h"
-#import "TLhelp_ProxyData.h"
 
 #import "TGChannelStateSignals.h"
 
@@ -113,11 +111,12 @@
 @implementation TGAdSignals
 
 + (SSignal *)remoteProxy {
-    return [[[TGTelegramNetworking instance] requestSignal:[[TLRPChelp_getProxyData alloc] init]] map:^id (TLhelp_ProxyData *result) {
+    TLRPChelp_getPromoData$help_getPromoData *getPromoData = [[TLRPChelp_getPromoData$help_getPromoData alloc] init];
+    return [[[TGTelegramNetworking instance] requestSignal:getPromoData] map:^id (TLhelp_PromoData *result) {
         int64_t peerId = 0;
-        if ([result isKindOfClass:[TLhelp_ProxyData$proxyDataPromo class]]) {
-            TLhelp_ProxyData$proxyDataPromo *promo = (TLhelp_ProxyData$proxyDataPromo *)result;
-            if ([promo.peer isKindOfClass:[TLPeer$peerChannel class]]) {
+        if ([result isKindOfClass:[TLhelp_PromoData$help_promoData class]]) {
+            TLhelp_PromoData$help_promoData *promo = (TLhelp_PromoData$help_promoData *)result;
+            if ((promo.flags & (1 << 3)) && [promo.peer isKindOfClass:[TLPeer$peerChannel class]]) {
                 TLPeer$peerChannel *channel = (TLPeer$peerChannel *)promo.peer;
                 peerId = TGPeerIdFromChannelId(channel.channel_id);
             }

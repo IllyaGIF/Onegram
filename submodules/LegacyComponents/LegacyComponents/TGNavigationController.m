@@ -1789,9 +1789,10 @@ static UIView *findDimmingView(UIView *view)
 
 - (NSArray *)popToRootViewControllerAnimated:(BOOL)animated
 {
-    for (NSUInteger i = self.viewControllers.count - 1; i >= 1; i--)
+    NSArray *viewControllers = self.viewControllers;
+    for (NSUInteger i = viewControllers.count; i > 1; i--)
     {
-        UIViewController *viewController = self.viewControllers[i];
+        UIViewController *viewController = viewControllers[i - 1];
         if (viewController.modalViewController != nil)
             TGDismissViewController(viewController, false, nil);
     }

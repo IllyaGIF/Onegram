@@ -271,6 +271,7 @@ static void TGModernTextViewModelDrawOperation(__unused CGContextRef context, TG
         }
         else
         {
+            _containsEmptyNewline = false;
             _layoutData = [TGReusableLabel calculateLayout:_text additionalAttributes:_additionalAttributes textCheckingResults:_textCheckingResults font:_font textColor:_textColor linkColor:_linkColor frame:CGRectZero orMaxWidth:(float)containerSize.width flags:_layoutFlags textAlignment:(NSTextAlignment)_alignment outIsRTL:&_isRTL additionalTrailingWidth:_additionalTrailingWidth maxNumberOfLines:_maxNumberOfLines numberOfLinesToInset:_linesInset.numberOfLinesToInset linesInset:_linesInset.inset containsEmptyNewline:&_containsEmptyNewline additionalLineSpacing:_additionalLineSpacing ellipsisString:_ellipsisString underlineAllLinks:_underlineAllLinks];
             if (_layoutData != nil)
             {
@@ -337,6 +338,16 @@ static void TGModernTextViewModelDrawOperation(__unused CGContextRef context, TG
     if (_layoutData.lineOrigins == NULL)
         return 0;
     return (NSUInteger)_layoutData.lineOrigins->size();
+}
+
+- (CGFloat)lastLineBaseline
+{
+    return _layoutData.lastLineBaseline;
+}
+
+- (CGFloat)trailingBaseline
+{
+    return _layoutData.trailingBaseline;
 }
 
 @end

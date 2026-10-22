@@ -137,6 +137,14 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
     return TGPhotoThumbnailImageFromFile(path) != nil;
 }
 
+static UIImage *TGPhotoThumbnailStrippedImage(NSDictionary *args)
+{
+    NSString *strippedCacheUrl = args[@"legacy-stripped-cache-url"];
+    if (![strippedCacheUrl respondsToSelector:@selector(characterAtIndex:)] || strippedCacheUrl.length == 0)
+        return nil;
+    return TGPhotoThumbnailImageFromFile([[TGRemoteImageView sharedCache] pathForCachedData:strippedCacheUrl]);
+}
+
 @interface TGPhotoThumbnailDataSource ()
 {
 }
@@ -163,9 +171,10 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
     return [uri hasPrefix:@"photo-thumbnail://"];
 }
 
-- (id)loadDataAsyncWithUri:(NSString *)uri progress:(void (^)(float))progress partialCompletion:(void (^)(TGDataResource *resource))__unused partialCompletion completion:(void (^)(TGDataResource *))completion
+- (id)loadDataAsyncWithUri:(NSString *)uri progress:(void (^)(float))progress partialCompletion:(void (^)(TGDataResource *resource))partialCompletion completion:(void (^)(TGDataResource *))completion
 {
     TGMediaPreviewTask *previewTask = [[TGMediaPreviewTask alloc] init];
+    __weak TGMediaPreviewTask *weakPreviewTask = previewTask;
     
     NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:@"photo-thumbnail://?".length]];
     bool isFlat = [args[@"flat"] boolValue];
@@ -190,18 +199,17 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
 
         if ([TGPhotoThumbnailDataSource _isDataLocallyAvailableForUri:uri])
         {
-            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-        }
-        else if (OGPlatformMediaDownloadsRequireUserAction())
-        {
-            if (completion != nil)
-                completion([TGPhotoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
+            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
         }
         else
         {
             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:@"photo-thumbnail://?".length]];
             
-            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
+            TGDataResource *strippedResult = TGPhotoThumbnailStrippedImage(args) != nil ? [TGPhotoThumbnailDataSource _performLoad:uri isCancelled:nil] : nil;
+            if (strippedResult != nil && partialCompletion != nil)
+                partialCompletion(strippedResult);
+            
+            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)] || ([args[@"cid"] longLongValue] != 0 && [args[@"mid"] intValue] != 0))
             {
                 static NSString *filesDirectory = nil;
                 static dispatch_once_t onceToken;
@@ -226,6 +234,7 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
                 NSString *temporaryThumbnailImagePath = [photoDirectory stringByAppendingPathComponent:@"image-thumb.jpg"];
                 
                 NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
+                options[@"thumbnailContext"] = args;
                 TGMediaOriginInfo *originInfo = nil;
                 if (args[@"origin_info"] != nil)
                 {
@@ -241,26 +250,27 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
                 if (originInfo != nil)
                     options[@"originInfo"] = originInfo;
                 
-                [previewTask executeWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
+                [previewTask executeThumbnailWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:options completion:^(bool success)
                 {
                     if (success)
                     {
                         dispatch_async([TGCache diskCacheQueue], ^
                         {
-                            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+                            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                         });
                     }
                     else
                     {
+                        TGLog(@"PHOTO_THUMB unavailable id=%@ url=%@ stripped=%d", args[@"id"], args[@"legacy-thumbnail-cache-url"], strippedResult != nil ? 1 : 0);
                         if (completion != nil)
-                            completion([TGPhotoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
+                            completion(strippedResult ?: [TGPhotoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
                     }
                 } workerTask:workerTask];
             }
             else
             {
                 if (completion != nil)
-                    completion([TGPhotoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
+                    completion(strippedResult ?: [TGPhotoThumbnailDataSource resultForUnavailableImage:isFlat cornerRadius:cornerRadius position:position]);
             }
         }
     }];
@@ -611,7 +621,7 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
         {
             image = TGPhotoThumbnailImageFromFile(temporaryThumbnailImagePath);
             if (image != nil)
-                lowQualityThumbnail = true;
+                lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
             else if ([[NSFileManager defaultManager] fileExistsAtPath:temporaryThumbnailImagePath isDirectory:NULL])
                 [[NSFileManager defaultManager] removeItemAtPath:temporaryThumbnailImagePath error:nil];
         }
@@ -625,7 +635,7 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
             if (image != nil)
             {
                 [[NSFileManager defaultManager] copyItemAtPath:legacyThumbnailFilePath toPath:temporaryThumbnailImagePath error:nil];
-                lowQualityThumbnail = true;
+                lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
             }
             else if ([[NSFileManager defaultManager] fileExistsAtPath:legacyThumbnailFilePath isDirectory:NULL])
             {
@@ -649,12 +659,19 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
                     {
                         image = TGPhotoThumbnailImageFromData(imageData);
                         if (image != nil)
-                            lowQualityThumbnail = true;
+                            lowQualityThumbnail = MAX(image.size.width, image.size.height) < 70.0f;
                         else
                             [[[TGMediaStoreContext instance] temporaryFilesCache] removeValueForKey:[imageUrl dataUsingEncoding:NSUTF8StringEncoding]];
                     }
                 }
             }
+        }
+        
+        if (image == nil)
+        {
+            image = TGPhotoThumbnailStrippedImage(args);
+            if (image != nil)
+                lowQualityThumbnail = true;
         }
         
         if (image != nil)
@@ -698,22 +715,19 @@ static bool TGPhotoThumbnailImageFileIsValid(NSString *path)
                 else
                     thumbnailImage = TGSecretBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
             }
+            else if (lowQualityThumbnail)
+            {
+                if (isFlat && cornerRadius != 0)
+                    thumbnailImage = TGBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
+                else
+                    thumbnailImage = TGBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
+            }
             else
             {
-                if (lowQualityThumbnail)
-                {
-                    if (isFlat && cornerRadius != 0)
-                        thumbnailImage = TGBlurredAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, position);
-                    else
-                        thumbnailImage = TGBlurredAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
-                }
+                if (isFlat && cornerRadius != 0)
+                    thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, 0, position);
                 else
-                {
-                    if (isFlat && cornerRadius != 0)
-                        thumbnailImage = TGLoadedAttachmentWithCornerRadiusImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, cornerRadius, 0, position);
-                    else
-                        thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
-                }
+                    thumbnailImage = TGLoadedAttachmentImage(thumbnailSourceImage, size, averageColorPtr, !isFlat, position);
             }
         }
         @finally

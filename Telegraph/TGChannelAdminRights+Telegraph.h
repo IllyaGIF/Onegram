@@ -7,6 +7,6 @@
 @interface TGChannelAdminRights (TG)
 
 - (instancetype)initWithTL:(TLChannelAdminRights *)rights;
-- (TLChannelAdminRights *)tlRights;
+- (TLChatAdminRights *)tlRights;
 
 @end

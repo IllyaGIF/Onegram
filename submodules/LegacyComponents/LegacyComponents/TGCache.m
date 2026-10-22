@@ -62,12 +62,29 @@ static NSString *TGCacheNormalizedKey(NSString *url)
     else if (![url hasPrefix:@"peerphoto:"])
         return url;
 
-    NSString *body = bodyLocation == 0 ? url : [url substringFromIndex:bodyLocation];
-    NSArray *components = [body componentsSeparatedByString:@":"];
-    if (components.count != 7)
+    NSUInteger length = url.length;
+    NSUInteger separators[6];
+    NSUInteger separatorCount = 0;
+    CFStringInlineBuffer buffer;
+    CFStringInitInlineBuffer((__bridge CFStringRef)url, &buffer, CFRangeMake((CFIndex)bodyLocation, (CFIndex)(length - bodyLocation)));
+    for (NSUInteger index = 0; index < length - bodyLocation; index++)
+    {
+        if (CFStringGetCharacterFromInlineBuffer(&buffer, (CFIndex)index) != ':')
+            continue;
+        if (separatorCount == 6)
+            return url;
+        separators[separatorCount++] = bodyLocation + index;
+    }
+    if (separatorCount != 6)
         return url;
-    NSString *normalizedBody = [[NSString alloc] initWithFormat:@"peerphoto:%@:%@:%@:%@", components[2], components[3], components[5], components[6]];
-    return bodyLocation == 0 ? normalizedBody : [[url substringToIndex:bodyLocation] stringByAppendingString:normalizedBody];
+
+    NSMutableString *normalized = [[NSMutableString alloc] initWithCapacity:length];
+    if (bodyLocation != 0)
+        [normalized appendString:[url substringToIndex:bodyLocation]];
+    [normalized appendString:@"peerphoto"];
+    [normalized appendString:[url substringWithRange:NSMakeRange(separators[1], separators[3] - separators[1])]];
+    [normalized appendString:[url substringWithRange:NSMakeRange(separators[4], length - separators[4])]];
+    return normalized;
 }
 
 static bool TGCacheIsAvatarKey(NSString *key)

@@ -9,4 +9,6 @@
 
 + (SSignal *)dismissReportSpamForPeers;
 
++ (void)reloadForAccountSwitch;
+
 @end

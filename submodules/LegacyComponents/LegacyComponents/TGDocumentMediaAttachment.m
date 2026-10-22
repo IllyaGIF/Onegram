@@ -442,6 +442,14 @@
     return CGSizeZero;
 }
 
+- (bool)isImageFile
+{
+    if ([[_mimeType lowercaseString] hasPrefix:@"image/"])
+        return true;
+    NSString *extension = [[self.fileName pathExtension] lowercaseString];
+    return extension.length != 0 && [@[@"jpg", @"jpeg", @"png", @"webp", @"gif", @"heic", @"heif", @"bmp", @"tif", @"tiff"] containsObject:extension];
+}
+
 - (NSArray *)textCheckingResults
 {
     if (_caption.length < 2)

@@ -6,11 +6,12 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
-@class TLInputUser;
+@class TLInputPeer;
 
 @interface TLRPCcontacts_block : TLMetaRpc
 
-@property (nonatomic, retain) TLInputUser *n_id;
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) TLInputPeer *n_id;
 
 - (Class)responseClass;
 

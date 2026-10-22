@@ -343,6 +343,16 @@ static id AFJSONLegacyDecode(NSData *data, NSError **error)
 }
 #endif
 
+static Class AFJSONSerializationClass(void)
+{
+    Class serializationClass = NSClassFromString(@"NSJSONSerialization");
+#if ONEGRAM_ARMV6
+    if (serializationClass == Nil)
+        serializationClass = [NSJSONSerialization class];
+#endif
+    return serializationClass;
+}
+
 NSData * AFJSONEncode(id object, NSError **error) {
     NSData *data = nil;
     
@@ -355,7 +365,7 @@ NSData * AFJSONEncode(id object, NSError **error) {
     id _NXJsonSerializerClass = NSClassFromString(@"NXJsonSerializer");
     SEL _NXJsonSerializerSelector = NSSelectorFromString(@"serialize:");
 
-    id _NSJSONSerializationClass = NSClassFromString(@"NSJSONSerialization");
+    id _NSJSONSerializationClass = AFJSONSerializationClass();
     SEL _NSJSONSerializationSelector = NSSelectorFromString(@"dataWithJSONObject:options:error:");
     
 #ifdef _AFNETWORKING_PREFER_NSJSONSERIALIZATION_
@@ -448,7 +458,7 @@ id AFJSONDecode(NSData *data, NSError **error) {
     id _SBJSONParserClass = NSClassFromString(@"SBJsonParser");
     SEL _SBJSONParserSelector = NSSelectorFromString(@"objectWithData:");
 
-    id _NSJSONSerializationClass = NSClassFromString(@"NSJSONSerialization");
+    id _NSJSONSerializationClass = AFJSONSerializationClass();
     SEL _NSJSONSerializationSelector = NSSelectorFromString(@"JSONObjectWithData:options:error:");
     
     id _NXJsonParserClass = NSClassFromString(@"NXJsonParser");

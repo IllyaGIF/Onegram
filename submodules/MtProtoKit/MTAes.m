@@ -10,148 +10,100 @@ typedef struct {
     unsigned long data[N_WORDS];
 } aes_block_t;
 
-#if defined(__i386__) || defined(__x86_64__)
-# define UNALIGNED_MEMOPS_ARE_FAST 1
-#else
-# define UNALIGNED_MEMOPS_ARE_FAST 0
-#endif
-
-#if UNALIGNED_MEMOPS_ARE_FAST
-# define load_block(d, s)        (d) = *(const aes_block_t *)(s)
-# define store_block(d, s)      *(aes_block_t *)(d) = (s)
-#else
 # define load_block(d, s)        memcpy((d).data, (s), AES_BLOCK_SIZE)
 # define store_block(d, s)       memcpy((d), (s).data, AES_BLOCK_SIZE)
-#endif
 
 void MyAesIgeEncrypt(const void *inBytes, int length, void *outBytes, const void *key, int keyLength, void *iv) {
-    int len;
-    size_t n;
-    void const *inB;
-    void *outB;
-    
-    unsigned char aesIv[AES_BLOCK_SIZE];
-    memcpy(aesIv, iv, AES_BLOCK_SIZE);
-    unsigned char ccIv[AES_BLOCK_SIZE];
-    memcpy(ccIv, iv + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
-    
-    assert(((size_t)inBytes | (size_t)outBytes | (size_t)aesIv | (size_t)ccIv) % sizeof(long) ==
-           0);
-    
-    void *tmpInBytes = malloc(length);
-    len = length / AES_BLOCK_SIZE;
-    inB = inBytes;
-    outB = tmpInBytes;
-    
-    aes_block_t *inp = (aes_block_t *)inB;
-    aes_block_t *outp = (aes_block_t *)outB;
-    for (n = 0; n < N_WORDS; ++n) {
-        outp->data[n] = inp->data[n];
-    }
-    
-    --len;
-    inB += AES_BLOCK_SIZE;
-    outB += AES_BLOCK_SIZE;
-    void const *inBCC = inBytes;
-    
-    aes_block_t const *iv3p = (aes_block_t *)ccIv;
-    
-    if (len > 0) {
-        while (len) {
-            aes_block_t *inp = (aes_block_t *)inB;
-            aes_block_t *outp = (aes_block_t *)outB;
-            
-            for (n = 0; n < N_WORDS; ++n) {
-                outp->data[n] = inp->data[n] ^ iv3p->data[n];
-            }
-            
-            iv3p = inBCC;
-            --len;
-            inBCC += AES_BLOCK_SIZE;
-            inB += AES_BLOCK_SIZE;
-            outB += AES_BLOCK_SIZE;
+    assert(length >= 0 && length % AES_BLOCK_SIZE == 0);
+    if (length == 0)
+        return;
+
+    const uint8_t *input = inBytes;
+    uint8_t *output = outBytes;
+    uint8_t *ivBytes = iv;
+    aes_block_t previousCiphertext;
+    aes_block_t previousPlaintext;
+    load_block(previousCiphertext, ivBytes);
+    load_block(previousPlaintext, ivBytes + AES_BLOCK_SIZE);
+    aes_block_t secondPreviousPlaintext = previousPlaintext;
+
+    uint8_t *tmpInBytes = malloc(length);
+    assert(tmpInBytes != NULL);
+    for (int offset = 0; offset < length; offset += AES_BLOCK_SIZE) {
+        aes_block_t plaintext;
+        load_block(plaintext, input + offset);
+        aes_block_t block = plaintext;
+        if (offset != 0) {
+            for (size_t n = 0; n < N_WORDS; ++n)
+                block.data[n] ^= secondPreviousPlaintext.data[n];
         }
+        store_block(tmpInBytes + offset, block);
+        secondPreviousPlaintext = previousPlaintext;
+        previousPlaintext = plaintext;
     }
     
     size_t realOutLength = 0;
-    CCCryptorStatus result = CCCrypt(kCCEncrypt, kCCAlgorithmAES128, 0, key, keyLength, aesIv, tmpInBytes, length, outBytes, length, &realOutLength);
-    free(tmpInBytes);
+    CCCryptorStatus result = CCCrypt(kCCEncrypt, kCCAlgorithmAES128, 0, key, keyLength, previousCiphertext.data, tmpInBytes, length, tmpInBytes, length, &realOutLength);
     
     assert(result == kCCSuccess);
     
-    len = length / AES_BLOCK_SIZE;
-    
-    aes_block_t const *ivp = inB;
-    aes_block_t *iv2p = (aes_block_t *)ccIv;
-    
-    inB = inBytes;
-    outB = outBytes;
-    
-    while (len) {
-        aes_block_t *inp = (aes_block_t *)inB;
-        aes_block_t *outp = (aes_block_t *)outB;
-        
-        for (n = 0; n < N_WORDS; ++n) {
-            outp->data[n] ^= iv2p->data[n];
-        }
-        ivp = outp;
-        iv2p = inp;
-        --len;
-        inB += AES_BLOCK_SIZE;
-        outB += AES_BLOCK_SIZE;
+    assert(realOutLength == (size_t)length);
+    load_block(previousPlaintext, ivBytes + AES_BLOCK_SIZE);
+    for (int offset = 0; offset < length; offset += AES_BLOCK_SIZE) {
+        aes_block_t plaintext;
+        aes_block_t ciphertext;
+        load_block(plaintext, input + offset);
+        load_block(ciphertext, tmpInBytes + offset);
+        for (size_t n = 0; n < N_WORDS; ++n)
+            ciphertext.data[n] ^= previousPlaintext.data[n];
+        store_block(output + offset, ciphertext);
+        previousCiphertext = ciphertext;
+        previousPlaintext = plaintext;
     }
-    
-    memcpy(iv, ivp->data, AES_BLOCK_SIZE);
-    memcpy(iv + AES_BLOCK_SIZE, iv2p->data, AES_BLOCK_SIZE);
+    free(tmpInBytes);
+
+    store_block(ivBytes, previousCiphertext);
+    store_block(ivBytes + AES_BLOCK_SIZE, previousPlaintext);
 }
 
 void MyAesIgeDecrypt(const void *inBytes, int length, void *outBytes, const void *key, int keyLength, void *iv) {
-    unsigned char aesIv[AES_BLOCK_SIZE];
-    memcpy(aesIv, iv, AES_BLOCK_SIZE);
-    unsigned char ccIv[AES_BLOCK_SIZE];
-    memcpy(ccIv, iv + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
-    
-    assert(((size_t)inBytes | (size_t)outBytes | (size_t)aesIv | (size_t)ccIv) % sizeof(long) ==
-           0);
+    assert(length >= 0 && length % AES_BLOCK_SIZE == 0);
+    if (length == 0)
+        return;
+
+    const uint8_t *input = inBytes;
+    uint8_t *output = outBytes;
+    uint8_t *ivBytes = iv;
+    aes_block_t previousCiphertext;
+    aes_block_t previousPlaintext;
+    load_block(previousCiphertext, ivBytes);
+    load_block(previousPlaintext, ivBytes + AES_BLOCK_SIZE);
     
     CCCryptorRef decryptor = NULL;
     CCCryptorCreate(kCCDecrypt, kCCAlgorithmAES128, kCCOptionECBMode, key, keyLength, nil, &decryptor);
     if (decryptor != NULL) {
-        int len;
-        size_t n;
-        
-        len = length / AES_BLOCK_SIZE;
-        
-        aes_block_t *ivp = (aes_block_t *)(aesIv);
-        aes_block_t *iv2p = (aes_block_t *)(ccIv);
-        
-        while (len) {
-            aes_block_t tmp;
-            aes_block_t *inp = (aes_block_t *)inBytes;
-            aes_block_t *outp = (aes_block_t *)outBytes;
-            
-            for (n = 0; n < N_WORDS; ++n)
-                tmp.data[n] = inp->data[n] ^ iv2p->data[n];
+        for (int offset = 0; offset < length; offset += AES_BLOCK_SIZE) {
+            aes_block_t ciphertext;
+            aes_block_t block;
+            aes_block_t plaintext;
+            load_block(ciphertext, input + offset);
+            for (size_t n = 0; n < N_WORDS; ++n)
+                block.data[n] = ciphertext.data[n] ^ previousPlaintext.data[n];
             
             size_t dataOutMoved = 0;
-            CCCryptorStatus result = CCCryptorUpdate(decryptor, &tmp, AES_BLOCK_SIZE, outBytes, AES_BLOCK_SIZE, &dataOutMoved);
+            CCCryptorStatus result = CCCryptorUpdate(decryptor, block.data, AES_BLOCK_SIZE, plaintext.data, AES_BLOCK_SIZE, &dataOutMoved);
             assert(result == kCCSuccess);
             assert(dataOutMoved == AES_BLOCK_SIZE);
             
-            for (n = 0; n < N_WORDS; ++n)
-                outp->data[n] ^= ivp->data[n];
-            
-            ivp = inp;
-            iv2p = outp;
-            
-            inBytes += AES_BLOCK_SIZE;
-            outBytes += AES_BLOCK_SIZE;
-            
-            --len;
+            for (size_t n = 0; n < N_WORDS; ++n)
+                plaintext.data[n] ^= previousCiphertext.data[n];
+            store_block(output + offset, plaintext);
+            previousCiphertext = ciphertext;
+            previousPlaintext = plaintext;
         }
         
-        memcpy(iv, ivp->data, AES_BLOCK_SIZE);
-        memcpy(iv + AES_BLOCK_SIZE, iv2p->data, AES_BLOCK_SIZE);
+        store_block(ivBytes, previousCiphertext);
+        store_block(ivBytes + AES_BLOCK_SIZE, previousPlaintext);
         
         CCCryptorRelease(decryptor);
     }

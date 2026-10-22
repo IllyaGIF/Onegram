@@ -186,9 +186,6 @@ static NSMutableDictionary *cachedGeocodes()
     NSString *key = [[NSString alloc] initWithFormat:@"%f,%f", _latitude, _longitude];
     [cachedGeocodes() setObject:result forKey:key];
     
-    static int index = 1;
-    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/location/savegeocode/(%d)", index++] options:result watcher:TGTelegraphInstance];
-    
     [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphObjectNode alloc] initWithObject:result]];
 }
 

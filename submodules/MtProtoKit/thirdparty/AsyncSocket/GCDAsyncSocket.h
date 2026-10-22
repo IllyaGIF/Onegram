@@ -72,6 +72,7 @@ extern NSString *const GCDAsyncSocketUseOpenSSL;
 extern NSString *const GCDAsyncSocketOpenSSLPeerName;
 extern NSString *const GCDAsyncSocketOpenSSLTrustedCertificates;
 extern NSString *const GCDAsyncSocketOpenSSLVerificationTime;
+extern NSString *const GCDAsyncSocketOpenSSLSplitClientHello;
 #endif
 
 #if SECURE_TRANSPORT_MAYBE_AVAILABLE
@@ -139,6 +140,8 @@ typedef enum GCDAsyncSocketError GCDAsyncSocketError;
 	GCDAsyncWritePacket *currentWrite;
 	
 	unsigned long socketFDBytesAvailable;
+	NSTimeInterval readSourceSpuriousDelay;
+	NSUInteger readSourceSpuriousGeneration;
 	
 	GCDAsyncSocketPreBuffer *preBuffer;
 		
@@ -157,6 +160,7 @@ typedef enum GCDAsyncSocketError GCDAsyncSocketError;
 	void *openSSLContext;
 	void *openSSLConnection;
 	int openSSLErrCode;
+	NSString *openSSLVerifyFailure;
 #endif
 	
 	id userData;

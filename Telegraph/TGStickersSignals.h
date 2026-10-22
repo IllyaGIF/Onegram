@@ -47,4 +47,6 @@
 
 + (SSignal *)stickersForEmojis:(NSArray *)emojis includeRemote:(bool)includeRemote updateRemoteCached:(bool)updateRemoteCached;
 
++ (void)reloadForAccountSwitch;
+
 @end

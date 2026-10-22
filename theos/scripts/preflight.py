@@ -67,12 +67,8 @@ def main():
         if not path.is_file():missing.append(str(path))
     for value in missing:print('Unavailable: '+value)
     if missing:return 1
-    if sys.platform=='darwin':
-        lipo=subprocess.check_output(['xcrun','--find','lipo'],text=True).strip()
-        nm=subprocess.check_output(['xcrun','--find','nm'],text=True).strip()
-    else:
-        lipo=str(args.toolchain/'bin/lipo')
-        nm=str(args.toolchain/'bin/nm')
+    lipo=str(args.toolchain/'bin/lipo')
+    nm=str(args.toolchain/'bin/nm')
     for archive in runtime_paths:
         subprocess.run([lipo,str(archive),'-verify_arch',arch],check=True)
         print('Runtime '+arch+': '+str(archive))

@@ -505,200 +505,211 @@ static NSMutableDictionary *flagRules = nil;
 
 - (CallingCodeInfo *)callingCodeInfo:(NSString *)callingCode
 {
-    CallingCodeInfo *res = [_callingCodeData objectForKey:callingCode];
-    if (res == nil)
+    @synchronized (_callingCodeData)
     {
-        NSNumber *num = [_callingCodeOffsets objectForKey:callingCode];
-        if (num)
-        {
-            const uint8_t *bytes = [_data bytes];
-            uint32_t start = (int)[num longValue];
-            uint32_t offset = start;
-            res = [[CallingCodeInfo alloc] init];
-            res.callingCode = callingCode;
-            res.countries = [_callingCodeCountries objectForKey:callingCode];
-            [_callingCodeData setObject:res forKey:callingCode];
-            
-            uint16_t block1Len = (uint16_t)[self value16:offset];
-            offset += 2;
+        CallingCodeInfo *cached = [_callingCodeData objectForKey:callingCode];
+        if (cached != nil)
+            return cached;
+    }
+    CallingCodeInfo *res = nil;
+    NSNumber *num = [_callingCodeOffsets objectForKey:callingCode];
+    if (num)
+    {
+        const uint8_t *bytes = [_data bytes];
+        uint32_t start = (int)[num longValue];
+        uint32_t offset = start;
+        res = [[CallingCodeInfo alloc] init];
+        res.callingCode = callingCode;
+        res.countries = [_callingCodeCountries objectForKey:callingCode];
+        
+        uint16_t block1Len = (uint16_t)[self value16:offset];
+        offset += 2;
 #ifdef DEBUG
-            uint16_t extra1 = (uint16_t)[self value16:offset];
+        uint16_t extra1 = (uint16_t)[self value16:offset];
 #endif
-            offset += 2;
-            uint16_t block2Len = (uint16_t)[self value16:offset];
-            offset += 2;
+        offset += 2;
+        uint16_t block2Len = (uint16_t)[self value16:offset];
+        offset += 2;
 #ifdef DEBUG
-            uint16_t extra2 = (uint16_t)[self value16:offset];
+        uint16_t extra2 = (uint16_t)[self value16:offset];
 #endif
-            offset += 2;
-            uint16_t setCnt = (uint16_t)[self value16:offset];
-            offset += 2;
+        offset += 2;
+        uint16_t setCnt = (uint16_t)[self value16:offset];
+        offset += 2;
 #ifdef DEBUG
-            uint16_t extra3 = (uint16_t)[self value16:offset];
+        uint16_t extra3 = (uint16_t)[self value16:offset];
 #endif
-            offset += 2;
-            
+        offset += 2;
+        
 #ifdef DEBUG
-            if (extra1) {
-                NSMutableArray *vals = [extra1CallingCodes objectForKey:[NSNumber numberWithInt:extra1]];
-                if (!vals) {
-                    vals = [[NSMutableArray alloc] init];
-                    [extra1CallingCodes setObject:vals forKey:[NSNumber numberWithInt:extra1]];
-                }
-                [vals addObject:res];
+        if (extra1) {
+            NSMutableArray *vals = [extra1CallingCodes objectForKey:[NSNumber numberWithInt:extra1]];
+            if (!vals) {
+                vals = [[NSMutableArray alloc] init];
+                [extra1CallingCodes setObject:vals forKey:[NSNumber numberWithInt:extra1]];
             }
-            if (extra2) {
-                NSMutableArray *vals = [extra2CallingCodes objectForKey:[NSNumber numberWithInt:extra2]];
-                if (!vals) {
-                    vals = [[NSMutableArray alloc] init];
-                    [extra2CallingCodes setObject:vals forKey:[NSNumber numberWithInt:extra2]];
-                }
-                [vals addObject:res];
+            [vals addObject:res];
+        }
+        if (extra2) {
+            NSMutableArray *vals = [extra2CallingCodes objectForKey:[NSNumber numberWithInt:extra2]];
+            if (!vals) {
+                vals = [[NSMutableArray alloc] init];
+                [extra2CallingCodes setObject:vals forKey:[NSNumber numberWithInt:extra2]];
             }
-            if (extra3) {
-                NSMutableArray *vals = [extra3CallingCodes objectForKey:[NSNumber numberWithInt:extra3]];
-                if (!vals) {
-                    vals = [[NSMutableArray alloc] init];
-                    [extra3CallingCodes setObject:vals forKey:[NSNumber numberWithInt:extra3]];
-                }
-                [vals addObject:res];
+            [vals addObject:res];
+        }
+        if (extra3) {
+            NSMutableArray *vals = [extra3CallingCodes objectForKey:[NSNumber numberWithInt:extra3]];
+            if (!vals) {
+                vals = [[NSMutableArray alloc] init];
+                [extra3CallingCodes setObject:vals forKey:[NSNumber numberWithInt:extra3]];
             }
+            [vals addObject:res];
+        }
 #endif
 
-            NSMutableArray *strs = [NSMutableArray arrayWithCapacity:5];
-            NSString *str;
-            while ([(str = [NSString stringWithCString:(char *)bytes + offset encoding:NSUTF8StringEncoding]) length]) {
-                [strs addObject:str];
-                offset += [str length] + 1;
-            }
-            res.trunkPrefixes = strs;
-            offset++; // skip NULL
+        NSMutableArray *strs = [NSMutableArray arrayWithCapacity:5];
+        NSString *str;
+        while ([(str = [NSString stringWithCString:(char *)bytes + offset encoding:NSUTF8StringEncoding]) length]) {
+            [strs addObject:str];
+            offset += [str length] + 1;
+        }
+        res.trunkPrefixes = strs;
+        offset++; // skip NULL
 
-            strs = [NSMutableArray arrayWithCapacity:5];
-            while ([(str = [NSString stringWithCString:(char *)bytes + offset encoding:NSUTF8StringEncoding]) length]) {
-                [strs addObject:str];
-                offset += [str length] + 1;
-            }
-            res.intlPrefixes = strs;
-            
-            NSMutableArray *ruleSets = [NSMutableArray arrayWithCapacity:setCnt];
-            offset = start + block1Len; // Start of rule sets
-            for (int s = 0; s < setCnt; s++) {
-                RuleSet *ruleSet = [[RuleSet alloc] init];
-                int matchCnt = [self value16:offset];
-                ruleSet.matchLen = matchCnt;
+        strs = [NSMutableArray arrayWithCapacity:5];
+        while ([(str = [NSString stringWithCString:(char *)bytes + offset encoding:NSUTF8StringEncoding]) length]) {
+            [strs addObject:str];
+            offset += [str length] + 1;
+        }
+        res.intlPrefixes = strs;
+        
+        NSMutableArray *ruleSets = [NSMutableArray arrayWithCapacity:setCnt];
+        offset = start + block1Len; // Start of rule sets
+        for (int s = 0; s < setCnt; s++) {
+            RuleSet *ruleSet = [[RuleSet alloc] init];
+            int matchCnt = [self value16:offset];
+            ruleSet.matchLen = matchCnt;
+            offset += 2;
+            int ruleCnt = [self value16:offset];
+            offset += 2;
+            NSMutableArray *rules = [NSMutableArray arrayWithCapacity:ruleCnt];
+            for (int r = 0; r < ruleCnt; r++) {
+                PhoneRule *rule = [[PhoneRule alloc] init];
+                rule.minVal = [self value32:offset];
+                offset += 4;
+                rule.maxVal = [self value32:offset];
+                offset += 4;
+                rule.byte8 = (int)bytes[offset++];
+                rule.maxLen = (int)bytes[offset++];
+                rule.otherFlag = (int)bytes[offset++];
+                rule.prefixLen = (int)bytes[offset++];
+                rule.flag12 = (int)bytes[offset++];
+                rule.flag13 = (int)bytes[offset++];
+                uint16_t strOffset = (uint16_t)[self value16:offset];
                 offset += 2;
-                int ruleCnt = [self value16:offset];
-                offset += 2;
-                NSMutableArray *rules = [NSMutableArray arrayWithCapacity:ruleCnt];
-                for (int r = 0; r < ruleCnt; r++) {
-                    PhoneRule *rule = [[PhoneRule alloc] init];
-                    rule.minVal = [self value32:offset];
-                    offset += 4;
-                    rule.maxVal = [self value32:offset];
-                    offset += 4;
-                    rule.byte8 = (int)bytes[offset++];
-                    rule.maxLen = (int)bytes[offset++];
-                    rule.otherFlag = (int)bytes[offset++];
-                    rule.prefixLen = (int)bytes[offset++];
-                    rule.flag12 = (int)bytes[offset++];
-                    rule.flag13 = (int)bytes[offset++];
-                    uint16_t strOffset = (uint16_t)[self value16:offset];
-                    offset += 2;
-                    rule.format = [NSString stringWithCString:(char *)bytes + start + block1Len + block2Len + strOffset encoding:NSUTF8StringEncoding];
-                    // Several formats contain [[9]] or [[8]]. Using the Contacts app as a test, I can find no use
-                    // for these. Do they mean "optional"? They don't seem to have any use. This code strips out
-                    // anything in [[..]]
-                    NSRange openPos = [rule.format rangeOfString:@"[["];
-                    if (openPos.location != NSNotFound) {
-                        NSRange closePos = [rule.format rangeOfString:@"]]"];
-                        rule.format = [NSString stringWithFormat:@"%@%@", [rule.format substringToIndex:openPos.location], [rule.format substringFromIndex:closePos.location + closePos.length]];
+                rule.format = [NSString stringWithCString:(char *)bytes + start + block1Len + block2Len + strOffset encoding:NSUTF8StringEncoding];
+                // Several formats contain [[9]] or [[8]]. Using the Contacts app as a test, I can find no use
+                // for these. Do they mean "optional"? They don't seem to have any use. This code strips out
+                // anything in [[..]]
+                NSRange openPos = [rule.format rangeOfString:@"[["];
+                if (openPos.location != NSNotFound) {
+                    NSRange closePos = [rule.format rangeOfString:@"]]"];
+                    rule.format = [NSString stringWithFormat:@"%@%@", [rule.format substringToIndex:openPos.location], [rule.format substringFromIndex:closePos.location + closePos.length]];
+                }
+                
+                [rules addObject:rule];
+#ifdef DEBUG
+                rule.countries = res.countries;
+                rule.callingCode = res.callingCode;
+                rule.matchLen = matchCnt;
+                if (rule.byte8) {
+                    NSMutableDictionary *data = [flagRules objectForKey:@"byte8"];
+                    if (!data) {
+                        data = [[NSMutableDictionary alloc] init];
+                        [flagRules setObject:data forKey:@"byte8"];
+                    }
+                    NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.byte8]];
+                    if (!list) {
+                        list = [[NSMutableArray alloc] init];
+                        [data setObject:list forKey:[NSNumber numberWithInt:rule.byte8]];
                     }
                     
-                    [rules addObject:rule];
-#ifdef DEBUG
-                    rule.countries = res.countries;
-                    rule.callingCode = res.callingCode;
-                    rule.matchLen = matchCnt;
-                    if (rule.byte8) {
-                        NSMutableDictionary *data = [flagRules objectForKey:@"byte8"];
-                        if (!data) {
-                            data = [[NSMutableDictionary alloc] init];
-                            [flagRules setObject:data forKey:@"byte8"];
-                        }
-                        NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.byte8]];
-                        if (!list) {
-                            list = [[NSMutableArray alloc] init];
-                            [data setObject:list forKey:[NSNumber numberWithInt:rule.byte8]];
-                        }
-                        
-                        [list addObject:rule];
-                    }
-                    if (rule.prefixLen) {
-                        NSMutableDictionary *data = [flagRules objectForKey:@"prefixLen"];
-                        if (!data) {
-                            data = [[NSMutableDictionary alloc] init];
-                            [flagRules setObject:data forKey:@"prefixLen"];
-                        }
-                        NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.prefixLen]];
-                        if (!list) {
-                            list = [[NSMutableArray alloc] init];
-                            [data setObject:list forKey:[NSNumber numberWithInt:rule.prefixLen]];
-                        }
-                        
-                        [list addObject:rule];
-                    }
-                    if (rule.otherFlag) {
-                        NSMutableDictionary *data = [flagRules objectForKey:@"otherFlag"];
-                        if (!data) {
-                            data = [[NSMutableDictionary alloc] init];
-                            [flagRules setObject:data forKey:@"otherFlag"];
-                        }
-                        NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.otherFlag]];
-                        if (!list) {
-                            list = [[NSMutableArray alloc] init];
-                            [data setObject:list forKey:[NSNumber numberWithInt:rule.otherFlag]];
-                        }
-                        
-                        [list addObject:rule];
-                    }
-                    if (rule.flag12) {
-                        NSMutableDictionary *data = [flagRules objectForKey:@"flag12"];
-                        if (!data) {
-                            data = [[NSMutableDictionary alloc] init];
-                            [flagRules setObject:data forKey:@"flag12"];
-                        }
-                        NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.flag12]];
-                        if (!list) {
-                            list = [[NSMutableArray alloc] init];
-                            [data setObject:list forKey:[NSNumber numberWithInt:rule.flag12]];
-                        }
-                        
-                        [list addObject:rule];
-                    }
-                    if (rule.flag13) {
-                        NSMutableDictionary *data = [flagRules objectForKey:@"flag13"];
-                        if (!data) {
-                            data = [[NSMutableDictionary alloc] init];
-                            [flagRules setObject:data forKey:@"flag13"];
-                        }
-                        NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.flag13]];
-                        if (!list) {
-                            list = [[NSMutableArray alloc] init];
-                            [data setObject:list forKey:[NSNumber numberWithInt:rule.flag13]];
-                        }
-                        
-                        [list addObject:rule];
-                    }
-#endif
+                    [list addObject:rule];
                 }
-                ruleSet.rules = rules;
-                [ruleSets addObject:ruleSet];
+                if (rule.prefixLen) {
+                    NSMutableDictionary *data = [flagRules objectForKey:@"prefixLen"];
+                    if (!data) {
+                        data = [[NSMutableDictionary alloc] init];
+                        [flagRules setObject:data forKey:@"prefixLen"];
+                    }
+                    NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.prefixLen]];
+                    if (!list) {
+                        list = [[NSMutableArray alloc] init];
+                        [data setObject:list forKey:[NSNumber numberWithInt:rule.prefixLen]];
+                    }
+                    
+                    [list addObject:rule];
+                }
+                if (rule.otherFlag) {
+                    NSMutableDictionary *data = [flagRules objectForKey:@"otherFlag"];
+                    if (!data) {
+                        data = [[NSMutableDictionary alloc] init];
+                        [flagRules setObject:data forKey:@"otherFlag"];
+                    }
+                    NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.otherFlag]];
+                    if (!list) {
+                        list = [[NSMutableArray alloc] init];
+                        [data setObject:list forKey:[NSNumber numberWithInt:rule.otherFlag]];
+                    }
+                    
+                    [list addObject:rule];
+                }
+                if (rule.flag12) {
+                    NSMutableDictionary *data = [flagRules objectForKey:@"flag12"];
+                    if (!data) {
+                        data = [[NSMutableDictionary alloc] init];
+                        [flagRules setObject:data forKey:@"flag12"];
+                    }
+                    NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.flag12]];
+                    if (!list) {
+                        list = [[NSMutableArray alloc] init];
+                        [data setObject:list forKey:[NSNumber numberWithInt:rule.flag12]];
+                    }
+                    
+                    [list addObject:rule];
+                }
+                if (rule.flag13) {
+                    NSMutableDictionary *data = [flagRules objectForKey:@"flag13"];
+                    if (!data) {
+                        data = [[NSMutableDictionary alloc] init];
+                        [flagRules setObject:data forKey:@"flag13"];
+                    }
+                    NSMutableArray *list = [data objectForKey:[NSNumber numberWithInt:rule.flag13]];
+                    if (!list) {
+                        list = [[NSMutableArray alloc] init];
+                        [data setObject:list forKey:[NSNumber numberWithInt:rule.flag13]];
+                    }
+                    
+                    [list addObject:rule];
+                }
+#endif
             }
-            res.ruleSets = ruleSets;
+            ruleSet.rules = rules;
+            [ruleSets addObject:ruleSet];
         }
+        res.ruleSets = ruleSets;
     }
     
+    if (res == nil)
+        return nil;
+    @synchronized (_callingCodeData)
+    {
+        CallingCodeInfo *published = [_callingCodeData objectForKey:callingCode];
+        if (published != nil)
+            return published;
+        [_callingCodeData setObject:res forKey:callingCode];
+    }
     return res;
 }
 

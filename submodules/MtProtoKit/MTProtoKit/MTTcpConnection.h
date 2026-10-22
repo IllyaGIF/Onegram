@@ -8,6 +8,17 @@
 @class MTTcpConnection;
 @class MTNetworkUsageCalculationInfo;
 
+typedef enum {
+    MTTcpConnectionOnegramWebSocketEventOpened = 0,
+    MTTcpConnectionOnegramWebSocketEventClosed = 1,
+    MTTcpConnectionOnegramWebSocketEventUnavailable = 2
+} MTTcpConnectionOnegramWebSocketEvent;
+
+extern NSString *const MTTcpConnectionOnegramWebSocketStatusNotification;
+extern NSString *const MTTcpConnectionOnegramWebSocketEventKey;
+extern NSString *const MTTcpConnectionOnegramWebSocketConnectionKey;
+extern NSString *const MTTcpConnectionOnegramWebSocketErrorKey;
+
 
 @protocol MTTcpConnectionDelegate <NSObject>
 

@@ -3,6 +3,7 @@
 @interface TGDateUtils : NSObject
 
 + (void)reset;
++ (void)prepare;
 
 + (NSString *)stringForShortTime:(int)time;
 + (NSString *)stringForShortTime:(int)time daytimeVariant:(int *)daytimeVariant;

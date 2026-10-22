@@ -4,7 +4,7 @@
 #import "../NSOutputStream+TL.h"
 
 #import "TLInputChannel.h"
-#import "TLInputUser.h"
+#import "TLInputPeer.h"
 
 @implementation TLRPCchannels_reportSpam
 
@@ -21,7 +21,7 @@
 
 - (int)layerVersion
 {
-    return 49;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -51,7 +51,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xfe087810;
+    return (int32_t)0xf44a8315;
 }
 
 - (int32_t)TLconstructorName
@@ -63,7 +63,7 @@
 {
     TLRPCchannels_reportSpam$channels_reportSpam *object = [[TLRPCchannels_reportSpam$channels_reportSpam alloc] init];
     object.channel = metaObject->getObject((int32_t)0xe11f3d41);
-    object.user_id = metaObject->getObject((int32_t)0xafdf4073);
+    object.participant = metaObject->getObject((int32_t)0x837816d4);
     object.n_id = metaObject->getArray((int32_t)0x7a5601fb);
     return object;
 }
@@ -79,8 +79,8 @@
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
-        value.nativeObject = self.user_id;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
+        value.nativeObject = self.participant;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x837816d4, value));
     }
     {
         TLConstructedValue value;

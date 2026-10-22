@@ -6,6 +6,7 @@
 #import "TGApplication.h"
 
 #import "TGDatabase.h"
+#import "TGAccountManager.h"
 #import "../OnegramRuntime/OGRuntime.h"
 
 int main(int argc, char *argv[])
@@ -22,6 +23,7 @@ int main(int argc, char *argv[])
 #if defined(ONEGRAM_DIAGNOSTICS)
         OGStartupDiagnosticsInitialize(startupTicks, startupUnixTime);
 #endif
+        [TGAccountManager performLaunchRecovery];
         [TGDatabase setDatabaseName:@"tgdata"];
         
         return UIApplicationMain(argc, argv, @"TGApplication", @"TGAppDelegate");

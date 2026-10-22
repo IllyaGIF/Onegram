@@ -4,6 +4,7 @@
 #import "IOS6FeatureProbe.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
 #import "../OnegramPlatform/OGPlatformVersion.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 #import "../OnegramRuntime/OGRuntime.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -126,9 +127,6 @@ static NSMutableArray *delayedNotifications()
 
 static bool TGIOS6ConsumeLocalNotificationBudget(NSUInteger batchCount)
 {
-    if (iosMajorVersion() > 6)
-        return true;
-
     (void)batchCount;
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
 
@@ -171,6 +169,8 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 @property (nonatomic) NSTimeInterval overallTimeout;
 
 @property (nonatomic) NSMutableSet *notifiedGroups;
+
++ (void)applyDelayedNotificationsInApplicationState:(UIApplicationState)applicationState maxMid:(int)maxMid mids:(NSArray *)mids midsWithoutSound:(NSSet *)midsWithoutSound maxQts:(int)maxQts randomIds:(NSArray *)randomIds;
 
 @end
 
@@ -274,108 +274,137 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     static CFAbsoluteTime lastPresentationTime = 0.0;
     static CFAbsoluteTime lastSoundTime = 0.0;
     static CFAbsoluteTime aggregateBlockUntil = 0.0;
-    bool shouldPresent = false;
+    CFAbsoluteTime presentationTime = now;
     NSDictionary *notificationUserInfo = OGPlatformLocalNotificationUserInfo(notification);
     bool isAggregate = [[notificationUserInfo objectForKey:@"ios6Aggregate"] boolValue];
 
     @synchronized(self)
     {
-        if (now >= aggregateBlockUntil && (lastPresentationTime == 0.0 || now - lastPresentationTime >= 1.0))
+        if (now < aggregateBlockUntil)
         {
-            lastPresentationTime = now;
-            if (isAggregate)
-                aggregateBlockUntil = now + 10.0;
-            shouldPresent = true;
+#if defined(ONEGRAM_DIAGNOSTICS)
+            OGPlatformDiagnosticLog(@"NOTIFY coalesced into aggregate");
+#endif
+            return;
+        }
 
-            NSString *soundName = OGPlatformLocalNotificationSoundName(notification);
-            if (soundName.length != 0)
-            {
-                if (lastSoundTime != 0.0 && now - lastSoundTime < 3.0)
-                    OGPlatformSetLocalNotificationSoundName(notification, nil);
-                else
-                    lastSoundTime = now;
-            }
+        if (lastPresentationTime != 0.0)
+            presentationTime = MAX(now, lastPresentationTime + 1.0);
+        lastPresentationTime = presentationTime;
+        if (isAggregate)
+            aggregateBlockUntil = presentationTime + 10.0;
+
+        NSString *soundName = OGPlatformLocalNotificationSoundName(notification);
+        if (soundName.length != 0)
+        {
+            if (lastSoundTime != 0.0 && presentationTime - lastSoundTime < 3.0)
+                OGPlatformSetLocalNotificationSoundName(notification, nil);
+            else
+                lastSoundTime = presentationTime;
         }
     }
 
-    if (!shouldPresent)
-        return;
-
     OGPlatformSetLocalNotificationAlertBody(notification, safeText);
+    bool deferred = presentationTime > now;
+    if (deferred)
+        OGPlatformSetLocalNotificationFireDate(notification, [NSDate dateWithTimeIntervalSinceReferenceDate:presentationTime]);
+#if defined(ONEGRAM_DIAGNOSTICS)
+    OGPlatformDiagnosticLog(@"NOTIFY present delay=%.1f aggregate=%d", presentationTime - now, isAggregate ? 1 : 0);
+#endif
+
     dispatch_async(dispatch_get_main_queue(), ^
     {
-        if ([UIApplication sharedApplication].applicationState != UIApplicationStateActive)
-            OGPlatformPresentLocalNotificationNow([UIApplication sharedApplication], notification);
+        UIApplication *application = [UIApplication sharedApplication];
+        if (application.applicationState == UIApplicationStateActive)
+            return;
+        if (deferred)
+            OGPlatformScheduleLocalNotification(application, notification);
+        else
+            OGPlatformPresentLocalNotificationNow(application, notification);
     });
 }
 
 + (void)presentLocalNotificationsForMessageDescriptions:(NSArray *)messageDescriptions
 {
-    if (!TGIOS6BackgroundNotificationsEnabled() ||
-        [UIApplication sharedApplication].applicationState == UIApplicationStateActive ||
-        messageDescriptions.count == 0)
-    {
+    if (!TGIOS6BackgroundNotificationsEnabled() || messageDescriptions.count == 0)
         return;
-    }
 
-    [ActionStageInstance() dispatchOnStageQueue:^
+    NSArray *descriptions = [messageDescriptions copy];
+    TGDispatchOnMainThread(^
     {
-        static NSMutableSet *recentNotificationKeys = nil;
-        static NSMutableArray *recentNotificationKeyOrder = nil;
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^
+        UIApplicationState applicationState = [UIApplication sharedApplication].applicationState;
+        if (applicationState == UIApplicationStateActive)
+            return;
+
+        [ActionStageInstance() dispatchOnStageQueue:^
         {
-            recentNotificationKeys = [[NSMutableSet alloc] init];
-            recentNotificationKeyOrder = [[NSMutableArray alloc] init];
-        });
-
-        NSMutableArray *acceptedDescriptions = [[NSMutableArray alloc] init];
-        NSMutableArray *mids = [[NSMutableArray alloc] init];
-        NSMutableSet *midsWithoutSound = [[NSMutableSet alloc] init];
-        int32_t maxMid = 0;
-
-        for (id messageDescription in messageDescriptions)
-        {
-            if (![messageDescription isKindOfClass:[TLMessage class]])
-                continue;
-
-            TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDescription];
-            if (message.mid == 0 || message.cid == 0 || message.outgoing || message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId) {
-                IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=invalid peer=%lld mid=%d outgoing=%d", message.cid, message.mid, message.outgoing ? 1 : 0);
-                continue;
-            }
-
-            if (TGPeerIdIsChannel(message.cid) && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
-                continue;
-
-            NSString *key = [[NSString alloc] initWithFormat:@"%lld:%d", message.cid, message.mid];
-            if ([recentNotificationKeys containsObject:key]) {
-                IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=duplicate peer=%lld mid=%d", message.cid, message.mid);
-                continue;
-            }
-
-            [recentNotificationKeys addObject:key];
-            [recentNotificationKeyOrder addObject:key];
-            while (recentNotificationKeyOrder.count > 256)
+            static NSMutableSet *recentNotificationKeys = nil;
+            static NSMutableArray *recentNotificationKeyOrder = nil;
+            static dispatch_once_t onceToken;
+            dispatch_once(&onceToken, ^
             {
-                NSString *oldestKey = recentNotificationKeyOrder[0];
-                [recentNotificationKeys removeObject:oldestKey];
-                [recentNotificationKeyOrder removeObjectAtIndex:0];
+                recentNotificationKeys = [[NSMutableSet alloc] init];
+                recentNotificationKeyOrder = [[NSMutableArray alloc] init];
+            });
+
+            NSMutableArray *acceptedDescriptions = [[NSMutableArray alloc] init];
+            NSMutableArray *mids = [[NSMutableArray alloc] init];
+            NSMutableSet *midsWithoutSound = [[NSMutableSet alloc] init];
+            int32_t maxMid = 0;
+
+            for (id messageDescription in descriptions)
+            {
+                if (![messageDescription isKindOfClass:[TLMessage class]])
+                    continue;
+
+                TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDescription];
+                if (message.mid == 0 || message.cid == 0 || message.outgoing || message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId) {
+                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=invalid peer=%lld mid=%d outgoing=%d", message.cid, message.mid, message.outgoing ? 1 : 0);
+                    continue;
+                }
+
+                TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:message.cid];
+                if (TGPeerIdIsChannel(message.cid) && !conversation.isChannelMember)
+                    continue;
+
+                if (message.mid <= MAX(conversation.maxReadMessageId, conversation.maxLocallyReadMessageId)) {
+                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=read peer=%lld mid=%d", message.cid, message.mid);
+                    continue;
+                }
+
+                NSString *key = [[NSString alloc] initWithFormat:@"%lld:%d", message.cid, message.mid];
+                if ([recentNotificationKeys containsObject:key]) {
+                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=duplicate peer=%lld mid=%d", message.cid, message.mid);
+                    continue;
+                }
+
+                [recentNotificationKeys addObject:key];
+                [recentNotificationKeyOrder addObject:key];
+                while (recentNotificationKeyOrder.count > 256)
+                {
+                    NSString *oldestKey = recentNotificationKeyOrder[0];
+                    [recentNotificationKeys removeObject:oldestKey];
+                    [recentNotificationKeyOrder removeObjectAtIndex:0];
+                }
+
+                [acceptedDescriptions addObject:messageDescription];
+                [mids addObject:@(message.mid)];
+                if (message.isSilent)
+                    [midsWithoutSound addObject:@(message.mid)];
+                maxMid = MAX(maxMid, message.mid);
             }
 
-            [acceptedDescriptions addObject:messageDescription];
-            [mids addObject:@(message.mid)];
-            if (message.isSilent)
-                [midsWithoutSound addObject:@(message.mid)];
-            maxMid = MAX(maxMid, message.mid);
-        }
+#if defined(ONEGRAM_DIAGNOSTICS)
+            OGPlatformDiagnosticLog(@"NOTIFY candidates=%d accepted=%d", (int)descriptions.count, (int)acceptedDescriptions.count);
+#endif
 
-        if (acceptedDescriptions.count != 0)
-        {
-            [delayedNotifications() addObjectsFromArray:acceptedDescriptions];
-            [TGApplyUpdatesActor applyDelayedNotifications:maxMid mids:mids midsWithoutSound:midsWithoutSound maxQts:0 randomIds:nil];
-        }
-    }];
+            if (acceptedDescriptions.count != 0)
+            {
+                [delayedNotifications() addObjectsFromArray:acceptedDescriptions];
+                [TGApplyUpdatesActor applyDelayedNotificationsInApplicationState:applicationState maxMid:maxMid mids:mids midsWithoutSound:midsWithoutSound maxQts:0 randomIds:nil];
+            }
+        }];
+    });
 }
 
 - (id)initWithPath:(NSString *)path
@@ -1000,8 +1029,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     
     NSMutableArray *allUpdates = [[NSMutableArray alloc] init];
     NSMutableArray *reactionMessageUpdates = [[NSMutableArray alloc] init];
-    NSMutableSet *updatedArchivePeerIds = nil;
-    bool archivePeerIdsChanged = false;
+    NSMutableDictionary *archiveStateByPeerId = [[NSMutableDictionary alloc] init];
     
     int currentTime = (int)[[TGTelegramNetworking instance] globalTime];
     
@@ -1094,23 +1122,6 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
         }
         else if ([update isKindOfClass:[TLUpdate$updateFolderPeers class]])
         {
-            if (updatedArchivePeerIds == nil)
-            {
-                NSData *data = [TGDatabaseInstance() customProperty:@"ios6ArchivePeerIds"];
-                NSArray *storedPeerIds = nil;
-                if (data.length != 0)
-                {
-                    @try
-                    {
-                        storedPeerIds = [NSKeyedUnarchiver unarchiveObjectWithData:data];
-                    }
-                    @catch (__unused NSException *exception)
-                    {
-                    }
-                }
-                updatedArchivePeerIds = [[NSMutableSet alloc] initWithArray:[storedPeerIds isKindOfClass:[NSArray class]] ? storedPeerIds : @[]];
-            }
-            
             TLUpdate$updateFolderPeers *folderUpdate = (TLUpdate$updateFolderPeers *)update;
             for (TLCodexFolderPeer *folderPeer in folderUpdate.folder_peers)
             {
@@ -1119,14 +1130,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                 int64_t peerId = TGIOS6PeerIdFromFolderPeer(folderPeer.peer);
                 if (peerId == 0)
                     continue;
-                NSNumber *nPeerId = @(peerId);
-                bool archived = folderPeer.folder_id == 1;
-                if (archived)
-                    [updatedArchivePeerIds addObject:nPeerId];
-                else
-                    [updatedArchivePeerIds removeObject:nPeerId];
-                [TGDatabaseInstance() setConversationArchived:peerId archived:archived];
-                archivePeerIdsChanged = true;
+                archiveStateByPeerId[@(peerId)] = @(folderPeer.folder_id == 1);
             }
         }
         else if ([update isKindOfClass:updateNewMessageClass])
@@ -1384,14 +1388,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     }
 
     
-    if (archivePeerIdsChanged)
-    {
-        NSArray *archivePeerIds = [updatedArchivePeerIds allObjects];
-        [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:archivePeerIds]];
-        TGDispatchOnMainThread(^{
-            [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
-        });
-    }
+    [TGDatabaseInstance() setConversationsArchiveState:archiveStateByPeerId];
     
     if (!failedProcessing)
     {
@@ -1498,855 +1495,857 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
 {
     dispatch_async(dispatch_get_main_queue(), ^
     {
-        UIApplicationState applicationState = [UIApplication sharedApplication].applicationState;
-        if ([UIApplication sharedApplication] == nil)
-            applicationState = UIApplicationStateBackground;
-        
+        UIApplication *application = [UIApplication sharedApplication];
+        UIApplicationState applicationState = application == nil ? UIApplicationStateBackground : application.applicationState;
         [ActionStageInstance() dispatchOnStageQueue:^
         {
-            if (applicationState != UIApplicationStateActive)
-            {
-                NSNumber *globalMessageSoundIdVal = nil;
-                NSNumber *globalMessagePreviewTextVal = nil;
-                NSNumber *globalMessageMuteUntilVal = nil;
-                
-                int globalMessageSoundId = 1;
-                bool globalMessagePreviewText = true;
-                int globalMessageMuteUntil = 0;
-                bool notFound = false;
-                [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 1 soundId:&globalMessageSoundIdVal muteUntil:&globalMessageMuteUntilVal previewText:&globalMessagePreviewTextVal messagesMuted:NULL notFound:&notFound];
-                if (notFound) {
-                    globalMessageSoundId = 1;
-                    globalMessagePreviewText = true;
-                }
-                else {
-                    globalMessageSoundId = globalMessageSoundIdVal ? globalMessageSoundIdVal.intValue : 1;
-                    globalMessagePreviewText = globalMessagePreviewTextVal ? globalMessagePreviewTextVal.boolValue : true;
-                    globalMessageMuteUntil = globalMessageMuteUntilVal ? globalMessageMuteUntilVal.intValue : 0;
-                }
-                
-                NSNumber *globalGroupSoundIdVal = nil;
-                NSNumber *globalGroupPreviewTextVal = nil;
-                NSNumber *globalGroupMuteUntilVal = nil;
-                
-                int globalGroupSoundId = 1;
-                bool globalGroupPreviewText = true;
-                int globalGroupMuteUntil = 0;
-                notFound = false;
-                [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 2 soundId:&globalGroupSoundIdVal muteUntil:&globalGroupMuteUntilVal previewText:&globalGroupPreviewTextVal messagesMuted:NULL notFound:&notFound];
-                if (notFound) {
-                    globalGroupSoundId = 1;
-                    globalGroupPreviewText = true;
-                } else {
-                    globalGroupSoundId = globalGroupSoundIdVal ? globalGroupSoundIdVal.intValue : 1;
-                    globalGroupPreviewText = globalGroupPreviewTextVal ? globalGroupPreviewTextVal.boolValue : true;
-                    globalGroupMuteUntil = globalGroupMuteUntilVal ? globalGroupMuteUntilVal.intValue : 0;
-                }
-                
-                @try
-                {
-                    std::set<int> midsSet;
-                    for (NSNumber *nMid in mids)
-                    {
-                        midsSet.insert([nMid intValue]);
-                    }
-                    
-                    std::set<int> processedMidsSet;
-                    
-                    std::set<int64_t> randomIdsSet;
-                    for (NSNumber *nRandomId in randomIds)
-                    {
-                        randomIdsSet.insert([nRandomId longLongValue]);
-                    }
-                    
-                    int count = (int)delayedNotifications().count;
-                    for (int i = 0; i < count; i++)
-                    {
-                        TGMessage *message = nil;
-                        NSUInteger multiforwardCount = 0;
-                        
-                        int messageQts = 0;
-                        
-                        id abstractDesc = delayedNotifications()[i];
-                        if ([abstractDesc respondsToSelector:@selector(allKeys)])
-                        {
-                            messageQts = [abstractDesc[@"qts"] intValue];
-                            abstractDesc = abstractDesc[@"message"];
-                        }
-                        
-                        if ([abstractDesc isKindOfClass:[TLMessage class]])
-                        {
-                            if (mids == nil)
-                                continue;
-                            
-                            TLMessage *messageDesc = abstractDesc;
-                            int mid = messageDesc.n_id;
-                            
-                            if (mid == 0 || mid > maxMid)
-                                continue;
-                            
-                            [delayedNotifications() removeObjectAtIndex:i];
-                            i--;
-                            count--;
-                            
-                            if (midsSet.find(mid) == midsSet.end())
-                                continue;
-                            
-                            if (processedMidsSet.find(mid) != processedMidsSet.end())
-                                continue;
-                            processedMidsSet.insert(mid);
+            [TGApplyUpdatesActor applyDelayedNotificationsInApplicationState:applicationState maxMid:maxMid mids:mids midsWithoutSound:midsWithoutSound maxQts:maxQts randomIds:randomIds];
+        }];
+    });
+}
 
-                            NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-                            if (!TGIOS6ConsumeLocalNotificationBudget(notificationBatchCount))
++ (void)applyDelayedNotificationsInApplicationState:(UIApplicationState)applicationState maxMid:(int)maxMid mids:(NSArray *)mids midsWithoutSound:(NSSet *)midsWithoutSound maxQts:(int)maxQts randomIds:(NSArray *)randomIds
+{
+    if (applicationState == UIApplicationStateActive)
+    {
+        [TGApplyUpdatesActor clearDelayedNotifications];
+        return;
+    }
+
+    NSNumber *globalMessageSoundIdVal = nil;
+    NSNumber *globalMessagePreviewTextVal = nil;
+    NSNumber *globalMessageMuteUntilVal = nil;
+
+    int globalMessageSoundId = 1;
+    bool globalMessagePreviewText = true;
+    int globalMessageMuteUntil = 0;
+    bool notFound = false;
+    [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 1 soundId:&globalMessageSoundIdVal muteUntil:&globalMessageMuteUntilVal previewText:&globalMessagePreviewTextVal messagesMuted:NULL notFound:&notFound];
+    if (notFound) {
+        globalMessageSoundId = 1;
+        globalMessagePreviewText = true;
+    }
+    else {
+        globalMessageSoundId = globalMessageSoundIdVal ? globalMessageSoundIdVal.intValue : 1;
+        globalMessagePreviewText = globalMessagePreviewTextVal ? globalMessagePreviewTextVal.boolValue : true;
+        globalMessageMuteUntil = globalMessageMuteUntilVal ? globalMessageMuteUntilVal.intValue : 0;
+    }
+
+    NSNumber *globalGroupSoundIdVal = nil;
+    NSNumber *globalGroupPreviewTextVal = nil;
+    NSNumber *globalGroupMuteUntilVal = nil;
+
+    int globalGroupSoundId = 1;
+    bool globalGroupPreviewText = true;
+    int globalGroupMuteUntil = 0;
+    notFound = false;
+    [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 2 soundId:&globalGroupSoundIdVal muteUntil:&globalGroupMuteUntilVal previewText:&globalGroupPreviewTextVal messagesMuted:NULL notFound:&notFound];
+    if (notFound) {
+        globalGroupSoundId = 1;
+        globalGroupPreviewText = true;
+    } else {
+        globalGroupSoundId = globalGroupSoundIdVal ? globalGroupSoundIdVal.intValue : 1;
+        globalGroupPreviewText = globalGroupPreviewTextVal ? globalGroupPreviewTextVal.boolValue : true;
+        globalGroupMuteUntil = globalGroupMuteUntilVal ? globalGroupMuteUntilVal.intValue : 0;
+    }
+
+    @try
+    {
+        std::set<int> midsSet;
+        for (NSNumber *nMid in mids)
+        {
+            midsSet.insert([nMid intValue]);
+        }
+
+        std::set<int> processedMidsSet;
+
+        std::set<int64_t> randomIdsSet;
+        for (NSNumber *nRandomId in randomIds)
+        {
+            randomIdsSet.insert([nRandomId longLongValue]);
+        }
+
+        int count = (int)delayedNotifications().count;
+        for (int i = 0; i < count; i++)
+        {
+            TGMessage *message = nil;
+            NSUInteger multiforwardCount = 0;
+
+            int messageQts = 0;
+
+            id abstractDesc = delayedNotifications()[i];
+            if ([abstractDesc respondsToSelector:@selector(allKeys)])
+            {
+                messageQts = [abstractDesc[@"qts"] intValue];
+                abstractDesc = abstractDesc[@"message"];
+            }
+
+            if ([abstractDesc isKindOfClass:[TLMessage class]])
+            {
+                if (mids == nil)
+                    continue;
+
+                TLMessage *messageDesc = abstractDesc;
+                int mid = messageDesc.n_id;
+
+                if (mid == 0 || mid > maxMid)
+                    continue;
+
+                [delayedNotifications() removeObjectAtIndex:i];
+                i--;
+                count--;
+
+                if (midsSet.find(mid) == midsSet.end())
+                    continue;
+
+                if (processedMidsSet.find(mid) != processedMidsSet.end())
+                    continue;
+                processedMidsSet.insert(mid);
+
+                NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
+                if (!TGIOS6ConsumeLocalNotificationBudget(notificationBatchCount))
+                    continue;
+
+                message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
+                bool foundForward = false;
+
+                for (id media in message.mediaAttachments)
+                {
+                    if ([media isKindOfClass:[TGForwardedMessageMediaAttachment class]])
+                    {
+                        foundForward = true;
+                        break;
+                    }
+                }
+
+                if (foundForward)
+                {
+                    for (int j = i + 1; j >= 0 && j < count; j++)
+                    {
+                        if ([delayedNotifications()[j] isKindOfClass:[TLMessage class]])
+                        {
+                            TGMessage *nextMessage = [[TGMessage alloc] initWithTelegraphMessageDesc:delayedNotifications()[j]];
+
+                            if (processedMidsSet.find(nextMessage.mid) != processedMidsSet.end())
                                 continue;
-                            
-                            message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
-                            bool foundForward = false;
-                            
-                            for (id media in message.mediaAttachments)
+                            processedMidsSet.insert(nextMessage.mid);
+
+                            bool nextIsForward = false;
+                            for (id media in nextMessage.mediaAttachments)
                             {
                                 if ([media isKindOfClass:[TGForwardedMessageMediaAttachment class]])
                                 {
-                                    foundForward = true;
+                                    nextIsForward = true;
                                     break;
                                 }
                             }
-                            
-                            if (foundForward)
-                            {
-                                for (int j = i + 1; j >= 0 && j < count; j++)
-                                {
-                                    if ([delayedNotifications()[j] isKindOfClass:[TLMessage class]])
-                                    {
-                                        TGMessage *nextMessage = [[TGMessage alloc] initWithTelegraphMessageDesc:delayedNotifications()[j]];
-                                        
-                                        if (processedMidsSet.find(nextMessage.mid) != processedMidsSet.end())
-                                            continue;
-                                        processedMidsSet.insert(nextMessage.mid);
-                                        
-                                        bool nextIsForward = false;
-                                        for (id media in nextMessage.mediaAttachments)
-                                        {
-                                            if ([media isKindOfClass:[TGForwardedMessageMediaAttachment class]])
-                                            {
-                                                nextIsForward = true;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        if (nextIsForward)
-                                        {
-                                            if (multiforwardCount == 0)
-                                                multiforwardCount = 1;
-                                            multiforwardCount++;
-                                            [delayedNotifications() removeObjectAtIndex:j];
-                                            j--;
-                                            count--;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        else if ([abstractDesc isKindOfClass:[TLEncryptedMessage class]])
-                        {
-                            if (randomIds == nil)
-                                continue;
-                            
-                            TLEncryptedMessage *encryptedMessage = abstractDesc;
-                            
-                            if (messageQts > maxQts)
-                                continue;
-                            
-                            [delayedNotifications() removeObjectAtIndex:i];
-                            i--;
-                            count--;
-                            
-                            if (randomIdsSet.find(encryptedMessage.random_id) == randomIdsSet.end())
-                                continue;
 
-                            NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-                            if (!TGIOS6ConsumeLocalNotificationBudget(notificationBatchCount))
-                                continue;
-                            
-                            message = [[TGMessage alloc] init];
-                            message.randomId = encryptedMessage.random_id;
-                            message.cid = [TGDatabaseInstance() peerIdForEncryptedConversationId:encryptedMessage.chat_id];
-                        }
-                        else
-                        {
-                            TGLog(@"***** unknown notification message type %@", abstractDesc);
-                            continue;
-                        }
-                        
-                        bool messageIsChannel = TGPeerIdIsChannel(message.cid);
-
-                        if (messageIsChannel && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
-                            continue;
-
-                        if (message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId)
-                            continue;
-
-                        if (message.containsMention)
-                        {
-                            if ([TGDatabaseInstance() isPeerMuted:message.fromUid]) {
-                                IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=mention_muted peer=%lld from=%lld mid=%d", message.cid, message.fromUid, message.mid);
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            if ([TGDatabaseInstance() isPeerMuted:message.cid]) {
-                                IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=peer_muted peer=%lld mid=%d", message.cid, message.mid);
-                                continue;
-                            }
-                        }
-                        
-                        id localNotification = OGPlatformCreateLocalNotification();
-                        if (localNotification == nil)
-                            continue;
-                        
-                        TGUser *user = nil;
-                        NSString *chatName = nil;
-                        
-                        int64_t notificationPeerId = 0;
-                        
-                        if (messageIsChannel)
-                        {
-                            notificationPeerId = message.cid;
-                            if (message.fromUid != 0)
-                                user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
-                            TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
-                            if (conversation != nil)
-                                chatName = conversation.chatTitle;
-                            else
-                                chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
-                        }
-                        else if (message.cid <= INT_MIN)
-                        {
-                            notificationPeerId = [TGDatabaseInstance() encryptedParticipantIdForConversationId:message.cid];
-                        }
-                        else if (message.cid > 0)
-                        {
-                            user = [TGDatabaseInstance() loadUser:(int)message.cid];
-                            notificationPeerId = message.cid;
-                        }
-                        else
-                        {
-                            if (message.containsMention)
-                                notificationPeerId = message.fromUid;
-                            else
-                                notificationPeerId = message.cid;
-                            user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
-                            TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
-                            if (conversation != nil)
-                                chatName = conversation.chatTitle;
-                            else
-                                chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
-                        }
-                        
-                        if ([TGDatabaseInstance() isPeerMuted:notificationPeerId]) {
-                            IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=notification_peer_muted peer=%lld title=%@ mid=%d", notificationPeerId, chatName ?: @"", message.mid);
-                            continue;
-                        }
-
-                        NSString *authorName = user.displayName;
-                        if (authorName.length == 0 && message.fromUid != 0)
-                        {
-                            if (TGPeerIdIsUser(message.fromUid))
+                            if (nextIsForward)
                             {
-                                TGUser *authorUser = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
-                                if (user == nil)
-                                    user = authorUser;
-                                authorName = authorUser.displayName;
-                            }
-                            else if (TGPeerIdIsGroup(message.fromUid) || TGPeerIdIsChannel(message.fromUid))
-                            {
-                                TGConversation *authorConversation = [TGDatabaseInstance() loadConversationWithIdCached:message.fromUid];
-                                if (authorConversation == nil)
-                                    authorConversation = [TGDatabaseInstance() loadConversationWithId:message.fromUid];
-                                authorName = authorConversation.chatTitle;
+                                if (multiforwardCount == 0)
+                                    multiforwardCount = 1;
+                                multiforwardCount++;
+                                [delayedNotifications() removeObjectAtIndex:j];
+                                j--;
+                                count--;
                             }
                         }
-                        if (authorName.length == 0 && messageIsChannel && message.fromUid == message.cid)
-                            authorName = chatName;
-                        if (authorName.length == 0 && message.cid > 0)
-                        {
-                            TGUser *peerUser = [TGDatabaseInstance() loadUser:(int32_t)message.cid];
-                            if (user == nil)
-                                user = peerUser;
-                            authorName = peerUser.displayName;
-                        }
-                        if (authorName.length == 0)
-                            authorName = chatName;
-                        if (authorName.length == 0)
-                            continue;
-                        
-                        NSNumber *soundIdVal = nil;
-                        int soundId = 1;
-                        [TGDatabaseInstance() loadPeerNotificationSettings:notificationPeerId soundId:&soundIdVal muteUntil:NULL previewText:NULL messagesMuted:NULL notFound:NULL];
-                        
-                        if (soundIdVal != nil) {
-                            soundId = soundIdVal.intValue;
-                        } else {
-                            soundId = (message.cid > 0 || (message.cid <= INT_MIN && !messageIsChannel)) ? globalMessageSoundId : globalGroupSoundId;
-                        }
-                        
-                        NSString *text = nil;
-                        
-                        bool attachmentFound = false;
-                        bool migrationFound = false;
-                        bool skipMessage = false;
-                        bool phoneCall = false;
-                        
-                        for (TGMediaAttachment *attachment in message.mediaAttachments)
-                        {
-                            if (attachment.type == TGActionMediaAttachmentType)
-                            {
-                                TGActionMediaAttachment *actionAttachment = (TGActionMediaAttachment *)attachment;
-                                switch (actionAttachment.actionType)
-                                {
-                                    case TGMessageActionChatEditTitle:
-                                    {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_TITLE_EDITED"), authorName, [((TGActionMediaAttachment *)attachment).actionData objectForKey:@"title"]];
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionChatEditPhoto:
-                                    {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_PHOTO_EDITED"), authorName, chatName];
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionChatAddMember:
-                                    {
-                                        NSArray *uids = actionAttachment.actionData[@"uids"];
-                                        if (uids != nil) {
-                                            TGUser *authorUser = user;
-                                            NSMutableArray *subjectUsers = [[NSMutableArray alloc] init];
-                                            for (NSNumber *nUid in uids) {
-                                                TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
-                                                if (user != nil) {
-                                                    [subjectUsers addObject:subjectUser];
-                                                }
-                                            }
-                                            
-                                            if (subjectUsers.count == 1 && authorUser.uid == ((TGUser *)subjectUsers[0]).uid) {
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
-                                            } else {
-                                                NSMutableString *subjectNames = [[NSMutableString alloc] init];
-                                                for (TGUser *subjectUser in subjectUsers) {
-                                                    if (subjectNames.length != 0) {
-                                                        [subjectNames appendString:@", "];
-                                                    }
-                                                    [subjectNames appendString:subjectUser.displayName];
-                                                }
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorName, chatName, subjectNames];
-                                            }
-                                            attachmentFound = true;
-                                        } else {
-                                            NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
-                                            if (nUid != nil)
-                                            {
-                                                TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
-                                                
-                                                if (subjectUser.uid == user.uid)
-                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
-                                                else if (subjectUser.uid == TGTelegraphInstance.clientUserId)
-                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), authorName, chatName];
-                                                else
-                                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorName, chatName, subjectUser.displayName];
-                                                attachmentFound = true;
-                                            }
-                                        }
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionChatDeleteMember:
-                                    {
-                                        NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
-                                        if (nUid != nil)
-                                        {
-                                            TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
-                                            
-                                            if (subjectUser.uid == user.uid)
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_LEFT"), authorName, chatName];
-                                            else if (subjectUser.uid == TGTelegraphInstance.clientUserId)
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_YOU"), authorName, chatName];
-                                            else
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_MEMBER"), authorName, chatName, subjectUser.displayName];
-                                            attachmentFound = true;
-                                        }
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionCreateChat:
-                                    {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), authorName, chatName];
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionChannelCreated:
-                                    {
-                                        text = @"";
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionChannelCommentsStatusChanged:
-                                    {
-                                        text = [actionAttachment.actionData[@"enabled"] boolValue] ? TGLocalized(@"Channel.NotificationCommentsEnabled") : TGLocalized(@"Channel.NotificationCommentsDisabled");
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionJoinedByLink:
-                                    {
-                                        NSString *formatString = [actionAttachment.actionData[@"joinedByRequest"] boolValue] ? TGLocalized(@"Notification.JoinedChat") : TGLocalized(@"Notification.JoinedGroupByLink");
-                                        text = [[NSString alloc] initWithFormat:formatString, authorName];
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionGroupMigratedTo:
-                                    {
-                                        migrationFound = true;
-                                        break;
-                                    }
-                                    case TGMessageActionGameScore:
-                                    {
-                                        TGMessage *replyMessage = nil;
-                                        for (id attachment in message.mediaAttachments) {
-                                            if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]]) {
-                                                replyMessage = ((TGReplyMessageMediaAttachment *)attachment).replyMessage;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        NSString *gameTitle = nil;
-                                        for (id attachment in replyMessage.mediaAttachments) {
-                                            if ([attachment isKindOfClass:[TGGameMediaAttachment class]]) {
-                                                gameTitle = ((TGGameMediaAttachment *)attachment).title;
-                                                break;
-                                            }
-                                        }
-                                        
-                                        int scoreCount = (int)[actionAttachment.actionData[@"score"] intValue];
-                                        
-                                        NSString *formatStringBase = @"";
-                                        if (gameTitle != nil) {
-                                            if (user.uid == TGTelegraphInstance.clientUserId) {
-                                                formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreSelfExtended_" value:scoreCount];
-                                            } else {
-                                                formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreExtended_" value:scoreCount];
-                                            }
-                                        } else {
-                                            if (user.uid == TGTelegraphInstance.clientUserId) {
-                                                formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreSelfSimple_" value:scoreCount];
-                                            } else {
-                                                formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreSimple_" value:scoreCount];
-                                            }
-                                        }
-                                        
-                                        NSString *baseString = TGLocalized(formatStringBase);
-                                        baseString = [baseString stringByReplacingOccurrencesOfString:@"%@" withString:@"{game}"];
-                                        
-                                        NSMutableString *formatString = [[NSMutableString alloc] initWithString:baseString];
-                                        
-                                        NSString *scoreAuthorName = user.displayFirstName;
-                                        if (scoreAuthorName.length == 0)
-                                            scoreAuthorName = authorName;
-                                        
-                                        for (int i = 0; i < 3; i++) {
-                                            NSRange nameRange = [formatString rangeOfString:@"{name}"];
-                                            NSRange scoreRange = [formatString rangeOfString:@"{score}"];
-                                            NSRange gameTitleRange = [formatString rangeOfString:@"{game}"];
-                                            
-                                            if (nameRange.location != NSNotFound) {
-                                                if (scoreRange.location == NSNotFound || scoreRange.location > nameRange.location) {
-                                                    scoreRange.location = NSNotFound;
-                                                }
-                                                if (gameTitleRange.location == NSNotFound || gameTitleRange.location > nameRange.location) {
-                                                    gameTitleRange.location = NSNotFound;
-                                                }
-                                            }
-                                            
-                                            if (scoreRange.location != NSNotFound) {
-                                                if (nameRange.location == NSNotFound || nameRange.location > scoreRange.location) {
-                                                    nameRange.location = NSNotFound;
-                                                }
-                                                if (gameTitleRange.location == NSNotFound || gameTitleRange.location > scoreRange.location) {
-                                                    gameTitleRange.location = NSNotFound;
-                                                }
-                                            }
-                                            
-                                            if (gameTitleRange.location != NSNotFound) {
-                                                if (scoreRange.location == NSNotFound || scoreRange.location > gameTitleRange.location) {
-                                                    scoreRange.location = NSNotFound;
-                                                }
-                                                if (nameRange.location == NSNotFound || nameRange.location > gameTitleRange.location) {
-                                                    nameRange.location = NSNotFound;
-                                                }
-                                            }
-                                            
-                                            if (nameRange.location != NSNotFound) {
-                                                [formatString replaceCharactersInRange:nameRange withString:scoreAuthorName];
-                                            }
-                                            
-                                            if (scoreRange.location != NSNotFound) {
-                                                [formatString replaceCharactersInRange:scoreRange withString:[NSString stringWithFormat:@"%d", scoreCount]];
-                                            }
-                                            
-                                            if (gameTitleRange.location != NSNotFound) {
-                                                [formatString replaceCharactersInRange:gameTitleRange withString:gameTitle];
-                                            }
-                                        }
-                                        
-                                        text = formatString;
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    case TGMessageActionPhoneCall:
-                                    {
-                                        TGCallDiscardReason reason = (TGCallDiscardReason)[actionAttachment.actionData[@"reason"] intValue];
-                                        if (reason == TGCallDiscardReasonMissed) {
-                                            text = [NSString stringWithFormat:TGLocalized(@"PHONE_CALL_MISSED"), authorName];
-                                            phoneCall = true;
-                                        }
-                                        else {
-                                            skipMessage = true;
-                                        }
-                                        
-                                        attachmentFound = true;
-                                        break;
-                                    }
-                                    case TGMessageActionEncryptedChatMessageScreenshot:
-                                    {
-                                        text = [NSString stringWithFormat:TGLocalized(@"MESSAGE_SCREENSHOT"), authorName];
-                                        attachmentFound = true;
-                                        
-                                        break;
-                                    }
-                                    default:
-                                        break;
-                                }
-                            }
-                            else if (attachment.type == TGImageMediaAttachmentType)
-                            {
-                                if (((globalMessagePreviewText && TGPeerIdIsUser(message.cid)) || (globalGroupPreviewText && !TGPeerIdIsUser(message.cid))) && ((TGImageMediaAttachment *)attachment).caption.length != 0) {
-                                    if (message.cid > 0) {
-                                        text = [[NSString alloc] initWithFormat:@"%@: 🖼 %@", authorName, ((TGImageMediaAttachment *)attachment).caption];
-                                    } else {
-                                        text = [[NSString alloc] initWithFormat:@"%@@%@: 🖼 %@", authorName, chatName, ((TGImageMediaAttachment *)attachment).caption];
-                                    }
-                                } else {
-                                    if (message.cid > 0) {
-                                        if (message.messageLifetime > 0 && message.messageLifetime <= 60) {
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO_SECRET"), authorName];
-                                        } else {
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO"), authorName];
-                                        }
-                                    }
-                                    else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_PHOTO"), authorName, chatName];
-                                }
-                                
-                                attachmentFound = true;
-                                
-                                break;
-                            }
-                            else if (attachment.type == TGVideoMediaAttachmentType)
-                            {
-                                bool isRoundMessage = ((TGVideoMediaAttachment *)attachment).roundMessage;
-                                
-                                if (((globalMessagePreviewText && TGPeerIdIsUser(message.cid)) || (globalGroupPreviewText && !TGPeerIdIsUser(message.cid))) && ((TGVideoMediaAttachment *)attachment).caption.length != 0) {
-                                    if (message.cid > 0) {
-                                        text = [[NSString alloc] initWithFormat:@"%@: 📹 %@", authorName, ((TGVideoMediaAttachment *)attachment).caption];
-                                    } else {
-                                        text = [[NSString alloc] initWithFormat:@"%@@%@: 📹 %@", authorName, chatName, ((TGVideoMediaAttachment *)attachment).caption];
-                                    }
-                                } else {
-                                    if (isRoundMessage) {
-                                        if (message.cid > 0)
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_ROUND"), authorName];
-                                        else
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_ROUND"), authorName, chatName];
-                                    }
-                                    else {
-                                        if (message.cid > 0)
-                                            if (message.messageLifetime > 0 && message.messageLifetime <= 60) {
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO_SECRET"), authorName];
-                                            } else {
-                                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO"), authorName];
-                                            }
-                                        else
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_VIDEO"), authorName, chatName];
-                                    }
-                                }
-                                
-                                attachmentFound = true;
-                                
-                                break;
-                            }
-                            else if (attachment.type == TGLocationMediaAttachmentType)
-                            {
-                                TGLocationMediaAttachment *attachment = (TGLocationMediaAttachment *)attachment;
-                                if (attachment.period > 0)
-                                {
-                                    if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEOLIVE"), authorName];
-                                    else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEOLIVE"), authorName, chatName];
-                                }
-                                else
-                                {
-                                    if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEO"), authorName];
-                                    else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEO"), authorName, chatName];
-                                }
-                                
-                                attachmentFound = true;
-                                
-                                break;
-                            }
-                            else if (attachment.type == TGContactMediaAttachmentType)
-                            {
-                                if (message.cid > 0)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_CONTACT"), authorName];
-                                else
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_CONTACT"), authorName, chatName];
-                                
-                                attachmentFound = true;
-                                
-                                break;
-                            }
-                            else if (attachment.type == TGDocumentMediaAttachmentType)
-                            {
-                                bool isAnimated = false;
-                                bool isVoice = false;
-                                CGSize imageSize = CGSizeZero;
-                                bool isSticker = false;
-                                NSString *stickerRepresentation = @"";
-                                for (id attribute in ((TGDocumentMediaAttachment *)attachment).attributes)
-                                {
-                                    if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]])
-                                    {
-                                        isAnimated = true;
-                                    }
-                                    else if ([attribute isKindOfClass:[TGDocumentAttributeImageSize class]])
-                                    {
-                                        imageSize = ((TGDocumentAttributeImageSize *)attribute).size;
-                                    }
-                                    else if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]]) {
-                                        imageSize = ((TGDocumentAttributeVideo *)attribute).size;
-                                    }
-                                    else if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]])
-                                    {
-                                        isSticker = true;
-                                        stickerRepresentation = [((TGDocumentAttributeSticker *)attribute).alt stringByAppendingString:@" "];
-                                    }
-                                    else if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
-                                        isVoice = ((TGDocumentAttributeAudio *)attribute).isVoice;
-                                    }
-                                }
-                                
-                                if (isSticker)
-                                {
-                                    if (message.cid > 0) {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_STICKER"), authorName, stickerRepresentation];
-                                    } else {
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_STICKER"), authorName, chatName, stickerRepresentation];
-                                    }
-                                }
-                                else if (isAnimated) {
-                                    if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GIF"), authorName];
-                                    else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GIF"), authorName, chatName];
-                                }
-                                else if (isVoice) {
-                                    if (message.cid > 0)
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), authorName];
-                                    else
-                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), authorName, chatName];
-                                }
-                                else
-                                {
-                                    if (globalMessagePreviewText && ((TGDocumentMediaAttachment *)attachment).caption.length != 0) {
-                                        if (message.cid > 0) {
-                                            text = [[NSString alloc] initWithFormat:@"%@: 📎 %@", authorName, ((TGDocumentMediaAttachment *)attachment).caption];
-                                        } else {
-                                            text = [[NSString alloc] initWithFormat:@"%@@%@: 📎 %@", authorName, chatName, ((TGDocumentMediaAttachment *)attachment).caption];
-                                        }
-                                    } else {
-                                        if (message.cid > 0)
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_DOC"), authorName];
-                                        else
-                                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_DOC"), authorName, chatName];
-                                    }
-                                }
-                                
-                                attachmentFound = true;
-                                
-                                break;
-                            }
-                            else if (attachment.type == TGAudioMediaAttachmentType)
-                            {
-                                if (message.cid > 0)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), authorName];
-                                else
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), authorName, chatName];
-                                
-                                attachmentFound = true;
-                                
-                                break;
-                            }
-                            else if (attachment.type == TGGameAttachmentType) {
-                                NSString *gameTitle = ((TGGameMediaAttachment *)attachment).title;
-                                
-                                if (message.cid > 0) {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GAME"), authorName, gameTitle];
-                                } else {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GAME"), authorName, chatName, gameTitle];
-                                }
-                                
-                                attachmentFound = true;
-                                break;
-                            }
-                            else if (attachment.type == TGInvoiceMediaAttachmentType) {
-                                TGInvoiceMediaAttachment *invoice = (TGInvoiceMediaAttachment *)attachment;
-                                
-                                NSString *priceString = [[TGCurrencyFormatter shared] formatAmount:invoice.totalAmount currency:invoice.currency];
-                                
-                                if (message.cid > 0) {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_INVOICE"), authorName, priceString];
-                                } else {
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_INVOICE"), authorName, chatName, priceString];
-                                }
-                                
-                                attachmentFound = true;
-                                break;
-                            }
-                        }
-                        
-                        if (migrationFound || skipMessage) {
-                            continue;
-                        }
-                        
-                        bool notificationWithoutSound = [midsWithoutSound containsObject:@(message.mid)];
-                        if (iosMajorVersion() <= 6 && !notificationWithoutSound)
-                        {
-                            OGPlatformSetLocalNotificationSoundName(localNotification, @"notification.caf");
-                        }
-                        else if (soundId > 0 && !notificationWithoutSound)
-                        {
-                            OGPlatformSetLocalNotificationSoundName(localNotification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
-
-                        }
-
-                        if (multiforwardCount != 0)
-                        {
-                            if (message.cid > 0)
-                            {
-                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_FWDS"), authorName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
-                            }
-                            else
-                            {
-                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_FWDS"), authorName, chatName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
-                            }
-                        }
-                        else
-                        {
-                            if (messageIsChannel)
-                            {
-                                if (globalGroupPreviewText && !attachmentFound)
-                                {
-                                    if (authorName.length != 0)
-                                        text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
-                                    else
-                                        text = [[NSString alloc] initWithFormat:@"%@: %@", chatName, message.text];
-                                }
-                                else if (!attachmentFound)
-                                {
-                                    text = [[NSString alloc] initWithFormat:@"%@", chatName];
-                                }
-                            }
-                            else if (message.cid <= INT_MIN)
-                            {
-                                text = [[NSString alloc] initWithFormat:TGLocalized(@"ENCRYPTED_MESSAGE"), @""];
-                            }
-                            else if (message.cid > 0)
-                            {
-                                if (globalMessagePreviewText && !attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:@"%@: %@", authorName, message.text];
-                                else if (!attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_NOTEXT"), authorName];
-                            }
-                            else
-                            {
-                                if (globalGroupPreviewText && !attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
-                                else if (!attachmentFound)
-                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_NOTEXT"), authorName, chatName];
-                            }
-                        }
-                        
-                        bool isLocked = false;
-                        if ([TGAppDelegateInstance respondsToSelector:@selector(isCurrentlyLocked)])
-                            isLocked = [TGAppDelegateInstance isCurrentlyLocked];
-                        if (isLocked)
-                        {
-                            text = [[NSString alloc] initWithFormat:TGLocalized(@"LOCKED_MESSAGE"), @""];
-                        }
-                        
-                        OGPlatformSetLocalNotificationUserInfo(localNotification, [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil]);
-
-                        NSString *notificationTitle = chatName;
-                        if (notificationTitle.length == 0)
-                            notificationTitle = authorName;
-                        if (notificationTitle.length != 0)
-                            OGPlatformSetLocalNotificationAlertTitle(localNotification, notificationTitle);
-                        
-                        if (iosMajorVersion() >= 8 && !isLocked)
-                        {
-                            if (phoneCall)
-                                OGPlatformSetLocalNotificationCategory(localNotification, @"p");
-                            else if (TGPeerIdIsGroup(message.cid))
-                                OGPlatformSetLocalNotificationCategory(localNotification, @"m");
-                            else if (TGPeerIdIsChannel(message.cid))
-                                OGPlatformSetLocalNotificationCategory(localNotification, @"c");
-                            else if (message.cid > INT_MIN)
-                                OGPlatformSetLocalNotificationCategory(localNotification, @"r");
-                        }
-                        
-                        NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
-                        if (iosMajorVersion() <= 6 && notificationBatchCount >= 5)
-                        {
-                            text = TGIOS6AggregateNotificationText(notificationBatchCount);
-                            NSMutableDictionary *aggregateInfo = [OGPlatformLocalNotificationUserInfo(localNotification) mutableCopy];
-                            if (aggregateInfo == nil)
-                                aggregateInfo = [[NSMutableDictionary alloc] init];
-                            aggregateInfo[@"ios6Aggregate"] = @true;
-                            OGPlatformSetLocalNotificationUserInfo(localNotification, aggregateInfo);
-                        }
-                        IOS6NotificationProbe(@"NOTIFY_READY", @"peer=%lld title=%@ mid=%d batch=%d", message.cid, chatName ?: @"", message.mid, (int)notificationBatchCount);
-                        [TGApplyUpdatesActor presentSafeLocalNotification:(UILocalNotification *)localNotification text:text];
                     }
                 }
-                @catch (NSException *e)
-                {
+            }
+            else if ([abstractDesc isKindOfClass:[TLEncryptedMessage class]])
+            {
+                if (randomIds == nil)
+                    continue;
+
+                TLEncryptedMessage *encryptedMessage = abstractDesc;
+
+                if (messageQts > maxQts)
+                    continue;
+
+                [delayedNotifications() removeObjectAtIndex:i];
+                i--;
+                count--;
+
+                if (randomIdsSet.find(encryptedMessage.random_id) == randomIdsSet.end())
+                    continue;
+
+                NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
+                if (!TGIOS6ConsumeLocalNotificationBudget(notificationBatchCount))
+                    continue;
+
+                message = [[TGMessage alloc] init];
+                message.randomId = encryptedMessage.random_id;
+                message.cid = [TGDatabaseInstance() peerIdForEncryptedConversationId:encryptedMessage.chat_id];
+            }
+            else
+            {
+                TGLog(@"***** unknown notification message type %@", abstractDesc);
+                continue;
+            }
+
+            bool messageIsChannel = TGPeerIdIsChannel(message.cid);
+
+            if (messageIsChannel && ![TGDatabaseInstance() loadConversationWithId:message.cid].isChannelMember)
+                continue;
+
+            if (message.cid == TGTelegraphInstance.clientUserId || message.fromUid == TGTelegraphInstance.clientUserId)
+                continue;
+
+            if (message.containsMention)
+            {
+                if ([TGDatabaseInstance() isPeerMuted:message.fromUid]) {
+                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=mention_muted peer=%lld from=%lld mid=%d", message.cid, message.fromUid, message.mid);
+                    continue;
                 }
             }
             else
             {
-                        [TGApplyUpdatesActor clearDelayedNotifications];
+                if ([TGDatabaseInstance() isPeerMuted:message.cid]) {
+                    IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=peer_muted peer=%lld mid=%d", message.cid, message.mid);
+                    continue;
+                }
             }
-        }];
-    });
+
+            id localNotification = OGPlatformCreateLocalNotification();
+            if (localNotification == nil)
+                continue;
+
+            TGUser *user = nil;
+            NSString *chatName = nil;
+
+            int64_t notificationPeerId = 0;
+
+            if (messageIsChannel)
+            {
+                notificationPeerId = message.cid;
+                if (message.fromUid != 0)
+                    user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
+                TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
+                if (conversation != nil)
+                    chatName = conversation.chatTitle;
+                else
+                    chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
+            }
+            else if (message.cid <= INT_MIN)
+            {
+                notificationPeerId = [TGDatabaseInstance() encryptedParticipantIdForConversationId:message.cid];
+            }
+            else if (message.cid > 0)
+            {
+                user = [TGDatabaseInstance() loadUser:(int)message.cid];
+                notificationPeerId = message.cid;
+            }
+            else
+            {
+                if (message.containsMention)
+                    notificationPeerId = message.fromUid;
+                else
+                    notificationPeerId = message.cid;
+                user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
+                TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
+                if (conversation != nil)
+                    chatName = conversation.chatTitle;
+                else
+                    chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
+            }
+
+            if ([TGDatabaseInstance() isPeerMuted:notificationPeerId]) {
+                IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=notification_peer_muted peer=%lld title=%@ mid=%d", notificationPeerId, chatName ?: @"", message.mid);
+                continue;
+            }
+
+            NSString *authorName = user.displayName;
+            if (authorName.length == 0 && message.fromUid != 0)
+            {
+                if (TGPeerIdIsUser(message.fromUid))
+                {
+                    TGUser *authorUser = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+                    if (user == nil)
+                        user = authorUser;
+                    authorName = authorUser.displayName;
+                }
+                else if (TGPeerIdIsGroup(message.fromUid) || TGPeerIdIsChannel(message.fromUid))
+                {
+                    TGConversation *authorConversation = [TGDatabaseInstance() loadConversationWithIdCached:message.fromUid];
+                    if (authorConversation == nil)
+                        authorConversation = [TGDatabaseInstance() loadConversationWithId:message.fromUid];
+                    authorName = authorConversation.chatTitle;
+                }
+            }
+            if (authorName.length == 0 && messageIsChannel && message.fromUid == message.cid)
+                authorName = chatName;
+            if (authorName.length == 0 && message.cid > 0)
+            {
+                TGUser *peerUser = [TGDatabaseInstance() loadUser:(int32_t)message.cid];
+                if (user == nil)
+                    user = peerUser;
+                authorName = peerUser.displayName;
+            }
+            if (authorName.length == 0)
+                authorName = chatName;
+            if (authorName.length == 0)
+                continue;
+
+            NSNumber *soundIdVal = nil;
+            int soundId = 1;
+            [TGDatabaseInstance() loadPeerNotificationSettings:notificationPeerId soundId:&soundIdVal muteUntil:NULL previewText:NULL messagesMuted:NULL notFound:NULL];
+
+            if (soundIdVal != nil) {
+                soundId = soundIdVal.intValue;
+            } else {
+                soundId = (message.cid > 0 || (message.cid <= INT_MIN && !messageIsChannel)) ? globalMessageSoundId : globalGroupSoundId;
+            }
+
+            NSString *text = nil;
+
+            bool attachmentFound = false;
+            bool migrationFound = false;
+            bool skipMessage = false;
+            bool phoneCall = false;
+
+            for (TGMediaAttachment *attachment in message.mediaAttachments)
+            {
+                if (attachment.type == TGActionMediaAttachmentType)
+                {
+                    TGActionMediaAttachment *actionAttachment = (TGActionMediaAttachment *)attachment;
+                    switch (actionAttachment.actionType)
+                    {
+                        case TGMessageActionChatEditTitle:
+                        {
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_TITLE_EDITED"), authorName, [((TGActionMediaAttachment *)attachment).actionData objectForKey:@"title"]];
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionChatEditPhoto:
+                        {
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_PHOTO_EDITED"), authorName, chatName];
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionChatAddMember:
+                        {
+                            NSArray *uids = actionAttachment.actionData[@"uids"];
+                            if (uids != nil) {
+                                TGUser *authorUser = user;
+                                NSMutableArray *subjectUsers = [[NSMutableArray alloc] init];
+                                for (NSNumber *nUid in uids) {
+                                    TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                                    if (user != nil) {
+                                        [subjectUsers addObject:subjectUser];
+                                    }
+                                }
+
+                                if (subjectUsers.count == 1 && authorUser.uid == ((TGUser *)subjectUsers[0]).uid) {
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
+                                } else {
+                                    NSMutableString *subjectNames = [[NSMutableString alloc] init];
+                                    for (TGUser *subjectUser in subjectUsers) {
+                                        if (subjectNames.length != 0) {
+                                            [subjectNames appendString:@", "];
+                                        }
+                                        [subjectNames appendString:subjectUser.displayName];
+                                    }
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorName, chatName, subjectNames];
+                                }
+                                attachmentFound = true;
+                            } else {
+                                NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
+                                if (nUid != nil)
+                                {
+                                    TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
+
+                                    if (subjectUser.uid == user.uid)
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
+                                    else if (subjectUser.uid == TGTelegraphInstance.clientUserId)
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), authorName, chatName];
+                                    else
+                                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_MEMBER"), authorName, chatName, subjectUser.displayName];
+                                    attachmentFound = true;
+                                }
+                            }
+
+                            break;
+                        }
+                        case TGMessageActionChatDeleteMember:
+                        {
+                            NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
+                            if (nUid != nil)
+                            {
+                                TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
+
+                                if (subjectUser.uid == user.uid)
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_LEFT"), authorName, chatName];
+                                else if (subjectUser.uid == TGTelegraphInstance.clientUserId)
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_YOU"), authorName, chatName];
+                                else
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_DELETE_MEMBER"), authorName, chatName, subjectUser.displayName];
+                                attachmentFound = true;
+                            }
+
+                            break;
+                        }
+                        case TGMessageActionCreateChat:
+                        {
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_ADD_YOU"), authorName, chatName];
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionChannelCreated:
+                        {
+                            text = @"";
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionChannelCommentsStatusChanged:
+                        {
+                            text = [actionAttachment.actionData[@"enabled"] boolValue] ? TGLocalized(@"Channel.NotificationCommentsEnabled") : TGLocalized(@"Channel.NotificationCommentsDisabled");
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionJoinedByLink:
+                        {
+                            NSString *formatString = [actionAttachment.actionData[@"joinedByRequest"] boolValue] ? TGLocalized(@"Notification.JoinedChat") : TGLocalized(@"Notification.JoinedGroupByLink");
+                            text = [[NSString alloc] initWithFormat:formatString, authorName];
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionGroupMigratedTo:
+                        {
+                            migrationFound = true;
+                            break;
+                        }
+                        case TGMessageActionGameScore:
+                        {
+                            TGMessage *replyMessage = nil;
+                            for (id attachment in message.mediaAttachments) {
+                                if ([attachment isKindOfClass:[TGReplyMessageMediaAttachment class]]) {
+                                    replyMessage = ((TGReplyMessageMediaAttachment *)attachment).replyMessage;
+                                    break;
+                                }
+                            }
+
+                            NSString *gameTitle = nil;
+                            for (id attachment in replyMessage.mediaAttachments) {
+                                if ([attachment isKindOfClass:[TGGameMediaAttachment class]]) {
+                                    gameTitle = ((TGGameMediaAttachment *)attachment).title;
+                                    break;
+                                }
+                            }
+
+                            int scoreCount = (int)[actionAttachment.actionData[@"score"] intValue];
+
+                            NSString *formatStringBase = @"";
+                            if (gameTitle != nil) {
+                                if (user.uid == TGTelegraphInstance.clientUserId) {
+                                    formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreSelfExtended_" value:scoreCount];
+                                } else {
+                                    formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreExtended_" value:scoreCount];
+                                }
+                            } else {
+                                if (user.uid == TGTelegraphInstance.clientUserId) {
+                                    formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreSelfSimple_" value:scoreCount];
+                                } else {
+                                    formatStringBase = [TGStringUtils integerValueFormat:@"ServiceMessage.GameScoreSimple_" value:scoreCount];
+                                }
+                            }
+
+                            NSString *baseString = TGLocalized(formatStringBase);
+                            baseString = [baseString stringByReplacingOccurrencesOfString:@"%@" withString:@"{game}"];
+
+                            NSMutableString *formatString = [[NSMutableString alloc] initWithString:baseString];
+
+                            NSString *scoreAuthorName = user.displayFirstName;
+                            if (scoreAuthorName.length == 0)
+                                scoreAuthorName = authorName;
+
+                            for (int i = 0; i < 3; i++) {
+                                NSRange nameRange = [formatString rangeOfString:@"{name}"];
+                                NSRange scoreRange = [formatString rangeOfString:@"{score}"];
+                                NSRange gameTitleRange = [formatString rangeOfString:@"{game}"];
+
+                                if (nameRange.location != NSNotFound) {
+                                    if (scoreRange.location == NSNotFound || scoreRange.location > nameRange.location) {
+                                        scoreRange.location = NSNotFound;
+                                    }
+                                    if (gameTitleRange.location == NSNotFound || gameTitleRange.location > nameRange.location) {
+                                        gameTitleRange.location = NSNotFound;
+                                    }
+                                }
+
+                                if (scoreRange.location != NSNotFound) {
+                                    if (nameRange.location == NSNotFound || nameRange.location > scoreRange.location) {
+                                        nameRange.location = NSNotFound;
+                                    }
+                                    if (gameTitleRange.location == NSNotFound || gameTitleRange.location > scoreRange.location) {
+                                        gameTitleRange.location = NSNotFound;
+                                    }
+                                }
+
+                                if (gameTitleRange.location != NSNotFound) {
+                                    if (scoreRange.location == NSNotFound || scoreRange.location > gameTitleRange.location) {
+                                        scoreRange.location = NSNotFound;
+                                    }
+                                    if (nameRange.location == NSNotFound || nameRange.location > gameTitleRange.location) {
+                                        nameRange.location = NSNotFound;
+                                    }
+                                }
+
+                                if (nameRange.location != NSNotFound) {
+                                    [formatString replaceCharactersInRange:nameRange withString:scoreAuthorName];
+                                }
+
+                                if (scoreRange.location != NSNotFound) {
+                                    [formatString replaceCharactersInRange:scoreRange withString:[NSString stringWithFormat:@"%d", scoreCount]];
+                                }
+
+                                if (gameTitleRange.location != NSNotFound) {
+                                    [formatString replaceCharactersInRange:gameTitleRange withString:gameTitle];
+                                }
+                            }
+
+                            text = formatString;
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        case TGMessageActionPhoneCall:
+                        {
+                            TGCallDiscardReason reason = (TGCallDiscardReason)[actionAttachment.actionData[@"reason"] intValue];
+                            if (reason == TGCallDiscardReasonMissed) {
+                                text = [NSString stringWithFormat:TGLocalized(@"PHONE_CALL_MISSED"), authorName];
+                                phoneCall = true;
+                            }
+                            else {
+                                skipMessage = true;
+                            }
+
+                            attachmentFound = true;
+                            break;
+                        }
+                        case TGMessageActionEncryptedChatMessageScreenshot:
+                        {
+                            text = [NSString stringWithFormat:TGLocalized(@"MESSAGE_SCREENSHOT"), authorName];
+                            attachmentFound = true;
+
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+                else if (attachment.type == TGImageMediaAttachmentType)
+                {
+                    if (((globalMessagePreviewText && TGPeerIdIsUser(message.cid)) || (globalGroupPreviewText && !TGPeerIdIsUser(message.cid))) && ((TGImageMediaAttachment *)attachment).caption.length != 0) {
+                        if (message.cid > 0) {
+                            text = [[NSString alloc] initWithFormat:@"%@: 🖼 %@", authorName, ((TGImageMediaAttachment *)attachment).caption];
+                        } else {
+                            text = [[NSString alloc] initWithFormat:@"%@@%@: 🖼 %@", authorName, chatName, ((TGImageMediaAttachment *)attachment).caption];
+                        }
+                    } else {
+                        if (message.cid > 0) {
+                            if (message.messageLifetime > 0 && message.messageLifetime <= 60) {
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO_SECRET"), authorName];
+                            } else {
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_PHOTO"), authorName];
+                            }
+                        }
+                        else
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_PHOTO"), authorName, chatName];
+                    }
+
+                    attachmentFound = true;
+
+                    break;
+                }
+                else if (attachment.type == TGVideoMediaAttachmentType)
+                {
+                    bool isRoundMessage = ((TGVideoMediaAttachment *)attachment).roundMessage;
+
+                    if (((globalMessagePreviewText && TGPeerIdIsUser(message.cid)) || (globalGroupPreviewText && !TGPeerIdIsUser(message.cid))) && ((TGVideoMediaAttachment *)attachment).caption.length != 0) {
+                        if (message.cid > 0) {
+                            text = [[NSString alloc] initWithFormat:@"%@: 📹 %@", authorName, ((TGVideoMediaAttachment *)attachment).caption];
+                        } else {
+                            text = [[NSString alloc] initWithFormat:@"%@@%@: 📹 %@", authorName, chatName, ((TGVideoMediaAttachment *)attachment).caption];
+                        }
+                    } else {
+                        if (isRoundMessage) {
+                            if (message.cid > 0)
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_ROUND"), authorName];
+                            else
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_ROUND"), authorName, chatName];
+                        }
+                        else {
+                            if (message.cid > 0)
+                                if (message.messageLifetime > 0 && message.messageLifetime <= 60) {
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO_SECRET"), authorName];
+                                } else {
+                                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_VIDEO"), authorName];
+                                }
+                            else
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_VIDEO"), authorName, chatName];
+                        }
+                    }
+
+                    attachmentFound = true;
+
+                    break;
+                }
+                else if (attachment.type == TGLocationMediaAttachmentType)
+                {
+                    TGLocationMediaAttachment *attachment = (TGLocationMediaAttachment *)attachment;
+                    if (attachment.period > 0)
+                    {
+                        if (message.cid > 0)
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEOLIVE"), authorName];
+                        else
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEOLIVE"), authorName, chatName];
+                    }
+                    else
+                    {
+                        if (message.cid > 0)
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GEO"), authorName];
+                        else
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GEO"), authorName, chatName];
+                    }
+
+                    attachmentFound = true;
+
+                    break;
+                }
+                else if (attachment.type == TGContactMediaAttachmentType)
+                {
+                    if (message.cid > 0)
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_CONTACT"), authorName];
+                    else
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_CONTACT"), authorName, chatName];
+
+                    attachmentFound = true;
+
+                    break;
+                }
+                else if (attachment.type == TGDocumentMediaAttachmentType)
+                {
+                    bool isAnimated = false;
+                    bool isVoice = false;
+                    CGSize imageSize = CGSizeZero;
+                    bool isSticker = false;
+                    NSString *stickerRepresentation = @"";
+                    for (id attribute in ((TGDocumentMediaAttachment *)attachment).attributes)
+                    {
+                        if ([attribute isKindOfClass:[TGDocumentAttributeAnimated class]])
+                        {
+                            isAnimated = true;
+                        }
+                        else if ([attribute isKindOfClass:[TGDocumentAttributeImageSize class]])
+                        {
+                            imageSize = ((TGDocumentAttributeImageSize *)attribute).size;
+                        }
+                        else if ([attribute isKindOfClass:[TGDocumentAttributeVideo class]]) {
+                            imageSize = ((TGDocumentAttributeVideo *)attribute).size;
+                        }
+                        else if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]])
+                        {
+                            isSticker = true;
+                            stickerRepresentation = [((TGDocumentAttributeSticker *)attribute).alt stringByAppendingString:@" "];
+                        }
+                        else if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
+                            isVoice = ((TGDocumentAttributeAudio *)attribute).isVoice;
+                        }
+                    }
+
+                    if (isSticker)
+                    {
+                        if (message.cid > 0) {
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_STICKER"), authorName, stickerRepresentation];
+                        } else {
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_STICKER"), authorName, chatName, stickerRepresentation];
+                        }
+                    }
+                    else if (isAnimated) {
+                        if (message.cid > 0)
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GIF"), authorName];
+                        else
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GIF"), authorName, chatName];
+                    }
+                    else if (isVoice) {
+                        if (message.cid > 0)
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), authorName];
+                        else
+                            text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), authorName, chatName];
+                    }
+                    else
+                    {
+                        if (globalMessagePreviewText && ((TGDocumentMediaAttachment *)attachment).caption.length != 0) {
+                            if (message.cid > 0) {
+                                text = [[NSString alloc] initWithFormat:@"%@: 📎 %@", authorName, ((TGDocumentMediaAttachment *)attachment).caption];
+                            } else {
+                                text = [[NSString alloc] initWithFormat:@"%@@%@: 📎 %@", authorName, chatName, ((TGDocumentMediaAttachment *)attachment).caption];
+                            }
+                        } else {
+                            if (message.cid > 0)
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_DOC"), authorName];
+                            else
+                                text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_DOC"), authorName, chatName];
+                        }
+                    }
+
+                    attachmentFound = true;
+
+                    break;
+                }
+                else if (attachment.type == TGAudioMediaAttachmentType)
+                {
+                    if (message.cid > 0)
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_AUDIO"), authorName];
+                    else
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_AUDIO"), authorName, chatName];
+
+                    attachmentFound = true;
+
+                    break;
+                }
+                else if (attachment.type == TGGameAttachmentType) {
+                    NSString *gameTitle = ((TGGameMediaAttachment *)attachment).title;
+
+                    if (message.cid > 0) {
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_GAME"), authorName, gameTitle];
+                    } else {
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_GAME"), authorName, chatName, gameTitle];
+                    }
+
+                    attachmentFound = true;
+                    break;
+                }
+                else if (attachment.type == TGInvoiceMediaAttachmentType) {
+                    TGInvoiceMediaAttachment *invoice = (TGInvoiceMediaAttachment *)attachment;
+
+                    NSString *priceString = [[TGCurrencyFormatter shared] formatAmount:invoice.totalAmount currency:invoice.currency];
+
+                    if (message.cid > 0) {
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_INVOICE"), authorName, priceString];
+                    } else {
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_INVOICE"), authorName, chatName, priceString];
+                    }
+
+                    attachmentFound = true;
+                    break;
+                }
+            }
+
+            if (migrationFound || skipMessage) {
+                continue;
+            }
+
+            bool notificationWithoutSound = [midsWithoutSound containsObject:@(message.mid)];
+            if (iosMajorVersion() <= 6 && !notificationWithoutSound)
+            {
+                OGPlatformSetLocalNotificationSoundName(localNotification, @"notification.caf");
+            }
+            else if (soundId > 0 && !notificationWithoutSound)
+            {
+                OGPlatformSetLocalNotificationSoundName(localNotification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
+
+            }
+
+            if (multiforwardCount != 0)
+            {
+                if (message.cid > 0)
+                {
+                    text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_FWDS"), authorName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
+                }
+                else
+                {
+                    text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_FWDS"), authorName, chatName, [[NSString alloc] initWithFormat:@"%d", (int)multiforwardCount]];
+                }
+            }
+            else
+            {
+                if (messageIsChannel)
+                {
+                    if (globalGroupPreviewText && !attachmentFound)
+                    {
+                        if (authorName.length != 0)
+                            text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
+                        else
+                            text = [[NSString alloc] initWithFormat:@"%@: %@", chatName, message.text];
+                    }
+                    else if (!attachmentFound)
+                    {
+                        text = [[NSString alloc] initWithFormat:@"%@", chatName];
+                    }
+                }
+                else if (message.cid <= INT_MIN)
+                {
+                    text = [[NSString alloc] initWithFormat:TGLocalized(@"ENCRYPTED_MESSAGE"), @""];
+                }
+                else if (message.cid > 0)
+                {
+                    if (globalMessagePreviewText && !attachmentFound)
+                        text = [[NSString alloc] initWithFormat:@"%@: %@", authorName, message.text];
+                    else if (!attachmentFound)
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"MESSAGE_NOTEXT"), authorName];
+                }
+                else
+                {
+                    if (globalGroupPreviewText && !attachmentFound)
+                        text = [[NSString alloc] initWithFormat:@"%@@%@: %@", authorName, chatName, message.text];
+                    else if (!attachmentFound)
+                        text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_MESSAGE_NOTEXT"), authorName, chatName];
+                }
+            }
+
+            bool isLocked = false;
+            if ([TGAppDelegateInstance respondsToSelector:@selector(isCurrentlyLocked)])
+                isLocked = [TGAppDelegateInstance isCurrentlyLocked];
+            if (isLocked)
+            {
+                text = [[NSString alloc] initWithFormat:TGLocalized(@"LOCKED_MESSAGE"), @""];
+            }
+
+            OGPlatformSetLocalNotificationUserInfo(localNotification, [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:message.cid], @"cid", @(message.mid), @"mid", nil]);
+
+            NSString *notificationTitle = chatName;
+            if (notificationTitle.length == 0)
+                notificationTitle = authorName;
+            if (notificationTitle.length != 0)
+                OGPlatformSetLocalNotificationAlertTitle(localNotification, notificationTitle);
+
+            if (iosMajorVersion() >= 8 && !isLocked)
+            {
+                if (phoneCall)
+                    OGPlatformSetLocalNotificationCategory(localNotification, @"p");
+                else if (TGPeerIdIsGroup(message.cid))
+                    OGPlatformSetLocalNotificationCategory(localNotification, @"m");
+                else if (TGPeerIdIsChannel(message.cid))
+                    OGPlatformSetLocalNotificationCategory(localNotification, @"c");
+                else if (message.cid > INT_MIN)
+                    OGPlatformSetLocalNotificationCategory(localNotification, @"r");
+            }
+
+            NSUInteger notificationBatchCount = mids.count != 0 ? mids.count : randomIds.count;
+            if (notificationBatchCount >= 5)
+            {
+                text = TGIOS6AggregateNotificationText(notificationBatchCount);
+                NSMutableDictionary *aggregateInfo = [OGPlatformLocalNotificationUserInfo(localNotification) mutableCopy];
+                if (aggregateInfo == nil)
+                    aggregateInfo = [[NSMutableDictionary alloc] init];
+                aggregateInfo[@"ios6Aggregate"] = @true;
+                OGPlatformSetLocalNotificationUserInfo(localNotification, aggregateInfo);
+            }
+            IOS6NotificationProbe(@"NOTIFY_READY", @"peer=%lld title=%@ mid=%d batch=%d", message.cid, chatName ?: @"", message.mid, (int)notificationBatchCount);
+            [TGApplyUpdatesActor presentSafeLocalNotification:(UILocalNotification *)localNotification text:text];
+        }
+    }
+    @catch (NSException *e)
+    {
+    }
 }
 
 @end

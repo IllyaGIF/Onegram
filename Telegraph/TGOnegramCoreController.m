@@ -7,234 +7,193 @@
 #import "TGCollectionItem.h"
 #import "TGCollectionItemView.h"
 #import "TGHeaderCollectionItem.h"
+#import "TGSwitchCollectionItem.h"
 #import "TGVariantCollectionItem.h"
 #import "TGButtonCollectionItem.h"
 #import "TGCommentCollectionItem.h"
 #import "TGPowerServersController.h"
 
 #import "../OnegramDante/PowerSubscriptions.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
-#import <QuartzCore/QuartzCore.h>
+static const CGFloat TGOnegramCoreMethodRowHeight = 58.0f;
+static const CGFloat TGOnegramCoreMethodHorizontalInset = 15.0f;
+static const CGFloat TGOnegramCoreMethodCheckSpacing = 10.0f;
+static const CGFloat TGOnegramCoreMethodTitleTop = 9.0f;
+static const CGFloat TGOnegramCoreMethodSubtitleTop = 32.0f;
 
-static const CGFloat TGOnegramCoreModeRowHeight = 52.0f;
-static const CGFloat TGOnegramCoreModeTagHeight = 30.0f;
-static const CGFloat TGOnegramCoreModeTagSpacing = 8.0f;
-static const CGFloat TGOnegramCoreModeHorizontalInset = 15.0f;
-static const CGFloat TGOnegramCoreModeTitleInset = 6.0f;
-static const CGFloat TGOnegramCoreModeMaximumFontSize = 14.0f;
-static const CGFloat TGOnegramCoreModeMinimumFontSize = 10.0f;
-
-@interface TGOnegramCoreModeCollectionItemView : TGCollectionItemView
+@interface TGOnegramCoreMethodCollectionItemView : TGCollectionItemView
 {
-    NSArray *_buttons;
-    NSUInteger _selectedIndex;
+    UILabel *_titleLabel;
+    UILabel *_subtitleLabel;
+    UIImageView *_checkView;
 }
 
-@property (nonatomic, copy) void (^selectionChanged)(NSUInteger index);
-
-- (void)setTitles:(NSArray *)titles;
-- (void)setSelectedIndex:(NSUInteger)selectedIndex;
+- (void)setTitle:(NSString *)title;
+- (void)setSubtitle:(NSString *)subtitle;
+- (void)setIsChecked:(bool)isChecked;
 
 @end
 
-@implementation TGOnegramCoreModeCollectionItemView
+@implementation TGOnegramCoreMethodCollectionItemView
 
 - (id)initWithFrame:(CGRect)frame
 {
     self = [super initWithFrame:frame];
     if (self != nil)
     {
-        _buttons = @[];
-        _selectedIndex = NSNotFound;
+        _titleLabel = [[UILabel alloc] init];
+        _titleLabel.backgroundColor = [UIColor clearColor];
+        _titleLabel.font = TGSystemFontOfSize(17.0f);
+        [self addSubview:_titleLabel];
+
+        _subtitleLabel = [[UILabel alloc] init];
+        _subtitleLabel.backgroundColor = [UIColor clearColor];
+        _subtitleLabel.font = TGSystemFontOfSize(13.0f);
+        [self addSubview:_subtitleLabel];
+
+        _checkView = [[UIImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 14.0f, 11.0f)];
+        [self addSubview:_checkView];
     }
     return self;
-}
-
-- (void)setTitles:(NSArray *)titles
-{
-    for (UIButton *button in _buttons)
-        [button removeFromSuperview];
-
-    NSMutableArray *buttons = [[NSMutableArray alloc] initWithCapacity:titles.count];
-    for (NSString *title in titles)
-    {
-        UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
-        button.exclusiveTouch = true;
-        button.layer.cornerRadius = TGOnegramCoreModeTagHeight / 2.0f;
-        button.layer.borderWidth = 1.0f;
-        button.titleLabel.lineBreakMode = NSLineBreakByClipping;
-        [button setTitle:title forState:UIControlStateNormal];
-        [button addTarget:self action:@selector(buttonPressed:) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:button];
-        [buttons addObject:button];
-    }
-    _buttons = buttons;
-    [self updateButtonAppearance];
-    [self setNeedsLayout];
-}
-
-- (void)setSelectedIndex:(NSUInteger)selectedIndex
-{
-    _selectedIndex = selectedIndex;
-    [self updateButtonAppearance];
 }
 
 - (void)setPresentation:(TGPresentation *)presentation
 {
     [super setPresentation:presentation];
-    [self updateButtonAppearance];
+
+    _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
+    _subtitleLabel.textColor = presentation.pallete.collectionMenuVariantColor;
+    _checkView.image = presentation.images.collectionMenuCheckImage;
+    [self setNeedsLayout];
 }
 
-- (void)updateButtonAppearance
+- (void)setTitle:(NSString *)title
 {
-    UIColor *accentColor = self.presentation.pallete.collectionMenuAccentColor;
-    UIColor *backgroundColor = self.presentation.pallete.collectionMenuCellBackgroundColor;
-    if (accentColor == nil || backgroundColor == nil)
-        return;
-
-    [_buttons enumerateObjectsUsingBlock:^(UIButton *button, NSUInteger index, __unused BOOL *stop)
-    {
-        bool selected = index == _selectedIndex;
-        button.selected = selected;
-        button.backgroundColor = selected ? accentColor : [UIColor clearColor];
-        button.layer.borderColor = accentColor.CGColor;
-        [button setTitleColor:selected ? backgroundColor : accentColor forState:UIControlStateNormal];
-        [button setTitleColor:[(selected ? backgroundColor : accentColor) colorWithAlphaComponent:0.5f] forState:UIControlStateHighlighted];
-    }];
+    _titleLabel.text = title;
+    [self setNeedsLayout];
 }
 
-- (void)buttonPressed:(UIButton *)button
+- (void)setSubtitle:(NSString *)subtitle
 {
-    NSUInteger index = [_buttons indexOfObject:button];
-    if (index == NSNotFound || index == _selectedIndex)
-        return;
-
-    if (_selectionChanged != nil)
-        _selectionChanged(index);
+    _subtitleLabel.text = subtitle;
+    [self setNeedsLayout];
 }
 
-- (UIFont *)fittingFontForTagWidth:(CGFloat)tagWidth
+- (void)setIsChecked:(bool)isChecked
 {
-    CGFloat availableWidth = tagWidth - TGOnegramCoreModeTitleInset * 2.0f;
-    for (CGFloat fontSize = TGOnegramCoreModeMaximumFontSize; fontSize > TGOnegramCoreModeMinimumFontSize; fontSize -= 0.5f)
-    {
-        UIFont *font = TGMediumSystemFontOfSize(fontSize);
-        bool fits = true;
-        for (UIButton *button in _buttons)
-        {
-            if ([[button titleForState:UIControlStateNormal] sizeWithFont:font].width > availableWidth)
-            {
-                fits = false;
-                break;
-            }
-        }
-        if (fits)
-            return font;
-    }
-    return TGMediumSystemFontOfSize(TGOnegramCoreModeMinimumFontSize);
+    _checkView.hidden = !isChecked;
 }
 
 - (void)layoutSubviews
 {
     [super layoutSubviews];
 
-    NSUInteger count = _buttons.count;
-    if (count == 0)
-        return;
-
+    bool classic = [TGPresentation classicIOS6Style];
     CGRect contentFrame = [self classicIOS6GroupedFrame];
-    CGFloat originX = contentFrame.origin.x + TGOnegramCoreModeHorizontalInset + ([TGPresentation classicIOS6Style] ? 0.0f : self.safeAreaInset.left);
-    CGFloat maxX = CGRectGetMaxX(contentFrame) - TGOnegramCoreModeHorizontalInset - ([TGPresentation classicIOS6Style] ? 0.0f : self.safeAreaInset.right);
-    CGFloat tagWidth = CGFloor((maxX - originX - TGOnegramCoreModeTagSpacing * (count - 1)) / count);
-    CGFloat originY = CGFloor((self.bounds.size.height - TGOnegramCoreModeTagHeight) / 2.0f);
-    UIFont *font = [self fittingFontForTagWidth:tagWidth];
+    CGFloat originX = contentFrame.origin.x + TGOnegramCoreMethodHorizontalInset + (classic ? 0.0f : self.safeAreaInset.left);
+    CGFloat maxX = CGRectGetMaxX(contentFrame) - TGOnegramCoreMethodHorizontalInset - (classic ? 0.0f : self.safeAreaInset.right);
 
-    [_buttons enumerateObjectsUsingBlock:^(UIButton *button, NSUInteger index, __unused BOOL *stop)
-    {
-        button.titleLabel.font = font;
-        button.frame = CGRectMake(originX + (tagWidth + TGOnegramCoreModeTagSpacing) * index, originY, tagWidth, TGOnegramCoreModeTagHeight);
-    }];
+    CGSize checkSize = _checkView.frame.size;
+    _checkView.frame = CGRectMake(maxX - checkSize.width, CGFloor((self.bounds.size.height - checkSize.height) / 2.0f), checkSize.width, checkSize.height);
+
+    CGFloat labelWidth = MAX(0.0f, maxX - checkSize.width - TGOnegramCoreMethodCheckSpacing - originX);
+    _titleLabel.frame = CGRectMake(originX, TGOnegramCoreMethodTitleTop, labelWidth, CGCeil(OGPlatformFontLineHeight(_titleLabel.font)));
+    _subtitleLabel.frame = CGRectMake(originX, TGOnegramCoreMethodSubtitleTop, labelWidth, CGCeil(OGPlatformFontLineHeight(_subtitleLabel.font)));
 }
 
 @end
 
-@interface TGOnegramCoreModeCollectionItem : TGCollectionItem
+@interface TGOnegramCoreMethodCollectionItem : TGCollectionItem
 
-@property (nonatomic, strong) NSArray *titles;
-@property (nonatomic) NSUInteger selectedIndex;
-@property (nonatomic, copy) void (^selectionChanged)(NSUInteger index);
+@property (nonatomic, readonly) OGOnegramCoreMode mode;
+@property (nonatomic, strong, readonly) NSString *title;
+@property (nonatomic, strong, readonly) NSString *subtitle;
+@property (nonatomic) bool isChecked;
+@property (nonatomic, copy) void (^pressed)(OGOnegramCoreMode mode);
+
+- (instancetype)initWithMode:(OGOnegramCoreMode)mode title:(NSString *)title subtitle:(NSString *)subtitle;
 
 @end
 
-@implementation TGOnegramCoreModeCollectionItem
+@implementation TGOnegramCoreMethodCollectionItem
 
-- (instancetype)init
+- (instancetype)initWithMode:(OGOnegramCoreMode)mode title:(NSString *)title subtitle:(NSString *)subtitle
 {
     self = [super init];
     if (self != nil)
     {
-        self.selectable = false;
-        self.highlightable = false;
-        _selectedIndex = NSNotFound;
+        _mode = mode;
+        _title = title;
+        _subtitle = subtitle;
+        self.deselectAutomatically = true;
     }
     return self;
 }
 
 - (Class)itemViewClass
 {
-    return [TGOnegramCoreModeCollectionItemView class];
+    return [TGOnegramCoreMethodCollectionItemView class];
 }
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, TGOnegramCoreModeRowHeight);
+    return CGSizeMake(containerSize.width, TGOnegramCoreMethodRowHeight);
 }
 
 - (void)bindView:(TGCollectionItemView *)view
 {
     [super bindView:view];
 
-    TGOnegramCoreModeCollectionItemView *modeView = (TGOnegramCoreModeCollectionItemView *)view;
-    [modeView setTitles:_titles];
-    [modeView setSelectedIndex:_selectedIndex];
-    __weak TGOnegramCoreModeCollectionItem *weakSelf = self;
-    modeView.selectionChanged = ^(NSUInteger index)
-    {
-        __strong TGOnegramCoreModeCollectionItem *strongSelf = weakSelf;
-        if (strongSelf != nil && strongSelf->_selectionChanged != nil)
-            strongSelf->_selectionChanged(index);
-    };
+    TGOnegramCoreMethodCollectionItemView *methodView = (TGOnegramCoreMethodCollectionItemView *)view;
+    [methodView setTitle:_title];
+    [methodView setSubtitle:_subtitle];
+    [methodView setIsChecked:_isChecked];
 }
 
-- (void)unbindView
+- (void)setIsChecked:(bool)isChecked
 {
-    ((TGOnegramCoreModeCollectionItemView *)self.boundView).selectionChanged = nil;
-    [super unbindView];
+    _isChecked = isChecked;
+    [(TGOnegramCoreMethodCollectionItemView *)self.boundView setIsChecked:isChecked];
 }
 
-- (void)setSelectedIndex:(NSUInteger)selectedIndex
+- (void)itemSelected:(id)__unused actionTarget
 {
-    _selectedIndex = selectedIndex;
-    [(TGOnegramCoreModeCollectionItemView *)self.boundView setSelectedIndex:selectedIndex];
+    if (_pressed != nil)
+        _pressed(_mode);
 }
 
 @end
-
-static NSArray *TGOnegramCoreModes(void)
-{
-    return @[@(OGOnegramCoreModeNone), @(OGOnegramCoreModeWebSocket), @(OGOnegramCoreModeDanteWARP), @(OGOnegramCoreModeDantePower)];
-}
 
 static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
 {
     return mode == OGOnegramCoreModeDanteWARP || mode == OGOnegramCoreModeDantePower;
 }
 
+static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
+{
+    switch (mode)
+    {
+        case OGOnegramCoreModeWebSocket:
+            return TGLocalized(@"OnegramCore.WebSocketInfo");
+        case OGOnegramCoreModeDanteWARP:
+            return TGLocalized(@"OnegramCore.WarpInfo");
+        case OGOnegramCoreModeDantePower:
+            return TGLocalized(@"OnegramCore.PowerInfo");
+        default:
+            return TGLocalized(@"OnegramCore.OffInfo");
+    }
+}
+
 @interface TGOnegramCoreController ()
 {
-    TGOnegramCoreModeCollectionItem *_modeItem;
-    TGCommentCollectionItem *_modeInfoItem;
-    TGCollectionMenuSection *_modeSection;
+    TGSwitchCollectionItem *_enabledItem;
+    TGCommentCollectionItem *_enabledInfoItem;
+    TGCollectionMenuSection *_enabledSection;
+
+    NSArray *_methodItems;
+    TGCommentCollectionItem *_methodInfoItem;
+    TGCollectionMenuSection *_methodSection;
 
     TGVariantCollectionItem *_statusItem;
     TGButtonCollectionItem *_reconnectItem;
@@ -263,17 +222,36 @@ static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
         if (modal)
             [self setLeftBarButtonItem:[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Done") style:UIBarButtonItemStyleDone target:self action:@selector(donePressed)]];
 
-        _modeItem = [[TGOnegramCoreModeCollectionItem alloc] init];
-        _modeItem.titles = @[TGLocalized(@"OnegramCore.Mode.Off"), TGLocalized(@"OnegramCore.Mode.WebSocket"), TGLocalized(@"OnegramCore.Mode.WARP"), TGLocalized(@"OnegramCore.Mode.Power")];
         __weak TGOnegramCoreController *weakSelf = self;
-        _modeItem.selectionChanged = ^(NSUInteger index)
+        _enabledItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.Title") isOn:false];
+        _enabledItem.toggled = ^(bool value, __unused TGSwitchCollectionItem *item)
         {
             __strong TGOnegramCoreController *strongSelf = weakSelf;
             if (strongSelf != nil)
-                [strongSelf selectMode:(OGOnegramCoreMode)[TGOnegramCoreModes()[index] integerValue]];
+                [strongSelf selectMode:value ? [OGOnegramCore sharedCore].preferredMode : OGOnegramCoreModeNone];
         };
-        _modeInfoItem = [[TGCommentCollectionItem alloc] initWithText:@""];
-        _modeSection = [[TGCollectionMenuSection alloc] initWithItems:@[[[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.ModeHeader")], _modeItem, _modeInfoItem]];
+        _enabledInfoItem = [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"OnegramCore.OffInfo")];
+        _enabledSection = [[TGCollectionMenuSection alloc] initWithItems:@[]];
+
+        _methodItems = @[
+            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeWebSocket title:TGLocalized(@"OnegramCore.Mode.WebSocket") subtitle:TGLocalized(@"OnegramCore.Mode.WebSocketSubtitle")],
+            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeDanteWARP title:TGLocalized(@"OnegramCore.Mode.WARP") subtitle:TGLocalized(@"OnegramCore.Mode.WARPSubtitle")],
+            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeDantePower title:TGLocalized(@"OnegramCore.Mode.Power") subtitle:TGLocalized(@"OnegramCore.Mode.PowerSubtitle")]
+        ];
+        for (TGOnegramCoreMethodCollectionItem *item in _methodItems)
+        {
+            item.pressed = ^(OGOnegramCoreMode mode)
+            {
+                __strong TGOnegramCoreController *strongSelf = weakSelf;
+                if (strongSelf != nil && mode != [OGOnegramCore sharedCore].mode)
+                    [strongSelf selectMode:mode];
+            };
+        }
+        _methodInfoItem = [[TGCommentCollectionItem alloc] initWithText:@""];
+        NSMutableArray *methodSectionItems = [[NSMutableArray alloc] initWithObjects:[[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.ModeHeader")], nil];
+        [methodSectionItems addObjectsFromArray:_methodItems];
+        [methodSectionItems addObject:_methodInfoItem];
+        _methodSection = [[TGCollectionMenuSection alloc] initWithItems:methodSectionItems];
 
         _statusItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.Status") variant:@"" action:NULL];
         _statusItem.hideArrow = true;
@@ -288,9 +266,9 @@ static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
         _powerServersItem.deselectAutomatically = true;
         _powerSection = [[TGCollectionMenuSection alloc] initWithItems:@[_powerServersItem]];
 
-        UIEdgeInsets insets = _modeSection.insets;
+        UIEdgeInsets insets = _enabledSection.insets;
         insets.top = 32.0f;
-        _modeSection.insets = insets;
+        _enabledSection.insets = insets;
 
         NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
         [center addObserver:self selector:@selector(proxyChanged:) name:OGOnegramCoreDidChangeNotification object:nil];
@@ -321,27 +299,19 @@ static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
 {
     OGOnegramCore *proxy = [OGOnegramCore sharedCore];
     OGOnegramCoreMode mode = proxy.mode;
+    bool enabled = mode != OGOnegramCoreModeNone;
 
-    _modeItem.selectedIndex = [TGOnegramCoreModes() indexOfObject:@(mode)];
-    switch (mode)
-    {
-        case OGOnegramCoreModeWebSocket:
-            _modeInfoItem.text = TGLocalized(@"OnegramCore.WebSocketInfo");
-            break;
-        case OGOnegramCoreModeDanteWARP:
-            _modeInfoItem.text = TGLocalized(@"OnegramCore.WarpInfo");
-            break;
-        case OGOnegramCoreModeDantePower:
-            _modeInfoItem.text = TGLocalized(@"OnegramCore.PowerInfo");
-            break;
-        default:
-            _modeInfoItem.text = TGLocalized(@"OnegramCore.OffInfo");
-            break;
-    }
+    [_enabledItem setIsOn:enabled animated:false];
+    [_enabledSection replaceItems:enabled ? @[_enabledItem] : @[_enabledItem, _enabledInfoItem]];
 
-    NSMutableArray *sections = [[NSMutableArray alloc] initWithObjects:_modeSection, nil];
-    if (mode != OGOnegramCoreModeNone)
+    NSMutableArray *sections = [[NSMutableArray alloc] initWithObjects:_enabledSection, nil];
+    if (enabled)
     {
+        for (TGOnegramCoreMethodCollectionItem *item in _methodItems)
+            item.isChecked = item.mode == mode;
+        _methodInfoItem.text = TGOnegramCoreModeInfo(mode);
+        [sections addObject:_methodSection];
+
         _statusItem.variant = [TGOnegramCoreController statusText];
         NSMutableArray *statusItems = [[NSMutableArray alloc] initWithObjects:_statusItem, nil];
         if (TGOnegramCoreModeUsesTunnel(mode))
@@ -349,7 +319,7 @@ static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
         NSError *error = proxy.lastError;
         if (proxy.state == OGOnegramCoreStateFailed && error.localizedDescription.length != 0)
         {
-            _errorItem.text = error.localizedDescription;
+            _errorItem.text = mode == OGOnegramCoreModeWebSocket ? [[NSString alloc] initWithFormat:TGLocalized(@"OnegramCore.WebSocketFallback"), error.localizedDescription] : error.localizedDescription;
             [statusItems addObject:_errorItem];
         }
         [_statusSection replaceItems:statusItems];
@@ -418,15 +388,13 @@ static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
     OGOnegramCoreMode mode = proxy.mode;
     if (mode == OGOnegramCoreModeNone)
         return TGLocalized(@"OnegramCore.Off");
-    if (!TGOnegramCoreModeUsesTunnel(mode))
-        return TGLocalized(@"OnegramCore.On");
 
     switch (proxy.state)
     {
         case OGOnegramCoreStateConnected:
             return TGLocalized(@"OnegramCore.Connected");
         case OGOnegramCoreStateFailed:
-            return TGLocalized(@"OnegramCore.Failed");
+            return mode == OGOnegramCoreModeWebSocket ? TGLocalized(@"OnegramCore.WebSocketUnavailable") : TGLocalized(@"OnegramCore.Failed");
         default:
             return TGLocalized(@"OnegramCore.Connecting");
     }
@@ -475,6 +443,27 @@ static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
     UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
     return image;
+}
+
++ (UIButton *)lockButtonWithTarget:(id)target action:(SEL)action
+{
+    UIButton *button = [[UIButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 44.0f, 44.0f)];
+    button.adjustsImageWhenHighlighted = false;
+    [button addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
+    [self updateLockButton:button];
+    return button;
+}
+
++ (void)updateLockButton:(UIButton *)button
+{
+    if (button == nil)
+        return;
+
+    bool enabled = [OGOnegramCore sharedCore].mode != OGOnegramCoreModeNone;
+    [button setImage:[self lockImageEnabled:enabled highlighted:false] forState:UIControlStateNormal];
+    [button setImage:[self lockImageEnabled:enabled highlighted:true] forState:UIControlStateHighlighted];
+    button.accessibilityLabel = @"Onegram Core";
+    button.accessibilityValue = [self statusText];
 }
 
 @end

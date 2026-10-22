@@ -1,0 +1,12 @@
+__Block_*
+__NSConcrete*
+_objc_*
+_dispatch_*
+__dispatch_*
+_libdispatch_*
+__libdispatch_*
+_CFRunLoopPerformBlock
+_CT*
+_kCT*
+_arc4random_buf
+_arc4random_uniform

@@ -463,7 +463,9 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                 arc4random_buf(&messageRandomId, 8);
                 sendScreenshotNotification.random_id = messageRandomId;
                 
-                sendScreenshotNotification.reply_to_msg_id = action.arg0;
+                TLInputReplyTo$inputReplyToMessage *replyTo = [[TLInputReplyTo$inputReplyToMessage alloc] init];
+                replyTo.reply_to_msg_id = action.arg0;
+                sendScreenshotNotification.reply_to = replyTo;
                 
                 sendScreenshotNotification.peer = [TGTelegraphInstance createInputPeerForConversation:action.subject accessHash:0];
                 

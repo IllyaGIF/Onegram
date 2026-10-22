@@ -1,17 +1,7 @@
 #import "OGDanteSupport.h"
 #import "PowerConfig.h"
 
-typedef NS_ENUM(NSInteger, PWNetworkKind) {
-    PWNetworkOpen = 0,     
-    PWNetworkRestricted,   
-    PWNetworkOffline       
-};
-
 @interface PowerSelector : NSObject
-
-+ (instancetype)sharedSelector;
-
-- (PWNetworkKind)fingerprintNetwork;
 
 - (NSString *)networkKey;
 

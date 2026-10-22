@@ -29,4 +29,6 @@
 
 - (bool)supportsLiveLocations;
 
++ (void)reloadForAccountSwitch;
+
 @end

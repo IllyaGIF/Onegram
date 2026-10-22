@@ -19,6 +19,31 @@
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
 
 #import "TGTelegramNetworking.h"
+#import "TGDownloadMessagesSignal.h"
+#import "TGTelegraph.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGRemoteImageView.h"
+#import "../submodules/LegacyComponents/LegacyComponents/SGraphObjectNode.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramRuntime/OGRuntime.h"
+#import "../submodules/LegacyComponents/SSignalKitCompat/SMulticastSignalManager.h"
+
+static SSignal *TGThumbnailMessageSignal(TGDownloadMessage *request)
+{
+    static NSArray *queues = nil;
+    static SMulticastSignalManager *manager = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queues = @[[[SSignalQueue alloc] init], [[SSignalQueue alloc] init]];
+        manager = [[SMulticastSignalManager alloc] init];
+    });
+    NSString *key = [NSString stringWithFormat:@"%lld:%d", request.peerId, request.messageId];
+    NSUInteger lane = OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice() ? 0 : [key hash] % queues.count;
+    return [manager multicastedSignalForKey:key producer:^SSignal *
+    {
+        return [queues[lane] enqueue:[TGDownloadMessagesSignal downloadMessages:@[request]]];
+    }];
+}
 
 static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *imageUri, TGMediaOriginInfo *originInfo, int *datacenterId, int64_t *identifier)
 {
@@ -69,6 +94,8 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
     SThreadPoolTask *_task;
     NSString *_uri;
     NSString *_targetFilePath;
+    SMetaDisposable *_thumbnailMetadataDisposable;
+    bool _thumbnailOnly;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -80,6 +107,89 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
 @end
 
 @implementation TGMediaPreviewTask
+
+- (void)executeThumbnailWithTargetFilePath:(NSString *)targetFilePath uri:(NSString *)uri options:(NSDictionary *)options completion:(void (^)(bool))completion workerTask:(TGWorkerTask *)workerTask
+{
+    if (_idCancelled)
+        return;
+    NSDictionary *context = options[@"thumbnailContext"];
+    if (uri.length == 0)
+    {
+        int64_t peerId = [context[@"cid"] longLongValue];
+        int32_t messageId = [context[@"mid"] intValue];
+        int64_t mediaId = [context[@"id"] longLongValue];
+        if (peerId == 0 || messageId == 0 || mediaId == 0)
+        {
+            if (completion != nil)
+                completion(false);
+            return;
+        }
+        TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
+        TGDownloadMessage *request = [[TGDownloadMessage alloc] initWithPeerId:peerId accessHash:conversation.accessHash messageId:messageId];
+        _workerTask = workerTask;
+        _thumbnailMetadataDisposable = [[SMetaDisposable alloc] init];
+        __weak TGMediaPreviewTask *weakSelf = self;
+        [_thumbnailMetadataDisposable setDisposable:[[[TGThumbnailMessageSignal(request) take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *messages)
+        {
+            TGMediaPreviewTask *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf->_idCancelled)
+                return;
+            NSString *thumbnailUri = nil;
+            TGMediaOriginInfo *origin = nil;
+            for (TGMessage *message in messages)
+            {
+                if (message.mid != messageId)
+                    continue;
+                for (TGMediaAttachment *attachment in message.mediaAttachments)
+                {
+                    TGImageInfo *info = nil;
+                    if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]] && ((TGDocumentMediaAttachment *)attachment).documentId == mediaId)
+                    {
+                        info = ((TGDocumentMediaAttachment *)attachment).thumbnailInfo;
+                        origin = ((TGDocumentMediaAttachment *)attachment).originInfo;
+                    }
+                    else if ([attachment isKindOfClass:[TGVideoMediaAttachment class]] && ((TGVideoMediaAttachment *)attachment).videoId == mediaId)
+                    {
+                        info = ((TGVideoMediaAttachment *)attachment).thumbnailInfo;
+                        origin = ((TGVideoMediaAttachment *)attachment).originInfo;
+                    }
+                    else if ([attachment isKindOfClass:[TGImageMediaAttachment class]] && ((TGImageMediaAttachment *)attachment).imageId == mediaId)
+                    {
+                        info = ((TGImageMediaAttachment *)attachment).imageInfo;
+                        origin = ((TGImageMediaAttachment *)attachment).originInfo;
+                    }
+                    thumbnailUri = [info imageUrlForPreviewWithSize:NULL];
+                    if (thumbnailUri.length != 0)
+                        break;
+                }
+                if (thumbnailUri.length != 0)
+                    break;
+            }
+            if (thumbnailUri.length == 0)
+            {
+                if (completion != nil)
+                    completion(false);
+                return;
+            }
+            NSMutableDictionary *updatedOptions = [options mutableCopy];
+            if (origin != nil)
+                updatedOptions[@"originInfo"] = origin;
+            [strongSelf executeThumbnailWithTargetFilePath:targetFilePath uri:thumbnailUri options:updatedOptions completion:completion workerTask:workerTask];
+        }]];
+        return;
+    }
+    NSArray *parts = [uri componentsSeparatedByString:@":"];
+    if (([uri hasPrefix:@"documentthumb:"] || [uri hasPrefix:@"photo:"]) && (parts.count < 7 || [parts[5] length] == 0 || [parts[4] longLongValue] > 512 * 1024))
+    {
+        if (completion != nil)
+            completion(false);
+        return;
+    }
+    NSMutableDictionary *thumbnailOptions = options == nil ? [[NSMutableDictionary alloc] init] : [options mutableCopy];
+    thumbnailOptions[@"thumbnailOnly"] = @true;
+    _thumbnailOnly = true;
+    [self executeWithTargetFilePath:targetFilePath uri:uri options:thumbnailOptions completion:completion workerTask:workerTask];
+}
 
 - (void)executeWithWorkerTask:(TGWorkerTask *)workerTask workerPool:(TGWorkerPool *)workerPool
 {
@@ -115,7 +225,7 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
     if (options == nil)
         options = @{};
     
-    if ([uri hasPrefix:@"http://"] || [uri hasPrefix:@"https://"])
+    if (([uri hasPrefix:@"http://"] || [uri hasPrefix:@"https://"]) && ![options[@"thumbnailOnly"] boolValue])
     {
         [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/temporaryDownload/(%@)", [TGStringUtils stringByEscapingForActorURL:uri]] options:@{@"url": uri, @"path": targetFilePath == nil ? @"" : targetFilePath, @"cache": [[TGMediaStoreContext instance] temporaryFilesCache], @"mediaTypeTag": @(TGNetworkMediaTypeTagImage)} flags:0 watcher:self];
     }
@@ -215,6 +325,7 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
 
 - (void)dealloc
 {
+    [_thumbnailMetadataDisposable dispose];
     if (_actionHandle != nil)
     {
         [_actionHandle reset];
@@ -225,6 +336,7 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
 - (void)cancel
 {
     _idCancelled = true;
+    [_thumbnailMetadataDisposable dispose];
     
     [_workerTask cancel];
     [_workerPool removeTask:_workerTask];
@@ -237,6 +349,27 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
 
 - (void)actorCompleted:(int)status path:(NSString *)__unused path result:(id)result
 {
+    if (_idCancelled)
+        return;
+    if (_thumbnailOnly && status == ASStatusSuccess && _targetFilePath.length != 0)
+    {
+        dispatch_async([TGCache diskCacheQueue], ^
+        {
+            if (_idCancelled)
+                return;
+            NSData *data = [_uri hasPrefix:@"file://"] ? [NSData dataWithContentsOfFile:[_uri substringFromIndex:7]] : [[TGRemoteImageView sharedCache] cachedDataForUrl:_uri];
+            if (data.length == 0 && [result isKindOfClass:[SGraphObjectNode class]])
+            {
+                id image = ((SGraphObjectNode *)result).object;
+                if ([image isKindOfClass:[UIImage class]])
+                    data = UIImageJPEGRepresentation(image, 0.85f);
+            }
+            bool success = data.length != 0 && data.length <= 512 * 1024 && [data writeToFile:_targetFilePath atomically:true];
+            if (!_idCancelled && _completion != nil)
+                _completion(success);
+        });
+        return;
+    }
     if (_completion != nil)
         _completion(status == ASStatusSuccess);
     if (_completionWithData != nil)

@@ -20,7 +20,7 @@
 
 - (int)layerVersion
 {
-    return 67;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -50,7 +50,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xb2e4d7d;
+    return (int32_t)0xcd984aa5;
 }
 
 - (int32_t)TLconstructorName
@@ -61,12 +61,26 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPClangpack_getDifference$langpack_getDifference *object = [[TLRPClangpack_getDifference$langpack_getDifference alloc] init];
+    object.lang_pack = metaObject->getString((int32_t)0x7579bab3);
+    object.lang_code = metaObject->getString((int32_t)0x2ccfcaf3);
     object.from_version = metaObject->getInt32((int32_t)0x75ff6a2f);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeString;
+        value.nativeObject = self.lang_pack;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7579bab3, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeString;
+        value.nativeObject = self.lang_code;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x2ccfcaf3, value));
+    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypePrimitiveInt32;

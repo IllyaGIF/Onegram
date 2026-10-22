@@ -127,21 +127,9 @@
     }
 }
 
-- (void)messageComposeViewController:(id)controller didFinishWithResult:(NSInteger)result
+- (void)messageComposeViewController:(id)__unused controller didFinishWithResult:(NSInteger)__unused result
 {
     [self dismissViewControllerAnimated:true completion:nil];
-    
-    if (result == OGPlatformMessageComposeResultSent)
-    {
-        @try
-        {
-            static int inviteAction = 0;
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/auth/sendinvites/(%d)", inviteAction] options:[[NSDictionary alloc] initWithObjectsAndKeys:OGPlatformTextMessageComposerBody(controller), @"text", OGPlatformTextMessageComposerRecipients(controller), @"phones", nil] watcher:TGTelegraphInstance];
-        }
-        @catch (NSException *exception)
-        {
-        }
-    }
 }
 
 @end

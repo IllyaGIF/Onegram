@@ -115,6 +115,21 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
     return singleton;
 }
 
++ (bool)callUsesLowComplexityAudio
+{
+    return [NSProcessInfo processInfo].processorCount <= 1;
+}
+
++ (Float64)callPreferredSampleRate
+{
+    return [self callUsesLowComplexityAudio] ? 16000.0 : 48000.0;
+}
+
++ (NSTimeInterval)callPreferredIOBufferDuration
+{
+    return [self callUsesLowComplexityAudio] ? 0.02 : 0.005;
+}
+
 - (instancetype)init
 {
     self = [super init];
@@ -282,12 +297,12 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
                         error = nil;
                         if (type == TGAudioSessionTypeCall)
                         {
-                            Float64 preferredRate = 48000.0;
+                            Float64 preferredRate = [TGAudioSessionManager callPreferredSampleRate];
                             OSStatus rateStatus = AudioSessionSetProperty(kAudioSessionProperty_PreferredHardwareSampleRate, sizeof(preferredRate), &preferredRate);
                             if (rateStatus != noErr)
                                 TGLog(@"LAT audioSession preferredRate error %d", (int)rateStatus);
 
-                            [session setPreferredIOBufferDuration:0.010 error:&error];
+                            [session setPreferredIOBufferDuration:[TGAudioSessionManager callPreferredIOBufferDuration] error:&error];
                             if (error != nil)
                                 TGLog(@"LAT audioSession preferredBuffer error %@", error);
                             error = nil;
@@ -329,12 +344,12 @@ static void TGLegacyAudioSessionRouteListener(void *clientData, AudioSessionProp
 
                         if (type == TGAudioSessionTypeCall)
                         {
-                            Float64 preferredRate = 48000.0;
+                            Float64 preferredRate = [TGAudioSessionManager callPreferredSampleRate];
                             OSStatus rateStatus = AudioSessionSetProperty(kAudioSessionProperty_PreferredHardwareSampleRate, sizeof(preferredRate), &preferredRate);
                             if (rateStatus != noErr)
                                 TGLog(@"LAT audioSession preferredRate error %d", (int)rateStatus);
 
-                            Float32 preferredDuration = 0.010f;
+                            Float32 preferredDuration = (Float32)[TGAudioSessionManager callPreferredIOBufferDuration];
                             OSStatus preferredStatus = AudioSessionSetProperty(kAudioSessionProperty_PreferredHardwareIOBufferDuration, sizeof(preferredDuration), &preferredDuration);
                             if (preferredStatus != noErr)
                                 TGLog(@"LAT audioSession preferredBuffer legacyError %d", (int)preferredStatus);

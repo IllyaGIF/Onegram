@@ -155,8 +155,9 @@
         [TGDatabaseInstance() setCustomProperty:@"checkedLocalization" value:[code dataUsingEncoding:NSUTF8StringEncoding]];
         
         [[[TGTelegramNetworking instance] context] performBatchUpdates:^{
-            TLRPClangpack_getDifference$langpack_getDifference *getLangPack = [[TLRPClangpack_getDifference$langpack_getDifference alloc] init];
-            getLangPack.from_version = 0;
+            TLRPClangpack_getLangPack$langpack_getLangPack *getLangPack = [[TLRPClangpack_getLangPack$langpack_getLangPack alloc] init];
+            getLangPack.lang_pack = @"";
+            getLangPack.lang_code = code;
             [disposable setDisposable:[[[TGTelegramNetworking instance] requestSignal:getLangPack] startWithNext:^(TLLangPackDifference *next) {
                 NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
                 for (TLLangPackString *string in next.strings) {
@@ -204,8 +205,13 @@
 }
 
 + (SSignal *)pollLocalization {
-    TLRPClangpack_getDifference$langpack_getDifference *getDifference = [[TLRPClangpack_getDifference$langpack_getDifference alloc] init];
     TGLocalization *current = currentNativeLocalization();
+    if (current.code.length == 0)
+        return [SSignal complete];
+    
+    TLRPClangpack_getDifference$langpack_getDifference *getDifference = [[TLRPClangpack_getDifference$langpack_getDifference alloc] init];
+    getDifference.lang_pack = @"";
+    getDifference.lang_code = current.code;
     getDifference.from_version = current.version;
     return [[[TGTelegramNetworking instance] requestSignal:getDifference] onNext:^(TLLangPackDifference *next) {
         NSMutableDictionary *dict = [[NSMutableDictionary alloc] init];
@@ -238,7 +244,7 @@
         }
         if (dict.count == 0 && next.version == current.version)
             return;
-        TGLocalization *currentLocalization = [current mergedWith:dict version:next.version];
+        TGLocalization *currentLocalization = dict.count == 0 ? [current withUpdatedVersion:next.version] : [current mergedWith:dict version:next.version];
         TGDispatchOnMainThread(^{
             setCurrentNativeLocalization(currentLocalization, false);
             [TGAppDelegateInstance resetLocalization];
@@ -274,7 +280,18 @@
             dict[string.key] = ((TLLangPackString$langPackString *)string).value;
         }
     }
-    TGLocalization *localization = replace ? [[TGLocalization alloc] initWithVersion:next.version code:next.lang_code dict:dict isActive:true] : [currentNativeLocalization() mergedWith:dict version:next.version];
+    TGLocalization *current = currentNativeLocalization();
+    TGLocalization *localization = nil;
+    if (replace)
+        localization = [[TGLocalization alloc] initWithVersion:next.version code:next.lang_code dict:dict isActive:true];
+    else if (dict.count == 0)
+    {
+        if (next.version == current.version)
+            return;
+        localization = [current withUpdatedVersion:next.version];
+    }
+    else
+        localization = [current mergedWith:dict version:next.version];
     TGDispatchOnMainThread(^{
         setCurrentNativeLocalization(localization, false);
         [TGAppDelegateInstance resetLocalization];

@@ -7,6 +7,9 @@
 - (void)removeObjectForKey:(NSString *)key;
 
 - (void)synchronize;
+- (void)suspendForAccountSwitch;
+- (void)reloadAfterAccountSwitch;
+- (void)resumeAfterAccountSwitch;
 
 + (instancetype)standard;
 

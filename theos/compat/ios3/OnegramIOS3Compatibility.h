@@ -369,6 +369,7 @@ static inline UIOffset UIOffsetMake(CGFloat horizontal, CGFloat vertical)
 @property double threadPriority;
 @end
 
+#define NSBlockOperation OnegramIOS3BlockOperation
 @interface NSBlockOperation : NSOperation
 {
     NSMutableArray *_onegramExecutionBlocks;
@@ -383,6 +384,7 @@ static inline UIOffset UIOffsetMake(CGFloat horizontal, CGFloat vertical)
 + (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(void (^)(NSURLResponse *response, NSData *data, NSError *connectionError))handler;
 @end
 
+#define NSUUID OnegramIOS3UUID
 @interface NSUUID : NSObject <NSCopying>
 {
     NSString *_onegramUUIDString;
@@ -700,6 +702,9 @@ enum
 - (void)endAppearanceTransition;
 @end
 
+#define UIPopoverController OnegramIOS3PopoverController
+#define UIPopoverControllerDelegate OnegramIOS3PopoverControllerDelegate
+#define UIPopoverBackgroundView OnegramIOS3PopoverBackgroundView
 @protocol UIPopoverControllerDelegate <NSObject>
 @optional
 - (void)popoverControllerDidDismissPopover:(id)popoverController;
@@ -796,7 +801,6 @@ typedef UITextAlignment NSTextAlignment;
 {
 @protected
     NSMutableString *_onegramString;
-    NSMutableArray *_onegramAttributes;
 }
 - (instancetype)initWithString:(NSString *)string;
 - (instancetype)initWithString:(NSString *)string attributes:(NSDictionary *)attributes;
@@ -830,6 +834,7 @@ typedef UITextAlignment NSTextAlignment;
 #ifdef __cplusplus
 extern "C" {
 #endif
+extern void (*OnegramIOS3OffMainGraphicsHandler)(const void *caller);
 void UIGraphicsBeginImageContextWithOptions(CGSize size, BOOL opaque, CGFloat scale);
 #ifdef __cplusplus
 }
@@ -890,8 +895,16 @@ typedef enum
 - (void)enumerateObjectsUsingBlock:(void (^)(id obj, BOOL *stop))block;
 @end
 
+typedef NSUInteger NSSortOptions;
+enum
+{
+    NSSortConcurrent = (1UL << 0),
+    NSSortStable = (1UL << 4)
+};
+
 @interface NSMutableArray (OnegramIOS3SortingCompatibility)
 - (void)sortUsingComparator:(NSComparisonResult (^)(id obj1, id obj2))cmptr;
+- (void)sortWithOptions:(NSSortOptions)opts usingComparator:(NSComparisonResult (^)(id obj1, id obj2))cmptr;
 @end
 
 @interface NSDictionary (OnegramIOS3Subscripting)
@@ -918,6 +931,7 @@ typedef enum
 @end
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
+#define NSJSONSerialization OnegramIOS3JSONSerialization
 @interface NSJSONSerialization : NSObject
 + (id)JSONObjectWithData:(NSData *)data options:(NSJSONReadingOptions)opt error:(NSError **)error;
 + (NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error;

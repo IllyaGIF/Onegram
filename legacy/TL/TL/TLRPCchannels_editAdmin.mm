@@ -5,7 +5,6 @@
 
 #import "TLInputChannel.h"
 #import "TLInputUser.h"
-#import "TLChannelAdminRights.h"
 #import "TLUpdates.h"
 
 @implementation TLRPCchannels_editAdmin
@@ -23,7 +22,7 @@
 
 - (int)layerVersion
 {
-    return 68;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -53,7 +52,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x20b88214;
+    return (int32_t)0x9a98ad68;
 }
 
 - (int32_t)TLconstructorName
@@ -64,14 +63,22 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCchannels_editAdmin$channels_editAdmin *object = [[TLRPCchannels_editAdmin$channels_editAdmin alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.channel = metaObject->getObject((int32_t)0xe11f3d41);
     object.user_id = metaObject->getObject((int32_t)0xafdf4073);
     object.admin_rights = metaObject->getObject((int32_t)0x86c3114f);
+    object.rank = metaObject->getString((int32_t)0x89ff708);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
@@ -89,6 +96,13 @@
         value.type = TLConstructedValueTypeObject;
         value.nativeObject = self.admin_rights;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x86c3114f, value));
+    }
+    if (self.flags & (1 << 0))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeString;
+        value.nativeObject = self.rank;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x89ff708, value));
     }
 }
 

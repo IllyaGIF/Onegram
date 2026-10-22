@@ -21,7 +21,7 @@
 
 - (int)layerVersion
 {
-    return 59;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -69,7 +69,7 @@
     object.limit = metaObject->getInt32((int32_t)0xb8433fca);
     object.max_id = metaObject->getInt32((int32_t)0xe2c00ace);
     object.min_id = metaObject->getInt32((int32_t)0x52b518c0);
-    object.n_hash = metaObject->getInt64((int32_t)0xb6b4f142);
+    object.n_hash = metaObject->getInt64((int32_t)0xc152e470);
     return object;
 }
 
@@ -121,9 +121,10 @@
         TLConstructedValue value;
         value.type = TLConstructedValueTypePrimitiveInt64;
         value.primitive.int64Value = self.n_hash;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xb6b4f142, value));
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xc152e470, value));
     }
 }
 
 
 @end
+

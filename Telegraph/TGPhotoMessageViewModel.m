@@ -1,3 +1,4 @@
+#import "TGImageInfo+Telegraph.h"
 #import "TGPhotoMessageViewModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -32,7 +33,8 @@
         legacyCacheUrl = [imageMedia.imageInfo imageUrlForSizeLargerThanSize:CGSizeMake(1000.0f, 1000.0f) actualSize:&largestSize];
     }
     
-    NSString *legacyThumbnailCacheUrl = [imageMedia.imageInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL];
+    NSString *legacyThumbnailCacheUrl = [imageMedia.imageInfo imageUrlForPreviewWithSize:NULL];
+    NSString *legacyStrippedCacheUrl = [imageMedia.imageInfo imageUrlForStrippedPreview];
     
     int64_t localImageId = 0;
     if (imageMedia.imageId == 0 && legacyCacheUrl.length != 0)
@@ -40,7 +42,7 @@
         localImageId = murMurHash32(legacyCacheUrl);
     }
     
-    if (legacyCacheUrl != nil && (imageMedia.imageId != 0 || localImageId != 0))
+    if ((imageMedia.imageId != 0 || localImageId != 0))
     {
         previewImageInfo = [[TGImageInfo alloc] init];
         
@@ -78,6 +80,9 @@
         
         if (legacyThumbnailCacheUrl != nil)
             [previewUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailCacheUrl]];
+        
+        if (legacyStrippedCacheUrl != nil && ![legacyStrippedCacheUrl isEqualToString:legacyThumbnailCacheUrl])
+            [previewUri appendFormat:@"&legacy-stripped-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyStrippedCacheUrl]];
         
         if (message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17)
             [previewUri appendString:@"&secret=1"];
@@ -139,7 +144,8 @@
         
         CGSize largestSize = CGSizeZero;
         NSString *legacyCacheUrl = [imageMedia.imageInfo closestImageUrlWithSize:CGSizeMake(1136, 1136) resultingSize:&largestSize pickLargest:true];
-        NSString *legacyThumbnailCacheUrl = [imageMedia.imageInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL];
+        NSString *legacyThumbnailCacheUrl = [imageMedia.imageInfo imageUrlForPreviewWithSize:NULL];
+        NSString *legacyStrippedCacheUrl = [imageMedia.imageInfo imageUrlForStrippedPreview];
         
         int64_t localImageId = 0;
         if (imageMedia.imageId == 0 && legacyCacheUrl.length != 0)
@@ -147,7 +153,7 @@
             localImageId = murMurHash32(legacyCacheUrl);
         }
         
-        if (legacyCacheUrl != nil && (imageMedia.imageId != 0 || localImageId != 0))
+        if ((imageMedia.imageId != 0 || localImageId != 0))
         {
             previewImageInfo = [[TGImageInfo alloc] init];
             
@@ -175,7 +181,7 @@
             }
             else
             {
-                [TGImageMessageViewModel calculateImageSizesForImageSize:largestSize thumbnailSize:&thumbnailSize renderSize:&renderSize squareAspect:message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17];
+                [TGImageMessageViewModel calculateImageSizesForImageSize:largestSize boundingWidth:self.mediaBoundingWidth thumbnailSize:&thumbnailSize renderSize:&renderSize squareAspect:message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17 larger:false];
             }
             
             [previewUri appendFormat:@"&width=%d&height=%d&renderWidth=%d&renderHeight=%d", (int)thumbnailSize.width, (int)thumbnailSize.height, (int)renderSize.width, (int)renderSize.height];
@@ -192,6 +198,9 @@
             if (legacyThumbnailCacheUrl != nil)
                 [previewUri appendFormat:@"&legacy-thumbnail-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyThumbnailCacheUrl]];
             
+            if (legacyStrippedCacheUrl != nil && ![legacyStrippedCacheUrl isEqualToString:legacyThumbnailCacheUrl])
+                [previewUri appendFormat:@"&legacy-stripped-cache-url=%@", [TGStringUtils stringByEscapingForURL:legacyStrippedCacheUrl]];
+            
             if (message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17)
                 [previewUri appendString:@"&secret=1"];
             
@@ -204,6 +213,13 @@
         return [self updatedImageUriForInfo:previewImageInfo];
     }
     return nil;
+}
+
+- (CGSize)mediaSourceSize
+{
+    CGSize largestSize = CGSizeZero;
+    [_imageMedia.imageInfo closestImageUrlWithSize:CGSizeMake(1136, 1136) resultingSize:&largestSize pickLargest:true];
+    return largestSize;
 }
 
 - (bool)instantPreviewGesture

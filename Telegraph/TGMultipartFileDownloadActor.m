@@ -68,6 +68,7 @@
     int _decryptedSize;
     
     int _downloadedFileSize;
+    bool _thumbnailOnly;
     
     bool _reportedProgress;
     int _lastReportedProgress;
@@ -193,12 +194,18 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
 
 - (void)execute:(NSDictionary *)options
 {
+    _thumbnailOnly = [options[@"thumbnailOnly"] boolValue];
     _storeFilePaths = [[NSMutableArray alloc] init];
     
     _identifier = [options[@"identifier"] longLongValue];
     _originInfo = options[@"originInfo"];
     _fileLocation = options[@"fileLocation"];
     _size = [options[@"encryptedSize"] intValue];
+    if (_thumbnailOnly && _size > 512 * 1024)
+    {
+        [ActionStageInstance() actionFailed:self.path reason:-1];
+        return;
+    }
     _decryptedSize = [options[@"decryptedSize"] intValue];
     if (options[@"storeFilePath"] != nil)
         [_storeFilePaths addObject:options[@"storeFilePath"]];
@@ -433,7 +440,7 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
         
         int partSize = [self preferredPartSize];
         
-        int maximumActiveParts = _size != 0 ? 4 : 1;
+        int maximumActiveParts = _thumbnailOnly ? 1 : (_size != 0 ? 4 : 1);
         while (activeDownloadingParts < maximumActiveParts)
         {
             if (_explicitDownloadParts.count == 0)
@@ -457,12 +464,19 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                 
                 if (activeDownloadingParts >= maximumActiveParts || (_size != 0 && nextDownloadOffset >= _size))
                     break;
+                if (_thumbnailOnly && nextDownloadOffset >= 512 * 1024)
+                {
+                    [ActionStageInstance() actionFailed:self.path reason:-1];
+                    return;
+                }
                 
                 int partLength = 0;
                 if (_size == 0)
                     partLength = partSize;
                 else
                     partLength = MIN(partSize, _size - nextDownloadOffset);
+                if (_thumbnailOnly)
+                    partLength = MIN(partLength, 512 * 1024 - nextDownloadOffset);
                 
                 TGFilePartRequestInfo *requestInfo = [[TGFilePartRequestInfo alloc] init];
                 requestInfo.offset = nextDownloadOffset;
@@ -909,6 +923,11 @@ static TGMultipartFileDownloadActor *TGMultipartFileDownloadActorResolve(NSStrin
                     hadCommit = true;
                     
                     NSData *dataToWrite = listPartInfo.downloadedData;
+                    if (_thumbnailOnly && dataToWrite.length > (NSUInteger)(512 * 1024 - _downloadedFileSize))
+                    {
+                        [ActionStageInstance() actionFailed:self.path reason:-1];
+                        return;
+                    }
                     
                     if (_encryptionKey != nil && _runningEncryptionIv != nil)
                     {

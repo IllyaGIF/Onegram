@@ -12,4 +12,6 @@
 + (SSignal *)recentStickers;
 + (SSignal *)remoteRecentStickers;
 
++ (void)reloadForAccountSwitch;
+
 @end

@@ -619,6 +619,13 @@ NSString *suffix = @"";
     return result;
 }
 
+- (MTApiEnvironment *)withUpdatedSystemLangCode:(NSString *)systemLangCode {
+    MTApiEnvironment *result = [self copy];
+    result->_systemLangCode = systemLangCode;
+    [result _updateApiInitializationHash];
+    return result;
+}
+
 - (instancetype)copyWithZone:(NSZone *)__unused zone {
     MTApiEnvironment *result = [[MTApiEnvironment alloc] init];
     

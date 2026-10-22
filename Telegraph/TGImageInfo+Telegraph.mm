@@ -71,6 +71,50 @@ NSString *extractFileUrl(id fileLocation)
 
 @implementation TGImageInfo (Telegraph)
 
+- (NSString *)imageUrlForPreviewWithSize:(CGSize *)size
+{
+    NSString *selected = nil;
+    CGSize selectedSize = CGSizeZero;
+    CGFloat bestDistance = CGFLOAT_MAX;
+    NSDictionary *sizes = [self allSizes];
+    for (NSString *uri in sizes)
+    {
+        if ([uri hasPrefix:@"photo:"] || [uri hasPrefix:@"documentthumb:"])
+        {
+            NSArray *parts = [uri componentsSeparatedByString:@":"];
+            if (parts.count < 7 || [parts[5] length] == 0 || [parts[4] longLongValue] > 512 * 1024)
+                continue;
+        }
+        CGSize candidate = [sizes[uri] CGSizeValue];
+        CGFloat side = MAX(candidate.width, candidate.height);
+        if (!(candidate.width > 0.0f && candidate.height > 0.0f && side <= 640.0f) || [self fileSizeForUrl:uri] > 512 * 1024)
+            continue;
+        CGFloat distance = ABS(side - 320.0f);
+        if (distance < bestDistance)
+        {
+            selected = uri;
+            selectedSize = candidate;
+            bestDistance = distance;
+        }
+    }
+    if (size != NULL)
+        *size = selectedSize;
+    return selected;
+}
+
+- (NSString *)imageUrlForStrippedPreview
+{
+    for (NSString *uri in [self allSizes])
+    {
+        if (![uri hasPrefix:@"photo:"])
+            continue;
+        NSArray *parts = [uri componentsSeparatedByString:@":"];
+        if (parts.count >= 7 && [parts[5] isEqualToString:@"i"])
+            return uri;
+    }
+    return nil;
+}
+
 - (id)initWithTelegraphSizesDescription:(NSArray *)sizesDesc
 {
     return [self initWithTelegraphSizesDescription:sizesDesc cachedData:nil];

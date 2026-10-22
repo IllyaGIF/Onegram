@@ -209,6 +209,7 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
     int64_t _imageId;
     TGMediaOriginInfo *_originInfo;
     bool _multipart;
+    bool _thumbnailOnly;
     NSString *_multipartFilePath;
 }
 
@@ -245,6 +246,12 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
 + (NSString *)genericPath
 {
     return @"/img/@";
+}
+
++ (void)reloadForAccountSwitch
+{
+    [urlRewrites() removeAllObjects];
+    [serverAssetData() removeAllObjects];
 }
 
 + (void)addUrlRewrite:(NSString *)currentUrl newUrl:(NSString *)newUrl
@@ -355,6 +362,13 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
 
 - (void)prepare:(NSDictionary *)options
 {
+    _thumbnailOnly = [options[@"thumbnailOnly"] boolValue];
+    if ([options[@"thumbnailOnly"] boolValue])
+    {
+        NSUInteger laneCount = OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice() ? 1 : 2;
+        self.requestQueueName = [NSString stringWithFormat:@"onegramMediaThumbnail-%lu", (unsigned long)([self.path hash] % laneCount)];
+        return;
+    }
     if (TGImageDownloadUsesPeerAvatarPipeline() && [self.path hasPrefix:@"/img/(download:"] && [self.path rangeOfString:@"peerphoto:"].location != NSNotFound)
     {
         NSUInteger lane = [self.path hash] % 4;
@@ -1110,6 +1124,8 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                             expectedSize = [locationParts[4] intValue];
                         if (expectedSize > 0)
                             multiPartOptions[@"encryptedSize"] = @(expectedSize);
+                        if ([options[@"thumbnailOnly"] boolValue])
+                            multiPartOptions[@"thumbnailOnly"] = @true;
                         if (_originInfo != nil)
                             multiPartOptions[@"originInfo"] = _originInfo;
                         
@@ -1158,6 +1174,8 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                             
                             if (options[@"originInfo"] != nil)
                                 multiPartOptions[@"originInfo"] = options[@"originInfo"];
+                            if (_thumbnailOnly)
+                                multiPartOptions[@"thumbnailOnly"] = @true;
                             int expectedSize = [userProperties[@"imageInfo"] fileSizeForUrl:trimmedUrl];
                             if (expectedSize > 0)
                                 multiPartOptions[@"encryptedSize"] = @(expectedSize);
@@ -1170,6 +1188,8 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                         NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
                         options[@"mediaTypeTag"] = @(TGNetworkMediaTypeTagImage);
                         options[@"url"] = url;
+                        if (_thumbnailOnly)
+                            options[@"thumbnailOnly"] = @true;
                         if (_originInfo != nil)
                             options[@"originInfo"] = _originInfo;
                         

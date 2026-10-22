@@ -107,6 +107,7 @@ void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length);
 NSArray *TGGetLogFilePaths(int count);
 NSArray *TGGetArchivedLogFilePaths();
 NSString *TGSaveCurrentLogLines(int lineCount);
+NSString *TGSaveCurrentLogLinesWithError(int lineCount, NSError **error);
 NSString *TGArchiveCrashLogText(NSString *text, NSDate *date);
 NSArray *TGGetPackedLogs();
 

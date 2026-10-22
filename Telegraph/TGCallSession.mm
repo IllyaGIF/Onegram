@@ -150,23 +150,40 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     
     
     NSMutableArray *connections = [[NSMutableArray alloc] init];
-    for (TGCallWebrtcConnectionDescription *connection in state.connection.webrtcConnections) {
-        NSString *ip = connection.ipv4.length != 0 ? connection.ipv4 : connection.ipv6;
-        if (ip.length == 0 || connection.port == 0)
+    NSMutableArray *reflectors = [[NSMutableArray alloc] init];
+    if (state.connection.defaultConnection != nil)
+        [reflectors addObject:state.connection.defaultConnection];
+    [reflectors addObjectsFromArray:state.connection.alternativeConnections ?: @[]];
+    NSMutableSet *identifierSet = [[NSMutableSet alloc] init];
+    for (TGCallConnectionDescription *connection in reflectors)
+        [identifierSet addObject:@(connection.identifier)];
+    NSArray *identifiers = [[identifierSet allObjects] sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableDictionary *identifierMapping = [[NSMutableDictionary alloc] init];
+    for (NSUInteger index = 0; index < identifiers.count && index < 255; index++)
+        identifierMapping[identifiers[index]] = @(index + 1);
+    for (TGCallConnectionDescription *connection in reflectors) {
+        NSNumber *mappedId = identifierMapping[@(connection.identifier)];
+        if (mappedId == nil || connection.port <= 0 || connection.port > 65535 || connection.peerTag.length < 16)
             continue;
-        
-        id webRtcConnection = [[connectionClass alloc] initWithReflectorId:(uint8_t)(connection.identifier & 0xff)
-                                                                   hasStun:connection.stun
-                                                                   hasTurn:connection.turn
-                                                                    hasTcp:false
-                                                                        ip:ip
-                                                                      port:connection.port
-                                                                  username:connection.username ?: @""
-                                                                  password:connection.password ?: @""];
-        if (webRtcConnection != nil)
-            [connections addObject:webRtcConnection];
+        const uint8_t *tag = static_cast<const uint8_t *>(connection.peerTag.bytes);
+        NSMutableString *password = [[NSMutableString alloc] initWithCapacity:32];
+        for (NSUInteger index = 0; index < 16; index++)
+            [password appendFormat:@"%02x", tag[index]];
+        for (NSString *ip in @[connection.ipv4 ?: @"", connection.ipv6 ?: @""]) {
+            if (ip.length == 0) continue;
+            id endpoint = [[connectionClass alloc] initWithReflectorId:[mappedId unsignedCharValue] hasStun:false hasTurn:true hasTcp:connection.isTcp ip:ip port:connection.port username:@"reflector" password:password];
+            if (endpoint != nil) [connections addObject:endpoint];
+        }
     }
-    
+    for (TGCallWebrtcConnectionDescription *connection in state.connection.webrtcConnections) {
+        if (connection.port <= 0 || connection.port > 65535) continue;
+        for (NSString *ip in @[connection.ipv4 ?: @"", connection.ipv6 ?: @""]) {
+            if (ip.length == 0) continue;
+            id endpoint = [[connectionClass alloc] initWithReflectorId:0 hasStun:connection.stun hasTurn:connection.turn hasTcp:false ip:ip port:connection.port username:connection.username ?: @"" password:connection.password ?: @""];
+            if (endpoint != nil) [connections addObject:endpoint];
+        }
+    }
+
     if (connections.count == 0) {
         return false;
     }
@@ -787,7 +804,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         state.connection.libraryVersions.count != 0;
         
         bool useWebRtc =
-        hasWebRtc && hasTgCallsProtocol;
+        (hasWebRtc || hasLegacyRelay) && hasTgCallsProtocol;
         
         
         
@@ -933,7 +950,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                                                    (uint16_t)connection.port,
                                                    address,
                                                    addressv6,
-                                                   tgvoip::Endpoint::TYPE_UDP_RELAY,
+                                                   connection.isTcp ? tgvoip::Endpoint::TYPE_TCP_RELAY : tgvoip::Endpoint::TYPE_UDP_RELAY,
                                                    peerTag
                                                    );
                          
@@ -1000,7 +1017,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                                                           (uint16_t)connection.port,
                                                           address,
                                                           addressv6,
-                                                          tgvoip::Endpoint::TYPE_UDP_RELAY,
+                                                          connection.isTcp ? tgvoip::Endpoint::TYPE_TCP_RELAY : tgvoip::Endpoint::TYPE_UDP_RELAY,
                                                           peerTag
                                                           )
                                          );
@@ -1568,11 +1585,11 @@ static id<SDisposable> audioSession;
          if (iosMajorVersion() >= 6)
          {
              AVAudioSession *session = [AVAudioSession sharedInstance];
-             [session setPreferredIOBufferDuration:0.005 error:NULL];
+             [session setPreferredIOBufferDuration:[TGAudioSessionManager callPreferredIOBufferDuration] error:NULL];
          }
          else
          {
-             Float32 duration = 0.005f;
+             Float32 duration = (Float32)[TGAudioSessionManager callPreferredIOBufferDuration];
              AudioSessionSetProperty(kAudioSessionProperty_PreferredHardwareIOBufferDuration, sizeof(duration), &duration);
          }
          

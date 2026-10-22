@@ -43,6 +43,7 @@ typedef void (*TGModernDrawingFunction)(CGContextRef context, TGModernDrawingOpe
 
 - (bool)isEqualToRecording:(TGModernDrawingRecording *)other;
 - (void)drawInContext:(CGContextRef)context;
+- (bool)drawInContext:(CGContextRef)context shouldContinue:(bool (^)(void))shouldContinue;
 
 @end
 

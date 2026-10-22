@@ -1,5 +1,7 @@
 #include "TGDateUtils.h"
 #include <time.h>
+#include <pthread.h>
+#include <libkern/OSAtomic.h>
 
 #import "LegacyComponentsInternal.h"
 #import "TGStringUtils.h"
@@ -29,7 +31,9 @@ static bool value_monthFirst = false;
 static bool isArabic = false;
 static bool isKorean = false;
 
-static bool TGDateUtilsInitialized = false;
+static pthread_mutex_t TGDateUtilsMutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile int32_t TGDateUtilsInitialized = 0;
+
 static void initializeTGDateUtils()
 {
     NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
@@ -119,30 +123,42 @@ static void initializeTGDateUtils()
     value_weekdayNamesFull[6] = TGLocalized(@"Weekday.Sunday");
     
     value_dialogTimeFormat = [[TGLocalized(@"Date.DialogDateFormat") stringByReplacingOccurrencesOfString:@"{month}" withString:@"%1$@"] stringByReplacingOccurrencesOfString:@"{day}" withString:@"%2$@"];
-    
-    TGDateUtilsInitialized = true;
+}
+
+static void TGDateUtilsEnsureInitialized()
+{
+    if (TGDateUtilsInitialized != 0)
+    {
+        OSMemoryBarrier();
+        return;
+    }
+    pthread_mutex_lock(&TGDateUtilsMutex);
+    if (TGDateUtilsInitialized == 0)
+    {
+        initializeTGDateUtils();
+        OSMemoryBarrier();
+        TGDateUtilsInitialized = 1;
+    }
+    pthread_mutex_unlock(&TGDateUtilsMutex);
 }
 
 static inline bool dateHas12hFormat()
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     return value_dateHas12hFormat;
 }
 
 bool TGUse12hDateFormat()
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     return value_dateHas12hFormat;
 }
 
 static inline NSString *weekdayNameShort(int number)
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     if (number < 0)
         number = 0;
@@ -159,8 +175,7 @@ static inline NSString *weekdayNameShort(int number)
 
 static inline NSString *weekdayNameFull(int number)
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     if (number < 0)
         number = 0;
@@ -182,8 +197,7 @@ NSString *TGWeekdayNameFull(int number)
 
 static inline NSString *monthNameGenFull(int number)
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     if (number < 0)
         number = 0;
@@ -195,8 +209,7 @@ static inline NSString *monthNameGenFull(int number)
 
 static inline NSString *monthNameGenShort(int number)
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     if (number < 0)
         number = 0;
@@ -218,8 +231,7 @@ NSString *TGMonthNameShort(int number)
 
 static inline NSString *dialogTimeFormat()
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     return value_dialogTimeFormat;
 }
@@ -228,7 +240,14 @@ static inline NSString *dialogTimeFormat()
 
 + (void)reset
 {
-    TGDateUtilsInitialized = false;
+    pthread_mutex_lock(&TGDateUtilsMutex);
+    TGDateUtilsInitialized = 0;
+    pthread_mutex_unlock(&TGDateUtilsMutex);
+}
+
++ (void)prepare
+{
+    TGDateUtilsEnsureInitialized();
 }
 
 + (NSString *)stringForShortTime:(int)time
@@ -242,8 +261,7 @@ static inline NSString *dialogTimeFormat()
 
 + (NSString *)stringForShortTimeWithHours:(int)hours minutes:(int)minutes
 {
-    if (!TGDateUtilsInitialized)
-        initializeTGDateUtils();
+    TGDateUtilsEnsureInitialized();
     
     if (isArabic)
     {
@@ -311,6 +329,7 @@ static inline NSString *dialogTimeFormat()
 
 + (NSString *)stringForFullDateWithDay:(int)day month:(int)month year:(int)year
 {
+    TGDateUtilsEnsureInitialized();
     if (isArabic)
     {
         return [TGStringUtils stringWithLocalizedNumberCharacters:[[NSString alloc] initWithFormat:@"%d%@%d%@%02d", day, value_date_separator, month, value_date_separator, year - 100]];

@@ -25,6 +25,7 @@
 #import "TGChannelManagementSignals.h"
 
 #import "TLChat$chat.h"
+#import "TGChannelBannedRights+Telegraph.h"
 
 #import "TLRPCmessages_editMessage.h"
 
@@ -168,7 +169,8 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 + (SSignal *)exportGroupInvitationLink:(int32_t)groupId
 {
     TLRPCmessages_exportChatInvite$messages_exportChatInvite *exportChatInvite = [[TLRPCmessages_exportChatInvite$messages_exportChatInvite alloc] init];
-    exportChatInvite.chat_id = groupId;
+    exportChatInvite.flags = (1 << 2);
+    exportChatInvite.peer = [TGTelegraphInstance createInputPeerForConversation:TGPeerIdFromGroupId(groupId) accessHash:0];
     return [[[TGTelegramNetworking instance] requestSignal:exportChatInvite] mapToSignal:^SSignal *(TLExportedChatInvite *result)
     {
         if ([result isKindOfClass:[TLExportedChatInvite$chatInviteExported class]])
@@ -315,6 +317,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         TLRPCmessages_editChatPhoto$messages_editChatPhoto *editChatPhoto = [[TLRPCmessages_editChatPhoto$messages_editChatPhoto alloc] init];
         editChatPhoto.chat_id = TGGroupIdFromPeerId(peerId);
         TLInputChatPhoto$inputChatUploadedPhoto *uploadedPhoto = [[TLInputChatPhoto$inputChatUploadedPhoto alloc] init];
+        uploadedPhoto.flags = (1 << 0);
         uploadedPhoto.file = inputFile;
         editChatPhoto.photo = uploadedPhoto;
         
@@ -410,41 +413,67 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
     }];
 }
 
-+ (SSignal *)toggleGroupHasAdmins:(int64_t)peerId hasAdmins:(bool)hasAdmins {
-    TLRPCmessages_toggleChatAdmins$messages_toggleChatAdmins *toggleChatAdmins = [[TLRPCmessages_toggleChatAdmins$messages_toggleChatAdmins alloc] init];
-    toggleChatAdmins.chat_id = TGGroupIdFromPeerId(peerId);
-    toggleChatAdmins.enabled = hasAdmins;
-    return [[[TGTelegramNetworking instance] requestSignal:toggleChatAdmins] mapToSignal:^SSignal *(TLUpdates *updates) {
-        [[TGTelegramNetworking instance] addUpdates:updates];
++ (SSignal *)storeGroupChatDescs:(NSArray *)chats {
+    TGConversation *conversation = nil;
+    for (TLChat *chatDesc in chats)
+    {
+        conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
+        break;
+    }
+    
+    if (conversation == nil)
+        return [SSignal complete];
+    
+    return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
+        [TGDatabaseInstance() transactionAddMessages:nil updateConversationDatas:@{@(conversation.conversationId): conversation} notifyAdded:true];
         
-        TGConversation *conversation = nil;
+        return [SSignal complete];
+    }] switchToLatest];
+}
 
-        for (TLChat *chatDesc in updates.chats)
++ (SSignal *)toggleGroupHasAdmins:(int64_t)peerId hasAdmins:(bool)hasAdmins {
+    TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:0];
+    if (![inputPeer isKindOfClass:[TLInputPeer$inputPeerChat class]])
+        return [SSignal fail:nil];
+    
+    TLRPCmessages_getChats$messages_getChats *getChats = [[TLRPCmessages_getChats$messages_getChats alloc] init];
+    getChats.n_id = @[@(((TLInputPeer$inputPeerChat *)inputPeer).chat_id)];
+    return [[[TGTelegramNetworking instance] requestSignal:getChats] mapToSignal:^SSignal *(TLmessages_Chats *chats) {
+        TLChat$chat *chat = nil;
+        for (TLChat *chatDesc in chats.chats)
         {
-            conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
-            break;
+            if ([chatDesc isKindOfClass:[TLChat$chat class]])
+            {
+                chat = (TLChat$chat *)chatDesc;
+                break;
+            }
         }
+        if (chat == nil)
+            return [SSignal fail:nil];
         
-        if (conversation != nil)
-        {
-            return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
-                [TGDatabaseInstance() transactionAddMessages:nil updateConversationDatas:@{@(conversation.conversationId): conversation} notifyAdded:true];
-                
-                return [SSignal complete];
-            }] switchToLatest];
-        } else {
-            return [SSignal complete];
-        }
+        int32_t adminOnlyFlags = TGChatBannedRightsChangeInfoFlag | TGChatBannedRightsInviteUsersFlag | TGChatBannedRightsPinMessagesFlag;
+        int32_t currentFlags = chat.default_banned_rights.flags;
+        int32_t updatedFlags = hasAdmins ? (currentFlags | adminOnlyFlags) : (currentFlags & ~adminOnlyFlags);
+        if (updatedFlags == currentFlags)
+            return [self storeGroupChatDescs:chats.chats];
+        
+        TLChatBannedRights$chatBannedRights *defaultBannedRights = [[TLChatBannedRights$chatBannedRights alloc] init];
+        defaultBannedRights.flags = updatedFlags;
+        defaultBannedRights.until_date = chat.default_banned_rights.until_date;
+        TLRPCmessages_editChatDefaultBannedRights$messages_editChatDefaultBannedRights *editDefaultBannedRights = [[TLRPCmessages_editChatDefaultBannedRights$messages_editChatDefaultBannedRights alloc] init];
+        editDefaultBannedRights.peer = inputPeer;
+        editDefaultBannedRights.banned_rights = defaultBannedRights;
+        return [[[TGTelegramNetworking instance] requestSignal:editDefaultBannedRights] mapToSignal:^SSignal *(TLUpdates *updates) {
+            [[TGTelegramNetworking instance] addUpdates:updates];
+            return [self storeGroupChatDescs:updates.chats];
+        }];
     }];
 }
 
 + (SSignal *)toggleUserIsAdmin:(int64_t)peerId user:(TGUser *)user isAdmin:(bool)isAdmin {
     TLRPCmessages_editChatAdmin$messages_editChatAdmin *editChatAdmin = [[TLRPCmessages_editChatAdmin$messages_editChatAdmin alloc] init];
     editChatAdmin.chat_id = TGGroupIdFromPeerId(peerId);
-    TLInputUser$inputUser *inputUser = [[TLInputUser$inputUser alloc] init];
-    inputUser.user_id = user.uid;
-    inputUser.access_hash = user.phoneNumberHash;
-    editChatAdmin.user_id = inputUser;
+    editChatAdmin.user_id = [TGTelegraphInstance createInputUserForUid:user.uid];
     editChatAdmin.is_admin = isAdmin;
     
     return [[[TGTelegramNetworking instance] requestSignal:editChatAdmin] mapToSignal:^SSignal *(__unused id result) {
@@ -815,11 +844,13 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                         TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
                         if (dialog.top_message == 0)
                             continue;
+                        bool archived = dialog.folder_id == 1;
                         int64_t peerId = 0;
                         if ([dialog.peer isKindOfClass:[TLPeer$peerUser class]])
                         {
                             TGConversation *conversation = [[TGConversation alloc] initWithConversationId:((TLPeer$peerUser *)dialog.peer).user_id unreadCount:dialog.unread_count serviceUnreadCount:0];
                             peerId = conversation.conversationId;
+                            conversation.isArchived = archived;
                             
                             conversation.unreadMark = dialog.flags & (1 << 3);
                             conversation.maxReadMessageId = dialog.read_inbox_max_id;
@@ -883,6 +914,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                         {
                             TGConversation *conversation = [chatItems objectForKey:[[NSNumber alloc] initWithLongLong:-((TLPeer$peerChat *)dialog.peer).chat_id]];
                             peerId = conversation.conversationId;
+                            conversation.isArchived = archived;
                             conversation.unreadCount = dialog.unread_count;
                             
                             conversation.unreadMark = dialog.flags & (1 << 3);
@@ -947,6 +979,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                             TGConversation *conversation = channelItems[@(TGPeerIdFromChannelId(((TLPeer$peerChannel *)dialog.peer).channel_id))];
                             if (conversation != nil) {
                                 peerId = conversation.conversationId;
+                                conversation.isArchived = archived;
                                 conversation.unreadMark = dialog.flags & (1 << 3);
                                 conversation.unreadCount = dialog.unread_count;
                                 conversation.maxReadMessageId = dialog.read_inbox_max_id;
@@ -1021,7 +1054,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 
                 [[TGDatabase instance] storeConversationList:conversations replace:false];
                 if (channels.count != 0)
-                    [[TGDatabase instance] updateChannels:channels];
+                    [[TGDatabase instance] updateDialogChannels:channels];
                 
                 [multipleMessagesByConversation enumerateKeysAndObjectsUsingBlock:^(NSNumber *nConversationId, NSArray *messages, __unused  BOOL *stop)
                  {
@@ -1209,23 +1242,16 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 continue;
             }
         
-            TLInputDialogPeer *inputDialogPeer = nil;
             if (TGPeerIdIsAdminLog(conversation.conversationId) && !TGIOS6GroupPeerIdIsModernRawChannel(conversation.conversationId)) {
-                TLInputDialogPeer$inputDialogPeerFeed *feed = [[TLInputDialogPeer$inputDialogPeerFeed alloc] init];
-                feed.feed_id = TGAdminLogIdFromPeerId(conversation.conversationId);
-                inputDialogPeer = feed;
-            }
-            else {
-                TLInputPeer *inputPeer = [self inputPeerWithPeerId:conversation.conversationId];
-                if (inputPeer != nil) {
-                    TLInputDialogPeer$inputDialogPeer *peer = [[TLInputDialogPeer$inputDialogPeer alloc] init];
-                    peer.peer = inputPeer;
-                    inputDialogPeer = peer;
-                }
+                continue;
             }
             
-            if (inputDialogPeer != nil)
-                [inputPeers addObject:inputDialogPeer];
+            TLInputPeer *inputPeer = [self inputPeerWithPeerId:conversation.conversationId];
+            if (inputPeer != nil) {
+                TLInputDialogPeer$inputDialogPeer *peer = [[TLInputDialogPeer$inputDialogPeer alloc] init];
+                peer.peer = inputPeer;
+                [inputPeers addObject:peer];
+            }
         }
         
         TLRPCmessages_reorderPinnedDialogs$messages_reorderPinnedDialogs *reorderPinnedDialogs = [[TLRPCmessages_reorderPinnedDialogs$messages_reorderPinnedDialogs alloc] init];

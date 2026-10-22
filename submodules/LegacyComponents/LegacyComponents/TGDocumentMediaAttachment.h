@@ -42,6 +42,7 @@
 - (NSString *)fileName;
 
 - (bool)isAnimated;
+- (bool)isImageFile;
 - (bool)isSticker;
 - (bool)isStickerWithPack;
 - (id<TGStickerPackReference>)stickerPackReference;

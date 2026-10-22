@@ -53,7 +53,7 @@
         _textView.textColor = [UIColor blackColor];
         _textView.scrollEnabled = false;
         ((HPTextViewInternal *)_textView).enableFirstResponder = true;
-        if (iosMajorVersion() >= 7) {
+        if ([HPTextViewInternal textKitAvailable]) {
             _textView.contentInset = UIEdgeInsetsZero;
             _textView.textContainerInset = [self insets];
         } else {

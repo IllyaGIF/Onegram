@@ -1,5 +1,6 @@
 #import "../../../OnegramPlatform/OGPlatformMedia.h"
 #import "TGModernGalleryController.h"
+#import "../../../OnegramPlatform/OGPlatformUIKit.h"
 
 #import "LegacyComponentsInternal.h"
 #import "TGHacks.h"
@@ -98,16 +99,18 @@
     if (!TGIsPad() && iosMajorVersion() >= 11 && UIInterfaceOrientationIsLandscape([[LegacyComponentsGlobals provider] applicationStatusBarOrientation]))
         return true;
     
-    if (self.childViewControllers.count > 0)
-        return [self.childViewControllers.lastObject prefersStatusBarHidden];
+    NSArray *children = OGPlatformChildViewControllers(self);
+    if (children.count > 0)
+        return [[children lastObject] prefersStatusBarHidden];
     
     return [super prefersStatusBarHidden];
 }
 
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures
 {
-    if (self.childViewControllers.count > 0)
-        return [self.childViewControllers.lastObject preferredScreenEdgesDeferringSystemGestures];
+    NSArray *children = OGPlatformChildViewControllers(self);
+    if (children.count > 0)
+        return [[children lastObject] preferredScreenEdgesDeferringSystemGestures];
     
     return [super preferredScreenEdgesDeferringSystemGestures];
 }

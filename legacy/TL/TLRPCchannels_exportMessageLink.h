@@ -6,14 +6,14 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
-@class TLInputChannel;
 @class TLExportedMessageLink;
+@class TLInputChannel;
 
 @interface TLRPCchannels_exportMessageLink : TLMetaRpc
 
+@property (nonatomic) int32_t flags;
 @property (nonatomic, retain) TLInputChannel *channel;
 @property (nonatomic) int32_t n_id;
-@property (nonatomic) bool grouped;
 
 - (Class)responseClass;
 

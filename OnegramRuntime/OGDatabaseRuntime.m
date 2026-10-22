@@ -7,6 +7,16 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <libkern/OSAtomic.h>
+#include <sched.h>
+
+typedef enum
+{
+    OGDatabaseRuntimeBoostNone = 0,
+    OGDatabaseRuntimeBoostWaiter = 1,
+    OGDatabaseRuntimeBoostMainWaiter = 2
+} OGDatabaseRuntimeBoost;
+
+static const int OGDatabaseRuntimeWaiterPriority = 33;
 
 static BOOL OGDatabaseRuntimeIsConstrained(void)
 {
@@ -69,7 +79,7 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
 
 @interface OGDatabaseRuntimeState : NSObject
 {
-    dispatch_queue_t _stateQueue;
+    pthread_mutex_t _lock;
     NSMutableArray *_mainThreadTasks;
     NSMutableArray *_synchronousTasks;
     NSMutableArray *_startupCriticalTasks;
@@ -80,6 +90,11 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     NSUInteger _priorityTaskBurst;
     CFAbsoluteTime _runningSubmittedAt;
     volatile int32_t _pendingPriorityTaskCount;
+    pthread_t _runningThread;
+    OGDatabaseRuntimeBoost _runningBoost;
+    BOOL _runningThreadSchedulingSaved;
+    int _runningThreadPolicy;
+    struct sched_param _runningThreadParameters;
 }
 - (void)dispatchQueue:(dispatch_queue_t)queue synchronous:(BOOL)synchronous block:(dispatch_block_t)block;
 - (void)dispatchContinuationOnQueue:(dispatch_queue_t)queue block:(dispatch_block_t)block;
@@ -96,7 +111,7 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     self = [super init];
     if (self != nil)
     {
-        _stateQueue = dispatch_queue_create("dev.IllyaGIF.Onegram.database-runtime.state", DISPATCH_QUEUE_SERIAL);
+        pthread_mutex_init(&_lock, NULL);
         _mainThreadTasks = [[NSMutableArray alloc] init];
         _synchronousTasks = [[NSMutableArray alloc] init];
         _startupCriticalTasks = [[NSMutableArray alloc] init];
@@ -147,10 +162,12 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
             if (!_storageWakeScheduled)
             {
                 _storageWakeScheduled = YES;
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(remaining * NSEC_PER_SEC)), _stateQueue, ^
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(remaining * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^
                 {
+                    pthread_mutex_lock(&_lock);
                     _storageWakeScheduled = NO;
                     [self scheduleDrainLocked];
+                    pthread_mutex_unlock(&_lock);
                 });
             }
             return nil;
@@ -158,6 +175,62 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     }
     _priorityTaskBurst = 0;
     return [self takeFirstTaskFromQueue:_storageTasks];
+}
+
+- (OGDatabaseRuntimeBoost)boostForTask:(OGDatabaseRuntimeTask *)task
+{
+    if (task->_mainThreadWaiter)
+        return OGDatabaseRuntimeBoostMainWaiter;
+    if (task->_synchronous || task->_startupCritical)
+        return OGDatabaseRuntimeBoostWaiter;
+    return OGDatabaseRuntimeBoostNone;
+}
+
+- (OGDatabaseRuntimeBoost)queuedWaiterBoostLocked
+{
+    if (_mainThreadTasks.count != 0)
+        return OGDatabaseRuntimeBoostMainWaiter;
+    if (_synchronousTasks.count != 0 || _startupCriticalTasks.count != 0)
+        return OGDatabaseRuntimeBoostWaiter;
+    return OGDatabaseRuntimeBoostNone;
+}
+
+- (void)boostRunningThreadLocked:(OGDatabaseRuntimeBoost)boost
+{
+    if (_runningThread == NULL || boost <= _runningBoost)
+        return;
+    if (!_runningThreadSchedulingSaved)
+    {
+        if (pthread_getschedparam(_runningThread, &_runningThreadPolicy, &_runningThreadParameters) != 0)
+            return;
+        _runningThreadSchedulingSaved = YES;
+    }
+    int priority = boost == OGDatabaseRuntimeBoostMainWaiter ? sched_get_priority_max(_runningThreadPolicy) - 1 : OGDatabaseRuntimeWaiterPriority;
+    _runningBoost = boost;
+    if (priority <= _runningThreadParameters.sched_priority)
+        return;
+    struct sched_param parameters = _runningThreadParameters;
+    parameters.sched_priority = priority;
+    pthread_setschedparam(_runningThread, _runningThreadPolicy, &parameters);
+}
+
+- (void)beginRunningTaskLocked:(OGDatabaseRuntimeTask *)task
+{
+    _runningThread = pthread_self();
+    _runningBoost = OGDatabaseRuntimeBoostNone;
+    _runningThreadSchedulingSaved = NO;
+    OGDatabaseRuntimeBoost boost = [self boostForTask:task];
+    OGDatabaseRuntimeBoost queuedBoost = [self queuedWaiterBoostLocked];
+    [self boostRunningThreadLocked:queuedBoost > boost ? queuedBoost : boost];
+}
+
+- (void)endRunningTaskLocked
+{
+    if (_runningThreadSchedulingSaved && _runningBoost != OGDatabaseRuntimeBoostNone)
+        pthread_setschedparam(_runningThread, _runningThreadPolicy, &_runningThreadParameters);
+    _runningThread = NULL;
+    _runningBoost = OGDatabaseRuntimeBoostNone;
+    _runningThreadSchedulingSaved = NO;
 }
 
 - (void)scheduleDrainLocked
@@ -174,6 +247,10 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
 
     dispatch_async(task->_queue, ^
     {
+        pthread_mutex_lock(&_lock);
+        [self beginRunningTaskLocked:task];
+        pthread_mutex_unlock(&_lock);
+
         OGDatabaseRuntimeSetSynchronous(task->_synchronous || task->_startupCritical);
 
         @autoreleasepool
@@ -187,22 +264,23 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
         if (task->_semaphore != NULL)
             dispatch_semaphore_signal(task->_semaphore);
 
-        dispatch_async(_stateQueue, ^
+        pthread_mutex_lock(&_lock);
+        [self endRunningTaskLocked];
+        _running = NO;
+        if (_mainThreadTasks.count != 0 || _synchronousTasks.count != 0 || _startupCriticalTasks.count != 0)
         {
-            _running = NO;
-
-            if (_mainThreadTasks.count != 0 || _synchronousTasks.count != 0 || _startupCriticalTasks.count != 0)
+            [self scheduleDrainLocked];
+        }
+        else
+        {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.002 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^
             {
+                pthread_mutex_lock(&_lock);
                 [self scheduleDrainLocked];
-            }
-            else
-            {
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.002 * NSEC_PER_SEC)), _stateQueue, ^
-                {
-                    [self scheduleDrainLocked];
-                });
-            }
-        });
+                pthread_mutex_unlock(&_lock);
+            });
+        }
+        pthread_mutex_unlock(&_lock);
     });
 }
 
@@ -220,6 +298,7 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     if (task->_mainThreadWaiter || task->_synchronous || task->_startupCritical)
         OSAtomicIncrement32Barrier(&_pendingPriorityTaskCount);
 
+    [self boostRunningThreadLocked:[self boostForTask:task]];
     [self scheduleDrainLocked];
 }
 
@@ -230,19 +309,16 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
 
     BOOL mainThreadWaiter = synchronous && [NSThread isMainThread];
     dispatch_semaphore_t semaphore = synchronous ? dispatch_semaphore_create(0) : NULL;
-    __block BOOL startupCritical = NO;
-    dispatch_sync(_stateQueue, ^
-    {
-        startupCritical = _startupCriticalCount != 0;
-    });
+    pthread_mutex_lock(&_lock);
+    BOOL startupCritical = _startupCriticalCount != 0;
+    pthread_mutex_unlock(&_lock);
     OGDatabaseRuntimeTask *task = [[OGDatabaseRuntimeTask alloc] initWithQueue:queue synchronous:synchronous mainThreadWaiter:mainThreadWaiter startupCritical:startupCritical block:block semaphore:semaphore];
 
     if (synchronous)
     {
-        dispatch_sync(_stateQueue, ^
-        {
-            [self enqueueTaskLocked:task];
-        });
+        pthread_mutex_lock(&_lock);
+        [self enqueueTaskLocked:task];
+        pthread_mutex_unlock(&_lock);
 
         dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
 #if !OS_OBJECT_USE_OBJC
@@ -251,10 +327,9 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
     }
     else
     {
-        dispatch_async(_stateQueue, ^
-        {
-            [self enqueueTaskLocked:task];
-        });
+        pthread_mutex_lock(&_lock);
+        [self enqueueTaskLocked:task];
+        pthread_mutex_unlock(&_lock);
     }
 }
 
@@ -264,13 +339,12 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
         return;
 
     OGDatabaseRuntimeTask *task = [[OGDatabaseRuntimeTask alloc] initWithQueue:queue synchronous:NO mainThreadWaiter:NO startupCritical:NO block:block semaphore:NULL];
-    dispatch_async(_stateQueue, ^
-    {
-        if (_runningSubmittedAt > 0.0)
-            task->_submittedAt = MIN(task->_submittedAt, _runningSubmittedAt);
-        [_storageTasks insertObject:task atIndex:0];
-        [self scheduleDrainLocked];
-    });
+    pthread_mutex_lock(&_lock);
+    if (_runningSubmittedAt > 0.0)
+        task->_submittedAt = MIN(task->_submittedAt, _runningSubmittedAt);
+    [_storageTasks insertObject:task atIndex:0];
+    [self scheduleDrainLocked];
+    pthread_mutex_unlock(&_lock);
 }
 
 - (BOOL)priorityWorkPending
@@ -280,28 +354,25 @@ static BOOL OGDatabaseRuntimeCurrentTaskIsSynchronous(void)
 
 - (void)beginStartupCritical
 {
-    dispatch_sync(_stateQueue, ^
-    {
-        _startupCriticalCount++;
-    });
+    pthread_mutex_lock(&_lock);
+    _startupCriticalCount++;
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)endStartupCritical
 {
-    dispatch_sync(_stateQueue, ^
-    {
-        if (_startupCriticalCount != 0)
-            _startupCriticalCount--;
-        [self scheduleDrainLocked];
-    });
+    pthread_mutex_lock(&_lock);
+    if (_startupCriticalCount != 0)
+        _startupCriticalCount--;
+    [self scheduleDrainLocked];
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)interactionStateChanged
 {
-    dispatch_async(_stateQueue, ^
-    {
-        [self scheduleDrainLocked];
-    });
+    pthread_mutex_lock(&_lock);
+    [self scheduleDrainLocked];
+    pthread_mutex_unlock(&_lock);
 }
 
 @end
@@ -592,7 +663,7 @@ void OGDatabaseRuntimeCooperateDuringInteraction(void)
         return;
     if (!OGRuntimeInteractionActiveFast())
         return;
-    if (OGDatabaseRuntimeCurrentTaskIsSynchronous())
+    if (OGDatabaseRuntimeCurrentTaskIsSynchronous() || [OGDatabaseRuntimeSharedState() priorityWorkPending])
         return;
 
     OGRuntimeCooperateWithInteraction();
@@ -610,7 +681,7 @@ static int OGDatabaseRuntimeProgressHandler(void *context)
     if (!OGRuntimeInteractionActiveFast())
         return 0;
 
-    if (!OGDatabaseRuntimeCurrentTaskIsSynchronous())
+    if (!OGDatabaseRuntimeCurrentTaskIsSynchronous() && ![OGDatabaseRuntimeSharedState() priorityWorkPending])
         OGRuntimeCooperateWithInteraction();
 
     return 0;

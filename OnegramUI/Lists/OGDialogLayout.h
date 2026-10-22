@@ -14,6 +14,7 @@ typedef struct
     double mentionWidth;
     double verifiedWidth;
     double premiumWidth;
+    double muteWidth;
     double previewPadding;
     bool branded;
     bool encrypted;
@@ -49,7 +50,7 @@ static inline OGDialogHorizontalLayout OGDialogHorizontalLayoutMake(OGDialogLayo
     if (input.encrypted)
         width -= 15.0;
     if (input.muted)
-        width -= 12.0;
+        width -= input.muteWidth + 3.0;
     if (input.branded && input.unreadBadge)
         width -= input.badgeWidth + 6.0;
     if (input.branded && input.mention)
@@ -58,7 +59,9 @@ static inline OGDialogHorizontalLayout OGDialogHorizontalLayoutMake(OGDialogLayo
         width -= input.verifiedWidth + 10.0;
     else if (input.premiumWidth > 0.0)
         width -= input.premiumWidth + 10.0;
-    layout.maximumTitleWidth = fmax(1.0, fmin(width, input.width - layout.titleOrigin - 75.0));
+    if (input.branded)
+        width = fmin(width, input.width - layout.titleOrigin - 75.0);
+    layout.maximumTitleWidth = fmax(1.0, width);
     layout.previewWidth = fmax(1.0, input.width - input.contentInset - 7.0 - layout.rightPadding);
     layout.authorWidth = fmax(1.0, input.width - input.contentInset - 4.0 - layout.rightPadding);
     return layout;

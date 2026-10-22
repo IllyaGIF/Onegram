@@ -413,7 +413,7 @@
         inset += button.frame.size.width + 9.0f;
     }
     
-    if (iosMajorVersion() >= 7)
+    if ([HPTextViewInternal textKitAvailable])
     {
         UIEdgeInsets insets = _inputField.internalTextView.textContainerInset;
         if (ABS(inset - insets.right) > FLT_EPSILON)

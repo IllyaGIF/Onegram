@@ -7,9 +7,11 @@
 namespace webrtc {
 class TimeDelta {
 public:
-	static TimeDelta Millis(int) {
-		return TimeDelta();
-	}
+    static TimeDelta Millis(int64_t value) { return TimeDelta(value); }
+    int64_t ms() const { return _milliseconds; }
+private:
+    explicit TimeDelta(int64_t value) : _milliseconds(value) { }
+    int64_t _milliseconds;
 };
 
 class TurnCustomizer {

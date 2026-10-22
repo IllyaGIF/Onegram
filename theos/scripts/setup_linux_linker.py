@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 from bootstrap_build import download, safe_unpack, validate_sha256
@@ -12,11 +13,11 @@ from bootstrap_build import download, safe_unpack, validate_sha256
 REVISION = 'df82634ce7c3eddba9722e881433fbe357396e16'
 ARCHIVE_SHA256 = 'f137bf519be7f08303923b28bdc0fdfd87ca0533e15ad9050eedda2f6d59b420'
 
-def ensure_linux_linker(toolchain, jobs=4):
+def ensure_linker(toolchain, jobs=4, host_sdk=None, build_tools=None):
     root = toolchain / '.onegram-linker'
     marker = root / 'installed.json'
     binary = toolchain / 'bin/ld'
-    recipe = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    recipe = hashlib.sha256((Path(__file__).read_text() + str(host_sdk) + str(build_tools)).encode()).hexdigest()
     if marker.is_file() and binary.is_file():
         try:
             data = json.loads(marker.read_text())
@@ -43,9 +44,9 @@ def ensure_linux_linker(toolchain, jobs=4):
         objc.write_text(contents.replace(original, corrected, 1))
     elif corrected not in contents:
         raise RuntimeError('ld64 Objective-C comparator was not found')
-    cc = shutil.which('clang')
-    cxx = shutil.which('clang++')
-    llvm_config = shutil.which('llvm-config')
+    cc = str(build_tools / 'bin/clang') if build_tools is not None else shutil.which('clang')
+    cxx = str(build_tools / 'bin/clang++') if build_tools is not None else shutil.which('clang++')
+    llvm_config = str(build_tools / 'bin/llvm-config') if build_tools is not None else shutil.which('llvm-config')
     if cc is None or cxx is None or llvm_config is None:
         raise RuntimeError('Native clang, clang++ and LLVM development tools are required to build the linker')
     env = os.environ.copy()
@@ -53,15 +54,24 @@ def ensure_linux_linker(toolchain, jobs=4):
         env.pop(variable, None)
     env.update(CC=cc, CXX=cxx, CFLAGS='-O2', CXXFLAGS='-O2 -include cstdint',
                LDFLAGS='-Wl,--allow-shlib-undefined', CCACHE_DIR=str(root/'ccache'))
+    tapi = toolchain
+    if host_sdk is not None:
+        env['PATH'] = str(build_tools / 'bin') + os.pathsep + env.get('PATH', '')
+        flags = shlex.join(['-isysroot', str(host_sdk), '-mmacosx-version-min=11.0', '-B' + str(toolchain / 'bin')])
+        env.update(CFLAGS='-O2 ' + flags, CXXFLAGS='-O2 -include cstdint ' + flags,
+                   LDFLAGS=flags + ' -Wl,-rpath,' + str(build_tools / 'lib'),
+                   SDKROOT=str(host_sdk))
+        env.pop('DEVELOPER_DIR', None)
+        tapi = build_tools
     log = root / 'build.log'
     commands = [
         ['bash', str(source / 'autogen.sh')],
         [str(source / 'configure'), '--target=arm-apple-darwin11',
-         '--with-libtapi=' + str(toolchain),
+         '--with-libtapi=' + str(tapi),
          '--with-llvm-config=' + llvm_config],
         ['make', '-C', 'ld64', '-j' + str(max(1, jobs))]
     ]
-    print('[Onegram setup] Building corrected Linux iOS linker', flush=True)
+    print('[Onegram setup] Building corrected ' + ('macOS' if host_sdk is not None else 'Linux') + ' iOS linker', flush=True)
     with log.open('w') as output:
         for command in commands:
             result = subprocess.run(command, cwd=source, env=env, stdout=output, stderr=subprocess.STDOUT)
@@ -77,6 +87,9 @@ def ensure_linux_linker(toolchain, jobs=4):
     shutil.copy2(built, staged)
     os.replace(staged, binary)
     marker.write_text(json.dumps({'recipe': recipe, 'binary': hashlib.sha256(binary.read_bytes()).hexdigest()}, sort_keys=True) + '\n')
+
+def ensure_linux_linker(toolchain, jobs=4):
+    ensure_linker(toolchain, jobs=jobs)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

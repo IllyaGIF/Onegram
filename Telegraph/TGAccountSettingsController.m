@@ -1,5 +1,6 @@
 #import "TGAccountSettingsController.h"
 #import "TGOnegramCoreController.h"
+#import "TGAccountSwitcherPanel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -119,6 +120,8 @@
         [_deleteButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         [_deleteButton addTarget:self action:@selector(deletePressed) forControlEvents:UIControlEventTouchUpInside];
         [self insertSubview:_deleteButton belowSubview:self.contentView];
+        self.textLabel.backgroundColor = [UIColor clearColor];
+        self.detailTextLabel.backgroundColor = [UIColor clearColor];
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swipeRecognized:)];
         pan.delegate = self;
         [self addGestureRecognizer:pan];
@@ -135,6 +138,8 @@
 {
     self.contentView.transform = CGAffineTransformIdentity;
     [super layoutSubviews];
+    self.textLabel.backgroundColor = [UIColor clearColor];
+    self.detailTextLabel.backgroundColor = [UIColor clearColor];
     _deleteButton.frame = CGRectMake(0.0f, 0.0f, MAX([self deleteButtonWidth], _swipeOffset), self.bounds.size.height);
     self.contentView.transform = CGAffineTransformMakeTranslation(_swipeOffset, 0.0f);
     _deleteButton.hidden = _swipeOffset <= 0.0f;
@@ -223,6 +228,7 @@
     if (self != nil)
     {
         self.title = @"Логи";
+        self.automaticallyManageScrollViewInsets = false;
         TGLogSetEnabled(true);
     }
     return self;
@@ -311,9 +317,9 @@
     CGFloat width = self.view.bounds.size.width;
     CGFloat height = self.view.bounds.size.height;
     UIEdgeInsets inset = self.controllerInset;
-    CGFloat bottomBarHeight = TGLogAvailable() ? 48.0f : 0.0f;
+    CGFloat bottomBarHeight = 48.0f;
     CGFloat bottomY = MAX(inset.top, height - inset.bottom - bottomBarHeight);
-    _bottomBar.hidden = !TGLogAvailable();
+    _bottomBar.hidden = false;
 
     _tableView.frame = CGRectMake(0.0f, inset.top, width, MAX(0.0f, bottomY - inset.top));
     _bottomBar.frame = CGRectMake(0.0f, bottomY, width, bottomBarHeight + inset.bottom);
@@ -335,6 +341,9 @@
     }
     for (NSString *path in availablePaths)
     {
+        NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+        if (attributes == nil || [attributes fileSize] == 0)
+            continue;
         if (![knownPaths containsObject:path])
         {
             [knownPaths addObject:path];
@@ -498,10 +507,11 @@
 
 - (void)saveLiveLogPressed
 {
-    NSString *path = TGSaveCurrentLogLines(500);
+    NSError *error = nil;
+    NSString *path = TGSaveCurrentLogLinesWithError(500, &error);
     if (path.length == 0)
     {
-        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Логи" message:@"Live-лог пуст" delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
+        UIAlertView *alert = [[UIAlertView alloc] initWithTitle:@"Логи" message:error != nil ? error.localizedDescription : @"В текущих логах пока нет записей" delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil];
         [alert show];
         return;
     }
@@ -551,6 +561,7 @@
     
     TGDisclosureActionCollectionItem *_logsItem;
     TGDisclosureActionCollectionItem *_onegramCoreItem;
+    TGDisclosureActionCollectionItem *_switchAccountItem;
     TGDisclosureActionCollectionItem *_profileMusicItem;
     TGDocumentMediaAttachment *_profileMusicDocument;
     NSArray *_profileMusicDocuments;
@@ -663,18 +674,21 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     _onegramCoreItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.Title") action:@selector(onegramCorePressed)];
     _onegramCoreItem.deselectAutomatically = true;
 
+    _switchAccountItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Accounts.SwitchAccount") action:@selector(switchAccountPressed)];
+    _switchAccountItem.deselectAutomatically = true;
+
     _proxyItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Settings.Proxy") action:@selector(proxyPressed)];
     _proxySection = [[TGCollectionMenuSection alloc] initWithItems:@[_proxyItem]];
 
     if ([TGPresentation brandedIOS6Style])
     {
-        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem, _proxyItem, _onegramCoreItem]];
+        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem, _proxyItem, _onegramCoreItem, _switchAccountItem]];
         _logsSection.insets = UIEdgeInsetsMake(0.0f, 4.0f, 15.0f, 5.0f);
         [self.menuSections addSection:_logsSection];
     }
     else
     {
-        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem]];
+        _logsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_logsItem, _switchAccountItem]];
         [self.menuSections addSection:_logsSection];
         _onegramCoreSection = [[TGCollectionMenuSection alloc] initWithItems:@[_onegramCoreItem]];
         [self.menuSections addSection:_onegramCoreSection];
@@ -830,6 +844,7 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
    
     _logsItem.icon = TGImageNamed(@"SettingsDataIcon.png");
     _proxyItem.icon = TGImageNamed(@"SettingsProxyIcon.png");
+    _switchAccountItem.icon = TGImageNamed(@"SettingsAccountsIcon.png");
     _savedMessagesItem.icon = TGImageNamed(@"SettingsSavedMessagesIcon.png");
     _clearChatListCacheItem.icon = TGImageNamed(@"SettingsDataIcon.png");
     _notificationsItem.icon = TGImageNamed(@"SettingsNotificationsIcon.png");
@@ -852,6 +867,8 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
         _proxyItem.brandedSettingsIconName = @"SettingsFeklaProxy";
         _onegramCoreItem.brandedSettingsStyle = true;
         _onegramCoreItem.brandedSettingsIconName = @"SettingsFeklaOnegramCore";
+        _switchAccountItem.brandedSettingsStyle = true;
+        _switchAccountItem.brandedSettingsIconName = @"SettingsFeklaAccounts";
         _savedMessagesItem.brandedSettingsStyle = true;
         _savedMessagesItem.brandedSettingsIconName = @"SettingsFeklaFavourites";
         _stickerSettingsItem.brandedSettingsStyle = true;
@@ -1379,7 +1396,6 @@ static NSString *TGAccountGroqApiKeyDefaultsKey(void)
     [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
-    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCacheVersion" value:nil];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6ClearChatListCacheRequested" object:nil];
 }
@@ -1568,6 +1584,14 @@ static NSString *TGIOS6SettingsProfileMusicTitle(TGDocumentMediaAttachment *docu
 {
     TGOnegramCoreController *controller = [[TGOnegramCoreController alloc] init];
     [self.navigationController pushViewController:controller animated:true];
+}
+
+- (void)switchAccountPressed
+{
+    UIView *containerView = TGAppDelegateInstance.rootController.view;
+    if (containerView == nil)
+        containerView = self.navigationController.view;
+    [TGAccountSwitcherPanel presentInView:containerView];
 }
 
 - (void)developerChannelPressed

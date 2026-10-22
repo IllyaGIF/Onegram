@@ -4,8 +4,7 @@
 #import "../NSOutputStream+TL.h"
 
 #import "TLInputFile.h"
-#import "TLInputGeoPoint.h"
-#import "TLInputPhotoCrop.h"
+#import "TLInputUser.h"
 #import "TLphotos_Photo.h"
 
 @implementation TLRPCphotos_uploadProfilePhoto
@@ -23,7 +22,7 @@
 
 - (int)layerVersion
 {
-    return 8;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -53,7 +52,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xd50f9c88;
+    return (int32_t)0x388a3b5;
 }
 
 - (int32_t)TLconstructorName
@@ -64,10 +63,12 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCphotos_uploadProfilePhoto$photos_uploadProfilePhoto *object = [[TLRPCphotos_uploadProfilePhoto$photos_uploadProfilePhoto alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
+    object.bot = metaObject->getObject((int32_t)0x5b476acc);
     object.file = metaObject->getObject((int32_t)0x3187ec9);
-    object.caption = metaObject->getString((int32_t)0x9bcfcf5a);
-    object.geo_point = metaObject->getObject((int32_t)0xa4670371);
-    object.crop = metaObject->getObject((int32_t)0x987dc5e1);
+    object.video = metaObject->getObject((int32_t)0x2182fe3c);
+    object.video_start_ts = metaObject->getDouble((int32_t)0xb3e89406);
+    object.video_emoji_markup = metaObject->getObject((int32_t)0xfd2a65a4);
     return object;
 }
 
@@ -75,27 +76,44 @@
 {
     {
         TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    if (self.flags & (1 << 5))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeObject;
+        value.nativeObject = self.bot;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x5b476acc, value));
+    }
+    if (self.flags & (1 << 0))
+    {
+        TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
         value.nativeObject = self.file;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x3187ec9, value));
     }
-    {
-        TLConstructedValue value;
-        value.type = TLConstructedValueTypeString;
-        value.nativeObject = self.caption;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9bcfcf5a, value));
-    }
+    if (self.flags & (1 << 1))
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
-        value.nativeObject = self.geo_point;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xa4670371, value));
+        value.nativeObject = self.video;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x2182fe3c, value));
     }
+    if (self.flags & (1 << 2))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveDouble;
+        value.primitive.doubleValue = self.video_start_ts;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xb3e89406, value));
+    }
+    if (self.flags & (1 << 4))
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
-        value.nativeObject = self.crop;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x987dc5e1, value));
+        value.nativeObject = self.video_emoji_markup;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xfd2a65a4, value));
     }
 }
 

@@ -44,7 +44,7 @@
 
 - (MTRequestNoopParser)requestNoop:(__autoreleasing NSData **)data
 {
-    Api86_FunctionContext *request = [Api86 help_test];
+    Api86_FunctionContext *request = [Api86 help_getNearestDc];
 
     if (data)
         *data = request.payload;

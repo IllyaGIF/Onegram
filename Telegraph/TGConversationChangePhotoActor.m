@@ -156,6 +156,7 @@
             TLInputFile *inputFile = result[@"file"];
             
             TLInputChatPhoto$inputChatUploadedPhoto *chatPhoto = [[TLInputChatPhoto$inputChatUploadedPhoto alloc] init];
+            chatPhoto.flags = (1 << 0);
             chatPhoto.file = inputFile;
             
             self.cancelToken = [TGTelegraphInstance doChangeConversationPhoto:_conversationId accessHash:_accessHash photo:chatPhoto actor:self];

@@ -7,12 +7,13 @@
 #import "TLMetaRpc.h"
 
 @class TLInputPeer;
+@class TLInputReplyTo;
 @class TLUpdates;
 
 @interface TLRPCmessages_sendScreenshotNotification : TLMetaRpc
 
 @property (nonatomic, retain) TLInputPeer *peer;
-@property (nonatomic) int32_t reply_to_msg_id;
+@property (nonatomic, retain) TLInputReplyTo *reply_to;
 @property (nonatomic) int64_t random_id;
 
 - (Class)responseClass;

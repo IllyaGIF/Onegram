@@ -816,7 +816,6 @@ void setCurrentNativeLocalization(TGLocalization *localization, bool switchIfCus
     NSString *nativePath = currentNativeLocalizationPath();
     NSString *extensionPath = currentNativeExtensionLocalizationPath();
     NSString *cachePath = currentNativeLocalizationCachePath();
-    NSString *indexPath = currentNativeLocalizationIndexPath();
     static dispatch_queue_t persistenceQueue = NULL;
     static dispatch_once_t persistenceOnceToken;
     dispatch_once(&persistenceOnceToken, ^
@@ -828,15 +827,16 @@ void setCurrentNativeLocalization(TGLocalization *localization, bool switchIfCus
         @autoreleasepool
         {
             NSFileManager *fileManager = [[NSFileManager alloc] init];
-            [fileManager removeItemAtPath:nativePath error:nil];
             [fileManager removeItemAtPath:cachePath error:nil];
-            [fileManager removeItemAtPath:indexPath error:nil];
-            if (![extensionPath isEqualToString:nativePath])
-                [fileManager removeItemAtPath:extensionPath error:nil];
             if ([NSKeyedArchiver archiveRootObject:localization toFile:nativePath])
+            {
                 TGStoreCachedNativeLocalization(localization, TGLocalizationSourceStamp(nativePath));
-            if (![extensionPath isEqualToString:nativePath])
-                [fileManager copyItemAtPath:nativePath toPath:extensionPath error:nil];
+                if (![extensionPath isEqualToString:nativePath])
+                {
+                    [fileManager removeItemAtPath:extensionPath error:nil];
+                    [fileManager copyItemAtPath:nativePath toPath:extensionPath error:nil];
+                }
+            }
         }
     });
     TGLocalizedStaticVersion++;
@@ -867,6 +867,7 @@ NSString *TGLocalized(NSString *s)
 }
 
 static const void *TGLogQueueSpecificKey = &TGLogQueueSpecificKey;
+static const int TGLogHistoryLimit = 60;
 
 static dispatch_queue_t TGLogQueue()
 {
@@ -995,7 +996,7 @@ void TGIOS6PrepareDiagnosticBreadcrumbs()
             TGIOS6DiagnosticBreadcrumbFd = -1;
         }
         if (filePath != NULL)
-            TGIOS6DiagnosticBreadcrumbFd = open(filePath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
+            unlink(filePath);
         pthread_mutex_unlock(&TGIOS6DiagnosticBreadcrumbMutex);
     };
 
@@ -1017,24 +1018,24 @@ static NSFileHandle *TGLogFileHandle()
         NSString *documentsDirectory = [TGAppDelegate documentsPath];
         
         NSString *currentFilePath = [documentsDirectory stringByAppendingPathComponent:@"application-0.log"];
-        NSString *oldestFilePath = [documentsDirectory stringByAppendingPathComponent:@"application-30.log"];
         
-        if ([fileManager fileExistsAtPath:oldestFilePath])
-            [fileManager removeItemAtPath:oldestFilePath error:nil];
-        
-        for (int i = 60 - 1; i >= 0; i--)
+        for (int i = TGLogHistoryLimit; i >= 0; i--)
         {
             NSString *filePath = [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", i]];
-            NSString *nextFilePath = [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", i + 1]];
-            if ([fileManager fileExistsAtPath:filePath])
+            NSDictionary *attributes = [fileManager attributesOfItemAtPath:filePath error:nil];
+            if (attributes == nil)
+                continue;
+            if (i == TGLogHistoryLimit || [attributes fileSize] == 0)
             {
-                [fileManager moveItemAtPath:filePath toPath:nextFilePath error:nil];
+                [fileManager removeItemAtPath:filePath error:nil];
+                continue;
             }
+            NSString *nextFilePath = [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", i + 1]];
+            [fileManager moveItemAtPath:filePath toPath:nextFilePath error:nil];
         }
         
         [fileManager createFileAtPath:currentFilePath contents:nil attributes:nil];
         TGCurrentLogFileHandle = [NSFileHandle fileHandleForWritingAtPath:currentFilePath];
-        [TGCurrentLogFileHandle truncateFileAtOffset:0];
     });
     
     if (TGCurrentLogFileHandle == nil) {
@@ -1057,7 +1058,7 @@ bool TGDeleteLogFile(NSString *path, NSError **error)
     bool valid = [parent isEqualToString:[documents stringByAppendingPathComponent:@"OnegramLogs"]] && [[name pathExtension] isEqualToString:@"log"];
     if ([parent isEqualToString:documents]) {
         valid = [name isEqualToString:@"ios6_diagnostic_breadcrumbs.log"] || [name isEqualToString:@"ios6_last_crash.txt"];
-        for (int i = 0; !valid && i <= 60; i++)
+        for (int i = 0; !valid && i <= TGLogHistoryLimit; i++)
             valid = [name isEqualToString:[NSString stringWithFormat:@"application-%d.log", i]];
     }
     if (!valid) {
@@ -1123,7 +1124,7 @@ void TGLogClear()
         
         NSFileManager *fileManager = [[NSFileManager alloc] init];
         NSString *documentsDirectory = [TGAppDelegate documentsPath];
-        for (int i = 1; i <= 60; i++)
+        for (int i = 1; i <= TGLogHistoryLimit; i++)
         {
             NSString *filePath = [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", i]];
             if ([fileManager fileExistsAtPath:filePath])
@@ -1345,70 +1346,147 @@ NSString *TGArchiveCrashLogText(NSString *text, NSDate *date)
     return path;
 }
 
-NSString *TGSaveCurrentLogLines(int lineCount)
+static NSArray *TGCurrentLogTail(NSString *path, NSUInteger maximumLines, NSError **error)
 {
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path])
+        return @[];
+
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:error];
+    if (attributes == nil)
+        return nil;
+    unsigned long long size = [attributes fileSize];
+    if (size == 0)
+        return @[];
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
+    if (handle == nil)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadNoPermissionError userInfo:@{NSFilePathErrorKey: path}];
+        return nil;
+    }
+
+    NSData *data = nil;
+    unsigned long long offset = size > 1024 * 1024 ? size - 1024 * 1024 : 0;
+    @try
+    {
+        [handle seekToFileOffset:offset];
+        data = [handle readDataToEndOfFile];
+        [handle closeFile];
+    }
+    @catch (NSException *exception)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadUnknownError userInfo:@{NSFilePathErrorKey: path, NSLocalizedDescriptionKey: exception.reason ?: @"Не удалось прочитать лог"}];
+    }
+    if (data == nil)
+        return nil;
+
+    if (offset != 0)
+    {
+        const uint8_t *bytes = data.bytes;
+        NSUInteger start = 0;
+        while (start < data.length && bytes[start] != '\n')
+            start++;
+        if (start == data.length)
+            return @[];
+        data = [data subdataWithRange:NSMakeRange(start + 1, data.length - start - 1)];
+    }
+
+    NSString *contents = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (contents == nil)
+        contents = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+    if (contents == nil)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadInapplicableStringEncodingError userInfo:@{NSFilePathErrorKey: path}];
+        return nil;
+    }
+
+    NSArray *fileLines = [contents componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+    NSMutableArray *tail = [[NSMutableArray alloc] initWithCapacity:MIN(maximumLines, fileLines.count)];
+    for (NSInteger index = (NSInteger)fileLines.count - 1; index >= 0 && tail.count < maximumLines; index--)
+    {
+        NSString *line = fileLines[(NSUInteger)index];
+        if (line.length != 0)
+            [tail addObject:line];
+    }
+    return [[tail reverseObjectEnumerator] allObjects];
+}
+
+static NSString *TGLogLineTimestamp(NSString *line)
+{
+    if (line.length < 23 || [line characterAtIndex:4] != '-' || [line characterAtIndex:7] != '-' || [line characterAtIndex:10] != ' ' || [line characterAtIndex:13] != ':' || [line characterAtIndex:16] != ':' || [line characterAtIndex:19] != '.')
+        return nil;
+    NSMutableString *timestamp = [[line substringToIndex:23] mutableCopy];
+    if ([timestamp characterAtIndex:17] == ' ')
+        [timestamp replaceCharactersInRange:NSMakeRange(17, 1) withString:@"0"];
+    return timestamp;
+}
+
+NSString *TGSaveCurrentLogLinesWithError(int lineCount, NSError **error)
+{
+    if (error != NULL)
+        *error = nil;
     if (lineCount <= 0)
         return nil;
 
     __block NSString *resultText = nil;
+    __block NSError *readError = nil;
     void (^readBlock)(void) = ^
     {
-        [TGLogFileHandle() synchronizeFile];
-        NSMutableArray *lines = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)lineCount];
-        NSArray *paths = TGGetLogFilePaths(60);
-        for (NSString *path in paths)
+        @try
         {
-            if ((int)lines.count >= lineCount)
-                break;
+            [TGCurrentLogFileHandle synchronizeFile];
+        }
+        @catch (NSException *exception)
+        {
+            readError = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadUnknownError userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"Не удалось прочитать лог"}];
+            return;
+        }
+        NSString *applicationPath = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"application-0.log"];
+        NSArray *applicationLines = TGCurrentLogFileHandle == nil ? @[] : TGCurrentLogTail(applicationPath, (NSUInteger)lineCount, &readError);
+        if (applicationLines == nil)
+            return;
 
-            NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
-            unsigned long long fileSize = [[attributes objectForKey:NSFileSize] unsignedLongLongValue];
-            if (fileSize == 0)
-                continue;
+        pthread_mutex_lock(&TGIOS6DiagnosticBreadcrumbMutex);
+        NSArray *diagnosticLines = nil;
+        @try
+        {
+            diagnosticLines = TGIOS6DiagnosticPreparedPath[0] == 0 ? @[] : TGCurrentLogTail(TGIOS6DiagnosticBreadcrumbPath(), (NSUInteger)lineCount, &readError);
+        }
+        @finally
+        {
+            pthread_mutex_unlock(&TGIOS6DiagnosticBreadcrumbMutex);
+        }
+        if (diagnosticLines == nil)
+            return;
 
-            const unsigned long long maximumReadSize = 1024 * 1024;
-            unsigned long long readSize = MIN(fileSize, maximumReadSize);
-            unsigned long long startOffset = fileSize - readSize;
-            NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:path];
-            if (handle == nil)
-                continue;
-
-            [handle seekToFileOffset:startOffset];
-            NSData *data = [handle readDataToEndOfFile];
-            [handle closeFile];
-
-            if (startOffset != 0 && data.length != 0)
+        NSMutableArray *entries = [[NSMutableArray alloc] initWithCapacity:applicationLines.count + diagnosticLines.count];
+        for (NSArray *stream in @[applicationLines, diagnosticLines])
+        {
+            NSString *timestamp = @"";
+            for (NSString *line in stream)
             {
-                const uint8_t *bytes = data.bytes;
-                NSUInteger skip = 0;
-                while (skip < data.length && bytes[skip] != '\n')
-                    skip++;
-                if (skip < data.length)
-                    skip++;
-                if (skip >= data.length)
-                    continue;
-                if (skip != 0)
-                    data = [data subdataWithRange:NSMakeRange(skip, data.length - skip)];
-            }
-
-            NSString *contents = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            if (contents == nil)
-                contents = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
-            if (contents.length == 0)
-                continue;
-
-            NSArray *fileLines = [contents componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
-            for (NSInteger index = (NSInteger)fileLines.count - 1; index >= 0 && (int)lines.count < lineCount; index--)
-            {
-                NSString *line = fileLines[(NSUInteger)index];
-                if (line.length == 0)
-                    continue;
-                [lines insertObject:line atIndex:0];
+                NSString *parsedTimestamp = TGLogLineTimestamp(line);
+                if (parsedTimestamp != nil)
+                    timestamp = parsedTimestamp;
+                [entries addObject:@{@"timestamp": timestamp, @"line": line, @"order": @(entries.count)}];
             }
         }
+        [entries sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right)
+        {
+            NSComparisonResult result = [left[@"timestamp"] compare:right[@"timestamp"] options:NSLiteralSearch];
+            return result == NSOrderedSame ? [left[@"order"] compare:right[@"order"]] : result;
+        }];
 
-        if (lines.count != 0)
-            resultText = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+        if (entries.count == 0)
+            return;
+        NSUInteger start = entries.count > (NSUInteger)lineCount ? entries.count - (NSUInteger)lineCount : 0;
+        NSMutableArray *lines = [[NSMutableArray alloc] initWithCapacity:entries.count - start];
+        for (NSUInteger index = start; index < entries.count; index++)
+            [lines addObject:entries[index][@"line"]];
+        resultText = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     };
 
     if (dispatch_get_specific(TGLogQueueSpecificKey) != NULL)
@@ -1416,13 +1494,24 @@ NSString *TGSaveCurrentLogLines(int lineCount)
     else
         dispatch_sync(TGLogQueue(), readBlock);
 
+    if (readError != nil)
+    {
+        if (error != NULL)
+            *error = readError;
+        return nil;
+    }
     if (resultText.length == 0)
         return nil;
 
     NSString *path = TGArchivedLogPath(@"Live", [NSDate date]);
-    if (![resultText writeToFile:path atomically:true encoding:NSUTF8StringEncoding error:nil])
+    if (![resultText writeToFile:path atomically:true encoding:NSUTF8StringEncoding error:error])
         return nil;
     return path;
+}
+
+NSString *TGSaveCurrentLogLines(int lineCount)
+{
+    return TGSaveCurrentLogLinesWithError(lineCount, NULL);
 }
 
 NSArray *TGGetPackedLogs()

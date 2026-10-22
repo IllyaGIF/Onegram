@@ -70,19 +70,28 @@ def string(value):
     return ' '.join(value) if isinstance(value, list) else value
 
 @lru_cache(maxsize=None)
+def directory_names(path):
+    exact = set()
+    folded = {}
+    for entry in path.iterdir():
+        exact.add(entry.name)
+        folded.setdefault(entry.name.casefold(), []).append(entry.name)
+    return exact, folded
+
+@lru_cache(maxsize=None)
 def actual_path(path):
     path = Path(path)
-    if path.exists():
+    if path.parent == path:
         return path
-    current = Path(path.anchor) if path.is_absolute() else Path('.')
-    for part in path.parts[1:] if path.is_absolute() else path.parts:
-        candidate = current / part
-        if not candidate.exists() and current.is_dir():
-            matches = [p for p in current.iterdir() if p.name.casefold() == part.casefold()]
+    parent = actual_path(path.parent)
+    candidate = parent / path.name
+    if path.name not in ('.', '..') and parent.is_dir():
+        exact, folded = directory_names(parent)
+        if path.name not in exact:
+            matches = folded.get(path.name.casefold(), [])
             if len(matches) == 1:
-                candidate = matches[0]
-        current = candidate
-    return current
+                candidate = parent / matches[0]
+    return candidate
 
 class Project:
     def __init__(self, path):

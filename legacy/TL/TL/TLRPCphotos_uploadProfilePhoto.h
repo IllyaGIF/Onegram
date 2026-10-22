@@ -7,16 +7,18 @@
 #import "TLMetaRpc.h"
 
 @class TLInputFile;
-@class TLInputGeoPoint;
-@class TLInputPhotoCrop;
+@class TLInputUser;
+@class TLVideoSize;
 @class TLphotos_Photo;
 
 @interface TLRPCphotos_uploadProfilePhoto : TLMetaRpc
 
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) TLInputUser *bot;
 @property (nonatomic, retain) TLInputFile *file;
-@property (nonatomic, retain) NSString *caption;
-@property (nonatomic, retain) TLInputGeoPoint *geo_point;
-@property (nonatomic, retain) TLInputPhotoCrop *crop;
+@property (nonatomic, retain) TLInputFile *video;
+@property (nonatomic) double video_start_ts;
+@property (nonatomic, retain) TLVideoSize *video_emoji_markup;
 
 - (Class)responseClass;
 

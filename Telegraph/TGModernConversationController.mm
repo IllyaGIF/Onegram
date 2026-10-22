@@ -16,6 +16,7 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/FreedomUIKit.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGModernButton.h"
 
 #import "TGLegacyComponentsContext.h"
 
@@ -32,6 +33,7 @@
 
 #import "TGModernConversationItem.h"
 #import "TGModernFlatteningViewModel.h"
+#import "TGModernLetteredAvatarViewModel.h"
 #import "TGModernFlatteningView.h"
 #import "TGModernTemporaryView.h"
 
@@ -620,6 +622,103 @@ static TGModernConversationController *TGModernConversationControllerResolveRefe
     return result;
 }
 
+@interface TGModernConversationAvatarRequest : NSObject
+@property (nonatomic) bool started;
+@end
+
+@implementation TGModernConversationAvatarRequest
+@end
+
+@interface TGModernConversationAvatarPreloader : NSObject <ASWatcher>
+{
+    NSMutableDictionary *_requests;
+}
+@property (nonatomic, strong, readonly) ASHandle *actionHandle;
+- (void)updateAvatars:(NSArray *)avatars;
+- (void)cancel;
+@end
+
+@implementation TGModernConversationAvatarPreloader
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
+        _requests = [[NSMutableDictionary alloc] init];
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    [_actionHandle reset];
+    [ActionStageInstance() removeWatcherByHandle:_actionHandle];
+}
+
+- (void)cancel
+{
+    [_requests removeAllObjects];
+    [ActionStageInstance() removeWatcherByHandle:_actionHandle];
+}
+
+- (void)updateAvatars:(NSArray *)avatars
+{
+    NSMutableSet *desired = [[NSMutableSet alloc] init];
+    NSUInteger limit = OGRuntimeSingleCoreDevice() ? 8 : 16;
+    TGCache *cache = [TGRemoteImageView sharedCache];
+    for (TGModernLetteredAvatarViewModel *avatar in avatars)
+    {
+        NSString *uri = avatar.avatarUri;
+        NSString *filter = avatar.avatarFilter;
+        if (uri.length == 0 || filter.length == 0)
+            continue;
+        NSString *path = [NSString stringWithFormat:@"/img/({filter:%@}%@)", filter, uri];
+        if ([desired containsObject:path])
+            continue;
+        if (desired.count >= limit)
+            break;
+        [desired addObject:path];
+        if (_requests[path] != nil)
+            continue;
+        TGModernConversationAvatarRequest *request = [[TGModernConversationAvatarRequest alloc] init];
+        _requests[path] = request;
+        NSString *key = [TGRemoteImageView cacheKeyForUrl:uri filter:filter];
+        if ([cache cachedImage:key availability:TGCacheMemory] != nil)
+            continue;
+        __weak TGModernConversationAvatarPreloader *weakSelf = self;
+        [cache prefetchRenderedAvatar:key completion:^(UIImage *image)
+        {
+            OGPlatformDispatchOnMainThread(^
+            {
+                TGModernConversationAvatarPreloader *preloader = weakSelf;
+                if (preloader == nil || preloader->_requests[path] != request)
+                    return;
+                if (image != nil)
+                {
+                    [cache cacheImage:image withData:nil url:key availability:TGCacheMemory];
+                    return;
+                }
+                request.started = true;
+                NSDictionary *options = @{@"cache": cache, @"cancelTimeout": @0, @"useCache": @true, @"allowThumbnailCache": @true, @"userProperties": @{@"onegramImagePriority": @2}};
+                [ActionStageInstance() requestActor:path options:options flags:TGActorRequestChangePriority watcher:preloader];
+            });
+        }];
+    }
+    for (NSString *path in [_requests allKeys])
+    {
+        if ([desired containsObject:path])
+            continue;
+        TGModernConversationAvatarRequest *request = _requests[path];
+        if (request.started)
+            [ActionStageInstance() removeWatcherByHandle:_actionHandle fromPath:path];
+        [_requests removeObjectForKey:path];
+    }
+}
+
+@end
+
 @interface TGModernConversationController () <PSUICollectionViewDataSource, TGModernConversationViewLayoutDelegate, HPGrowingTextViewDelegate, UIGestureRecognizerDelegate, TGLegacyCameraControllerDelegate, TGModernConversationInputTextPanelDelegate, TGModernConversationEditingPanelDelegate, TGModernConversationTitleViewDelegate, TGForwardContactPickerControllerDelegate, TGAudioRecorderDelegate,
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
 UIDocumentInteractionControllerDelegate,
@@ -711,6 +810,7 @@ TGImagePickerControllerDelegate, TGSearchBarDelegate, TGKeyCommandResponder, UID
     TGModernConversationAvatarButton *_avatarButton;
     UIBarButtonItem *_avatarButtonItem;
     UIBarButtonItem *_infoButtonItem;
+    TGModernButton *_searchBarButton;
     
     TGMenuContainerView *_menuContainerView;
     TGMenuContainerView *_tooltipContainerView;
@@ -750,6 +850,10 @@ TGImagePickerControllerDelegate, TGSearchBarDelegate, TGKeyCommandResponder, UID
     CFAbsoluteTime _scrollLastSampleTime;
     NSUInteger _prerenderItemCount;
     NSMutableArray *_prerenderModels;
+    NSMutableArray *_prerenderPreparedModels;
+    NSUInteger _prerenderPreparedBytes;
+    NSMutableArray *_prerenderAvatarModels;
+    TGModernConversationAvatarPreloader *_prerenderAvatarPreloader;
     bool _enableBelowHistoryRequests;
     
     bool _enableUnloadHistoryRequests;
@@ -1120,6 +1224,7 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
     
     TGModernConversationRetainCollectionViewUntilUpdatesFinish(_collectionView);
     
+    [_prerenderAvatarPreloader cancel];
     for (TGModernFlatteningViewModel *model in _prerenderModels)
         [model cancelAsynchronousContentsPreparation];
     
@@ -1433,15 +1538,30 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
 {
     if ([self isAdminLog] || [self isSavedMessages]) {
         if (_infoButtonItem == nil) {
-            _infoButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSearch target:self action:@selector(searchPressed)];
-            if ([TGPresentation brandedIOS6Style])
-                _infoButtonItem.imageInsets = UIEdgeInsetsMake(0.0f, 2.0f, 0.0f, -2.0f);
+            if (iosMajorVersion() < 7 && ![TGPresentation classicIOS6Style]) {
+                UIImage *image = [self _searchBarButtonImage];
+                _searchBarButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0.0f, 0.0f, image.size.width + 16.0f, 44.0f)];
+                _searchBarButton.adjustsImageWhenHighlighted = false;
+                [_searchBarButton setImage:image forState:UIControlStateNormal];
+                [_searchBarButton addTarget:self action:@selector(searchPressed) forControlEvents:UIControlEventTouchUpInside];
+                _infoButtonItem = [[UIBarButtonItem alloc] initWithCustomView:_searchBarButton];
+            } else {
+                _infoButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSearch target:self action:@selector(searchPressed)];
+                if ([TGPresentation brandedIOS6Style])
+                    _infoButtonItem.imageInsets = UIEdgeInsetsMake(0.0f, 2.0f, 0.0f, -2.0f);
+            }
         }
         return _infoButtonItem;
     }
     else {
         return _avatarButtonItem;
     }
+}
+
+- (UIImage *)_searchBarButtonImage
+{
+    TGPresentation *presentation = _presentation ?: TGPresentation.current;
+    return TGTintedImage(TGComponentsImageNamed(@"NavigationSearchIcon.png"), presentation.pallete.navigationButtonColor);
 }
 
 - (void)setAdditionalNavigationBarHeight:(CGFloat)height
@@ -1685,6 +1805,7 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
     _secondaryTitlePanel.presentation = presentation;
     _searchBar.pallete = presentation.searchBarPallete;
     _scrollButtons.presentation = presentation;
+    [_searchBarButton setImage:[self _searchBarButtonImage] forState:UIControlStateNormal];
     
     [_collectionView updatePresentation];
     [self _updateConversationBackgroundAnimated:false];
@@ -2374,6 +2495,13 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
 
 - (void)viewWillDisappear:(BOOL)animated
 {
+    [_prerenderAvatarPreloader cancel];
+    _prerenderAvatarModels = nil;
+    for (TGModernFlatteningViewModel *model in _prerenderModels)
+        [model cancelAsynchronousContentsPreparation];
+    _prerenderModels = nil;
+    _prerenderPreparedModels = nil;
+    _prerenderPreparedBytes = 0;
     _prerenderGeneration++;
     _prerenderPreparationScheduled = false;
     _prerenderPendingItems = nil;
@@ -2832,6 +2960,13 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
     CGFloat aboveDistance = _scrollVelocityY > 60.0f ? distance + velocityLead : (_scrollVelocityY < -60.0f ? MAX(_collectionView.bounds.size.height * 2.0f, distance * 0.5f) : distance);
     CGFloat belowDistance = _scrollVelocityY < -60.0f ? distance + velocityLead : (_scrollVelocityY > 60.0f ? MAX(_collectionView.bounds.size.height * 2.0f, distance * 0.5f) : distance);
 
+    if ((NSInteger)_items.count >= TGModernConversationControllerUnloadHistoryLimit)
+    {
+        CGFloat edgeDistance = MIN(distance, _collectionView.bounds.size.height * 3.0f + velocityLead);
+        aboveDistance = MIN(aboveDistance, edgeDistance);
+        belowDistance = MIN(belowDistance, edgeDistance);
+    }
+
     [_companion setHistoryAboveReadAheadAllowed:contentHeight - maxY < aboveDistance];
 
     if (_enableAboveHistoryRequests && contentHeight - maxY < aboveDistance)
@@ -3179,17 +3314,21 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
 {
     TGModernConversationItem *item = indexPath.row < (NSInteger)_items.count ? [_items objectAtIndex:indexPath.row] : nil;
     
-    if (item != nil && iosMajorVersion() >= 8)
+    if (item != nil && iosMajorVersion() >= 8 && [_collectionView usesNativeCollectionView] && !_disableItemBinding)
     {
         TGModernCollectionCell *concreteCell = (TGModernCollectionCell *)cell;
         [UIView performWithoutAnimation:^{
-            if (concreteCell.boundItem != nil) {
-                TGModernConversationItem *item = concreteCell.boundItem;
-                [item unbindCell:_viewStorage];
-            }
-            
-            if (!_disableItemBinding)
+            if (concreteCell.boundItem != item)
+            {
+                if (concreteCell.boundItem != nil)
+                {
+                    TGModernConversationItem *previousItem = concreteCell.boundItem;
+                    [previousItem unbindCell:_viewStorage];
+                }
                 [self _bindItem:item toCell:concreteCell atIndexPath:indexPath];
+                if (concreteCell->_needsRelativeBoundsUpdateNotifications)
+                    [_collectionView setNeedsLayout];
+            }
         }];
     }
     
@@ -3231,8 +3370,9 @@ static void TGModernConversationControllerConfigureHistoryWindow(void)
                     [item unbindCell:_viewStorage];
                 }
                 
-                if (!_disableItemBinding && iosMajorVersion() <= 7) {
+                if (!_disableItemBinding && (iosMajorVersion() <= 7 || ![_collectionView usesNativeCollectionView])) {
                     [self _bindItem:item toCell:cell atIndexPath:indexPath];
+                    [self _setNeedsVisibleItemIndicesUpdate];
                 }
             }];
 
@@ -3641,11 +3781,35 @@ static void TGModernConversationCollectFlatteningModels(TGModernViewModel *model
         TGModernConversationCollectFlatteningModels(submodel, result, depth + 1);
 }
 
+static void TGModernConversationSetVisibleContentPriority(TGModernViewModel *model, CGFloat priority, int depth)
+{
+    if ([model isKindOfClass:[TGModernFlatteningViewModel class]])
+    {
+        [(TGModernFlatteningViewModel *)model setVisibleContentsPriority:priority];
+        return;
+    }
+    if (depth >= 4)
+        return;
+    for (TGModernViewModel *submodel in model.submodels)
+        TGModernConversationSetVisibleContentPriority(submodel, priority, depth + 1);
+}
+
+static void TGModernConversationAppendAvatar(TGModernViewModel *model, NSMutableArray *avatars)
+{
+    if ([model isKindOfClass:[TGMessageViewModel class]])
+    {
+        TGModernLetteredAvatarViewModel *avatar = [(TGMessageViewModel *)model conversationAvatarModel];
+        if (avatar != nil && ![avatars containsObject:avatar])
+            [avatars addObject:avatar];
+    }
+}
+
 struct TGModernConversationPrerenderCandidate
 {
     NSUInteger index;
     CGFloat priority;
     bool fromBottomEdge;
+    CGFloat height;
 };
 
 struct TGModernConversationPrerenderCandidateComparator
@@ -3663,19 +3827,23 @@ struct TGModernConversationPrerenderCandidateComparator
     _prerenderPreparationScheduled = true;
     NSUInteger generation = _prerenderGeneration;
     __weak TGModernConversationController *weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.008 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.001 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
     {
         __strong TGModernConversationController *controller = weakSelf;
         if (controller == nil || controller->_prerenderGeneration != generation)
             return;
         controller->_prerenderPreparationScheduled = false;
-        if (controller->_collectionView.window == nil || controller->_prerenderPendingIndex >= controller->_prerenderPendingItems.count)
+        if (controller->_collectionView.window == nil || controller->_receivedWillDisappear)
             return;
-        NSDictionary *entry = controller->_prerenderPendingItems[controller->_prerenderPendingIndex++];
-        TGMessageModernConversationItem *item = entry[@"item"];
-        NSUInteger index = [entry[@"index"] unsignedIntegerValue];
-        if (index < controller->_items.count && controller->_items[index] == item && [item boundCell] == nil && ABS(controller->_collectionView.bounds.size.width - controller->_prerenderContainerWidth) < FLT_EPSILON)
+        CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + (OGRuntimeSingleCoreDevice() ? 0.002 : 0.004);
+        NSUInteger prepared = 0;
+        while (controller->_prerenderPendingIndex < controller->_prerenderPendingItems.count && prepared < 4)
         {
+            NSDictionary *entry = controller->_prerenderPendingItems[controller->_prerenderPendingIndex++];
+            TGMessageModernConversationItem *item = entry[@"item"];
+            NSUInteger index = [entry[@"index"] unsignedIntegerValue];
+            if (index >= controller->_items.count || controller->_items[index] != item || [item boundCell] != nil || ABS(controller->_collectionView.bounds.size.width - controller->_prerenderContainerWidth) >= FLT_EPSILON)
+                continue;
 #if defined(ONEGRAM_DIAGNOSTICS)
             CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
 #endif
@@ -3684,26 +3852,42 @@ struct TGModernConversationPrerenderCandidateComparator
                 TGModernViewModel *viewModel = [item viewModelForContainerSize:CGSizeMake(controller->_prerenderContainerWidth, CGFLOAT_MAX) viewStorage:controller->_viewStorage];
                 if ([viewModel isKindOfClass:[TGMessageViewModel class]])
                     [(TGMessageViewModel *)viewModel prepareForAsynchronousContentDrawing];
+                if ([entry[@"avatar"] boolValue])
+                    TGModernConversationAppendAvatar(viewModel, controller->_prerenderAvatarModels);
                 NSMutableArray *models = [[NSMutableArray alloc] init];
                 TGModernConversationCollectFlatteningModels(viewModel, models, 0);
-                NSUInteger used = 0;
-                for (TGModernFlatteningViewModel *model in controller->_prerenderModels)
-                    used += [model estimatedContentsBytes];
+                NSUInteger used = controller->_prerenderPreparedBytes;
+                bool exhausted = false;
                 NSUInteger budget = [TGModernFlatteningViewModel prerenderBudgetBytes];
                 for (TGModernFlatteningViewModel *model in models)
                 {
-                    if ([controller->_prerenderModels containsObject:model]) continue;
+                    if ([controller->_prerenderPreparedModels containsObject:model])
+                        continue;
                     NSUInteger bytes = [model estimatedContentsBytes];
-                    if (used != 0 && bytes > budget - MIN(budget, used)) break;
+                    if (used != 0 && bytes > budget - MIN(budget, used))
+                    {
+                        exhausted = true;
+                        break;
+                    }
                     used += bytes;
-                    [controller->_prerenderModels addObject:model];
+                    [controller->_prerenderPreparedModels addObject:model];
+                    if (![controller->_prerenderModels containsObject:model])
+                        [controller->_prerenderModels addObject:model];
                     [model prepareContentsAsynchronouslyWithPriority:[entry[@"priority"] doubleValue] fromBottomEdge:[entry[@"bottom"] boolValue]];
 #if defined(ONEGRAM_DIAGNOSTICS)
                     TGModernConversationScrollStatPrerenderItems++;
 #endif
                 }
-                if (used >= budget)
+                controller->_prerenderPreparedBytes = used;
+                if (exhausted || used >= budget)
                 {
+                    NSSet *preparedModels = [[NSSet alloc] initWithArray:controller->_prerenderPreparedModels];
+                    for (TGModernFlatteningViewModel *model in controller->_prerenderModels)
+                    {
+                        if (![preparedModels containsObject:model])
+                            [model cancelAsynchronousContentsPreparation];
+                    }
+                    controller->_prerenderModels = [controller->_prerenderPreparedModels mutableCopy];
                     controller->_prerenderPendingItems = nil;
                     controller->_prerenderPendingIndex = 0;
                 }
@@ -3711,7 +3895,13 @@ struct TGModernConversationPrerenderCandidateComparator
 #if defined(ONEGRAM_DIAGNOSTICS)
             TGModernConversationScrollStatPrerenderTime += CFAbsoluteTimeGetCurrent() - start;
 #endif
+            if (controller->_prerenderGeneration != generation)
+                return;
+            prepared++;
+            if (CFAbsoluteTimeGetCurrent() >= deadline)
+                break;
         }
+        [controller->_prerenderAvatarPreloader updateAvatars:controller->_prerenderAvatarModels];
         if (controller->_prerenderPendingIndex >= controller->_prerenderPendingItems.count)
         {
             controller->_prerenderPendingItems = nil;
@@ -3723,34 +3913,38 @@ struct TGModernConversationPrerenderCandidateComparator
 
 - (void)_updateContentPrerendering:(bool)symmetric
 {
-    if (_collectionView == nil || _collectionLayout == nil)
+    if (_collectionView == nil || _collectionLayout == nil || _receivedWillDisappear)
         return;
     CGRect bounds = _collectionView.bounds;
     NSUInteger itemCount = _items.count;
     if (bounds.size.height < 1.0f || itemCount == 0)
         return;
+    CGFloat height = bounds.size.height;
+    CGFloat speed = ABS(_scrollVelocityY);
+    for (TGModernCollectionCell *cell in _collectionView.visibleCells)
+    {
+        CGFloat distance = _scrollVelocityY < 0.0f ? ABS(CGRectGetMinY(cell.frame) - CGRectGetMinY(bounds)) : ABS(CGRectGetMaxY(bounds) - CGRectGetMaxY(cell.frame));
+        TGModernConversationSetVisibleContentPriority([cell.boundItem viewModel], distance * 512.0f / height, 0);
+    }
 #if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime prerenderStart = CFAbsoluteTimeGetCurrent();
 #endif
     CGFloat offsetY = bounds.origin.y;
-    CGFloat height = bounds.size.height;
     CGFloat prediction = symmetric ? offsetY : [self _predictedHistoryOffset];
     CGFloat delta = offsetY - _prerenderOffset;
     CGFloat predictedDelta = prediction - _prerenderPredictionOffset;
     int direction = symmetric ? 0 : (_scrollVelocityY > 60.0f ? 1 : (_scrollVelocityY < -60.0f ? -1 : (delta >= 0.0f ? 1 : -1)));
-    if (!symmetric && _prerenderValid && _prerenderItemCount == itemCount && _prerenderContainerWidth == bounds.size.width && _prerenderDirection == direction && ABS(delta) < height * 0.55f && ABS(predictedDelta) < height * 0.8f)
+    if (!symmetric && _prerenderValid && _prerenderItemCount == itemCount && _prerenderContainerWidth == bounds.size.width && _prerenderDirection == direction && ABS(delta) < height * 0.22f && ABS(predictedDelta) < height * 0.4f)
         return;
     _prerenderValid = true;
     _prerenderOffset = offsetY;
     _prerenderPredictionOffset = prediction;
     _prerenderItemCount = itemCount;
-
     _prerenderContainerWidth = bounds.size.width;
     _prerenderDirection = direction;
-    _prerenderGeneration++;
-    _prerenderPreparationScheduled = false;
-    CGFloat minY = MIN(offsetY, prediction) - height * (direction < 0 ? 2.5f : 0.8f);
-    CGFloat maxY = MAX(offsetY, prediction) + height * (direction > 0 ? 2.5f : 0.8f);
+    CGFloat ahead = MIN(height * 2.5f, MAX(height, speed * 0.35f));
+    CGFloat minY = offsetY - (direction < 0 ? ahead : height * 0.6f);
+    CGFloat maxY = offsetY + height + (direction > 0 ? ahead : height * 0.6f);
     if (direction == 0)
     {
         minY = offsetY - height;
@@ -3759,11 +3953,12 @@ struct TGModernConversationPrerenderCandidateComparator
     CGRect rect = CGRectMake(bounds.origin.x, minY, bounds.size.width, maxY - minY);
     CGFloat boundsMinY = CGRectGetMinY(bounds);
     CGFloat boundsMaxY = CGRectGetMaxY(bounds);
-    CGFloat predictedMinY = prediction;
-    CGFloat predictedMaxY = prediction + height;
     NSArray *attributesList = [_collectionLayout layoutAttributesForElementsInRect:rect];
     std::vector<TGModernConversationPrerenderCandidate> candidates;
     candidates.reserve(attributesList.count);
+    NSMutableArray *avatars = [[NSMutableArray alloc] init];
+    for (TGModernCollectionCell *cell in _collectionView.visibleCells)
+        TGModernConversationAppendAvatar([cell.boundItem viewModel], avatars);
     for (PSUICollectionViewLayoutAttributes *attributes in attributesList)
     {
         NSInteger row = attributes.indexPath.row;
@@ -3776,13 +3971,10 @@ struct TGModernConversationPrerenderCandidateComparator
         CGFloat above = CGRectGetMinY(frame) - boundsMaxY;
         CGFloat below = boundsMinY - CGRectGetMaxY(frame);
         CGFloat distance = MAX(0.0f, MAX(above, below));
-        CGFloat predictedDistance = MAX(0.0f, MAX(CGRectGetMinY(frame) - predictedMaxY, predictedMinY - CGRectGetMaxY(frame)));
-        CGFloat priority = MIN(distance, predictedDistance);
-        if (direction > 0 && below > 0.0f)
-            priority += height * 4.0f;
-        else if (direction < 0 && above > 0.0f)
-            priority += height * 4.0f;
-        TGModernConversationPrerenderCandidate candidate = { (NSUInteger)row, priority, CGRectGetMidY(frame) > CGRectGetMidY(bounds) };
+        CGFloat priority = distance * 1000.0f / MAX(height, speed);
+        if ((direction > 0 && below > 0.0f) || (direction < 0 && above > 0.0f))
+            priority += 4000.0f;
+        TGModernConversationPrerenderCandidate candidate = { (NSUInteger)row, priority, CGRectGetMidY(frame) > CGRectGetMidY(bounds), frame.size.height };
         candidates.push_back(candidate);
     }
     std::stable_sort(candidates.begin(), candidates.end(), TGModernConversationPrerenderCandidateComparator());
@@ -3790,75 +3982,61 @@ struct TGModernConversationPrerenderCandidateComparator
     NSUInteger budget = [TGModernFlatteningViewModel prerenderBudgetBytes];
     NSUInteger usedBytes = 0;
     NSUInteger maxCandidates = OGRuntimeSingleCoreDevice() ? 18 : 48;
-    NSMutableArray *models = [[NSMutableArray alloc] initWithCapacity:MIN((NSUInteger)candidates.size(), maxCandidates)];
-    std::vector<CGFloat> priorities;
-    std::vector<bool> edges;
-    priorities.reserve(MIN((NSUInteger)candidates.size(), maxCandidates));
-    edges.reserve(MIN((NSUInteger)candidates.size(), maxCandidates));
+    NSMutableArray *models = [[NSMutableArray alloc] init];
     NSMutableArray *pendingItems = [[NSMutableArray alloc] init];
-    NSUInteger considered = 0;
-    for (NSUInteger index = 0; index < candidates.size() && considered < maxCandidates; index++)
+    CGFloat scale = TGScreenScaling();
+    for (NSUInteger index = 0; index < candidates.size() && pendingItems.count < maxCandidates; index++)
     {
         TGModernConversationPrerenderCandidate candidate = candidates[index];
         TGModernConversationItem *item = _items[candidate.index];
-        TGModernViewModel *viewModel = [item viewModel];
-        if (viewModel == nil)
-        {
-            if ([item isKindOfClass:[TGMessageModernConversationItem class]])
-            {
-                [pendingItems addObject:@{@"item": item, @"index": @(candidate.index), @"priority": @(candidate.priority), @"bottom": @(candidate.fromBottomEdge)}];
-                considered++;
-            }
+        if (![item isKindOfClass:[TGMessageModernConversationItem class]])
             continue;
-        }
-        considered++;
-        if ([viewModel isKindOfClass:[TGMessageViewModel class]])
-            [(TGMessageViewModel *)viewModel prepareForAsynchronousContentDrawing];
+        TGModernViewModel *viewModel = [item viewModel];
         NSMutableArray *itemModels = [[NSMutableArray alloc] init];
         TGModernConversationCollectFlatteningModels(viewModel, itemModels, 0);
+        NSUInteger bytes = 0;
+        for (TGModernFlatteningViewModel *model in itemModels)
+            bytes += [model estimatedContentsBytes];
+        if (viewModel == nil)
+        {
+            CGFloat estimatedHeight = MIN(candidate.height, OGRuntimeSingleCoreDevice() ? (candidate.height > 256.0f ? 128.0f : 256.0f) : 512.0f);
+            NSUInteger rowBytes = ((NSUInteger)(bounds.size.width * scale) * 4 + 15) & ~((NSUInteger)15);
+            bytes = rowBytes * (NSUInteger)(MAX(1.0f, estimatedHeight) * scale);
+        }
+        if (usedBytes != 0 && bytes > budget - MIN(budget, usedBytes))
+            break;
+        usedBytes += bytes;
+        bool prepareAvatar = candidate.priority < 1000.0f;
+        if (prepareAvatar)
+            TGModernConversationAppendAvatar(viewModel, avatars);
         for (TGModernFlatteningViewModel *model in itemModels)
         {
-            NSUInteger bytes = [model estimatedContentsBytes];
-            if (usedBytes + bytes > budget && models.count != 0)
-                break;
-            usedBytes += bytes;
             [models addObject:model];
-            priorities.push_back(candidate.priority);
-            edges.push_back(candidate.fromBottomEdge);
+            [model setAsynchronousContentsPriority:candidate.priority fromBottomEdge:candidate.fromBottomEdge];
         }
+        [pendingItems addObject:@{@"item": item, @"index": @(candidate.index), @"priority": @(candidate.priority), @"bottom": @(candidate.fromBottomEdge), @"avatar": @(prepareAvatar)}];
         if (usedBytes >= budget)
             break;
     }
-
-    if (_prerenderModels.count != 0)
+    NSSet *currentModels = [[NSSet alloc] initWithArray:models];
+    for (TGModernFlatteningViewModel *model in _prerenderModels)
     {
-        NSSet *currentModels = [[NSSet alloc] initWithArray:models];
-        for (TGModernFlatteningViewModel *model in _prerenderModels)
-        {
-            if (![currentModels containsObject:model])
-                [model cancelAsynchronousContentsPreparation];
-        }
-    }
-
-    NSUInteger modelIndex = 0;
-    for (TGModernFlatteningViewModel *model in models)
-    {
-        CGFloat priority = priorities[modelIndex];
-        bool fromBottom = edges[modelIndex];
-        [TGRichMessageInlineImageStore performWithoutStartingRequests:^
-        {
-            [model prepareContentsAsynchronouslyWithPriority:priority fromBottomEdge:fromBottom];
-        }];
-        modelIndex++;
+        if (![currentModels containsObject:model])
+            [model cancelAsynchronousContentsPreparation];
     }
     _prerenderModels = models;
-    _prerenderPendingItems = usedBytes >= budget ? nil : [pendingItems copy];
+    _prerenderPreparedModels = [[NSMutableArray alloc] init];
+    _prerenderPreparedBytes = 0;
+    _prerenderAvatarModels = avatars;
+    if (_prerenderAvatarPreloader == nil)
+        _prerenderAvatarPreloader = [[TGModernConversationAvatarPreloader alloc] init];
+    [_prerenderAvatarPreloader updateAvatars:avatars];
+    _prerenderPendingItems = [pendingItems copy];
     _prerenderPendingIndex = 0;
     [self _schedulePrerenderModelPreparation];
 #if defined(ONEGRAM_DIAGNOSTICS)
     TGModernConversationScrollStatPrerenderTime += CFAbsoluteTimeGetCurrent() - prerenderStart;
     TGModernConversationScrollStatPrerenderCount++;
-    TGModernConversationScrollStatPrerenderItems += (int)models.count;
 #endif
 }
 
@@ -14237,7 +14415,7 @@ static UIView *_findBackArrow(UIView *view)
                 if (menuMessageItem != nil)
                 {
                     TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
-                    [[[[_companion updatePinnedMessage:menuMessageItem->_message.mid] deliverOn:[SQueue mainQueue]] onDispose:^{
+                    [[[[_companion updatePinnedMessage:menuMessageItem->_message.mid unpin:false] deliverOn:[SQueue mainQueue]] onDispose:^{
                     }] startWithNext:nil error:^(__unused id error) {
                         TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
                         if (strongSelf != nil) {
@@ -14247,11 +14425,11 @@ static UIView *_findBackArrow(UIView *view)
                     } completed:^{
                     }];
                 }
-            } else if ([menuAction isEqualToString:@"unpin"]) {
+            } else if ([menuAction isEqualToString:@"unpin"] && menuMessageItem != nil) {
                 [self endEditing];
                 
                 TGModernConversationControllerReference *weakSelf = _ios4LifetimeReference;
-                [[[[_companion updatePinnedMessage:0] deliverOn:[SQueue mainQueue]] onDispose:^{
+                [[[[_companion updatePinnedMessage:menuMessageItem->_message.mid unpin:true] deliverOn:[SQueue mainQueue]] onDispose:^{
                 }] startWithNext:nil error:^(__unused id error) {
                     TGModernConversationController *strongSelf = TGModernConversationControllerResolveReference(weakSelf);
                     if (strongSelf != nil) {

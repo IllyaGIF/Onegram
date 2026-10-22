@@ -13,6 +13,7 @@
 @property (nonatomic, copy) void (^returned)();
 
 - (void)setReturnKeyType:(UIReturnKeyType)returnKeyType;
-+ (CGFloat)heightForText:(NSString *)text width:(CGFloat)width safeAreaInset:(UIEdgeInsets)safeAreaInset;
++ (CGRect)textViewFrameForBounds:(CGRect)bounds insets:(UIEdgeInsets)insets safeAreaInset:(UIEdgeInsets)safeAreaInset showRemainingCount:(bool)showRemainingCount;
++ (CGFloat)heightForText:(NSString *)text textViewWidth:(CGFloat)textViewWidth;
 
 @end

@@ -10,12 +10,46 @@
 #import "TGImageManager.h"
 #import "TGGradientLabel.h"
 
+@interface TGLetteredAvatarRoundedImageKey : NSObject <NSCopying>
+{
+@public
+    UIImage *_image;
+    CGFloat _radius;
+}
+@end
+
+@implementation TGLetteredAvatarRoundedImageKey
+
+- (id)copyWithZone:(NSZone *)__unused zone
+{
+    return self;
+}
+
+- (NSUInteger)hash
+{
+    return (NSUInteger)(uintptr_t)(__bridge void *)_image ^ (NSUInteger)lrintf(_radius * 64.0f);
+}
+
+- (BOOL)isEqual:(id)object
+{
+    if (object == self)
+        return true;
+    if (![object isKindOfClass:[TGLetteredAvatarRoundedImageKey class]])
+        return false;
+    TGLetteredAvatarRoundedImageKey *other = object;
+    return other->_image == _image && other->_radius == _radius;
+}
+
+@end
+
 static UIImage *TGLetteredAvatarRoundedImage(UIImage *image, CGFloat radius, CGSize boundsSize)
 {
     if (image == nil || radius <= 0.0f || image.size.width < 1.0f || image.size.height < 1.0f)
         return image;
     CGFloat imageRadius = boundsSize.width > 1.0f ? radius * image.size.width / boundsSize.width : radius;
-    NSArray *key = @[image, @(imageRadius)];
+    TGLetteredAvatarRoundedImageKey *key = [[TGLetteredAvatarRoundedImageKey alloc] init];
+    key->_image = image;
+    key->_radius = imageRadius;
     static OGMemoryCache *cache = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^

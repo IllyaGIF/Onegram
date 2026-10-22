@@ -29,6 +29,7 @@ public:
 	void EnableOutput(bool enabled);
 	bool IsFailed();
 	uint32_t GetConfiguredSampleRate(){ return configuredSampleRate; }
+	void GetStreamSampleRates(double* inputRate, double* outputRate);
 #if TARGET_OS_OSX
 	void SetCurrentDevice(bool input, std::string deviceID);
 #endif
@@ -51,6 +52,8 @@ private:
 	bool failed;
 	bool started;
 	uint32_t configuredSampleRate;
+	AudioStreamBasicDescription configuredFormat;
+	bool ApplyConfiguredFormat();
 };
 }}
 

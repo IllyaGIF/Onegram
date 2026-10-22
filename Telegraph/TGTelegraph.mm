@@ -42,10 +42,10 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 #import "TGMessage+Telegraph.h"
 
 #import "TGLogoutRequestBuilder.h"
+#import "TGAccountSwitcher.h"
 #import "TGSendCodeRequestBuilder.h"
 #import "TGSignInRequestBuilder.h"
 #import "TGSignUpRequestBuilder.h"
-#import "TGSendInvitesActor.h"
 #import "TGPushActionsRequestBuilder.h"
 #import "TGUpdatePresenceActor.h"
 #import "TGRevokeSessionsActor.h"
@@ -114,7 +114,6 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 
 #import "TGLocationRequestActor.h"
 #import "TGLocationReverseGeocodeActor.h"
-#import "TGSaveGeocodingResultActor.h"
 
 #import "TGFileDownloadActor.h"
 #import "TGFileUploadActor.h"
@@ -443,42 +442,6 @@ static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *d
     if (inputPeer != NULL)
         *inputPeer = nil;
     return nil;
-}
-
-static NSArray *TGIOS6ArchivePeerIdsFromDialogs(TLmessages_Dialogs *dialogs)
-{
-    NSMutableArray *peerIds = [[NSMutableArray alloc] init];
-    NSMutableSet *seenPeerIds = [[NSMutableSet alloc] init];
-    
-    for (TLDialog *baseDialog in dialogs.dialogs)
-    {
-        if (![baseDialog isKindOfClass:[TLDialog$dialogMeta class]])
-            continue;
-        
-        TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
-        
-        int64_t peerId = TGIOS6ArchivePeerIdAndType(dialog.peer, NULL, NULL);
-        if (peerId == 0)
-            continue;
-        
-        NSNumber *nPeerId = [[NSNumber alloc] initWithLongLong:peerId];
-        if (![seenPeerIds containsObject:nPeerId])
-        {
-            [seenPeerIds addObject:nPeerId];
-            [peerIds addObject:nPeerId];
-        }
-    }
-    
-    return peerIds;
-}
-
-static void TGIOS6StoreArchivePeerIds(TLmessages_Dialogs *dialogs, NSString *reason)
-{
-    NSArray *peerIds = TGIOS6ArchivePeerIdsFromDialogs(dialogs);
-    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:peerIds]];
-    uint8_t complete = 1;
-    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:[NSData dataWithBytes:&complete length:1]];
-    [ActionStageInstance() dispatchResource:@"/dialogListReloaded" resource:@true];
 }
 
 @interface TGIOS6InputMessageID : NSObject <TLObject>
@@ -1012,9 +975,15 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (void)installDatabaseCleanupBlocksIfNeeded
 {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-    [TGDatabaseInstance() setMessageCleanupBlock:^(TGMediaAttachment *attachment)
+    static TGDatabase *installedDatabase = nil;
+    TGDatabase *database = TGDatabaseInstance();
+    @synchronized ([TGTelegraph class])
+    {
+        if (installedDatabase == database)
+            return;
+        installedDatabase = database;
+    }
+    [database setMessageCleanupBlock:^(TGMediaAttachment *attachment)
     {
         if ([attachment isKindOfClass:[TGLocalMessageMetaMediaAttachment class]])
         {
@@ -1032,7 +1001,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         }
     }];
 
-    [TGDatabaseInstance() setCleanupEverythingBlock:^
+    [database setCleanupEverythingBlock:^
     {
         NSString *documentsDirectory = [TGAppDelegate documentsPath];
         NSFileManager *fileManager = [[NSFileManager alloc] init];
@@ -1046,16 +1015,15 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         NSString *filesPath = [documentsDirectory stringByAppendingPathComponent:@"files"];
         for (NSString *fileName in [fileManager contentsOfDirectoryAtPath:filesPath error:nil])
         {
-            [fileManager removeItemAtPath:[videosPath stringByAppendingPathComponent:fileName] error:nil];
+            [fileManager removeItemAtPath:[filesPath stringByAppendingPathComponent:fileName] error:nil];
         }
 
         NSString *audioPath = [documentsDirectory stringByAppendingPathComponent:@"audio"];
         for (NSString *fileName in [fileManager contentsOfDirectoryAtPath:audioPath error:nil])
         {
-            [fileManager removeItemAtPath:[videosPath stringByAppendingPathComponent:fileName] error:nil];
+            [fileManager removeItemAtPath:[audioPath stringByAppendingPathComponent:fileName] error:nil];
         }
     }];
-    });
 }
 
 - (id)init
@@ -1139,7 +1107,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             [ASActor registerActorClass:[TGSendCodeRequestBuilder class]];
             [ASActor registerActorClass:[TGSignInRequestBuilder class]];
             [ASActor registerActorClass:[TGSignUpRequestBuilder class]];
-            [ASActor registerActorClass:[TGSendInvitesActor class]];
             [ASActor registerActorClass:[TGPushActionsRequestBuilder class]];
             [ASActor registerActorClass:[TGUpdatePresenceActor class]];
             [ASActor registerActorClass:[TGRevokeSessionsActor class]];
@@ -1209,7 +1176,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
             [ASActor registerActorClass:[TGLocationRequestActor class]];
             [ASActor registerActorClass:[TGLocationReverseGeocodeActor class]];
-            [ASActor registerActorClass:[TGSaveGeocodingResultActor class]];
             
             [ASActor registerActorClass:[TGVideoDownloadActor class]];
             
@@ -1583,6 +1549,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         [TGModernSendCommonMessageActor clearRemoteMediaMapping];
         
         [[TGTelegramNetworking instance] removeCredentialsForExtensions];
+        [[TGTelegramNetworking instance] removeHelperAuthInfo];
         
         [TGStickersSignals clearCache];
         [TGMaskStickersSignals clearCache];
@@ -1618,7 +1585,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             [[UIApplication sharedApplication] setApplicationIconBadgeNumber:0];
             OGPlatformCancelAllLocalNotifications([UIApplication sharedApplication]);
             
-            [TGAppDelegateInstance presentLoginController:true animated:false phoneNumber:presetPhoneNumber phoneCode:nil phoneCodeHash:nil codeSentToTelegram:false codeSentViaPhone:false profileFirstName:nil profileLastName:nil resetAccountState:nil termsOfService:nil];
+            if (![[TGAccountSwitcher instance] switchToRemainingAccountAfterLogout])
+                [TGAppDelegateInstance presentLoginController:true animated:false phoneNumber:presetPhoneNumber phoneCode:nil phoneCodeHash:nil codeSentToTelegram:false codeSentViaPhone:false profileFirstName:nil profileLastName:nil resetAccountState:nil termsOfService:nil];
         });
         
         [_channelTasksDisposable dispose];
@@ -1642,6 +1610,62 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         
         [ActionStageInstance() dispatchResource:@"/tg/loggedOut" resource:nil];
     }];
+}
+
+- (void)suspendAccountSessionForSwitch
+{
+    [ActionStageInstance() removeWatcher:self];
+    
+    [TGSuggestedContactsRequestActor clearCache];
+    [TGContactListRequestBuilder clearCache];
+    [[TGInterfaceAssets instance] clearColorMapping];
+    
+    [_liveLocationManager reset];
+    [_callManager reset];
+    
+    _genericTasksSignalManager = [[SMulticastSignalManager alloc] init];
+    _channelStatesSignalManager = [[SMulticastSignalManager alloc] init];
+    
+    [_updatePresenceTimer invalidate];
+    _updatePresenceTimer = nil;
+    [_userPresenceExpirationTimer invalidate];
+    _userPresenceExpirationTimer = nil;
+    [_typingUserRecordsByConversation removeAllObjects];
+    [_userDataUpdatesSubscribers removeAllObjects];
+    
+    _userLinksToDispatch.clear();
+    _userDataToDispatch.clear();
+    _userPresenceToDispatch.clear();
+    _userPresenceExpiration.clear();
+    
+    TG_SYNCHRONIZED_BEGIN(_activityManagerByConversationId);
+    [_activityManagerByConversationId removeAllObjects];
+    TG_SYNCHRONIZED_END(_activityManagerByConversationId);
+    
+    [_channelTasksDisposable dispose];
+    _channelTasksDisposable = [[SDisposableSet alloc] init];
+    
+    [_disposeOnLogout dispose];
+    _disposeOnLogout = [[SDisposableSet alloc] init];
+    
+    [_checkLocalizationDisposable dispose];
+    _checkLocalizationDisposable = [[SMetaDisposable alloc] init];
+    
+    [_musicPlayer setPlaylist:nil initialItemKey:nil metadata:nil];
+    
+    _constrainedStartupDialogReady = false;
+    _constrainedPostDialogStartupPending = false;
+    _constrainedPostDialogStartupUserId = 0;
+    
+    _clientUserId = 0;
+    _clientIsActivated = false;
+    
+    _mediaBox = [[MediaBox alloc] initWithBasePath:[[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"mediacache"]];
+    
+    TGDispatchOnMainThread(^
+    {
+        [_typingUserRecordsByConversationMainThread removeAllObjects];
+    });
 }
 
 - (void)stateUpdateRequired
@@ -2303,9 +2327,13 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         }
 #endif
         
+        if ([[TGAccountSwitcher instance] consumeAuthorizationWithUserId:uid])
+            return;
+        
         TGLog(@"Starting with user id %d activated: %d", uid, clientIsActivated ? 1 : 0);
         
         [[TGTelegramNetworking instance] exportCredentialsForExtensions];
+        [[TGTelegramNetworking instance] exportHelperAuthInfo];
 
         self.clientUserId = uid;
         self.clientIsActivated = clientIsActivated;
@@ -2337,6 +2365,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
                 TGUser *user = [TGDatabaseInstance() loadUser:uid];
                 if (user != nil)
                 {
+                    [[TGAccountSwitcher instance] updateActiveAccountWithUser:user];
+                    
                     TGUserPresence presence;
                     presence.online = true;
                     presence.lastSeen = (int)(CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970);
@@ -3247,25 +3277,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doSendInvites:(NSArray *)phones text:(NSString *)text actor:(TGSendInvitesActor *)actor
-{
-    TLRPCauth_sendInvites$auth_sendInvites *sendInvites = [[TLRPCauth_sendInvites$auth_sendInvites alloc] init];
-    sendInvites.phone_numbers = phones;
-    sendInvites.message = text;
-    
-    return [[TGTelegramNetworking instance] performRpc:sendInvites completionBlock:^(__unused id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
-    {
-        if (error == nil)
-        {
-            [actor sendInvitesSuccess];
-        }
-        else
-        {
-            [actor sendInvitesFailed];
-        }
-    } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric | TGRequestClassHidesActivityIndicator];
-}
-
 - (NSString *)currentDeviceModel
 {
     return [[UIDevice currentDevice] platformString];
@@ -3353,7 +3364,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         registerDevice.app_sandbox = false;
 #endif
         registerDevice.secret = [NSData data];
-        registerDevice.other_uids = @[];
+        registerDevice.other_uids = [[TGAccountSwitcher instance] otherAuthorizedUserIds];
         rpcRequest = registerDevice;
     }
     else
@@ -3362,7 +3373,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         
         unregisterDevice.token_type = 1;
         unregisterDevice.token = deviceToken;
-        unregisterDevice.other_uids = @[];
+        unregisterDevice.other_uids = [[TGAccountSwitcher instance] otherAuthorizedUserIds];
         
         rpcRequest = unregisterDevice;
     }
@@ -4173,6 +4184,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     else if (period > 0)
     {
         TLInputMedia$inputMediaGeoLive *geoMedia = [[TLInputMedia$inputMediaGeoLive alloc] init];
+        geoMedia.flags = (1 << 1);
         geoMedia.geo_point = geoPoint;
         geoMedia.period = period;
         media = geoMedia;
@@ -4656,26 +4668,11 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doUploadTimelinePhoto:(id)inputFile hasLocation:(bool)hasLocation latitude:(double)latitude longitude:(double)longitude actor:(TGTimelineUploadPhotoRequestBuilder *)actor
+- (NSObject *)doUploadTimelinePhoto:(id)inputFile hasLocation:(bool)__unused hasLocation latitude:(double)__unused latitude longitude:(double)__unused longitude actor:(TGTimelineUploadPhotoRequestBuilder *)actor
 {
     TLRPCphotos_uploadProfilePhoto$photos_uploadProfilePhoto *uploadProfilePhoto = [[TLRPCphotos_uploadProfilePhoto$photos_uploadProfilePhoto alloc] init];
-    
-    if (hasLocation)
-    {
-        TLInputGeoPoint$inputGeoPoint *geoPoint = [[TLInputGeoPoint$inputGeoPoint alloc] init];
-        geoPoint.lat = latitude;
-        geoPoint.n_long = longitude;
-        uploadProfilePhoto.geo_point = geoPoint;
-    }
-    else
-    {
-        TLInputGeoPoint$inputGeoPointEmpty *geoPoint = [[TLInputGeoPoint$inputGeoPointEmpty alloc] init];
-        uploadProfilePhoto.geo_point = geoPoint;
-    }
-    
+    uploadProfilePhoto.flags = (1 << 0);
     uploadProfilePhoto.file = inputFile;
-    uploadProfilePhoto.caption = @"";
-    uploadProfilePhoto.crop = [[TLInputPhotoCrop$inputPhotoCropAuto alloc] init];
     
     return [[TGTelegramNetworking instance] performRpc:uploadProfilePhoto completionBlock:^(TLphotos_Photo *result, __unused int64_t responseTime, MTRpcError *error)
     {
@@ -4720,13 +4717,19 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 - (NSObject *)doAssignProfilePhoto:(int64_t)itemId accessHash:(int64_t)accessHash actor:(TGTimelineAssignProfilePhotoActor *)actor
 {
     TLRPCphotos_updateProfilePhoto$photos_updateProfilePhoto *updateProfilePhoto = [[TLRPCphotos_updateProfilePhoto$photos_updateProfilePhoto alloc] init];
-    TLInputPhoto$inputPhoto *inputPhoto = [[TLInputPhoto$inputPhoto alloc] init];
-    inputPhoto.n_id = itemId;
-    inputPhoto.access_hash = accessHash;
-    updateProfilePhoto.n_id = inputPhoto;
-    updateProfilePhoto.crop = [[TLInputPhotoCrop$inputPhotoCropAuto alloc] init];
+    if (itemId == 0)
+    {
+        updateProfilePhoto.n_id = [[TLInputPhoto$inputPhotoEmpty alloc] init];
+    }
+    else
+    {
+        TLInputPhoto$inputPhoto *inputPhoto = [[TLInputPhoto$inputPhoto alloc] init];
+        inputPhoto.n_id = itemId;
+        inputPhoto.access_hash = accessHash;
+        updateProfilePhoto.n_id = inputPhoto;
+    }
     
-    return [[TGTelegramNetworking instance] performRpc:updateProfilePhoto completionBlock:^(TLUserProfilePhoto *result, __unused int64_t responseTime, MTRpcError *error)
+    return [[TGTelegramNetworking instance] performRpc:updateProfilePhoto completionBlock:^(TLphotos_Photo *result, __unused int64_t responseTime, MTRpcError *error)
     {
         if (error == nil)
         {
@@ -4735,37 +4738,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         else
         {
             [actor assignProfilePhotoRequestFailed];
-        }
-    } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
-}
-
-- (NSObject *)doSaveGeocodingResult:(double)latitude longitude:(double)longitude components:(NSDictionary *)components actor:(TGSaveGeocodingResultActor *)actor
-{
-    TLRPCgeo_saveGeoPlace$geo_saveGeoPlace *savePlace = [[TLRPCgeo_saveGeoPlace$geo_saveGeoPlace alloc] init];
-    
-    TLInputGeoPoint$inputGeoPoint *geoPoint = [[TLInputGeoPoint$inputGeoPoint alloc] init];
-    geoPoint.lat = latitude;
-    geoPoint.n_long = longitude;
-    
-    savePlace.geo_point = geoPoint;
-    
-    TLInputGeoPlaceName$inputGeoPlaceName *placeName = [[TLInputGeoPlaceName$inputGeoPlaceName alloc] init];
-    placeName.country = [components objectForKey:@"country"];
-    placeName.state = [components objectForKey:@"state"];
-    placeName.city = [components objectForKey:@"city"];
-    placeName.district = [components objectForKey:@"district"];
-    placeName.street = [components objectForKey:@"street"];
-    savePlace.place_name = placeName;
-    
-    return [[TGTelegramNetworking instance] performRpc:savePlace completionBlock:^(__unused id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
-    {
-        if (error == nil)
-        {
-            [actor saveGeocodingResultSuccess];
-        }
-        else
-        {
-            [actor saveGeocodingResultFailed];
         }
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
@@ -4979,13 +4951,13 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     if (block)
     {
         TLRPCcontacts_block$contacts_block *blockMethod = [[TLRPCcontacts_block$contacts_block alloc] init];
-        blockMethod.n_id = [self createInputUserForUid:(int)peerId];
+        blockMethod.n_id = [self createInputPeerForConversation:peerId accessHash:0];
         method = blockMethod;
     }
     else
     {
         TLRPCcontacts_unblock$contacts_unblock *unblockMethod = [[TLRPCcontacts_unblock$contacts_unblock alloc] init];
-        unblockMethod.n_id = [self createInputUserForUid:(int)peerId];
+        unblockMethod.n_id = [self createInputPeerForConversation:peerId accessHash:0];
         method = unblockMethod;
     }
     

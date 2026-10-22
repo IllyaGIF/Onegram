@@ -9,10 +9,6 @@ typedef NS_ENUM(NSInteger, PWProbeResult) {
     PWProbeUnsupported       
 };
 
-void PWSetBoundInterface(unsigned ifindex);
-
-void PWBindSocket(int fd);
-
 @interface PowerSession : NSObject
 
 - (instancetype)initWithConfig:(PowerConfig *)config;
@@ -24,14 +20,7 @@ void PWBindSocket(int fd);
                           timeout:(NSTimeInterval)timeout
                      latencyMillis:(int *)latencyMillis;
 
-- (void)relayClient:(int)clientFd host:(NSString *)host port:(uint16_t)port;
-
 - (BOOL)relayClient:(int)clientFd host:(NSString *)host port:(uint16_t)port
             okReply:(NSData *)okReply initialData:(NSData *)initialData;
-
-- (NSData *)resolveTCPDNSQuery:(NSData *)query
-                  resolverHost:(NSString *)host
-                          port:(uint16_t)port
-                       timeout:(NSTimeInterval)timeout;
 
 @end

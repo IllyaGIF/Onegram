@@ -21,7 +21,7 @@
 
 - (int)layerVersion
 {
-    return 41;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -51,7 +51,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xae189d5f;
+    return (int32_t)0xc5ba3d86;
 }
 
 - (int32_t)TLconstructorName
@@ -64,6 +64,7 @@
     TLRPCaccount_reportPeer$account_reportPeer *object = [[TLRPCaccount_reportPeer$account_reportPeer alloc] init];
     object.peer = metaObject->getObject((int32_t)0x9344c37d);
     object.reason = metaObject->getObject((int32_t)0x3405f57);
+    object.message = metaObject->getString((int32_t)0xc43b7853);
     return object;
 }
 
@@ -80,6 +81,12 @@
         value.type = TLConstructedValueTypeObject;
         value.nativeObject = self.reason;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x3405f57, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeString;
+        value.nativeObject = self.message;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xc43b7853, value));
     }
 }
 

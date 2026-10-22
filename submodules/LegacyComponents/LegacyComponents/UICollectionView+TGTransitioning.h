@@ -2,6 +2,8 @@
 #import "LegacyComponentsIos6Compat.h"
 #import "SSignalKitCompat/SSignalKit.h"
 
+@class TGCollectionViewTransitionLayout;
+
 @protocol TGTransitionAnimatorLayout <NSObject>
 
 - (void)collectionViewAlmostCompleteTransitioning:(PSUICollectionView *)collectionView;
@@ -13,8 +15,8 @@
 
 @property (nonatomic, readonly) bool isTransitionInProgress;
 
-- (UICollectionViewTransitionLayout *)transitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout duration:(NSTimeInterval)duration completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
-- (CGPoint)toContentOffsetForLayout:(UICollectionViewTransitionLayout *)layout indexPath:(NSIndexPath *)indexPath toSize:(CGSize)toSize toContentInset:(UIEdgeInsets)toContentInset;
+- (TGCollectionViewTransitionLayout *)transitionToCollectionViewLayout:(PSUICollectionViewLayout *)layout duration:(NSTimeInterval)duration completion:(UICollectionViewLayoutInteractiveTransitionCompletion)completion;
+- (CGPoint)toContentOffsetForLayout:(TGCollectionViewTransitionLayout *)layout indexPath:(NSIndexPath *)indexPath toSize:(CGSize)toSize toContentInset:(UIEdgeInsets)toContentInset;
 
 - (SSignal *)noOngoingTransitionSignal;
 

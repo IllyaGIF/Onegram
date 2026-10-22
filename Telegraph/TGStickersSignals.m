@@ -33,6 +33,91 @@ static bool alreadyReloadedFeaturedPacksFromRemote = false;
 
 static NSDictionary *cachedPacks = nil;
 static OSSpinLock cachedPacksLock = 0;
+static pthread_mutex_t TGStickerPacksPersistenceMutex = PTHREAD_MUTEX_INITIALIZER;
+static NSDictionary *TGStickerPacksPendingDictionary = nil;
+static NSString *TGStickerPacksPendingPath = nil;
+static bool TGStickerPacksPersistenceScheduled = false;
+static const NSTimeInterval TGStickerPacksPersistenceDelay = 2.0;
+
+static void TGStickerPacksWriteData(NSData *data, NSString *path)
+{
+    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:NULL];
+    if (data.length == 0 || ![data writeToFile:path atomically:true])
+        TGLog(@"***** TGStickersSignalsClass storePacksData couldn't write to file");
+}
+
+static void TGStickerPacksPersistPending(void)
+{
+    pthread_mutex_lock(&TGStickerPacksPersistenceMutex);
+    NSDictionary *dictionary = TGStickerPacksPendingDictionary;
+    NSString *path = TGStickerPacksPendingPath;
+    TGStickerPacksPendingDictionary = nil;
+    TGStickerPacksPendingPath = nil;
+    TGStickerPacksPersistenceScheduled = false;
+    pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
+    if (dictionary == nil || path == nil)
+        return;
+
+    @try
+    {
+        TGStickerPacksWriteData([NSKeyedArchiver archivedDataWithRootObject:dictionary], path);
+    }
+    @catch (NSException *exception)
+    {
+        TGLog(@"***** TGStickersSignalsClass couldn't archive packs cache: %@", exception);
+    }
+}
+
+static void TGStickerPacksDiscardPending(void)
+{
+    pthread_mutex_lock(&TGStickerPacksPersistenceMutex);
+    TGStickerPacksPendingDictionary = nil;
+    TGStickerPacksPendingPath = nil;
+    pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
+}
+
+static dispatch_queue_t TGStickerPacksPersistenceQueue(void);
+
+@interface TGStickerPacksPersistenceObserver : NSObject
+
+@end
+
+@implementation TGStickerPacksPersistenceObserver
+
+- (void)applicationDidEnterBackground:(NSNotification *)__unused notification
+{
+    dispatch_async(TGStickerPacksPersistenceQueue(), ^
+    {
+        TGStickerPacksPersistPending();
+    });
+}
+
+- (void)applicationWillTerminate:(NSNotification *)__unused notification
+{
+    dispatch_sync(TGStickerPacksPersistenceQueue(), ^
+    {
+        TGStickerPacksPersistPending();
+    });
+}
+
+@end
+
+static dispatch_queue_t TGStickerPacksPersistenceQueue(void)
+{
+    static dispatch_queue_t queue = NULL;
+    static TGStickerPacksPersistenceObserver *observer = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = dispatch_queue_create("org.telegram.stickerPacksPersistence", NULL);
+        dispatch_set_target_queue(queue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0));
+        observer = [[TGStickerPacksPersistenceObserver alloc] init];
+        NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+        [center addObserver:observer selector:@selector(applicationDidEnterBackground:) name:@"UIApplicationDidEnterBackgroundNotification" object:nil];
+        [center addObserver:observer selector:@selector(applicationWillTerminate:) name:UIApplicationWillTerminateNotification object:nil];
+    });
+    return queue;
+}
 static NSMutableDictionary *cachedStickerPackInfo = nil;
 static OSSpinLock cachedStickerPackInfoLock = 0;
 static const NSUInteger TGIOS6StickerPackInfoRefreshLimit = 32;
@@ -53,14 +138,16 @@ static SSignal *TGIOS6CombineStickerPackInfoSignals(NSArray *signals)
     }];
 }
 
+static SMulticastSignalManager *TGIOS6StickerPackInfoSignalManagerInstance = nil;
+static OSSpinLock TGIOS6StickerPackInfoSignalManagerLock = OS_SPINLOCK_INIT;
+
 static SMulticastSignalManager *TGIOS6StickerPackInfoSignalManager()
 {
-    static SMulticastSignalManager *manager = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        manager = [[SMulticastSignalManager alloc] init];
-    });
+    OSSpinLockLock(&TGIOS6StickerPackInfoSignalManagerLock);
+    if (TGIOS6StickerPackInfoSignalManagerInstance == nil)
+        TGIOS6StickerPackInfoSignalManagerInstance = [[SMulticastSignalManager alloc] init];
+    SMulticastSignalManager *manager = TGIOS6StickerPackInfoSignalManagerInstance;
+    OSSpinLockUnlock(&TGIOS6StickerPackInfoSignalManagerLock);
     return manager;
 }
 
@@ -391,36 +478,30 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     return data;
 }
 
-+ (void)storePacksData:(NSData *)data {
-    NSString *directory = [[self filePath] stringByDeletingLastPathComponent];
-    [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
-    
-    if (data.length == 0 || ![data writeToFile:[self filePath] atomically:true]) {
-        TGLog(@"***** TGStickersSignalsClass storePacksData couldn't write to file");
-    }
-}
-
 + (void)storePacksDictionary:(NSDictionary *)dictionary
 {
     if (![dictionary isKindOfClass:[NSDictionary class]])
         return;
 
-    NSMutableDictionary *persistentDictionary = [[NSMutableDictionary alloc] initWithDictionary:dictionary];
-    NSArray *featuredPacks = persistentDictionary[@"featuredPacks"];
-    if ([featuredPacks isKindOfClass:[NSArray class]] && featuredPacks.count != 0)
+    dispatch_queue_t queue = TGStickerPacksPersistenceQueue();
+    NSString *path = [self filePath];
+    bool schedule = false;
+    pthread_mutex_lock(&TGStickerPacksPersistenceMutex);
+    TGStickerPacksPendingDictionary = dictionary;
+    TGStickerPacksPendingPath = path;
+    if (!TGStickerPacksPersistenceScheduled)
     {
-        persistentDictionary[@"featuredPacks"] = @[];
-        persistentDictionary[@"featuredCacheUpdateDate"] = @0;
+        TGStickerPacksPersistenceScheduled = true;
+        schedule = true;
     }
+    pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
 
-    @try
+    if (schedule)
     {
-        NSData *data = [NSKeyedArchiver archivedDataWithRootObject:persistentDictionary];
-        [self storePacksData:data];
-    }
-    @catch (NSException *exception)
-    {
-        TGLog(@"***** TGStickersSignalsClass couldn't archive packs cache: %@", exception);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(TGStickerPacksPersistenceDelay * NSEC_PER_SEC)), queue, ^
+        {
+            TGStickerPacksPersistPending();
+        });
     }
 }
 
@@ -433,8 +514,36 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     OSSpinLockLock(&cachedStickerPackInfoLock);
     [cachedStickerPackInfo removeAllObjects];
     OSSpinLockUnlock(&cachedStickerPackInfoLock);
-    [[NSFileManager defaultManager] removeItemAtPath:[self filePath] error:nil];
+    TGStickerPacksDiscardPending();
+    NSString *path = [self filePath];
+    dispatch_sync(TGStickerPacksPersistenceQueue(), ^
+    {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    });
     alreadyReloadedStickerPacksFromRemote = false;
+}
+
++ (void)reloadForAccountSwitch
+{
+    dispatch_sync(TGStickerPacksPersistenceQueue(), ^
+    {
+        TGStickerPacksPersistPending();
+    });
+
+    OSSpinLockLock(&cachedPacksLock);
+    cachedPacks = nil;
+    OSSpinLockUnlock(&cachedPacksLock);
+    
+    OSSpinLockLock(&cachedStickerPackInfoLock);
+    [cachedStickerPackInfo removeAllObjects];
+    OSSpinLockUnlock(&cachedStickerPackInfoLock);
+    
+    OSSpinLockLock(&TGIOS6StickerPackInfoSignalManagerLock);
+    TGIOS6StickerPackInfoSignalManagerInstance = nil;
+    OSSpinLockUnlock(&TGIOS6StickerPackInfoSignalManagerLock);
+    
+    alreadyReloadedStickerPacksFromRemote = false;
+    alreadyReloadedFeaturedPacksFromRemote = false;
 }
 
 + (NSDictionary *)cachedStickerPacks
@@ -518,8 +627,9 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
         normalizedDict[@"maxDocumentIdsUseCount_v2"] = @0;
     if (![normalizedDict[@"archivedPacksSummary"] isKindOfClass:[TGArchivedStickerPacksSummary class]])
         normalizedDict[@"archivedPacksSummary"] = [[TGArchivedStickerPacksSummary alloc] initWithCount:0];
-    bool needsLazyDocumentsRewrite = ![normalizedDict[@"ios6LazyStickerDocuments"] boolValue];
-    normalizedDict[@"ios6LazyStickerDocuments"] = @true;
+    bool needsLazyArchivesRewrite = ![normalizedDict[@"ios6LazyStickerArchives"] boolValue];
+    [normalizedDict removeObjectForKey:@"ios6LazyStickerDocuments"];
+    normalizedDict[@"ios6LazyStickerArchives"] = @true;
     const int32_t staticPackFetchVersion = 4;
     if ([normalizedDict[@"ios6StaticPackFetchVersion"] intValue] != staticPackFetchVersion)
     {
@@ -553,7 +663,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     }
     
     NSArray *storedPacks = dict[@"packs"];
-    if (needsLazyDocumentsRewrite && storedPacks.count != 0)
+    if (needsLazyArchivesRewrite && storedPacks.count != 0)
         [self storePacksDictionary:dict];
 
     OSSpinLockLock(&cachedPacksLock);
@@ -595,24 +705,25 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     }
     else
     {
-        NSMutableSet *documentIds = [[NSMutableSet alloc] init];
-        
-        for (TGStickerPack *stickerPack in stickerPacks)
-        {
-            for (TGDocumentMediaAttachment *document in stickerPack.documents)
-            {
-                [documentIds addObject:@(document.documentId)];
-            }
-        }
-        
         NSMutableDictionary *documentIdsUseCount = [[NSMutableDictionary alloc] initWithDictionary:currentDict[@"documentIdsUseCount"]];
-        NSMutableArray *removedDocumentIds = [[NSMutableArray alloc] init];
-        for (NSNumber *nDocumentId in documentIdsUseCount.allKeys)
+        if (documentIdsUseCount.count != 0)
         {
-            if (![documentIds containsObject:nDocumentId])
-                [removedDocumentIds addObject:nDocumentId];
+            NSMutableSet *documentIds = [[NSMutableSet alloc] init];
+            for (TGStickerPack *stickerPack in stickerPacks)
+            {
+                for (TGDocumentMediaAttachment *document in stickerPack.documents)
+                {
+                    [documentIds addObject:@(document.documentId)];
+                }
+            }
+            NSMutableArray *removedDocumentIds = [[NSMutableArray alloc] init];
+            for (NSNumber *nDocumentId in documentIdsUseCount.allKeys)
+            {
+                if (![documentIds containsObject:nDocumentId])
+                    [removedDocumentIds addObject:nDocumentId];
+            }
+            [documentIdsUseCount removeObjectsForKeys:removedDocumentIds];
         }
-        [documentIdsUseCount removeObjectsForKeys:removedDocumentIds];
         
         NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:currentDict];
         dict[@"packs"] = stickerPacks;

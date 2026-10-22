@@ -486,7 +486,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x7b1a118f;
+    return (int32_t)0x971fa843;
 }
 
 - (int32_t)TLconstructorName
@@ -497,8 +497,11 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLInputMedia$inputMediaGeoLive *object = [[TLInputMedia$inputMediaGeoLive alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.geo_point = metaObject->getObject((int32_t)0xa4670371);
+    object.heading = metaObject->getInt32((int32_t)0x98065780);
     object.period = metaObject->getInt32((int32_t)0xc19ffb71);
+    object.proximity_notification_radius = metaObject->getInt32((int32_t)0x68478afc);
     return object;
 }
 
@@ -506,15 +509,36 @@
 {
     {
         TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    {
+        TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
         value.nativeObject = self.geo_point;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xa4670371, value));
     }
+    if (self.flags & (1 << 2))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.heading;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x98065780, value));
+    }
+    if (self.flags & (1 << 1))
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypePrimitiveInt32;
         value.primitive.int32Value = self.period;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xc19ffb71, value));
+    }
+    if (self.flags & (1 << 3))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.proximity_notification_radius;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x68478afc, value));
     }
 }
 

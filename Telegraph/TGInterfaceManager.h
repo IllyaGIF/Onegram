@@ -62,6 +62,7 @@
 - (void)dismissAllCalls;
 - (void)maybeDisplayCallsTabAlert;
 - (bool)hasCallControllerInForeground;
+- (void)resetForAccountSwitch;
 
 - (SSignal *)callControllerInForeground;
 - (SSignal *)messageVisibilitySignalWithConversationId:(int64_t)conversationId messageId:(int32_t)messageId peerId:(int64_t)peerId;

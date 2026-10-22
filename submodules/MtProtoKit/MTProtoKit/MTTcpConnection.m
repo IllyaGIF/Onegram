@@ -306,6 +306,8 @@ struct ctr_state {
     __weak MTContext *_context;
     bool _onegramWebSocket;
     bool _onegramWebSocketReady;
+    bool _onegramWebSocketReportedOpen;
+    NSError *_onegramWebSocketLastError;
     NSInteger _onegramWebSocketAttempt;
     NSString *_onegramWebSocketDomain;
     NSString *_onegramWebSocketPath;
@@ -335,6 +337,8 @@ struct ctr_state {
 - (void)onegramStartWebSocketAttempt;
 - (void)onegramWebSocketAttemptFailed;
 - (void)onegramWebSocketOpened;
+- (void)onegramPostWebSocketEvent:(MTTcpConnectionOnegramWebSocketEvent)event error:(NSError *)error;
+- (void)onegramWebSocketTrace:(NSString *)stage detail:(NSString *)detail;
 - (void)onegramReadNextWebSocketFrame;
 - (void)onegramReadWebSocketPayload;
 - (void)onegramSendWebSocketPayload:(NSData *)payload opcode:(uint8_t)opcode;
@@ -344,6 +348,11 @@ struct ctr_state {
 
 @end
 
+NSString *const MTTcpConnectionOnegramWebSocketStatusNotification = @"MTTcpConnectionOnegramWebSocketStatusNotification";
+NSString *const MTTcpConnectionOnegramWebSocketEventKey = @"event";
+NSString *const MTTcpConnectionOnegramWebSocketConnectionKey = @"connection";
+NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
+
 @implementation MTTcpConnection
 
 + (MTQueue *)tcpQueue
@@ -352,7 +361,7 @@ struct ctr_state {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[MTQueue alloc] initWithName:"org.mtproto.tcpQueue"];
+        queue = [[MTQueue alloc] initWithName:"org.mtproto.tcpQueue" targetPriority:DISPATCH_QUEUE_PRIORITY_HIGH];
     });
     return queue;
 }
@@ -539,7 +548,32 @@ struct ctr_state {
     if (_closed)
         return;
 
+    NSError *error = _onegramWebSocketLastError;
+    if (error == nil)
+        error = [NSError errorWithDomain:@"MTTcpConnectionOnegramWebSocket" code:1 userInfo:@{NSLocalizedDescriptionKey: @"No WebSocket endpoint is reachable"}];
+    [self onegramWebSocketTrace:@"exhausted" detail:error.localizedDescription];
+    [self onegramPostWebSocketEvent:MTTcpConnectionOnegramWebSocketEventUnavailable error:error];
     [self onegramStartDirectFallback];
+}
+
+- (void)onegramWebSocketTrace:(NSString *)stage detail:(NSString *)detail
+{
+#if defined(ONEGRAM_DIAGNOSTICS)
+    OGPlatformDiagnosticLog(@"WSTRACE connection=%p primary=%d attempt=%ld domain=%@ target=%@ stage=%@ %@", self, _usageCalculationInfo.primaryConnection ? 1 : 0, (long)_onegramWebSocketAttempt, _onegramWebSocketDomain ?: @"none", [self onegramWebSocketTargetForAttempt:_onegramWebSocketAttempt] ?: @"none", stage, detail ?: @"");
+#else
+    (void)stage;
+    (void)detail;
+#endif
+}
+
+- (void)onegramPostWebSocketEvent:(MTTcpConnectionOnegramWebSocketEvent)event error:(NSError *)error
+{
+    NSMutableDictionary *userInfo = [[NSMutableDictionary alloc] init];
+    userInfo[MTTcpConnectionOnegramWebSocketEventKey] = @(event);
+    userInfo[MTTcpConnectionOnegramWebSocketConnectionKey] = _internalId;
+    if (error != nil)
+        userInfo[MTTcpConnectionOnegramWebSocketErrorKey] = error;
+    [[NSNotificationCenter defaultCenter] postNotificationName:MTTcpConnectionOnegramWebSocketStatusNotification object:nil userInfo:userInfo];
 }
 
 - (void)onegramStartDirectFallback
@@ -596,10 +630,15 @@ struct ctr_state {
     _onegramWebSocketFragment = nil;
     _onegramWebSocketTransportBuffer = nil;
     [self onegramPrepareSocket];
+    [self onegramWebSocketTrace:@"connect" detail:nil];
 
     NSError *error = nil;
     if (![_socket connectToHost:target onPort:443 viaInterface:_interface withTimeout:5 error:&error] || error != nil)
+    {
+        _onegramWebSocketLastError = error;
+        [self onegramWebSocketTrace:@"fail" detail:error.localizedDescription];
         [self onegramWebSocketAttemptFailed];
+    }
 }
 
 - (void)onegramWebSocketAttemptFailed
@@ -617,6 +656,10 @@ struct ctr_state {
 - (void)onegramWebSocketOpened
 {
     _onegramWebSocketReady = true;
+    _onegramWebSocketLastError = nil;
+    _onegramWebSocketReportedOpen = true;
+    [self onegramWebSocketTrace:@"open" detail:nil];
+    [self onegramPostWebSocketEvent:MTTcpConnectionOnegramWebSocketEventOpened error:nil];
     if (_connectionOpened)
         _connectionOpened();
     id<MTTcpConnectionDelegate> delegate = _delegate;
@@ -981,8 +1024,14 @@ struct ctr_state {
         {
             _closed = true;
             
-            [_socket disconnect];
+            if (_onegramWebSocketReportedOpen)
+            {
+                _onegramWebSocketReportedOpen = false;
+                [self onegramPostWebSocketEvent:MTTcpConnectionOnegramWebSocketEventClosed error:nil];
+            }
+            
             _socket.delegate = nil;
+            [_socket disconnect];
             _socket = nil;
             
             if (_connectionClosed)
@@ -1212,9 +1261,9 @@ struct ctr_state {
     [self stop];
 }
 
-- (void)socket:(GCDAsyncSocket *)__unused socket didReadPartialDataOfLength:(NSUInteger)partialLength tag:(long)__unused tag
+- (void)socket:(GCDAsyncSocket *)socket didReadPartialDataOfLength:(NSUInteger)partialLength tag:(long)__unused tag
 {
-    if (_closed)
+    if (_closed || socket != _socket)
         return;
     
     [_responseTimeoutTimer resetTimeout:MTMinTcpResponseTimeout];
@@ -1279,9 +1328,9 @@ struct ctr_state {
     [_socket readDataToLength:4 withTimeout:-1 tag:MTTcpSocksRequest];
 }
 
-- (void)socket:(GCDAsyncSocket *)__unused socket didReadData:(NSData *)rawData withTag:(long)tag
+- (void)socket:(GCDAsyncSocket *)socket didReadData:(NSData *)rawData withTag:(long)tag
 {
-    if (_closed)
+    if (_closed || socket != _socket)
         return;
 
 #if TARGET_OS_IPHONE
@@ -1318,8 +1367,10 @@ struct ctr_state {
         NSData *expectedDigest = MTSha1([source dataUsingEncoding:NSUTF8StringEncoding]);
         NSString *expectedAccept = MTOnegramBase64(expectedDigest);
         bool valid = [statusLine rangeOfString:@" 101 "].location != NSNotFound && accept.length != 0 && [accept isEqualToString:expectedAccept];
+        [self onegramWebSocketTrace:@"http" detail:[NSString stringWithFormat:@"status=%@ acceptValid=%d", statusLine.length != 0 ? statusLine : @"empty", valid ? 1 : 0]];
         if (!valid)
         {
+            _onegramWebSocketLastError = [NSError errorWithDomain:@"MTTcpConnectionOnegramWebSocket" code:2 userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"WebSocket handshake rejected by %@: %@", _onegramWebSocketDomain ?: @"server", statusLine.length != 0 ? statusLine : @"empty response"]}];
             [self onegramWebSocketAttemptFailed];
             return;
         }
@@ -1785,8 +1836,11 @@ struct ctr_state {
     }
 }
              
-- (void)socket:(GCDAsyncSocket *)__unused socket didConnectToHost:(NSString *)__unused host port:(uint16_t)__unused port
+- (void)socket:(GCDAsyncSocket *)socket didConnectToHost:(NSString *)__unused host port:(uint16_t)__unused port
 {
+    if (_closed || socket != _socket)
+        return;
+
     [_socket performBlock:^{
         int socketFd = [_socket socketFD];
         if (socketFd >= 0) {
@@ -1839,6 +1893,7 @@ struct ctr_state {
     
     if (_onegramWebSocket)
     {
+        [self onegramWebSocketTrace:@"tcp" detail:[NSString stringWithFormat:@"host=%@ port=%d", host ?: @"none", (int)port]];
 #if defined(ONEGRAM_ARMV6)
         NSMutableDictionary *settings = [NSMutableDictionary dictionaryWithObject:_onegramWebSocketDomain forKey:GCDAsyncSocketOpenSSLPeerName];
 #else
@@ -1855,6 +1910,11 @@ struct ctr_state {
 #endif
             [settings setObject:trustedCertificates forKey:GCDAsyncSocketOpenSSLTrustedCertificates];
             [settings setObject:@([_context globalTime]) forKey:GCDAsyncSocketOpenSSLVerificationTime];
+#if defined(ONEGRAM_ARMV6)
+            [settings setObject:[NSNumber numberWithBool:YES] forKey:GCDAsyncSocketOpenSSLSplitClientHello];
+#else
+            [settings setObject:@(YES) forKey:GCDAsyncSocketOpenSSLSplitClientHello];
+#endif
         }
 #endif
         [_socket startTLS:settings];
@@ -1875,6 +1935,7 @@ struct ctr_state {
     if (!_onegramWebSocket || sock != _socket || _closed)
         return;
 
+    [self onegramWebSocketTrace:@"tls" detail:nil];
     uint8_t randomBytes[16];
     arc4random_buf(randomBytes, sizeof(randomBytes));
     _onegramWebSocketKey = MTOnegramBase64([NSData dataWithBytes:randomBytes length:sizeof(randomBytes)]);
@@ -1885,8 +1946,11 @@ struct ctr_state {
     [_socket readDataToData:headerTerminator withTimeout:5 maxLength:32768 tag:MTTcpOnegramWebSocketHttpHeader];
 }
 
-- (void)socketDidDisconnect:(GCDAsyncSocket *)__unused socket withError:(NSError *)error
+- (void)socketDidDisconnect:(GCDAsyncSocket *)socket withError:(NSError *)error
 {
+    if (_closed || socket != _socket)
+        return;
+
 #if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformDiagnosticLog(@"NETSTATE disconnected connection=%p primary=%d closed=%d domain=%@ code=%ld description=%@", self, _usageCalculationInfo.primaryConnection ? 1 : 0, _closed ? 1 : 0, error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
 #endif
@@ -1901,6 +1965,9 @@ struct ctr_state {
 
     if (_onegramWebSocket && !_onegramWebSocketReady && !_closed)
     {
+        [self onegramWebSocketTrace:@"fail" detail:error.localizedDescription ?: @"disconnected"];
+        if (error != nil)
+            _onegramWebSocketLastError = error;
         [self onegramWebSocketAttemptFailed];
         return;
     }

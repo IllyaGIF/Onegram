@@ -629,11 +629,7 @@ typedef enum {
     bool _needsUpdate;
     TGDialogListControllerReference *_ios6LifetimeReference;
     bool _ios6ArchiveExpanded;
-    bool _ios6ArchiveRefreshRequested;
     bool _ios6ArchiveItemsLoadRequested;
-    NSSet *_ios6ArchivePeerIds;
-    NSData *_ios6ArchivePeerIdsSourceData;
-    bool _ios6ArchivePeerIdsSourceLoaded;
     NSArray *_ios6DialogFilters;
     int32_t _ios6SelectedDialogFilterId;
     SMetaDisposable *_ios6DialogFiltersDisposable;
@@ -994,7 +990,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         _significantTimeChangeProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(significantTimeChange:) name:UIApplicationSignificantTimeChangeNotification];
         _didEnterBackgroundProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(didEnterBackground:) name:UIApplicationDidEnterBackgroundNotification];
         _willEnterForegroundProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(willEnterForeground:) name:UIApplicationWillEnterForegroundNotification];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6ArchivePeerIdsUpdated:) name:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6ClearChatCacheRequested:) name:@"TGIOS6ClearChatListCacheRequested" object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6DialogFiltersUpdated:) name:@"TGIOS6DialogFiltersUpdated" object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(ios6AuthorizationReady:) name:TGAuthorizationReadyNotification object:nil];
@@ -1093,15 +1088,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
             [(TGDialogListCell *)[strongSelf->_tableView cellForRowAtIndexPath:indexPath] setEditingConrolsExpanded:false animated:true];
             [TGTelegraphInstance doSetConversationArchived:peerId accessHash:conversation.accessHash archived:archived completion:nil];
             conversation.isArchived = archived;
-            [TGDatabaseInstance() setConversationArchived:peerId archived:archived];
-
-            NSMutableSet *peerIds = [[NSMutableSet alloc] initWithSet:strongSelf->_ios6ArchivePeerIds ?: [NSSet set]];
-            if (archived)
-                [peerIds addObject:@(peerId)];
-            else
-                [peerIds removeObject:@(peerId)];
-            strongSelf->_ios6ArchivePeerIds = peerIds;
-            [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:peerIds.allObjects]];
+            [TGDatabaseInstance() setConversationsArchiveState:@{@(peerId): @(archived)}];
             [strongSelf updateBarButtonItemsAnimated:false];
             [strongSelf reloadData:false];
         };
@@ -1193,7 +1180,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         OGRuntimeEndInteraction();
     }
     [_ios6LifetimeReference invalidate];
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6ArchivePeerIdsUpdated" object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6ClearChatListCacheRequested" object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"TGIOS6DialogFiltersUpdated" object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:TGAuthorizationReadyNotification object:nil];
@@ -2598,8 +2584,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
     CFAbsoluteTime fullReloadStart = CFAbsoluteTimeGetCurrent();
 
-    [self ios6ReloadArchivePeerIds];
-    
     if (_listModel.count == 0)
         [self resetInitialOffset];
 
@@ -2617,34 +2601,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [_listModel removeAllObjects];
     [_listModel addObjectsFromArray:items];
 
-    if (_ios6ArchivePeerIds != nil && items.count != 0)
-    {
-        NSMutableSet *incomingArchivePeerIds = [[NSMutableSet alloc] init];
-        NSUInteger incomingConversationCount = 0;
-        NSUInteger incomingNormalCount = 0;
-        NSUInteger localArchiveMatches = 0;
-        for (id item in items)
-        {
-            if (![item isKindOfClass:[TGConversation class]])
-                continue;
-            TGConversation *conversation = (TGConversation *)item;
-            incomingConversationCount++;
-            NSNumber *peerId = @(conversation.conversationId);
-            if (conversation.isArchived && conversation.pinnedDate == 0)
-                [incomingArchivePeerIds addObject:peerId];
-            else
-                incomingNormalCount++;
-            if (conversation.pinnedDate == 0 && [_ios6ArchivePeerIds containsObject:peerId])
-                localArchiveMatches++;
-        }
-        if (incomingNormalCount != 0 && incomingConversationCount != 0 && localArchiveMatches == incomingConversationCount && incomingArchivePeerIds.count < incomingConversationCount)
-        {
-            _ios6ArchivePeerIds = [incomingArchivePeerIds copy];
-            [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:[NSKeyedArchiver archivedDataWithRootObject:_ios6ArchivePeerIds.allObjects]];
-        }
-    }
-
-    [self ios6ApplyArchivePeerIdsToListModel];
     [self ios6ScheduleCompleteDialogHydrationAndAvatarPrefetch];
     _ios6VisibleListCache = nil;
     _ios6VisibleListCacheFilterId = INT32_MIN;
@@ -2857,7 +2813,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         }
         _ios6AllDialogItems = allDialogItems;
     }
-    [self ios6ApplyArchivePeerIdsToListModel];
     NSUInteger archivedCountAfter = [self ios6ArchivedConversationCount];
     if (archivedCountBefore != archivedCountAfter)
     {
@@ -3376,14 +3331,11 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [TGDatabaseInstance() setCustomProperty:@"dialogListLoaded" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListRemoteOffset" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"dialogListHash" value:nil];
-    [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIds" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"ios6ArchivePeerIdsComplete" value:nil];
     [TGDatabaseInstance() setCustomProperty:@"ios6DialogListCacheVersion" value:nil];
     
     _ios6ArchiveExpanded = false;
-    _ios6ArchiveRefreshRequested = false;
     _ios6ArchiveItemsLoadRequested = false;
-    _ios6ArchivePeerIds = nil;
     
     [self updateBarButtonItemsAnimated:false];
     [_dialogListCompanion clearChatListCacheAndReload];
@@ -3396,8 +3348,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
 - (void)archiveButtonPressed:(id)__unused sender
 {
-    [self ios6ReloadArchivePeerIds];
-    
     _ios6ArchiveExpanded = !_ios6ArchiveExpanded;
     if (_ios6ArchiveExpanded && (!_ios6ArchiveItemsLoadRequested || [self ios6ArchivedConversationCount] == 0))
     {
@@ -3411,42 +3361,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     [self reloadData:false];
     if ([self dialogListDisplayedItems].count != 0)
         [_tableView setContentOffset:CGPointMake(0.0f, -_tableView.contentInset.top) animated:false];
-}
-
-- (void)ios6ArchivePeerIdsUpdated:(NSNotification *)notification
-{
-    if (![NSThread isMainThread])
-    {
-        TGDialogListControllerReference *reference = _ios6LifetimeReference;
-        OGPlatformDispatchOnMainThread(^
-        {
-            [reference withValue:^(void *value)
-            {
-                [(__bridge TGDialogListController *)value ios6ArchivePeerIdsUpdated:notification];
-            }];
-        });
-        return;
-    }
-    _ios6ArchiveRefreshRequested = false;
-    [self ios6ReloadArchivePeerIds];
-    [self ios6ApplyArchivePeerIdsToListModel];
-
-    _ios6VisibleListCache = nil;
-    _ios6VisibleListCacheFilterId = INT32_MIN;
-    TGDialogListControllerReference *reference = _ios6LifetimeReference;
-    OGPlatformDispatchOnMainThreadAfter(0.30, ^
-    {
-        [reference withValue:^(void *value)
-        {
-            TGDialogListController *controller = (__bridge TGDialogListController *)value;
-            [controller ios6RefreshAllDialogItems:false];
-        }];
-    });
-
-    [self ios6LogArchiveDiagnostics:@"peerIds.updated"];
-    [self updateBarButtonItemsAnimated:false];
-    [self ios6UpdateFolderTabs];
-    [self reloadData:false];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
@@ -3574,47 +3488,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     return [item isKindOfClass:[NSString class]] && [(NSString *)item isEqualToString:TGIOS6ArchiveHeaderItem];
 }
 
-- (void)ios6ReloadArchivePeerIds
-{
-    NSData *data = [TGDatabaseInstance() customProperty:@"ios6ArchivePeerIds"];
-    if (_ios6ArchivePeerIdsSourceLoaded && data == _ios6ArchivePeerIdsSourceData)
-        return;
-
-    _ios6ArchivePeerIdsSourceLoaded = true;
-    _ios6ArchivePeerIdsSourceData = data;
-    NSSet *peerIds = nil;
-    
-    if (data.length != 0)
-    {
-        @try
-        {
-            NSArray *storedPeerIds = [NSKeyedUnarchiver unarchiveObjectWithData:data];
-            if ([storedPeerIds isKindOfClass:[NSArray class]])
-                peerIds = [[NSSet alloc] initWithArray:storedPeerIds];
-        }
-        @catch (__unused NSException *exception)
-        {
-            TGLog(@"ARCHIVE peerIds.load failed");
-        }
-    }
-    
-    _ios6ArchivePeerIds = peerIds;
-    
-}
-
-- (void)ios6ApplyArchivePeerIdsToListModel
-{
-    if (_ios6ArchivePeerIds == nil)
-        return;
-    for (id item in _listModel)
-    {
-        if (![item isKindOfClass:[TGConversation class]])
-            continue;
-        TGConversation *conversation = (TGConversation *)item;
-        conversation.isArchived = conversation.pinnedDate == 0 && [_ios6ArchivePeerIds containsObject:@(conversation.conversationId)];
-    }
-}
-
 - (NSString *)ios6ArchiveSampleForConversation:(TGConversation *)conversation
 {
     NSString *title = conversation.chatTitle.length == 0 ? conversation.dialogListData[@"title"] : conversation.chatTitle;
@@ -3647,12 +3520,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
         return false;
     
     TGConversation *conversation = (TGConversation *)item;
-    if (conversation.pinnedDate != 0)
-        return false;
-    if (conversation.isArchived)
-        return true;
-    
-    return _ios6ArchivePeerIds != nil && [_ios6ArchivePeerIds containsObject:[[NSNumber alloc] initWithLongLong:conversation.conversationId]];
+    return conversation.pinnedDate == 0 && conversation.isArchived;
 }
 
 - (bool)ios6NewChatListGesturesEnabled
@@ -4097,7 +3965,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     bool isEncrypted = [dialogListData[@"isEncrypted"] boolValue];
     bool muted = [dialogListData[@"mute"] boolValue];
     bool pinned = conversation.pinnedToTop;
-    bool archived = conversation.isArchived || [self ios6IsArchivedConversation:conversation];
+    bool archived = conversation.isArchived;
     bool read = !conversation.unreadMark && conversation.unreadCount == 0 && conversation.serviceUnreadCount == 0 && conversation.unreadMentionCount == 0;
     int64_t peerId = conversation.conversationId;
 
@@ -5428,8 +5296,7 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
     }
     if ((flags & (1 << 12)) && ![self ios6ConversationIsUnread:conversation])
         return false;
-    bool archivedForFilter = conversation.isArchived || (_ios6ArchivePeerIds != nil && [_ios6ArchivePeerIds containsObject:@(conversation.conversationId)]);
-    if ((flags & (1 << 13)) && archivedForFilter)
+    if ((flags & (1 << 13)) && conversation.isArchived)
         return false;
     return true;
 }
@@ -7258,7 +7125,6 @@ static const CGFloat TGDialogListArchiveHeaderHeight = 54.0f;
 
     [_listModel removeAllObjects];
     [_listModel addObjectsFromArray:coalescedModel];
-    [self ios6ApplyArchivePeerIdsToListModel];
     _ios6VisibleListCache = nil;
     _ios6VisibleListCacheFilterId = INT32_MIN;
 

@@ -7,12 +7,12 @@
 #import "TLMetaRpc.h"
 
 @class TLInputChannel;
-@class TLInputUser;
+@class TLInputPeer;
 
 @interface TLRPCchannels_reportSpam : TLMetaRpc
 
 @property (nonatomic, retain) TLInputChannel *channel;
-@property (nonatomic, retain) TLInputUser *user_id;
+@property (nonatomic, retain) TLInputPeer *participant;
 @property (nonatomic, retain) NSArray *n_id;
 
 - (Class)responseClass;

@@ -29,6 +29,8 @@ extern CGFloat TGModernFlatteningViewModelTilingLimit;
 
 + (NSUInteger)prerenderBudgetBytes;
 - (NSUInteger)estimatedContentsBytes;
+- (void)setVisibleContentsPriority:(CGFloat)priority;
+- (void)setAsynchronousContentsPriority:(CGFloat)priority fromBottomEdge:(bool)fromBottomEdge;
 
 - (void)prepareContentsAsynchronouslyWithPriority:(CGFloat)priority fromBottomEdge:(bool)fromBottomEdge;
 - (void)cancelAsynchronousContentsPreparation;

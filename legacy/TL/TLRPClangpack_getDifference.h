@@ -10,6 +10,8 @@
 
 @interface TLRPClangpack_getDifference : TLMetaRpc
 
+@property (nonatomic, retain) NSString *lang_pack;
+@property (nonatomic, retain) NSString *lang_code;
 @property (nonatomic) int32_t from_version;
 
 - (Class)responseClass;

@@ -1,6 +1,7 @@
 #import "OGRuntime.h"
 #import "OGDatabaseRuntime.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramPlatform/OGStructuralKey.h"
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <float.h>
@@ -19,7 +20,7 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
 
 @interface OGRuntimeState : NSObject
 {
-    dispatch_queue_t _stateQueue;
+    pthread_mutex_t _lock;
     dispatch_queue_t _interactiveQueue;
     dispatch_queue_t _userQueue;
     dispatch_queue_t _storageQueue;
@@ -43,7 +44,7 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
 }
 - (void)beginInteraction;
 - (void)enqueuePreload:(id<NSCopying>)key block:(dispatch_block_t)block;
-- (void)drainPreloads;
+- (void)drainPreloadsLocked;
 - (void)endInteraction;
 - (BOOL)interactionActive;
 - (dispatch_queue_t)queueForPriority:(OGRuntimePriority)priority;
@@ -66,7 +67,7 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
     self = [super init];
     if (self != nil)
     {
-        _stateQueue = dispatch_queue_create("dev.IllyaGIF.Onegram.runtime.state", DISPATCH_QUEUE_SERIAL);
+        pthread_mutex_init(&_lock, NULL);
         _interactiveQueue = dispatch_queue_create("dev.IllyaGIF.Onegram.runtime.interactive", DISPATCH_QUEUE_SERIAL);
         _userQueue = dispatch_queue_create("dev.IllyaGIF.Onegram.runtime.user", DISPATCH_QUEUE_SERIAL);
         _storageQueue = dispatch_queue_create("dev.IllyaGIF.Onegram.runtime.storage", DISPATCH_QUEUE_SERIAL);
@@ -100,7 +101,7 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
             dispatch_set_target_queue(_maintenanceQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0));
         }
 
-        _preloadBlocks = [[NSMutableDictionary alloc] init];
+        _preloadBlocks = OGStructuralKeyDictionaryCreate();
         _preloadKeys = [[NSMutableArray alloc] init];
         _preloadWorkerLimit = (NSUInteger)MIN(4, MAX(1, cpuCount - 1));
         if (OGPlatformUsesConstrainedBackgroundExecution())
@@ -114,25 +115,22 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
 
 - (void)beginInteraction
 {
-    dispatch_sync(_stateQueue, ^
+    pthread_mutex_lock(&_lock);
+    _interactionCount++;
+    OGRuntimeInteractionFastFlag = 1;
+    if (_interactionCount == 1 && _suspendsBackgroundWorkDuringInteraction)
     {
-        _interactionCount++;
-        OGRuntimeInteractionFastFlag = _interactionCount != 0 ? 1 : 0;
-        if (_interactionCount == 1 && _suspendsBackgroundWorkDuringInteraction)
-        {
-            dispatch_suspend(_utilityQueue);
-            dispatch_suspend(_maintenanceQueue);
-        }
-    });
+        dispatch_suspend(_utilityQueue);
+        dispatch_suspend(_maintenanceQueue);
+    }
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)endInteraction
 {
-    dispatch_sync(_stateQueue, ^
+    pthread_mutex_lock(&_lock);
+    if (_interactionCount != 0)
     {
-        if (_interactionCount == 0)
-            return;
-
         _interactionCount--;
         OGRuntimeInteractionFastFlag = _interactionCount != 0 ? 1 : 0;
         if (_interactionCount == 0 && _suspendsBackgroundWorkDuringInteraction)
@@ -140,8 +138,9 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
             dispatch_resume(_maintenanceQueue);
             dispatch_resume(_utilityQueue);
         }
-        [self drainPreloads];
-    });
+        [self drainPreloadsLocked];
+    }
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)enqueuePreload:(id<NSCopying>)key block:(dispatch_block_t)block
@@ -150,16 +149,40 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
         return;
     id<NSCopying> taskKey = [key copyWithZone:NULL];
     dispatch_block_t taskBlock = [block copy];
-    dispatch_async(_stateQueue, ^
-    {
-        if ([_preloadBlocks objectForKey:taskKey] == nil)
-            [_preloadKeys addObject:taskKey];
-        [_preloadBlocks setObject:taskBlock forKey:taskKey];
-        [self drainPreloads];
-    });
+    pthread_mutex_lock(&_lock);
+    if ([_preloadBlocks objectForKey:taskKey] == nil)
+        [_preloadKeys addObject:taskKey];
+    [_preloadBlocks setObject:taskBlock forKey:taskKey];
+    [self drainPreloadsLocked];
+    pthread_mutex_unlock(&_lock);
 }
 
-- (void)drainPreloads
+- (void)finishPreload:(id<NSCopying>)key block:(dispatch_block_t)block deferred:(BOOL)deferred
+{
+    pthread_mutex_lock(&_lock);
+    _preloadRunningCount--;
+    if (deferred && [_preloadBlocks objectForKey:key] == nil)
+    {
+        [_preloadKeys addObject:key];
+        [_preloadBlocks setObject:block forKey:key];
+    }
+    if (_suspendsBackgroundWorkDuringInteraction && _interactionCount != 0 && !OGPlatformUsesConstrainedBackgroundExecution())
+    {
+        _preloadCoolingDown = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.016 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+        {
+            pthread_mutex_lock(&_lock);
+            _preloadCoolingDown = NO;
+            [self drainPreloadsLocked];
+            pthread_mutex_unlock(&_lock);
+        });
+    }
+    else
+        [self drainPreloadsLocked];
+    pthread_mutex_unlock(&_lock);
+}
+
+- (void)drainPreloadsLocked
 {
     if (_preloadCoolingDown || (_suspendsBackgroundWorkDuringInteraction && _interactionCount != 0))
         return;
@@ -181,26 +204,7 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
                     block();
                 }
             }
-            dispatch_async(_stateQueue, ^
-            {
-                _preloadRunningCount--;
-                if (deferred && [_preloadBlocks objectForKey:key] == nil)
-                {
-                    [_preloadKeys addObject:key];
-                    [_preloadBlocks setObject:block forKey:key];
-                }
-                if (_suspendsBackgroundWorkDuringInteraction && _interactionCount != 0 && !OGPlatformUsesConstrainedBackgroundExecution())
-                {
-                    _preloadCoolingDown = YES;
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.016 * NSEC_PER_SEC)), _stateQueue, ^
-                    {
-                        _preloadCoolingDown = NO;
-                        [self drainPreloads];
-                    });
-                }
-                else
-                    [self drainPreloads];
-            });
+            [self finishPreload:key block:block deferred:deferred];
         };
         if (OGPlatformUsesConstrainedBackgroundExecution())
             OGPlatformDispatchAfterCurrentMainRunLoop(run);
@@ -221,11 +225,9 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
 
 - (BOOL)interactionActive
 {
-    __block BOOL value = NO;
-    dispatch_sync(_stateQueue, ^
-    {
-        value = _interactionCount != 0;
-    });
+    pthread_mutex_lock(&_lock);
+    BOOL value = _interactionCount != 0;
+    pthread_mutex_unlock(&_lock);
     return value;
 }
 
@@ -294,23 +296,23 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
     }
 
     NSString *taskKey = [key copy];
-    dispatch_async(_stateQueue, ^
+    pthread_mutex_lock(&_lock);
+    uint64_t token = [self nextToken];
+    [_tokens setObject:[NSNumber numberWithUnsignedLongLong:token] forKey:taskKey];
+    pthread_mutex_unlock(&_lock);
+
+    NSTimeInterval safeDelay = delay < 0.0 ? 0.0 : delay;
+    int64_t nanoseconds = (int64_t)(safeDelay * (NSTimeInterval)NSEC_PER_SEC);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, nanoseconds), [self queueForPriority:priority], ^
     {
-        uint64_t token = [self nextToken];
-        NSNumber *tokenValue = [NSNumber numberWithUnsignedLongLong:token];
-        [_tokens setObject:tokenValue forKey:taskKey];
-
-        NSTimeInterval safeDelay = delay < 0.0 ? 0.0 : delay;
-        int64_t nanoseconds = (int64_t)(safeDelay * (NSTimeInterval)NSEC_PER_SEC);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, nanoseconds), _stateQueue, ^
-        {
-            NSNumber *currentToken = [_tokens objectForKey:taskKey];
-            if (currentToken == nil || [currentToken unsignedLongLongValue] != token)
-                return;
-
+        pthread_mutex_lock(&_lock);
+        NSNumber *currentToken = [_tokens objectForKey:taskKey];
+        BOOL current = currentToken != nil && [currentToken unsignedLongLongValue] == token;
+        if (current)
             [_tokens removeObjectForKey:taskKey];
-            dispatch_async([self queueForPriority:priority], block);
-        });
+        pthread_mutex_unlock(&_lock);
+        if (current)
+            block();
     });
 }
 
@@ -319,11 +321,9 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
     if (key.length == 0)
         return;
 
-    NSString *taskKey = [key copy];
-    dispatch_async(_stateQueue, ^
-    {
-        [_tokens removeObjectForKey:taskKey];
-    });
+    pthread_mutex_lock(&_lock);
+    [_tokens removeObjectForKey:key];
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)completeStartupPhaseLocked:(NSString *)reason
@@ -352,50 +352,45 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
         return;
 
     dispatch_block_t deferredBlock = [block copy];
-    dispatch_async(_stateQueue, ^
+    pthread_mutex_lock(&_lock);
+    if (_startupPhaseCompleted)
     {
-        if (_startupPhaseCompleted)
-        {
-            [self dispatchPriority:priority block:deferredBlock];
-            return;
-        }
-
-        [_startupDeferredTasks addObject:[[NSArray alloc] initWithObjects:[NSNumber numberWithInt:(int)priority], deferredBlock, nil]];
-
-        if (_startupPhaseTimeoutGeneration == 0)
-            [self scheduleStartupPhaseTimeoutLocked];
-    });
+        pthread_mutex_unlock(&_lock);
+        [self dispatchPriority:priority block:deferredBlock];
+        return;
+    }
+    [_startupDeferredTasks addObject:[[NSArray alloc] initWithObjects:[NSNumber numberWithInt:(int)priority], deferredBlock, nil]];
+    if (_startupPhaseTimeoutGeneration == 0)
+        [self scheduleStartupPhaseTimeoutLocked];
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)scheduleStartupPhaseTimeoutLocked
 {
     _startupPhaseTimeoutGeneration++;
     uint64_t generation = _startupPhaseTimeoutGeneration;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(OGRuntimeStartupPhaseTimeout * (NSTimeInterval)NSEC_PER_SEC)), _stateQueue, ^
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(OGRuntimeStartupPhaseTimeout * (NSTimeInterval)NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
     {
+        pthread_mutex_lock(&_lock);
         if (generation == _startupPhaseTimeoutGeneration)
             [self completeStartupPhaseLocked:@"timeout"];
+        pthread_mutex_unlock(&_lock);
     });
 }
 
 - (void)extendStartupPhase
 {
-    dispatch_async(_stateQueue, ^
-    {
-        if (_startupPhaseCompleted)
-            return;
-
+    pthread_mutex_lock(&_lock);
+    if (!_startupPhaseCompleted)
         [self scheduleStartupPhaseTimeoutLocked];
-    });
+    pthread_mutex_unlock(&_lock);
 }
 
 - (void)completeStartupPhase:(NSString *)reason
 {
-    NSString *completionReason = reason.length != 0 ? [reason copy] : @"unspecified";
-    dispatch_async(_stateQueue, ^
-    {
-        [self completeStartupPhaseLocked:completionReason];
-    });
+    pthread_mutex_lock(&_lock);
+    [self completeStartupPhaseLocked:reason.length != 0 ? reason : @"unspecified"];
+    pthread_mutex_unlock(&_lock);
 }
 
 @end

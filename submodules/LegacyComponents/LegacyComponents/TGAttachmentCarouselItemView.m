@@ -1097,11 +1097,6 @@ const NSUInteger TGAttachmentDisplayedAssetLimit = 500;
     return _smallLayout.minimumLineSpacing;
 }
 
-- (UICollectionViewTransitionLayout *)collectionView:(PSUICollectionView *)__unused collectionView transitionLayoutForOldLayout:(PSUICollectionViewLayout *)fromLayout newLayout:(PSUICollectionViewLayout *)toLayout
-{
-    return [[TGTransitionLayout alloc] initWithCurrentLayout:fromLayout nextLayout:toLayout];
-}
-
 #pragma mark -
 
 - (void)scrollViewDidScroll:(UIScrollView *)__unused scrollView

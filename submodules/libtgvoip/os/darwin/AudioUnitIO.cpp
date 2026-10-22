@@ -85,6 +85,7 @@ AudioUnitIO::AudioUnitIO(){
 	audioFormat.mFramesPerPacket	= 1;
 	audioFormat.mChannelsPerFrame	= 1;
 	
+	configuredFormat=audioFormat;
 	status = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &audioFormat, sizeof(audioFormat));
 	CHECK_AU_ERROR(status, "Error setting output format");
 	status = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, kInputBus, &audioFormat, sizeof(audioFormat));
@@ -163,6 +164,7 @@ void AudioUnitIO::Configure(uint32_t sampleRate, uint32_t bitsPerSample, uint32_
 	}
 
 	configuredSampleRate=sampleRate;
+	configuredFormat=audioFormat;
 
 	AudioStreamBasicDescription actualOut;
 	AudioStreamBasicDescription actualIn;
@@ -233,12 +235,48 @@ void AudioUnitIO::EnableOutput(bool enabled){
 	StartIfNeeded();
 }
 
+void AudioUnitIO::GetStreamSampleRates(double* inputRate, double* outputRate){
+	AudioStreamBasicDescription actualOut;
+	AudioStreamBasicDescription actualIn;
+	memset(&actualOut, 0, sizeof(actualOut));
+	memset(&actualIn, 0, sizeof(actualIn));
+	UInt32 outSize=sizeof(actualOut);
+	UInt32 inSize=sizeof(actualIn);
+	OSStatus getOut=AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &actualOut, &outSize);
+	OSStatus getIn=AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, kInputBus, &actualIn, &inSize);
+	if(inputRate)
+		*inputRate=getIn==noErr ? actualIn.mSampleRate : 0.0;
+	if(outputRate)
+		*outputRate=getOut==noErr ? actualOut.mSampleRate : 0.0;
+}
+
+bool AudioUnitIO::ApplyConfiguredFormat(){
+	double inputRate=0.0;
+	double outputRate=0.0;
+	GetStreamSampleRates(&inputRate, &outputRate);
+	if(inputRate==configuredFormat.mSampleRate && outputRate==configuredFormat.mSampleRate)
+		return true;
+	syslog(LOG_NOTICE, "LAT audioUnit format.drift configured=%.0f inRate=%.0f outRate=%.0f", configuredFormat.mSampleRate, inputRate, outputRate);
+	OSStatus status=AudioUnitUninitialize(unit);
+	if(status!=noErr)
+		return false;
+	OSStatus outStatus=AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &configuredFormat, sizeof(configuredFormat));
+	OSStatus inStatus=AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, kInputBus, &configuredFormat, sizeof(configuredFormat));
+	status=AudioUnitInitialize(unit);
+	GetStreamSampleRates(&inputRate, &outputRate);
+	syslog(LOG_NOTICE, "LAT audioUnit format.reapply outStatus=%d inStatus=%d initStatus=%d inRate=%.0f outRate=%.0f", (int)outStatus, (int)inStatus, (int)status, inputRate, outputRate);
+	return status==noErr && inputRate==configuredFormat.mSampleRate && outputRate==configuredFormat.mSampleRate;
+}
+
 void AudioUnitIO::StartIfNeeded(){
 	if(started)
 		return;
 	started=true;
 	OSStatus status = AudioUnitInitialize(unit);
 	CHECK_AU_ERROR(status, "Error initializing AudioUnit");
+	if(!ApplyConfiguredFormat()){
+		LOGE("AudioUnit stream format differs from the configured format");
+	}
 	status=AudioOutputUnitStart(unit);
 	CHECK_AU_ERROR(status, "Error starting AudioUnit");
 }

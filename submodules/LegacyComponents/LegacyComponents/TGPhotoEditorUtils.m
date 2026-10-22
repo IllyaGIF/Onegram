@@ -181,7 +181,11 @@ UIImage *TGPhotoEditorLegacyCrop(UIImage *image, UIImage *paintingImage, UIImage
     CGRect frame = CGRectMake(CGCeil(-image.size.width / 2), CGCeil(-image.size.height / 2), image.size.width, image.size.height);
     [image drawInRect:frame];
     if (paintingImage != nil)
+    {
+        if (mirrored)
+            CGContextScaleCTM(context, -1.0f, 1.0f);
         [paintingImage drawInRect:frame];
+    }
     
     UIImage *croppedImage = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();

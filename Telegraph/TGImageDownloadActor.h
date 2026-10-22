@@ -25,4 +25,6 @@
 + (void)addServerMediaDataForAssetUrl:(NSString *)assetUrl attachment:(TGMediaAttachment *)attachment;
 + (void)clearServerMediaSataForAssetUrl:(NSString *)assetUrl;
 
++ (void)reloadForAccountSwitch;
+
 @end

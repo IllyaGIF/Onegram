@@ -3,6 +3,7 @@
 #import "OGMemoryCache.h"
 #import "OGFontCmap.h"
 #import "OGUnicode.h"
+#import <libkern/OSAtomic.h>
 
 #if !OG_PLATFORM_HAS_CORETEXT
 
@@ -13,23 +14,7 @@ const CFStringRef kCTUnderlineStyleAttributeName = CFSTR("CTUnderlineStyle");
 const CFStringRef kCTRunDelegateAttributeName = CFSTR("CTRunDelegate");
 
 static NSString *const OGTextFontKey = @"f";
-static NSString *const OGTextAttributedStringKey = @"a";
-static NSString *const OGTextClustersKey = @"c";
-static NSString *const OGTextRunsKey = @"u";
-static NSString *const OGTextAttributesKey = @"t";
-static NSString *const OGTextStringKey = @"s";
-static NSString *const OGTextStartKey = @"i";
-static NSString *const OGTextEndKey = @"e";
-static NSString *const OGTextXKey = @"x";
-static NSString *const OGTextWidthKey = @"w";
-static NSString *const OGTextAscentKey = @"n";
-static NSString *const OGTextDescentKey = @"d";
-static NSString *const OGTextLeadingKey = @"l";
-static NSString *const OGTextRangeKey = @"r";
-static NSString *const OGTextTrailingKey = @"q";
-static NSString *const OGTextRTLKey = @"b";
 static NSString *const OGTextDelegateOwnerKey = @"o";
-static NSString *const OGTextJustifiedKey = @"j";
 
 @interface OGPlatformRunDelegateOwner : NSObject
 {
@@ -125,54 +110,9 @@ static BOOL OGTextIsLowSurrogate(unichar value)
     return value >= 0xdc00 && value <= 0xdfff;
 }
 
-static uint32_t OGTextCodePoint(NSString *string, NSUInteger index, NSUInteger *length)
-{
-    unichar high = [string characterAtIndex:index];
-    if (OGTextIsHighSurrogate(high) && index + 1 < [string length])
-    {
-        unichar low = [string characterAtIndex:index + 1];
-        if (OGTextIsLowSurrogate(low))
-        {
-            if (length != NULL)
-                *length = 2;
-            return 0x10000 + (((uint32_t)high - 0xd800) << 10) + ((uint32_t)low - 0xdc00);
-        }
-    }
-    if (length != NULL)
-        *length = 1;
-    return high;
-}
-
 static BOOL OGTextIsCombining(uint32_t value)
 {
     return (value >= 0x0300 && value <= 0x036f) || (value >= 0x1ab0 && value <= 0x1aff) || (value >= 0x1dc0 && value <= 0x1dff) || (value >= 0x20d0 && value <= 0x20ff) || (value >= 0xfe20 && value <= 0xfe2f) || (value >= 0xfe00 && value <= 0xfe0f) || (value >= 0x1f3fb && value <= 0x1f3ff);
-}
-
-static NSUInteger OGTextClusterEnd(NSString *string, NSUInteger index, NSUInteger limit)
-{
-    NSUInteger length = 0;
-    OGTextCodePoint(string, index, &length);
-    NSUInteger cursor = MIN(limit, index + length);
-    while (cursor < limit)
-    {
-        NSUInteger nextLength = 0;
-        uint32_t value = OGTextCodePoint(string, cursor, &nextLength);
-        if (OGTextIsCombining(value))
-        {
-            cursor = MIN(limit, cursor + nextLength);
-            continue;
-        }
-        if (value == 0x200d && cursor + nextLength < limit)
-        {
-            cursor += nextLength;
-            NSUInteger joinedLength = 0;
-            OGTextCodePoint(string, cursor, &joinedLength);
-            cursor = MIN(limit, cursor + joinedLength);
-            continue;
-        }
-        break;
-    }
-    return cursor;
 }
 
 static BOOL OGTextCodePointIsRTL(uint32_t value)
@@ -183,18 +123,6 @@ static BOOL OGTextCodePointIsRTL(uint32_t value)
 static BOOL OGTextCodePointIsStrongLTR(uint32_t value)
 {
     return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z') || (value >= 0x00c0 && value <= 0x058f) || (value >= 0x0900 && value <= 0x1fff);
-}
-
-static BOOL OGTextClusterIsWhitespace(NSString *string)
-{
-    if ([string length] == 0)
-        return NO;
-    for (NSUInteger i = 0; i < [string length]; i++)
-    {
-        if (![[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:[string characterAtIndex:i]])
-            return NO;
-    }
-    return YES;
 }
 
 static NSDictionary *OGTextAttributesAtIndex(id attributedString, NSUInteger index)
@@ -212,6 +140,435 @@ static OGPlatformRunDelegateOwner *OGTextRunDelegateOwner(NSDictionary *attribut
         return nil;
     id owner = [delegate objectForKey:OGTextDelegateOwnerKey];
     return [owner isKindOfClass:[OGPlatformRunDelegateOwner class]] ? owner : nil;
+}
+
+@interface OGTextFontCmap : NSObject
+{
+@public
+    NSData *_table;
+    size_t _glyphCount;
+    CGFontRef _font;
+    CGFloat _unitsPerEm;
+}
+@end
+
+@implementation OGTextFontCmap
+
+- (void)dealloc
+{
+    if (_font != NULL)
+        CGFontRelease(_font);
+}
+
+@end
+
+static OGTextFontCmap *OGTextFontCmapForName(NSString *fontName)
+{
+    if (fontName.length == 0)
+        return nil;
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[OGMemoryCache alloc] initWithCountLimit:256 costLimit:1536 * 1024];
+    });
+    OGTextFontCmap *cmap = [cache objectForKey:fontName];
+    if (cmap != nil)
+        return cmap;
+    CGFontRef cgFont = CGFontCreateWithFontName((__bridge CFStringRef)fontName);
+    if (cgFont == NULL)
+        return nil;
+    int unitsPerEm = CGFontGetUnitsPerEm(cgFont);
+    CFDataRef table = CGFontCopyTableForTag(cgFont, 0x636d6170u);
+    if (table == NULL || unitsPerEm <= 0)
+    {
+        if (table != NULL)
+            CFRelease(table);
+        CGFontRelease(cgFont);
+        return nil;
+    }
+    cmap = [[OGTextFontCmap alloc] init];
+    cmap->_table = (__bridge_transfer NSData *)table;
+    cmap->_glyphCount = CGFontGetNumberOfGlyphs(cgFont);
+    cmap->_font = cgFont;
+    cmap->_unitsPerEm = (CGFloat)unitsPerEm;
+    [cache setObject:cmap forKey:fontName cost:cmap->_table.length];
+    return cmap;
+}
+
+static BOOL OGTextFontCmapCoversString(OGTextFontCmap *cmap, NSString *text)
+{
+    if (cmap == nil)
+        return NO;
+    const uint8_t *bytes = (const uint8_t *)cmap->_table.bytes;
+    size_t length = cmap->_table.length;
+    NSUInteger count = text.length;
+    for (NSUInteger i = 0; i < count; i++)
+    {
+        uint32_t value = [text characterAtIndex:i];
+        if (OGUnicodeIsHighSurrogate((uint16_t)value) && i + 1 < count && OGUnicodeIsLowSurrogate([text characterAtIndex:i + 1]))
+            value = OGUnicodeScalarForSurrogatePair((uint16_t)value, [text characterAtIndex:++i]);
+        if (value >= 0xd800 && value <= 0xdfff)
+            return NO;
+        uint32_t glyph = OGFontCmapGlyph(bytes, length, value);
+        if (glyph == 0 || glyph >= cmap->_glyphCount)
+            return NO;
+    }
+    return YES;
+}
+
+static uint32_t OGTextFontCmapGlyph(OGTextFontCmap *cmap, uint32_t value)
+{
+    if (value >= 0xd800 && value <= 0xdfff)
+        return 0;
+    uint32_t glyph = OGFontCmapGlyph((const uint8_t *)cmap->_table.bytes, cmap->_table.length, value);
+    return glyph < cmap->_glyphCount ? glyph : 0;
+}
+
+typedef struct
+{
+    uint16_t base;
+    uint16_t isolated;
+    uint16_t final;
+    uint16_t initial;
+    uint16_t medial;
+} OGTextArabicForms;
+
+static const OGTextArabicForms OGTextArabicFormTable[] = {
+    {0x0621, 0xfe80, 0, 0, 0},
+    {0x0622, 0xfe81, 0xfe82, 0, 0},
+    {0x0623, 0xfe83, 0xfe84, 0, 0},
+    {0x0624, 0xfe85, 0xfe86, 0, 0},
+    {0x0625, 0xfe87, 0xfe88, 0, 0},
+    {0x0626, 0xfe89, 0xfe8a, 0xfe8b, 0xfe8c},
+    {0x0627, 0xfe8d, 0xfe8e, 0, 0},
+    {0x0628, 0xfe8f, 0xfe90, 0xfe91, 0xfe92},
+    {0x0629, 0xfe93, 0xfe94, 0, 0},
+    {0x062a, 0xfe95, 0xfe96, 0xfe97, 0xfe98},
+    {0x062b, 0xfe99, 0xfe9a, 0xfe9b, 0xfe9c},
+    {0x062c, 0xfe9d, 0xfe9e, 0xfe9f, 0xfea0},
+    {0x062d, 0xfea1, 0xfea2, 0xfea3, 0xfea4},
+    {0x062e, 0xfea5, 0xfea6, 0xfea7, 0xfea8},
+    {0x062f, 0xfea9, 0xfeaa, 0, 0},
+    {0x0630, 0xfeab, 0xfeac, 0, 0},
+    {0x0631, 0xfead, 0xfeae, 0, 0},
+    {0x0632, 0xfeaf, 0xfeb0, 0, 0},
+    {0x0633, 0xfeb1, 0xfeb2, 0xfeb3, 0xfeb4},
+    {0x0634, 0xfeb5, 0xfeb6, 0xfeb7, 0xfeb8},
+    {0x0635, 0xfeb9, 0xfeba, 0xfebb, 0xfebc},
+    {0x0636, 0xfebd, 0xfebe, 0xfebf, 0xfec0},
+    {0x0637, 0xfec1, 0xfec2, 0xfec3, 0xfec4},
+    {0x0638, 0xfec5, 0xfec6, 0xfec7, 0xfec8},
+    {0x0639, 0xfec9, 0xfeca, 0xfecb, 0xfecc},
+    {0x063a, 0xfecd, 0xfece, 0xfecf, 0xfed0},
+    {0x0641, 0xfed1, 0xfed2, 0xfed3, 0xfed4},
+    {0x0642, 0xfed5, 0xfed6, 0xfed7, 0xfed8},
+    {0x0643, 0xfed9, 0xfeda, 0xfedb, 0xfedc},
+    {0x0644, 0xfedd, 0xfede, 0xfedf, 0xfee0},
+    {0x0645, 0xfee1, 0xfee2, 0xfee3, 0xfee4},
+    {0x0646, 0xfee5, 0xfee6, 0xfee7, 0xfee8},
+    {0x0647, 0xfee9, 0xfeea, 0xfeeb, 0xfeec},
+    {0x0648, 0xfeed, 0xfeee, 0, 0},
+    {0x0649, 0xfeef, 0xfef0, 0, 0},
+    {0x064a, 0xfef1, 0xfef2, 0xfef3, 0xfef4},
+    {0x067e, 0xfb56, 0xfb57, 0xfb58, 0xfb59},
+    {0x0686, 0xfb7a, 0xfb7b, 0xfb7c, 0xfb7d},
+    {0x0698, 0xfb8a, 0xfb8b, 0, 0},
+    {0x06a9, 0xfb8e, 0xfb8f, 0xfb90, 0xfb91},
+    {0x06af, 0xfb92, 0xfb93, 0xfb94, 0xfb95},
+    {0x06cc, 0xfbfc, 0xfbfd, 0xfbfe, 0xfbff}
+};
+
+static const uint32_t OGTextRemovedScalar = 0xffffffffu;
+
+static const OGTextArabicForms *OGTextArabicFormsForScalar(uint32_t value)
+{
+    size_t low = 0, high = sizeof(OGTextArabicFormTable) / sizeof(OGTextArabicFormTable[0]);
+    while (low < high)
+    {
+        size_t middle = low + (high - low) / 2;
+        if (OGTextArabicFormTable[middle].base < value)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    if (low < sizeof(OGTextArabicFormTable) / sizeof(OGTextArabicFormTable[0]) && OGTextArabicFormTable[low].base == value)
+        return &OGTextArabicFormTable[low];
+    return NULL;
+}
+
+static BOOL OGTextArabicIsTransparent(uint32_t value)
+{
+    return (value >= 0x0610 && value <= 0x061a) || (value >= 0x064b && value <= 0x065f) || value == 0x0670 || (value >= 0x06d6 && value <= 0x06dc) || (value >= 0x06df && value <= 0x06e4) || value == 0x06e7 || value == 0x06e8 || (value >= 0x06ea && value <= 0x06ed);
+}
+
+static BOOL OGTextArabicJoinsForward(uint32_t value)
+{
+    if (value == 0x0640 || value == 0x200d)
+        return YES;
+    const OGTextArabicForms *forms = OGTextArabicFormsForScalar(value);
+    return forms != NULL && forms->initial != 0;
+}
+
+static BOOL OGTextArabicJoinsBackward(uint32_t value)
+{
+    return value == 0x0640 || value == 0x200d || OGTextArabicFormsForScalar(value) != NULL;
+}
+
+static uint16_t OGTextArabicLamAlefLigature(uint32_t alef, BOOL final)
+{
+    switch (alef)
+    {
+        case 0x0622:
+            return final ? 0xfef6 : 0xfef5;
+        case 0x0623:
+            return final ? 0xfef8 : 0xfef7;
+        case 0x0625:
+            return final ? 0xfefa : 0xfef9;
+        case 0x0627:
+            return final ? 0xfefc : 0xfefb;
+        default:
+            return 0;
+    }
+}
+
+static void OGTextApplyArabicShaping(OGTextFontCmap *cmap, uint32_t *scalars, NSUInteger count)
+{
+    uint32_t *original = (uint32_t *)malloc(count * sizeof(uint32_t));
+    if (original == NULL)
+        return;
+    memcpy(original, scalars, count * sizeof(uint32_t));
+    for (NSUInteger index = 0; index < count; index++)
+    {
+        uint32_t value = original[index];
+        if (scalars[index] == OGTextRemovedScalar)
+            continue;
+        const OGTextArabicForms *forms = OGTextArabicFormsForScalar(value);
+        if (forms == NULL)
+            continue;
+
+        NSInteger previous = (NSInteger)index - 1;
+        while (previous >= 0 && OGTextArabicIsTransparent(original[previous]))
+            previous--;
+        NSUInteger next = index + 1;
+        while (next < count && OGTextArabicIsTransparent(original[next]))
+            next++;
+        BOOL joinsPrevious = previous >= 0 && OGTextArabicJoinsForward(original[previous]);
+        BOOL joinsNext = next < count && OGTextArabicJoinsBackward(original[next]);
+
+        if (value == 0x0644 && next < count)
+        {
+            uint16_t ligature = OGTextArabicLamAlefLigature(original[next], joinsPrevious);
+            if (ligature != 0 && OGTextFontCmapGlyph(cmap, ligature) != 0)
+            {
+                scalars[index] = ligature;
+                scalars[next] = OGTextRemovedScalar;
+                continue;
+            }
+        }
+
+        uint16_t form = 0;
+        if (forms->initial != 0)
+        {
+            if (joinsPrevious && joinsNext)
+                form = forms->medial;
+            else if (joinsPrevious)
+                form = forms->final;
+            else if (joinsNext)
+                form = forms->initial;
+            else
+                form = forms->isolated;
+        }
+        else
+            form = joinsPrevious ? forms->final : forms->isolated;
+        if (form != 0 && OGTextFontCmapGlyph(cmap, form) != 0)
+            scalars[index] = form;
+    }
+    free(original);
+}
+
+static BOOL OGTextScalarIsInvisible(uint32_t value)
+{
+    return value < 0x20 || (value >= 0x7f && value <= 0x9f) || value == 0x00ad || (value >= 0x200b && value <= 0x200f) || (value >= 0x2028 && value <= 0x202e) || (value >= 0x2060 && value <= 0x2064) || (value >= 0xfe00 && value <= 0xfe0f) || value == 0xfeff;
+}
+
+static NSUInteger OGTextShapeCharacters(OGTextFontCmap *cmap, const unichar *units, NSUInteger length, CGGlyph *glyphs, bool *clusterStarts, NSUInteger *sources)
+{
+    if (length == 0)
+        return 0;
+    uint32_t *scalars = (uint32_t *)malloc(length * sizeof(uint32_t));
+    NSUInteger *scalarSources = (NSUInteger *)malloc(length * sizeof(NSUInteger));
+    if (scalars == NULL || scalarSources == NULL)
+    {
+        free(scalars);
+        free(scalarSources);
+        return 0;
+    }
+    NSUInteger scalarCount = 0;
+    BOOL arabic = NO;
+    for (NSUInteger index = 0; index < length; index++)
+    {
+        NSUInteger source = index;
+        uint32_t value = units[index];
+        if (OGUnicodeIsHighSurrogate(units[index]) && index + 1 < length && OGUnicodeIsLowSurrogate(units[index + 1]))
+        {
+            value = OGUnicodeScalarForSurrogatePair(units[index], units[index + 1]);
+            index++;
+        }
+        if (value >= 0x0600 && value <= 0x06ff)
+            arabic = YES;
+        scalarSources[scalarCount] = source;
+        scalars[scalarCount++] = value;
+    }
+    if (arabic)
+        OGTextApplyArabicShaping(cmap, scalars, scalarCount);
+
+    NSUInteger glyphCount = 0;
+    for (NSUInteger index = 0; index < scalarCount; index++)
+    {
+        uint32_t value = scalars[index];
+        if (value == OGTextRemovedScalar || OGTextScalarIsInvisible(value))
+            continue;
+        glyphs[glyphCount] = (CGGlyph)OGTextFontCmapGlyph(cmap, value);
+        if (clusterStarts != NULL)
+            clusterStarts[glyphCount] = glyphCount == 0 || !(OGTextIsCombining(value) || OGTextArabicIsTransparent(value));
+        if (sources != NULL)
+            sources[glyphCount] = scalarSources[index];
+        glyphCount++;
+    }
+    free(scalars);
+    free(scalarSources);
+    return glyphCount;
+}
+
+static NSUInteger OGTextShapeGlyphs(OGTextFontCmap *cmap, NSString *string, CGGlyph *glyphs, bool *clusterStarts)
+{
+    NSUInteger length = string.length;
+    if (length == 0)
+        return 0;
+    unichar *units = (unichar *)malloc(length * sizeof(unichar));
+    if (units == NULL)
+        return 0;
+    [string getCharacters:units range:NSMakeRange(0, length)];
+    NSUInteger count = OGTextShapeCharacters(cmap, units, length, glyphs, clusterStarts, NULL);
+    free(units);
+    return count;
+}
+
+static CGFloat OGTextGlyphAdvances(OGTextFontCmap *cmap, CGFloat pointSize, const CGGlyph *glyphs, NSUInteger count, CGFloat *advances)
+{
+    if (count == 0)
+        return 0.0f;
+    int *units = (int *)calloc(count, sizeof(int));
+    if (units == NULL)
+        return 0.0f;
+    CGFontGetGlyphAdvances(cmap->_font, glyphs, count, units);
+    CGFloat scale = pointSize / cmap->_unitsPerEm;
+    CGFloat total = 0.0f;
+    for (NSUInteger index = 0; index < count; index++)
+    {
+        advances[index] = (CGFloat)units[index] * scale;
+        total += advances[index];
+    }
+    free(units);
+    return total;
+}
+
+static CGFloat OGTextGlyphRunWidth(NSString *string, UIFont *font)
+{
+    OGTextFontCmap *cmap = OGTextFontCmapForName(font.fontName);
+    NSUInteger length = string.length;
+    if (cmap == nil || length == 0)
+        return 0.0f;
+    if (length == 1)
+    {
+        unichar value = [string characterAtIndex:0];
+        if (!(value >= 0x0600 && value <= 0x06ff) && !OGUnicodeIsHighSurrogate(value) && !OGUnicodeIsLowSurrogate(value))
+        {
+            if (OGTextScalarIsInvisible(value))
+                return 0.0f;
+            CGGlyph glyph = (CGGlyph)OGTextFontCmapGlyph(cmap, value);
+            int advance = 0;
+            CGFontGetGlyphAdvances(cmap->_font, &glyph, 1, &advance);
+            return (CGFloat)advance * font.pointSize / cmap->_unitsPerEm;
+        }
+    }
+    CGGlyph *glyphs = (CGGlyph *)malloc(length * sizeof(CGGlyph));
+    bool *clusterStarts = (bool *)malloc(length * sizeof(bool));
+    CGFloat *advances = (CGFloat *)malloc(length * sizeof(CGFloat));
+    CGFloat width = 0.0f;
+    if (glyphs != NULL && clusterStarts != NULL && advances != NULL)
+    {
+        NSUInteger count = OGTextShapeGlyphs(cmap, string, glyphs, clusterStarts);
+        width = OGTextGlyphAdvances(cmap, font.pointSize, glyphs, count, advances);
+    }
+    free(glyphs);
+    free(clusterStarts);
+    free(advances);
+    return width;
+}
+
+static void OGTextDrawGlyphRun(CGContextRef context, NSString *string, UIFont *font, CGPoint baseline, BOOL rtl)
+{
+    OGTextFontCmap *cmap = OGTextFontCmapForName(font.fontName);
+    NSUInteger length = string.length;
+    if (cmap == nil || length == 0)
+        return;
+    CGGlyph *glyphs = (CGGlyph *)malloc(length * sizeof(CGGlyph));
+    bool *clusterStarts = (bool *)malloc(length * sizeof(bool));
+    CGFloat *advances = (CGFloat *)malloc(length * sizeof(CGFloat));
+    CGGlyph *visualGlyphs = (CGGlyph *)malloc(length * sizeof(CGGlyph));
+    CGSize *visualAdvances = (CGSize *)malloc(length * sizeof(CGSize));
+    if (glyphs != NULL && clusterStarts != NULL && advances != NULL && visualGlyphs != NULL && visualAdvances != NULL)
+    {
+        NSUInteger count = OGTextShapeGlyphs(cmap, string, glyphs, clusterStarts);
+        OGTextGlyphAdvances(cmap, font.pointSize, glyphs, count, advances);
+        NSUInteger output = 0;
+        if (rtl)
+        {
+            NSUInteger end = count;
+            while (end > 0)
+            {
+                NSUInteger start = end - 1;
+                while (start > 0 && !clusterStarts[start])
+                    start--;
+                for (NSUInteger index = start; index < end; index++)
+                {
+                    visualGlyphs[output] = glyphs[index];
+                    visualAdvances[output] = CGSizeMake(advances[index], 0.0f);
+                    output++;
+                }
+                end = start;
+            }
+        }
+        else
+        {
+            for (NSUInteger index = 0; index < count; index++)
+            {
+                visualGlyphs[output] = glyphs[index];
+                visualAdvances[output] = CGSizeMake(advances[index], 0.0f);
+                output++;
+            }
+        }
+        if (output != 0)
+        {
+            CGAffineTransform savedMatrix = CGContextGetTextMatrix(context);
+            CGPoint savedPosition = CGContextGetTextPosition(context);
+            CGContextSetFont(context, cmap->_font);
+            CGContextSetFontSize(context, font.pointSize);
+            CGContextSetTextDrawingMode(context, kCGTextFill);
+            CGContextSetTextMatrix(context, CGAffineTransformMakeScale(1.0f, -1.0f));
+            CGContextSetTextPosition(context, baseline.x, baseline.y);
+            CGContextShowGlyphsWithAdvances(context, visualGlyphs, visualAdvances, output);
+            CGContextSetTextMatrix(context, savedMatrix);
+            CGContextSetTextPosition(context, savedPosition.x, savedPosition.y);
+        }
+    }
+    free(glyphs);
+    free(clusterStarts);
+    free(advances);
+    free(visualGlyphs);
+    free(visualAdvances);
 }
 
 static CGFloat OGTextMeasure(NSString *string, NSDictionary *attributes, CGFloat *ascent, CGFloat *descent, CGFloat *leading)
@@ -236,165 +593,534 @@ static CGFloat OGTextMeasure(NSString *string, NSDictionary *attributes, CGFloat
         *leading = MAX(0.0f, OGPlatformFontLineHeight(font) - font.ascender + font.descender);
     if ([string rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location != NSNotFound)
         return 0.0f;
-    return [string sizeWithFont:font].width;
+    return OGTextGlyphRunWidth(string, font);
 }
 
-static NSMutableDictionary *OGTextCluster(NSString *string, NSDictionary *attributes, CFIndex start, CFIndex end)
+static uint32_t OGTextCodePointInCharacters(const unichar *characters, NSUInteger length, NSUInteger index, NSUInteger *count)
 {
+    unichar high = characters[index];
+    if (OGTextIsHighSurrogate(high) && index + 1 < length && OGTextIsLowSurrogate(characters[index + 1]))
+    {
+        *count = 2;
+        return OGUnicodeScalarForSurrogatePair(high, characters[index + 1]);
+    }
+    *count = 1;
+    return high;
+}
+
+static NSUInteger OGTextClusterEndInCharacters(const unichar *characters, NSUInteger index, NSUInteger limit)
+{
+    NSUInteger count = 0;
+    OGTextCodePointInCharacters(characters, limit, index, &count);
+    NSUInteger cursor = MIN(limit, index + count);
+    while (cursor < limit)
+    {
+        NSUInteger nextCount = 0;
+        uint32_t value = OGTextCodePointInCharacters(characters, limit, cursor, &nextCount);
+        if (OGTextIsCombining(value))
+        {
+            cursor = MIN(limit, cursor + nextCount);
+            continue;
+        }
+        if (value == 0x200d && cursor + nextCount < limit)
+        {
+            cursor += nextCount;
+            NSUInteger joinedCount = 0;
+            OGTextCodePointInCharacters(characters, limit, cursor, &joinedCount);
+            cursor = MIN(limit, cursor + joinedCount);
+            continue;
+        }
+        break;
+    }
+    return cursor;
+}
+
+enum
+{
+    OGTextClusterRTL = 1 << 0,
+    OGTextClusterStrongLTR = 1 << 1,
+    OGTextClusterWhitespace = 1 << 2,
+    OGTextClusterNewline = 1 << 3,
+    OGTextClusterTab = 1 << 4
+};
+
+static uint8_t OGTextClusterFlags(const unichar *characters, NSUInteger length)
+{
+    if (length == 0)
+        return 0;
+    uint8_t flags = 0;
+    NSUInteger count = 0;
+    uint32_t first = OGTextCodePointInCharacters(characters, length, 0, &count);
+    if (OGTextCodePointIsRTL(first))
+        flags |= OGTextClusterRTL;
+    else if (OGTextCodePointIsStrongLTR(first))
+        flags |= OGTextClusterStrongLTR;
+    CFCharacterSetRef whitespace = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
+    CFCharacterSetRef newline = CFCharacterSetGetPredefined(kCFCharacterSetNewline);
+    BOOL allWhitespace = YES;
+    for (NSUInteger index = 0; index < length; index++)
+    {
+        if (!CFCharacterSetIsCharacterMember(whitespace, characters[index]))
+            allWhitespace = NO;
+        if (CFCharacterSetIsCharacterMember(newline, characters[index]))
+            flags |= OGTextClusterNewline;
+    }
+    if (allWhitespace)
+        flags |= OGTextClusterWhitespace;
+    if (length == 1 && characters[0] == '\t')
+        flags |= OGTextClusterTab;
+    return flags;
+}
+
+@interface OGTextCluster : NSObject
+{
+@public
+    NSString *_source;
+    NSDictionary *_attributes;
+    NSRange _characters;
+    CFIndex _start;
+    CFIndex _end;
+    CGFloat _width;
+    CGFloat _x;
+    CGFloat _ascent;
+    CGFloat _descent;
+    CGFloat _leading;
+    uint8_t _flags;
+}
+@end
+
+@implementation OGTextCluster
+@end
+
+static OGTextCluster *OGTextClusterCopy(OGTextCluster *cluster)
+{
+    OGTextCluster *copy = [[OGTextCluster alloc] init];
+    copy->_source = cluster->_source;
+    copy->_attributes = cluster->_attributes;
+    copy->_characters = cluster->_characters;
+    copy->_start = cluster->_start;
+    copy->_end = cluster->_end;
+    copy->_width = cluster->_width;
+    copy->_x = cluster->_x;
+    copy->_ascent = cluster->_ascent;
+    copy->_descent = cluster->_descent;
+    copy->_leading = cluster->_leading;
+    copy->_flags = cluster->_flags;
+    return copy;
+}
+
+static OGTextCluster *OGTextClusterCreateMeasured(NSString *source, const unichar *characters, NSRange range, NSDictionary *attributes)
+{
+    OGTextCluster *cluster = [[OGTextCluster alloc] init];
+    cluster->_source = source;
+    cluster->_attributes = attributes;
+    cluster->_characters = range;
+    cluster->_start = (CFIndex)range.location;
+    cluster->_end = (CFIndex)NSMaxRange(range);
+    cluster->_flags = OGTextClusterFlags(characters + range.location, range.length);
     CGFloat ascent = 0.0f;
     CGFloat descent = 0.0f;
     CGFloat leading = 0.0f;
-    CGFloat width = OGTextMeasure(string, attributes, &ascent, &descent, &leading);
-    uint32_t first = [string length] == 0 ? 0 : OGTextCodePoint(string, 0, NULL);
-    return [NSMutableDictionary dictionaryWithObjectsAndKeys:string, OGTextStringKey, attributes, OGTextAttributesKey, [NSNumber numberWithLong:start], OGTextStartKey, [NSNumber numberWithLong:end], OGTextEndKey, [NSNumber numberWithFloat:width], OGTextWidthKey, [NSNumber numberWithFloat:ascent], OGTextAscentKey, [NSNumber numberWithFloat:descent], OGTextDescentKey, [NSNumber numberWithFloat:leading], OGTextLeadingKey, [NSNumber numberWithBool:OGTextCodePointIsRTL(first)], OGTextRTLKey, nil];
+    cluster->_width = OGTextMeasure([source substringWithRange:range], attributes, &ascent, &descent, &leading);
+    cluster->_ascent = ascent;
+    cluster->_descent = descent;
+    cluster->_leading = leading;
+    return cluster;
 }
 
-static NSArray *OGTextLogicalClusters(id attributedString, CFRange range)
+static NSString *OGTextClustersString(NSArray *clusters, BOOL reverse)
 {
-    NSString *string = [attributedString string];
-    NSUInteger length = [string length];
-    NSUInteger start = MIN((NSUInteger)MAX((CFIndex)0, range.location), length);
-    NSUInteger requestedEnd = range.length == 0 ? length : MIN(length, start + (NSUInteger)MAX((CFIndex)0, range.length));
-    NSMutableArray *clusters = [NSMutableArray array];
-    NSUInteger index = start;
-    while (index < requestedEnd)
+    NSMutableString *string = nil;
+    NSString *source = nil;
+    NSRange pending = NSMakeRange(0, 0);
+    NSEnumerator *enumerator = reverse ? [clusters reverseObjectEnumerator] : [clusters objectEnumerator];
+    for (OGTextCluster *cluster in enumerator)
     {
-        NSUInteger end = OGTextClusterEnd(string, index, requestedEnd);
-        NSDictionary *attributes = OGTextAttributesAtIndex(attributedString, index);
-        NSString *clusterString = [string substringWithRange:NSMakeRange(index, end - index)];
-        [clusters addObject:OGTextCluster(clusterString, attributes, (CFIndex)index, (CFIndex)end)];
-        index = end;
+        if (cluster->_source == source && NSMaxRange(pending) == cluster->_characters.location)
+        {
+            pending.length += cluster->_characters.length;
+            continue;
+        }
+        if (source != nil && pending.length != 0)
+        {
+            if (string == nil)
+                string = [[NSMutableString alloc] init];
+            [string appendString:[source substringWithRange:pending]];
+        }
+        source = cluster->_source;
+        pending = cluster->_characters;
     }
-    return clusters;
+    if (string == nil)
+        return source == nil || pending.length == 0 ? @"" : [source substringWithRange:pending];
+    if (source != nil && pending.length != 0)
+        [string appendString:[source substringWithRange:pending]];
+    return string;
+}
+
+enum
+{
+    OGTextChunkSoftLimit = 64,
+    OGTextChunkHardLimit = 256,
+    OGTextChunkClusterCapacity = 320
+};
+
+@interface OGTextTypesetter : NSObject
+{
+@public
+    id _attributedString;
+    NSString *_string;
+    NSUInteger _length;
+    unichar *_characters;
+    OGTextCluster * __unsafe_unretained *_clusterAtStart;
+    uint8_t *_measured;
+    NSMutableArray *_clusters;
+    OSSpinLock _lock;
+}
+@end
+
+@implementation OGTextTypesetter
+
+- (instancetype)initWithAttributedString:(id)attributedString
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _attributedString = [attributedString copy];
+        _string = [[_attributedString string] copy];
+        _length = [_string length];
+        _clusters = [[NSMutableArray alloc] init];
+        _lock = OS_SPINLOCK_INIT;
+        if (_length != 0)
+        {
+            _characters = (unichar *)malloc(_length * sizeof(unichar));
+            _clusterAtStart = (OGTextCluster * __unsafe_unretained *)calloc(_length, sizeof(OGTextCluster *));
+            _measured = (uint8_t *)calloc(_length, sizeof(uint8_t));
+            if (_characters == NULL || _clusterAtStart == NULL || _measured == NULL)
+                return nil;
+            [_string getCharacters:_characters range:NSMakeRange(0, _length)];
+        }
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    free(_characters);
+    free(_clusterAtStart);
+    free(_measured);
+}
+
+@end
+
+static OGTextTypesetter *OGTextTypesetterObject(CTTypesetterRef typesetter)
+{
+    id object = OGTextObject(typesetter);
+    return [object isKindOfClass:[OGTextTypesetter class]] ? object : nil;
+}
+
+static void OGTextTypesetterMeasureChunk(OGTextTypesetter *typesetter, NSUInteger start)
+{
+    const unichar *characters = typesetter->_characters;
+    NSUInteger length = typesetter->_length;
+    NSRange attributesRange = NSMakeRange(NSNotFound, 0);
+    NSDictionary *attributes = [typesetter->_attributedString attributesAtIndex:start effectiveRange:&attributesRange];
+    if (attributes == nil)
+        attributes = [NSDictionary dictionary];
+    NSUInteger runLimit = attributesRange.location != NSNotFound && attributesRange.location <= start && NSMaxRange(attributesRange) > start ? MIN(length, NSMaxRange(attributesRange)) : start + 1;
+
+    CFCharacterSetRef whitespace = CFCharacterSetGetPredefined(kCFCharacterSetWhitespaceAndNewline);
+    NSUInteger ends[OGTextChunkClusterCapacity];
+    CGFloat widths[OGTextChunkClusterCapacity];
+    NSUInteger count = 0;
+    NSUInteger cursor = start;
+    while (cursor < runLimit && count < OGTextChunkClusterCapacity && (cursor == start || !typesetter->_measured[cursor]))
+    {
+        cursor = OGTextClusterEndInCharacters(characters, cursor, length);
+        widths[count] = 0.0f;
+        ends[count++] = cursor;
+        NSUInteger units = cursor - start;
+        if (units >= OGTextChunkHardLimit)
+            break;
+        if (units >= OGTextChunkSoftLimit && CFCharacterSetIsCharacterMember(whitespace, characters[cursor - 1]))
+            break;
+    }
+    NSUInteger units = cursor - start;
+
+    CGFloat ascent = 0.0f;
+    CGFloat descent = 0.0f;
+    CGFloat leading = 0.0f;
+    OGPlatformRunDelegateOwner *owner = OGTextRunDelegateOwner(attributes);
+    if (owner != nil)
+    {
+        ascent = [owner ascent];
+        descent = [owner descent];
+        CGFloat width = [owner width];
+        for (NSUInteger index = 0; index < count; index++)
+            widths[index] = width;
+    }
+    else
+    {
+        UIFont *font = OGTextFontFromAttributes(attributes);
+        ascent = MAX(0.0f, font.ascender);
+        descent = MAX(0.0f, -font.descender);
+        leading = MAX(0.0f, OGPlatformFontLineHeight(font) - font.ascender + font.descender);
+        OGTextFontCmap *cmap = OGTextFontCmapForName(font.fontName);
+        if (cmap != nil)
+        {
+            CGGlyph *glyphs = (CGGlyph *)malloc(units * sizeof(CGGlyph));
+            NSUInteger *sources = (NSUInteger *)malloc(units * sizeof(NSUInteger));
+            CGFloat *advances = (CGFloat *)malloc(units * sizeof(CGFloat));
+            if (glyphs != NULL && sources != NULL && advances != NULL)
+            {
+                NSUInteger glyphCount = OGTextShapeCharacters(cmap, characters + start, units, glyphs, NULL, sources);
+                OGTextGlyphAdvances(cmap, font.pointSize, glyphs, glyphCount, advances);
+                NSUInteger clusterIndex = 0;
+                for (NSUInteger glyph = 0; glyph < glyphCount; glyph++)
+                {
+                    NSUInteger source = start + sources[glyph];
+                    while (clusterIndex + 1 < count && source >= ends[clusterIndex])
+                        clusterIndex++;
+                    widths[clusterIndex] += advances[glyph];
+                }
+            }
+            free(glyphs);
+            free(sources);
+            free(advances);
+        }
+    }
+
+    NSUInteger clusterStart = start;
+    for (NSUInteger index = 0; index < count; index++)
+    {
+        OGTextCluster *cluster = [[OGTextCluster alloc] init];
+        cluster->_source = typesetter->_string;
+        cluster->_attributes = attributes;
+        cluster->_characters = NSMakeRange(clusterStart, ends[index] - clusterStart);
+        cluster->_start = (CFIndex)clusterStart;
+        cluster->_end = (CFIndex)ends[index];
+        cluster->_flags = OGTextClusterFlags(characters + clusterStart, ends[index] - clusterStart);
+        cluster->_width = owner == nil && (cluster->_flags & OGTextClusterNewline) != 0 ? 0.0f : widths[index];
+        cluster->_ascent = ascent;
+        cluster->_descent = descent;
+        cluster->_leading = leading;
+        [typesetter->_clusters addObject:cluster];
+        memset(typesetter->_measured + clusterStart, 1, ends[index] - clusterStart);
+        OSMemoryBarrier();
+        typesetter->_clusterAtStart[clusterStart] = cluster;
+        clusterStart = ends[index];
+    }
+}
+
+static OGTextCluster *OGTextTypesetterClusterAtIndex(OGTextTypesetter *typesetter, NSUInteger index)
+{
+    OGTextCluster *cluster = typesetter->_clusterAtStart[index];
+    if (cluster != nil)
+        return cluster;
+    OSSpinLockLock(&typesetter->_lock);
+    cluster = typesetter->_clusterAtStart[index];
+    if (cluster == nil && !typesetter->_measured[index])
+    {
+        OGTextTypesetterMeasureChunk(typesetter, index);
+        cluster = typesetter->_clusterAtStart[index];
+    }
+    OSSpinLockUnlock(&typesetter->_lock);
+    return cluster;
+}
+
+static OGTextCluster *OGTextTypesetterClusterInRange(OGTextTypesetter *typesetter, NSUInteger index, NSUInteger limit)
+{
+    OGTextCluster *cluster = OGTextTypesetterClusterAtIndex(typesetter, index);
+    if (cluster != nil && (NSUInteger)cluster->_end <= limit)
+        return cluster;
+    NSUInteger end = OGTextClusterEndInCharacters(typesetter->_characters, index, limit);
+    return OGTextClusterCreateMeasured(typesetter->_string, typesetter->_characters, NSMakeRange(index, end - index), OGTextAttributesAtIndex(typesetter->_attributedString, index));
 }
 
 static void OGTextApplyTabWidths(NSArray *clusters, CGFloat offset)
 {
     CGFloat position = offset;
-    for (NSMutableDictionary *cluster in clusters)
+    for (OGTextCluster *cluster in clusters)
     {
-        NSString *string = [cluster objectForKey:OGTextStringKey];
-        CGFloat width = [[cluster objectForKey:OGTextWidthKey] floatValue];
-        if ([string isEqualToString:@"\t"])
+        if ((cluster->_flags & OGTextClusterTab) != 0)
         {
-            NSDictionary *attributes = [cluster objectForKey:OGTextAttributesKey];
-            CGFloat tabWidth = OGTextMeasure(@"    ", attributes, NULL, NULL, NULL);
+            CGFloat tabWidth = OGTextMeasure(@"    ", cluster->_attributes, NULL, NULL, NULL);
             if (tabWidth <= 0.0f)
-                tabWidth = MAX(1.0f, OGTextFontFromAttributes(attributes).pointSize * 2.0f);
+                tabWidth = MAX(1.0f, OGTextFontFromAttributes(cluster->_attributes).pointSize * 2.0f);
             CGFloat nextStop = (floorf(position / tabWidth) + 1.0f) * tabWidth;
-            width = MAX(1.0f, nextStop - position);
-            [cluster setObject:[NSNumber numberWithFloat:width] forKey:OGTextWidthKey];
+            cluster->_width = MAX(1.0f, nextStop - position);
         }
-        position += width;
+        position += cluster->_width;
     }
 }
 
-static BOOL OGTextBaseDirectionIsRTL(NSArray *clusters)
+@interface OGTextRun : NSObject
 {
-    for (NSDictionary *cluster in clusters)
-    {
-        NSString *string = [cluster objectForKey:OGTextStringKey];
-        if ([string length] == 0)
-            continue;
-        uint32_t value = OGTextCodePoint(string, 0, NULL);
-        if (OGTextCodePointIsRTL(value))
-            return YES;
-        if (OGTextCodePointIsStrongLTR(value))
-            return NO;
-    }
-    return NO;
+@public
+    NSArray *_clusters;
+    NSDictionary *_attributes;
+    NSString *_string;
+    CFRange _range;
+    CGFloat _x;
+    CGFloat _width;
+    CGFloat _ascent;
+    CGFloat _descent;
+    CGFloat _leading;
+    BOOL _rtl;
+    BOOL _justified;
+}
+@end
+
+@implementation OGTextRun
+@end
+
+@interface OGTextLine : NSObject
+{
+@public
+    NSArray *_clusters;
+    NSArray *_runs;
+    CFRange _range;
+    CGFloat _width;
+    CGFloat _ascent;
+    CGFloat _descent;
+    CGFloat _leading;
+    CGFloat _trailing;
+}
+@end
+
+@implementation OGTextLine
+@end
+
+static OGTextLine *OGTextLineObject(CTLineRef line)
+{
+    id object = OGTextObject(line);
+    return [object isKindOfClass:[OGTextLine class]] ? object : nil;
 }
 
-static NSDictionary *OGTextRunFromClusters(NSArray *clusters, BOOL rtl, CGFloat x, BOOL justified)
+static OGTextRun *OGTextRunObject(CTRunRef run)
 {
-    CGFloat width = 0.0f;
-    CGFloat ascent = 0.0f;
-    CGFloat descent = 0.0f;
-    CGFloat leading = 0.0f;
+    id object = OGTextObject(run);
+    return [object isKindOfClass:[OGTextRun class]] ? object : nil;
+}
+
+static OGTextRun *OGTextRunCreate(NSArray *visualClusters, BOOL rtl, CGFloat x, BOOL justified)
+{
+    OGTextRun *run = [[OGTextRun alloc] init];
+    run->_clusters = visualClusters;
+    run->_rtl = rtl;
+    run->_x = x;
+    run->_justified = justified;
     CFIndex minimum = LONG_MAX;
-    CFIndex maximum = 0;
-    NSMutableString *string = [NSMutableString string];
-    NSArray *logicalClusters = rtl ? [[clusters reverseObjectEnumerator] allObjects] : clusters;
-    for (NSDictionary *cluster in logicalClusters)
-        [string appendString:[cluster objectForKey:OGTextStringKey]];
-    for (NSDictionary *cluster in clusters)
+    CFIndex maximum = LONG_MIN;
+    for (OGTextCluster *cluster in visualClusters)
     {
-        width += [[cluster objectForKey:OGTextWidthKey] floatValue];
-        ascent = MAX(ascent, [[cluster objectForKey:OGTextAscentKey] floatValue]);
-        descent = MAX(descent, [[cluster objectForKey:OGTextDescentKey] floatValue]);
-        leading = MAX(leading, [[cluster objectForKey:OGTextLeadingKey] floatValue]);
-        minimum = MIN(minimum, [[cluster objectForKey:OGTextStartKey] longValue]);
-        maximum = MAX(maximum, [[cluster objectForKey:OGTextEndKey] longValue]);
+        run->_width += cluster->_width;
+        run->_ascent = MAX(run->_ascent, cluster->_ascent);
+        run->_descent = MAX(run->_descent, cluster->_descent);
+        run->_leading = MAX(run->_leading, cluster->_leading);
+        if (cluster->_start >= 0)
+        {
+            minimum = MIN(minimum, cluster->_start);
+            maximum = MAX(maximum, cluster->_end);
+        }
     }
-    NSDictionary *attributes = [clusters count] == 0 ? [NSDictionary dictionary] : [[clusters objectAtIndex:0] objectForKey:OGTextAttributesKey];
-    return [NSDictionary dictionaryWithObjectsAndKeys:clusters, OGTextClustersKey, attributes, OGTextAttributesKey, string, OGTextStringKey, [NSNumber numberWithFloat:x], OGTextXKey, [NSNumber numberWithFloat:width], OGTextWidthKey, [NSNumber numberWithFloat:ascent], OGTextAscentKey, [NSNumber numberWithFloat:descent], OGTextDescentKey, [NSNumber numberWithFloat:leading], OGTextLeadingKey, [NSValue valueWithRange:NSMakeRange(minimum == LONG_MAX ? 0 : (NSUInteger)minimum, maximum >= minimum ? (NSUInteger)(maximum - minimum) : 0)], OGTextRangeKey, [NSNumber numberWithBool:rtl], OGTextRTLKey, [NSNumber numberWithBool:justified], OGTextJustifiedKey, nil];
+    run->_range = minimum == LONG_MAX ? CFRangeMake(kCFNotFound, 0) : CFRangeMake(minimum, maximum - minimum);
+    run->_attributes = visualClusters.count == 0 ? [NSDictionary dictionary] : ((OGTextCluster *)[visualClusters objectAtIndex:0])->_attributes;
+    run->_string = OGTextClustersString(visualClusters, rtl);
+    return run;
 }
 
-static CFTypeRef OGTextLineFromClusters(NSArray *logicalClusters, CFRange sourceRange, BOOL justified)
+static CTLineRef OGTextLineCreate(NSArray *logicalClusters, CFRange sourceRange, BOOL justified)
 {
-    NSMutableArray *directionalGroups = [NSMutableArray array];
+    NSMutableArray *groups = [[NSMutableArray alloc] init];
     NSMutableArray *current = nil;
     NSDictionary *previousAttributes = nil;
     BOOL previousRTL = NO;
     CFIndex previousEnd = LONG_MIN;
-    for (NSMutableDictionary *cluster in logicalClusters)
+    BOOL baseRTL = NO;
+    BOOL baseResolved = NO;
+    for (OGTextCluster *cluster in logicalClusters)
     {
-        NSDictionary *attributes = [cluster objectForKey:OGTextAttributesKey];
-        BOOL rtl = [[cluster objectForKey:OGTextRTLKey] boolValue];
-        CFIndex start = [[cluster objectForKey:OGTextStartKey] longValue];
-        CFIndex end = [[cluster objectForKey:OGTextEndKey] longValue];
-        if (current == nil || rtl != previousRTL || ![attributes isEqual:previousAttributes] || start < 0 || previousEnd < 0 || start != previousEnd)
+        BOOL rtl = (cluster->_flags & OGTextClusterRTL) != 0;
+        if (!baseResolved && (cluster->_flags & (OGTextClusterRTL | OGTextClusterStrongLTR)) != 0)
         {
-            current = [NSMutableArray array];
-            [directionalGroups addObject:current];
+            baseRTL = rtl;
+            baseResolved = YES;
+        }
+        NSDictionary *attributes = cluster->_attributes;
+        if (current == nil || rtl != previousRTL || (attributes != previousAttributes && ![attributes isEqual:previousAttributes]) || cluster->_start < 0 || previousEnd < 0 || cluster->_start != previousEnd)
+        {
+            current = [[NSMutableArray alloc] init];
+            [groups addObject:current];
             previousAttributes = attributes;
             previousRTL = rtl;
         }
         [current addObject:cluster];
-        previousEnd = end;
+        previousEnd = cluster->_end;
     }
-    if (OGTextBaseDirectionIsRTL(logicalClusters))
-        directionalGroups = [NSMutableArray arrayWithArray:[[directionalGroups reverseObjectEnumerator] allObjects]];
-    NSMutableArray *visualClusters = [NSMutableArray array];
-    NSMutableArray *runs = [NSMutableArray array];
+
+    OGTextLine *line = [[OGTextLine alloc] init];
+    NSMutableArray *visualClusters = [[NSMutableArray alloc] initWithCapacity:logicalClusters.count];
+    NSMutableArray *runs = [[NSMutableArray alloc] initWithCapacity:groups.count];
     CGFloat x = 0.0f;
-    CGFloat ascent = 0.0f;
-    CGFloat descent = 0.0f;
-    CGFloat leading = 0.0f;
-    for (NSArray *group in directionalGroups)
+    NSEnumerator *groupEnumerator = baseRTL ? [groups reverseObjectEnumerator] : [groups objectEnumerator];
+    for (NSArray *group in groupEnumerator)
     {
-        BOOL rtl = [[[group objectAtIndex:0] objectForKey:OGTextRTLKey] boolValue];
+        BOOL rtl = (((OGTextCluster *)[group objectAtIndex:0])->_flags & OGTextClusterRTL) != 0;
         NSArray *visualGroup = rtl ? [[group reverseObjectEnumerator] allObjects] : group;
-        for (NSMutableDictionary *cluster in visualGroup)
+        CGFloat runX = x;
+        for (OGTextCluster *cluster in visualGroup)
         {
-            [cluster setObject:[NSNumber numberWithFloat:x] forKey:OGTextXKey];
-            x += [[cluster objectForKey:OGTextWidthKey] floatValue];
-            ascent = MAX(ascent, [[cluster objectForKey:OGTextAscentKey] floatValue]);
-            descent = MAX(descent, [[cluster objectForKey:OGTextDescentKey] floatValue]);
-            leading = MAX(leading, [[cluster objectForKey:OGTextLeadingKey] floatValue]);
+            cluster->_x = x;
+            x += cluster->_width;
+            line->_ascent = MAX(line->_ascent, cluster->_ascent);
+            line->_descent = MAX(line->_descent, cluster->_descent);
+            line->_leading = MAX(line->_leading, cluster->_leading);
             [visualClusters addObject:cluster];
         }
-        NSDictionary *run = OGTextRunFromClusters(visualGroup, rtl, [[[visualGroup objectAtIndex:0] objectForKey:OGTextXKey] floatValue], justified);
-        [runs addObject:run];
+        [runs addObject:OGTextRunCreate(visualGroup, rtl, runX, justified)];
     }
-    CGFloat trailing = 0.0f;
-    for (NSDictionary *cluster in [logicalClusters reverseObjectEnumerator])
+    for (OGTextCluster *cluster in [logicalClusters reverseObjectEnumerator])
     {
-        if (!OGTextClusterIsWhitespace([cluster objectForKey:OGTextStringKey]))
+        if ((cluster->_flags & OGTextClusterWhitespace) == 0)
             break;
-        trailing += [[cluster objectForKey:OGTextWidthKey] floatValue];
+        line->_trailing += cluster->_width;
     }
-    NSDictionary *line = [NSDictionary dictionaryWithObjectsAndKeys:visualClusters, OGTextClustersKey, runs, OGTextRunsKey, [NSNumber numberWithFloat:x], OGTextWidthKey, [NSNumber numberWithFloat:ascent], OGTextAscentKey, [NSNumber numberWithFloat:descent], OGTextDescentKey, [NSNumber numberWithFloat:leading], OGTextLeadingKey, [NSValue valueWithRange:NSMakeRange((NSUInteger)MAX((CFIndex)0, sourceRange.location), (NSUInteger)MAX((CFIndex)0, sourceRange.length))], OGTextRangeKey, [NSNumber numberWithFloat:trailing], OGTextTrailingKey, nil];
-    return OGTextCreateObject(line);
+    line->_clusters = visualClusters;
+    line->_runs = runs;
+    line->_width = x;
+    line->_range = CFRangeMake(MAX((CFIndex)0, sourceRange.location), MAX((CFIndex)0, sourceRange.length));
+    return (CTLineRef)OGTextCreateObject(line);
 }
 
-static NSArray *OGTextCopyClusters(CFTypeRef line)
+static NSMutableArray *OGTextCopyClusters(OGTextLine *line)
 {
-    NSArray *clusters = [OGTextObject(line) objectForKey:OGTextClustersKey];
-    NSMutableArray *result = [NSMutableArray arrayWithCapacity:[clusters count]];
-    for (NSDictionary *cluster in clusters)
-        [result addObject:[NSMutableDictionary dictionaryWithDictionary:cluster]];
+    NSMutableArray *result = [[NSMutableArray alloc] initWithCapacity:line->_clusters.count];
+    for (OGTextCluster *cluster in line->_clusters)
+        [result addObject:OGTextClusterCopy(cluster)];
     return result;
+}
+
+static NSMutableArray *OGTextLogicalOrder(NSArray *clusters)
+{
+    NSMutableArray *ordered = [[NSMutableArray alloc] initWithCapacity:clusters.count];
+    NSMutableArray *detached = [[NSMutableArray alloc] init];
+    for (OGTextCluster *cluster in clusters)
+    {
+        if (cluster->_start < 0)
+            [detached addObject:cluster];
+        else
+            [ordered addObject:cluster];
+    }
+    [ordered sortUsingComparator:^NSComparisonResult(OGTextCluster *left, OGTextCluster *right)
+    {
+        if (left->_start < right->_start)
+            return NSOrderedAscending;
+        if (left->_start > right->_start)
+            return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    [ordered addObjectsFromArray:detached];
+    return ordered;
 }
 
 CTFontRef CTFontCreateWithName(CFStringRef name, CGFloat size, const CGAffineTransform *matrix)
@@ -427,22 +1153,15 @@ CFCharacterSetRef CTFontCopyCharacterSet(CTFontRef font)
     id cached = [cache objectForKey:uiFont.fontName];
     if (cached != nil)
         return (CFCharacterSetRef)CFRetain((__bridge CFTypeRef)cached);
-    CGFontRef cgFont = CGFontCreateWithFontName((__bridge CFStringRef)uiFont.fontName);
-    if (cgFont == NULL)
+    OGTextFontCmap *cmap = OGTextFontCmapForName(uiFont.fontName);
+    if (cmap == nil)
         return NULL;
-    size_t glyphCount = CGFontGetNumberOfGlyphs(cgFont);
-    CFDataRef cmap = CGFontCopyTableForTag(cgFont, 0x636d6170u);
-    CGFontRelease(cgFont);
-    if (cmap == NULL)
-        return NULL;
-    const uint8_t *bytes = CFDataGetBytePtr(cmap);
-    size_t length = (size_t)CFDataGetLength(cmap);
+    size_t glyphCount = cmap->_glyphCount;
+    const uint8_t *bytes = (const uint8_t *)cmap->_table.bytes;
+    size_t length = cmap->_table.length;
     CFMutableCharacterSetRef characters = CFCharacterSetCreateMutable(kCFAllocatorDefault);
     if (characters == NULL)
-    {
-        CFRelease(cmap);
         return NULL;
-    }
     uint32_t first = UINT32_MAX;
     for (uint32_t value = 0; value <= 0x10000; value++)
     {
@@ -523,58 +1242,54 @@ CFCharacterSetRef CTFontCopyCharacterSet(CTFontRef font)
             }
         }
     }
-    CFRelease(cmap);
     [cache setObject:(__bridge id)characters forKey:uiFont.fontName cost:128 * 1024];
     return characters;
-}
-
-static BOOL OGTextFontCoversString(CTFontRef font, NSString *text)
-{
-    CFCharacterSetRef characters = CTFontCopyCharacterSet(font);
-    if (characters == NULL)
-        return NO;
-    BOOL covered = YES;
-    for (NSUInteger i = 0; i < text.length; i++)
-    {
-        uint32_t value = [text characterAtIndex:i];
-        if (OGUnicodeIsHighSurrogate((uint16_t)value) && i + 1 < text.length && OGUnicodeIsLowSurrogate([text characterAtIndex:i + 1]))
-            value = OGUnicodeScalarForSurrogatePair((uint16_t)value, [text characterAtIndex:++i]);
-        if (!CFCharacterSetIsLongCharacterMember(characters, value))
-        {
-            covered = NO;
-            break;
-        }
-    }
-    CFRelease(characters);
-    return covered;
 }
 
 CTFontRef CTFontCreateForString(CTFontRef font, CFStringRef string, CFRange range)
 {
     NSString *text = (__bridge NSString *)string;
-    if (font == NULL || range.location < 0 || range.length < 0 || (NSUInteger)range.location > text.length || (NSUInteger)range.length > text.length - (NSUInteger)range.location)
+    UIFont *baseFont = OGTextUIFont(font);
+    if (baseFont == nil || range.location < 0 || range.length < 0 || (NSUInteger)range.location > text.length || (NSUInteger)range.length > text.length - (NSUInteger)range.location)
         return NULL;
     text = [text substringWithRange:NSMakeRange((NSUInteger)range.location, (NSUInteger)range.length)];
-    if (OGTextFontCoversString(font, text))
+    if (OGTextFontCmapCoversString(OGTextFontCmapForName(baseFont.fontName), text))
         return (CTFontRef)CFRetain(font);
+
+    static OGMemoryCache *resolved = nil;
     static NSArray *names = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
+        resolved = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:0];
         NSMutableArray *available = [[NSMutableArray alloc] init];
         for (NSString *family in [UIFont familyNames])
             [available addObjectsFromArray:[UIFont fontNamesForFamilyName:family]];
         names = [available copy];
     });
+
+    NSString *key = [[NSString alloc] initWithFormat:@"%@\n%@", baseFont.fontName, text];
+    id cached = [resolved objectForKey:key];
+    if ([cached isKindOfClass:[NSString class]])
+    {
+        CTFontRef candidate = CTFontCreateWithName((__bridge CFStringRef)cached, CTFontGetSize(font), NULL);
+        if (candidate != NULL)
+            return candidate;
+    }
+    else if (cached != nil)
+        return NULL;
+
     for (NSString *name in names)
     {
+        if (!OGTextFontCmapCoversString(OGTextFontCmapForName(name), text))
+            continue;
         CTFontRef candidate = CTFontCreateWithName((__bridge CFStringRef)name, CTFontGetSize(font), NULL);
         if (candidate == NULL)
             continue;
-        if (OGTextFontCoversString(candidate, text))
-            return candidate;
-        CFRelease(candidate);
+        [resolved setObject:name forKey:key cost:1];
+        return candidate;
     }
+    [resolved setObject:[NSNull null] forKey:key cost:1];
     return NULL;
 }
 
@@ -593,19 +1308,40 @@ CGFloat CTFontGetDescent(CTFontRef font)
     return MAX(0.0f, -OGTextUIFont(font).descender);
 }
 
+CGFloat CTFontGetLeading(CTFontRef font)
+{
+    UIFont *uiFont = OGTextUIFont(font);
+    if (uiFont == nil)
+        return 0.0f;
+    CGFontRef cgFont = CGFontCreateWithFontName((__bridge CFStringRef)uiFont.fontName);
+    if (cgFont == NULL)
+        return 0.0f;
+    int unitsPerEm = CGFontGetUnitsPerEm(cgFont);
+    CGFloat leading = unitsPerEm > 0 ? (CGFloat)CGFontGetLeading(cgFont) * uiFont.pointSize / (CGFloat)unitsPerEm : 0.0f;
+    CGFontRelease(cgFont);
+    return MAX(0.0f, leading);
+}
+
+CGFloat CTFontGetCapHeight(CTFontRef font)
+{
+    return OGPlatformFontCapHeight(OGTextUIFont(font));
+}
+
 CTTypesetterRef CTTypesetterCreateWithAttributedString(CFAttributedStringRef string)
 {
     id attributedString = (__bridge id)string;
     if (attributedString == nil)
         return NULL;
-    return (CTTypesetterRef)OGTextCreateObject([NSDictionary dictionaryWithObject:attributedString forKey:OGTextAttributedStringKey]);
+    OGTextTypesetter *typesetter = [[OGTextTypesetter alloc] initWithAttributedString:attributedString];
+    return (CTTypesetterRef)OGTextCreateObject(typesetter);
 }
 
-static CFIndex OGTextSuggestBreak(CTTypesetterRef typesetter, CFIndex startIndex, double width, BOOL wordBreak)
+static CFIndex OGTextSuggestBreak(CTTypesetterRef typesetterRef, CFIndex startIndex, double width, BOOL wordBreak)
 {
-    id attributedString = [OGTextObject(typesetter) objectForKey:OGTextAttributedStringKey];
-    NSString *string = [attributedString string];
-    NSUInteger length = [string length];
+    OGTextTypesetter *typesetter = OGTextTypesetterObject(typesetterRef);
+    if (typesetter == nil)
+        return 0;
+    NSUInteger length = typesetter->_length;
     NSUInteger start = MIN((NSUInteger)MAX((CFIndex)0, startIndex), length);
     if (start >= length)
         return 0;
@@ -614,19 +1350,17 @@ static CFIndex OGTextSuggestBreak(CTTypesetterRef typesetter, CFIndex startIndex
     NSUInteger lastBreak = NSNotFound;
     while (index < length)
     {
-        NSUInteger end = OGTextClusterEnd(string, index, length);
-        NSString *clusterString = [string substringWithRange:NSMakeRange(index, end - index)];
-        NSDictionary *attributes = OGTextAttributesAtIndex(attributedString, index);
-        CGFloat clusterWidth = OGTextMeasure(clusterString, attributes, NULL, NULL, NULL);
-        BOOL newline = [clusterString rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location != NSNotFound;
-        if (newline)
+        OGTextCluster *cluster = OGTextTypesetterClusterInRange(typesetter, index, length);
+        NSUInteger end = (NSUInteger)cluster->_end;
+        if ((cluster->_flags & OGTextClusterNewline) != 0)
             return (CFIndex)(end - start);
+        CGFloat clusterWidth = cluster->_width;
         if (used + clusterWidth > width && index > start)
             return (CFIndex)((wordBreak && lastBreak != NSNotFound ? lastBreak : index) - start);
         if (used + clusterWidth > width)
             return (CFIndex)(end - start);
         used += clusterWidth;
-        if (OGTextClusterIsWhitespace(clusterString))
+        if ((cluster->_flags & OGTextClusterWhitespace) != 0)
             lastBreak = end;
         index = end;
     }
@@ -643,21 +1377,26 @@ CFIndex CTTypesetterSuggestClusterBreak(CTTypesetterRef typesetter, CFIndex star
     return OGTextSuggestBreak(typesetter, startIndex, width, NO);
 }
 
-static CTLineRef OGTextCreateTypesetterLine(CTTypesetterRef typesetter, CFRange stringRange, CGFloat offset)
+static CTLineRef OGTextCreateTypesetterLine(CTTypesetterRef typesetterRef, CFRange stringRange, CGFloat offset)
 {
-    id attributedString = [OGTextObject(typesetter) objectForKey:OGTextAttributedStringKey];
-    if (attributedString == nil)
+    OGTextTypesetter *typesetter = OGTextTypesetterObject(typesetterRef);
+    if (typesetter == nil)
         return NULL;
-    NSUInteger length = [attributedString length];
-    CFRange range = stringRange;
-    if (range.location < 0 || (NSUInteger)range.location > length)
+    NSUInteger length = typesetter->_length;
+    if (stringRange.location < 0 || (NSUInteger)stringRange.location > length)
         return NULL;
-    if (range.length == 0)
-        range.length = (CFIndex)length - range.location;
-    range.length = MIN(range.length, (CFIndex)length - range.location);
-    NSArray *clusters = OGTextLogicalClusters(attributedString, range);
+    NSUInteger start = (NSUInteger)stringRange.location;
+    NSUInteger end = stringRange.length == 0 ? length : MIN(length, start + (NSUInteger)MAX((CFIndex)0, stringRange.length));
+    NSMutableArray *clusters = [[NSMutableArray alloc] init];
+    NSUInteger index = start;
+    while (index < end)
+    {
+        OGTextCluster *cluster = OGTextTypesetterClusterInRange(typesetter, index, end);
+        [clusters addObject:OGTextClusterCopy(cluster)];
+        index = (NSUInteger)cluster->_end;
+    }
     OGTextApplyTabWidths(clusters, offset);
-    return (CTLineRef)OGTextLineFromClusters(clusters, range, NO);
+    return OGTextLineCreate(clusters, CFRangeMake((CFIndex)start, (CFIndex)(end - start)), NO);
 }
 
 CTLineRef CTTypesetterCreateLine(CTTypesetterRef typesetter, CFRange stringRange)
@@ -680,185 +1419,168 @@ CTLineRef CTLineCreateWithAttributedString(CFAttributedStringRef string)
     return line;
 }
 
-static NSArray *OGTextLogicalOrder(NSArray *clusters)
+CTLineRef CTLineCreateTruncatedLine(CTLineRef lineRef, double width, CTLineTruncationType truncationType, CTLineRef truncationTokenRef)
 {
-    NSMutableArray *result = [NSMutableArray arrayWithArray:clusters];
-    [result sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
-        CFIndex leftIndex = [[left objectForKey:OGTextStartKey] longValue];
-        CFIndex rightIndex = [[right objectForKey:OGTextStartKey] longValue];
-        if (leftIndex < 0 && rightIndex >= 0)
-            return NSOrderedDescending;
-        if (rightIndex < 0 && leftIndex >= 0)
-            return NSOrderedAscending;
-        if (leftIndex < rightIndex)
-            return NSOrderedAscending;
-        if (leftIndex > rightIndex)
-            return NSOrderedDescending;
-        return NSOrderedSame;
-    }];
-    return result;
-}
-
-CTLineRef CTLineCreateTruncatedLine(CTLineRef line, double width, CTLineTruncationType truncationType, CTLineRef truncationToken)
-{
-    if (line == NULL || truncationToken == NULL || width < 0.0)
+    OGTextLine *line = OGTextLineObject(lineRef);
+    OGTextLine *truncationToken = OGTextLineObject(truncationTokenRef);
+    if (line == nil || truncationToken == nil || width < 0.0)
         return NULL;
-    if (CTLineGetTypographicBounds(line, NULL, NULL, NULL) <= width)
-        return (CTLineRef)CFRetain(line);
+    if (line->_width <= width)
+        return (CTLineRef)CFRetain(lineRef);
     NSArray *source = OGTextLogicalOrder(OGTextCopyClusters(line));
-    NSArray *tokenSource = OGTextLogicalOrder(OGTextCopyClusters(truncationToken));
-    NSMutableArray *token = [NSMutableArray arrayWithCapacity:[tokenSource count]];
+    NSArray *token = OGTextLogicalOrder(OGTextCopyClusters(truncationToken));
     CGFloat tokenWidth = 0.0f;
-    for (NSMutableDictionary *cluster in tokenSource)
+    for (OGTextCluster *cluster in token)
     {
-        [cluster setObject:[NSNumber numberWithLong:-1] forKey:OGTextStartKey];
-        [cluster setObject:[NSNumber numberWithLong:-1] forKey:OGTextEndKey];
-        tokenWidth += [[cluster objectForKey:OGTextWidthKey] floatValue];
-        [token addObject:cluster];
+        cluster->_start = -1;
+        cluster->_end = -1;
+        tokenWidth += cluster->_width;
     }
     if (tokenWidth > width)
         return NULL;
     CGFloat available = (CGFloat)width - tokenWidth;
-    NSMutableArray *result = [NSMutableArray array];
+    NSMutableArray *result = [[NSMutableArray alloc] init];
     if (truncationType == kCTLineTruncationStart)
     {
         CGFloat used = 0.0f;
-        NSMutableArray *suffix = [NSMutableArray array];
-        for (NSDictionary *cluster in [source reverseObjectEnumerator])
+        NSUInteger first = source.count;
+        while (first > 0)
         {
-            CGFloat clusterWidth = [[cluster objectForKey:OGTextWidthKey] floatValue];
+            CGFloat clusterWidth = ((OGTextCluster *)[source objectAtIndex:first - 1])->_width;
             if (used + clusterWidth > available)
                 break;
-            [suffix insertObject:cluster atIndex:0];
             used += clusterWidth;
+            first--;
         }
         [result addObjectsFromArray:token];
-        [result addObjectsFromArray:suffix];
+        [result addObjectsFromArray:[source subarrayWithRange:NSMakeRange(first, source.count - first)]];
     }
     else if (truncationType == kCTLineTruncationMiddle)
     {
         CGFloat leftUsed = 0.0f;
         CGFloat rightUsed = 0.0f;
         NSUInteger left = 0;
-        NSUInteger right = [source count];
+        NSUInteger right = source.count;
         BOOL takeLeft = YES;
         while (left < right)
         {
-            NSDictionary *cluster = takeLeft ? [source objectAtIndex:left] : [source objectAtIndex:right - 1];
-            CGFloat clusterWidth = [[cluster objectForKey:OGTextWidthKey] floatValue];
-            if (leftUsed + rightUsed + clusterWidth > available)
+            OGTextCluster *cluster = [source objectAtIndex:takeLeft ? left : right - 1];
+            if (leftUsed + rightUsed + cluster->_width > available)
                 break;
             if (takeLeft)
             {
-                leftUsed += clusterWidth;
+                leftUsed += cluster->_width;
                 left++;
             }
             else
             {
-                rightUsed += clusterWidth;
+                rightUsed += cluster->_width;
                 right--;
             }
             takeLeft = leftUsed > rightUsed;
         }
-        if (left != 0)
-            [result addObjectsFromArray:[source subarrayWithRange:NSMakeRange(0, left)]];
+        [result addObjectsFromArray:[source subarrayWithRange:NSMakeRange(0, left)]];
         [result addObjectsFromArray:token];
-        if (right < [source count])
-            [result addObjectsFromArray:[source subarrayWithRange:NSMakeRange(right, [source count] - right)]];
+        [result addObjectsFromArray:[source subarrayWithRange:NSMakeRange(right, source.count - right)]];
     }
     else
     {
         CGFloat used = 0.0f;
-        for (NSDictionary *cluster in source)
+        for (OGTextCluster *cluster in source)
         {
-            CGFloat clusterWidth = [[cluster objectForKey:OGTextWidthKey] floatValue];
-            if (used + clusterWidth > available)
+            if (used + cluster->_width > available)
                 break;
             [result addObject:cluster];
-            used += clusterWidth;
+            used += cluster->_width;
         }
         [result addObjectsFromArray:token];
     }
-    NSRange range = [[OGTextObject(line) objectForKey:OGTextRangeKey] rangeValue];
-    return (CTLineRef)OGTextLineFromClusters(result, CFRangeMake((CFIndex)range.location, (CFIndex)range.length), NO);
+    return OGTextLineCreate(result, line->_range, NO);
 }
 
-CTLineRef CTLineCreateJustifiedLine(CTLineRef line, CGFloat justificationFactor, double justificationWidth)
+CTLineRef CTLineCreateJustifiedLine(CTLineRef lineRef, CGFloat justificationFactor, double justificationWidth)
 {
-    if (line == NULL || justificationFactor < 0.0f || justificationFactor > 1.0f)
+    OGTextLine *line = OGTextLineObject(lineRef);
+    if (line == nil || justificationFactor < 0.0f || justificationFactor > 1.0f)
         return NULL;
-    CGFloat currentWidth = (CGFloat)CTLineGetTypographicBounds(line, NULL, NULL, NULL);
-    if (justificationWidth <= currentWidth)
-        return (CTLineRef)CFRetain(line);
-    NSMutableArray *clusters = [NSMutableArray arrayWithArray:OGTextLogicalOrder(OGTextCopyClusters(line))];
-    NSMutableArray *spaces = [NSMutableArray array];
-    for (NSMutableDictionary *cluster in clusters)
+    if (justificationWidth <= line->_width)
+        return (CTLineRef)CFRetain(lineRef);
+    NSArray *clusters = OGTextLogicalOrder(OGTextCopyClusters(line));
+    NSUInteger spaces = 0;
+    for (OGTextCluster *cluster in clusters)
     {
-        if (OGTextClusterIsWhitespace([cluster objectForKey:OGTextStringKey]) && [[cluster objectForKey:OGTextStringKey] rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]].location == NSNotFound)
-            [spaces addObject:cluster];
+        if ((cluster->_flags & (OGTextClusterWhitespace | OGTextClusterNewline)) == OGTextClusterWhitespace)
+            spaces++;
     }
-    if ([spaces count] == 0)
-        return (CTLineRef)CFRetain(line);
-    CGFloat extra = ((CGFloat)justificationWidth - currentWidth) * justificationFactor / [spaces count];
-    for (NSMutableDictionary *cluster in spaces)
-        [cluster setObject:[NSNumber numberWithFloat:[[cluster objectForKey:OGTextWidthKey] floatValue] + extra] forKey:OGTextWidthKey];
-    NSRange range = [[OGTextObject(line) objectForKey:OGTextRangeKey] rangeValue];
-    return (CTLineRef)OGTextLineFromClusters(clusters, CFRangeMake((CFIndex)range.location, (CFIndex)range.length), YES);
-}
-
-double CTLineGetTypographicBounds(CTLineRef line, CGFloat *ascent, CGFloat *descent, CGFloat *leading)
-{
-    NSDictionary *object = OGTextObject(line);
-    if (ascent != NULL)
-        *ascent = [[object objectForKey:OGTextAscentKey] floatValue];
-    if (descent != NULL)
-        *descent = [[object objectForKey:OGTextDescentKey] floatValue];
-    if (leading != NULL)
-        *leading = [[object objectForKey:OGTextLeadingKey] floatValue];
-    return [[object objectForKey:OGTextWidthKey] doubleValue];
-}
-
-double CTLineGetTrailingWhitespaceWidth(CTLineRef line)
-{
-    return [[OGTextObject(line) objectForKey:OGTextTrailingKey] doubleValue];
-}
-
-CFRange CTLineGetStringRange(CTLineRef line)
-{
-    NSRange range = [[OGTextObject(line) objectForKey:OGTextRangeKey] rangeValue];
-    return CFRangeMake((CFIndex)range.location, (CFIndex)range.length);
-}
-
-CFArrayRef CTLineGetGlyphRuns(CTLineRef line)
-{
-    return (__bridge CFArrayRef)[OGTextObject(line) objectForKey:OGTextRunsKey];
-}
-
-CGFloat CTLineGetOffsetForStringIndex(CTLineRef line, CFIndex charIndex, CGFloat *secondaryOffset)
-{
-    NSArray *clusters = [OGTextObject(line) objectForKey:OGTextClustersKey];
-    CGFloat lineWidth = [[OGTextObject(line) objectForKey:OGTextWidthKey] floatValue];
-    for (NSDictionary *cluster in clusters)
+    if (spaces == 0)
+        return (CTLineRef)CFRetain(lineRef);
+    CGFloat extra = ((CGFloat)justificationWidth - line->_width) * justificationFactor / (CGFloat)spaces;
+    for (OGTextCluster *cluster in clusters)
     {
-        CFIndex start = [[cluster objectForKey:OGTextStartKey] longValue];
-        CFIndex end = [[cluster objectForKey:OGTextEndKey] longValue];
-        if (start < 0 || end < 0)
+        if ((cluster->_flags & (OGTextClusterWhitespace | OGTextClusterNewline)) == OGTextClusterWhitespace)
+            cluster->_width += extra;
+    }
+    return OGTextLineCreate(clusters, line->_range, YES);
+}
+
+double CTLineGetTypographicBounds(CTLineRef lineRef, CGFloat *ascent, CGFloat *descent, CGFloat *leading)
+{
+    OGTextLine *line = OGTextLineObject(lineRef);
+    if (ascent != NULL)
+        *ascent = line == nil ? 0.0f : line->_ascent;
+    if (descent != NULL)
+        *descent = line == nil ? 0.0f : line->_descent;
+    if (leading != NULL)
+        *leading = line == nil ? 0.0f : line->_leading;
+    return line == nil ? 0.0 : (double)line->_width;
+}
+
+double CTLineGetTrailingWhitespaceWidth(CTLineRef lineRef)
+{
+    OGTextLine *line = OGTextLineObject(lineRef);
+    return line == nil ? 0.0 : (double)line->_trailing;
+}
+
+CFRange CTLineGetStringRange(CTLineRef lineRef)
+{
+    OGTextLine *line = OGTextLineObject(lineRef);
+    return line == nil ? CFRangeMake(0, 0) : line->_range;
+}
+
+CFArrayRef CTLineGetGlyphRuns(CTLineRef lineRef)
+{
+    OGTextLine *line = OGTextLineObject(lineRef);
+    return (__bridge CFArrayRef)(line == nil ? [NSArray array] : line->_runs);
+}
+
+CGFloat CTLineGetOffsetForStringIndex(CTLineRef lineRef, CFIndex charIndex, CGFloat *secondaryOffset)
+{
+    OGTextLine *line = OGTextLineObject(lineRef);
+    if (line == nil)
+    {
+        if (secondaryOffset != NULL)
+            *secondaryOffset = 0.0f;
+        return 0.0f;
+    }
+    for (OGTextCluster *cluster in line->_clusters)
+    {
+        if (cluster->_start < 0 || cluster->_end < 0)
             continue;
-        CGFloat x = [[cluster objectForKey:OGTextXKey] floatValue];
-        CGFloat width = [[cluster objectForKey:OGTextWidthKey] floatValue];
-        BOOL rtl = [[cluster objectForKey:OGTextRTLKey] boolValue];
-        if (charIndex >= start && charIndex <= end)
+        if (charIndex >= cluster->_start && charIndex <= cluster->_end)
         {
-            CGFloat primary = rtl ? (charIndex == start ? x + width : x) : (charIndex == end ? x + width : x);
+            BOOL rtl = (cluster->_flags & OGTextClusterRTL) != 0;
+            CGFloat x = cluster->_x;
+            CGFloat width = cluster->_width;
+            CGFloat primary = rtl ? (charIndex == cluster->_start ? x + width : x) : (charIndex == cluster->_end ? x + width : x);
             if (secondaryOffset != NULL)
-                *secondaryOffset = rtl ? (charIndex == start ? x : x + width) : primary;
+                *secondaryOffset = rtl ? (charIndex == cluster->_start ? x : x + width) : primary;
             return primary;
         }
     }
-    CFRange range = CTLineGetStringRange(line);
+    CGFloat offset = charIndex <= line->_range.location ? 0.0f : line->_width;
     if (secondaryOffset != NULL)
-        *secondaryOffset = charIndex <= range.location ? 0.0f : lineWidth;
-    return charIndex <= range.location ? 0.0f : lineWidth;
+        *secondaryOffset = offset;
+    return offset;
 }
 
 CGFloat CTLineGetPenOffsetForFlush(CTLineRef line, CGFloat flushFactor, double flushWidth)
@@ -877,107 +1599,101 @@ static UIColor *OGTextColorFromAttributes(NSDictionary *attributes)
     return [value isKindOfClass:[UIColor class]] ? value : nil;
 }
 
-static void OGTextDrawRun(NSDictionary *run, CGContextRef context, CGPoint origin)
+static void OGTextDrawRun(OGTextRun *run, CGContextRef context, CGPoint origin)
 {
-    NSDictionary *attributes = [run objectForKey:OGTextAttributesKey];
+    NSDictionary *attributes = run->_attributes;
     if (OGTextRunDelegateOwner(attributes) != nil)
         return;
-    BOOL justified = [[[run objectForKey:OGTextJustifiedKey] description] boolValue];
     UIFont *font = OGTextFontFromAttributes(attributes);
     UIColor *color = OGTextColorFromAttributes(attributes);
     BOOL fromContext = [[[attributes objectForKey:(__bridge NSString *)kCTForegroundColorFromContextAttributeName] description] boolValue];
-    NSArray *clusters = [run objectForKey:OGTextClustersKey];
+    NSArray *clusters = run->_clusters;
     CGContextSaveGState(context);
-    UIGraphicsPushContext(context);
     if (!fromContext && color != nil)
-        [color set];
-    if (justified)
     {
-        BOOL rtl = [[[run objectForKey:OGTextRTLKey] description] boolValue];
+        CGContextSetFillColorWithColor(context, color.CGColor);
+        CGContextSetStrokeColorWithColor(context, color.CGColor);
+    }
+    if (run->_justified)
+    {
+        NSUInteger count = clusters.count;
         NSUInteger index = 0;
-        while (index < [clusters count])
+        while (index < count)
         {
-            NSDictionary *cluster = [clusters objectAtIndex:index];
-            NSString *string = [cluster objectForKey:OGTextStringKey];
-            if (OGTextClusterIsWhitespace(string))
+            if ((((OGTextCluster *)[clusters objectAtIndex:index])->_flags & OGTextClusterWhitespace) != 0)
             {
                 index++;
                 continue;
             }
             NSUInteger end = index + 1;
-            while (end < [clusters count] && !OGTextClusterIsWhitespace([[clusters objectAtIndex:end] objectForKey:OGTextStringKey]))
+            while (end < count && (((OGTextCluster *)[clusters objectAtIndex:end])->_flags & OGTextClusterWhitespace) == 0)
                 end++;
-            NSArray *wordClusters = [clusters subarrayWithRange:NSMakeRange(index, end - index)];
-            NSArray *logicalWordClusters = rtl ? [[wordClusters reverseObjectEnumerator] allObjects] : wordClusters;
-            NSMutableString *word = [NSMutableString string];
-            for (NSDictionary *wordCluster in logicalWordClusters)
-                [word appendString:[wordCluster objectForKey:OGTextStringKey]];
-            CGFloat x = [[[wordClusters objectAtIndex:0] objectForKey:OGTextXKey] floatValue];
-            [word drawAtPoint:CGPointMake(origin.x + x, origin.y - font.ascender) withFont:font];
+            NSArray *word = [clusters subarrayWithRange:NSMakeRange(index, end - index)];
+            CGFloat x = ((OGTextCluster *)[word objectAtIndex:0])->_x;
+            OGTextDrawGlyphRun(context, OGTextClustersString(word, run->_rtl), font, CGPointMake(origin.x + x, origin.y), run->_rtl);
             index = end;
         }
     }
     else
-    {
-        CGFloat x = [[run objectForKey:OGTextXKey] floatValue];
-        [[run objectForKey:OGTextStringKey] drawAtPoint:CGPointMake(origin.x + x, origin.y - font.ascender) withFont:font];
-    }
+        OGTextDrawGlyphRun(context, run->_string, font, CGPointMake(origin.x + run->_x, origin.y), run->_rtl);
     NSNumber *underline = [attributes objectForKey:(__bridge NSString *)kCTUnderlineStyleAttributeName];
     if (underline == nil)
         underline = [attributes objectForKey:@"NSUnderline"];
     if ([underline integerValue] != 0)
     {
-        CGFloat x = [[run objectForKey:OGTextXKey] floatValue];
-        CGFloat width = [[run objectForKey:OGTextWidthKey] floatValue];
         CGContextSetLineWidth(context, MAX(1.0f, font.pointSize / 14.0f));
-        CGContextMoveToPoint(context, origin.x + x, origin.y + 1.0f);
-        CGContextAddLineToPoint(context, origin.x + x + width, origin.y + 1.0f);
+        CGContextMoveToPoint(context, origin.x + run->_x, origin.y + 1.0f);
+        CGContextAddLineToPoint(context, origin.x + run->_x + run->_width, origin.y + 1.0f);
         CGContextStrokePath(context);
     }
-    UIGraphicsPopContext();
     CGContextRestoreGState(context);
 }
 
-void CTLineDraw(CTLineRef line, CGContextRef context)
+void CTLineDraw(CTLineRef lineRef, CGContextRef context)
 {
-    if (line == NULL || context == NULL)
+    OGTextLine *line = OGTextLineObject(lineRef);
+    if (line == nil || context == NULL)
         return;
     CGPoint origin = CGContextGetTextPosition(context);
-    for (NSDictionary *run in [OGTextObject(line) objectForKey:OGTextRunsKey])
+    for (OGTextRun *run in line->_runs)
         OGTextDrawRun(run, context, origin);
 }
 
-CFDictionaryRef CTRunGetAttributes(CTRunRef run)
+CFDictionaryRef CTRunGetAttributes(CTRunRef runRef)
 {
-    return (__bridge CFDictionaryRef)[OGTextObject(run) objectForKey:OGTextAttributesKey];
+    OGTextRun *run = OGTextRunObject(runRef);
+    return (__bridge CFDictionaryRef)(run == nil ? nil : run->_attributes);
 }
 
-CFIndex CTRunGetGlyphCount(CTRunRef run)
+CFIndex CTRunGetGlyphCount(CTRunRef runRef)
 {
-    return (CFIndex)[[OGTextObject(run) objectForKey:OGTextClustersKey] count];
+    OGTextRun *run = OGTextRunObject(runRef);
+    return run == nil ? 0 : (CFIndex)run->_clusters.count;
 }
 
 static NSRange OGTextValidatedGlyphRange(NSArray *clusters, CFRange range)
 {
-    NSUInteger location = range.location < 0 ? 0 : MIN((NSUInteger)range.location, [clusters count]);
-    NSUInteger length = range.length == 0 ? [clusters count] - location : MIN((NSUInteger)MAX((CFIndex)0, range.length), [clusters count] - location);
+    NSUInteger location = range.location < 0 ? 0 : MIN((NSUInteger)range.location, clusters.count);
+    NSUInteger length = range.length == 0 ? clusters.count - location : MIN((NSUInteger)MAX((CFIndex)0, range.length), clusters.count - location);
     return NSMakeRange(location, length);
 }
 
-double CTRunGetTypographicBounds(CTRunRef run, CFRange range, CGFloat *ascent, CGFloat *descent, CGFloat *leading)
+double CTRunGetTypographicBounds(CTRunRef runRef, CFRange range, CGFloat *ascent, CGFloat *descent, CGFloat *leading)
 {
-    NSArray *clusters = [OGTextObject(run) objectForKey:OGTextClustersKey];
+    OGTextRun *run = OGTextRunObject(runRef);
+    NSArray *clusters = run == nil ? [NSArray array] : run->_clusters;
     NSRange validRange = OGTextValidatedGlyphRange(clusters, range);
     CGFloat width = 0.0f;
     CGFloat maximumAscent = 0.0f;
     CGFloat maximumDescent = 0.0f;
     CGFloat maximumLeading = 0.0f;
-    for (NSDictionary *cluster in [clusters subarrayWithRange:validRange])
+    for (NSUInteger index = validRange.location; index < NSMaxRange(validRange); index++)
     {
-        width += [[cluster objectForKey:OGTextWidthKey] floatValue];
-        maximumAscent = MAX(maximumAscent, [[cluster objectForKey:OGTextAscentKey] floatValue]);
-        maximumDescent = MAX(maximumDescent, [[cluster objectForKey:OGTextDescentKey] floatValue]);
-        maximumLeading = MAX(maximumLeading, [[cluster objectForKey:OGTextLeadingKey] floatValue]);
+        OGTextCluster *cluster = [clusters objectAtIndex:index];
+        width += cluster->_width;
+        maximumAscent = MAX(maximumAscent, cluster->_ascent);
+        maximumDescent = MAX(maximumDescent, cluster->_descent);
+        maximumLeading = MAX(maximumLeading, cluster->_leading);
     }
     if (ascent != NULL)
         *ascent = maximumAscent;
@@ -988,59 +1704,56 @@ double CTRunGetTypographicBounds(CTRunRef run, CFRange range, CGFloat *ascent, C
     return width;
 }
 
-CFRange CTRunGetStringRange(CTRunRef run)
+CFRange CTRunGetStringRange(CTRunRef runRef)
 {
-    NSRange range = [[OGTextObject(run) objectForKey:OGTextRangeKey] rangeValue];
-    return CFRangeMake((CFIndex)range.location, (CFIndex)range.length);
+    OGTextRun *run = OGTextRunObject(runRef);
+    return run == nil ? CFRangeMake(kCFNotFound, 0) : run->_range;
 }
 
-void CTRunGetStringIndices(CTRunRef run, CFRange range, CFIndex buffer[])
+void CTRunGetStringIndices(CTRunRef runRef, CFRange range, CFIndex buffer[])
 {
-    if (buffer == NULL)
+    OGTextRun *run = OGTextRunObject(runRef);
+    if (run == nil || buffer == NULL)
         return;
-    NSArray *clusters = [OGTextObject(run) objectForKey:OGTextClustersKey];
-    NSRange validRange = OGTextValidatedGlyphRange(clusters, range);
+    NSRange validRange = OGTextValidatedGlyphRange(run->_clusters, range);
     NSUInteger output = 0;
     for (NSUInteger index = validRange.location; index < NSMaxRange(validRange); index++)
-        buffer[output++] = [[[clusters objectAtIndex:index] objectForKey:OGTextStartKey] longValue];
+        buffer[output++] = ((OGTextCluster *)[run->_clusters objectAtIndex:index])->_start;
 }
 
-void CTRunGetPositions(CTRunRef run, CFRange range, CGPoint buffer[])
+void CTRunGetPositions(CTRunRef runRef, CFRange range, CGPoint buffer[])
 {
-    if (buffer == NULL)
+    OGTextRun *run = OGTextRunObject(runRef);
+    if (run == nil || buffer == NULL)
         return;
-    NSArray *clusters = [OGTextObject(run) objectForKey:OGTextClustersKey];
-    NSRange validRange = OGTextValidatedGlyphRange(clusters, range);
+    NSRange validRange = OGTextValidatedGlyphRange(run->_clusters, range);
     NSUInteger output = 0;
     for (NSUInteger index = validRange.location; index < NSMaxRange(validRange); index++)
-        buffer[output++] = CGPointMake([[[clusters objectAtIndex:index] objectForKey:OGTextXKey] floatValue], 0.0f);
+        buffer[output++] = CGPointMake(((OGTextCluster *)[run->_clusters objectAtIndex:index])->_x, 0.0f);
 }
 
-void CTRunDraw(CTRunRef run, CGContextRef context, CFRange range)
+void CTRunDraw(CTRunRef runRef, CGContextRef context, CFRange range)
 {
-    if (run == NULL || context == NULL)
+    OGTextRun *run = OGTextRunObject(runRef);
+    if (run == nil || context == NULL)
         return;
-    NSDictionary *object = OGTextObject(run);
-    NSArray *clusters = [object objectForKey:OGTextClustersKey];
-    NSRange validRange = OGTextValidatedGlyphRange(clusters, range);
+    NSRange validRange = OGTextValidatedGlyphRange(run->_clusters, range);
     if (validRange.length == 0)
         return;
     CGPoint origin = CGContextGetTextPosition(context);
-    if (validRange.location == 0 && validRange.length == [clusters count])
+    if (validRange.location == 0 && validRange.length == run->_clusters.count)
     {
-        OGTextDrawRun(object, context, origin);
+        OGTextDrawRun(run, context, origin);
         return;
     }
-    NSArray *subclusters = [clusters subarrayWithRange:validRange];
-    BOOL rtl = [[[object objectForKey:OGTextRTLKey] description] boolValue];
-    BOOL justified = [[[object objectForKey:OGTextJustifiedKey] description] boolValue];
-    CGFloat x = [[[subclusters objectAtIndex:0] objectForKey:OGTextXKey] floatValue];
-    OGTextDrawRun(OGTextRunFromClusters(subclusters, rtl, x, justified), context, origin);
+    NSArray *subclusters = [run->_clusters subarrayWithRange:validRange];
+    OGTextDrawRun(OGTextRunCreate(subclusters, run->_rtl, ((OGTextCluster *)[subclusters objectAtIndex:0])->_x, run->_justified), context, origin);
 }
 
-CTRunStatus CTRunGetStatus(CTRunRef run)
+CTRunStatus CTRunGetStatus(CTRunRef runRef)
 {
-    return [[[OGTextObject(run) objectForKey:OGTextRTLKey] description] boolValue] ? kCTRunStatusRightToLeft : kCTRunStatusNoStatus;
+    OGTextRun *run = OGTextRunObject(runRef);
+    return run != nil && run->_rtl ? kCTRunStatusRightToLeft : kCTRunStatusNoStatus;
 }
 
 CTRunDelegateRef CTRunDelegateCreate(const CTRunDelegateCallbacks *callbacks, void *refCon)

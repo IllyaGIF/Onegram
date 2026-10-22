@@ -17,6 +17,21 @@
 @property (strong, nonatomic) NSArray *supplementaryKinds;
 @end
 
+@implementation TGCollectionViewTransitionLayout
+
+- (instancetype)initWithCurrentLayout:(PSUICollectionViewLayout *)currentLayout nextLayout:(PSUICollectionViewLayout *)nextLayout
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _currentLayout = currentLayout;
+        _nextLayout = nextLayout;
+    }
+    return self;
+}
+
+@end
+
 @implementation TGTransitionLayout
 
 - (instancetype)initWithCurrentLayout:(PSUICollectionViewLayout *)currentLayout nextLayout:(PSUICollectionViewLayout *)newLayout
@@ -124,7 +139,7 @@
     return poses;
 }
 
-- (void)prepareForLegacyTransitionInCollectionView:(PSUICollectionView *)collectionView
+- (void)prepareForTransitionInCollectionView:(PSUICollectionView *)collectionView
 {
     [collectionView layoutIfNeeded];
     _fromContentOffset = collectionView.contentOffset;
@@ -151,10 +166,10 @@
 
 - (void)interpolatePose:(PSUICollectionViewLayoutAttributes *)pose fromPose:(PSUICollectionViewLayoutAttributes *)fromPose toPose:(PSUICollectionViewLayoutAttributes *)toPose fromProgress:(CGFloat)f toProgress:(CGFloat)t
 {
-    CGRect bounds = CGRectZero;
-    bounds.size.width = f * fromPose.bounds.size.width + t * toPose.bounds.size.width;
-    bounds.size.height = f * fromPose.bounds.size.height + t * toPose.bounds.size.height;
-    pose.bounds = bounds;
+    CGSize size = CGSizeZero;
+    size.width = f * fromPose.size.width + t * toPose.size.width;
+    size.height = f * fromPose.size.height + t * toPose.size.height;
+    pose.size = size;
     
     CGPoint center = CGPointZero;
     center.x = f * fromPose.center.x + t * toPose.center.x;

@@ -72,6 +72,7 @@ static ASQueue *taskManagementQueue()
 - (id)loadDataAsyncWithUri:(NSString *)uri progress:(void (^)(float))progress partialCompletion:(void (^)(TGDataResource *resource))__unused partialCompletion completion:(void (^)(TGDataResource *))completion
 {
     TGMediaPreviewTask *previewTask = [[TGMediaPreviewTask alloc] init];
+    __weak TGMediaPreviewTask *weakPreviewTask = previewTask;
     
     [taskManagementQueue() dispatchOnQueue:^
     {
@@ -91,18 +92,13 @@ static ASQueue *taskManagementQueue()
         
         if ([TGMediaListPhotoDataSource _isDataLocallyAvailableForUri:uri])
         {
-            [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
-        }
-        else if (OGPlatformMediaDownloadsRequireUserAction())
-        {
-            if (completion != nil)
-                completion([TGMediaListPhotoDataSource resultForUnavailableImage]);
+            [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
         }
         else
         {
             NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[uri substringFromIndex:[[NSString alloc] initWithFormat:@"%@://?", [TGMediaListPhotoDataSource uriScheme]].length]];
             
-            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
+            if ([args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)] || ([args[@"cid"] longLongValue] != 0 && [args[@"mid"] intValue] != 0))
             {
                 static NSString *filesDirectory = nil;
                 static dispatch_once_t onceToken;
@@ -126,10 +122,10 @@ static ASQueue *taskManagementQueue()
                 
                 NSString *temporaryThumbnailImagePath = [photoDirectory stringByAppendingPathComponent:@"image-thumb.jpg"];
                 
-                [previewTask executeWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:nil completion:^(bool success)
+                [previewTask executeThumbnailWithTargetFilePath:temporaryThumbnailImagePath uri:args[@"legacy-thumbnail-cache-url"] options:@{@"thumbnailContext": args} completion:^(bool success)
                 {
                     if (success)
-                        [previewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
+                        [weakPreviewTask executeWithWorkerTask:workerTask workerPool:workerPool()];
                     else
                     {
                         if (completion != nil)
@@ -338,7 +334,6 @@ static ASQueue *taskManagementQueue()
         if (image == nil)
         {
             image = [[UIImage alloc] initWithContentsOfFile:temporaryThumbnailImagePath];
-            lowQualityThumbnail = true;
         }
         
         if (image == nil && [args[@"legacy-thumbnail-cache-url"] respondsToSelector:@selector(characterAtIndex:)])
@@ -349,6 +344,7 @@ static ASQueue *taskManagementQueue()
                 [[NSFileManager defaultManager] copyItemAtPath:[[TGRemoteImageView sharedCache] pathForCachedData:args[@"legacy-thumbnail-cache-url"]] toPath:temporaryThumbnailImagePath error:nil];
             }
         }
+        lowQualityThumbnail = image != nil && MAX(image.size.width, image.size.height) < 70.0f;
         
         if (image != nil)
         {
@@ -389,14 +385,9 @@ static ASQueue *taskManagementQueue()
         bool needsAverageColor = averageColor == nil;
         uint32_t averageColorValue = [averageColor intValue];
         
-        if (lowQualityThumbnail)
-            thumbnailImage = TGBlurredFileImage(thumbnailSourceImage, size, needsAverageColor ? &averageColorValue : NULL, 0);
-        else
-        {
-            thumbnailImage = thumbnailSourceImage;
-            if (needsAverageColor)
-                TGPlainImageAverageColor(thumbnailSourceImage, &averageColorValue);
-        }
+        thumbnailImage = thumbnailSourceImage;
+        if (needsAverageColor)
+            TGPlainImageAverageColor(thumbnailSourceImage, &averageColorValue);
 
         if (thumbnailImage != nil)
         {

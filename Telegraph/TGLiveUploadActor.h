@@ -24,6 +24,8 @@
 - (void)completeWhenReady;
 - (float)progress;
 
++ (void)reloadForAccountSwitch;
+
 @end
 
 @interface TGLiveUploadActorData : NSObject

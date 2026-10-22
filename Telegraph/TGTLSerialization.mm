@@ -402,7 +402,7 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
 
 - (MTRequestNoopParser)requestNoop:(__autoreleasing NSData **)data
 {
-    NSData *testData = [TGTLSerialization serializeMessage:[[TLRPChelp_test$help_test alloc] init]];
+    NSData *testData = [TGTLSerialization serializeMessage:[[TLRPChelp_getNearestDc$help_getNearestDc alloc] init]];
     if (data)
         *data = testData;
     

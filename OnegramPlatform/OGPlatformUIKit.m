@@ -2,6 +2,7 @@
 #import "OGPlatformVersion.h"
 #import <QuartzCore/QuartzCore.h>
 #import <dlfcn.h>
+#include <float.h>
 #import <objc/runtime.h>
 
 CGRect OGPlatformKeyboardEndFrame(NSNotification *notification)
@@ -57,6 +58,24 @@ static void OGPlatformSetObjectProperty(id object, NSString *selectorName, id va
     void (*function)(id, SEL, id) = (void (*)(id, SEL, id))[object methodForSelector:selector];
     if (function != NULL)
         function(object, selector, value);
+}
+
+NSArray *OGPlatformChildViewControllers(UIViewController *viewController)
+{
+    if (OGPlatformMajorVersion() < 4)
+    {
+        if ([viewController isKindOfClass:[UINavigationController class]])
+            return [(UINavigationController *)viewController viewControllers] ?: [NSArray array];
+        if ([viewController isKindOfClass:[UITabBarController class]])
+            return [(UITabBarController *)viewController viewControllers] ?: [NSArray array];
+    }
+
+    id children = OGPlatformObjectProperty(viewController, @"childViewControllers");
+    if (children == nil)
+        return [NSArray array];
+    if ([children isKindOfClass:[NSArray class]])
+        return children;
+    return [children allObjects];
 }
 
 BOOL OGPlatformAccessibilityInvertColorsEnabled(void)
@@ -1024,6 +1043,20 @@ void OGPlatformPresentLocalNotificationNow(UIApplication *application, id notifi
     void (*function)(id, SEL, id) = (void (*)(id, SEL, id))[application methodForSelector:selector];
     if (function != NULL)
         function(application, selector, notification);
+}
+
+BOOL OGPlatformSetBackgroundFetchEnabled(UIApplication *application, BOOL enabled)
+{
+    if (application == nil)
+        return NO;
+    SEL selector = NSSelectorFromString(@"setMinimumBackgroundFetchInterval:");
+    if (![application respondsToSelector:selector])
+        return NO;
+    void (*function)(id, SEL, NSTimeInterval) = (void (*)(id, SEL, NSTimeInterval))[application methodForSelector:selector];
+    if (function == NULL)
+        return NO;
+    function(application, selector, enabled ? 0.0 : DBL_MAX);
+    return YES;
 }
 
 void OGPlatformScheduleLocalNotification(UIApplication *application, id notification)

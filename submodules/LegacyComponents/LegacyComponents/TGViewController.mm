@@ -20,7 +20,7 @@
 static __strong NSTimer *autorotationEnableTimer = nil;
 static bool autorotationDisabled = false;
 
-static std::set<int> autorotationLockIds;
+static std::set<int> &autorotationLockIds = *new std::set<int>();
 
 void TGPresentViewController(UIViewController *presentingController, UIViewController *viewController, BOOL animated, void (^completion)(void))
 {

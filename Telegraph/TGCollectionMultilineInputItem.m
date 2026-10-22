@@ -24,16 +24,15 @@
     _currentContainerWidth = containerSize.width;
     _currentSafeAreaInset = safeAreaInset;
     
-    CGFloat width = _currentContainerWidth - safeAreaInset.left - safeAreaInset.right;
-    if (_showRemainingCount)
-        width -= 30.0f;
-    
-    width -= _insets.left + _insets.right;
-    
-    CGFloat textHeight = [TGCollectionMultilineInputItemView heightForText:_text width:width safeAreaInset:_currentSafeAreaInset];
+    CGFloat textHeight = [self textHeightForText:_text];
     if (_minHeight > FLT_EPSILON)
         textHeight = MAX(_minHeight, textHeight);
     return CGSizeMake(containerSize.width, textHeight);
+}
+
+- (CGFloat)textHeightForText:(NSString *)text {
+    CGRect textViewFrame = [TGCollectionMultilineInputItemView textViewFrameForBounds:CGRectMake(0.0f, 0.0f, _currentContainerWidth, 0.0f) insets:_insets safeAreaInset:_currentSafeAreaInset showRemainingCount:_showRemainingCount];
+    return [TGCollectionMultilineInputItemView heightForText:text textViewWidth:textViewFrame.size.width];
 }
 
 - (Class)itemViewClass {
@@ -55,16 +54,12 @@
     view.textChanged = ^(NSString *text) {
         __strong TGCollectionMultilineInputItem *strongSelf = weakSelf;
         if (strongSelf != nil) {
-            CGFloat width = strongSelf->_currentContainerWidth;
-            if (strongSelf->_showRemainingCount)
-                width -= 30.0f;
-            
-            CGFloat previousHeight = [TGCollectionMultilineInputItemView heightForText:strongSelf->_text width:width safeAreaInset:strongSelf->_currentSafeAreaInset];
+            CGFloat previousHeight = [strongSelf textHeightForText:strongSelf->_text];
             strongSelf->_text = text;
             if (strongSelf->_textChanged) {
                 strongSelf->_textChanged(text);
             }
-            CGFloat currentHeight = [TGCollectionMultilineInputItemView heightForText:strongSelf->_text width:width safeAreaInset:strongSelf->_currentSafeAreaInset];
+            CGFloat currentHeight = [strongSelf textHeightForText:strongSelf->_text];
             if (ABS(currentHeight - previousHeight) > FLT_EPSILON) {
                 if (strongSelf->_heightChanged) {
                     strongSelf->_heightChanged();

@@ -11,6 +11,7 @@
 @property (nonatomic, readonly) int32_t mid;
 @property (nonatomic, readonly) CGSize imageSize;
 @property (nonatomic, readonly) CGFloat aspectRatio;
+@property (nonatomic, readonly) bool document;
 
 @property (nonatomic, assign) CGRect layoutFrame;
 @property (nonatomic, assign) TGMessageGroupPositionFlags positionFlags;
@@ -98,8 +99,34 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         CGFloat maxAspectRatio = maxSize.width / maxSize.height;
         if (photos.count > 0)
             averageAspectRatio = averageAspectRatio / photos.count;
+        bool documentGroup = photos.count == messages.count && photos.count > 1;
+        for (TGMessagePhotoInfo *info in photos)
+            documentGroup = documentGroup && info.document;
+        bool containsDocument = false;
+        for (TGMessagePhotoInfo *info in photos)
+            containsDocument = containsDocument || info.document;
+        if (containsDocument && !documentGroup)
+            return nil;
+        _documentGroup = documentGroup;
+
+        if (documentGroup)
+        {
+            CGFloat y = 0.0f;
+            for (NSUInteger index = 0; index < photos.count; index++)
+            {
+                TGMessagePhotoInfo *info = photos[index];
+                info.layoutFrame = CGRectMake(0.0f, y, maxSize.width, info.imageSize.height);
+                info.positionFlags = TGMessageGroupPositionLeft | TGMessageGroupPositionRight;
+                if (index == 0)
+                    info.positionFlags |= TGMessageGroupPositionTop;
+                if (index + 1 == photos.count)
+                    info.positionFlags |= TGMessageGroupPositionBottom;
+                y += info.imageSize.height;
+            }
+            _statusMessage = messages.lastObject;
+        }
         
-        if (!forceCalc)
+        if (!documentGroup && !forceCalc)
         {
             if (photos.count == 2)
             {
@@ -229,7 +256,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             }
         }
         
-        if (forceCalc || photos.count >= 5)
+        if (!documentGroup && (forceCalc || photos.count >= 5))
         {
             NSMutableArray *croppedRatios = [[NSMutableArray alloc] init];
             for (TGMessagePhotoInfo *photo in photos)
@@ -444,6 +471,38 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
     return _layouts.count;
 }
 
+- (void)updateDocumentMessage:(TGMessage *)message
+{
+    if (!_documentGroup || _layouts[@(message.mid)] == nil)
+        return;
+    if (message.mid == _captionMessageId || message.caption.length != 0) {
+        _caption = [message.caption copy];
+        _captionTextCheckingResults = [message.textCheckingResults copy];
+        _captionMessageId = message.caption.length == 0 ? 0 : message.mid;
+    }
+    if (message.mid == _statusMessage.mid)
+        _statusMessage = message;
+    id reaction = message.contentProperties[@"ios6ReactionSummary"];
+    if (message.mid == _mainMessageId || _reactionSummary.length == 0) {
+        if ([reaction isKindOfClass:[TGMessageReactionSummaryContentProperty class]]) {
+            _reactionSummary = [((TGMessageReactionSummaryContentProperty *)reaction).summary copy];
+            _chosenReaction = [((TGMessageReactionSummaryContentProperty *)reaction).chosenReaction copy];
+        } else if ([reaction isKindOfClass:[NSString class]]) {
+            _reactionSummary = [reaction copy];
+        } else if (message.mid == _mainMessageId) {
+            _reactionSummary = nil;
+            _chosenReaction = nil;
+        }
+    }
+    [self updateDiscussion:TGMessageGroupedLayoutDiscussion(message) messageId:message.mid];
+}
+
+- (void)setMediaOrigin:(CGPoint)mediaOrigin
+{
+    _mediaOrigin = mediaOrigin;
+    _hasMediaOrigin = true;
+}
+
 - (CGRect)frameForMessageId:(int32_t)messageId
 {
     TGMessagePhotoInfo *info = _layouts[@(messageId)];
@@ -489,6 +548,9 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
     NSMutableDictionary *newLayouts = [_layouts mutableCopy];
     groupedLayout->_layouts = newLayouts;
     groupedLayout->_dimensions = _dimensions;
+    groupedLayout->_documentGroup = _documentGroup;
+    groupedLayout->_documentContentWidth = _documentContentWidth;
+    groupedLayout->_statusMessage = _statusMessage.mid == previousMessage.mid ? message : _statusMessage;
     groupedLayout->_mainMessageId = _mainMessageId;
     groupedLayout->_caption = [_caption copy];
     groupedLayout->_captionTextCheckingResults = [_captionTextCheckingResults copy];
@@ -562,6 +624,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         
         TGImageMediaAttachment *imageAttachment = nil;
         TGVideoMediaAttachment *videoAttachment = nil;
+        TGDocumentMediaAttachment *documentAttachment = nil;
         
         for (TGMediaAttachment *attachment in message.mediaAttachments)
         {
@@ -573,6 +636,16 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             else if (attachment.type == TGVideoMediaAttachmentType)
             {
                 videoAttachment = (TGVideoMediaAttachment *)attachment;
+                break;
+            }
+            else if (attachment.type == TGDocumentMediaAttachmentType)
+            {
+                TGDocumentMediaAttachment *document = (TGDocumentMediaAttachment *)attachment;
+                bool specialized = document.isSticker || document.isAnimated || document.isVoice || [document.mimeType isEqualToString:@"image/gif"] || [[[document safeFileName] pathExtension].lowercaseString isEqualToString:@"gif"];
+                for (id attribute in document.attributes)
+                    specialized = specialized || [attribute isKindOfClass:[TGDocumentAttributeAudio class]] || [attribute isKindOfClass:[TGDocumentAttributeVideo class]];
+                if (!specialized)
+                    documentAttachment = document;
                 break;
             }
         }
@@ -591,6 +664,13 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         {
             _imageSize = videoAttachment.dimensions;
             _aspectRatio = _imageSize.height > 0 ? _imageSize.width / _imageSize.height : 1.0f;
+        }
+        else if (documentAttachment != nil)
+        {
+            _document = true;
+            bool hasPreview = (documentAttachment.thumbnailInfo != nil && !documentAttachment.thumbnailInfo.empty) || documentAttachment.isImageFile;
+            _imageSize = CGSizeMake(74.0f, hasPreview ? 78.0f : 64.0f);
+            _aspectRatio = 1.0f;
         }
         else
         {

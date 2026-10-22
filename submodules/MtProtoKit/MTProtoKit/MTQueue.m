@@ -25,12 +25,19 @@
 
 - (instancetype)initWithName:(const char *)name
 {
+    return [self initWithName:name targetPriority:DISPATCH_QUEUE_PRIORITY_DEFAULT];
+}
+
+- (instancetype)initWithName:(const char *)name targetPriority:(long)targetPriority
+{
     self = [super init];
     if (self != nil)
     {
         _name = name;
         
         _queue = dispatch_queue_create(_name, 0);
+        if (targetPriority != DISPATCH_QUEUE_PRIORITY_DEFAULT)
+            dispatch_set_target_queue(_queue, dispatch_get_global_queue(targetPriority, 0));
         dispatch_queue_set_specific(_queue, _name, (void *)_name, NULL);
     }
     return self;

@@ -10,7 +10,7 @@
     TGLog(@"***** TLBotInlineMessage$botInlineMessageMediaGeo serialization not supported");
 }
 
-- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)constructorSignature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLBotInlineMessage$botInlineMessageMediaGeo *result = [[TLBotInlineMessage$botInlineMessageMediaGeo alloc] init];
     
@@ -25,7 +25,19 @@
         }
     }
     
-    result.period = [is readInt32];
+    if (constructorSignature == (int32_t)0x051846fd)
+    {
+        if (flags & (1 << 0))
+            result.heading = [is readInt32];
+        if (flags & (1 << 1))
+            result.period = [is readInt32];
+        if (flags & (1 << 3))
+            result.proximity_notification_radius = [is readInt32];
+    }
+    else
+    {
+        result.period = [is readInt32];
+    }
     
     if (flags & (1 << 2))
     {

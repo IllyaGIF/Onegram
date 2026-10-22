@@ -11,6 +11,8 @@
 
 @interface TGPainting : NSObject
 
++ (bool)isSupported;
+
 @property (nonatomic, readonly) EAGLContext *context;
 @property (nonatomic, readonly) GLuint textureName;
 

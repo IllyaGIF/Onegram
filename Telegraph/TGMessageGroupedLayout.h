@@ -18,6 +18,9 @@ typedef enum {
 
 @property (nonatomic, readonly) CGSize dimensions;
 @property (nonatomic, readonly) NSUInteger count;
+@property (nonatomic, readonly) bool documentGroup;
+@property (nonatomic) CGFloat documentContentWidth;
+@property (nonatomic, strong, readonly) TGMessage *statusMessage;
 @property (nonatomic, readonly) int32_t mainMessageId;
 @property (nonatomic, copy, readonly) NSString *caption;
 @property (nonatomic, copy, readonly) NSArray *captionTextCheckingResults;
@@ -26,6 +29,8 @@ typedef enum {
 @property (nonatomic, copy, readonly) NSString *chosenReaction;
 @property (nonatomic, strong, readonly) TGMessageDiscussionContentProperty *discussion;
 @property (nonatomic, readonly) int32_t discussionMessageId;
+@property (nonatomic) CGPoint mediaOrigin;
+@property (nonatomic, readonly) bool hasMediaOrigin;
 
 - (instancetype)initWithMessages:(NSArray *)messages larger:(bool)larger;
 
@@ -39,5 +44,6 @@ typedef enum {
 
 - (void)updateReactionSummary:(NSString *)reactionSummary chosenReaction:(NSString *)chosenReaction messageId:(int32_t)messageId;
 - (void)updateDiscussion:(TGMessageDiscussionContentProperty *)discussion messageId:(int32_t)messageId;
+- (void)updateDocumentMessage:(TGMessage *)message;
 
 @end

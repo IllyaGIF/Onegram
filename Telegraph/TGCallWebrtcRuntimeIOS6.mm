@@ -13,6 +13,13 @@
 #include <memory>
 #include <vector>
 
+extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
+{
+    @autoreleasepool {
+        task(context);
+    }
+}
+
 @interface TGIOS6WebrtcCallbackProxy : NSObject
 
 @property (nonatomic, copy) void (^signalBarsChanged)(int32_t);
@@ -23,18 +30,59 @@
 
 @end
 
-@implementation TGIOS6WebrtcCallbackProxy
+@implementation TGIOS6WebrtcCallbackProxy {
+    bool _hasState;
+    int32_t _lastState;
+    bool _hasSignalBars;
+    int32_t _lastSignalBars;
+}
+
+- (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged
+{
+    void (^callback)(int32_t, int32_t, int32_t, int32_t, int32_t, float) = [stateChanged copy];
+    void (^update)(void) = ^{
+        _stateChanged = callback;
+        if (_hasState && _stateChanged != nil)
+            _stateChanged(_lastState, 0, 0, 0, 0, 0.0f);
+    };
+    if ([NSThread isMainThread]) update();
+    else dispatch_async(dispatch_get_main_queue(), update);
+}
+
+- (void)setSignalBarsChanged:(void (^)(int32_t))signalBarsChanged
+{
+    void (^callback)(int32_t) = [signalBarsChanged copy];
+    void (^update)(void) = ^{
+        _signalBarsChanged = callback;
+        if (_hasSignalBars && _signalBarsChanged != nil)
+            _signalBarsChanged(_lastSignalBars);
+    };
+    if ([NSThread isMainThread]) update();
+    else dispatch_async(dispatch_get_main_queue(), update);
+}
 
 - (void)emitSignalBars:(int32_t)bars
 {
-    if (_signalBarsChanged != nil)
-        _signalBarsChanged(bars);
+    void (^update)(void) = ^{
+        _hasSignalBars = true;
+        _lastSignalBars = bars;
+        if (_signalBarsChanged != nil)
+            _signalBarsChanged(bars);
+    };
+    if ([NSThread isMainThread]) update();
+    else dispatch_async(dispatch_get_main_queue(), update);
 }
 
 - (void)emitState:(int32_t)state
 {
-    if (_stateChanged != nil)
-        _stateChanged(state, 0, 0, 0, 0, 0.0f);
+    void (^update)(void) = ^{
+        _hasState = true;
+        _lastState = state;
+        if (_stateChanged != nil)
+            _stateChanged(state, 0, 0, 0, 0, 0.0f);
+    };
+    if ([NSThread isMainThread]) update();
+    else dispatch_async(dispatch_get_main_queue(), update);
 }
 
 @end
@@ -182,16 +230,19 @@ public:
             return;
         }
 
-        std::unique_ptr<tgcalls::Instance> instance = std::move(_instance);
-        instance->stop([completion](tgcalls::FinalState finalState) {
+        std::shared_ptr<std::unique_ptr<tgcalls::Instance>> stopping(new std::unique_ptr<tgcalls::Instance>(std::move(_instance)));
+        (*stopping)->stop([stopping, completion](tgcalls::FinalState finalState) {
             if (completion != nil) {
                 NSString *debugLog = [NSString stringWithUTF8String:finalState.debugLog.c_str()] ?: @"";
-                completion(debugLog,
-                           (int64_t)finalState.trafficStats.bytesSentWifi,
-                           (int64_t)finalState.trafficStats.bytesReceivedWifi,
-                           (int64_t)finalState.trafficStats.bytesSentMobile,
-                           (int64_t)finalState.trafficStats.bytesReceivedMobile);
+                const int64_t sentWifi = finalState.trafficStats.bytesSentWifi;
+                const int64_t receivedWifi = finalState.trafficStats.bytesReceivedWifi;
+                const int64_t sentMobile = finalState.trafficStats.bytesSentMobile;
+                const int64_t receivedMobile = finalState.trafficStats.bytesReceivedMobile;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    completion(debugLog, sentWifi, receivedWifi, sentMobile, receivedMobile);
+                });
             }
+            stopping->reset();
         });
     }
 
@@ -284,6 +335,11 @@ private:
         
         _cppBridge = new TGIOS6WebrtcCppBridge(_callbackProxy);
         bool started = _cppBridge->start(_version, _customParameters, _key, _isOutgoing, _connections, maxLayer, allowP2P, allowTCP, _sendSignalingData, _callbackProxy);
+        if (!started) {
+            delete _cppBridge;
+            _cppBridge = NULL;
+            return nil;
+        }
     }
     return self;
 }

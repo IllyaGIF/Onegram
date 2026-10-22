@@ -6,9 +6,13 @@
     return [self initWithFlags:rights.flags];
 }
 
-- (TLChannelAdminRights *)tlRights {
-    TLChannelAdminRights$channelAdminRights *result = [[TLChannelAdminRights$channelAdminRights alloc] init];
-    result.flags = [self tlFlags];
+- (TLChatAdminRights *)tlRights {
+    int32_t flags = [self tlFlags];
+    if (flags & (1 << 6)) {
+        flags = (flags & ~(1 << 6)) | (1 << 5);
+    }
+    TLChatAdminRights$chatAdminRights *result = [[TLChatAdminRights$chatAdminRights alloc] init];
+    result.flags = flags;
     return result;
 }
 

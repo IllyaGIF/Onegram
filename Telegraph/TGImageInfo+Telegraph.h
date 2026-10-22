@@ -27,6 +27,9 @@ NSString *extractFileUrl(id fileLocation);
 
 @interface TGImageInfo (Telegraph)
 
+- (NSString *)imageUrlForPreviewWithSize:(CGSize *)size;
+- (NSString *)imageUrlForStrippedPreview;
+
 - (id)initWithTelegraphSizesDescription:(NSArray *)sizesDesc;
 - (id)initWithTelegraphSizesDescription:(NSArray *)sizesDesc cachedData:(__autoreleasing NSData **)cachedData;
 - (id)initWithModernTelegraphPhoto:(TLPhoto$photo *)photo cachedData:(__autoreleasing NSData **)cachedData;

@@ -61,7 +61,12 @@ const CGFloat TGPhotoTextSettingsItemHeight = 44.0f;
         [self addSubview:outlineButton];
         [fontViews addObject:outlineButton];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
         TGPhotoTextView *textView = [[TGPhotoTextView alloc] init];
+#else
+        TGPhotoTextRenderView *textView = [[TGPhotoTextRenderView alloc] init];
+        textView.userInteractionEnabled = false;
+#endif
         textView.backgroundColor = [UIColor clearColor];
         textView.textColor = [UIColor whiteColor];
         textView.strokeWidth = 3.0f;

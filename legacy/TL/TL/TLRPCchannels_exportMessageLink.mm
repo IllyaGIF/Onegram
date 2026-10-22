@@ -3,8 +3,8 @@
 #import "../NSInputStream+TL.h"
 #import "../NSOutputStream+TL.h"
 
-#import "TLInputChannel.h"
 #import "TLExportedMessageLink.h"
+#import "TLInputChannel.h"
 
 @implementation TLRPCchannels_exportMessageLink
 
@@ -21,7 +21,7 @@
 
 - (int)layerVersion
 {
-    return 48;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -51,7 +51,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xceb77163;
+    return (int32_t)0xe63fadeb;
 }
 
 - (int32_t)TLconstructorName
@@ -62,14 +62,20 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCchannels_exportMessageLink$channels_exportMessageLink *object = [[TLRPCchannels_exportMessageLink$channels_exportMessageLink alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.channel = metaObject->getObject((int32_t)0xe11f3d41);
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
-    object.grouped = metaObject->getBool((int32_t)0xc09de8b2);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
@@ -81,12 +87,6 @@
         value.type = TLConstructedValueTypePrimitiveInt32;
         value.primitive.int32Value = self.n_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7a5601fb, value));
-    }
-    {
-        TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveBool;
-        value.primitive.boolValue = self.grouped;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xc09de8b2, value));
     }
 }
 

@@ -1,3 +1,4 @@
+#import "TGImageInfo+Telegraph.h"
 #import "TGRoundMessageViewModel.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 
@@ -40,114 +41,8 @@
 #import "TGMessageReplyButtonsModel.h"
 
 #import "TGPresentation.h"
+#import "TGMessageReactionsLayout.h"
 #import "TGPresentationAssets.h"
-
-static NSString *TGIOS6RoundReactionSummary(TGMessage *message)
-{
-    id value = [message.contentProperties objectForKey:@"ios6ReactionSummary"];
-    if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-        return ((TGMessageReactionSummaryContentProperty *)value).summary;
-    if ([value isKindOfClass:[NSString class]])
-        return value;
-    return nil;
-}
-
-static NSString *TGIOS6RoundChosenReaction(TGMessage *message)
-{
-    id value = [message.contentProperties objectForKey:@"ios6ReactionSummary"];
-    if ([value isKindOfClass:[TGMessageReactionSummaryContentProperty class]])
-        return ((TGMessageReactionSummaryContentProperty *)value).chosenReaction;
-    return nil;
-}
-
-static NSString *TGIOS6RoundReactionKey(NSString *emoji)
-{
-    return [[emoji stringByReplacingOccurrencesOfString:@"\uFE0F" withString:@""] stringByReplacingOccurrencesOfString:@"\uFE0E" withString:@""];
-}
-
-static NSArray *TGIOS6RoundReactionItems(NSString *summary)
-{
-    NSMutableArray *orderedKeys = [[NSMutableArray alloc] init];
-    NSMutableDictionary *emojiByKey = [[NSMutableDictionary alloc] init];
-    NSMutableDictionary *countByKey = [[NSMutableDictionary alloc] init];
-    for (NSString *part in [summary componentsSeparatedByString:@"  "])
-    {
-        NSRange separator = [part rangeOfString:@" " options:NSBackwardsSearch];
-        NSString *emoji = separator.location == NSNotFound ? part : [part substringToIndex:separator.location];
-        NSInteger count = separator.location == NSNotFound ? 1 : MAX(1, [[part substringFromIndex:separator.location + 1] integerValue]);
-        NSString *key = [[emoji stringByReplacingOccurrencesOfString:@"\uFE0F" withString:@""] stringByReplacingOccurrencesOfString:@"\uFE0E" withString:@""];
-        if (key.length == 0)
-            continue;
-        if ([countByKey objectForKey:key] == nil)
-        {
-            [orderedKeys addObject:key];
-            [emojiByKey setObject:emoji forKey:key];
-            [countByKey setObject:[NSNumber numberWithInteger:count] forKey:key];
-        }
-        else
-            [countByKey setObject:[NSNumber numberWithInteger:MAX([[countByKey objectForKey:key] integerValue], count)] forKey:key];
-    }
-    NSMutableArray *items = [[NSMutableArray alloc] init];
-    for (NSString *key in orderedKeys)
-    {
-        NSString *emoji = [emojiByKey objectForKey:key];
-        NSInteger count = [[countByKey objectForKey:key] integerValue];
-        [items addObject:@{ @"emoji": emoji, @"count": @(count) }];
-    }
-    return items;
-}
-
-static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count, bool selected)
-{
-    if (emoji.length == 0)
-        return nil;
-
-    static NSCache *cache = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        cache = [[NSCache alloc] init];
-        cache.countLimit = 64;
-    });
-
-    NSString *countText = count <= 1 ? nil : (count >= 1000 ? [NSString stringWithFormat:@"%dK", (int)MAX(1, count / 1000)] : [NSString stringWithFormat:@"%d", (int)count]);
-    NSString *cacheKey = [NSString stringWithFormat:@"%@/%@/%d", emoji, countText ?: @"", selected ? 1 : 0];
-    UIImage *image = [cache objectForKey:cacheKey];
-    if (image != nil)
-        return image;
-
-    UIFont *font = TGSystemFontOfSize(12.0f);
-    UIFont *emojiFont = TGEmojiFontOfSize(12.0f);
-    UIImage *emojiImage = TGEmojiImageOfSize(emoji, 15.0f);
-    CGSize emojiSize = emojiImage == nil ? [emoji sizeWithFont:emojiFont] : CGSizeMake(15.0f, 15.0f);
-    CGSize countSize = countText.length == 0 ? CGSizeZero : [countText sizeWithFont:font];
-    CGFloat contentWidth = ceilf(emojiSize.width);
-    if (countText.length != 0)
-        contentWidth += 3.0f + ceilf(countSize.width);
-    CGSize size = CGSizeMake(MAX(30.0f, MIN(160.0f, contentWidth + 14.0f)), 22.0f);
-    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    UIColor *backgroundColor = selected ? [UIColor colorWithRed:0.0f green:0.48f blue:0.92f alpha:0.34f] : [UIColor colorWithWhite:0.0f alpha:0.10f];
-    CGContextSetFillColorWithColor(context, backgroundColor.CGColor);
-    UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.0f, 0.0f, size.width, size.height) cornerRadius:11.0f];
-    CGContextAddPath(context, path.CGPath);
-    CGContextFillPath(context);
-    [[UIColor colorWithWhite:0.55f alpha:1.0f] set];
-
-    CGFloat contentX = roundf((size.width - contentWidth) / 2.0f);
-    CGRect emojiRect = CGRectMake(contentX, roundf((size.height - emojiSize.height) / 2.0f), ceilf(emojiSize.width), emojiSize.height);
-    if (emojiImage != nil)
-        [emojiImage drawInRect:emojiRect];
-    else
-        [emoji drawInRect:CGRectOffset(emojiRect, 0.0f, 1.0f) withFont:emojiFont lineBreakMode:UILineBreakModeClip alignment:UITextAlignmentLeft];
-    if (countText.length != 0)
-        [countText drawInRect:CGRectMake(contentX + ceilf(emojiSize.width) + 3.0f, roundf((size.height - countSize.height) / 2.0f), ceilf(countSize.width), countSize.height) withFont:font lineBreakMode:UILineBreakModeClip alignment:UITextAlignmentLeft];
-
-    image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    [cache setObject:image forKey:cacheKey];
-    return image;
-}
 
 @interface TGRoundMessageViewModel () <TGDoubleTapGestureRecognizerDelegate, UIGestureRecognizerDelegate, TGMessageImageViewDelegate>
 {
@@ -220,9 +115,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     TGBotReplyMarkup *_replyMarkup;
     SMetaDisposable *_callbackButtonInProgressDisposable;
 
-    NSString *_ios6ReactionSummary;
-    NSString *_ios6ChosenReaction;
-    NSArray *_ios6ReactionButtonModels;
+    TGMessageReactionsModel *_reactionsModel;
 }
 
 @property (nonatomic, strong) TGMessageImageViewModel *imageModel;
@@ -233,63 +126,20 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 
 @implementation TGRoundMessageViewModel
 
-- (void)_ios6RebuildReactionButtons:(TGModernViewStorage *)viewStorage
-{
-    for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
-        if ([self containsSubmodel:button])
-            [self removeSubmodel:button viewStorage:viewStorage];
-
-    NSMutableArray *buttons = [[NSMutableArray alloc] init];
-    NSString *chosenKey = TGIOS6RoundReactionKey(_ios6ChosenReaction);
-    TGMessageViewModelReference *messageLifetimeReference1 = [self lifetimeReference];
-    for (NSDictionary *item in TGIOS6RoundReactionItems(_ios6ReactionSummary))
-    {
-        NSString *emoji = [item[@"emoji"] copy];
-        NSInteger count = [item[@"count"] integerValue];
-        bool selected = chosenKey.length != 0 && [chosenKey isEqualToString:TGIOS6RoundReactionKey(emoji)];
-        TGModernButtonViewModel *button = [[TGModernButtonViewModel alloc] init];
-        button.image = TGIOS6RoundReactionButtonImage(emoji, count, selected);
-        button.frame = (CGRect){CGPointZero, button.image.size};
-        button.modernHighlight = true;
-        button.pressed = ^
-        {
-            [messageLifetimeReference1 withValue:^(void *value)
-            {
-                __strong TGRoundMessageViewModel *strongSelf = (__bridge TGRoundMessageViewModel *)value;
-                if (strongSelf == nil)
-                    return;
-                bool remove = [TGIOS6RoundReactionKey(strongSelf->_ios6ChosenReaction) isEqualToString:TGIOS6RoundReactionKey(emoji)];
-                [strongSelf->_context.companionHandle requestAction:@"ios6ReactionTapped" options:@{ @"mid": @(strongSelf->_mid), @"reaction": emoji, @"remove": @(remove) }];
-            }];
-        };
-        [self addSubmodel:button];
-        [buttons addObject:button];
-    }
-    _ios6ReactionButtonModels = buttons;
-    UIView *container = [_imageModel boundView].superview;
-    if (container != nil)
-        for (TGModernButtonViewModel *button in buttons)
-        {
-            if ([button boundView] == nil)
-                [button bindViewToContainer:container viewStorage:viewStorage];
-            [container bringSubviewToFront:[button boundView]];
-        }
-}
-
 - (instancetype)initWithMessage:(TGMessage *)message video:(TGVideoMediaAttachment *)video authorPeer:(id)authorPeer context:(TGModernViewContext *)context forwardPeer:(id)forwardPeer forwardAuthor:(id)forwardAuthor forwardMessageId:(int32_t)forwardMessageId replyHeader:(TGMessage *)replyHeader replyPeer:(id)replyPeer
 {
     TGImageInfo *imageInfo = video.thumbnailInfo;
     TGImageInfo *previewImageInfo = imageInfo;
     
     NSString *legacyVideoFilePath = [TGVideoMessageViewModel filePathForVideoId:video.videoId != 0 ? video.videoId : video.localVideoId local:video.videoId == 0];
-    NSString *legacyThumbnailCacheUri = [imageInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL];
+    NSString *legacyThumbnailCacheUri = [imageInfo imageUrlForPreviewWithSize:NULL];
 
     
     CGSize roundSize = [TGRoundMessageViewModel roundSize];
 
     CGSize renderSize = CGSizeZero;
     [imageInfo imageUrlForLargestSize:&renderSize];
-    renderSize = TGScaleToFill(renderSize, roundSize);
+    renderSize = renderSize.width > 0.0f && renderSize.height > 0.0f ? TGScaleToFill(renderSize, roundSize) : roundSize;
     
     if (video.videoId != 0 || video.localVideoId != 0)
     {
@@ -533,10 +383,8 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 
         _callbackButtonInProgressDisposable = [[SMetaDisposable alloc] init];
 
-        _ios6ReactionSummary = [TGIOS6RoundReactionSummary(message) copy];
-        _ios6ChosenReaction = [TGIOS6RoundChosenReaction(message) copy];
-        if (_ios6ReactionSummary.length != 0)
-            [self _ios6RebuildReactionButtons:nil];
+        _reactionsModel = [[TGMessageReactionsModel alloc] initWithContext:context style:TGMessageReactionsStyleService];
+        [_reactionsModel updateWithMessage:message parent:self viewStorage:nil container:nil];
     }
     return self;
 }
@@ -654,13 +502,10 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 {
     [super updateMessage:message viewStorage:viewStorage sizeUpdated:sizeUpdated];
 
-    NSString *updatedReactionSummary = TGIOS6RoundReactionSummary(message);
-    NSString *updatedChosenReaction = TGIOS6RoundChosenReaction(message);
-    if (!TGObjectCompare(_ios6ReactionSummary, updatedReactionSummary) || !TGObjectCompare(_ios6ChosenReaction, updatedChosenReaction))
+    if ([_reactionsModel updateWithMessage:message parent:self viewStorage:viewStorage container:[_imageModel boundView].superview])
     {
-        _ios6ReactionSummary = [updatedReactionSummary copy];
-        _ios6ChosenReaction = [updatedChosenReaction copy];
-        [self _ios6RebuildReactionButtons:viewStorage];
+        if (sizeUpdated != NULL)
+            *sizeUpdated = true;
     }
     
     TGVideoMediaAttachment *video = nil;
@@ -688,13 +533,13 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
         TGImageInfo *previewImageInfo = imageInfo;
         
         NSString *legacyVideoFilePath = [TGVideoMessageViewModel filePathForVideoId:video.videoId != 0 ? video.videoId : video.localVideoId local:video.videoId == 0];
-        NSString *legacyThumbnailCacheUri = [imageInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL];
+        NSString *legacyThumbnailCacheUri = [imageInfo imageUrlForPreviewWithSize:NULL];
         
         CGSize roundSize = [TGRoundMessageViewModel roundSize];
         
         CGSize renderSize = CGSizeZero;
         [imageInfo imageUrlForLargestSize:&renderSize];
-        renderSize = TGScaleToFill(renderSize, roundSize);
+        renderSize = renderSize.width > 0.0f && renderSize.height > 0.0f ? TGScaleToFill(renderSize, roundSize) : roundSize;
         
         if (video.videoId != 0 || video.localVideoId != 0)
         {
@@ -1157,9 +1002,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     [self updateEditingState:nil viewStorage:nil animationDelay:-1.0];
     
     [super bindViewToContainer:container viewStorage:viewStorage];
-    for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
-        if ([button boundView] != nil)
-            [container bringSubviewToFront:[button boundView]];
+    [_reactionsModel bringToFrontInContainer:container];
     
     _boundToContainer = true;
     
@@ -1210,9 +1053,7 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
 
 - (void)bindSpecialViewsToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage atItemPosition:(CGPoint)itemPosition {
     [super bindSpecialViewsToContainer:container viewStorage:viewStorage atItemPosition:itemPosition];
-    for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
-        if ([button boundView] != nil)
-            [container bringSubviewToFront:[button boundView]];
+    [_reactionsModel bringToFrontInContainer:container];
     
     _boundToContainer = false;
     
@@ -1622,7 +1463,6 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     }
     
     bottomSpacing += 3.0f;
-    CGFloat reactionExtraHeight = _ios6ReactionButtonModels.count != 0 ? 25.0f : 0.0f;
     
     CGFloat avatarOffset = 0.0f;
     if (_hasAvatar)
@@ -1662,21 +1502,11 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
         }
     }
 
-    if (_ios6ReactionButtonModels.count != 0)
-    {
-        CGFloat totalWidth = 0.0f;
-        for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
-            totalWidth += button.image.size.width;
-        totalWidth += MAX(0, (NSInteger)_ios6ReactionButtonModels.count - 1) * 3.0f;
-        CGFloat x = _incomingAppearance ? CGRectGetMinX(backgroundFrame) + 8.0f : MAX(8.0f, CGRectGetMaxX(backgroundFrame) - 8.0f - totalWidth);
-        for (TGModernButtonViewModel *button in _ios6ReactionButtonModels)
-        {
-            CGSize buttonSize = button.image.size;
-            button.hidden = x + buttonSize.width > containerSize.width - 8.0f;
-            button.frame = CGRectMake(x, CGRectGetMaxY(backgroundFrame) + 2.0f, buttonSize.width, buttonSize.height);
-            x += buttonSize.width + 3.0f;
-        }
-    }
+    CGFloat reactionExtraHeight = 0.0f;
+    TGMessageReactionsLayout *reactionsLayout = [_reactionsModel layoutWithMaximumWidth:backgroundFrame.size.width trailingWidth:0.0f trailingHeight:0.0f];
+    if (reactionsLayout != nil)
+        reactionExtraHeight = TGMessageReactionsCurrentMetrics().topSpacing + reactionsLayout.size.height;
+    [_reactionsModel applyLayout:reactionsLayout origin:CGPointMake(CGRectGetMinX(backgroundFrame), CGRectGetMaxY(backgroundFrame) + TGMessageReactionsCurrentMetrics().topSpacing)];
     
     CGFloat pixel = MIN(0.5f, TGScreenPixel);
     _muteButtonModel.frame = CGRectMake(floor(CGRectGetMidX(backgroundFrame) - 12.0f), CGRectGetMaxY(backgroundFrame) - 24.0f - 8.0f - pixel, 24.0f, 24.0f);
@@ -1751,7 +1581,8 @@ static UIImage *TGIOS6RoundReactionButtonImage(NSString *emoji, NSInteger count,
     if (_replyButtonsModel != nil) {
         CGRect backgroundFrame = _imageModel.frame;
         
-        [_replyButtonsModel layoutForContainerSize:CGSizeMake(MIN(MAX([_replyButtonsModel minimumWidth], backgroundFrame.size.width + 10.0f), containerSize.width - 38.0f), containerSize.height)];
+        CGFloat replyButtonsAvailableWidth = _incomingAppearance ? (containerSize.width - 38.0f - backgroundFrame.origin.x) : (CGRectGetMaxX(backgroundFrame) - 38.0f);
+        [_replyButtonsModel layoutForContainerSize:CGSizeMake(MAX(backgroundFrame.size.width + 10.0f, MIN([_replyButtonsModel minimumWidth], replyButtonsAvailableWidth)), containerSize.height)];
         
         _replyButtonsModel.frame = CGRectMake((_incomingAppearance ? backgroundFrame.origin.x : (CGRectGetMaxX(backgroundFrame) - _replyButtonsModel.frame.size.width)) + (_incomingAppearance ? -5.0f : 5.0f), CGRectGetMaxY(backgroundFrame) + reactionExtraHeight, _replyButtonsModel.frame.size.width, _replyButtonsModel.frame.size.height);
         replyButtonsHeight = _replyButtonsModel.frame.size.height;

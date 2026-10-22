@@ -316,6 +316,15 @@ static NSDictionary *TGIOS6SafeMaskStickerPacks(id dict)
     alreadyReloadedStickerPacksFromRemote = false;
 }
 
++ (void)reloadForAccountSwitch
+{
+    OSSpinLockLock(&cachedPacksLock);
+    cachedPacks = nil;
+    OSSpinLockUnlock(&cachedPacksLock);
+    alreadyReloadedStickerPacksFromRemote = false;
+    alreadyReloadedFeaturedPacksFromRemote = false;
+}
+
 + (NSDictionary *)cachedStickerPacks
 {
     OSSpinLockLock(&cachedPacksLock);

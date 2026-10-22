@@ -169,6 +169,11 @@ public:
     return @"/as/media/video/@";
 }
 
++ (void)reloadForAccountSwitch
+{
+    [rewriteDict() removeAllObjects];
+}
+
 + (void)rewriteLocalFilePath:(NSString *)localFilePath remoteUrl:(NSString *)remoteUrl
 {
     if (localFilePath != nil && remoteUrl != nil)

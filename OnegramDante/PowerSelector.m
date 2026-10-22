@@ -3,89 +3,26 @@
 #include <sys/socket.h>
 #include <ifaddrs.h>
 #include <net/if.h>
-#import "OGDanteSupport.h"
-
-#include <errno.h>
-#include <fcntl.h>
 #include <netdb.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <arpa/inet.h>
 
 static NSString * const kPWRememberedKey = @"power_choice";
 
 static NSString * const kPWHistoryKey = @"power_history";
 static const NSUInteger kPWHistoryMax = 8;
+static const NSUInteger kPWRememberedMax = 32;
 
 static const NSTimeInterval kPWFailMemory = 15 * 60;
-
-static BOOL PWAnyReachable(const char *const *hosts, uint16_t port, NSTimeInterval timeout) {
-    int fds[8];
-    int count = 0;
-    for (int i = 0; hosts[i] && count < 8; i++) {
-        struct sockaddr_in sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sin_family = AF_INET;
-        sa.sin_port = htons(port);
-        if (inet_pton(AF_INET, hosts[i], &sa.sin_addr) != 1) continue;
-        int fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (fd < 0) continue;
-        PWBindSocket(fd);
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-        if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0) {
-            close(fd);
-            for (int j = 0; j < count; j++) close(fds[j]);
-            return YES;
-        }
-        if (errno != EINPROGRESS) { close(fd); continue; }
-        fds[count++] = fd;
-    }
-    if (!count) return NO;
-
-    struct timeval tv = { (time_t)timeout,
-                          (suseconds_t)((timeout - (long)timeout) * 1e6) };
-    fd_set w;
-    FD_ZERO(&w);
-    int maxFd = -1;
-    for (int i = 0; i < count; i++) {
-        FD_SET(fds[i], &w);
-        if (fds[i] > maxFd) maxFd = fds[i];
-    }
-    BOOL ok = NO;
-    if (select(maxFd + 1, NULL, &w, NULL, &tv) > 0) {
-        for (int i = 0; i < count && !ok; i++) {
-            if (!FD_ISSET(fds[i], &w)) continue;
-            int err = 0;
-            socklen_t len = sizeof(err);
-            getsockopt(fds[i], SOL_SOCKET, SO_ERROR, &err, &len);
-            ok = (err == 0);
-        }
-    }
-    for (int i = 0; i < count; i++) close(fds[i]);
-    return ok;
-}
 
 @implementation PowerSelector {
     NSMutableDictionary *_failedAt;   
     BOOL _cancelSearch;
     NSUInteger _progressDone, _progressTotal;
     NSString *_lastReport;
-    NSString *_cachedKey;
-    PWNetworkKind _cachedKind;
-    NSTimeInterval _cachedAt;
-}
-
-+ (instancetype)sharedSelector {
-    static PowerSelector *s;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ s = [[PowerSelector alloc] init]; });
-    return s;
 }
 
 - (void)dealloc {
-    [_failedAt release]; [_lastReport release]; [_cachedKey release];
+    [_failedAt release]; [_lastReport release];
     [super dealloc];
 }
 
@@ -100,52 +37,20 @@ static BOOL PWAnyReachable(const char *const *hosts, uint16_t port, NSTimeInterv
     if (getifaddrs(&interfaces) == 0) {
         for (struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
             if (!item->ifa_addr || !(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
-            int family = item->ifa_addr->sa_family;
-            if (family != AF_INET && family != AF_INET6) continue;
-            char host[NI_MAXHOST];
-            socklen_t size = family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
-            if (getnameinfo(item->ifa_addr, size, host, sizeof(host), NULL, 0, NI_NUMERICHOST) == 0)
-                [addresses addObject:[NSString stringWithFormat:@"%s:%s", item->ifa_name, host]];
+            if (item->ifa_addr->sa_family != AF_INET) continue;
+            NSString *entry;
+            if (strncmp(item->ifa_name, "pdp_ip", 6) == 0) entry = [NSString stringWithUTF8String:item->ifa_name];
+            else {
+                char host[NI_MAXHOST];
+                if (getnameinfo(item->ifa_addr, sizeof(struct sockaddr_in), host, sizeof(host), NULL, 0, NI_NUMERICHOST) != 0) continue;
+                entry = [NSString stringWithFormat:@"%s:%s", item->ifa_name, host];
+            }
+            if (![addresses containsObject:entry]) [addresses addObject:entry];
         }
         freeifaddrs(interfaces);
     }
     [addresses sortUsingSelector:@selector(compare:)];
     return addresses.count ? [addresses componentsJoinedByString:@"|"] : @"нет сети";
-}
-
-- (PWNetworkKind)fingerprintNetwork {
-
-    NSString *key = [self networkKey];
-    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (_cachedKey && [_cachedKey isEqualToString:key] && now - _cachedAt < 30.0) {
-        return _cachedKind;
-    }
-
-    static const char *kOutside[] = { "1.1.1.1", "104.16.132.229",
-                                      "140.82.121.4", "8.8.8.8", NULL };
-    static const char *kAllowed[] = { "87.240.132.67", "213.59.253.7", NULL };
-
-    PWNetworkKind kind;
-    if (PWAnyReachable(kOutside, 443, 2.5)) {
-        kind = PWNetworkOpen;
-    } else if (PWAnyReachable(kAllowed, 443, 2.5)) {
-        kind = PWNetworkRestricted;
-    } else {
-        kind = PWNetworkOffline;
-    }
-
-    [_cachedKey release];
-    _cachedKey = [key copy];
-    _cachedKind = kind;
-    _cachedAt = now;
-
-    [self setReport:[NSString stringWithFormat:@"%@: %@",
-                   [self networkKey],
-                   kind == PWNetworkOpen ? @"пускают наружу"
-                   : kind == PWNetworkRestricted ? @"только белый список"
-                   : @"не отвечает никто"]];
-    DLog(@"[power] сеть — %@", _lastReport);
-    return kind;
 }
 
 - (BOOL)searchCancelled { @synchronized (self) { return _cancelSearch; } }
@@ -202,11 +107,10 @@ static BOOL PWAnyReachable(const char *const *hosts, uint16_t port, NSTimeInterv
     NSUInteger total = 0;
     for (PowerConfig *c in order) if ([c isSupported]) total++;
     @synchronized (self) { _progressDone = 0; _progressTotal = total; }
-    
-    OGDanteLog(@"exploit: loading %lu payloads", (unsigned long)total);
+    OGDanteLog(@"[power] probing %lu servers", (unsigned long)total);
     for (PowerConfig *c in order) {
         if ([self searchCancelled]) {
-            OGDanteLog(@"exploit: aborted by user");
+            OGDanteLog(@"[power] probing cancelled");
             [self setReport:[report stringByAppendingString:@"прервано"]];
             return nil;
         }
@@ -221,17 +125,17 @@ static BOOL PWAnyReachable(const char *const *hosts, uint16_t port, NSTimeInterv
         PWProbeResult r = [session probeThroughHost:@"www.google.com" port:80
                                             timeout:timeoutPerConfig
                                       latencyMillis:&ms];
-        if ([self searchCancelled]) continue;             
+        if ([self searchCancelled]) continue;
         @synchronized (self) { _progressDone = (NSUInteger)tried; }
         if (r == PWProbeOK) {
-            OGDanteLog(@"exploit: payload %03d/%03lu landed, %d ms", tried, (unsigned long)total, ms);
+            OGDanteLog(@"[power] server %d/%lu ok, %d ms", tried, (unsigned long)total, ms);
             @synchronized (self) { _progressTotal = 0; }
             [report appendFormat:@"  %@ — работает, %d мс\n", c.name, ms];
             [self setReport:report];
             DLog(@"[power] подошла %@ (%d мс)", c.name, ms);
 
             NSString *hp = [NSString stringWithFormat:@"%@:%u", c.host, c.port];
-            NSMutableDictionary *save = [NSMutableDictionary dictionaryWithDictionary:remembered ?: @{}];
+            NSMutableDictionary *save = [NSMutableDictionary dictionaryWithDictionary:remembered.count && remembered.count < kPWRememberedMax ? remembered : @{}];
             [save setObject:hp forKey:key];
             [[NSUserDefaults standardUserDefaults] setObject:save forKey:kPWRememberedKey];
             NSMutableArray *h = [NSMutableArray arrayWithArray:history];
@@ -252,12 +156,12 @@ static BOOL PWAnyReachable(const char *const *hosts, uint16_t port, NSTimeInterv
             [_failedAt setObject:@([NSDate timeIntervalSinceReferenceDate])
                           forKey:[NSString stringWithFormat:@"%@:%u", c.host, c.port]];
         }
-        OGDanteLog(@"exploit: payload %03d/%03lu ... fail (%@)", tried, (unsigned long)total,
+        OGDanteLog(@"[power] server %d/%lu failed (%@)", tried, (unsigned long)total,
              r == PWProbeNoRoute ? @"blocked" : r == PWProbeTLSFailed ? @"handshake"
              : r == PWProbeRejected ? @"rejected" : @"timeout");
     }
     @synchronized (self) { _progressTotal = 0; }
-    OGDanteLog(@"exploit: all %d payloads failed", tried);
+    OGDanteLog(@"[power] all %d servers failed", tried);
 
     [report appendFormat:@"проверено %d, рабочих нет", tried];
     [self setReport:report];

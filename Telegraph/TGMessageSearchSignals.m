@@ -140,14 +140,19 @@
 }
 
 + (SSignal *)shareLinkForChannelMessage:(int64_t)peerId accessHash:(int64_t)accessHash messageId:(int32_t)messageId grouped:(bool)grouped {
+    TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
+    if (![inputPeer isKindOfClass:[TLInputPeer$inputPeerChannel class]])
+        return [SSignal fail:nil];
+    
     TLRPCchannels_exportMessageLink$channels_exportMessageLink *exportMessageLink = [[TLRPCchannels_exportMessageLink$channels_exportMessageLink alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
-    inputChannel.access_hash = accessHash;
+    inputChannel.channel_id = ((TLInputPeer$inputPeerChannel *)inputPeer).channel_id;
+    inputChannel.access_hash = ((TLInputPeer$inputPeerChannel *)inputPeer).access_hash;
     exportMessageLink.channel = inputChannel;
     
     exportMessageLink.n_id = messageId;
-    exportMessageLink.grouped = grouped;
+    if (grouped)
+        exportMessageLink.flags |= (1 << 0);
     
     if (false) {
         return [[[TGDatabaseInstance() existingChannel:peerId] take:1] map:^id(TGConversation *conversation) {

@@ -359,6 +359,20 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
     }
 }
 
+- (void)invalidateApiInitializationForDatacenterId:(NSInteger)datacenterId
+{
+    [_context performBatchUpdates:^
+    {
+        MTDatacenterAuthInfo *authInfo = [_context authInfoForDatacenterWithId:datacenterId];
+        if (authInfo.authKeyAttributes[@"apiInitializationHash"] == nil)
+            return;
+
+        NSMutableDictionary *authKeyAttributes = [[NSMutableDictionary alloc] initWithDictionary:authInfo.authKeyAttributes];
+        [authKeyAttributes removeObjectForKey:@"apiInitializationHash"];
+        [_context updateAuthInfoForDatacenterWithId:datacenterId authInfo:[authInfo withUpdatedAuthKeyAttributes:authKeyAttributes]];
+    }];
+}
+
 - (NSData *)decorateRequestData:(MTRequest *)request initializeApi:(bool)initializeApi unresolvedDependencyOnRequestInternalId:(__autoreleasing id *)unresolvedDependencyOnRequestInternalId
 {    
     NSData *currentData = request.payload;
@@ -763,16 +777,12 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
                         }
                         else if (rpcError.errorCode == 400 && [rpcError.errorDescription rangeOfString:@"CONNECTION_NOT_INITED"].location != NSNotFound)
                         {
-                            [_context performBatchUpdates:^
-                            {
-                                MTDatacenterAuthInfo *authInfo = [_context authInfoForDatacenterWithId:mtProto.datacenterId];
-                                
-                                NSMutableDictionary *authKeyAttributes = [[NSMutableDictionary alloc] initWithDictionary:authInfo.authKeyAttributes];
-                                [authKeyAttributes removeObjectForKey:@"apiInitializationHash"];
-                                
-                                authInfo = [authInfo withUpdatedAuthKeyAttributes:authKeyAttributes];
-                                [_context updateAuthInfoForDatacenterWithId:mtProto.datacenterId authInfo:authInfo];
-                            }];
+                            [self invalidateApiInitializationForDatacenterId:mtProto.datacenterId];
+                        }
+                        else if (responseParsingFailed && !request.requestContext.willInitializeApi)
+                        {
+                            OGPlatformDiagnosticLog(@"AUTH response not decodable without api initialization dc=%d, reinitializing connection", (int)mtProto.datacenterId);
+                            [self invalidateApiInitializationForDatacenterId:mtProto.datacenterId];
                         }
                         
                     }

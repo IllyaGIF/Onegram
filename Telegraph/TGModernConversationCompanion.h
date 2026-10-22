@@ -345,7 +345,7 @@ typedef enum {
 - (SSignal *)editingContextForMessageWithId:(int32_t)messageId;
 - (SSignal *)saveEditedMessageWithId:(int32_t)messageId text:(NSString *)text entities:(NSArray *)entities disableLinkPreviews:(bool)disableLinkPreviews;
 
-- (SSignal *)updatePinnedMessage:(int32_t)messageId;
+- (SSignal *)updatePinnedMessage:(int32_t)messageId unpin:(bool)unpin;
 
 - (bool)canCreateLinksToMessages;
 
@@ -373,5 +373,7 @@ typedef enum {
 
 - (SSignal *)alphacodeListForQuery:(NSString *)query;
 - (void)performBotAutostart:(NSString *)param;
+
++ (void)reloadForAccountSwitch;
 
 @end

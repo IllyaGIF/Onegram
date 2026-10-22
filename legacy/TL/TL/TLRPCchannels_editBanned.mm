@@ -4,8 +4,7 @@
 #import "../NSOutputStream+TL.h"
 
 #import "TLInputChannel.h"
-#import "TLInputUser.h"
-#import "TLChannelBannedRights.h"
+#import "TLInputPeer.h"
 #import "TLUpdates.h"
 
 @implementation TLRPCchannels_editBanned
@@ -23,7 +22,7 @@
 
 - (int)layerVersion
 {
-    return 68;
+    return 228;
 }
 
 - (int32_t)TLconstructorSignature
@@ -53,7 +52,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0xbfd915cd;
+    return (int32_t)0x96e6cd81;
 }
 
 - (int32_t)TLconstructorName
@@ -65,7 +64,7 @@
 {
     TLRPCchannels_editBanned$channels_editBanned *object = [[TLRPCchannels_editBanned$channels_editBanned alloc] init];
     object.channel = metaObject->getObject((int32_t)0xe11f3d41);
-    object.user_id = metaObject->getObject((int32_t)0xafdf4073);
+    object.participant = metaObject->getObject((int32_t)0x837816d4);
     object.banned_rights = metaObject->getObject((int32_t)0x7ecb6900);
     return object;
 }
@@ -81,8 +80,8 @@
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeObject;
-        value.nativeObject = self.user_id;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
+        value.nativeObject = self.participant;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x837816d4, value));
     }
     {
         TLConstructedValue value;

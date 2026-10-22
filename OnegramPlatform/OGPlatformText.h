@@ -77,6 +77,8 @@ FOUNDATION_EXPORT CTFontRef CTFontCreateForString(CTFontRef font, CFStringRef st
 FOUNDATION_EXPORT CGFloat CTFontGetSize(CTFontRef font);
 FOUNDATION_EXPORT CGFloat CTFontGetAscent(CTFontRef font);
 FOUNDATION_EXPORT CGFloat CTFontGetDescent(CTFontRef font);
+FOUNDATION_EXPORT CGFloat CTFontGetLeading(CTFontRef font);
+FOUNDATION_EXPORT CGFloat CTFontGetCapHeight(CTFontRef font);
 
 FOUNDATION_EXPORT CTTypesetterRef CTTypesetterCreateWithAttributedString(CFAttributedStringRef string);
 FOUNDATION_EXPORT CFIndex CTTypesetterSuggestLineBreak(CTTypesetterRef typesetter, CFIndex startIndex, double width);

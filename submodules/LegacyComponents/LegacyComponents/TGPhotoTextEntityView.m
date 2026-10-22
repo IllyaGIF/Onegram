@@ -25,6 +25,7 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 @end
 
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 @interface TGPhotoTextLayoutManager : NSLayoutManager
 
 @property (nonatomic, strong) UIColor *strokeColor;
@@ -32,6 +33,7 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 @property (nonatomic, assign) CGPoint strokeOffset;
 
 @end
+#endif
 
 
 @interface TGPhotoTextEntityView () <UITextViewDelegate>
@@ -43,6 +45,9 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     bool _stroke;
     
     TGPhotoTextView *_textView;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    TGPhotoTextRenderView *_renderView;
+#endif
 }
 @end
 
@@ -81,10 +86,22 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
         OGPlatformDisableSpellChecking(_textView);
         _textView.font = [UIFont boldSystemFontOfSize:_baseFontSize];
         
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+        _renderView = [[TGPhotoTextRenderView alloc] initWithFrame:CGRectZero];
+        _renderView.userInteractionEnabled = false;
+        _renderView.text = entity.text;
+        _renderView.font = _textView.font;
+        _renderView.textWidth = _maxWidth;
+        _textView.hidden = true;
+#endif
+        
         [self setSwatch:entity.swatch];
         [self setStroke:entity.stroke];
     
         [self addSubview:_textView];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+        [self addSubview:_renderView];
+#endif
     }
     return self;
 }
@@ -118,6 +135,11 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     _textView.editable = true;
     _textView.selectable = true;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    _renderView.hidden = true;
+    _textView.hidden = false;
+#endif
+    
     [_textView.window makeKeyWindow];
     [_textView becomeFirstResponder];
 }
@@ -128,6 +150,13 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     _textView.editable = false;
     _textView.selectable = false;
     
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    _renderView.text = _textView.text;
+    _textView.hidden = true;
+    _renderView.hidden = false;
+    [self sizeToFit];
+#endif
+    
     if (self.finishedEditing != nil)
         self.finishedEditing(self);
 }
@@ -136,6 +165,9 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 
 - (void)textViewDidChange:(UITextView *)__unused textView
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    _renderView.text = _textView.text;
+#endif
     [self sizeToFit];
     [_textView setNeedsDisplay];
 }
@@ -152,6 +184,9 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 {
     _font = font;
     _textView.font = [UIFont boldSystemFontOfSize:_baseFontSize];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    _renderView.font = _textView.font;
+#endif
     [self sizeToFit];
 }
 
@@ -177,6 +212,9 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
         _textView.layer.shadowRadius = 4.0f;
     }
 #endif
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    _renderView.shadowEnabled = !stroke;
+#endif
     
     [self updateColor];
     [self setNeedsLayout];
@@ -187,12 +225,22 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     if (_stroke)
     {
         _textView.textColor = [UIColor whiteColor];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
         _textView.strokeColor = _swatch.color;
+#else
+        _renderView.textColor = [UIColor whiteColor];
+        _renderView.strokeColor = _swatch.color;
+#endif
     }
     else
     {
         _textView.textColor = _swatch.color;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
         _textView.strokeColor = nil;
+#else
+        _renderView.textColor = _swatch.color;
+        _renderView.strokeColor = nil;
+#endif
     }
 }
 
@@ -213,6 +261,13 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 
 - (CGSize)sizeThatFits:(CGSize)__unused size
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    if (!_textView.isFirstResponder)
+    {
+        CGSize textSize = [_renderView textSize];
+        return CGSizeMake(MAX(224, ceil(textSize.width) + 20.0f), ceil(textSize.height) + 20.0f + _textView.font.pointSize * _font.sizeCorrection);
+    }
+#endif
     CGSize result = [_textView sizeThatFits:CGSizeMake(_maxWidth, FLT_MAX)];
     result.width = MAX(224, ceil(result.width) + 20.0f);
     result.height = ceil(result.height) + 20.0f + _textView.font.pointSize * _font.sizeCorrection;
@@ -254,6 +309,9 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     CGFloat correction = _textView.font.pointSize * _font.sizeCorrection;
     rect.origin.y += correction;
     rect.size.height -= correction;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    _renderView.frame = rect;
+#endif
     rect = CGRectOffset(rect, 0.0f, 10.0f);
     
     _textView.frame = rect;
@@ -419,6 +477,7 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 
 @implementation TGPhotoTextView
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 - (instancetype)initWithFrame:(CGRect)frame
 {
     NSTextStorage *textStorage = [[NSTextStorage alloc] init];
@@ -429,15 +488,9 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     [layoutManager addTextContainer:container];
     [textStorage addLayoutManager:layoutManager];
     
-    return [self initWithFrame:frame textContainer:container];;
+    return [self initWithFrame:frame textContainer:container];
 }
-
-- (instancetype)initWithFrame:(CGRect)frame textContainer:(NSTextContainer *)textContainer
-{
-    if ([[[UIDevice currentDevice] systemVersion] intValue] < 7)
-        return [super initWithFrame:frame];
-    return [super initWithFrame:frame textContainer:textContainer];
-}
+#endif
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 32000
 - (void)drawRect:(CGRect)rect
@@ -466,6 +519,7 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 }
 #endif
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 - (CGFloat)strokeWidth
 {
     return ((TGPhotoTextLayoutManager *)self.layoutManager).strokeWidth;
@@ -498,10 +552,12 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
     [(TGPhotoTextLayoutManager *)self.layoutManager setStrokeOffset:strokeOffset];
     [self setNeedsDisplay];
 }
+#endif
 
 @end
 
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
 @implementation TGPhotoTextLayoutManager
 
 - (void)showCGGlyphs:(const CGGlyph *)glyphs positions:(const CGPoint *)positions count:(NSUInteger)glyphCount font:(UIFont *)font matrix:(CGAffineTransform)textMatrix attributes:(NSDictionary *)attributes inContext:(CGContextRef)context
@@ -528,3 +584,134 @@ const CGFloat TGPhotoTextSelectionViewHandleSide = 30.0f;
 }
 
 @end
+#endif
+
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+
+@implementation TGPhotoTextRenderView
+
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self != nil)
+    {
+        self.backgroundColor = [UIColor clearColor];
+        self.opaque = false;
+        self.contentMode = UIViewContentModeRedraw;
+    }
+    return self;
+}
+
+- (void)setText:(NSString *)text
+{
+    _text = [text copy];
+    [self setNeedsDisplay];
+}
+
+- (void)setFont:(UIFont *)font
+{
+    _font = font;
+    [self setNeedsDisplay];
+}
+
+- (void)setTextColor:(UIColor *)textColor
+{
+    _textColor = textColor;
+    [self setNeedsDisplay];
+}
+
+- (void)setStrokeColor:(UIColor *)strokeColor
+{
+    _strokeColor = strokeColor;
+    [self setNeedsDisplay];
+}
+
+- (void)setStrokeWidth:(CGFloat)strokeWidth
+{
+    _strokeWidth = strokeWidth;
+    [self setNeedsDisplay];
+}
+
+- (void)setStrokeOffset:(CGPoint)strokeOffset
+{
+    _strokeOffset = strokeOffset;
+    [self setNeedsDisplay];
+}
+
+- (void)setShadowEnabled:(bool)shadowEnabled
+{
+    _shadowEnabled = shadowEnabled;
+    [self setNeedsDisplay];
+}
+
+- (void)setTextWidth:(CGFloat)textWidth
+{
+    _textWidth = textWidth;
+    [self setNeedsDisplay];
+}
+
+- (CGFloat)_effectiveTextWidth
+{
+    return _textWidth > FLT_EPSILON ? _textWidth : CGFLOAT_MAX;
+}
+
+- (CGFloat)_effectiveStrokeWidth
+{
+    if (_strokeColor == nil)
+        return 0.0f;
+    return _strokeWidth > FLT_EPSILON ? _strokeWidth : floor(_font.pointSize / 9.0f);
+}
+
+- (CGSize)textSize
+{
+    if (_font == nil)
+        return CGSizeZero;
+    
+    NSString *text = _text.length != 0 ? _text : @" ";
+    CGSize size = [text sizeWithFont:_font constrainedToSize:CGSizeMake([self _effectiveTextWidth], CGFLOAT_MAX) lineBreakMode:NSLineBreakByWordWrapping];
+    return CGSizeMake(ceil(size.width), ceil(size.height));
+}
+
+- (CGSize)sizeThatFits:(CGSize)__unused size
+{
+    CGSize textSize = [self textSize];
+    CGFloat margin = ceil([self _effectiveStrokeWidth] / 2.0f + MAX(fabs(_strokeOffset.x), fabs(_strokeOffset.y)));
+    return CGSizeMake(textSize.width + margin * 2.0f, textSize.height + margin * 2.0f);
+}
+
+- (void)drawRect:(CGRect)__unused rect
+{
+    if (_text.length == 0 || _font == nil)
+        return;
+    
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGSize bounds = self.bounds.size;
+    CGSize textSize = [self textSize];
+    CGFloat textWidth = MIN([self _effectiveTextWidth], MAX(bounds.width, textSize.width));
+    CGRect textRect = CGRectMake(floor((bounds.width - textWidth) / 2.0f), floor((bounds.height - textSize.height) / 2.0f), textWidth, textSize.height);
+    
+    if (_strokeColor != nil)
+    {
+        CGContextSaveGState(context);
+        CGContextTranslateCTM(context, _strokeOffset.x, _strokeOffset.y);
+        CGContextSetLineJoin(context, kCGLineJoinRound);
+        CGContextSetLineWidth(context, [self _effectiveStrokeWidth]);
+        CGContextSetStrokeColorWithColor(context, _strokeColor.CGColor);
+        CGContextSetTextDrawingMode(context, kCGTextStroke);
+        [_text drawInRect:textRect withFont:_font lineBreakMode:NSLineBreakByWordWrapping alignment:NSTextAlignmentCenter];
+        CGContextRestoreGState(context);
+    }
+    
+    CGContextSaveGState(context);
+    if (_shadowEnabled)
+        CGContextSetShadowWithColor(context, CGSizeMake(0.0f, 4.0f), 4.0f, [UIColor colorWithWhite:0.0f alpha:0.4f].CGColor);
+    CGContextSetTextDrawingMode(context, kCGTextFill);
+    CGContextSetFillColorWithColor(context, (_textColor ?: [UIColor whiteColor]).CGColor);
+    [_text drawInRect:textRect withFont:_font lineBreakMode:NSLineBreakByWordWrapping alignment:NSTextAlignmentCenter];
+    CGContextRestoreGState(context);
+}
+
+@end
+
+#endif

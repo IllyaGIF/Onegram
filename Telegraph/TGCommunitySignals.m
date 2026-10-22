@@ -57,6 +57,15 @@ static TGCommunity *TGCommunityFromChat(TLChat *chat)
 
 @implementation TGCommunitySignals
 
++ (void)reloadForAccountSwitch
+{
+    NSMutableDictionary *cache = TGCommunityCache();
+    @synchronized (cache)
+    {
+        [cache removeAllObjects];
+    }
+}
+
 + (TGCommunity *)cachedCommunityWithId:(int64_t)communityId
 {
     if (communityId == 0)

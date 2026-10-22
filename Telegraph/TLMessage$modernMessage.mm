@@ -82,10 +82,7 @@ static NSString *TGModernReadReactionSummary(NSInputStream *is, id<TLSerializati
         if (reactionSignature == (int32_t)0x1b2286b8)
             reaction = [is readString];
         else if (reactionSignature == (int32_t)0x8935fc73)
-        {
-            [is readInt64];
-            reaction = @"◆";
-        }
+            reaction = [NSString stringWithFormat:@"◆%lld", [is readInt64]];
         else if (reactionSignature == (int32_t)0x523da4eb)
             reaction = @"★";
         else if (reactionSignature != (int32_t)0x79f5d419)
@@ -94,7 +91,7 @@ static NSString *TGModernReadReactionSummary(NSInputStream *is, id<TLSerializati
         int32_t reactionCount = [is readInt32];
         if (chosen && reaction.length != 0 && chosenReaction != NULL)
             *chosenReaction = reaction;
-        if (reaction.length != 0 && reactionCount > 0 && parts.count < 3)
+        if (reaction.length != 0 && reactionCount > 0)
             [parts addObject:[NSString stringWithFormat:@"%@ %d", reaction, reactionCount]];
     }
 

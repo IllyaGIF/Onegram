@@ -12,6 +12,8 @@
 
 @end
 
+static const CGFloat TGCollectionMultilineInputRemainingCountWidth = 30.0f;
+
 @implementation TGCollectionMultilineInputItemView
 
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -23,7 +25,8 @@
         _textView.font = [TGCollectionMultilineInputItemView font];
         _textView.delegate = self;
         _textView.scrollEnabled = false;
-        _textView.contentInset = [TGCollectionMultilineInputItemView insets];
+        UIEdgeInsets insets = [TGCollectionMultilineInputItemView insets];
+        _textView.contentInset = UIEdgeInsetsMake(insets.top, 0.0f, insets.bottom, 0.0f);
         [self.contentView addSubview:_textView];
         
         _placeholderLabel = [[UILabel alloc] init];
@@ -61,9 +64,23 @@
     return UIEdgeInsetsMake(13.0f, 11.0f, 13.0f, 11.0f);
 }
 
-+ (CGFloat)heightForText:(NSString *)text width:(CGFloat)width safeAreaInset:(UIEdgeInsets)safeAreaInset {
++ (CGFloat)textHorizontalPadding {
+    return iosMajorVersion() < 7 ? 8.0f : 5.0f;
+}
+
++ (CGRect)textViewFrameForBounds:(CGRect)bounds insets:(UIEdgeInsets)additionalInsets safeAreaInset:(UIEdgeInsets)safeAreaInset showRemainingCount:(bool)showRemainingCount {
     UIEdgeInsets insets = [self insets];
-    return CGCeil([text.length == 0 ? @" " : text sizeWithFont:[self font] constrainedToSize:CGSizeMake(width - insets.left - insets.right - 10.0f - safeAreaInset.left - safeAreaInset.right, CGFLOAT_MAX) lineBreakMode:NSLineBreakByWordWrapping].height + insets.top + insets.bottom);
+    CGFloat left = insets.left + additionalInsets.left + safeAreaInset.left;
+    CGFloat right = insets.right + additionalInsets.right + safeAreaInset.right;
+    if (showRemainingCount)
+        right += TGCollectionMultilineInputRemainingCountWidth;
+    return CGRectMake(bounds.origin.x + left, bounds.origin.y, MAX(0.0f, bounds.size.width - left - right), bounds.size.height);
+}
+
++ (CGFloat)heightForText:(NSString *)text textViewWidth:(CGFloat)textViewWidth {
+    UIEdgeInsets insets = [self insets];
+    CGFloat textWidth = MAX(1.0f, textViewWidth - [self textHorizontalPadding] * 2.0f);
+    return CGCeil([text.length == 0 ? @" " : text sizeWithFont:[self font] constrainedToSize:CGSizeMake(textWidth, CGFLOAT_MAX) lineBreakMode:NSLineBreakByWordWrapping].height + insets.top + insets.bottom);
 }
 
 - (void)setPlaceholder:(NSString *)placeholder {
@@ -161,19 +178,11 @@
     [super layoutSubviews];
     
     UIEdgeInsets insets = [TGCollectionMultilineInputItemView insets];
-    UIEdgeInsets additionalInsets = self.insets;
-    additionalInsets.left += self.safeAreaInset.left;
-    additionalInsets.right += self.safeAreaInset.right;
+    CGRect textViewFrame = [TGCollectionMultilineInputItemView textViewFrameForBounds:self.bounds insets:self.insets safeAreaInset:self.safeAreaInset showRemainingCount:!_countLabel.hidden];
     
-    _placeholderLabel.frame = CGRectOffset(_placeholderLabel.bounds, insets.left + additionalInsets.left + 5.0f, insets.top + additionalInsets.top + TGRetinaPixel);
-    CGRect frame = self.bounds;
-    if (!_countLabel.hidden)
-        frame.size.width -= 30.0f;
-    frame.size.width -= additionalInsets.left + additionalInsets.right;
-    frame.origin.x += additionalInsets.left;
-    
-    _textView.frame = frame;
-    _countLabel.frame = CGRectMake(self.bounds.size.width - insets.right - 30.0f - 4.0f - self.safeAreaInset.right, insets.top + TGRetinaPixel, 30.0f, _countLabel.frame.size.height);
+    _textView.frame = textViewFrame;
+    _placeholderLabel.frame = CGRectOffset(_placeholderLabel.bounds, textViewFrame.origin.x + [TGCollectionMultilineInputItemView textHorizontalPadding], insets.top + self.insets.top + TGRetinaPixel);
+    _countLabel.frame = CGRectMake(self.bounds.size.width - insets.right - TGCollectionMultilineInputRemainingCountWidth - 4.0f - self.safeAreaInset.right, insets.top + TGRetinaPixel, TGCollectionMultilineInputRemainingCountWidth, _countLabel.frame.size.height);
 }
 
 - (BOOL)becomeFirstResponder {

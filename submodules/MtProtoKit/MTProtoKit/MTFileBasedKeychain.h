@@ -22,6 +22,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)unencryptedKeychainWithName:(NSString * )name documentsPath:(NSString *)documentsPath;
 + (instancetype)keychainWithName:(NSString * )name documentsPath:(NSString * )documentsPath;
++ (void)invalidateAllKeychains;
 
 - (NSDictionary *)contentsForGroup:(NSString *)group;
 

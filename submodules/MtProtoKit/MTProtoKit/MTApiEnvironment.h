@@ -50,6 +50,7 @@
 @property (nonatomic, copy) void (^passwordInputHandler)();
 
 - (MTApiEnvironment *)withUpdatedLangPackCode:(NSString *)langPackCode;
+- (MTApiEnvironment *)withUpdatedSystemLangCode:(NSString *)systemLangCode;
 - (MTApiEnvironment *)withUpdatedSocksProxySettings:(MTSocksProxySettings *)socksProxySettings;
 - (MTApiEnvironment *)withUpdatedOnegramWebSocketEnabled:(bool)onegramWebSocketEnabled;
 - (MTApiEnvironment *)withUpdatedPreferHttpTransport:(bool)preferHttpTransport;

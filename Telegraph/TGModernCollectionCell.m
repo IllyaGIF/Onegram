@@ -44,12 +44,12 @@
     self = [super initWithFrame:frame];
     if (self != nil)
     {
-        [self contentViewForBinding].transform = CGAffineTransformMakeRotation((float)M_PI);
         self.clipsToBounds = true;
         
-        _contentViewForBinding = [[UIView alloc] initWithFrame:(CGRect){CGPointZero, frame.size}];
-        _contentViewForBinding.transform = CGAffineTransformMakeRotation((float)M_PI);
+        _contentViewForBinding = [[UIView alloc] initWithFrame:(CGRect){CGPointZero, self.bounds.size}];
+        _contentViewForBinding.transform = CGAffineTransformMakeScale(-1.0f, -1.0f);
         [self addSubview:_contentViewForBinding];
+        [self _layoutContentViewForBinding];
     }
     return self;
 }
@@ -73,17 +73,30 @@
     }
 }
 
+- (void)_layoutContentViewForBinding
+{
+    if (_contentViewForBinding == nil)
+        return;
+    CGRect bounds = self.bounds;
+    CGRect contentBounds = (CGRect){CGPointZero, bounds.size};
+    if (!CGRectEqualToRect(_contentViewForBinding.bounds, contentBounds))
+        _contentViewForBinding.bounds = contentBounds;
+    CGPoint center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+    if (!CGPointEqualToPoint(_contentViewForBinding.center, center))
+        _contentViewForBinding.center = center;
+}
+
 - (void)setFrame:(CGRect)frame
 {
     [super setFrame:frame];
-    _contentViewForBinding.frame = (CGRect){CGPointZero, frame.size};
+    [self _layoutContentViewForBinding];
 }
 
 - (void)setBounds:(CGRect)bounds
 {
     [super setBounds:bounds];
     
-    _contentViewForBinding.frame = (CGRect){CGPointZero, bounds.size};
+    [self _layoutContentViewForBinding];
 }
 
 - (UIView *)contentViewForBinding

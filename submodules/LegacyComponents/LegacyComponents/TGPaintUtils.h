@@ -8,6 +8,8 @@ void TGPaintHasGLError_(const char *file, int line);
 
 void TGSetupColorUniform(GLint location, UIColor *color);
 
+bool TGPaintVertexArrayObjectsSupported(void);
+
 UIImage *TGPaintCombineImages(UIImage *background, UIImage *foreground, bool opaque);
 UIImage *TGPaintCombineCroppedImages(UIImage *background, UIImage *foreground, bool opaque, CGSize originalSize, CGRect cropRect, UIImageOrientation cropOrientation, CGFloat rotation, bool mirrored);
 
@@ -71,42 +73,4 @@ static inline CGFloat TGPaintSineCurve(CGFloat input)
     result /= 2.0f;
     
     return result;
-}
-
-typedef void(^dispatch_cancelable_block_t)(BOOL cancel);
-
-static inline dispatch_cancelable_block_t dispatch_after_delay(NSTimeInterval delay, dispatch_queue_t queue, dispatch_block_t block)
-{
-    if (block == nil)
-        return nil;
-    
-    __block dispatch_cancelable_block_t cancelableBlock = nil;
-    __block dispatch_block_t originalBlock = [block copy];
-    
-    dispatch_cancelable_block_t delayBlock = ^(BOOL cancel)
-    {
-        if (!cancel && originalBlock)
-            dispatch_async(queue, originalBlock);
-        
-        originalBlock = nil;
-        cancelableBlock = nil;
-    };
-    
-    cancelableBlock = [delayBlock copy];
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delay * NSEC_PER_SEC), queue, ^
-    {
-        if (cancelableBlock)
-            cancelableBlock(false);
-    });
-    
-    return cancelableBlock;
-}
-
-static inline void cancel_block(dispatch_cancelable_block_t block)
-{
-    if (block == nil)
-        return;
-    
-    block(true);
 }

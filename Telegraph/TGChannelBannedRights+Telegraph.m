@@ -6,8 +6,8 @@
     return [self initWithFlags:tlRights.flags timeout:tlRights.until_date];
 }
 
-- (TLChannelBannedRights *)tlRights {
-    TLChannelBannedRights$channelBannedRights *rights = [[TLChannelBannedRights$channelBannedRights alloc] init];
+- (TLChatBannedRights *)tlRights {
+    TLChatBannedRights$chatBannedRights *rights = [[TLChatBannedRights$chatBannedRights alloc] init];
     rights.flags = [self tlFlags];
     rights.until_date = self.timeout;
     return rights;

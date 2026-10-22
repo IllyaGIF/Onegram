@@ -5,6 +5,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGStaticBackdropAreaData.h"
 
 #import "TGPresentation.h"
+#import "TGMessageViewsView.h"
 
 static const float luminanceThreshold = 0.8f;
 
@@ -173,24 +174,11 @@ static const float luminanceThreshold = 0.8f;
     }
 }
 
-+ (NSString *)stringForCount:(int32_t)count {
-    if (count < 0)
-        count = 0;
-    
-    if (count < 1000) {
-        return [[NSString alloc] initWithFormat:@"%d", (int)count];
-    } else if (count < 1000 * 1000) {
-        return [[NSString alloc] initWithFormat:@"%dk", (int)count / 1000];
-    } else {
-        return [[NSString alloc] initWithFormat:@"%dm", (int)count / (1000 * 1000)];
-    }
-}
-
 - (void)setTimestampString:(NSString *)timestampString signatureString:(NSString *)signatureString displayCheckmarks:(bool)displayCheckmarks checkmarkValue:(int)checkmarkValue displayViews:(bool)displayViews viewsValue:(int)viewsValue animated:(bool)animated
 {
     NSString *viewsString = nil;
     if (displayViews) {
-        viewsString = [TGMessageImageViewTimestampView stringForCount:viewsValue];
+        viewsString = [TGMessageViewsView stringForCount:viewsValue];
     }
     
     if (!TGStringCompare(_viewsString, viewsString)) {
@@ -464,7 +452,7 @@ static const float luminanceThreshold = 0.8f;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        font = TGItalicSystemFontOfSize(11.0f);
+        font = TGSystemFontOfSize(11.0f);
     });
     
     return font;

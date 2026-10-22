@@ -131,10 +131,10 @@ static NSString *TGLocalizationBrandTitle(void) {
 }
 
 static NSString *TGLocalizationBrandedValue(NSString *value, NSString *brandTitle) {
-    if (brandTitle == nil || ![value isKindOfClass:[NSString class]] || [value rangeOfString:@"Telegram"].location == NSNotFound) {
+    if (brandTitle == nil || ![value isKindOfClass:[NSString class]] || [value rangeOfString:@"Telegram" options:NSLiteralSearch].location == NSNotFound) {
         return value;
     }
-    return [value stringByReplacingOccurrencesOfString:@"Telegram" withString:brandTitle];
+    return [value stringByReplacingOccurrencesOfString:@"Telegram" withString:brandTitle options:NSLiteralSearch range:NSMakeRange(0, value.length)];
 }
 
 static NSDictionary *TGLocalizationBrandedDictionary(NSDictionary *dict, NSString *brandTitle) {
@@ -232,6 +232,10 @@ static NSDictionary *TGLocalizationBrandedDictionary(NSDictionary *dict, NSStrin
     return [[TGLocalization alloc] initWithVersion:_version code:_code sourceDict:_dict brandTitle:_brandTitle isActive:isActive];
 }
 
+- (TGLocalization *)withUpdatedVersion:(int32_t)version {
+    return [[TGLocalization alloc] initWithVersion:version code:_code sourceDict:_dict brandTitle:_brandTitle isActive:_isActive];
+}
+
 - (NSLocale *)locale
 {
     NSString *suffix = @"";
@@ -258,7 +262,7 @@ static NSDictionary *TGLocalizationBrandedDictionary(NSDictionary *dict, NSStrin
     NSString *value = _dict[key];
 
     if (value != nil && value.length != 0) {
-        if (_brandTitle == nil || [value rangeOfString:@"Telegram"].location == NSNotFound) {
+        if (_brandTitle == nil || [value rangeOfString:@"Telegram" options:NSLiteralSearch].location == NSNotFound) {
             return value;
         }
         pthread_mutex_lock(&_brandedValuesLock);

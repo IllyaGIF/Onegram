@@ -27,7 +27,7 @@
     TGPaintPanGestureRecognizer *_gestureRecognizer;
     bool _beganDrawing;
     
-    __unsafe_unretained dispatch_cancelable_block_t _redrawBlock;
+    bool _redrawScheduled;
 }
 @end
 
@@ -248,18 +248,19 @@
 
 - (void)_scheduleRedraw
 {
-    if (_redrawBlock != nil)
-    {
-        cancel_block(_redrawBlock);
-        _redrawBlock = nil;
-    }
+    if (_redrawScheduled)
+        return;
     
+    _redrawScheduled = true;
     __weak TGPaintCanvas *weakSelf = self;
-    _redrawBlock = dispatch_after_delay(0.0, [_painting _queue], ^
+    dispatch_async([_painting _queue], ^
     {
         __strong TGPaintCanvas *strongSelf = weakSelf;
-        if (strongSelf != nil)
-            [strongSelf redrawIfNeeded];
+        if (strongSelf == nil)
+            return;
+        
+        strongSelf->_redrawScheduled = false;
+        [strongSelf redrawIfNeeded];
     });
 }
 

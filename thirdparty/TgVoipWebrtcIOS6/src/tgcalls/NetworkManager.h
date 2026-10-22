@@ -56,6 +56,8 @@ namespace tgcalls {
 
 struct Message;
 class Ios6DtlsTransport;
+class Ios6TurnSocket;
+class Ios6RelayConnection;
 
 
 class NetworkManager :
@@ -147,6 +149,13 @@ private:
     void ios56MaybeStartDtls();
     void ios56ScheduleDtlsTimer();
     void ios56ApplyDtlsState();
+    bool ios56AllocateRelay();
+    void ios56AttemptRelayAllocation();
+    void ios56RelayDidBecomeReady();
+    void ios56RunIceProbe();
+    void ios56ProcessRemoteCandidates();
+    void ios56ScheduleConnectionTimeout();
+    bool ios56IsConnected() const;
 
 #endif
 
@@ -199,6 +208,8 @@ private:
 #ifdef TGCALLS_IOS6_AUDIO_ONLY
 
     int _ios6TurnFd = -1;
+    std::shared_ptr<Ios6TurnSocket> _ios6TurnSocket;
+    std::shared_ptr<Ios6RelayConnection> _ios6Relay;
 
     RtcServer _ios6TurnServer;
 
@@ -228,6 +239,11 @@ private:
         _ios6DtlsTransport;
 
     bool _ios6DtlsStateAnnounced = false;
+
+    absl::optional<CandidatesListMessage> _ios6RemoteCandidates;
+    double _ios6ConnectStartMs = 0.0;
+    int _ios6RelayRetryDelayMs = 1000;
+    bool _ios6ConnectionFailed = false;
 
 #endif
 

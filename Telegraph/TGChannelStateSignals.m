@@ -937,6 +937,15 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     [[self channelStates] swap:[[NSMutableDictionary alloc] init]];
 }
 
++ (void)reloadForAccountSwitch {
+    [self clearChannelStates];
+    @synchronized(TGIOS6InvalidChannelDifferenceUntil())
+    {
+        [TGIOS6InvalidChannelDifferenceUntil() removeAllObjects];
+    }
+    [TGIOS6SeededModernChannelTails() swap:[[NSMutableSet alloc] init]];
+}
+
 + (void)resumeChannelStates {
     NSArray *states = [[self channelStates] with:^id(NSMutableDictionary *dict) {
         return [dict.allValues copy];

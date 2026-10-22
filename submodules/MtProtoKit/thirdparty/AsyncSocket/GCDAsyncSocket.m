@@ -12,6 +12,9 @@
 #import "GCDAsyncSocket.h"
 
 #import "MTLogging.h"
+#if defined(ONEGRAM_DIAGNOSTICS)
+#import "../../../../OnegramPlatform/OGPlatformDispatch.h"
+#endif
 
 #include <stdarg.h>
 #include <string.h>
@@ -183,6 +186,7 @@ NSString *const GCDAsyncSocketUseOpenSSL = @"GCDAsyncSocketUseOpenSSL";
 NSString *const GCDAsyncSocketOpenSSLPeerName = @"GCDAsyncSocketOpenSSLPeerName";
 NSString *const GCDAsyncSocketOpenSSLTrustedCertificates = @"GCDAsyncSocketOpenSSLTrustedCertificates";
 NSString *const GCDAsyncSocketOpenSSLVerificationTime = @"GCDAsyncSocketOpenSSLVerificationTime";
+NSString *const GCDAsyncSocketOpenSSLSplitClientHello = @"GCDAsyncSocketOpenSSLSplitClientHello";
 #endif
 
 #if SECURE_TRANSPORT_MAYBE_AVAILABLE
@@ -331,6 +335,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
              fromDescription:(NSString *)interfaceDescription
                         port:(uint16_t)port;
 - (void)setupReadAndWriteSourcesForNewlyConnectedSocket:(int)socketFD;
+- (void)deferSpuriousReadEvent;
 - (void)suspendReadSource;
 - (void)resumeReadSource;
 - (void)suspendWriteSource;
@@ -343,6 +348,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 #if TARGET_OS_IPHONE
 - (BOOL)usingOpenSSLForTLS;
 - (void)openssl_startTLS;
+- (void)openSSLRecordVerifyFailure:(NSString *)description;
 - (void)openssl_continueSSLHandshake;
 - (NSError *)opensslErrorWithCode:(int)code;
 #endif
@@ -1130,6 +1136,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 		else
 		{
 			socketQueue = dispatch_queue_create([GCDAsyncSocketQueueName UTF8String], NULL);
+			dispatch_set_target_queue(socketQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0));
 		}
 		
 		readQueue = [[NSMutableArray alloc] initWithCapacity:5];
@@ -3806,6 +3813,30 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 	if (interfaceAddr6Ptr) *interfaceAddr6Ptr = addr6;
 }
 
+static unsigned long GCDAsyncSocketConfirmedReadableBytes(int socketFD, BOOL *endOfStream)
+{
+	int pendingBytes = 0;
+	if (ioctl(socketFD, FIONREAD, &pendingBytes) == 0 && pendingBytes > 0)
+	{
+		return (unsigned long)pendingBytes;
+	}
+
+	uint8_t probe = 0;
+	ssize_t result = recv(socketFD, &probe, 1, MSG_PEEK);
+	if (result > 0)
+	{
+		return 1;
+	}
+	if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+		return 0;
+
+#if defined(ONEGRAM_DIAGNOSTICS)
+	OGPlatformDiagnosticLog(@"SOCKREAD eof fd=%d result=%ld errno=%d", socketFD, (long)result, result < 0 ? errno : 0);
+#endif
+	*endOfStream = YES;
+	return 0;
+}
+
 - (void)setupReadAndWriteSourcesForNewlyConnectedSocket:(int)socketFD
 {
 	readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, socketFD, 0, socketQueue);
@@ -3819,6 +3850,18 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 		
 		socketFDBytesAvailable = dispatch_source_get_data(readSource);
 		LogVerbose(@"socketFDBytesAvailable: %lu", socketFDBytesAvailable);
+		
+		if (socketFDBytesAvailable == 0)
+		{
+			BOOL endOfStream = NO;
+			socketFDBytesAvailable = GCDAsyncSocketConfirmedReadableBytes(socketFD, &endOfStream);
+			if (socketFDBytesAvailable == 0 && !endOfStream)
+			{
+				[self deferSpuriousReadEvent];
+				return;
+			}
+		}
+		readSourceSpuriousDelay = 0;
 		
 		if (socketFDBytesAvailable > 0)
 			[self doReadData];
@@ -3927,8 +3970,20 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 	return YES;
 }
 
+- (void)deferSpuriousReadEvent
+{
+	[self suspendReadSource];
+	readSourceSpuriousDelay = readSourceSpuriousDelay <= 0 ? 0.005 : MIN(readSourceSpuriousDelay * 2, 0.1);
+	NSUInteger generation = readSourceSpuriousGeneration;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(readSourceSpuriousDelay * NSEC_PER_SEC)), socketQueue, ^{ @autoreleasepool {
+		if (generation == readSourceSpuriousGeneration)
+			[self resumeReadSource];
+	}});
+}
+
 - (void)suspendReadSource
 {
+	readSourceSpuriousGeneration++;
 	if (!(flags & kReadSourceSuspended))
 	{
 		LogVerbose(@"dispatch_suspend(readSource)");
@@ -3940,6 +3995,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 
 - (void)resumeReadSource
 {
+	readSourceSpuriousGeneration++;
 	if (flags & kReadSourceSuspended)
 	{
 		LogVerbose(@"dispatch_resume(readSource)");
@@ -4684,6 +4740,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 	
 	BOOL socketEOF = (flags & kSocketHasReadEOF) ? YES : NO;  // Nothing more to via socket (end of file)
 	BOOL waiting   = !done && !error && !socketEOF && !hasBytesAvailable; // Ran out of data, waiting for more
+	BOOL openSSLReadMayContinue = NO;
 	
 	if (!done && !error && !socketEOF && !waiting && hasBytesAvailable)
 	{
@@ -4728,6 +4785,10 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 				// Read type #1 or #2
 				
 				bytesToRead = [currentRead readLengthForNonTermWithHint:estimatedBytesAvailable];
+#if TARGET_OS_IPHONE
+				if ([self usingOpenSSLForTLS] && currentRead->readLength > currentRead->bytesDone)
+					bytesToRead = currentRead->readLength - currentRead->bytesDone;
+#endif
 			}
 		}
 		
@@ -4835,6 +4896,8 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 						}
 						break;
 					}
+					if (bytesRead >= bytesToRead)
+						openSSLReadMayContinue = YES;
 				}
 				else
 #endif
@@ -5175,6 +5238,14 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 			}
 		}
 	}
+#if TARGET_OS_IPHONE
+	else if (!done && openSSLReadMayContinue)
+	{
+		dispatch_async(socketQueue, ^{ @autoreleasepool {
+			[self doReadData];
+		}});
+	}
+#endif
 	
 	// Do not add any code here without first adding return statements in the error cases above.
 }
@@ -6264,12 +6335,273 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 
 #if TARGET_OS_IPHONE
 
+typedef enum
+{
+    GCDAsyncSocketOpenSSLHelloSplitIdle = 0,
+    GCDAsyncSocketOpenSSLHelloSplitSending = 1,
+    GCDAsyncSocketOpenSSLHelloSplitDone = 2
+} GCDAsyncSocketOpenSSLHelloSplitStage;
+
+typedef struct
+{
+    GCDAsyncSocketOpenSSLHelloSplitStage stage;
+    unsigned char *pending;
+    int pendingLength;
+    int pendingOffset;
+    int firstSegmentLength;
+    int consumedLength;
+} GCDAsyncSocketOpenSSLHelloSplitState;
+
+static int GCDAsyncSocketOpenSSLServerNameSplitOffset(const unsigned char *payload, int length)
+{
+    if (length < 4 || payload[0] != 0x01)
+        return 0;
+    int end = 4 + ((payload[1] << 16) | (payload[2] << 8) | payload[3]);
+    if (end > length)
+        return 0;
+    int position = 4 + 2 + 32;
+    if (position + 1 > end)
+        return 0;
+    position += 1 + payload[position];
+    if (position + 2 > end)
+        return 0;
+    position += 2 + ((payload[position] << 8) | payload[position + 1]);
+    if (position + 1 > end)
+        return 0;
+    position += 1 + payload[position];
+    if (position + 2 > end)
+        return 0;
+    int extensionsEnd = position + 2 + ((payload[position] << 8) | payload[position + 1]);
+    position += 2;
+    if (extensionsEnd > end)
+        return 0;
+    while (position + 4 <= extensionsEnd)
+    {
+        int type = (payload[position] << 8) | payload[position + 1];
+        int extensionLength = (payload[position + 2] << 8) | payload[position + 3];
+        position += 4;
+        if (position + extensionLength > extensionsEnd)
+            return 0;
+        if (type == 0)
+        {
+            if (extensionLength < 5 || payload[position + 2] != 0)
+                return 0;
+            int nameLength = (payload[position + 3] << 8) | payload[position + 4];
+            if (nameLength < 2 || 5 + nameLength > extensionLength)
+                return 0;
+            return position + 5 + nameLength / 2;
+        }
+        position += extensionLength;
+    }
+    return 0;
+}
+
+static void GCDAsyncSocketOpenSSLHelloSplitPrepare(GCDAsyncSocketOpenSSLHelloSplitState *state, const unsigned char *bytes, int length)
+{
+    state->stage = GCDAsyncSocketOpenSSLHelloSplitDone;
+    if (length < 5 || bytes[0] != 0x16)
+        return;
+    int recordLength = (bytes[3] << 8) | bytes[4];
+    if (5 + recordLength > length)
+        return;
+    int split = GCDAsyncSocketOpenSSLServerNameSplitOffset(bytes + 5, recordLength);
+    if (split <= 0 || split >= recordLength)
+        return;
+    unsigned char *pending = (unsigned char *)OPENSSL_malloc(recordLength + 10);
+    if (pending == NULL)
+        return;
+    int tail = recordLength - split;
+    pending[0] = 0x16;
+    pending[1] = bytes[1];
+    pending[2] = bytes[2];
+    pending[3] = (unsigned char)(split >> 8);
+    pending[4] = (unsigned char)(split & 0xff);
+    memcpy(pending + 5, bytes + 5, (size_t)split);
+    pending[5 + split] = 0x16;
+    pending[6 + split] = bytes[1];
+    pending[7 + split] = bytes[2];
+    pending[8 + split] = (unsigned char)(tail >> 8);
+    pending[9 + split] = (unsigned char)(tail & 0xff);
+    memcpy(pending + 10 + split, bytes + 5 + split, (size_t)tail);
+    state->pending = pending;
+    state->pendingLength = recordLength + 10;
+    state->pendingOffset = 0;
+    state->firstSegmentLength = 5 + split;
+    state->consumedLength = 5 + recordLength;
+    state->stage = GCDAsyncSocketOpenSSLHelloSplitSending;
+}
+
+static int GCDAsyncSocketOpenSSLHelloSplitWrite(BIO *bio, const char *input, int inputLength)
+{
+    GCDAsyncSocketOpenSSLHelloSplitState *state = (GCDAsyncSocketOpenSSLHelloSplitState *)bio->ptr;
+    if (input == NULL || inputLength <= 0 || bio->next_bio == NULL || state == NULL)
+        return 0;
+
+    BIO_clear_retry_flags(bio);
+    if (state->stage == GCDAsyncSocketOpenSSLHelloSplitIdle)
+        GCDAsyncSocketOpenSSLHelloSplitPrepare(state, (const unsigned char *)input, inputLength);
+
+    if (state->stage == GCDAsyncSocketOpenSSLHelloSplitSending)
+    {
+        while (state->pendingOffset < state->pendingLength)
+        {
+            int limit = state->pendingOffset < state->firstSegmentLength ? state->firstSegmentLength : state->pendingLength;
+            int written = BIO_write(bio->next_bio, state->pending + state->pendingOffset, limit - state->pendingOffset);
+            if (written <= 0)
+            {
+                BIO_copy_next_retry(bio);
+                return written;
+            }
+            state->pendingOffset += written;
+        }
+        int consumed = state->consumedLength;
+        OPENSSL_free(state->pending);
+        state->pending = NULL;
+        state->stage = GCDAsyncSocketOpenSSLHelloSplitDone;
+        return consumed;
+    }
+
+    int written = BIO_write(bio->next_bio, input, inputLength);
+    BIO_copy_next_retry(bio);
+    return written;
+}
+
+static long GCDAsyncSocketOpenSSLHelloSplitControl(BIO *bio, int command, long number, void *pointer)
+{
+    GCDAsyncSocketOpenSSLHelloSplitState *state = (GCDAsyncSocketOpenSSLHelloSplitState *)bio->ptr;
+    if (bio->next_bio == NULL)
+        return 0;
+    switch (command)
+    {
+        case BIO_CTRL_DUP:
+            return 0;
+        case BIO_CTRL_WPENDING:
+        {
+            long pending = state != NULL && state->stage == GCDAsyncSocketOpenSSLHelloSplitSending ? (long)(state->pendingLength - state->pendingOffset) : 0;
+            return pending + BIO_ctrl(bio->next_bio, command, number, pointer);
+        }
+        case BIO_C_DO_STATE_MACHINE:
+        {
+            BIO_clear_retry_flags(bio);
+            long result = BIO_ctrl(bio->next_bio, command, number, pointer);
+            BIO_copy_next_retry(bio);
+            return result;
+        }
+        default:
+            return BIO_ctrl(bio->next_bio, command, number, pointer);
+    }
+}
+
+static int GCDAsyncSocketOpenSSLHelloSplitCreate(BIO *bio)
+{
+    GCDAsyncSocketOpenSSLHelloSplitState *state = (GCDAsyncSocketOpenSSLHelloSplitState *)OPENSSL_malloc(sizeof(GCDAsyncSocketOpenSSLHelloSplitState));
+    if (state == NULL)
+        return 0;
+    memset(state, 0, sizeof(GCDAsyncSocketOpenSSLHelloSplitState));
+    bio->ptr = state;
+    bio->init = 1;
+    bio->flags = 0;
+    return 1;
+}
+
+static int GCDAsyncSocketOpenSSLHelloSplitDestroy(BIO *bio)
+{
+    if (bio == NULL)
+        return 0;
+    GCDAsyncSocketOpenSSLHelloSplitState *state = (GCDAsyncSocketOpenSSLHelloSplitState *)bio->ptr;
+    if (state != NULL)
+    {
+        if (state->pending != NULL)
+            OPENSSL_free(state->pending);
+        OPENSSL_free(state);
+    }
+    bio->ptr = NULL;
+    bio->init = 0;
+    return 1;
+}
+
+static BIO_METHOD GCDAsyncSocketOpenSSLHelloSplitMethod = {
+    (0x60 | BIO_TYPE_FILTER),
+    "client hello split",
+    GCDAsyncSocketOpenSSLHelloSplitWrite,
+    NULL,
+    NULL,
+    NULL,
+    GCDAsyncSocketOpenSSLHelloSplitControl,
+    GCDAsyncSocketOpenSSLHelloSplitCreate,
+    GCDAsyncSocketOpenSSLHelloSplitDestroy,
+    NULL
+};
+
+static BOOL GCDAsyncSocketOpenSSLAttachSocket(SSL *connection, int socketFD, BOOL splitClientHello)
+{
+    if (!splitClientHello)
+        return SSL_set_fd(connection, socketFD) == 1;
+
+    BIO *readBio = BIO_new_socket(socketFD, BIO_NOCLOSE);
+    BIO *socketWriteBio = BIO_new_socket(socketFD, BIO_NOCLOSE);
+    BIO *splitBio = BIO_new(&GCDAsyncSocketOpenSSLHelloSplitMethod);
+    if (readBio == NULL || socketWriteBio == NULL || splitBio == NULL)
+    {
+        if (readBio != NULL)
+            BIO_free(readBio);
+        if (socketWriteBio != NULL)
+            BIO_free(socketWriteBio);
+        if (splitBio != NULL)
+            BIO_free(splitBio);
+        return NO;
+    }
+    SSL_set_bio(connection, readBio, BIO_push(splitBio, socketWriteBio));
+    return YES;
+}
+
+static NSString *GCDAsyncSocketOpenSSLCertificateDescription(X509 *certificate)
+{
+    char subject[256];
+    char issuer[256];
+    X509_NAME_oneline(X509_get_subject_name(certificate), subject, (int)sizeof(subject));
+    X509_NAME_oneline(X509_get_issuer_name(certificate), issuer, (int)sizeof(issuer));
+    return [NSString stringWithFormat:@"s=%s i=%s", subject, issuer];
+}
+
+static int GCDAsyncSocketOpenSSLVerifyCallback(int preverifyOk, X509_STORE_CTX *storeContext)
+{
+    if (preverifyOk)
+        return preverifyOk;
+
+    SSL *connection = (SSL *)X509_STORE_CTX_get_ex_data(storeContext, SSL_get_ex_data_X509_STORE_CTX_idx());
+    GCDAsyncSocket *socket = connection == NULL ? nil : (__bridge GCDAsyncSocket *)SSL_get_app_data(connection);
+    if (socket == nil)
+        return preverifyOk;
+
+    X509 *current = X509_STORE_CTX_get_current_cert(storeContext);
+    NSMutableString *description = [NSMutableString stringWithFormat:@"depth %d: %s", X509_STORE_CTX_get_error_depth(storeContext), X509_verify_cert_error_string(X509_STORE_CTX_get_error(storeContext))];
+    if (current != NULL)
+        [description appendFormat:@" at %@", GCDAsyncSocketOpenSSLCertificateDescription(current)];
+    STACK_OF(X509) *built = X509_STORE_CTX_get_chain(storeContext);
+    int builtCount = built == NULL ? 0 : sk_X509_num(built);
+    for (int index = 0; index < builtCount; index++)
+        [description appendFormat:@"; chain[%d] %@", index, GCDAsyncSocketOpenSSLCertificateDescription(sk_X509_value(built, index))];
+    STACK_OF(X509) *untrusted = storeContext->untrusted;
+    int untrustedCount = untrusted == NULL ? 0 : sk_X509_num(untrusted);
+    for (int index = 0; index < untrustedCount; index++)
+        [description appendFormat:@"; sent[%d] %@", index, GCDAsyncSocketOpenSSLCertificateDescription(sk_X509_value(untrusted, index))];
+    [socket openSSLRecordVerifyFailure:description];
+    return preverifyOk;
+}
+
+- (void)openSSLRecordVerifyFailure:(NSString *)description
+{
+    if (openSSLVerifyFailure == nil)
+        openSSLVerifyFailure = description;
+}
+
 - (NSError *)opensslErrorWithCode:(int)code
 {
     SSL *connection = (SSL *)openSSLConnection;
     long verifyResult = connection == NULL ? X509_V_OK : SSL_get_verify_result(connection);
     if (verifyResult != X509_V_OK)
-        return [self otherError:[NSString stringWithFormat:@"OpenSSL certificate verification failed: %s", X509_verify_cert_error_string(verifyResult)]];
+        return [self otherError:[NSString stringWithFormat:@"OpenSSL certificate verification failed: %@", openSSLVerifyFailure ?: [NSString stringWithUTF8String:X509_verify_cert_error_string(verifyResult)]]];
 
     unsigned long errorCode = ERR_get_error();
     if (errorCode != 0)
@@ -6299,6 +6631,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
 #endif
     NSData *trustedCertificates = [tlsSettings objectForKey:GCDAsyncSocketOpenSSLTrustedCertificates];
     NSNumber *verificationTime = [tlsSettings objectForKey:GCDAsyncSocketOpenSSLVerificationTime];
+    NSNumber *splitClientHello = [tlsSettings objectForKey:GCDAsyncSocketOpenSSLSplitClientHello];
     if (peerName.length == 0 || trustedCertificates.length == 0)
     {
         [self closeWithError:[self badConfigError:@"OpenSSL TLS requires a peer name and trusted certificates"]];
@@ -6315,7 +6648,7 @@ void GCDAsyncSocketInitializeOpenSSL(void)
         return;
     }
 
-    SSL_CTX_set_verify(context, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_verify(context, SSL_VERIFY_PEER, GCDAsyncSocketOpenSSLVerifyCallback);
     SSL_CTX_set_verify_depth(context, 8);
     SSL_CTX_set_options(context, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
     if (SSL_CTX_set_cipher_list(context, "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:AES128-GCM-SHA256:AES256-GCM-SHA384") != 1)
@@ -6370,10 +6703,11 @@ void GCDAsyncSocketInitializeOpenSSL(void)
     int socketFD = (socket4FD == SOCKET_NULL) ? socket6FD : socket4FD;
     const char *peer = [peerName UTF8String];
     X509_VERIFY_PARAM *verifyParameters = SSL_get0_param(connection);
+    X509_VERIFY_PARAM_set_flags(verifyParameters, X509_V_FLAG_TRUSTED_FIRST);
     X509_VERIFY_PARAM_set_hostflags(verifyParameters, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
     if ([verificationTime isKindOfClass:[NSNumber class]])
         X509_VERIFY_PARAM_set_time(verifyParameters, (time_t)[verificationTime doubleValue]);
-    if (socketFD == SOCKET_NULL || peer == NULL || SSL_set_fd(connection, socketFD) != 1 || SSL_set_tlsext_host_name(connection, peer) != 1 || X509_VERIFY_PARAM_set1_host(verifyParameters, peer, 0) != 1)
+    if (socketFD == SOCKET_NULL || peer == NULL || !GCDAsyncSocketOpenSSLAttachSocket(connection, socketFD, [splitClientHello boolValue]) || SSL_set_tlsext_host_name(connection, peer) != 1 || X509_VERIFY_PARAM_set1_host(verifyParameters, peer, 0) != 1)
     {
         SSL_free(connection);
         SSL_CTX_free(context);
@@ -6382,6 +6716,8 @@ void GCDAsyncSocketInitializeOpenSSL(void)
     }
 
     SSL_set_mode(connection, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+    SSL_set_app_data(connection, (__bridge void *)self);
+    openSSLVerifyFailure = nil;
     SSL_set_connect_state(connection);
     openSSLContext = context;
     openSSLConnection = connection;

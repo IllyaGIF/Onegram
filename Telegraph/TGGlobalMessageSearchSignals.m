@@ -365,7 +365,8 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
         if (peerId == 0) {
             TLRPCmessages_searchGlobal$messages_searchGlobal *searchGlobal = [[TLRPCmessages_searchGlobal$messages_searchGlobal alloc] init];
             searchGlobal.q = query;
-            searchGlobal.offset_date = 0;
+            searchGlobal.filter = [[TLMessagesFilter$inputMessagesFilterEmpty alloc] init];
+            searchGlobal.offset_rate = 0;
             searchGlobal.offset_id = maxId;
             searchGlobal.offset_peer = [[TLInputPeer$inputPeerEmpty alloc] init];
             searchGlobal.limit = limit;

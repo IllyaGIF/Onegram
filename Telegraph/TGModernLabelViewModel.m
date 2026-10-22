@@ -56,6 +56,18 @@
     }
 }
 
+- (bool)updateFont:(CTFontRef)font
+{
+    if (_font == font || (_font != NULL && font != NULL && CFEqual(_font, font)))
+        return false;
+    CTFontRef previousFont = _font;
+    _font = font == NULL ? NULL : CFRetain(font);
+    if (previousFont != NULL)
+        CFRelease(previousFont);
+    [self setText:_text maxWidth:_maxWidth];
+    return true;
+}
+
 - (void)setText:(NSString *)text maxWidth:(CGFloat)maxWidth
 {
     [self setText:text maxWidth:maxWidth needsContentUpdate:NULL];

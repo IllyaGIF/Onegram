@@ -356,6 +356,15 @@ static CGSize TGDialogListCachedTextMetric(NSString *text, UIFont *font, CGFloat
     return result;
 }
 
+static const CGFloat TGDialogListUnboundedTextWidth = 4096.0f;
+
+static CGFloat TGDialogListRenderedSingleLineWidth(NSString *text, UIFont *font)
+{
+    if (text.length == 0 || font == nil)
+        return 0.0f;
+    return CGCeil(TGDialogListCachedTextMetric(text, font, TGDialogListUnboundedTextWidth, 1, 1).width);
+}
+
 static CGFloat TGDialogListBrandedPreviewRightPadding(UIFont *font)
 {
     if (font == nil)
@@ -2121,13 +2130,14 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     input.branded = branded;
     input.encrypted = encrypted;
     input.muted = muted;
+    input.muteWidth = presentation.images.dialogMutedIcon.size.width;
     input.unreadBadge = showBadge;
     input.pinned = showPinned;
     input.mention = showMention;
     input.deliveryError = deliveryFailed;
     input.deliveryStatus = showsDeliveryStatus;
     OGDialogHorizontalLayout geometry = OGDialogHorizontalLayoutMake(input);
-    CGFloat titleTextWidth = TGDialogListCachedTextMetric(titleText, titleFont, 0.0f, 1, 0).width;
+    CGFloat titleTextWidth = TGDialogListRenderedSingleLineWidth(titleText, titleFont);
     if (iosMajorVersion() <= 3 && TGDialogListRequiresPackEmoji(titleText))
     {
         TGDialogListLegacyTextLayout *layout = TGDialogListLegacyTextLayoutForText(titleText, titleFont, geometry.maximumTitleWidth, 1);
@@ -4607,6 +4617,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         input.branded = TGDialogListBrandedIOS6Style();
         input.encrypted = _isEncrypted;
         input.muted = _isMuted;
+        input.muteWidth = _presentation.images.dialogMutedIcon.size.width;
         input.unreadBadge = !_unreadCountBackgrond.hidden;
         input.pinned = !_pinnedBackgrond.hidden;
         input.mention = !_unseenMentionsView.hidden;
@@ -4630,7 +4641,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             {
                 _layoutTitleText = _titleText;
                 _layoutTitleFont = titleFont;
-                _layoutTitleWidth = _titleText.length == 0 ? 0.0f : CGCeil(TGDialogListCachedTextMetric(_titleText, titleFont, 0.0f, 1, 0).width);
+                _layoutTitleWidth = TGDialogListRenderedSingleLineWidth(_titleText, titleFont);
             }
             titleTextWidth = _layoutTitleWidth;
         }
@@ -4717,7 +4728,12 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         
         if (_authorName != nil && !_hideAuthorName)
         {
-            _textView.authorNameFrame = CGRectMake(contentX, TGDialogListBrandedIOS6Style() ? brandedMessageY : 29.0f + TGScreenPixel, geometry.authorWidth, TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 20.0f);
+            CGFloat authorNameY = 29.0f + TGScreenPixel;
+            if (TGDialogListBrandedIOS6Style())
+                authorNameY = brandedMessageY;
+            else if (!TGDialogListClassicIOS6Style() && iosMajorVersion() >= 7)
+                authorNameY = 26.0f;
+            _textView.authorNameFrame = CGRectMake(contentX, authorNameY, geometry.authorWidth, TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 20.0f);
             
             CGFloat authorLineHeight = TGDialogListBrandedIOS6Style() ? brandedBodyHeight : 12.0f;
             messageRect.origin.y += TGDialogListBrandedIOS6Style() ? authorLineHeight : (iosMajorVersion() >= 7 ? (16 + TGScreenPixel) : 17);
