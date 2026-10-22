@@ -1150,7 +1150,7 @@ _dispatch_continuation_alloc_from_heap(void);
         env['PATH'] = str(wrappers) + os.pathsep + env.get('PATH', '')
         run(['perl', 'Configure', 'ios-armv6-cross', 'no-shared', 'no-dso', 'no-hw', 'no-engine'], cwd=openssl, env=env)
         run(['make', 'depend', 'AR=' + ar + ' r', 'RANLIB=' + ranlib], cwd=openssl, env=env)
-        run(['make', '-j' + str(args.jobs), 'build_libs', 'AR=' + ar + ' r', 'RANLIB=' + ranlib], cwd=openssl, env=env)
+        run(['make', '-j1', 'build_libs', 'AR=' + ar + ' r', 'RANLIB=' + ranlib], cwd=openssl, env=env)
         archive_members = subprocess.check_output([ar, 't', str(openssl / 'libcrypto.a')], text=True).splitlines()
         required_asm_members = {
             'armcap.o',
