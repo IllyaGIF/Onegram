@@ -1,0 +1,17 @@
+{
+  "packages": [
+    "python=3.12", "clang=11.1.0", "clangxx=11.1.0", "llvmdev=11.1.0", "compiler-rt=11.1.0", "cctools=973.0.1",
+    "ld64=609", "tapi=1100.0.11", "libcxx=11.1.0", "make=4.4",
+    "ccache", "ldid=2.1.2", "autoconf", "automake", "libtool", "rsync",
+    "git", "perl", "gawk", "pkg-config", "curl", "xz", "patch", "zip", "unzip"
+  ],
+  "runtime": {
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-11.1.0/compiler-rt-11.1.0.src.tar.xz",
+    "sha256": "def1fc00c764cd3abbba925c712ac38860a756a43b696b291f46fee09e453274"
+  },
+  "host_sdk": {
+    "name": "MacOSX11.3.sdk",
+    "url": "https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz",
+    "sha256": "cd4f08a75577145b8f05245a2975f7c81401d75e9535dcffbb879ee1deefcbf4"
+  }
+}

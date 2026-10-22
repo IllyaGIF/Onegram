@@ -1462,6 +1462,9 @@ uicache_command() {
             unregister) echo "$prefix/usr/bin/uicache -u $application" ;;
         esac
     else
+        case "$action" in
+            register) printf '%s\n' "rm -rf /var/mobile/Library/Caches/com.apple.IconsCache" ;;
+        esac
         echo "su mobile -c /usr/bin/uicache 2>/dev/null || /usr/bin/uicache"
     fi
 }
@@ -1516,6 +1519,27 @@ Author: IllyaGIF
 Section: Networking
 Depends: firmware (>= $firmware), uikittools
 CTL
+
+    cat > "$stage/DEBIAN/preinst" <<'PRE'
+#!/bin/sh
+case "$1" in
+    install|upgrade)
+        for info in /var/containers/Bundle/Application/*/*.app/Info.plist \
+                    /var/mobile/Containers/Bundle/Application/*/*.app/Info.plist \
+                    /var/mobile/Applications/*/*.app/Info.plist; do
+            [ -f "$info" ] || continue
+            if grep -qa 'dev\.IllyaGIF\.Onegram' "$info"; then
+                echo "Onegram is already installed as an IPA: ${info%/Info.plist}" >&2
+                echo "Both copies use the bundle ID dev.IllyaGIF.Onegram and iOS can show only one of them." >&2
+                echo "Delete the IPA version from the home screen, then install this package again." >&2
+                exit 1
+            fi
+        done
+        ;;
+esac
+exit 0
+PRE
+    chmod 755 "$stage/DEBIAN/preinst"
 
     cat > "$stage/DEBIAN/postinst" <<PI
 #!/bin/sh

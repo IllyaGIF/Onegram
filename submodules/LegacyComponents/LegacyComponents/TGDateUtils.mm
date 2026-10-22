@@ -133,7 +133,7 @@ static void TGDateUtilsEnsureInitialized()
         return;
     }
     pthread_mutex_lock(&TGDateUtilsMutex);
-    if (TGDateUtilsInitialized == 0)
+    if (TGDateUtilsInitialized == 0 && legacyEffectiveLocalization() != nil)
     {
         initializeTGDateUtils();
         OSMemoryBarrier();
@@ -304,7 +304,12 @@ static inline NSString *dialogTimeFormat()
     struct tm timeinfo;
     gmtime_r(&t, &timeinfo);
     
-    return [[NSString alloc] initWithFormat:dialogTimeFormat(), monthNameGenFull(timeinfo.tm_mon), [TGStringUtils stringWithLocalizedNumber:timeinfo.tm_mday]];
+    NSString *format = dialogTimeFormat();
+    NSString *month = monthNameGenFull(timeinfo.tm_mon);
+    NSString *day = [TGStringUtils stringWithLocalizedNumber:timeinfo.tm_mday];
+    if (format == nil)
+        format = @"%1$@ %2$@";
+    return [[NSString alloc] initWithFormat:format, month == nil ? @"" : month, day == nil ? @"" : day];
 }
 
 + (NSString *)stringForDayOfWeek:(int)date

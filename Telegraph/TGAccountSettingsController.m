@@ -95,15 +95,44 @@
 #import "TGLegacyComponentsContext.h"
 #import <QuartzCore/QuartzCore.h>
 
-@interface TGIOS6LogFileCell : UITableViewCell <UIGestureRecognizerDelegate>
+@class TGIOS6LogFileSwipeGate;
+
+@interface TGIOS6LogFileCell : UITableViewCell
 {
     UIButton *_deleteButton;
+    UIPanGestureRecognizer *_swipeRecognizer;
+    TGIOS6LogFileSwipeGate *_swipeGate;
     CGFloat _swipeOffset;
     CGFloat _initialSwipeOffset;
 }
 @property (nonatomic, copy) void (^deleteRequested)(void);
 - (void)closeSwipeAnimated:(bool)animated;
 - (bool)swipeIsOpen;
+- (bool)swipeRecognizerShouldBegin:(UIGestureRecognizer *)recognizer;
+@end
+
+@interface TGIOS6LogFileSwipeGate : NSObject <UIGestureRecognizerDelegate>
+{
+    __weak TGIOS6LogFileCell *_cell;
+}
+- (instancetype)initWithCell:(TGIOS6LogFileCell *)cell;
+@end
+
+@implementation TGIOS6LogFileSwipeGate
+
+- (instancetype)initWithCell:(TGIOS6LogFileCell *)cell
+{
+    self = [super init];
+    if (self != nil)
+        _cell = cell;
+    return self;
+}
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
+{
+    return [_cell swipeRecognizerShouldBegin:recognizer];
+}
+
 @end
 
 @implementation TGIOS6LogFileCell
@@ -122,9 +151,10 @@
         [self insertSubview:_deleteButton belowSubview:self.contentView];
         self.textLabel.backgroundColor = [UIColor clearColor];
         self.detailTextLabel.backgroundColor = [UIColor clearColor];
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swipeRecognized:)];
-        pan.delegate = self;
-        [self addGestureRecognizer:pan];
+        _swipeGate = [[TGIOS6LogFileSwipeGate alloc] initWithCell:self];
+        _swipeRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swipeRecognized:)];
+        _swipeRecognizer.delegate = _swipeGate;
+        [self addGestureRecognizer:_swipeRecognizer];
     }
     return self;
 }
@@ -145,10 +175,12 @@
     _deleteButton.hidden = _swipeOffset <= 0.0f;
 }
 
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
+- (bool)swipeRecognizerShouldBegin:(UIGestureRecognizer *)recognizer
 {
-    CGPoint velocity = [(UIPanGestureRecognizer *)recognizer velocityInView:self];
-    return _deleteRequested != nil && fabs(velocity.x) > fabs(velocity.y) && (velocity.x > 0.0f || _swipeOffset > 0.0f);
+    if (recognizer != _swipeRecognizer || _deleteRequested == nil)
+        return false;
+    CGPoint velocity = [_swipeRecognizer velocityInView:self];
+    return fabs(velocity.x) > fabs(velocity.y) && (velocity.x > 0.0f || _swipeOffset > 0.0f);
 }
 
 - (void)setSwipeOffset:(CGFloat)offset animated:(bool)animated
@@ -439,7 +471,7 @@
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     static NSString *identifier = @"TGIOS6LogFileCell";
-    TGIOS6LogFileCell *cell = [tableView dequeueReusableCellWithIdentifier:identifier];
+    TGIOS6LogFileCell *cell = (TGIOS6LogFileCell *)[tableView dequeueReusableCellWithIdentifier:identifier];
     if (cell == nil)
         cell = [[TGIOS6LogFileCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:identifier];
 
@@ -477,7 +509,7 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:true];
-    TGIOS6LogFileCell *cell = [tableView cellForRowAtIndexPath:indexPath];
+    TGIOS6LogFileCell *cell = (TGIOS6LogFileCell *)[tableView cellForRowAtIndexPath:indexPath];
     if ([cell swipeIsOpen]) {
         [cell closeSwipeAnimated:true];
         return;
