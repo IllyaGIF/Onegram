@@ -1,14 +1,18 @@
 #include "NetworkManager.h"
 #include "Ios6TurnClient.h"
 #include "Ios6DtlsTransport.h"
+#include "MediaTransport.h"
 
 #include "Message.h"
+#include "rtp/RtpTime.h"
+#include "rtp/SrtpSession.h"
 #include "rtc_base/logging.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <errno.h>
 #include <sstream>
 #include <syslog.h>
 #include <sys/time.h>
@@ -25,11 +29,28 @@ namespace tgcalls {
 
 static const double kIos6ConnectTimeoutMs = 20000.0;
 static const double kIos6IceCheckWindowMs = 7000.0;
+static const double kIos6ReceiverTransientErrorGraceMs = 10000.0;
+static const useconds_t kIos6ReceiverRetryDelayUs = 50000;
 
 static double Ios6LatencyNowMs() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return ((double)tv.tv_sec * 1000.0) + ((double)tv.tv_usec / 1000.0);
+}
+
+static bool Ios6ReceiveErrorIsTransient(int errorCode) {
+    switch (errorCode) {
+        case ECONNREFUSED:
+        case ENETDOWN:
+        case ENETUNREACH:
+        case ENETRESET:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
+        case ENOBUFS:
+            return true;
+        default:
+            return false;
+    }
 }
 
 NetworkManager::NetworkManager(
@@ -41,11 +62,13 @@ NetworkManager::NetworkManager(
     bool enableStunMarking,
     std::vector<RtcServer> const &rtcServers,
     std::unique_ptr<Proxy> proxy,
+    std::shared_ptr<MediaTransport> mediaTransport,
     std::function<void(const State &)> stateUpdated,
     DecryptedMessageCallback transportMessageReceived,
     MessageCallback sendSignalingMessage,
     std::function<void(int delayMs, int cause)> sendTransportServiceAsync) :
 _thread(thread),
+_mediaTransport(std::move(mediaTransport)),
 _enableP2P(enableP2P),
 _enableTCP(enableTCP),
 _enableStunMarking(enableStunMarking),
@@ -397,6 +420,7 @@ void NetworkManager::ios56ApplyDtlsState() {
         }
 
         _ios6DtlsStateAnnounced = true;
+        _mediaTransport->clearPath();
 
         syslog(
             LOG_ERR,
@@ -428,6 +452,34 @@ void NetworkManager::ios56ApplyDtlsState() {
             _ios6DtlsTransport
                 ->srtpKeyMaterial()
                 .size()
+    );
+
+    const std::shared_ptr<rtp::SrtpSession> srtp = rtp::SrtpSession::createFromDtlsKeyingMaterial(
+        _ios6DtlsTransport->srtpKeyMaterial(),
+        _ios6DtlsTransport->isClient()
+    );
+
+    if (!srtp) {
+        syslog(
+            LOG_ERR,
+            "IOS6WEBRTC srtp.session.create.failed"
+        );
+
+        if (_stateUpdated) {
+            State state;
+            state.isReadyToSendData = false;
+            state.isFailed = true;
+            _stateUpdated(state);
+        }
+
+        return;
+    }
+
+    _mediaTransport->setPath(
+        _ios6Relay,
+        _ios6SelectedPeerHost,
+        _ios6SelectedPeerPort,
+        srtp
     );
 
     if (_stateUpdated) {
@@ -520,6 +572,7 @@ void NetworkManager::ios56StartTransportReceiver() {
     _ios6ReceiverStarted = true;
 
     const std::shared_ptr<Ios6RelayConnection> connection = _ios6Relay;
+    const std::shared_ptr<MediaTransport> mediaTransport = _mediaTransport;
     const int fd = connection->socket().descriptor();
 
     const std::string selectedPeerHost =
@@ -566,6 +619,9 @@ void NetworkManager::ios56StartTransportReceiver() {
                 fd
             );
 
+            const bool isTcp = connection->socket().isTcp();
+            double transientErrorStartMs = 0.0;
+
             for (;;) {
                 if (weak.expired()) {
                     break;
@@ -586,17 +642,47 @@ void NetworkManager::ios56StartTransportReceiver() {
                 }
 
                 if (!received.error.empty()) {
-                    if (!weak.expired()) {
-                        syslog(
-                            LOG_NOTICE,
-                            "IOS6WEBRTC transport.receiver.recvError fd=%d error=%s",
-                            fd,
-                            received.error.c_str()
-                        );
+                    if (weak.expired()) {
+                        break;
                     }
+
+                    if (!isTcp && Ios6ReceiveErrorIsTransient(received.errorCode)) {
+                        const double nowMs = Ios6LatencyNowMs();
+                        if (transientErrorStartMs <= 0.0) {
+                            transientErrorStartMs = nowMs;
+                            syslog(
+                                LOG_NOTICE,
+                                "IOS6WEBRTC transport.receiver.transientError fd=%d errno=%d error=%s",
+                                fd,
+                                received.errorCode,
+                                received.error.c_str()
+                            );
+                        }
+                        if (nowMs - transientErrorStartMs < kIos6ReceiverTransientErrorGraceMs) {
+                            usleep(kIos6ReceiverRetryDelayUs);
+                            continue;
+                        }
+                    }
+
+                    syslog(
+                        LOG_NOTICE,
+                        "IOS6WEBRTC transport.receiver.recvError fd=%d errno=%d error=%s",
+                        fd,
+                        received.errorCode,
+                        received.error.c_str()
+                    );
+
+                    thread->PostTask([weak]() {
+                        const std::shared_ptr<NetworkManager> strong = weak.lock();
+                        if (strong) {
+                            strong->ios56HandleReceiverFailure();
+                        }
+                    });
 
                     break;
                 }
+
+                transientErrorStartMs = 0.0;
 
                 if (received.kind ==
                     Ios6RelayReceiveResult::KindInnerStun) {
@@ -619,38 +705,8 @@ void NetworkManager::ios56StartTransportReceiver() {
                     continue;
                 }
 
-                {
-                    const std::shared_ptr<NetworkManager> strong = weak.lock();
-                    if (strong &&
-                        strong->_ios6TransportReady &&
-                        strong->_ios6DtlsTransport &&
-                        strong->_ios6DtlsTransport->isConfigured() &&
-                        strong->_ios6DtlsTransport->isReady() &&
-                        received.data.size() >= 12 &&
-                        !Ios6DtlsTransport::looksLikeDtls(&received.data[0], received.data.size())) {
-
-                        const bool looksLikeRtcp =
-                            ((received.data[0] >> 6) == 2) &&
-                            received.data[1] >= 192 &&
-                            received.data[1] <= 223;
-
-                        if (!looksLikeRtcp) {
-                            std::vector<uint8_t> packet(received.data);
-                            if (strong->_ios6DtlsTransport->unprotectRtp(packet) &&
-                                packet.size() >= 12) {
-                                if (strong->_transportMessageReceived) {
-                                    rtc::CopyOnWriteBuffer rtp(&packet[0], packet.size());
-                                    Message message;
-                                    message.data = AudioDataMessage{ rtp };
-                                    DecryptedMessage decrypted;
-                                    decrypted.message = std::move(message);
-                                    decrypted.counter = 0;
-                                    strong->_transportMessageReceived(std::move(decrypted));
-                                }
-                                continue;
-                            }
-                        }
-                    }
+                if (mediaTransport->handleIncomingDatagram(&received.data[0], received.data.size(), rtp::MonotonicMicros())) {
+                    continue;
                 }
 
                 std::shared_ptr<std::vector<uint8_t> > payload(
@@ -772,97 +828,6 @@ void NetworkManager::ios56StartTransportReceiver() {
                                 return;
                             }
 
-                            if (payload->size() < 2) {
-                                return;
-                            }
-
-                            const bool looksLikeRtcp =
-                                (((*payload)[0] >> 6) == 2) &&
-                                (*payload)[1] >= 192 &&
-                                (*payload)[1] <= 223;
-
-                            if (looksLikeRtcp) {
-                                syslog(
-                                    LOG_NOTICE,
-                                    "IOS6WEBRTC transport.recv.srtcp.skip bytes=%lu",
-                                    (unsigned long)payload->size()
-                                );
-
-                                return;
-                            }
-
-                            std::vector<uint8_t> packet(
-                                payload->begin(),
-                                payload->end()
-                            );
-
-                            const size_t srtpSize =
-                                packet.size();
-
-                            if (!strong->_ios6DtlsTransport
-                                    ->unprotectRtp(
-                                        packet
-                                    )) {
-
-                                syslog(
-                                    LOG_ERR,
-                                    "IOS6WEBRTC transport.recv.srtp.unprotect.fail first=0x%02x bytes=%lu",
-                                    (unsigned int)(*payload)[0],
-                                    (unsigned long)srtpSize
-                                );
-
-                                return;
-                            }
-
-                            if (packet.size() < 12) {
-                                return;
-                            }
-
-                            const unsigned int sequence =
-                                ((unsigned int)packet[2] << 8) |
-                                (unsigned int)packet[3];
-
-                            const unsigned int payloadType =
-                                packet[1] & 0x7f;
-
-                            if ((sequence % 50) == 0) {
-                                syslog(
-                                    LOG_NOTICE,
-                                    "IOS6WEBRTC transport.recv.srtp.ok seq=%u pt=%u srtpBytes=%lu rtpBytes=%lu",
-                                    sequence,
-                                    payloadType,
-                                    (unsigned long)srtpSize,
-                                    (unsigned long)packet.size()
-                                );
-                            }
-
-                            if (strong->_transportMessageReceived) {
-                                rtc::CopyOnWriteBuffer rtp(
-                                    &packet[0],
-                                    packet.size()
-                                );
-
-                                Message message;
-
-                                message.data =
-                                    AudioDataMessage{
-                                        rtp
-                                    };
-
-                                DecryptedMessage decrypted;
-
-                                decrypted.message =
-                                    std::move(message);
-
-                                decrypted.counter = 0;
-
-                                strong->_transportMessageReceived(
-                                    std::move(
-                                        decrypted
-                                    )
-                                );
-                            }
-
                             return;
                         }
 
@@ -917,8 +882,31 @@ void NetworkManager::ios56StartTransportReceiver() {
 }
 
 
+void NetworkManager::ios56HandleReceiverFailure() {
+    if (_ios6ConnectionFailed) {
+        return;
+    }
+
+    _ios6ConnectionFailed = true;
+    _ios6TransportReady = false;
+    _mediaTransport->clearPath();
+
+    syslog(
+        LOG_NOTICE,
+        "IOS6WEBRTC transport.receiver.failed"
+    );
+
+    if (_stateUpdated) {
+        State state;
+        state.isReadyToSendData = false;
+        state.isFailed = true;
+        _stateUpdated(state);
+    }
+}
+
 NetworkManager::~NetworkManager() {
     _ios6TransportReady = false;
+    _mediaTransport->clearPath();
     if (_ios6TurnFd >= 0) {
         syslog(
             LOG_NOTICE,
@@ -1626,108 +1614,6 @@ uint32_t NetworkManager::sendMessage(
 
     if (_ios6DtlsTransport &&
         _ios6DtlsTransport->isConfigured()) {
-
-        const AudioDataMessage *audio =
-            absl::get_if<AudioDataMessage>(
-                &message.data
-            );
-
-        if (!audio) {
-            return 0;
-        }
-
-        if (!_ios6DtlsTransport->isReady()) {
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC transport.send.srtp.notReady"
-            );
-
-            return 0;
-        }
-
-        if (audio->data.size() < 2) {
-            return 0;
-        }
-
-        const uint8_t *raw =
-            audio->data.data();
-
-        const bool looksLikeRtcp =
-            ((raw[0] >> 6) == 2) &&
-            raw[1] >= 192 &&
-            raw[1] <= 223;
-
-        if (looksLikeRtcp) {
-            syslog(
-                LOG_NOTICE,
-                "IOS6WEBRTC transport.send.srtcp.skip bytes=%lu",
-                (unsigned long)audio->data.size()
-            );
-
-            return 0;
-        }
-
-        std::vector<uint8_t> packet(
-            raw,
-            raw + audio->data.size()
-        );
-
-        const size_t rtpSize =
-            packet.size();
-
-        if (!_ios6DtlsTransport
-                ->protectRtp(packet)) {
-
-            syslog(
-                LOG_ERR,
-                "IOS6WEBRTC transport.send.srtp.protect.fail bytes=%lu",
-                (unsigned long)rtpSize
-            );
-
-            return 0;
-        }
-
-        std::string sendError;
-
-        const bool sent =
-            Ios6RelaySendData(
-                *_ios6Relay,
-                _ios6SelectedPeerHost,
-                _ios6SelectedPeerPort,
-                &packet[0],
-                packet.size(),
-                &sendError
-            );
-
-        const unsigned int sequence =
-            rtpSize >= 4
-                ? (((unsigned int)raw[2] << 8) |
-                   (unsigned int)raw[3])
-                : 0;
-
-        if ((sequence % 50) == 0 ||
-            !sent) {
-
-            syslog(
-                sent ? LOG_NOTICE : LOG_ERR,
-                "IOS6WEBRTC transport.send.srtp ok=%d seq=%u rtpBytes=%lu srtpBytes=%lu error=%s",
-                sent ? 1 : 0,
-                sequence,
-                (unsigned long)rtpSize,
-                (unsigned long)packet.size(),
-                sendError.c_str()
-            );
-        }
-
-        if (sent) {
-            addTrafficStats(
-                packet.size(),
-                false
-            );
-
-            return 1;
-        }
-
         return 0;
     }
 
@@ -1862,6 +1748,14 @@ void NetworkManager::setIsLocalNetworkLowCost(
 }
 
 TrafficStats NetworkManager::getNetworkStats() {
+    const MediaTransport::Statistics media = _mediaTransport->statistics();
+    if (media.bytesSent > _mediaBytesSentAccounted || media.bytesReceived > _mediaBytesReceivedAccounted) {
+        addTrafficStats((int64_t)(media.bytesSent - _mediaBytesSentAccounted), false);
+        addTrafficStats((int64_t)(media.bytesReceived - _mediaBytesReceivedAccounted), true);
+        _mediaBytesSentAccounted = media.bytesSent;
+        _mediaBytesReceivedAccounted = media.bytesReceived;
+    }
+
     TrafficStats stats;
 
     stats.bytesSentWifi =

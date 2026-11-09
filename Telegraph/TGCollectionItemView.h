@@ -47,6 +47,7 @@ typedef enum {
 - (void)setItemPosition:(int)itemPosition animated:(bool)animated;
 
 - (bool)usesBrandedGroupedSurface;
+- (UIColor *)cellBackgroundColor;
 - (CGRect)classicIOS6GroupedFrame;
 
 @end

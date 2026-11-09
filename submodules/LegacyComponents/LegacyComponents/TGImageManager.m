@@ -3,6 +3,7 @@
 #import "TGImageManagerTask.h"
 
 #import "LegacyComponentsInternal.h"
+#import "../../../OnegramPlatform/OGPlatformGraphics.h"
 
 @interface TGImageManager ()
 {
@@ -40,13 +41,15 @@ static UIImage *forceImageDecoding(UIImage *image)
 {
     if (image == nil || CGSizeEqualToSize(image.size, CGSizeZero))
         return nil;
-    
-    UIGraphicsBeginImageContextWithOptions(image.size, true, image.scale);
-    [image drawAtPoint:CGPointZero blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    
-    return result;
+    CGSize pixelSize = CGSizeMake(image.size.width * image.scale, image.size.height * image.scale);
+    return OGPlatformDecodeImageWithBlock(^UIImage *
+    {
+        UIGraphicsBeginImageContextWithOptions(image.size, true, image.scale);
+        [image drawAtPoint:CGPointZero blendMode:kCGBlendModeCopy alpha:1.0f];
+        UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        return result;
+    }, pixelSize, 2, nil);
 }
 
 - (UIImage *)loadImageSyncWithUri:(NSString *)uri canWait:(bool)canWait decode:(bool)decode acceptPartialData:(bool)acceptPartialData asyncTaskId:(__autoreleasing id *)asyncTaskId progress:(void (^)(float))progress partialCompletion:(void (^)(UIImage *))partialCompletion completion:(void (^)(UIImage *))completion

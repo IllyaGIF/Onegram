@@ -17,6 +17,7 @@
 #import "TGCallKitAdapter.h"
 
 #import "TGCallView.h"
+#import "TGCallVideoView.h"
 #import "TGCallDebugView.h"
 #import "TGCallAlertView.h"
 #import "TGCallRatingView.h"
@@ -69,6 +70,10 @@
     NSInteger _debugBitrate;
     NSInteger _debugPacketLoss;
     bool _debugP2P;
+    
+    bool _videoActive;
+    bool _videoAutoStartHandled;
+    bool _cameraRequestInProgress;
 }
 
 @property (strong, nonatomic) TGCallView *view;
@@ -166,6 +171,18 @@
         if (strongSelf != nil)
             [strongSelf showDebug];
     };
+    self.view.cameraPressed = ^
+    {
+        __strong TGCallController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf cameraPressed];
+    };
+    self.view.flipCameraPressed = ^
+    {
+        __strong TGCallController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf->_session switchCamera];
+    };
     self.view.messagePressed = ^
     {
         __strong TGCallController *strongSelf = weakSelf;
@@ -177,6 +194,9 @@
 - (void)commonInit
 {
     __weak TGCallController *weakSelf = self;
+    
+    _videoAutoStartHandled = false;
+    [_session setIncomingVideoView:self.view.remoteVideoView];
     
     SVariable *timer = [[SVariable alloc] init];
     [timer set:[SSignal single:@0]];
@@ -273,6 +293,17 @@
     
     _audioRoutes = state.audioRoutes;
     _activeAudioRoute = state.activeAudioRoute;
+    _videoActive = state.localVideoEnabled || state.remoteVideoActive;
+    
+    if (state.localVideoEnabled)
+        [self.view setVideoCapturer:_session.videoCapturer];
+    
+    if (!_videoAutoStartHandled && state.isVideoCall && state.canSendVideo && (state.outgoing || state.state == TGCallStateAccepting || state.state == TGCallStateOngoing))
+    {
+        _videoAutoStartHandled = true;
+        if (!state.localVideoEnabled)
+            [self enableCamera];
+    }
     
     if (!_dismissing)
         [self updateProximityListener];
@@ -367,8 +398,39 @@
 {
     _accessHash = 0;
     
-    _session = [TGTelegraphInstance.callManager sessionForOutgoingCallWithPeerId:_peerId];
+    bool video = _session.isVideoCall;
+    _session = [TGTelegraphInstance.callManager sessionForOutgoingCallWithPeerId:_peerId video:video];
     [self commonInit];
+}
+
+- (void)cameraPressed
+{
+    if (_session.localVideoEnabled)
+        [_session setOutgoingVideoEnabled:false];
+    else
+        [self enableCamera];
+}
+
+- (void)enableCamera
+{
+    if (_cameraRequestInProgress)
+        return;
+    
+    if (![[[LegacyComponentsGlobals provider] accessChecker] checkCameraAuthorizationStatusForIntent:TGCameraAccessIntentDefault alertDismissCompletion:nil])
+        return;
+    
+    _cameraRequestInProgress = true;
+    __weak TGCallController *weakSelf = self;
+    [TGCallController requestCameraAccess:^(bool granted)
+    {
+        __strong TGCallController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        
+        strongSelf->_cameraRequestInProgress = false;
+        if (granted && !strongSelf->_dismissing)
+            [strongSelf->_session setOutgoingVideoEnabled:true];
+    }];
 }
 
 - (void)speakerPressed
@@ -508,9 +570,48 @@
 #endif
 }
 
++ (void)requestCameraAccess:(void (^)(bool granted))resultBlock
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
+    if (resultBlock != nil)
+        resultBlock(true);
+#else
+    if (iosMajorVersion() < 7)
+    {
+        if (resultBlock != nil)
+            resultBlock(true);
+        return;
+    }
+    
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+    if (status == AVAuthorizationStatusAuthorized)
+    {
+        if (resultBlock != nil)
+            resultBlock(true);
+        return;
+    }
+    
+    if (status == AVAuthorizationStatusDenied || status == AVAuthorizationStatusRestricted)
+    {
+        if (resultBlock != nil)
+            resultBlock(false);
+        return;
+    }
+    
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted)
+    {
+        TGDispatchOnMainThread(^
+        {
+            if (resultBlock != nil)
+                resultBlock(granted);
+        });
+    }];
+#endif
+}
+
 - (void)updateProximityListener
 {
-    bool proximityRequired = !_activeAudioRoute.isBluetooth && !_activeAudioRoute.isLoudspeaker;
+    bool proximityRequired = !_activeAudioRoute.isBluetooth && !_activeAudioRoute.isLoudspeaker && !_videoActive;
     if (_proximityChangeHolder == nil && _proximityListenerEnabled && proximityRequired)
     {
         _proximityChangeHolder = [[TGHolder alloc] init];
@@ -623,12 +724,14 @@
 
 - (NSString *)_localizedStringForError:(NSString *)error
 {
-    if ([error isEqualToString:@"PARTICIPANT_VERSION_OUTDATED"])
+    if (error.length == 0)
+        return nil;
+    if ([error isEqualToString:@"PARTICIPANT_VERSION_OUTDATED"] || [error isEqualToString:@"CALL_PROTOCOL_LAYER_INVALID"])
         return TGLocalized(@"Call.ParticipantVersionOutdatedError");
-    else if ([error isEqualToString:@"USER_PRIVACY_RESTRICTED"])
+    if ([error isEqualToString:@"USER_PRIVACY_RESTRICTED"])
         return TGLocalized(@"Call.PrivacyErrorMessage");
     
-    return nil;
+    return TGLocalized(@"Call.ConnectionErrorMessage");
 }
 
 #pragma mark - Transition

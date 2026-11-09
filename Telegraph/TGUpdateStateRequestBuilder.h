@@ -50,7 +50,7 @@
 
 
 #ifdef __cplusplus
-+ (NSData *)decryptEncryptedMessageData:(TLEncryptedMessage *)encryptedMessage decryptedLayer:(NSUInteger *)decryptedLayer cachedPeerIds:(std::map<int64_t, int64_t> *)cachedPeerIds cachedParticipantIds:(std::map<int64_t, int> *)cachedParticipantIds outConversationId:(int64_t *)outConversationId outKeyId:(int64_t *)outKeyId outSeqIn:(int32_t *)outSeqIn outSeqOut:(int32_t *)outSeqOut;
++ (NSData *)decryptEncryptedMessageData:(TLEncryptedMessage *)encryptedMessage decryptedLayer:(NSUInteger *)decryptedLayer cachedPeerIds:(std::map<int64_t, int64_t> *)cachedPeerIds cachedParticipantIds:(std::map<int64_t, int64_t> *)cachedParticipantIds outConversationId:(int64_t *)outConversationId outKeyId:(int64_t *)outKeyId outSeqIn:(int32_t *)outSeqIn outSeqOut:(int32_t *)outSeqOut;
 #endif
 
 @end

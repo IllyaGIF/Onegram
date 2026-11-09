@@ -11,6 +11,7 @@
 - (CGFloat)highlightedButtonAlpha;
 - (CGFloat)progressAlpha;
 
+- (UIImage *)thumbnailImage;
 - (UIImage *)image;
 - (NSData *)imageData;
 - (bool)hasData;

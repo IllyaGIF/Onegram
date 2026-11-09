@@ -114,7 +114,7 @@
         if (strongSelf != nil)
         {
             if (strongSelf->_completion)
-                strongSelf->_completion(true, [userId intValue]);
+                strongSelf->_completion(true, [userId longLongValue]);
         }
     } error:^(id error)
     {

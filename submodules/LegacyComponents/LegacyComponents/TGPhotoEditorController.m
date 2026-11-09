@@ -1610,7 +1610,7 @@ static UIImage *TGPhotoEditorVideoThumbnail(UIImage *image, CGSize videoDimensio
         _menuContainerView = nil;
     }
 
-    _menuContainerView = [[TGMenuContainerView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, self.view.frame.size.width, self.view.frame.size.height)];
+    _menuContainerView = [[TGMenuContainerView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:_menuContainerView];
     
     NSMutableArray *actions = [[NSMutableArray alloc] init];
@@ -1755,9 +1755,9 @@ static UIImage *TGPhotoEditorVideoThumbnail(UIImage *image, CGSize videoDimensio
         return CGSizeMake(540.0f, 620.0f);
     
     if (self.parentViewController != nil)
-        return self.parentViewController.view.frame.size;
+        return self.parentViewController.view.bounds.size;
     else if (self.navigationController != nil)
-        return self.navigationController.view.frame.size;
+        return self.navigationController.view.bounds.size;
     
     return [_context fullscreenBounds].size;
 }

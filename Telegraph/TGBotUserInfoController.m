@@ -1,4 +1,8 @@
 #import "TGBotUserInfoController.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -66,14 +70,24 @@
 #import "TGGroupsInCommonController.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+#import "TGPluginHost.h"
+#import "TGPluginMenuSection.h"
 
-@interface TGBotUserInfoController () <TGAlertSoundControllerDelegate, TGUserInfoEditingPhoneCollectionItemDelegate, TGPhoneLabelPickerControllerDelegate, TGCreateContactControllerDelegate, TGAddToExistingContactControllerDelegate>
+@interface TGBotUserInfoController () <TGAlertSoundControllerDelegate, TGUserInfoEditingPhoneCollectionItemDelegate, TGPhoneLabelPickerControllerDelegate, TGCreateContactControllerDelegate, TGAddToExistingContactControllerDelegate
+#if OG_PLUGINS_AVAILABLE
+, OGPluginUIProfileHost
+#endif
+>
 {
-    int32_t _uid;
+    int64_t _uid;
     bool _editing;
     UIEdgeInsets _defaultPhonesSectionInsets;
     
     int64_t _sharedMediaPeerId;
+#if OG_PLUGINS_AVAILABLE
+    TGPluginMenuSection *_pluginMenuSection;
+#endif
     NSDictionary *_sharedMediaOptions;
     bool _withoutActions;
     
@@ -125,7 +139,7 @@
 
 @implementation TGBotUserInfoController
 
-- (instancetype)initWithUid:(int32_t)uid sendCommand:(void (^)(NSString *))sendCommand
+- (instancetype)initWithUid:(int64_t)uid sendCommand:(void (^)(NSString *))sendCommand
 {
     self = [super init];
     if (self != nil)
@@ -137,6 +151,9 @@
         
         _sharedMediaPeerId = uid;
         _sharedMediaOptions = @{};
+#if OG_PLUGINS_AVAILABLE
+        _pluginMenuSection = [[TGPluginMenuSection alloc] initWithMenuType:OGPluginMenuTypeProfileAction controller:self peerId:uid];
+#endif
         
         _user = [TGDatabaseInstance() loadUser:_uid];
         _phonebookInfo = _user.phoneNumber.length != 0 ? [TGDatabaseInstance() phonebookContactByPhoneId:phoneMatchHash(_user.phoneNumber)] : nil;
@@ -198,10 +215,10 @@
                                                     [[NSString alloc] initWithFormat:@"/tg/sharedMediaCount/(%" PRIx64 ")", (int64_t)_uid]
                                                     ] watcher:self];
              
-             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", _uid] watcher:self];
-             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ",cachedOnly)", _uid] options:@{@"peerId": @(_uid)} watcher:self];
-             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 1] watcher:self];
-             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 1] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 1] forKey:@"peerId"] watcher:self];
+             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _uid] watcher:self];
+             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _uid] options:@{@"peerId": @(_uid)} watcher:self];
+             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsPrivate] watcher:self];
+             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsPrivate] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsPrivate] forKey:@"peerId"] watcher:self];
              
              [ActionStageInstance() requestActor:@"/tg/blockedUsers/(cached)" options:nil watcher:self];
          }];
@@ -508,6 +525,9 @@
     UIEdgeInsets phonesSectionInsets = _defaultPhonesSectionInsets;
     self.phonesSection.insets = phonesSectionInsets;
     
+#if OG_PLUGINS_AVAILABLE
+    [_pluginMenuSection updateVisible:!_editing beforeSection:_blockUserSection];
+#endif
     [self.collectionView reloadData];
 }
 
@@ -521,13 +541,13 @@
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
     {
         variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         if (muteExpiration >= 7 * 24 * 60 * 60)
             variant = TGLocalized(@"UserInfo.NotificationsDisabled");
         else
@@ -559,13 +579,13 @@
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
     {
         variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         variant = [TGStringUtils stringForRemainingMuteInterval:muteExpiration];
     }
     
@@ -784,7 +804,7 @@ static UIView *_findBackArrow(UIView *view)
 {
     NSMutableArray *actions = [[NSMutableArray alloc] init];
     
-    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= [[TGTelegramNetworking instance] approximateRemoteTime];
+    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= OGRemoteClockTime();
     NSString *defaultTitle = defaultEnabled ? TGLocalized(@"UserInfo.NotificationsDefaultEnabled") : TGLocalized(@"UserInfo.NotificationsDefaultDisabled");
     
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:defaultTitle action:@"default"]];
@@ -827,7 +847,7 @@ static UIView *_findBackArrow(UIView *view)
     }
     else
     {
-        muteUntil = @((int)([[TGTelegramNetworking instance] approximateRemoteTime] + muteFor));
+        muteUntil = @((int)(OGRemoteClockTime() + muteFor));
     }
     
     if (!TGObjectCompare(muteUntil, _userNotificationSettings[@"muteUntil"]))
@@ -841,7 +861,7 @@ static UIView *_findBackArrow(UIView *view)
             muteUntil = @(INT32_MIN);
         
         static int actionId = 0;
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId32 ")/(userInfoControllerMute%d)", _uid, actionId++] options:@{
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId64 ")/(userInfoControllerMute%d)", _uid, actionId++] options:@{
             @"peerId": @(_uid),
             @"muteUntil": muteUntil
             } watcher:TGTelegraphInstance];
@@ -888,7 +908,7 @@ static UIView *_findBackArrow(UIView *view)
         [self _updateNotificationSettings:false];
         
         static int actionId = 0;
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId32 ")/(userInfoControllerSound%d)", _uid, actionId++] options:@{
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId64 ")/(userInfoControllerSound%d)", _uid, actionId++] options:@{
             @"peerId": @(_uid),
             @"soundId": @(soundId)
         } watcher:TGTelegraphInstance];
@@ -1118,7 +1138,7 @@ static UIView *_findBackArrow(UIView *view)
              [ActionStageInstance() removeWatcher:self fromPath:@"/tg/phonebook"];
              
              static int actionId = 0;
-             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%d,%d,breakLinkLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithInt:_uid], @"uid", [[NSNumber alloc] initWithInt:nativeId], @"nativeId", nil] watcher:self];
+             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%lld,%d,breakLinkLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_uid], @"uid", [[NSNumber alloc] initWithInt:nativeId], @"nativeId", nil] watcher:self];
          }
      }];
 }
@@ -1143,7 +1163,7 @@ static UIView *_findBackArrow(UIView *view)
          else
          {
              static int actionId = 0;
-             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%d,%d,changeNameLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithInt:_uid], @"uid", firstName == nil ? @"" : firstName, @"firstName", lastName == nil ? @"" : lastName, @"lastName", [[NSNumber alloc] initWithInt:nativeId], @"nativeId", nil] watcher:self];
+             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%lld,%d,changeNameLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_uid], @"uid", firstName == nil ? @"" : firstName, @"firstName", lastName == nil ? @"" : lastName, @"lastName", [[NSNumber alloc] initWithInt:nativeId], @"nativeId", nil] watcher:self];
          }
      }];
 }
@@ -1173,7 +1193,7 @@ static UIView *_findBackArrow(UIView *view)
              static int actionId = 0;
              
              NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
-             [options setObject:[[NSNumber alloc] initWithInt:_uid] forKey:@"uid"];
+             [options setObject:[[NSNumber alloc] initWithLongLong:_uid] forKey:@"uid"];
              [options setObject:[[NSNumber alloc] initWithInt:_phonebookInfo.nativeId] forKey:@"nativeId"];
              if (phoneNumbers != nil)
                  [options setObject:phoneNumbers forKey:@"phones"];
@@ -1408,7 +1428,7 @@ static UIView *_findBackArrow(UIView *view)
             [self.userInfoItem updateTimestamp];
         });
     }
-    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", _uid]])
+    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", _uid]])
     {
         [self actorCompleted:ASStatusSuccess path:path result:resource];
     }
@@ -1430,7 +1450,7 @@ static UIView *_findBackArrow(UIView *view)
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", _uid]])
+    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", _uid]])
     {
         TGDispatchOnMainThread(^
         {
@@ -1438,7 +1458,7 @@ static UIView *_findBackArrow(UIView *view)
             [self _updateNotificationSettings:false];
         });
     }
-    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 1]])
+    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsPrivate]])
     {
         TGDispatchOnMainThread(^
         {
@@ -1651,5 +1671,19 @@ static UIView *_findBackArrow(UIView *view)
 - (void)groupsInCommonPressed {
     [self.navigationController pushViewController:[[TGGroupsInCommonController alloc] initWithUserId:_uid] animated:true];
 }
+
+#if OG_PLUGINS_AVAILABLE
+
+- (int64_t)pluginUIProfilePeerId
+{
+    return _uid;
+}
+
+- (UIView *)pluginUIOverlayContainer
+{
+    return self.view;
+}
+
+#endif
 
 @end

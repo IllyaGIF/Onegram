@@ -56,7 +56,7 @@ static OGMemoryCache *TGGradientLabelImageCache(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        cache = [[OGMemoryCache alloc] initWithCountLimit:256 costLimit:2 * 1024 * 1024];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:256 costLimit:OGMemoryCacheBudget(2 * 1024 * 1024)];
     });
     return cache;
 }

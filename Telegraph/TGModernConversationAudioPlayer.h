@@ -13,6 +13,7 @@
 
 @class TGModernConversationAudioPlayer;
 @class TGModernViewInlineMediaContext;
+@class OGMediaStream;
 
 @protocol TGModernConversationAudioPlayerDelegate <NSObject>
 
@@ -28,8 +29,11 @@
 @property (nonatomic, weak) id<TGModernConversationAudioPlayerDelegate> delegate;
 @property (nonatomic, strong) SQueue *queue;
 @property (nonatomic, readonly) TGAudioPlayer *audioPlayer;
+@property (nonatomic, strong, readonly) OGMediaStream *stream;
 
 - (instancetype)initWithFilePath:(NSString *)filePath music:(bool)music controlAudioSession:(bool)controlAudioSession;
+- (instancetype)initWithStream:(OGMediaStream *)stream pathExtension:(NSString *)pathExtension duration:(NSTimeInterval)duration music:(bool)music controlAudioSession:(bool)controlAudioSession;
+- (bool)isStreaming;
 
 - (TGModernViewInlineMediaContext *)inlineMediaContext;
 

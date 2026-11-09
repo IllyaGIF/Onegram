@@ -22,6 +22,7 @@
 #import "TGAppDelegate.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static NSArray *timeoutValues() {
     NSArray *values = @[@(1 * 60 * 60 * 24),
@@ -176,7 +177,7 @@ static NSString *stringForBanTimeout(int32_t value) {
     }
     
     _banTimeout = _member.bannedRights.timeout;
-    int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+    int32_t timestamp = (int32_t)OGRemoteClockTime();
     _blockTimeout = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.BanUser.BlockFor") variant:stringForBanTimeout(_banTimeout == INT32_MAX ? _banTimeout : (_banTimeout - timestamp)) action:@selector(timeoutPressed)];
     _blockTimeout.deselectAutomatically = true;
     if (_isPreview) {
@@ -258,7 +259,7 @@ static NSString *stringForBanTimeout(int32_t value) {
                 strongSelf->_pickerSheet = [[TGPickerSheet alloc] initWithDateSelection:^(NSTimeInterval item) {
                     __strong TGChannelBanController *strongSelf = weakSelf;
                     if (strongSelf != nil) {
-                        int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+                        int32_t timestamp = (int32_t)OGRemoteClockTime();
                         if (item - timestamp >= 0) {
                             strongSelf->_banTimeout = (int32_t)item;
                             strongSelf->_blockTimeout.variant = stringForBanTimeout(strongSelf->_banTimeout == INT32_MAX ? INT32_MAX : (strongSelf->_banTimeout - timestamp));
@@ -268,7 +269,7 @@ static NSString *stringForBanTimeout(int32_t value) {
                 strongSelf->_pickerSheet.emptyValue = TGLocalized(@"MessageTimer.Forever");
                 [strongSelf->_pickerSheet show];
             } else if (![action isEqualToString:@"cancel"]) {
-                int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+                int32_t timestamp = (int32_t)OGRemoteClockTime();
                 if ([action intValue] == INT32_MAX) {
                     strongSelf->_banTimeout = INT32_MAX;
                 } else {

@@ -148,10 +148,15 @@ typedef enum {
 
 - (void)_controllerWillAppearAnimated:(bool)animated firstTime:(bool)firstTime;
 - (void)_controllerDidAppear:(bool)firstTime;
+- (void)_controllerWillDisappear;
+- (bool)shouldAutomaticallyDownloadAttachment:(TGMediaAttachment *)attachment message:(TGMessage *)message;
+- (void)_downloadAutomaticMediaInMessage:(TGMessage *)message highPriority:(bool)highPriority generation:(int32_t)generation;
 - (void)_controllerAvatarPressed;
 - (void)_dismissController;
 - (void)_setControllerWidthForItemCalculation:(CGFloat)width;
 - (void)_loadControllerPrimaryTitlePanel;
+- (void)_createOrUpdatePrimaryTitlePanel:(bool)createIfNeeded;
+- (NSArray *)_titlePanelActionsWithPluginActions:(NSArray *)actions;
 - (TGModernConversationEmptyListPlaceholderView *)_conversationEmptyListPlaceholder;
 - (TGModernConversationInputPanel *)_conversationGenericInputPanel;
 - (TGModernConversationInputPanel *)_conversationEmptyListInputPanel;
@@ -194,15 +199,15 @@ typedef enum {
 - (void)controllerWantsToSendGame:(TGGameMediaAttachment *)gameMedia asReplyToMessageId:(int32_t)replyMessageId botContextResult:(TGBotContextResultAttachment *)botContextResult botReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup;
 - (void)controllerWantsToResendMessages:(NSArray *)messageIds;
 - (void)controllerWantsToForwardMessages:(NSArray *)messageIndices;
-- (void)controllerWantsToCreateContact:(int32_t)uid firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber attachment:(TGContactMediaAttachment *)attachment;
-- (void)controllerWantsToAddContactToExisting:(int32_t)uid phoneNumber:(NSString *)phoneNumber attachment:(TGContactMediaAttachment *)attachment;
+- (void)controllerWantsToCreateContact:(int64_t)uid firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber attachment:(TGContactMediaAttachment *)attachment;
+- (void)controllerWantsToAddContactToExisting:(int64_t)uid phoneNumber:(NSString *)phoneNumber attachment:(TGContactMediaAttachment *)attachment;
 - (void)controllerWantsToApplyLocalization:(NSString *)filePath;
 - (void)controllerClearedConversation;
 - (void)systemClearedConversation;
 - (void)controllerDeletedMessages:(NSArray *)messageIds forEveryone:(bool)forEveryone completion:(void (^)())completion;
 - (void)controllerCanReadHistoryUpdated;
 - (void)controllerCanRegroupUnreadIncomingMessages;
-- (void)controllerRequestedNavigationToConversationWithUser:(int32_t)uid;
+- (void)controllerRequestedNavigationToConversationWithUser:(int64_t)uid;
 - (bool)controllerShouldStoreCapturedAssets;
 - (bool)controllerShouldCacheServerAssets;
 - (bool)controllerShouldLiveUploadVideo;
@@ -270,9 +275,10 @@ typedef enum {
 - (void)loadMoreMessagesBelow;
 - (void)setHistoryAboveReadAheadAllowed:(bool)allowed;
 - (bool)historyAboveReadAheadAllowed;
+- (void)setHistoryBelowReadAheadAllowed:(bool)allowed;
+- (bool)historyBelowReadAheadAllowed;
 - (bool)historyAboveMayBeAvailable;
-- (void)unloadMessagesAbove;
-- (void)unloadMessagesBelow;
+- (void)unloadMessagesAroundMessageId:(int32_t)messageId conversationId:(int64_t)conversationId date:(int32_t)date;
 
 - (void)_performFastScrollDown:(bool)becauseOfSendTextAction becauseOfNavigation:(bool)becauseOfNavigation;
 - (void)_replaceMessages:(NSArray *)newMessages;

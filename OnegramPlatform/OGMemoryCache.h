@@ -1,6 +1,8 @@
 #import <Foundation/Foundation.h>
 #include <stdint.h>
 
+FOUNDATION_EXPORT NSUInteger OGMemoryCacheBudget(NSUInteger referenceBytes);
+
 @interface OGMemoryCache : NSObject
 
 @property (nonatomic) NSUInteger countLimit;

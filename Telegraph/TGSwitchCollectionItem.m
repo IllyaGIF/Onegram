@@ -12,6 +12,7 @@
 
 #import "TGSwitchCollectionItemView.h"
 #import "TGPresentation.h"
+#import "TGCollectionItemDescription.h"
 #import "../OnegramUI/Core/OGTheme.h"
 #import "../OnegramUI/Core/OGSettingsAppearance.h"
 #import "../OnegramUI/Core/OGProfileAppearance.h"
@@ -52,7 +53,9 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, _brandedUserInfoStyle && [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.actionRowAppearance.controlRowHeight : 44.0f);
+    if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
+        return CGSizeMake(containerSize.width, [OGTheme brandedTheme].profileAppearance.actionRowAppearance.controlRowHeight);
+    return CGSizeMake(containerSize.width, TGCollectionItemSwitchHeightWithDescription(_descriptionText, containerSize.width));
 }
 
 - (void)bindView:(TGCollectionItemView *)view
@@ -61,6 +64,7 @@
     
     [((TGSwitchCollectionItemView *)view) setFullSeparator:_fullSeparator];
     [((TGSwitchCollectionItemView *)view) setTitle:_title];
+    [((TGSwitchCollectionItemView *)view) setDescriptionText:_descriptionText];
     [((TGSwitchCollectionItemView *)view) setIsOn:_isOn animated:false];
     [((TGSwitchCollectionItemView *)view) setIsEnabled:_isEnabled];
     [((TGSwitchCollectionItemView *)view) setIsLocked:_isLocked];
@@ -83,6 +87,16 @@
         
         if ([self boundView] != nil)
             [((TGSwitchCollectionItemView *)[self boundView]) setTitle:_title];
+    }
+}
+
+- (void)setDescriptionText:(NSString *)descriptionText
+{
+    if (!TGStringCompare(_descriptionText, descriptionText))
+    {
+        _descriptionText = descriptionText;
+        if ([self boundView] != nil)
+            [((TGSwitchCollectionItemView *)[self boundView]) setDescriptionText:_descriptionText];
     }
 }
 

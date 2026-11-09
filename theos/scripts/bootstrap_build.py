@@ -15,6 +15,7 @@ import zipfile
 SDK_BY_ARCH = {
     'armv6': ('3.1.3',),
     'armv7': ('6.1',),
+    'arm64': ('11.2',),
     'universal3': ('3.1.3', '6.1', '11.2'),
 }
 SDK_ARCHIVE_URLS = {
@@ -144,7 +145,7 @@ def validate_toolchain(root):
 
 def validate_linker(root, sdk, architecture, deployment):
     tools = root / 'toolchain/linux/iphone/bin'
-    crt = sdk / 'usr/lib/crt1.3.1.o'
+    crt = sdk / ('usr/lib/crt1.o' if tuple(int(part) for part in deployment.split('.')) < (3, 1) else 'usr/lib/crt1.3.1.o')
     if not crt.is_file():
         return False
     with tempfile.TemporaryDirectory(prefix='onegram-linker-check-') as temp:
@@ -467,9 +468,12 @@ def main():
         if args.architecture == 'armv7':
             sdk = theos / 'sdks/iPhoneOS6.1.sdk'
             install_linux_toolchain(theos, sdk, 'armv7', '4.3', args.dry_run)
+        elif args.architecture == 'arm64':
+            sdk = theos / 'sdks/iPhoneOS11.2.sdk'
+            install_linux_toolchain(theos, sdk, 'arm64', '7.0', args.dry_run)
         else:
             sdk = theos / 'sdks/iPhoneOS3.1.3.sdk'
-            install_linux_toolchain(theos, sdk, 'armv6', '3.1.3', args.dry_run)
+            install_linux_toolchain(theos, sdk, 'armv6', '3.0', args.dry_run)
         if not args.dry_run:
             from setup_linux_linker import ensure_linux_linker
             ensure_linux_linker(theos / 'toolchain/linux/iphone')

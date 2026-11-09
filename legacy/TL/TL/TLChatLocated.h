@@ -9,7 +9,7 @@
 
 @interface TLChatLocated : NSObject <TLObject>
 
-@property (nonatomic) int32_t chat_id;
+@property (nonatomic) int64_t chat_id;
 @property (nonatomic) int32_t distance;
 
 @end

@@ -21,7 +21,7 @@ typedef enum {
 
 - (id)itemId;
 - (int)date;
-- (int)authorUid;
+- (int64_t)authorUid;
 - (TGUser *)author;
 
 - (UIImage *)immediateThumbnail;

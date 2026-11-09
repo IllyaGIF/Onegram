@@ -1,3 +1,5 @@
+#import "TGSendAsSignals.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGLetteredAvatarView.h"
 #import "TGModernConversationInputTextPanel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -177,6 +179,9 @@ static CGRect viewFrame(UIView *view)
     CGSize _brandedBackgroundSize;
     CGFloat _brandedBackgroundTopOutset;
     
+    UIButton *_senderButton;
+    TGLetteredAvatarView *_senderAvatar;
+    TGSendAsPeer *_senderPeer;
     CGFloat _sendButtonWidth;
     
     CGSize _messageAreaSize;
@@ -811,7 +816,7 @@ static CGRect viewFrame(UIView *view)
 
 - (BOOL)growingTextViewEnabled:(HPGrowingTextView *)__unused growingTextView
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(isInputPanelTextEnabled:)])
         return [delegate isInputPanelTextEnabled:self];
     
@@ -831,14 +836,14 @@ static CGRect viewFrame(UIView *view)
 {
     [self updateAssociatedPanelVisibility:true];
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelFocused:)])
         [delegate inputPanelFocused:self];
     
     [self updateModeButtonVisibility:true reset:false];
 }
 
-- (void)replaceMention:(NSString *)mention username:(bool)username userId:(int32_t)userId {
+- (void)replaceMention:(NSString *)mention username:(bool)username userId:(int64_t)userId {
     [TGModernConversationInputTextPanel replaceMention:mention inputField:_inputField username:username userId:userId];
 }
 
@@ -846,7 +851,7 @@ static CGRect viewFrame(UIView *view)
     [self replaceMention:mention inputField:inputField username:true userId:0];
 }
 
-+ (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int32_t)userId
++ (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int64_t)userId
 {
     [HPGrowingTextView replaceMention:mention inputField:inputField username:username userId:userId];
 }
@@ -932,7 +937,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)updateInputQueries:(HPGrowingTextView *)growingTextView
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     NSString *text = growingTextView.text;
     int textLength = (int)text.length;
 
@@ -1137,7 +1142,7 @@ static CGRect viewFrame(UIView *view)
         _removeGifTabTextOnDeactivation = false;
     }
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     
     NSString *text = growingTextView.text;
     bool hasNonWhitespace = [text hasNonWhitespaceCharacters];
@@ -1177,7 +1182,7 @@ static CGRect viewFrame(UIView *view)
     {
         if (hasNonWhitespace)
         {
-            id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+            id delegate = self.delegate;
             if ([delegate respondsToSelector:@selector(inputTextPanelHasIndicatedTypingActivity:)])
                 [delegate inputTextPanelHasIndicatedTypingActivity:self];
         }
@@ -1185,7 +1190,7 @@ static CGRect viewFrame(UIView *view)
     
     if (!hasNonWhitespace)
     {
-        id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+        id delegate = self.delegate;
         if ([delegate respondsToSelector:@selector(inputTextPanelHasCancelledTypingActivity:)])
             [delegate inputTextPanelHasCancelledTypingActivity:self];
     }
@@ -1361,7 +1366,7 @@ static CGRect viewFrame(UIView *view)
         }
         
         _sendButton.enabled = true;
-        id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+        id delegate = self.delegate;
         if ([delegate respondsToSelector:@selector(inputPanelSendShouldBeAlwaysEnabled:)])
         {
             if ([delegate inputPanelSendShouldBeAlwaysEnabled:self])
@@ -1540,7 +1545,7 @@ static CGRect viewFrame(UIView *view)
     
     bool enableSend = text.length != 0;
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelSendShouldBeAlwaysEnabled:)])
     {
         if ([delegate inputPanelSendShouldBeAlwaysEnabled:self])
@@ -1553,7 +1558,7 @@ static CGRect viewFrame(UIView *view)
     
     if (enableSend)
     {
-        id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+        id delegate = self.delegate;
         if ([delegate respondsToSelector:@selector(inputPanelRequestedSendMessage:text:entities:media:preparedMessage:)]) {
             __autoreleasing NSArray *entities = nil;
             NSString *text = [_inputField textWithEntities:&entities];
@@ -1575,28 +1580,28 @@ static CGRect viewFrame(UIView *view)
         
     });
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRequestedAttachmentsMenu:)])
         [delegate inputPanelRequestedAttachmentsMenu:self];
 }
 
 - (void)attachButtonInteractionBegan
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRequestedFastCamera:)])
         [delegate inputPanelRequestedFastCamera:self];
 }
 
 - (void)attachButtonInteractionUpdate:(CGPoint)location
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelPannedFastCamera:location:)])
         [delegate inputPanelPannedFastCamera:self location:location];
 }
 
 - (void)attachButtonInteractionCompleted:(CGPoint)location
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelReleasedFastCamera:location:)])
         [delegate inputPanelReleasedFastCamera:self location:location];
 }
@@ -1617,7 +1622,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)decideMicButtonAction
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     
     bool videoMessageAvailable = _videoMessageAvailable;
     if (videoMessageAvailable && !_pressingMicButton)
@@ -1645,7 +1650,7 @@ static CGRect viewFrame(UIView *view)
              _micButtonIconView.alpha = 1.0f;
          }];
         
-        id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+        id delegate = self.delegate;
         if ([delegate respondsToSelector:@selector(inputPanelRecordingModeChanged:video:)])
             [delegate inputPanelRecordingModeChanged:self video:self.isVideoMessage];
         
@@ -1687,7 +1692,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)micButtonInteractionBegan
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     _inputMediaAllowed = true;
     if ([delegate respondsToSelector:@selector(inputPanelAudioRecordingEnabled:)])
     {
@@ -1735,7 +1740,7 @@ static CGRect viewFrame(UIView *view)
         [self setShowRecordingInterface:false video:self.isVideoMessage velocity:velocity.x];
     }
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelAudioRecordingCancel:)])
         [delegate inputPanelAudioRecordingCancel:self];
 }
@@ -1763,7 +1768,7 @@ static CGRect viewFrame(UIView *view)
         [self decideMicButtonAction];
     }
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelAudioRecordingComplete:)])
         [delegate inputPanelAudioRecordingComplete:self];
 }
@@ -1774,7 +1779,7 @@ static CGRect viewFrame(UIView *view)
         return;
     }
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelAudioButtonInteractionUpdate:value:)] && self.isVideoMessage)
         [delegate inputPanelAudioButtonInteractionUpdate:self value:value];
     
@@ -1842,7 +1847,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)micButtonInteractionLocked
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRecordingLocked:video:)])
         [delegate inputPanelRecordingLocked:self video:self.isVideoMessage];
     
@@ -1877,7 +1882,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)micButtonInteractionRequestedLockedAction
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRecordingRequestedLockedAction:)])
         [delegate inputPanelRecordingRequestedLockedAction:self];
 }
@@ -1886,7 +1891,7 @@ static CGRect viewFrame(UIView *view)
 {
     [self recordingStopped];
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRecordingStopped:)])
         [delegate inputPanelRecordingStopped:self];
 }
@@ -2109,6 +2114,54 @@ static CGRect viewFrame(UIView *view)
         block();
 }
 
+- (UIButton *)senderButton
+{
+    return _senderButton;
+}
+
+- (CGFloat)senderAreaWidth
+{
+    return _senderPeer != nil && !_collapsed && !_recording && _messageEditingContext == nil && !_inputDisabled && ![self currentlyDisplayingContextResult] ? 36.0f : 0.0f;
+}
+
+- (void)senderPressed
+{
+    id delegate = self.delegate;
+    if ([delegate respondsToSelector:@selector(inputPanelRequestedSenderMenu:)])
+        [delegate inputPanelRequestedSenderMenu:self];
+}
+
+- (void)setSenderPeer:(TGSendAsPeer *)peer
+{
+    _senderPeer = peer;
+    if (peer != nil && _senderButton == nil)
+    {
+        _senderButton = [UIButton buttonWithType:UIButtonTypeCustom];
+        [_senderButton addTarget:self action:@selector(senderPressed) forControlEvents:UIControlEventTouchUpInside];
+        _senderAvatar = [[TGLetteredAvatarView alloc] initWithFrame:CGRectMake(4.0f, 8.0f, 28.0f, 28.0f)];
+        _senderAvatar.userInteractionEnabled = false;
+        _senderAvatar.clipsToBounds = true;
+        _senderAvatar.layer.cornerRadius = 14.0f;
+        [_senderAvatar setSingleFontSize:14.0f doubleFontSize:12.0f useBoldFont:false];
+        [_senderButton addSubview:_senderAvatar];
+        [self addSubview:_senderButton];
+    }
+    if (peer != nil)
+    {
+        UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:28.0f];
+        if (TGPeerIdIsUser(peer.peerId))
+            [_senderAvatar loadUserPlaceholderWithSize:CGSizeMake(28, 28) uid:peer.peerId firstName:peer.firstName lastName:peer.lastName placeholder:placeholder];
+        else
+            [_senderAvatar loadGroupPlaceholderWithSize:CGSizeMake(28, 28) conversationId:peer.peerId title:peer.title placeholder:placeholder];
+        if (peer.avatarUrl.length != 0)
+            [_senderAvatar loadImage:peer.avatarUrl filter:@"circle:28x28" placeholder:[_senderAvatar currentImage]];
+        _senderButton.accessibilityLabel = [NSString stringWithFormat:@"%@: %@", TGLocalized(@"Conversation.SendAs"), peer.title ?: @""];
+    }
+    [self updateInputFieldLayout];
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+}
+
 - (void)updateInputFieldLayout {
     NSRange range = _inputField.internalTextView.selectedRange;
     
@@ -2121,7 +2174,7 @@ static CGRect viewFrame(UIView *view)
     if ([self currentlyDisplayingContextResult]) {
         sendAreaInset = 6.0f;
     } else {
-        sendAreaInset = _sendButtonWidth + 1.0f;
+        sendAreaInset = _sendButtonWidth + 1.0f + [self senderAreaWidth];
     }
     
     CGRect inputFieldClippingFrame = CGRectMake(inputFieldInsets.left, inputFieldInsets.top, _parentSize.width - inputFieldInsets.left - inputFieldInsets.right - sendAreaInset - _panelAccessoryView.frame.size.width - _safeAreaInset.left - _safeAreaInset.right, 0.0f);
@@ -2206,7 +2259,7 @@ static CGRect viewFrame(UIView *view)
     
     [self updateCustomKeyboardFrame:inputContainerHeight];
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelWillChangeHeight:height:duration:animationCurve:)])
     {
         [delegate inputPanelWillChangeHeight:self height:inputContainerHeight + customKeyboardHeight duration:duration animationCurve:animationCurve];
@@ -2293,9 +2346,12 @@ static CGRect viewFrame(UIView *view)
     if ([self currentlyDisplayingContextResult]) {
         sendAreaInset = 6.0f;
     } else {
-        sendAreaInset = _sendButtonWidth;
+        sendAreaInset = _sendButtonWidth + [self senderAreaWidth];
     }
     
+    _senderButton.hidden = [self senderAreaWidth] < FLT_EPSILON;
+    _senderButton.frame = CGRectMake(frame.size.width - [self baseButtonWidth] - _safeAreaInset.right - 36.0f, globalVerticalOffset + frame.size.height - [self baseHeight], 36.0f, [self baseHeight]);
+    _senderAvatar.center = CGPointMake(18.0f, [self baseHeight] / 2.0f);
     CGFloat modeButtonVerticalOffset = -[self baseHeight] + [self modeButtonOffset];
     setViewFrame(_fieldBackground, CGRectMake(inputFieldInsets.left, globalVerticalOffset + inputFieldInsets.top + [self extendedPanelHeight], frame.size.width - inputFieldInsets.left - inputFieldInsets.right - sendAreaInset, frame.size.height - inputFieldInsets.top - inputFieldInsets.bottom - [self extendedPanelHeight]));
     setViewFrame(_inputFieldPlaceholder, CGRectMake([self inputFieldPlaceholderOffset].x, [self inputFieldPlaceholderOffset].y, _inputFieldPlaceholder.frame.size.width, _inputFieldPlaceholder.frame.size.height));
@@ -2448,6 +2504,9 @@ static CGRect viewFrame(UIView *view)
 
 - (void)setShowRecordingInterface:(bool)show video:(bool)video velocity:(CGFloat)velocity
 {
+    _senderButton.hidden = show || [self senderAreaWidth] < FLT_EPSILON;
+    [self updateInputFieldLayout];
+    [self setNeedsLayout];
 #if TG_ENABLE_AUDIO_NOTES
     [self updateSendButtonVisibility:false];
     CGFloat avoidOffset = 400.0f;
@@ -2709,7 +2768,7 @@ static CGRect viewFrame(UIView *view)
     }
     
     NSTimeInterval recordingDuration = 0.0;
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelAudioRecordingDuration:)])
         recordingDuration = [delegate inputPanelAudioRecordingDuration:self];
     
@@ -2909,7 +2968,7 @@ static CGRect viewFrame(UIView *view)
         CGFloat inputContainerHeight = [self heightForInputFieldHeight:_inputField.frame.size.height];
         CGFloat customKeyboardHeight = [self customKeyboardHeight];
         
-        id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+        id delegate = self.delegate;
         NSTimeInterval duration = 0.2;
         UIViewAnimationCurve curve = 7;
         
@@ -3162,7 +3221,7 @@ static CGRect viewFrame(UIView *view)
                 CGFloat inputContainerHeight = [self heightForInputFieldHeight:_inputField.frame.size.height];
                 CGFloat customKeyboardHeight = [self customKeyboardHeight];
                 
-                id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+                id delegate = self.delegate;
                 if ([delegate respondsToSelector:@selector(inputPanelWillChangeHeight:height:duration:animationCurve:)])
                 {
                     [delegate inputPanelWillChangeHeight:self height:inputContainerHeight + customKeyboardHeight duration:0.2 animationCurve:0];
@@ -3193,7 +3252,7 @@ static CGRect viewFrame(UIView *view)
                 CGFloat inputContainerHeight = [self heightForInputFieldHeight:_inputField.frame.size.height];
                 CGFloat customKeyboardHeight = [self customKeyboardHeight];
                 
-                id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+                id delegate = self.delegate;
                 if ([delegate respondsToSelector:@selector(inputPanelWillChangeHeight:height:duration:animationCurve:)])
                 {
                     [delegate inputPanelWillChangeHeight:self height:inputContainerHeight + customKeyboardHeight duration:0.0 animationCurve:0];
@@ -3202,7 +3261,7 @@ static CGRect viewFrame(UIView *view)
         }
     }
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     bool sendButtonEnabled = [_inputField.internalTextView.text hasNonWhitespaceCharacters];
     if ([delegate respondsToSelector:@selector(inputPanelSendShouldBeAlwaysEnabled:)])
     {
@@ -3235,7 +3294,7 @@ static CGRect viewFrame(UIView *view)
         else
         {
             TGStickerAssociatedInputPanel *stickerPanel = [[TGStickerAssociatedInputPanel alloc] init];
-            id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+            id delegate = self.delegate;
             stickerPanel.controller = [delegate inputPanelParentViewController:self];
             stickerPanel.documentSelected = stickerSelected;
             [stickerPanel setDocumentList:dictionary];
@@ -3251,7 +3310,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)growingTextView:(HPGrowingTextView *)__unused growingTextView didPasteImages:(NSArray *)images andText:(NSString *)text
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRequestedSendImages:images:)])
         [delegate inputPanelRequestedSendImages:self images:images];
     if (text.length != 0) {
@@ -3263,7 +3322,7 @@ static CGRect viewFrame(UIView *view)
 
 - (void)growingTextView:(HPGrowingTextView *)__unused growingTextView didPasteData:(NSData *)data
 {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRequestedSendData:data:)])
         [delegate inputPanelRequestedSendData:self data:data];
 }
@@ -3530,7 +3589,7 @@ static CGRect viewFrame(UIView *view)
         [self updateAssociatedPanelVisibility:true];
         
         if (_replyMarkup != nil) {
-            id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+            id delegate = self.delegate;
             if ([delegate respondsToSelector:@selector(inputPanelRequestedToggleCommandKeyboard:showCommandKeyboard:)]) {
                 [delegate inputPanelRequestedToggleCommandKeyboard:self showCommandKeyboard:false];
             }
@@ -3546,13 +3605,14 @@ static CGRect viewFrame(UIView *view)
     if (_canOpenStickersPanel != nil && !_canOpenStickersPanel()) {
         return;
     }
+    OGDiagnosticsTimingBegin("stickers_open");
     
     dispatch_async(dispatch_get_main_queue(), ^{
         if (_stickerKeyboardView == nil)
         {
             _stickerKeyboardView = [[TGStickerKeyboardView alloc] init];
             _stickerKeyboardView.channelInfoSignal = _channelInfoSignal;
-            id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+            id delegate = self.delegate;
             _stickerKeyboardView.parentViewController = [delegate inputPanelParentViewController:self];
             __weak TGModernConversationInputTextPanel *weakSelf = self;
             _stickerKeyboardView.stickerSelected = ^(TGDocumentMediaAttachment *sticker)
@@ -3613,6 +3673,7 @@ static CGRect viewFrame(UIView *view)
         
         _stickerKeyboardView.enableAnimation = true;
         [self setCustomKeyboard:_stickerKeyboardView animated:true force:false];
+        OGDiagnosticsTimingAfterFrame("stickers_open", _stickerKeyboardView, false, false);
     });
 }
 
@@ -3671,7 +3732,7 @@ static CGRect viewFrame(UIView *view)
     commandKeyboardView.matchDefaultHeight = [self currentReplyMarkup].matchDefaultHeight;
     [commandKeyboardView setReplyMarkup:[self currentReplyMarkup]];
     __weak TGModernConversationInputTextPanel *weakSelf = self;
-    commandKeyboardView.commandActivated = ^(TGBotReplyMarkupButton *button, int32_t userId, int32_t messageId)
+    commandKeyboardView.commandActivated = ^(TGBotReplyMarkupButton *button, int64_t userId, int32_t messageId)
     {
         __strong TGModernConversationInputTextPanel *strongSelf = weakSelf;
         if (strongSelf != nil)
@@ -3692,7 +3753,7 @@ static CGRect viewFrame(UIView *view)
     
     [self updateGifsTabActive:false];
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelRequestedToggleCommandKeyboard:showCommandKeyboard:)]) {
         [delegate inputPanelRequestedToggleCommandKeyboard:self showCommandKeyboard:true];
     }
@@ -3852,7 +3913,7 @@ static CGRect viewFrame(UIView *view)
 }
 
 - (void)broadcastButtonPressed {
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelToggleBroadcastMode:)]) {
         [delegate inputPanelToggleBroadcastMode:self];
     }
@@ -4039,7 +4100,7 @@ static CGRect viewFrame(UIView *view)
             query = [query substringFromIndex:1];
         }
         
-        id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+        id delegate = self.delegate;
         if ([delegate respondsToSelector:@selector(inputPanelMentionTextEntered:mention:text:)]) {
             [delegate inputPanelMentionTextEntered:self mention:@"" text:@""];
         }
@@ -4118,7 +4179,7 @@ static CGRect viewFrame(UIView *view)
     if (keyboardView != nil)
         [self customKeyboardWrapperView].hidden = false;
 
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ((animated || force) && [delegate respondsToSelector:@selector(inputPanelWillChangeHeight:height:duration:animationCurve:)])
     {
         NSTimeInterval duration = animated ? 0.2 : 0.0;
@@ -4247,7 +4308,7 @@ static CGRect viewFrame(UIView *view)
     
     [_customKeyboardView setExpanded:expanded];
     
-    id<TGModernConversationInputTextPanelDelegate> delegate = (id<TGModernConversationInputTextPanelDelegate>)self.delegate;
+    id delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(inputPanelExpandedKeyboard:expanded:)])
         [delegate inputPanelExpandedKeyboard:self expanded:expanded];
     

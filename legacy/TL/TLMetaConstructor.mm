@@ -11,14 +11,14 @@
 #include <pthread.h>
 #include <set>
 
-static bool TLMetaConstructorShouldReportUnsupportedName(int32_t name)
+static bool TLMetaConstructorShouldReportUnsupportedSignature(int32_t signature)
 {
     static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-    static std::set<int32_t> *reportedNames = NULL;
+    static std::set<int32_t> *reportedSignatures = NULL;
     pthread_mutex_lock(&mutex);
-    if (reportedNames == NULL)
-        reportedNames = new std::set<int32_t>();
-    bool inserted = reportedNames->insert(name).second;
+    if (reportedSignatures == NULL)
+        reportedSignatures = new std::set<int32_t>();
+    bool inserted = reportedSignatures->insert(signature).second;
     pthread_mutex_unlock(&mutex);
     return inserted;
 }
@@ -45,6 +45,9 @@ TLMetaConstructor::~TLMetaConstructor()
 
 TLConstructedValue TLMetaConstructor::construct(NSInputStream *is, id<TLSerializationEnvironment> environment, __unused TLSerializationContext *context, __autoreleasing NSError **error)
 {
+    if (signature == TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
+        return TLMetaClassStore::constructValue(is, signature, environment, nil, error);
+
     std::tr1::shared_ptr<std::vector<TLConstructedValue> > values(new std::vector<TLConstructedValue>());
     std::map<int32_t, int32_t> flagValues;
     
@@ -98,7 +101,7 @@ TLConstructedValue TLMetaConstructor::construct(NSInputStream *is, id<TLSerializ
     id<TLObject> objectClass = TLMetaClassStore::getObjectClass(name);
     if (objectClass == nil)
     {
-        if (TLMetaConstructorShouldReportUnsupportedName(name))
+        if (TLMetaConstructorShouldReportUnsupportedSignature(signature))
             TGLog(@"TL SKIP unsupported object ctorSig=%08x ctorName=%08x", (unsigned int)this->signature, (unsigned int)this->name);
         TLConstructedValue skippedValue;
         skippedValue.type = TLConstructedValueTypeObject;

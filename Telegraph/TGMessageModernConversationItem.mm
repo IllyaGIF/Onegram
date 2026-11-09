@@ -1,4 +1,8 @@
 #import "TGMessageModernConversationItem.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 #import "TGDatabase.h"
@@ -15,6 +19,10 @@
 #import "TGAudioMessageViewModel.h"
 #import "TGAnimatedImageMessageViewModel.h"
 #import "TGStickerMessageViewModel.h"
+#import "TGAnimatedEmojiStore.h"
+#import "TGAnimatedStickerView.h"
+#import "TGOnegramSettings.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGMusicAudioMessageModel.h"
 #import "TGCallMessageViewModel.h"
 #import "TGRoundMessageViewModel.h"
@@ -40,6 +48,50 @@
 #import "TGPollMediaAttachment.h"
 #import "TGPollMessageViewModel.h"
 #import "TGRichMessageModernViewModel.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+#import <mach/mach.h>
+#import <pthread.h>
+
+typedef struct
+{
+    CFAbsoluteTime wallTime;
+    double threadTime;
+    int64_t faults;
+    int64_t pageins;
+    int64_t contextSwitches;
+} TGMessageModernConversationItemSample;
+
+static TGMessageModernConversationItemSample TGMessageModernConversationItemTakeSample(void)
+{
+    TGMessageModernConversationItemSample sample;
+    sample.wallTime = CFAbsoluteTimeGetCurrent();
+    sample.threadTime = 0.0;
+    thread_basic_info_data_t basicInfo;
+    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(pthread_mach_thread_np(pthread_self()), THREAD_BASIC_INFO, (thread_info_t)&basicInfo, &count) == KERN_SUCCESS)
+        sample.threadTime = (double)basicInfo.user_time.seconds + (double)basicInfo.user_time.microseconds / 1000000.0 + (double)basicInfo.system_time.seconds + (double)basicInfo.system_time.microseconds / 1000000.0;
+    sample.faults = 0;
+    sample.pageins = 0;
+    sample.contextSwitches = 0;
+    task_events_info_data_t eventsInfo;
+    count = TASK_EVENTS_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&eventsInfo, &count) == KERN_SUCCESS)
+    {
+        sample.faults = eventsInfo.faults;
+        sample.pageins = eventsInfo.pageins;
+        sample.contextSwitches = eventsInfo.csw;
+    }
+    return sample;
+}
+
+static void TGMessageModernConversationItemReportModel(TGModernViewModel *viewModel, TGMessage *message, TGMessageModernConversationItemSample start, TGMessageModernConversationItemSample created, TGMessageModernConversationItemSample laidOut, TGMessageModernConversationItemSample finished)
+{
+    if (finished.wallTime - start.wallTime < 0.04)
+        return;
+    OGPlatformDiagnosticLog(@"MODELSLOW %@ mid=%d thread=%s media=%d text=%d create=%.0f/%.0f layout=%.0f/%.0f availability=%.0f/%.0f faults=%d pageins=%d csw=%d", viewModel == nil ? @"?" : NSStringFromClass([viewModel class]), message.mid, pthread_main_np() != 0 ? "main" : "background", (int)message.mediaAttachments.count, (int)message.text.length, (created.wallTime - start.wallTime) * 1000.0, (created.threadTime - start.threadTime) * 1000.0, (laidOut.wallTime - created.wallTime) * 1000.0, (laidOut.threadTime - created.threadTime) * 1000.0, (finished.wallTime - laidOut.wallTime) * 1000.0, (finished.threadTime - laidOut.threadTime) * 1000.0, (int)(finished.faults - start.faults), (int)(finished.pageins - start.pageins), (int)(finished.contextSwitches - start.contextSwitches));
+}
 
 typedef enum {
     TGCachedMessageTypeUnknown = 0,
@@ -48,12 +100,11 @@ typedef enum {
     TGCachedMessageTypeNotification = 3
 } TGCachedMessageType;
 
-int32_t TGMessageModernConversationItemLocalUserId = 0;
+int64_t TGMessageModernConversationItemLocalUserId = 0;
 
 static UIColor *coloredNameForUser(TGUser *user, bool dark)
 {
-    int64_t userId = user.modernUserId != 0 ? user.modernUserId : user.uid;
-    int colorIndex = user.nameColorId >= 0 && user.nameColorId < 7 ? user.nameColorId : [[TGInterfaceAssets instance] userColorIndexForId:userId];
+    int colorIndex = user.nameColorId >= 0 && user.nameColorId < 7 ? user.nameColorId : [[TGInterfaceAssets instance] userColorIndexForId:user.uid];
     return [[TGInterfaceAssets instance] userColorForIndex:colorIndex dark:dark];
 }
 
@@ -233,6 +284,19 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         TGMessageGroupedLayout *updatedLayout = [_groupedLayout groupedLayoutAfterMessageUpdate:message previousMessage:fromMessage];
         [self updateGroupedLayout:updatedLayout];
     }
+#if OG_PLUGINS_AVAILABLE
+    if (_viewModel != nil && ([_viewModel isKindOfClass:[TGPluginServiceMessageViewModel class]] ||
+        OGPluginUIServiceMessageCandidate(message.text.length != 0 ? message.text : message.caption)) &&
+        (message.mid != fromMessage.mid || !TGStringCompare(message.text, fromMessage.text) || !TGStringCompare(message.caption, fromMessage.caption)))
+    {
+        if ([self boundCell] != nil)
+        {
+            rebindCell = [self boundCell];
+            [self unbindCell:viewStorage];
+        }
+        _viewModel = nil;
+    }
+#endif
     
     if (_viewModel != nil && !TGPeerIdIsSecretChat(_message.cid) && _message.messageLifetime > 0) {
         bool replaceModel = false;
@@ -517,10 +581,22 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     
     if (_viewModel == nil)
     {
+        bool diagnostics = OGDiagnosticsEnabled();
+        TGMessageModernConversationItemSample diagnosticStart = {};
+        if (diagnostics)
+            diagnosticStart = TGMessageModernConversationItemTakeSample();
         _viewModel = [self createMessageViewModel:_message containerSize:containerSize];
         [self _ios6ApplyDiscussionFooterToModel:_viewModel];
+        TGMessageModernConversationItemSample diagnosticCreated = {};
+        if (diagnostics)
+            diagnosticCreated = TGMessageModernConversationItemTakeSample();
         [_viewModel layoutForContainerSize:containerSize];
+        TGMessageModernConversationItemSample diagnosticLaidOut = {};
+        if (diagnostics)
+            diagnosticLaidOut = TGMessageModernConversationItemTakeSample();
         [_viewModel updateMediaAvailability:_mediaAvailabilityStatus viewStorage:nil delayDisplay:false];
+        if (diagnostics)
+            TGMessageModernConversationItemReportModel(_viewModel, _message, diagnosticStart, diagnosticCreated, diagnosticLaidOut, TGMessageModernConversationItemTakeSample());
         updateCell = true;
     }
     else
@@ -565,7 +641,13 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
 
 - (CGSize)sizeForContainerSize:(CGSize)containerSize viewStorage:(TGModernViewStorage *)viewStorage
 {
-    return CGSizeMake(containerSize.width, [self viewModelForContainerSize:containerSize viewStorage:viewStorage].frame.size.height);
+    CGSize size = CGSizeMake(containerSize.width, [self viewModelForContainerSize:containerSize viewStorage:viewStorage].frame.size.height);
+#if OG_PLUGINS_AVAILABLE
+    CGFloat pluginHeight = 0.0f;
+    if (OGPluginUIMessageHeight(_message.cid, _message.mid, &pluginHeight))
+        size.height = pluginHeight;
+#endif
+    return size;
 }
 
 - (void)updateToItem:(TGMessageModernConversationItem *)updatedItem viewStorage:(TGModernViewStorage *)viewStorage sizeChanged:(bool *)sizeChanged delayAvailability:(bool)delayAvailability containerSize:(CGSize)containerSize force:(bool)force
@@ -771,6 +853,29 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
 
 - (TGMessageViewModel *)createMessageViewModel:(TGMessage *)message containerSize:(CGSize)containerSize
 {
+#if OG_PLUGINS_AVAILABLE
+    if (message.hole == nil && message.group == nil)
+    {
+        NSString *serviceText = message.text.length != 0 ? message.text : message.caption;
+        bool hasDocument = false;
+        for (TGMediaAttachment *attachment in message.mediaAttachments)
+        {
+            if (attachment.type == TGDocumentMediaAttachmentType)
+            {
+                hasDocument = true;
+                break;
+            }
+        }
+        NSDictionary *description = OGPluginUIServiceMessageDescription(message.cid, message.mid, serviceText, message.outgoing, hasDocument);
+        if (description != nil)
+        {
+            TGPluginServiceMessageViewModel *model = [[TGPluginServiceMessageViewModel alloc] initWithMessage:message description:description context:_context];
+            model.collapseFlags = _collapseFlags;
+            [model layoutForContainerSize:containerSize];
+            return model;
+        }
+    }
+#endif
     bool useAuthor = ([self currentAuthorPeer] != nil) && (!message.outgoing || _context.isSavedMessages);
     if (message.outgoing) {
         if ([[self currentAuthorPeer] isKindOfClass:[TGConversation class]]) {
@@ -782,7 +887,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
     int webpageIndex = -1;
     int gameIndex = -1;
     int invoiceIndex = -1;
-    int32_t contactUid = 0;
+    int64_t contactUid = 0;
     bool unsupportedMessage = false;
     TGUser *viaUser = nil;
     
@@ -904,7 +1009,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
             else if (attachment.type == TGInvoiceMediaAttachmentType)
                 invoiceIndex = index;
             else if (attachment.type == TGViaUserAttachmentType) {
-                int32_t userId = ((TGViaUserAttachment *)attachment).userId;
+                int64_t userId = ((TGViaUserAttachment *)attachment).userId;
                 if (userId == 0) {
                     NSString *username = ((TGViaUserAttachment *)attachment).username;
                     if (username.length != 0) {
@@ -1047,7 +1152,7 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                         if (authorPeer == nil)
                         {
                             if (TGPeerIdIsUser(message.fromUid))
-                                authorPeer = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+                                authorPeer = [TGDatabaseInstance() loadUser:message.fromUid];
                             else
                                 authorPeer = [TGDatabaseInstance() loadConversationWithId:message.fromUid];
                         }
@@ -1086,7 +1191,15 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
                 }
                 case TGActionMediaAttachmentType:
                 {
-                    if (((TGActionMediaAttachment *)attachment).actionType == TGMessageActionPhoneCall)
+                    TGMessageAction actionType = ((TGActionMediaAttachment *)attachment).actionType;
+                    if (actionType == TGMessageActionStarGift || actionType == TGMessageActionStarGiftUnique || actionType == TGMessageActionStarGiftPurchaseOffer || actionType == TGMessageActionStarGiftPurchaseOfferDeclined)
+                    {
+                        TGStarGiftMessageViewModel *model = [[TGStarGiftMessageViewModel alloc] initWithMessage:_message actionMedia:(TGActionMediaAttachment *)attachment authorPeer:[self currentAuthorPeer] context:_context];
+                        model.collapseFlags = _collapseFlags;
+                        [model layoutForContainerSize:containerSize];
+                        return model;
+                    }
+                    else if (actionType == TGMessageActionPhoneCall)
                     {
 
                         TGCallMessageViewModel *model = [[TGCallMessageViewModel alloc] initWithMessage:_message actionMedia:(TGActionMediaAttachment *)attachment authorPeer:[self currentAuthorPeer] additionalUsers:_additionalUsers context:_context];
@@ -1381,6 +1494,21 @@ static UIColor *coloredNameForConversation(TGConversation *conversation, bool da
         return model;
     }
     
+    if (!unsupportedMessage && gameIndex == -1 && invoiceIndex == -1 && webpageIndex == -1 && forwardPeer == nil && [TGOnegramSettings boolForKey:TGOnegramSettingMessagesAnimatedEmoji])
+    {
+        TGDocumentMediaAttachment *emojiDocument = [TGAnimatedEmojiStore documentForText:message.text];
+        if (emojiDocument != nil && (!OGPlatformMediaDownloadsRequireUserAction() || [[NSFileManager defaultManager] fileExistsAtPath:[TGAnimatedStickerView filePathForDocument:emojiDocument]]))
+        {
+            TGStickerMessageViewModel *model = [[TGStickerMessageViewModel alloc] initWithMessage:message document:emojiDocument size:CGSizeMake(224.0f, 224.0f) authorPeer:useAuthor ? [self currentAuthorPeer] : nil context:_context replyHeader:replyMessage replyPeer:replyPeer viaUser:viaUser];
+            model.animatedEmoji = true;
+            if (useAuthor)
+                [self _setupMessageAuthor:model];
+            model.collapseFlags = _collapseFlags;
+            [model layoutForContainerSize:containerSize];
+            return model;
+        }
+    }
+    
     TGTextMessageModernViewModel *model = [[TGTextMessageModernViewModel alloc] initWithMessage:message hasGame:(gameIndex != -1) hasInvoice:invoiceIndex != -1 authorPeer:useAuthor ? [self currentAuthorPeer] : nil viaUser:viaUser context:_context];
     if (unsupportedMessage)
         [model setIsUnsupported:true];
@@ -1513,7 +1641,7 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
 {
     if (_message.locationAttachment.period > 0)
     {
-        int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+        int32_t currentTime = (int32_t)OGRemoteClockTime();
         if (_message.date + _message.locationAttachment.period <= currentTime)
             _isExpiredLiveLocation = true;
     }
@@ -1543,6 +1671,16 @@ static inline TGCachedMessageType getMessageType(TGMessageModernConversationItem
 - (CGFloat)groupedMediaOffsetY
 {
     return _viewModel != nil ? [_viewModel groupedMediaOffsetY] : _groupedMediaOffsetY;
+}
+
+- (bool)groupedHeaderVisible
+{
+    return [_viewModel groupedHeaderVisible];
+}
+
+- (bool)groupedTopCornersHidden
+{
+    return [_viewModel groupedTopCornersHidden];
 }
 
 - (TGMessageGroupedLayout *)groupedLayout

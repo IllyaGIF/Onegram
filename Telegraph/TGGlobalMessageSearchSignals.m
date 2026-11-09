@@ -30,32 +30,6 @@
 NSString *const TGRecentSearchDefaultsKey = @"Telegram_recentSearch_peers";
 const NSInteger TGRecentSearchLimit = 20;
 
-static inline bool TGIOS6SearchPeerIdLooksLikeModernRawChannel(int64_t peerId)
-{
-    return peerId <= ((int64_t)INT32_MIN) * 3 && peerId > ((int64_t)INT32_MIN) * 4;
-}
-
-static inline bool TGIOS6SearchPeerIdIsModernRawChannel(int64_t peerId)
-{
-    return TGIOS6SearchPeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
-}
-
-static inline int64_t TGIOS6SearchChannelIdFromPeerId(int64_t peerId)
-{
-    NSData *apiIdData = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6ApiChannelId")];
-    int64_t apiChannelId = 0;
-    if (apiIdData.length == sizeof(int64_t))
-        [apiIdData getBytes:&apiChannelId length:sizeof(apiChannelId)];
-    if (apiChannelId > 0)
-        return apiChannelId;
-
-    if (TGIOS6SearchPeerIdIsModernRawChannel(peerId))
-        return -peerId - 4294967296LL;
-
-    int32_t channelId = TGChannelIdFromPeerId(peerId);
-    return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
-}
-
 static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int64_t accessHash)
 {
     TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
@@ -225,7 +199,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
     }
 }
 
-+ (SSignal *)searchMessages:(NSString *)query peerId:(int64_t)peerId accessHash:(int64_t)accessHash userId:(int32_t)userId maxId:(int32_t)maxId limit:(int32_t)limit itemMapping:(id (^)(id))itemMapping
++ (SSignal *)searchMessages:(NSString *)query peerId:(int64_t)peerId accessHash:(int64_t)accessHash userId:(int64_t)userId maxId:(int32_t)maxId limit:(int32_t)limit itemMapping:(id (^)(id))itemMapping
 {
     return [[[self searchMessages:query peerId:peerId accessHash:accessHash userId:userId maxId:maxId limit:limit] deliverOn:[SQueue wrapConcurrentNativeQueue:[TGDatabaseInstance() databaseQueue]]] map:^id (NSArray *conversations)
     {
@@ -356,7 +330,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
         return [[SSignal single:@{@"myPeers": @[], @"peers": @[]}] then:remoteSignal];
 }
 
-+ (SSignal *)searchMessages:(NSString *)query peerId:(int64_t)peerId accessHash:(int64_t)accessHash userId:(int32_t)userId maxId:(int32_t)maxId limit:(int32_t)limit
++ (SSignal *)searchMessages:(NSString *)query peerId:(int64_t)peerId accessHash:(int64_t)accessHash userId:(int64_t)userId maxId:(int32_t)maxId limit:(int32_t)limit
 {
     SSignal *(^remoteSignalGenerator)(NSSet *) = ^SSignal *(NSSet *currentMessageIds)
     {
@@ -372,9 +346,9 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
             searchGlobal.limit = limit;
             
             requestBody = searchGlobal;
-        } else if (TGPeerIdIsAdminLog(peerId) && !TGIOS6SearchPeerIdIsModernRawChannel(peerId)) {
+        } else if (TGPeerIdIsFeed(peerId)) {
             TLRPCchannels_searchFeed *searchFeed = [[TLRPCchannels_searchFeed alloc] init];
-            searchFeed.feed_id = TGAdminLogIdFromPeerId(peerId);
+            searchFeed.feed_id = TGFeedIdFromPeerId(peerId);
             searchFeed.q = query;
             searchFeed.offset_date = 0;
             searchFeed.offset_id = maxId;
@@ -638,7 +612,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
             
             if (conversation == nil)
             {
-                TGUser *user = [TGDatabaseInstance() loadUser:(int)peerId];
+                TGUser *user = [TGDatabaseInstance() loadUser:peerId];
                 if (user != nil)
                     [peers addObject:user];
             }
@@ -669,7 +643,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
                                 id item = itemMapping(conversation, false);
                                 if (item != nil) {
                                     if (TGPeerIdIsUser(conversation.conversationId)) {
-                                        TGUser *user = [TGDatabaseInstance() loadUser:(int)conversation.conversationId];
+                                        TGUser *user = [TGDatabaseInstance() loadUser:conversation.conversationId];
                                         if (user != nil) {
                                             [parsedPeers addObject:user];
                                         }
@@ -680,7 +654,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
                             }
                             
                             if (conversation == nil) {
-                                TGUser *user = [TGDatabaseInstance() loadUser:(int)peer.peerId];
+                                TGUser *user = [TGDatabaseInstance() loadUser:peer.peerId];
                                 if (user != nil) {
                                     [parsedPeers addObject:user];
                                 }
@@ -715,7 +689,7 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
 + (SSignal *)searchChannelMembers:(NSString *)query peerId:(int64_t)peerId accessHash:(int64_t)accessHash section:(TGGlobalMessageSearchMembersSection)section {
     TLRPCchannels_getParticipants$channels_getParticipants *getParticipants = [[TLRPCchannels_getParticipants$channels_getParticipants alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6SearchChannelIdFromPeerId(peerId);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6SearchChannelAccessHashForPeerId(peerId, accessHash);
     getParticipants.channel = inputChannel;
     
@@ -759,9 +733,9 @@ static inline int64_t TGIOS6SearchChannelAccessHashForPeerId(int64_t peerId, int
                     bool isCreator = false;
                     TGChannelAdminRights *adminRights = nil;
                     TGChannelBannedRights *bannedRights = nil;
-                    int32_t inviterId = 0;
-                    int32_t adminInviterId = 0;
-                    int32_t kickedById = 0;
+                    int64_t inviterId = 0;
+                    int64_t adminInviterId = 0;
+                    int64_t kickedById = 0;
                     bool adminCanManage = false;
                     
                     if ([participant isKindOfClass:[TLChannelParticipant$channelParticipant class]]) {

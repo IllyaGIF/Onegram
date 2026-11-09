@@ -5,9 +5,9 @@
 
 @interface TGCallSignals : NSObject
 
-+ (SSignal *)requestedOutgoingCallWithPeerId:(int64_t)peerId;
++ (SSignal *)requestedOutgoingCallWithPeerId:(int64_t)peerId video:(bool)video;
 + (SSignal *)discardedCallWithCallId:(int64_t)callId accessHash:(int64_t)accessHash reason:(TGCallDiscardReason)reason duration:(int32_t)duration;
-+ (SSignal *)receivedIncomingCallWithCallId:(int64_t)callId accessHash:(int64_t)accessHash date:(int32_t)date adminId:(int32_t)adminId participantId:(int32_t)participantId gAHash:(NSData *)gAHash;
++ (SSignal *)receivedIncomingCallWithCallId:(int64_t)callId accessHash:(int64_t)accessHash date:(int32_t)date adminId:(int64_t)adminId participantId:(int64_t)participantId gAHash:(NSData *)gAHash;
 + (SSignal *)acceptedIncomingCallWithCallId:(int64_t)callId accessHash:(int64_t)accessHash dhConfig:(id)dhConfig bBytes:(NSData *)bBytes gBBytes:(NSData *)gBBytes gAHash:(NSData *)gAHash;
 + (SSignal *)confirmedCallWithCallId:(int64_t)callId accessHash:(int64_t)accessHash key:(NSData *)key gABytes:(NSData *)gABytes keyId:(int64_t)keyId;
 + (SSignal *)sendSignalingDataForCallId:(int64_t)callId accessHash:(int64_t)accessHash data:(NSData *)data;

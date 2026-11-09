@@ -4,6 +4,7 @@
 #import <dlfcn.h>
 #include <float.h>
 #import <objc/runtime.h>
+#import <pthread.h>
 
 CGRect OGPlatformKeyboardEndFrame(NSNotification *notification)
 {
@@ -237,6 +238,154 @@ static void OGPlatformInstallCollectionViewDataGuard(void)
     OGPlatformOriginalCollectionDataSetLayoutAttributes = (OGPlatformCollectionDataSetLayoutAttributesFunction)method_setImplementation(setMethod, (IMP)OGPlatformCollectionDataSetLayoutAttributes);
 }
 
+#if !defined(ONEGRAM_IOS3_APPLICATION_BUILD)
+typedef void (*OGPlatformGestureRecognizerSetDelegateFunction)(id, SEL, id);
+
+static OGPlatformGestureRecognizerSetDelegateFunction OGPlatformOriginalGestureRecognizerSetDelegate = NULL;
+static pthread_mutex_t OGPlatformGestureDelegateMutex;
+static char OGPlatformGestureDelegateSentinelKey;
+static char OGPlatformGestureDelegateBindingKey;
+
+@class OGPlatformGestureDelegateSentinel;
+
+@interface OGPlatformGestureDelegateBinding : NSObject
+{
+@public
+    __unsafe_unretained id _recognizer;
+    __unsafe_unretained OGPlatformGestureDelegateSentinel *_sentinel;
+}
+@end
+
+@interface OGPlatformGestureDelegateSentinel : NSObject
+{
+@public
+    CFMutableSetRef _bindings;
+}
+@end
+
+@implementation OGPlatformGestureDelegateSentinel
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        _bindings = CFSetCreateMutable(kCFAllocatorDefault, 0, NULL);
+    return self;
+}
+
+- (void)dealloc
+{
+    pthread_mutex_lock(&OGPlatformGestureDelegateMutex);
+    CFIndex count = CFSetGetCount(_bindings);
+    if (count > 0)
+    {
+        const void **bindings = (const void **)malloc(sizeof(void *) * (size_t)count);
+        if (bindings == NULL)
+            abort();
+        CFSetGetValues(_bindings, bindings);
+        CFSetRemoveAllValues(_bindings);
+        for (CFIndex index = 0; index < count; index++)
+        {
+            OGPlatformGestureDelegateBinding *binding = (__bridge OGPlatformGestureDelegateBinding *)bindings[index];
+            binding->_sentinel = nil;
+            OGPlatformOriginalGestureRecognizerSetDelegate(binding->_recognizer, @selector(setDelegate:), nil);
+        }
+        free(bindings);
+    }
+    pthread_mutex_unlock(&OGPlatformGestureDelegateMutex);
+    CFRelease(_bindings);
+}
+
+@end
+
+@implementation OGPlatformGestureDelegateBinding
+
+- (void)dealloc
+{
+    pthread_mutex_lock(&OGPlatformGestureDelegateMutex);
+    if (_sentinel != nil)
+        CFSetRemoveValue(_sentinel->_bindings, (__bridge const void *)self);
+    pthread_mutex_unlock(&OGPlatformGestureDelegateMutex);
+}
+
+@end
+
+static void OGPlatformGestureRecognizerSetDelegate(id recognizer, SEL selector, id delegate)
+{
+    OGPlatformOriginalGestureRecognizerSetDelegate(recognizer, selector, delegate);
+
+    OGPlatformGestureDelegateSentinel *sentinel = nil;
+    if (delegate != nil && delegate != recognizer)
+    {
+        sentinel = objc_getAssociatedObject(delegate, &OGPlatformGestureDelegateSentinelKey);
+        if (sentinel == nil)
+        {
+            sentinel = [[OGPlatformGestureDelegateSentinel alloc] init];
+            objc_setAssociatedObject(delegate, &OGPlatformGestureDelegateSentinelKey, sentinel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
+
+    OGPlatformGestureDelegateBinding *binding = objc_getAssociatedObject(recognizer, &OGPlatformGestureDelegateBindingKey);
+    if (binding == nil)
+    {
+        if (sentinel == nil)
+            return;
+        binding = [[OGPlatformGestureDelegateBinding alloc] init];
+        binding->_recognizer = recognizer;
+        objc_setAssociatedObject(recognizer, &OGPlatformGestureDelegateBindingKey, binding, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    pthread_mutex_lock(&OGPlatformGestureDelegateMutex);
+    if (binding->_sentinel != sentinel)
+    {
+        if (binding->_sentinel != nil)
+            CFSetRemoveValue(binding->_sentinel->_bindings, (__bridge const void *)binding);
+        binding->_sentinel = sentinel;
+        if (sentinel != nil)
+            CFSetAddValue(sentinel->_bindings, (__bridge const void *)binding);
+    }
+    pthread_mutex_unlock(&OGPlatformGestureDelegateMutex);
+}
+
+static BOOL OGPlatformGestureRecognizerDelegateIsZeroing(Class recognizerClass)
+{
+    objc_property_t property = class_getProperty(recognizerClass, "delegate");
+    if (property == NULL)
+        return NO;
+    const char *attributes = property_getAttributes(property);
+    if (attributes == NULL)
+        return NO;
+    for (const char *attribute = attributes; attribute != NULL; attribute = strchr(attribute, ','))
+    {
+        if (*attribute == ',')
+            attribute++;
+        if (attribute[0] == 'W' && (attribute[1] == ',' || attribute[1] == '\0'))
+            return YES;
+    }
+    return NO;
+}
+
+static void OGPlatformInstallGestureRecognizerDelegateGuard(void)
+{
+    Class recognizerClass = NSClassFromString(@"UIGestureRecognizer");
+    if (recognizerClass == Nil || OGPlatformGestureRecognizerDelegateIsZeroing(recognizerClass))
+        return;
+
+    Method method = class_getInstanceMethod(recognizerClass, @selector(setDelegate:));
+    if (method == NULL)
+        return;
+
+    pthread_mutexattr_t attributes;
+    pthread_mutexattr_init(&attributes);
+    pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&OGPlatformGestureDelegateMutex, &attributes);
+    pthread_mutexattr_destroy(&attributes);
+
+    OGPlatformOriginalGestureRecognizerSetDelegate = (OGPlatformGestureRecognizerSetDelegateFunction)method_getImplementation(method);
+    method_setImplementation(method, (IMP)OGPlatformGestureRecognizerSetDelegate);
+}
+#endif
+
 void OGPlatformInstallUIKitGuards(void)
 {
     static BOOL installed = NO;
@@ -245,6 +394,9 @@ void OGPlatformInstallUIKitGuards(void)
     installed = YES;
 
     OGPlatformInstallCollectionViewDataGuard();
+#if !defined(ONEGRAM_IOS3_APPLICATION_BUILD)
+    OGPlatformInstallGestureRecognizerDelegateGuard();
+#endif
 
     if (OGPlatformMajorVersion() >= 4)
         return;
@@ -773,6 +925,18 @@ void OGPlatformBeginReceivingRemoteControlEvents(UIApplication *application)
         function(application, selector);
 }
 
+void OGPlatformEndReceivingRemoteControlEvents(UIApplication *application)
+{
+    if (application == nil)
+        return;
+    SEL selector = NSSelectorFromString(@"endReceivingRemoteControlEvents");
+    if (![application respondsToSelector:selector])
+        return;
+    void (*function)(id, SEL) = (void (*)(id, SEL))[application methodForSelector:selector];
+    if (function != NULL)
+        function(application, selector);
+}
+
 OGPlatformBackgroundTaskIdentifier OGPlatformBeginBackgroundTask(UIApplication *application, void (^expirationHandler)(void))
 {
     SEL selector = NSSelectorFromString(@"beginBackgroundTaskWithExpirationHandler:");
@@ -1081,6 +1245,14 @@ void OGPlatformCancelLocalNotification(UIApplication *application, id notificati
     void (*function)(id, SEL, id) = (void (*)(id, SEL, id))[application methodForSelector:selector];
     if (function != NULL)
         function(application, selector, notification);
+}
+
+NSArray *OGPlatformScheduledLocalNotifications(UIApplication *application)
+{
+    if (application == nil)
+        return nil;
+    id notifications = OGPlatformObjectProperty(application, @"scheduledLocalNotifications");
+    return [notifications isKindOfClass:[NSArray class]] ? notifications : nil;
 }
 
 void OGPlatformApplyLegacySegmentedControlStyle(UISegmentedControl *control, UIColor *tintColor)

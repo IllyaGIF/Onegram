@@ -9,6 +9,7 @@
 #import "TGTelegramNetworking.h"
 #import "TGLiveLocationSignals.h"
 #import "TGLiveLocationSession.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGLiveLocationSessionContext : NSObject
 
@@ -100,7 +101,7 @@
 {
     [_queue dispatch:^
     {
-        int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+        int32_t currentTime = (int32_t)OGRemoteClockTime();
         NSArray *storedSessions = [TGDatabaseInstance() loadLiveLocationSessions];
         for (TGLiveLocationSession *session in storedSessions)
         {
@@ -265,7 +266,7 @@
     
     SSignal *messageSignal = [[TGLiveLocationSignals liveLocationsForPeerId:session.peerId includeExpired:false onlyLocal:true] mapToSignal:^SSignal *(NSArray *messages)
     {
-        int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+        int32_t currentTime = (int32_t)OGRemoteClockTime();
         for (TGMessage *message in messages)
         {
             if (message.mid == session.messageId)
@@ -291,7 +292,7 @@
     
     SSignal *updateSignal = [combinedSignal mapToSignal:^SSignal *(CLLocation *location)
     {
-        int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+        int32_t currentTime = (int32_t)OGRemoteClockTime();
         if (currentTime >= session.expires)
         {
             return [SSignal fail:nil];
@@ -445,7 +446,7 @@
         }
         else
         {
-            int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+            int32_t currentTime = (int32_t)OGRemoteClockTime();
             if (_previousInfrequentSinkTime == 0 || abs(currentTime - _previousInfrequentSinkTime) > 30)
             {
                 _locationUpdatePipe.sink(@true);

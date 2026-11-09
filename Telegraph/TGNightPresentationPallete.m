@@ -1,9 +1,48 @@
 #import "TGNightPresentationPallete.h"
 #import "TGPresentation.h"
+#import "TGOnegramSettings.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 #import "../OnegramUI/Core/OGSettingsAppearance.h"
 
+static const uint32_t TGNightPresentationSurfaceTones[] = {0x1c1c1d, 0x121212, 0x0a0a0a, 0x2c2c2e, 0x16181c};
+static const NSUInteger TGNightPresentationSurfaceToneCount = sizeof(TGNightPresentationSurfaceTones) / sizeof(TGNightPresentationSurfaceTones[0]);
+static volatile NSInteger TGNightPresentationSurfaceTone = -1;
+
+static uint32_t TGNightPresentationSurfaceRGB(void)
+{
+    NSInteger tone = TGNightPresentationSurfaceTone;
+    if (tone < 0)
+    {
+        tone = [TGOnegramSettings integerForKey:TGOnegramSettingAppearanceNightSurface];
+        TGNightPresentationSurfaceTone = tone;
+    }
+    return TGNightPresentationSurfaceTones[(NSUInteger)MAX(0, MIN((NSInteger)TGNightPresentationSurfaceToneCount - 1, tone))];
+}
+
+static uint32_t TGNightPresentationLightened(uint32_t rgb, uint32_t amount)
+{
+    uint32_t result = 0;
+    for (int shift = 0; shift <= 16; shift += 8)
+        result |= MIN((uint32_t)0xff, ((rgb >> shift) & 0xff) + amount) << shift;
+    return result;
+}
+
 @implementation TGNightPresentationPallete
+
++ (NSUInteger)surfaceToneCount
+{
+    return TGNightPresentationSurfaceToneCount;
+}
+
++ (uint32_t)surfaceColorForTone:(NSUInteger)tone
+{
+    return TGNightPresentationSurfaceTones[MIN(tone, TGNightPresentationSurfaceToneCount - 1)];
+}
+
++ (void)setSurfaceTone:(NSInteger)tone
+{
+    TGNightPresentationSurfaceTone = MAX(0, MIN((NSInteger)TGNightPresentationSurfaceToneCount - 1, tone));
+}
 
 - (bool)isDark
 {
@@ -72,7 +111,8 @@
 
 - (UIColor *)barBackgroundColor
 {
-    return UIColorRGB(0x1c1c1d);
+    uint32_t surface = TGNightPresentationSurfaceRGB();
+    return UIColorRGB(surface);
 }
 
 - (UIColor *)barSeparatorColor
@@ -167,7 +207,8 @@
 
 - (UIColor *)searchBarBackgroundColor
 {
-    return UIColorRGB(0x272728);
+    uint32_t field = TGNightPresentationLightened(TGNightPresentationSurfaceRGB(), 0x0b);
+    return UIColorRGB(field);
 }
 
 - (UIColor *)searchBarTextColor
@@ -182,7 +223,7 @@
 
 - (UIColor *)searchBarMergedBackgroundColor
 {
-    return UIColorRGB(0x272728);
+    return [self searchBarBackgroundColor];
 }
 
 - (UIColor *)searchBarClearIconColor
@@ -777,7 +818,9 @@
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6SettingsAppearanceDark:[self isDark]].groupedSelectedFillColor;
-    return UIColorRGB(0x101010);
+    uint32_t surface = TGNightPresentationSurfaceRGB();
+    uint32_t selection = (surface & 0xff) <= 0x16 ? TGNightPresentationLightened(surface, 0x0e) : 0x101010;
+    return UIColorRGB(selection);
 }
 
 - (UIColor *)collectionMenuTextColor

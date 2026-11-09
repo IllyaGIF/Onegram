@@ -281,6 +281,14 @@ void AudioUnitIO::StartIfNeeded(){
 	CHECK_AU_ERROR(status, "Error starting AudioUnit");
 }
 
+void AudioUnitIO::Stop(){
+	if(!started)
+		return;
+	AudioOutputUnitStop(unit);
+	AudioUnitUninitialize(unit);
+	started=false;
+}
+
 bool AudioUnitIO::IsFailed(){
 	return failed;
 }

@@ -351,6 +351,27 @@ static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, C
     return image;
 }
 
++ (UIImage *)tabBarProfileIcon:(UIColor *)color
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(31, 31), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    CGContextFillEllipseInRect(context, CGRectMake(10.0f, 4.0f, 11.0f, 11.0f));
+    CGContextBeginPath(context);
+    CGContextMoveToPoint(context, 4.5f, 27.0f);
+    CGContextAddCurveToPoint(context, 4.5f, 21.0f, 9.5f, 17.5f, 15.5f, 17.5f);
+    CGContextAddCurveToPoint(context, 21.5f, 17.5f, 26.5f, 21.0f, 26.5f, 27.0f);
+    CGContextAddLineToPoint(context, 26.5f, 27.0f);
+    CGContextAddArcToPoint(context, 26.5f, 28.5f, 25.0f, 28.5f, 1.5f);
+    CGContextAddLineToPoint(context, 6.0f, 28.5f);
+    CGContextAddArcToPoint(context, 4.5f, 28.5f, 4.5f, 27.0f, 1.5f);
+    CGContextClosePath(context);
+    CGContextFillPath(context);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
 + (UIImage *)tabBarSettingsIcon:(UIColor *)color
 {
     if (TGClassicIOS6StyleEnabled())
@@ -1147,6 +1168,18 @@ static void TGDrawInputPanelConfirmGlyph(CGContextRef context, UIColor *color, C
     return [self chatEditGroupIcon:color];
 }
 
++ (UIImage *)chatTitleMoreIcon:(UIColor *)color
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(24.0f, 24.0f), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    for (NSInteger index = 0; index < 3; index++)
+        CGContextFillEllipseInRect(context, CGRectMake(2.5f + index * 7.0f, 9.5f, 5.0f, 5.0f));
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return image;
+}
+
 + (UIImage *)chatSearchNextIcon:(UIColor *)color
 {
     return TGTintedImage(TGImageNamed(@"InlineSearchUp.png"), color);
@@ -1270,6 +1303,11 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     return CGRectMake(x, y, tagSize.width, tagSize.height);
 }
 
++ (CGFloat)defaultChatBubbleRadius
+{
+    return 46.5f / 3.0f;
+}
+
 + (UIImage *)chatBubbleFull:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing
 {
     if (TGClassicIOS6StyleEnabled())
@@ -1320,6 +1358,60 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     return [image stretchableImageWithLeftCapWidth:outgoing ? 17 : 23 topCapHeight:16];
 }
 
+static void TGPresentationAddBubbleBodyPath(CGMutablePathRef path, CGRect rect, CGFloat radius, bool sharpBottomRight)
+{
+    CGFloat minX = CGRectGetMinX(rect);
+    CGFloat minY = CGRectGetMinY(rect);
+    CGFloat maxX = CGRectGetMaxX(rect);
+    CGFloat maxY = CGRectGetMaxY(rect);
+    CGFloat bottomRight = sharpBottomRight ? 0.0f : radius;
+    CGPathMoveToPoint(path, NULL, minX + radius, minY);
+    CGPathAddArcToPoint(path, NULL, maxX, minY, maxX, minY + radius, radius);
+    CGPathAddArcToPoint(path, NULL, maxX, maxY, maxX - bottomRight, maxY, bottomRight);
+    CGPathAddArcToPoint(path, NULL, minX, maxY, minX, maxY - radius, radius);
+    CGPathAddArcToPoint(path, NULL, minX, minY, minX + radius, minY, radius);
+    CGPathCloseSubpath(path);
+}
+
++ (UIImage *)customRadiusChatBubble:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail radius:(CGFloat)radius
+{
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(40, 33), false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    if (!outgoing)
+    {
+        CGContextTranslateCTM(context, 40.0f, 0.0f);
+        CGContextScaleCTM(context, -1.0f, 1.0f);
+    }
+    CGRect body = CGRectMake(1.0f, 1.0f, 33.0f, 31.0f);
+    CGFloat maxX = CGRectGetMaxX(body);
+    CGFloat maxY = CGRectGetMaxY(body);
+    CGMutablePathRef path = CGPathCreateMutable();
+    TGPresentationAddBubbleBodyPath(path, body, radius, hasTail && radius < 6.0f);
+    if (hasTail)
+    {
+        CGFloat tailTop = MAX(body.origin.y + radius, maxY - 12.0f);
+        CGPathMoveToPoint(path, NULL, maxX - 0.5f, tailTop);
+        CGPathAddCurveToPoint(path, NULL, maxX - 0.5f, maxY - 4.0f, 36.5f, maxY - 0.5f, 39.0f, maxY);
+        CGPathAddCurveToPoint(path, NULL, 36.0f, maxY + 0.5f, 32.0f, maxY, maxX - MAX(6.0f, radius * 0.6f), maxY - 0.5f);
+        CGPathCloseSubpath(path);
+    }
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    CGContextSetLineWidth(context, TGScreenPixel * 2.0f);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    if (borderColor != nil)
+    {
+        CGContextSetStrokeColorWithColor(context, borderColor.CGColor);
+        CGContextAddPath(context, path);
+        CGContextStrokePath(context);
+    }
+    CGContextAddPath(context, path);
+    CGContextFillPath(context);
+    CGPathRelease(path);
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [image stretchableImageWithLeftCapWidth:outgoing ? 17 : 23 topCapHeight:16];
+}
+
 + (UIImage *)chatBubblePartial:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing
 {
     if (TGClassicIOS6StyleEnabled())
@@ -1344,8 +1436,10 @@ static UIImage *TGBrandedIOS6FlatDeliveryTagImage(NSString *timeText, bool incom
     return [image stretchableImageWithLeftCapWidth:outgoing ? 17 : 23 topCapHeight:16];
 }
 
-+ (UIImage *)chatBubbleImage:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail
++ (UIImage *)chatBubbleImage:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail radius:(NSInteger)radius
 {
+    if (radius >= 0 && !TGClassicIOS6StyleEnabled())
+        return [self customRadiusChatBubble:color borderColor:borderColor outgoing:outgoing hasTail:hasTail radius:MIN([self defaultChatBubbleRadius], (CGFloat)radius)];
     if (hasTail)
         return [self chatBubbleFull:color borderColor:borderColor outgoing:outgoing];
     else

@@ -59,6 +59,8 @@
 
 @end
 
+static const NSTimeInterval TGDoubleTapGestureRecognizerSecondTapInterval = 0.3;
+
 @implementation TGDoubleTapGestureRecognizer
 
 - (void)setDelegate:(id<UIGestureRecognizerDelegate>)delegate
@@ -72,6 +74,7 @@
     self = [super initWithTarget:target action:action];
     if (self != nil)
     {
+        _longPressDuration = 1.5;
     }
     return self;
 }
@@ -185,7 +188,7 @@
             [delegate gestureRecognizer:self didBeginAtPoint:[[touches anyObject] locationInView:self.view]];
         }
         
-        _longPressTimer = [TGDoubleTapGestureRecognizerTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(longTapEvent) interval:1.5 repeat:false];
+        _longPressTimer = [TGDoubleTapGestureRecognizerTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(longTapEvent) interval:_longPressDuration repeat:false];
     }
     else if (_currentTapCount >= 1)
     {
@@ -230,7 +233,7 @@
         }
         else
         {
-            _tapTimer = [TGDoubleTapGestureRecognizerTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(tapTimerEvent) interval:0.2 repeat:false];
+            _tapTimer = [TGDoubleTapGestureRecognizerTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(tapTimerEvent) interval:TGDoubleTapGestureRecognizerSecondTapInterval repeat:false];
         }
     }
     

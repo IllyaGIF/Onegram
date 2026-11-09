@@ -11,25 +11,7 @@
 #import "TGGroupChatModel.h"
 #import "TGChannelChatModel.h"
 
-static inline bool TGPeerIdIsChannel(int64_t peerId) {
-    return peerId <= ((int64_t)INT32_MIN) * 2 && peerId > ((int64_t)INT32_MIN) * 3;
-}
-
-static inline int32_t TGChannelIdFromPeerId(int64_t peerId) {
-    if (TGPeerIdIsChannel(peerId)) {
-        return (int32_t)(((int64_t)INT32_MIN) * 2 - peerId);
-    } else {
-        return 0;
-    }
-}
-
-static inline bool TGPeerIdIsGroup(int64_t peerId) {
-    return peerId < 0 && peerId > INT32_MIN;
-}
-
-static inline bool TGPeerIdIsUser(int64_t peerId) {
-    return peerId > 0 && peerId < INT32_MAX;
-}
+#import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
 #import "../submodules/LegacyComponents/SSignalKitCompat/SSignalKit.h"
 
@@ -197,15 +179,15 @@ int32_t murMurHash32(NSString *string)
             NSMutableArray *users = [[NSMutableArray alloc] init];
             
             
-            FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid, first_name, last_name, local_first_name, local_last_name, phone_number, access_hash FROM users_v29 WHERE uid IN (SELECT uid FROM contacts_v29)"]];
+            FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid, first_name, last_name, local_first_name, local_last_name, phone_number, access_hash FROM users_v30 WHERE uid IN (SELECT uid FROM contacts_v30)"]];
             while ([result next]) {
-                int32_t uid = [result intForColumnIndex:0];
+                int64_t uid = [result longLongIntForColumnIndex:0];
                 NSString *firstName = [result stringForColumnIndex:1];
                 NSString *lastName = [result stringForColumnIndex:2];
                 NSString *phonebookFirstName = [result stringForColumnIndex:3];
                 NSString *phonebookLastName = [result stringForColumnIndex:4];
                 NSString *phoneNumber = [result stringForColumnIndex:5];
-                int64_t accessHash = [result intForColumnIndex:6];
+                int64_t accessHash = [result longLongIntForColumnIndex:6];
                 
                 NSString *normalizedFirstName = nil;
                 NSString *normalizedLastName = nil;
@@ -286,15 +268,15 @@ int32_t murMurHash32(NSString *string)
         NSString *normalizedPhone = [TGLegacyDatabase cleanPhone:queryPhoneNumber clip:true];
         NSMutableArray *users = [[NSMutableArray alloc] init];
         
-        FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid, first_name, last_name, local_first_name, local_last_name, phone_number, access_hash FROM users_v29 WHERE uid IN (SELECT uid FROM contacts_v29)"]];
+        FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid, first_name, last_name, local_first_name, local_last_name, phone_number, access_hash FROM users_v30 WHERE uid IN (SELECT uid FROM contacts_v30)"]];
         while ([result next]) {
-            int32_t uid = [result intForColumnIndex:0];
+            int64_t uid = [result longLongIntForColumnIndex:0];
             NSString *firstName = [result stringForColumnIndex:1];
             NSString *lastName = [result stringForColumnIndex:2];
             NSString *phonebookFirstName = [result stringForColumnIndex:3];
             NSString *phonebookLastName = [result stringForColumnIndex:4];
             NSString *phoneNumber = [result stringForColumnIndex:5];
-            int64_t accessHash = [result intForColumnIndex:6];
+            int64_t accessHash = [result longLongIntForColumnIndex:6];
             
             NSString *normalizedFirstName = nil;
             NSString *normalizedLastName = nil;
@@ -321,12 +303,12 @@ int32_t murMurHash32(NSString *string)
 - (NSArray *)topUsers {
     NSMutableArray *users = [[NSMutableArray alloc] init];
     
-    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT u.uid, u.first_name, u.last_name, u.access_hash, u.photo_small FROM users_v29 u JOIN peer_rating_29 p ON u.uid = p.peer_id WHERE p.category = 1 ORDER BY p.rating DESC LIMIT 9"]];
+    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT u.uid, u.first_name, u.last_name, u.access_hash, u.photo_small FROM users_v30 u JOIN peer_rating_30 p ON u.uid = p.peer_id WHERE p.category = 1 ORDER BY p.rating DESC LIMIT 9"]];
     while ([result next]) {
-        int32_t uid = [result intForColumnIndex:0];
+        int64_t uid = [result longLongIntForColumnIndex:0];
         NSString *firstName = [result stringForColumnIndex:1];
         NSString *lastName = [result stringForColumnIndex:2];
-        int64_t accessHash = [result intForColumnIndex:3];
+        int64_t accessHash = [result longLongIntForColumnIndex:3];
         NSString *photoSmall = [result stringForColumnIndex:4];
         
         [users addObject:[[TGLegacyUser alloc] initWithUserId:uid accessHash:accessHash firstName:firstName lastName:lastName phoneNumber:nil photoSmall:photoSmall]];
@@ -347,13 +329,13 @@ int32_t murMurHash32(NSString *string)
         else
             [rangeString appendString:@","];
         
-        [rangeString appendFormat:@"%d", user.userId];
+        [rangeString appendFormat:@"%lld", user.userId];
     }
     
-    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT cid, unread_count FROM convesations_v29 WHERE cid IN (%@)", rangeString]];
+    FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT cid, unread_count FROM convesations_v30 WHERE cid IN (%@)", rangeString]];
     
     while ([result next]) {
-        int32_t cid = [result intForColumnIndex:0];
+        int64_t cid = [result longLongIntForColumnIndex:0];
         int32_t unreadCount = [result intForColumnIndex:1];
         
         counts[@(cid)] = @(unreadCount);
@@ -362,20 +344,20 @@ int32_t murMurHash32(NSString *string)
     return counts;
 }
 
-- (TGLegacyUser *)userWithIdSync:(int32_t)userId {
+- (TGLegacyUser *)userWithIdSync:(int64_t)userId {
     
     __block TGLegacyUser *resultUser = nil;
     [_queue dispatchSync:^{
-        NSString *tableName = @"users_v29";
+        NSString *tableName = @"users_v30";
         
         TGLegacyUser *model = nil;
         FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT uid, first_name, last_name, access_hash, photo_small, phone_number FROM %@ WHERE uid=?", tableName], @(userId)];
         if ([result next])
         {
-            int32_t uid = [result intForColumnIndex:0];
+            int64_t uid = [result longLongIntForColumnIndex:0];
             NSString *firstName = [result stringForColumnIndex:1];
             NSString *lastName = [result stringForColumnIndex:2];
-            int64_t accessHash = [result intForColumnIndex:3];
+            int64_t accessHash = [result longLongIntForColumnIndex:3];
             NSString *photoSmall = [result stringForColumnIndex:4];
             NSString *phoneNumber = [result stringForColumnIndex:5];
             
@@ -390,7 +372,7 @@ int32_t murMurHash32(NSString *string)
 - (TGChatModel *)conversationWithIdSync:(int64_t)conversationId {
     __block TGChatModel *resultConversation = nil;
     [_queue dispatchSync:^{
-        NSString *tableName = TGPeerIdIsChannel(conversationId) ? @"channel_conversations_v29" : @"convesations_v29";
+        NSString *tableName = TGPeerIdIsChannel(conversationId) ? @"channel_conversations_v30" : @"convesations_v30";
         
         TGChatModel *model = nil;
         FMResultSet *result = [_database executeQuery:[NSString stringWithFormat:@"SELECT * FROM %@ WHERE cid=?", tableName], @(conversationId)];
@@ -443,9 +425,9 @@ int32_t murMurHash32(NSString *string)
                         photoBig = value;
                 }
 
-                model = [[TGGroupChatModel alloc] initWithGroupId:-(int32_t)[result longLongIntForColumn:@"cid"] title:[result stringForColumn:@"chat_title"] avatarLocation:[[TGFileLocation alloc] initWithFileUrl:photoSmall]];
+                model = [[TGGroupChatModel alloc] initWithGroupId:TGGroupIdFromPeerId(conversationId) title:[result stringForColumn:@"chat_title"] avatarLocation:[[TGFileLocation alloc] initWithFileUrl:photoSmall]];
             } else if (TGPeerIdIsUser(conversationId)) {
-                model = [[TGPrivateChatModel alloc] initWithUserId:(int32_t)[result longLongIntForColumn:@"cid"]];
+                model = [[TGPrivateChatModel alloc] initWithUserId:TGUserIdFromPeerId(conversationId)];
             }
         }
 
@@ -457,7 +439,7 @@ int32_t murMurHash32(NSString *string)
 - (NSData *)customPropertySync:(NSString *)name {
     __block NSData *resultData = nil;
     [_queue dispatchSync:^{
-        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT value FROM %@ WHERE key=?", @"service_v29"], [[NSNumber alloc] initWithInt:murMurHash32(name)]];
+        FMResultSet *result = [_database executeQuery:[[NSString alloc] initWithFormat:@"SELECT value FROM %@ WHERE key=?", @"service_v30"], [[NSNumber alloc] initWithInt:murMurHash32(name)]];
         if ([result next])
         {
             resultData = [result dataForColumn:@"value"];

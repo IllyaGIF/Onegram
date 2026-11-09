@@ -6,10 +6,12 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
+@class TLDocument;
+@class TLWallPaperSettings;
 
 @interface TLWallPaper : NSObject <TLObject>
 
-@property (nonatomic) int32_t n_id;
+@property (nonatomic) int64_t n_id;
 @property (nonatomic, retain) NSString *title;
 @property (nonatomic) int32_t color;
 
@@ -17,13 +19,24 @@
 
 @interface TLWallPaper$wallPaper : TLWallPaper
 
-@property (nonatomic, retain) NSArray *sizes;
+@property (nonatomic) int32_t flags;
+@property (nonatomic) int64_t access_hash;
+@property (nonatomic, retain) NSString *slug;
+@property (nonatomic, retain) TLDocument *document;
+@property (nonatomic, retain) TLWallPaperSettings *settings;
 
 @end
 
 @interface TLWallPaper$wallPaperSolid : TLWallPaper
 
 @property (nonatomic) int32_t bg_color;
+
+@end
+
+@interface TLWallPaper$wallPaperNoFile : TLWallPaper
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) TLWallPaperSettings *settings;
 
 @end
 

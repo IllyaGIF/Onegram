@@ -61,7 +61,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCauth_importAuthorization$auth_importAuthorization *object = [[TLRPCauth_importAuthorization$auth_importAuthorization alloc] init];
-    object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
+    object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.bytes = metaObject->getBytes((int32_t)0xec5ef20a);
     return object;
 }
@@ -70,8 +70,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.n_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7a5601fb, value));
     }
     {

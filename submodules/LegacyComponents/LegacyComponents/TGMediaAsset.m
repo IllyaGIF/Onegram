@@ -69,6 +69,8 @@ UIImage *TGMediaAssetLegacyAspectRatioThumbnailImage(ALAsset *asset)
     if (iosMajorVersion() >= 5)
     {
         CGImageRef imageRef = asset.aspectRatioThumbnail;
+        if (imageRef == NULL)
+            imageRef = asset.thumbnail;
         return imageRef == NULL ? nil : [UIImage imageWithCGImage:imageRef];
     }
 

@@ -34,6 +34,10 @@
 @property (nonatomic, strong) NSString *username;
 @property (nonatomic, strong) NSString *about;
 @property (nonatomic) CGFloat brandedDetailsTextScale;
+@property (nonatomic) bool modernSubtitleShowsContactDetails;
+@property (nonatomic) int storyRingState;
+@property (nonatomic, strong) UIColor *modernHeaderColor;
+@property (nonatomic, strong) NSNumber *starsRatingLevel;
 
 - (void)setUser:(TGUser *)user animated:(bool)animated;
 - (void)setEditing:(bool)editing animated:(bool)animated;

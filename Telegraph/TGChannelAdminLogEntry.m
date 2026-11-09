@@ -10,7 +10,7 @@
 
 @implementation TGChannelAdminLogEntry
 
-- (instancetype)initWithEntryId:(int64_t)entryId timestamp:(int32_t)timestamp userId:(int32_t)userId content:(id<TGChannelAdminLogEntryContent>)content {
+- (instancetype)initWithEntryId:(int64_t)entryId timestamp:(int32_t)timestamp userId:(int64_t)userId content:(id<TGChannelAdminLogEntryContent>)content {
     self = [super init];
     if (self != nil) {
         _entryId = entryId;
@@ -99,8 +99,8 @@
     } else if ([event.action isKindOfClass:[TLChannelAdminLogEventAction$channelAdminLogEventActionParticipantToggleAdmin class]]) {
         TLChannelAdminLogEventAction$channelAdminLogEventActionParticipantToggleAdmin *action = (TLChannelAdminLogEventAction$channelAdminLogEventActionParticipantToggleAdmin *)event.action;
         
-        TGChannelAdminRights *previousRights = [[TGChannelAdminRights alloc] initWithCanChangeInfo:false canPostMessages:false canEditMessages:false canDeleteMessages:false canBanUsers:false canInviteUsers:false canChangeInviteLink:false canPinMessages:false canAddAdmins:false];
-        TGChannelAdminRights *rights = [[TGChannelAdminRights alloc] initWithCanChangeInfo:false canPostMessages:false canEditMessages:false canDeleteMessages:false canBanUsers:false canInviteUsers:false canChangeInviteLink:false canPinMessages:false canAddAdmins:false];
+        TGChannelAdminRights *previousRights = [[TGChannelAdminRights alloc] initWithFlags:0];
+        TGChannelAdminRights *rights = [[TGChannelAdminRights alloc] initWithFlags:0];
         
         TGCachedConversationMember *previousMember = [TGChannelManagementSignals parseMember:action.prev_participant];
         TGCachedConversationMember *member = [TGChannelManagementSignals parseMember:action.n_new_participant];
@@ -277,7 +277,7 @@
 
 @implementation TGChannelAdminLogEntryInvite
 
-- (instancetype)initWithUserId:(int32_t)userId {
+- (instancetype)initWithUserId:(int64_t)userId {
     self = [super init];
     if (self != nil) {
         _userId = userId;
@@ -289,7 +289,7 @@
 
 @implementation TGChannelAdminLogEntryToggleBan
 
-- (instancetype)initWithUserId:(int32_t)userId previousRights:(TGChannelBannedRights *)previousRights rights:(TGChannelBannedRights *)rights {
+- (instancetype)initWithUserId:(int64_t)userId previousRights:(TGChannelBannedRights *)previousRights rights:(TGChannelBannedRights *)rights {
     self = [super init];
     if (self != nil) {
         _userId = userId;
@@ -303,7 +303,7 @@
 
 @implementation TGChannelAdminLogEntryToggleAdmin
 
-- (instancetype)initWithUserId:(int32_t)userId previousRights:(TGChannelAdminRights *)previousRights rights:(TGChannelAdminRights *)rights {
+- (instancetype)initWithUserId:(int64_t)userId previousRights:(TGChannelAdminRights *)previousRights rights:(TGChannelAdminRights *)rights {
     self = [super init];
     if (self != nil) {
         _userId = userId;

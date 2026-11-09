@@ -14,9 +14,9 @@
 
 @property (nonatomic) int32_t flags;
 @property (nonatomic) int32_t date;
-@property (nonatomic) int32_t bot_id;
+@property (nonatomic) int64_t bot_id;
 @property (nonatomic, retain) TLInvoice *invoice;
-@property (nonatomic) int32_t provider_id;
+@property (nonatomic) int64_t provider_id;
 @property (nonatomic, retain) TLPaymentRequestedInfo *info;
 @property (nonatomic, retain) TLShippingOption *shipping;
 @property (nonatomic, retain) NSString *currency;

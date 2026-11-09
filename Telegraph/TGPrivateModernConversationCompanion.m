@@ -26,6 +26,8 @@
 #import "TGModernConversationTitleIcon.h"
 
 #import "TGModernConversationTitleView.h"
+#import "TGRichMessageInlineImageStore.h"
+#import "TGPresentationAssets.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGProgressWindow.h"
 
@@ -70,6 +72,7 @@
 #import "TLRPCmessages_search.h"
 #import "TGMessage+Telegraph.h"
 #import "TGUserDataRequestBuilder.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGIOS6PrivatePinnedMessagesFilter : TLMessagesFilter
 @end
@@ -132,6 +135,10 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     NSMutableDictionary *_userNotificationSettings;
     
     NSArray *_additionalTitleIcons;
+    bool _showsPremiumBadge;
+    int64_t _emojiStatusDocumentId;
+    UIImage *_emojiStatusImage;
+    SMetaDisposable *_emojiStatusDisposable;
     
     TGPhoneSharingStatus _phoneSharingStatus;
     
@@ -176,10 +183,10 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 
 - (instancetype)initWithConversation:(TGConversation *)conversation activity:(NSString *)activity mayHaveUnreadMessages:(bool)mayHaveUnreadMessages
 {
-    return [self initWithConversation:conversation uid:(int32_t)conversation.conversationId activity:activity mayHaveUnreadMessages:mayHaveUnreadMessages];
+    return [self initWithConversation:conversation uid:conversation.conversationId activity:activity mayHaveUnreadMessages:mayHaveUnreadMessages];
 }
 
-- (instancetype)initWithConversation:(TGConversation *)conversation uid:(int)uid activity:(NSString *)activity mayHaveUnreadMessages:(bool)mayHaveUnreadMessages
+- (instancetype)initWithConversation:(TGConversation *)conversation uid:(int64_t)uid activity:(NSString *)activity mayHaveUnreadMessages:(bool)mayHaveUnreadMessages
 {
     _linkPanelVariable = [[SVariable alloc] init];
     self = [super initWithConversation:conversation mayHaveUnreadMessages:mayHaveUnreadMessages];
@@ -253,6 +260,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     [_updatedPeerSettingsDisposable dispose];
     [_liveLocationDisposable dispose];
     [_pinnedMessagesDisposable dispose];
+    [_emojiStatusDisposable dispose];
 }
 
 - (void)setAdditionalTitleIcons:(NSArray *)additionalTitleIcons
@@ -277,6 +285,19 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     {
         NSMutableArray *icons = [[NSMutableArray alloc] initWithArray:_additionalTitleIcons];
         
+        UIImage *badgeImage = _emojiStatusDocumentId != 0 ? _emojiStatusImage : (_showsPremiumBadge ? [TGPresentationAssets premiumBadgeIcon:14.0f] : nil);
+        if (badgeImage != nil)
+        {
+            CGFloat muteCenterY = 7.0f + self.controller.presentation.images.chatTitleMutedIcon.size.height / 2.0f;
+            TGModernConversationTitleIcon *badgeIcon = [[TGModernConversationTitleIcon alloc] init];
+            badgeIcon.bounds = CGRectMake(0.0f, 0.0f, badgeImage.size.width + 4.0f, badgeImage.size.height);
+            badgeIcon.offsetWeight = 0.5f;
+            badgeIcon.imageOffset = CGPointMake(4.0f, CGFloor(muteCenterY - badgeImage.size.height / 2.0f));
+            badgeIcon.image = badgeImage;
+            badgeIcon.iconPosition = TGModernConversationTitleIconPositionAfterTitle;
+            [icons addObject:badgeIcon];
+        }
+        
         if (_isMuted)
         {
             TGModernConversationTitleIcon *muteIcon = [[TGModernConversationTitleIcon alloc] init];
@@ -292,6 +313,61 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         
         [self _setTitleIcons:icons];
     });
+}
+
+- (void)_updateUserBadge:(TGUser *)user
+{
+    if (![NSThread isMainThread])
+    {
+        TGDispatchOnMainThread(^
+        {
+            [self _updateUserBadge:user];
+        });
+        return;
+    }
+    bool showsPremiumBadge = user.isPremium && !user.isVerified && _uid != TGTelegraphInstance.clientUserId;
+    int64_t emojiStatusDocumentId = user.isVerified || _uid == TGTelegraphInstance.clientUserId ? 0 : user.emojiStatusDocumentId;
+    if (showsPremiumBadge == _showsPremiumBadge && emojiStatusDocumentId == _emojiStatusDocumentId)
+        return;
+    _showsPremiumBadge = showsPremiumBadge;
+    if (emojiStatusDocumentId != _emojiStatusDocumentId)
+    {
+        _emojiStatusDocumentId = emojiStatusDocumentId;
+        _emojiStatusImage = nil;
+        if (_emojiStatusDisposable == nil)
+            _emojiStatusDisposable = [[SMetaDisposable alloc] init];
+        [_emojiStatusDisposable setDisposable:nil];
+        if (emojiStatusDocumentId != 0)
+        {
+            UIImage *cachedImage = [TGRichMessageInlineImageStore imageForKey:[TGRichMessageInlineImageStore customEmojiKey:emojiStatusDocumentId]];
+            if (cachedImage != nil)
+                _emojiStatusImage = [self _titleEmojiStatusImage:cachedImage];
+            else
+            {
+                __weak TGPrivateModernConversationCompanion *weakSelf = self;
+                [_emojiStatusDisposable setDisposable:[[[TGRichMessageInlineImageStore customEmojiImageSignal:emojiStatusDocumentId] deliverOn:[SQueue mainQueue]] startWithNext:^(UIImage *image)
+                {
+                    __strong TGPrivateModernConversationCompanion *strongSelf = weakSelf;
+                    if (strongSelf == nil || strongSelf->_emojiStatusDocumentId != emojiStatusDocumentId || ![image isKindOfClass:[UIImage class]])
+                        return;
+                    strongSelf->_emojiStatusImage = [strongSelf _titleEmojiStatusImage:image];
+                    [strongSelf _updateTitleIcons];
+                }]];
+            }
+        }
+    }
+    [self _updateTitleIcons];
+}
+
+- (UIImage *)_titleEmojiStatusImage:(UIImage *)image
+{
+    CGFloat side = 20.0f;
+    CGSize fitted = TGFitSize(image.size, CGSizeMake(side, side));
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(side, side), false, 0.0f);
+    [image drawInRect:CGRectMake(CGFloor((side - fitted.width) / 2.0f), CGFloor((side - fitted.height) / 2.0f), fitted.width, fitted.height)];
+    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return result;
 }
 
 - (void)_updateUserMute:(bool)isMuted
@@ -780,7 +856,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
                 dict = [[NSMutableDictionary alloc] init];
                 dismissedContactLinkPanelsByUserId()[@(TGTelegraphInstance.clientUserId)] = dict;
             }
-            if (![dict[[[NSString alloc] initWithFormat:@"%" PRId32 "_%@", _uid, @"add"]] boolValue])
+            if (![dict[[[NSString alloc] initWithFormat:@"%" PRId64 "_%@", _uid, @"add"]] boolValue])
             {
                 TGModernConversationContactLinkTitlePanel *linkPanel = nil;
                 if (![panel isKindOfClass:[TGModernConversationContactLinkTitlePanel class]])
@@ -804,7 +880,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
                 dict = [[NSMutableDictionary alloc] init];
                 dismissedContactLinkPanelsByUserId()[@(TGTelegraphInstance.clientUserId)] = dict;
             }
-            if (![dict[[[NSString alloc] initWithFormat:@"%" PRId32 "_%@", _uid, @"add"]] boolValue])
+            if (![dict[[[NSString alloc] initWithFormat:@"%" PRId64 "_%@", _uid, @"add"]] boolValue])
             {
                 TGModernConversationContactLinkTitlePanel *linkPanel = nil;
                 if (![panel isKindOfClass:[TGModernConversationContactLinkTitlePanel class]])
@@ -858,7 +934,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]
     ] actionBlock:^(TGModernConversationController *controller, NSString *action) {
         if ([action isEqualToString:@"reportSpam"]) {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)conversationId];
+            TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
             SMetaDisposable *metaDisposable = [[SMetaDisposable alloc] init];
             id<SDisposable> disposable = [[[TGServiceSignals reportSpam:conversationId accessHash:user.phoneNumberHash] onDispose:^{
                 [TGTelegraphInstance.disposeOnLogout remove:metaDisposable];
@@ -889,7 +965,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
             dict = [[NSMutableDictionary alloc] init];
             dismissedContactLinkPanelsByUserId()[@(TGTelegraphInstance.clientUserId)] = dict;
         }
-        dict[[[NSString alloc] initWithFormat:@"%" PRId32 "_%@", _uid, panel.shareContact ? @"share" : @"add"]] = @(true);
+        dict[[[NSString alloc] initWithFormat:@"%" PRId64 "_%@", _uid, panel.shareContact ? @"share" : @"add"]] = @(true);
         
         TGModernConversationController *controller = self.controller;
         [controller setSecondaryTitlePanel:nil];
@@ -911,8 +987,8 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     {
         [ActionStageInstance() dispatchOnStageQueue:^
         {
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/blockedUsers/(%" PRId32 ",cached)", _uid] options:@{@"uid": @(_uid)} watcher:self];
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/completeUsers/(%" PRId32 ",cached)", _uid] options:@{@"uid": @(_uid)} watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/blockedUsers/(%" PRId64 ",cached)", _uid] options:@{@"uid": @(_uid)} watcher:self];
+            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/completeUsers/(%" PRId64 ",cached)", _uid] options:@{@"uid": @(_uid)} watcher:TGTelegraphInstance];
         }];
         
         [TGDatabaseInstance() dispatchOnDatabaseThread:^
@@ -1117,6 +1193,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     _isLoadingFirstMessages = false;
     
     [self _setTitle:[self stringForTitle:user]];
+    [self _updateUserBadge:user];
     [self _setAvatarConversationId:_uid firstName:user.firstName lastName:user.lastName];
     [self _setAvatarUrl:user.photoFullUrlSmall];
     bool accentColored = false;
@@ -1247,7 +1324,8 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 
 - (bool)shouldAutomaticallyDownloadAnimations
 {
-    return TGAppDelegateInstance.autoPlayAnimations;
+    TGAutoDownloadChat chat = _isContact ? TGAutoDownloadChatContact : TGAutoDownloadChatOtherPrivateChat;
+    return [TGAppDelegateInstance.autoDownloadPreferences shouldDownloadGifInChat:chat networkType:TGTelegraphInstance.networkTypeManager.networkType];
 }
 
 - (bool)shouldAutomaticallyDownloadAudios
@@ -1293,17 +1371,17 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 {
     [ActionStageInstance() watchForPaths:@[
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%" PRId64 ")/typing", _conversationId],
-        [[NSString alloc] initWithFormat:@"/tg/userLink/(%" PRId32 ")", _uid],
+        [[NSString alloc] initWithFormat:@"/tg/userLink/(%" PRId64 ")", _uid],
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/messageFlagChanges", _conversationId],
         [[NSString alloc] initWithFormat:@"/tg/conversation/messageViewDateChanges"],
-        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 1],
+        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsPrivate],
         @"/tg/blockedUsers",
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]
     ] watcher:self];
 
-    [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", _uid] watcher:self];
-    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ",cachedOnly)", _uid] options:@{@"peerId": @(_uid)} watcher:self];
-    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 1] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 1] forKey:@"peerId"] watcher:self];
+    [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _uid] watcher:self];
+    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _uid] options:@{@"peerId": @(_uid)} watcher:self];
+    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsPrivate] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsPrivate] forKey:@"peerId"] watcher:self];
     
     [super subscribeToUpdates];
 }
@@ -1340,7 +1418,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
     
     [actions addObject:@{@"title": TGLocalized(@"Conversation.Info"), @"icon": presentation.images.chatTitleInfoIcon, @"action": @"info"}];
     [privateTitlePanel setPresentation:presentation];
-    [privateTitlePanel setButtonsWithTitlesAndActions:actions];
+    [privateTitlePanel setButtonsWithTitlesAndActions:[self _titlePanelActionsWithPluginActions:actions]];
 
     [controller setPrimaryTitlePanel:privateTitlePanel];
 }
@@ -1477,8 +1555,8 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
 {
     NSMutableDictionary *peerDict = [[NSMutableDictionary alloc] init];
     peerDict[@"type"] = @"user";
-    peerDict[@"id"] = @((int32_t)_conversationId);
-    TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)_conversationId];
+    peerDict[@"id"] = @(_conversationId);
+    TGUser *user = [TGDatabaseInstance() loadUser:_conversationId];
     if (user.userName.length != 0)
         peerDict[@"username"] = user.userName;
     return @{@"user_id": @(TGTelegraphInstance.clientUserId), @"peer": peerDict};
@@ -1581,6 +1659,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
                 bool accentColored = false;
                 NSString *statusString = [self statusStringForUser:user accentColored:&accentColored];
                 [self _setTitle:[self stringForTitle:user] andStatus:statusString accentColored:accentColored allowAnimatioon:true toggleMode:TGModernConversationControllerTitleToggleNone];
+                [self _updateUserBadge:user];
                 [self _setAvatarConversationId:_uid firstName:user.firstName lastName:user.lastName];
                 [self _setAvatarUrl:user.photoFullUrlSmall];
                 
@@ -1703,7 +1782,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         
         [self updateUserBlocked:blocked];
     }
-    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 1]])
+    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsPrivate]])
     {
         TGDispatchOnMainThread(^
         {
@@ -1730,7 +1809,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
     bool isMuted = true;
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
         isMuted = false;
     
     [self _updateUserMute:isMuted];
@@ -1829,7 +1908,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
             NSString *normalizedMention = [mention lowercaseString];
             NSMutableArray *users = [[NSMutableArray alloc] init];
             for (NSNumber *nUserId in userIds) {
-                TGUser *user = [TGDatabaseInstance() loadUser:[nUserId intValue]];
+                TGUser *user = [TGDatabaseInstance() loadUser:[nUserId longLongValue]];
                 if (user != nil && (normalizedMention.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedMention])) {
                     [users addObject:user];
                 }
@@ -1853,7 +1932,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
                     for (TGBotReplyMarkupButton *button in row.buttons) {
                         if ([button.action isKindOfClass:[TGBotReplyMarkupButtonActionSwitchInline class]]) {
                             NSString *query = ((TGBotReplyMarkupButtonActionSwitchInline *)button.action).query;
-                            TGUser *user = [TGDatabaseInstance() loadUser:(int)_conversationId];
+                            TGUser *user = [TGDatabaseInstance() loadUser:_conversationId];
                             if (user.userName.length != 0) {
                                 NSNumber *botContextPeerId = self.botContextPeerId;
                                 TGDispatchOnMainThread(^{
@@ -1895,7 +1974,7 @@ static NSMutableDictionary *dismissedContactLinkPanelsByUserId()
         [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Call.ConnectionErrorTitle") message:[NSString stringWithFormat:TGLocalized(@"Call.PrivacyErrorMessage"), user.displayFirstName] cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
     }
     else {
-        [[TGInterfaceManager instance] callPeerWithId:_uid];
+        [[TGInterfaceManager instance] presentCallOptionsForPeerId:_uid inView:self.controller.view];
     }
 }
 

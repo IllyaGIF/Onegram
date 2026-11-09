@@ -23,7 +23,8 @@
     int zero = 0;
     [data appendBytes:&zero length:4];
     
-    [data appendBytes:&_uid length:4];
+    int32_t legacyUid = 0;
+    [data appendBytes:&legacyUid length:4];
     
     NSData *firstNameData = [_firstName dataUsingEncoding:NSUTF8StringEncoding];
     int length = (int)firstNameData.length;
@@ -45,6 +46,9 @@
     [data appendBytes:&length length:4];
     [data appendData:vcardData];
     
+    int64_t uid = _uid;
+    [data appendBytes:&uid length:8];
+    
     int dataLength = (int)data.length - dataLengthPtr - 4;
     [data replaceBytesInRange:NSMakeRange(dataLengthPtr, 4) withBytes:&dataLength];
 }
@@ -57,10 +61,10 @@
     
     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] init];
     
-    int uid = 0;
-    [is read:(uint8_t *)&uid maxLength:4];
+    int32_t legacyUid = 0;
+    [is read:(uint8_t *)&legacyUid maxLength:4];
     read += 4;
-    contactAttachment.uid = uid;
+    contactAttachment.uid = legacyUid;
     
     int length = 0;
     [is read:(uint8_t *)&length maxLength:4];
@@ -89,8 +93,16 @@
         [is read:(uint8_t *)&length maxLength:4];
         uint8_t *vcardBytes = malloc(length);
         [is read:vcardBytes maxLength:length];
-        read += length;
+        read += length + 4;
         contactAttachment.vcard = [[NSString alloc] initWithBytesNoCopy:vcardBytes length:length encoding:NSUTF8StringEncoding freeWhenDone:true];
+    }
+    
+    if (read + 8 <= dataLength)
+    {
+        int64_t uid = 0;
+        [is read:(uint8_t *)&uid maxLength:8];
+        read += 8;
+        contactAttachment.uid = uid;
     }
     
     return contactAttachment;
@@ -100,7 +112,7 @@
     self = [super init];
     if (self != nil) {
         self.type = TGContactMediaAttachmentType;
-        _uid = [aDecoder decodeInt32ForKey:@"uid"];
+        _uid = [aDecoder decodeInt64ForKey:@"uid"];
         _firstName = [aDecoder decodeObjectForKey:@"firstName"];
         _lastName = [aDecoder decodeObjectForKey:@"lastName"];
         _phoneNumber = [aDecoder decodeObjectForKey:@"phoneNumber"];
@@ -110,7 +122,7 @@
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder {
-    [aCoder encodeInt32:_uid forKey:@"uid"];
+    [aCoder encodeInt64:_uid forKey:@"uid"];
     [aCoder encodeObject:_firstName forKey:@"firstName"];
     [aCoder encodeObject:_lastName forKey:@"lastName"];
     [aCoder encodeObject:_phoneNumber forKey:@"phoneNumber"];

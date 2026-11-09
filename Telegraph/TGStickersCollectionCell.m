@@ -4,6 +4,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
+#import "TGAnimatedStickerView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGStickerAssociation.h"
 
@@ -13,6 +14,7 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
 {
     UIView *_wrapperView;
     TGImageView *_imageView;
+    TGAnimatedStickerView *_animatedView;
     UILabel *_altLabel;
     bool _showAltFallback;
     
@@ -67,6 +69,15 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
 - (TGDocumentMediaAttachment *)sticker
 {
     return _sticker;
+}
+
+- (void)prepareForReuse
+{
+    [super prepareForReuse];
+    [_animatedView reset];
+    [_imageView reset];
+    _uri = nil;
+    _sticker = nil;
 }
 
 - (void)setSticker:(TGDocumentMediaAttachment *)documentMedia associations:(NSArray *)associations mask:(bool)mask
@@ -132,10 +143,27 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
     if (currentAlt.length != 0 && [currentAlt characterAtIndex:0] == 0x2639)
         currentAlt = @"\u2639\ufe0f";
     
-    _showAltFallback = !mask && currentAlt.length != 0 && ([documentMedia.mimeType isEqualToString:@"video/webm"] || [documentMedia.mimeType isEqualToString:@"application/x-tgsticker"]);
-    _imageView.hidden = _showAltFallback;
+    bool animated = !mask && [TGAnimatedStickerView isAnimatedStickerDocument:documentMedia];
+    _showAltFallback = !mask && !animated && currentAlt.length != 0 && [documentMedia.mimeType isEqualToString:@"video/webm"];
+    _imageView.hidden = _showAltFallback || animated;
     _altLabel.hidden = !_showAltFallback;
-    if (_showAltFallback)
+    if (animated)
+    {
+        if (_animatedView == nil)
+        {
+            _animatedView = [[TGAnimatedStickerView alloc] initWithFrame:self.bounds];
+            _animatedView.playing = false;
+            [_wrapperView insertSubview:_animatedView aboveSubview:_imageView];
+        }
+        _animatedView.hidden = false;
+        [_animatedView setDocument:documentMedia placeholderUri:uri];
+    }
+    else if (_animatedView != nil)
+    {
+        _animatedView.hidden = true;
+        [_animatedView reset];
+    }
+    if (_showAltFallback || animated)
     {
         _uri = nil;
         [_imageView reset];
@@ -160,10 +188,9 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
         {
             [UIView animateWithDuration:0.6 delay:0.0 usingSpringWithDamping:0.6f initialSpringVelocity:0.0f options:UIViewAnimationOptionBeginFromCurrentState animations:^
              {
-                 if (_highlighted)
-                     _imageView.transform = CGAffineTransformMakeScale(0.8f, 0.8f);
-                 else
-                     _imageView.transform = CGAffineTransformIdentity;
+                 CGAffineTransform transform = _highlighted ? CGAffineTransformMakeScale(0.8f, 0.8f) : CGAffineTransformIdentity;
+                 _imageView.transform = transform;
+                 _animatedView.transform = transform;
              } completion:nil];
         }
     }
@@ -212,6 +239,8 @@ NSString *const TGStickersCollectionCellIdentifier = @"TGStickersCollectionCell"
 {
     _wrapperView.frame = self.bounds;
     _imageView.frame = self.bounds;
+    if (_animatedView != nil && CGAffineTransformIsIdentity(_animatedView.transform))
+        _animatedView.frame = self.bounds;
     if (_showAltFallback)
         _altLabel.frame = self.bounds;
     else

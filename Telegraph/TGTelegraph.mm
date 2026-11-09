@@ -1,3 +1,5 @@
+#import "OGMediaFetchSession.h"
+#import "TGSendAsSignals.h"
 #import "TGTelegraph.h"
 
 extern CFAbsoluteTime mainLaunchTimestamp;
@@ -207,15 +209,17 @@ extern CFAbsoluteTime mainLaunchTimestamp;
 #import "TLRPCmessages_getPinnedDialogs.h"
 #import "TLDialog.h"
 #import "TLPeer.h"
+#import "TLChat$channel.h"
 
 #import "TGICloudEmergencyDataSignals.h"
 #import <objc/runtime.h>
+#import "../OnegramRuntime/OGRemoteClock.h"
 
-static int64_t TGIOS6ArchivePeerIdAndType(TLPeer *peer, NSString **type, int32_t *rawId)
+static int64_t TGIOS6ArchivePeerIdAndType(TLPeer *peer, NSString **type, int64_t *rawId)
 {
     if ([peer isKindOfClass:[TLPeer$peerUser class]])
     {
-        int32_t userId = ((TLPeer$peerUser *)peer).user_id;
+        int64_t userId = ((TLPeer$peerUser *)peer).user_id;
         if (type != NULL)
             *type = @"user";
         if (rawId != NULL)
@@ -224,7 +228,7 @@ static int64_t TGIOS6ArchivePeerIdAndType(TLPeer *peer, NSString **type, int32_t
     }
     else if ([peer isKindOfClass:[TLPeer$peerChat class]])
     {
-        int32_t chatId = ((TLPeer$peerChat *)peer).chat_id;
+        int64_t chatId = ((TLPeer$peerChat *)peer).chat_id;
         if (type != NULL)
             *type = @"chat";
         if (rawId != NULL)
@@ -233,7 +237,7 @@ static int64_t TGIOS6ArchivePeerIdAndType(TLPeer *peer, NSString **type, int32_t
     }
     else if ([peer isKindOfClass:[TLPeer$peerChannel class]])
     {
-        int32_t channelId = ((TLPeer$peerChannel *)peer).channel_id;
+        int64_t channelId = ((TLPeer$peerChannel *)peer).channel_id;
         if (type != NULL)
             *type = @"channel";
         if (rawId != NULL)
@@ -255,12 +259,12 @@ static NSString *TGIOS6ArchiveDialogKey(TLDialog *baseDialog)
 
     TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
     NSString *type = nil;
-    int32_t rawId = 0;
+    int64_t rawId = 0;
     TGIOS6ArchivePeerIdAndType(dialog.peer, &type, &rawId);
     if (type.length == 0 || rawId == 0)
         return nil;
 
-    return [NSString stringWithFormat:@"%@:%d", type, rawId];
+    return [NSString stringWithFormat:@"%@:%lld", type, rawId];
 }
 
 static NSString *TGIOS6DialogKey(TLDialog *baseDialog)
@@ -283,7 +287,7 @@ static void TGIOS6LogArchiveDialogs(TLmessages_Dialogs *dialogs, NSString *reaso
         {
             TLDialog$dialogMeta *dialog = (TLDialog$dialogMeta *)baseDialog;
             NSString *type = nil;
-            int32_t rawId = 0;
+            int64_t rawId = 0;
             int64_t peerId = TGIOS6ArchivePeerIdAndType(dialog.peer, &type, &rawId);
         }
         else
@@ -294,49 +298,28 @@ static void TGIOS6LogArchiveDialogs(TLmessages_Dialogs *dialogs, NSString *reaso
     }
 }
 
-static int64_t TGIOS6RawPeerId(TLPeer *peer)
+static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmessages_Dialogs *dialogs, int64_t clientUserId)
 {
-    NSNumber *value = objc_getAssociatedObject(peer, NSSelectorFromString(@"tg_ios6_apiPeerId"));
-    if (value != nil)
-        return [value longLongValue];
-
-    if ([peer isKindOfClass:[TLPeer$peerUser class]])
-        return TGModernUserIdForLegacyId(((TLPeer$peerUser *)peer).user_id);
-    if ([peer isKindOfClass:[TLPeer$peerChat class]])
-        return ((TLPeer$peerChat *)peer).chat_id;
-    if ([peer isKindOfClass:[TLPeer$peerChannel class]])
-        return ((TLPeer$peerChannel *)peer).channel_id;
-    return 0;
-}
-
-static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmessages_Dialogs *dialogs, int32_t clientUserId)
-{
-    int64_t rawPeerId = TGIOS6RawPeerId(dialog.peer);
-    if (rawPeerId == 0)
-        return nil;
-
     if ([dialog.peer isKindOfClass:[TLPeer$peerUser class]])
     {
-        int32_t legacyUserId = ((TLPeer$peerUser *)dialog.peer).user_id;
-        if (legacyUserId == clientUserId)
+        int64_t userId = ((TLPeer$peerUser *)dialog.peer).user_id;
+        if (userId == 0)
+            return nil;
+        if (userId == clientUserId)
             return [[TLInputPeer$inputPeerSelf alloc] init];
 
         int64_t accessHash = 0;
         for (TLUser *user in dialogs.users)
         {
-            if ([user isKindOfClass:[TLUser$modernUser class]])
+            if ([user isKindOfClass:[TLUser$modernUser class]] && ((TLUser$modernUser *)user).n_id == userId)
             {
-                TLUser$modernUser *modernUser = (TLUser$modernUser *)user;
-                if (modernUser.n_id_long == rawPeerId || modernUser.n_id == legacyUserId)
-                {
-                    accessHash = modernUser.access_hash;
-                    break;
-                }
+                accessHash = ((TLUser$modernUser *)user).access_hash;
+                break;
             }
         }
         if (accessHash == 0)
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:legacyUserId];
+            TGUser *user = [TGDatabaseInstance() loadUser:userId];
             if (user != nil)
                 accessHash = user.phoneNumberHash;
         }
@@ -344,35 +327,41 @@ static TLInputPeer *TGIOS6InputPeerForDialog(TLDialog$dialogMeta *dialog, TLmess
             return nil;
 
         TLInputPeer$inputPeerUser *inputPeer = [[TLInputPeer$inputPeerUser alloc] init];
-        inputPeer.user_id = rawPeerId;
+        inputPeer.user_id = userId;
         inputPeer.access_hash = accessHash;
         return inputPeer;
     }
 
     if ([dialog.peer isKindOfClass:[TLPeer$peerChat class]])
     {
+        int64_t chatId = ((TLPeer$peerChat *)dialog.peer).chat_id;
+        if (chatId == 0)
+            return nil;
         TLInputPeer$inputPeerChat *inputPeer = [[TLInputPeer$inputPeerChat alloc] init];
-        inputPeer.chat_id = rawPeerId;
+        inputPeer.chat_id = chatId;
         return inputPeer;
     }
 
     if ([dialog.peer isKindOfClass:[TLPeer$peerChannel class]])
     {
+        int64_t channelId = ((TLPeer$peerChannel *)dialog.peer).channel_id;
+        if (channelId == 0)
+            return nil;
+
         int64_t accessHash = 0;
         for (TLChat *chatDesc in dialogs.chats)
         {
+            if (chatDesc.n_id != channelId || ![chatDesc isKindOfClass:[TLChat$channel class]])
+                continue;
             TGConversation *conversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
-            if (TGIOS6ApiChannelIdForConversation(conversation) == rawPeerId)
-            {
-                accessHash = conversation.accessHash;
-                break;
-            }
+            accessHash = conversation.accessHash;
+            break;
         }
         if (accessHash == 0)
             return nil;
 
         TLInputPeer$inputPeerChannel *inputPeer = [[TLInputPeer$inputPeerChannel alloc] init];
-        inputPeer.channel_id = rawPeerId;
+        inputPeer.channel_id = channelId;
         inputPeer.access_hash = accessHash;
         return inputPeer;
     }
@@ -399,7 +388,7 @@ static NSError *TGIOS6DialogListError(MTRpcError *rpcError, NSInteger code, NSSt
     return [NSError errorWithDomain:@"TGDialogListRPC" code:rpcError.errorCode userInfo:userInfo];
 }
 
-static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *dialogs, int32_t clientUserId, TLInputPeer **inputPeer)
+static TGDialogListRemoteOffset *TGIOS6DialogsRemoteOffset(TLmessages_Dialogs *dialogs, int64_t clientUserId, TLInputPeer **inputPeer)
 {
     NSMutableDictionary *messages = [[NSMutableDictionary alloc] init];
     for (TLMessage *messageDesc in dialogs.messages)
@@ -753,16 +742,16 @@ static void TGIOS6RegisterLoginTokenClasses(void)
 
 TGTelegraph *TGTelegraphInstance = nil;
 
-typedef std::map<int, std::pair<TGUser *, int > >::iterator UserDataToDispatchIterator;
+typedef std::map<int64_t, std::pair<TGUser *, int > >::iterator UserDataToDispatchIterator;
 
 @interface TGTelegraph ()
 {
-    std::map<int, TGUserPresence> _userPresenceToDispatch;
-    std::map<int, std::pair<TGUser *, int> > _userDataToDispatch;
+    std::map<int64_t, TGUserPresence> _userPresenceToDispatch;
+    std::map<int64_t, std::pair<TGUser *, int> > _userDataToDispatch;
     
-    std::map<int, int> _userPresenceExpiration;
+    std::map<int64_t, int> _userPresenceExpiration;
     
-    std::map<int, int> _userLinksToDispatch;
+    std::map<int64_t, int> _userLinksToDispatch;
     
     TG_SYNCHRONIZED_DEFINE(_activityManagerByConversationId);
     NSMutableDictionary *_activityManagerByConversationId;
@@ -771,7 +760,7 @@ typedef std::map<int, std::pair<TGUser *, int > >::iterator UserDataToDispatchIt
     TGMusicPlayer *_musicPlayer;
     bool _constrainedStartupDialogReady;
     bool _constrainedPostDialogStartupPending;
-    int _constrainedPostDialogStartupUserId;
+    int64_t _constrainedPostDialogStartupUserId;
 }
 
 @property (nonatomic, strong) NSMutableArray *runningRequests;
@@ -797,84 +786,14 @@ typedef std::map<int, std::pair<TGUser *, int > >::iterator UserDataToDispatchIt
 
 - (void)installDatabaseCleanupBlocksIfNeeded;
 - (void)tryStartConstrainedPostDialogStartup;
-- (void)startConstrainedPostDialogStartupForUserId:(int)uid;
+- (void)startConstrainedPostDialogStartupForUserId:(int64_t)uid;
 
 @end
 
-static inline bool TGIOS6PeerIdIsModernRawChannel(int64_t peerId, int64_t accessHash)
-{
-    int64_t channelId = -peerId - 4294967296LL;
-    return accessHash != 0 && channelId > 0 && channelId <= UINT32_MAX;
-}
-
-static int64_t TGIOS6StoredApiPeerId(int64_t peerId, NSString *propertyName)
-{
-    NSData *data = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(propertyName)];
-    if (data.length < sizeof(int64_t))
-        return 0;
-
-    int64_t value = 0;
-    [data getBytes:&value length:sizeof(value)];
-    return value > 0 ? value : 0;
-}
-
-static inline bool TGIOS6PeerIdIsChannel(int64_t peerId, int64_t accessHash)
-{
-    return TGIOS6PeerIdIsModernRawChannel(peerId, accessHash) || TGPeerIdIsChannel(peerId);
-}
-
-static inline int64_t TGIOS6FallbackChannelIdFromPeerId(int64_t peerId, int64_t accessHash)
-{
-    if (TGIOS6PeerIdIsModernRawChannel(peerId, accessHash))
-        return -peerId - 4294967296LL;
-
-    int32_t channelId = TGChannelIdFromPeerId(peerId);
-    if (channelId != 0)
-        return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
-
-    return 0;
-}
-
-static inline int64_t TGIOS6ChannelIdFromPeerId(int64_t peerId, int64_t accessHash)
-{
-    int64_t storedChannelId = TGIOS6StoredApiPeerId(peerId, @"ios6ApiChannelId");
-    return storedChannelId > 0 ? storedChannelId : TGIOS6FallbackChannelIdFromPeerId(peerId, accessHash);
-}
-
-static inline int64_t TGIOS6ChatIdFromPeerId(int64_t peerId)
-{
-    int64_t storedChatId = TGIOS6StoredApiPeerId(peerId, @"ios6ApiChatId");
-    if (storedChatId > 0)
-        return storedChatId;
-
-    return (int64_t)TGGroupIdFromPeerId(peerId);
-}
-
 static inline void TGIOS6FillInputChannel(TLInputChannel$inputChannel *inputChannel, int64_t peerId, int64_t accessHash)
 {
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = accessHash;
-}
-
-static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
-{
-    int64_t mappedUserId = TGModernUserIdForLegacyId(uid);
-    if (mappedUserId != (int64_t)uid)
-        return mappedUserId;
-    
-    NSString *photoUrl = user.photoUrlSmall.length != 0 ? user.photoUrlSmall : user.photoUrlBig;
-    if ([photoUrl hasPrefix:@"peerphoto:"])
-    {
-        NSArray *components = [photoUrl componentsSeparatedByString:@":"];
-        if (components.count >= 4 && [components[2] intValue] == 1)
-        {
-            int64_t photoPeerId = [components[3] longLongValue];
-            if (photoPeerId > 0)
-                return photoPeerId;
-        }
-    }
-    
-    return (int64_t)uid;
 }
 
 @interface TGIOS6InputFolderPeer : NSObject <TLObject>
@@ -918,16 +837,18 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 #pragma mark - iOS 6 forum forwarding
 
-@interface TGIOS6ForwardMessagesToTopicRpc : TLMetaRpc
+@interface TGIOS6ForwardMessagesToThreadRpc : TLMetaRpc
 @property (nonatomic) int32_t flags;
 @property (nonatomic, strong) TLInputPeer *fromPeer;
 @property (nonatomic, strong) NSArray *messageIds;
 @property (nonatomic, strong) NSArray *randomIds;
 @property (nonatomic, strong) TLInputPeer *toPeer;
 @property (nonatomic) int32_t topMessageId;
+@property (nonatomic, strong) TLInputPeer *monoforumPeer;
+@property (nonatomic, strong) TLInputPeer *sendAs;
 @end
 
-@implementation TGIOS6ForwardMessagesToTopicRpc
+@implementation TGIOS6ForwardMessagesToThreadRpc
 
 - (int32_t)TLconstructorSignature { return (int32_t)0x13704a7c; }
 - (int32_t)TLconstructorName { return -1; }
@@ -939,7 +860,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:self.flags];
+    [os writeInt32:self.flags | (self.sendAs != nil ? (1 << 13) : 0)];
     TLMetaClassStore::serializeObject(os, self.fromPeer, true);
 
     [os writeInt32:TL_UNIVERSAL_VECTOR_CONSTRUCTOR];
@@ -955,11 +876,23 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     TLMetaClassStore::serializeObject(os, self.toPeer, true);
     if ((self.flags & (1 << 9)) != 0)
         [os writeInt32:self.topMessageId];
+    if ((self.flags & (1 << 22)) != 0)
+    {
+        [os writeInt32:(int32_t)0x69d66c45];
+        TLMetaClassStore::serializeObject(os, self.monoforumPeer, true);
+    }
+    if (self.sendAs != nil)
+        TLMetaClassStore::serializeObject(os, self.sendAs, true);
 }
 
 @end
 
 @implementation TGTelegraph
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 - (TGMusicPlayer *)musicPlayer
 {
@@ -1674,9 +1607,9 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         [ActionStageInstance() requestActor:@"/tg/service/updatestate" options:nil watcher:self];
 }
 
-- (void)setClientUserId:(int)clientUserId
+- (void)setClientUserId:(int64_t)clientUserId
 {
-    int previousClientUserId = _clientUserId;
+    int64_t previousClientUserId = _clientUserId;
     _clientUserId = clientUserId;
 
     if (clientUserId != 0 || previousClientUserId != 0 || !OGPlatformUsesConstrainedBackgroundExecution())
@@ -1790,16 +1723,16 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (void)dispatchUserPresenceChanges:(int64_t)userId presence:(TGUserPresence)presence
 {
-    std::tr1::shared_ptr<std::map<int, TGUserPresence> > presenceMap(new std::map<int, TGUserPresence>());
-    presenceMap->insert(std::make_pair((int)userId, presence));
+    std::tr1::shared_ptr<std::map<int64_t, TGUserPresence> > presenceMap(new std::map<int64_t, TGUserPresence>());
+    presenceMap->insert(std::make_pair(userId, presence));
     [self dispatchMultipleUserPresenceChanges:presenceMap];
 }
 
-- (void)dispatchMultipleUserPresenceChanges:(std::tr1::shared_ptr<std::map<int, TGUserPresence> >)presenceMap
+- (void)dispatchMultipleUserPresenceChanges:(std::tr1::shared_ptr<std::map<int64_t, TGUserPresence> >)presenceMap
 {
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        for (std::map<int, TGUserPresence>::const_iterator it = presenceMap->begin(); it != presenceMap->end(); it++)
+        for (std::map<int64_t, TGUserPresence>::const_iterator it = presenceMap->begin(); it != presenceMap->end(); it++)
         {
             _userPresenceToDispatch[it->first] = it->second;
         }
@@ -1825,11 +1758,11 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     
     bool updatedPresenceExpiration = false;
     
-    int clientUserId = TGTelegraphInstance.clientUserId;
+    int64_t clientUserId = TGTelegraphInstance.clientUserId;
     
-    for (std::map<int, TGUserPresence>::iterator it = _userPresenceToDispatch.begin(); it != _userPresenceToDispatch.end(); it++)
+    for (std::map<int64_t, TGUserPresence>::iterator it = _userPresenceToDispatch.begin(); it != _userPresenceToDispatch.end(); it++)
     {
-        TGUser *databaseUser = [[TGDatabase instance] loadUser:(int)(it->first)];
+        TGUser *databaseUser = [[TGDatabase instance] loadUser:it->first];
         if (databaseUser != nil)
         {
             if (databaseUser.presence.online != it->second.online || databaseUser.presence.lastSeen != it->second.lastSeen)
@@ -1880,10 +1813,10 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 {
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        int currentUnixTime = (int)[[TGTelegramNetworking instance] globalTime];
+        int currentUnixTime = (int)OGRemoteClockTime();
         
         int nextPresenceExpiration = INT_MAX;
-        for (std::map<int, int>::iterator it = _userPresenceExpiration.begin(); it != _userPresenceExpiration.end(); it++)
+        for (std::map<int64_t, int>::iterator it = _userPresenceExpiration.begin(); it != _userPresenceExpiration.end(); it++)
         {
             if (it->second < nextPresenceExpiration)
                 nextPresenceExpiration = it->second;
@@ -1926,10 +1859,10 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 {
     _userPresenceExpirationTimer = nil;
     
-    int currentUnixTime = (int)[[TGTelegramNetworking instance] globalTime];
+    int currentUnixTime = (int)OGRemoteClockTime();
     
-    std::vector<std::pair<int, TGUserPresence> > expired;
-    for (std::map<int, int>::iterator it = _userPresenceExpiration.begin(); it != _userPresenceExpiration.end(); it++)
+    std::vector<std::pair<int64_t, TGUserPresence> > expired;
+    for (std::map<int64_t, int>::iterator it = _userPresenceExpiration.begin(); it != _userPresenceExpiration.end(); it++)
     {
         if (it->second <= currentUnixTime + 1)
         {
@@ -1938,7 +1871,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             presence.online = false;
             presence.lastSeen = user.presence.lastSeen > 0 ? it->second : user.presence.lastSeen;
             presence.temporaryLastSeen = 0;
-            expired.push_back(std::pair<int, TGUserPresence>(it->first, presence));
+            expired.push_back(std::pair<int64_t, TGUserPresence>(it->first, presence));
             
 #ifdef DEBUG
             TGLog(@"%@ did go offline", [TGDatabaseInstance() loadUser:it->first].displayName);
@@ -1946,7 +1879,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         }
     }
     
-    for (std::vector<std::pair<int, TGUserPresence> >::iterator it = expired.begin(); it != expired.end(); it++)
+    for (std::vector<std::pair<int64_t, TGUserPresence> >::iterator it = expired.begin(); it != expired.end(); it++)
     {
         _userPresenceExpiration.erase(it->first);
         
@@ -1976,14 +1909,14 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         {
             int64_t conversationId = [nConversationId longLongValue];
             
-            std::set<int> usersStoppedTyping;
-            std::set<int> *pUsersStoppedTyping = &usersStoppedTyping;
+            std::set<int64_t> usersStoppedTyping;
+            std::set<int64_t> *pUsersStoppedTyping = &usersStoppedTyping;
             
             [typingUserRecords enumerateKeysAndObjectsUsingBlock:^(NSNumber *nUid, TGTypingRecord *record, __unused BOOL *stop)
             {
                 if (ABS(currentTime - record.date) > 6.0)
                 {
-                    pUsersStoppedTyping->insert([nUid intValue]);
+                    pUsersStoppedTyping->insert([nUid longLongValue]);
                 }
                 else if (record.date + 6.0 < nextTypingUpdate)
                     nextTypingUpdate = record.date + 6.0;
@@ -1991,9 +1924,9 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             
             if (!usersStoppedTyping.empty())
             {
-                for (std::set<int>::iterator it = usersStoppedTyping.begin(); it != usersStoppedTyping.end(); it++)
+                for (std::set<int64_t>::iterator it = usersStoppedTyping.begin(); it != usersStoppedTyping.end(); it++)
                 {
-                    [typingUserRecords removeObjectForKey:[NSNumber numberWithInt:*it]];
+                    [typingUserRecords removeObjectForKey:[NSNumber numberWithLongLong:*it]];
                 }
                 
                 NSMutableDictionary *typingUsersActivitiesDict = [[NSMutableDictionary alloc] init];
@@ -2039,13 +1972,13 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     }];
 }
 
-- (void)dispatchUserActivity:(int)uid inConversation:(int64_t)conversationId type:(NSString *)type
+- (void)dispatchUserActivity:(int64_t)uid inConversation:(int64_t)conversationId type:(NSString *)type
 {
     [ActionStageInstance() dispatchOnStageQueue:^
     {
         NSNumber *key = [[NSNumber alloc] initWithLongLong:conversationId];
         NSMutableDictionary *typingUserRecords = [_typingUserRecordsByConversation objectForKey:key];
-        NSNumber *userKey = [[NSNumber alloc] initWithInt:uid];
+        NSNumber *userKey = [[NSNumber alloc] initWithLongLong:uid];
         
         if (type != nil)
         {
@@ -2100,7 +2033,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 #if TARGET_IPHONE_SIMULATOR
             timeout = 10;
 #endif
-            TGUserPresence presence = (TGUserPresence){.online = true, .lastSeen = user.presence.lastSeen > 1000 ? ((int)[[TGTelegramNetworking instance] globalTime]) : user.presence.lastSeen, .temporaryLastSeen = (int)([[TGTelegramNetworking instance] globalTime] + timeout)};
+            TGUserPresence presence = (TGUserPresence){.online = true, .lastSeen = user.presence.lastSeen > 1000 ? ((int)OGRemoteClockTime()) : user.presence.lastSeen, .temporaryLastSeen = (int)(OGRemoteClockTime() + timeout)};
             [self dispatchUserPresenceChanges:uid presence:presence];
         }
         
@@ -2177,12 +2110,12 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
                    });
 }
 
-- (int)serviceUserUid
+- (int64_t)serviceUserUid
 {
     return 777000;
 }
 
-- (int)createServiceUserIfNeeded
+- (int64_t)createServiceUserIfNeeded
 {
     if ([TGDatabaseInstance() loadUser:[self serviceUserUid]] == nil)
     {
@@ -2198,12 +2131,12 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     return [self serviceUserUid];
 }
 
-- (int)voipSupportUserUid
+- (int64_t)voipSupportUserUid
 {
     return 4244000;
 }
 
-- (int)createVoipSupportUserIfNeeded
+- (int64_t)createVoipSupportUserIfNeeded
 {
     if ([TGDatabaseInstance() loadUser:[self voipSupportUserUid]] == nil)
     {
@@ -2219,7 +2152,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     return [self voipSupportUserUid];
 }
 
-- (void)dispatchUserLinkChanged:(int)uid link:(int)link
+- (void)dispatchUserLinkChanged:(int64_t)uid link:(int)link
 {
     [ActionStageInstance() dispatchOnStageQueue:^
     {
@@ -2227,9 +2160,9 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         
         dispatch_async([ActionStageInstance() globalStageDispatchQueue], ^
         {
-            for (std::map<int, int>::iterator it = _userLinksToDispatch.begin(); it != _userLinksToDispatch.end(); it++)
+            for (std::map<int64_t, int>::iterator it = _userLinksToDispatch.begin(); it != _userLinksToDispatch.end(); it++)
             {
-                [ActionStageInstance() dispatchResource:[[NSString alloc] initWithFormat:@"/tg/userLink/(%d)", it->first] resource:[[SGraphObjectNode alloc] initWithObject:[[NSNumber alloc] initWithInt:it->second]]];
+                [ActionStageInstance() dispatchResource:[[NSString alloc] initWithFormat:@"/tg/userLink/(%lld)", it->first] resource:[[SGraphObjectNode alloc] initWithObject:[[NSNumber alloc] initWithInt:it->second]]];
             }
             
             _userLinksToDispatch.clear();
@@ -2305,7 +2238,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 {
 }
 
-- (void)processAuthorizedWithUserId:(int)uid clientIsActivated:(bool)clientIsActivated
+- (void)processAuthorizedWithUserId:(int64_t)uid clientIsActivated:(bool)clientIsActivated
 {
     [ActionStageInstance() dispatchOnStageQueue:^
     {
@@ -2330,7 +2263,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         if ([[TGAccountSwitcher instance] consumeAuthorizationWithUserId:uid])
             return;
         
-        TGLog(@"Starting with user id %d activated: %d", uid, clientIsActivated ? 1 : 0);
+        TGLog(@"Starting with user id %lld activated: %d", uid, clientIsActivated ? 1 : 0);
         
         [[TGTelegramNetworking instance] exportCredentialsForExtensions];
         [[TGTelegramNetworking instance] exportHelperAuthInfo];
@@ -2415,6 +2348,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             {
                 [TGUpdateStateRequestBuilder scheduleInitialUpdates];
                 [ActionStageInstance() requestActor:@"/tg/service/updatestate" options:nil watcher:self];
+                [_channelTasksDisposable add:[[TGChannelManagementSignals pollQueuedChannels] startWithNext:nil]];
                 OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityUserInitiated, ^
                 {
                     [ActionStageInstance() dispatchOnStageQueue:^
@@ -2483,7 +2417,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 }
 
 
-- (void)startConstrainedPostDialogStartupForUserId:(int)uid
+- (void)startConstrainedPostDialogStartupForUserId:(int64_t)uid
 {
     OGPlatformDispatchOnMainThread(^
     {
@@ -2506,7 +2440,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             [_channelTasksDisposable add:[[TGChannelManagementSignals deleteChannelMessages] startWithNext:nil]];
             [_channelTasksDisposable add:[[TGChannelManagementSignals readChannelMessages] startWithNext:nil]];
             [_channelTasksDisposable add:[[TGChannelManagementSignals leaveChannels] startWithNext:nil]];
-            [_channelTasksDisposable add:[[TGChannelManagementSignals pollQueuedChannels] startWithNext:nil]];
             [_channelTasksDisposable add:[[TGPeerInfoSignals dismissReportSpamForPeers] startWithNext:nil]];
             [_channelTasksDisposable add:[[TGGroupManagementSignals validatePeerReadStates:[TGDatabaseInstance() conversationsForReadStateValidation]] startWithNext:nil]];
             [_channelTasksDisposable add:[[TGGroupManagementSignals synchronizePeerMessageDrafts:[TGDatabaseInstance() synchronizePeerMessageDraftPeers]] startWithNext:nil]];
@@ -2520,6 +2453,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         [TGDatabaseInstance() processAndScheduleSelfDestruct];
         [TGDatabaseInstance() processAndScheduleMute];
         [TGDatabaseInstance() processAndScheduleMediaCleanup];
+        NSString *documentsPath = [TGAppDelegate documentsPath];
+        [OGMediaFetchSession removeStalePartialFilesInDirectories:@[[documentsPath stringByAppendingPathComponent:@"files"], [documentsPath stringByAppendingPathComponent:@"video"]]];
     });
 
     OGRuntimeDispatchAfter(OGRuntimePriorityMaintenance, 30.0, ^
@@ -2533,7 +2468,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     if (!_constrainedStartupDialogReady || !_constrainedPostDialogStartupPending)
         return;
 
-    int uid = _constrainedPostDialogStartupUserId;
+    int64_t uid = _constrainedPostDialogStartupUserId;
     _constrainedPostDialogStartupPending = false;
     _constrainedPostDialogStartupUserId = 0;
 
@@ -2969,7 +2904,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         if (authorization != nil && user != nil)
         {
             [TGUserDataRequestBuilder executeUserDataUpdate:@[user]];
-            int32_t userId = ((TLUser$modernUser *)user).n_id;
+            int64_t userId = ((TLUser$modernUser *)user).n_id;
             [self processAuthorizedWithUserId:userId clientIsActivated:true];
             if (completion != nil)
                 completion(nil, 0, true, nil);
@@ -3308,7 +3243,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     
     if (online)
     {
-        int currentUnixTime = (int)[[TGTelegramNetworking instance] globalTime];
+        int currentUnixTime = (int)OGRemoteClockTime();
         
         TGUserPresence presence;
         presence.online = true;
@@ -3391,10 +3326,17 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doRequestUserData:(int)uid requestBuilder:(TGUserDataRequestBuilder *)requestBuilder
+- (NSObject *)doRequestUserData:(int64_t)uid requestBuilder:(TGUserDataRequestBuilder *)requestBuilder
 {
+    TLInputUser *inputUser = [self createInputUserForUid:uid];
+    if (inputUser == nil)
+    {
+        [requestBuilder userDataRequestFailed];
+        return nil;
+    }
+
     TLRPCusers_getUsers$users_getUsers *getUsers = [[TLRPCusers_getUsers$users_getUsers alloc] init];
-    getUsers.n_id = [NSArray arrayWithObject:[self createInputUserForUid:uid]];
+    getUsers.n_id = [NSArray arrayWithObject:inputUser];
     
     return [[TGTelegramNetworking instance] performRpc:getUsers completionBlock:^(id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
     {
@@ -3409,7 +3351,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doRequestExtendedUserData:(int)uid actor:(TGExtendedUserDataRequestActor *)actor
+- (NSObject *)doRequestExtendedUserData:(int64_t)uid actor:(TGExtendedUserDataRequestActor *)actor
 {
     TLRPCusers_getFullUser$users_getFullUser *getFullUser = [[TLRPCusers_getFullUser$users_getFullUser alloc] init];
     getFullUser.n_id = [self createInputUserForUid:uid];
@@ -3433,7 +3375,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
                     legacyInputUser.user_id = uid;
                     legacyInputUser.access_hash = user.phoneNumberHash;
                     retryGetFullUser.n_id = legacyInputUser;
-                    TGLog(@"AUTH getFullUser retry legacy uid=%d hash=%lld after=%@", uid, user.phoneNumberHash, error.errorDescription);
+                    TGLog(@"AUTH getFullUser retry legacy uid=%lld hash=%lld after=%@", uid, user.phoneNumberHash, error.errorDescription);
                     
                     [[TGTelegramNetworking instance] performRpc:retryGetFullUser completionBlock:^(TLUserFull *retryResult, __unused int64_t retryResponseTime, MTRpcError *retryError)
                     {
@@ -3468,16 +3410,12 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 - (NSObject *)doRequestState:(TGUpdateStateRequestBuilder *)requestBuilder
 {
     TLRPCupdates_getState$updates_getState *getState = [[TLRPCupdates_getState$updates_getState alloc] init];
-#if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime stateRequestStart = CFAbsoluteTimeGetCurrent();
     OGPlatformDiagnosticLog(@"SYNC state requested");
-#endif
     
     return [[TGTelegramNetworking instance] performRpc:getState completionBlock:^(id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
     {
-#if defined(ONEGRAM_DIAGNOSTICS)
         OGPlatformDiagnosticLog(@"SYNC state response class=%@ error=%d ms=%.0f", response == nil ? @"nil" : NSStringFromClass([(id)response class]), error == nil ? 0 : (int)error.errorCode, (CFAbsoluteTimeGetCurrent() - stateRequestStart) * 1000.0);
-#endif
         if (error == nil)
         {
             [requestBuilder stateRequestSuccess:(TLupdates_State *)response];
@@ -3512,7 +3450,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     return [[TGTelegramNetworking instance] performRpc:getDifference completionBlock:^(id<TLObject> response, __unused int64_t responseTime, MTRpcError *error)
     {
         TGLog(@"BOOTSYNC response class=%@ error=%d ms=%.1f", response == nil ? @"nil" : NSStringFromClass([response class]), error == nil ? 0 : (int)error.errorCode, (CFAbsoluteTimeGetCurrent() - differenceRequestStart) * 1000.0);
-#if defined(ONEGRAM_DIAGNOSTICS)
+        if (OGDiagnosticsEnabled())
         {
             NSUInteger messageCount = 0;
             NSUInteger updateCount = 0;
@@ -3528,7 +3466,6 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             }
             OGPlatformDiagnosticLog(@"SYNC difference pts=%d class=%@ error=%d ms=%.0f messages=%u updates=%u users=%u chats=%u", pts, response == nil ? @"nil" : NSStringFromClass([(id)response class]), error == nil ? 0 : (int)error.errorCode, (CFAbsoluteTimeGetCurrent() - differenceRequestStart) * 1000.0, (unsigned int)messageCount, (unsigned int)updateCount, (unsigned int)userCount, (unsigned int)chatCount);
         }
-#endif
         if (error == nil)
         {
             [requestBuilder stateDeltaRequestSuccess:(TLupdates_Difference *)response];
@@ -3710,10 +3647,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             return;
         }
         bool hasMore = [dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogsSlice class]] && dialogs.dialogs.count >= (NSUInteger)request.limit;
-#if defined(ONEGRAM_DIAGNOSTICS)
         int totalCount = [dialogs isKindOfClass:[TLmessages_Dialogs$messages_dialogsSlice class]] ? ((TLmessages_Dialogs$messages_dialogsSlice *)dialogs).count : (int)dialogs.dialogs.count;
         OGPlatformDiagnosticLog(@"DIALOGS page response folder=%d count=%u limit=%d total=%d has_more=%d", folderId, (unsigned int)dialogs.dialogs.count, request.limit, totalCount, hasMore ? 1 : 0);
-#endif
         TLInputPeer *nextPeer = nil;
         TGDialogListRemoteOffset *nextOffset = hasMore ? TGIOS6DialogsRemoteOffset(dialogs, _clientUserId, &nextPeer) : nil;
         if (hasMore && (nextOffset == nil || [nextOffset compare:offset] == NSOrderedSame))
@@ -3773,7 +3708,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             {
                 if (popularContact.client_id >= 0 && popularContact.client_id < (int)contactsArray.count)
                 {
-                    TGContactBinding *binding = [contacts objectAtIndex:popularContact.client_id];
+                    TGContactBinding *binding = [contacts objectAtIndex:(NSUInteger)popularContact.client_id];
                     [popularArray addObject:@{@"phoneId": @(binding.phoneId), @"importers": @(popularContact.importers)}];
                 }
             }
@@ -3787,7 +3722,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doRequestContactList:(int32_t)hash actor:(TGSynchronizeContactsActor *)actor
+- (NSObject *)doRequestContactList:(int64_t)hash actor:(TGSynchronizeContactsActor *)actor
 {
     TLRPCcontacts_getContacts$contacts_getContacts *getContacts = [[TLRPCcontacts_getContacts$contacts_getContacts alloc] init];
     getContacts.n_hash = hash;
@@ -3909,7 +3844,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     
     for (NSNumber *nUid in uids)
     {
-        TLInputUser *inputUser = [self createInputUserForUid:[nUid intValue]];
+        TLInputUser *inputUser = [self createInputUserForUid:[nUid longLongValue]];
         if (inputUser != nil)
             [inputUsers addObject:inputUser];
     }
@@ -3938,7 +3873,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     {
         return [[TLInputPeer$inputPeerEmpty alloc] init];
     }
-    else if (TGIOS6PeerIdIsChannel(conversationId, accessHash))
+    else if (TGPeerIdIsChannel(conversationId))
     {
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
         if (conversation != nil && conversation.accessHash != 0 && conversation.accessHash != accessHash)
@@ -3947,33 +3882,15 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             accessHash = conversation.accessHash;
         }
 
-        int64_t storedChannelId = TGIOS6StoredApiPeerId(conversationId, @"ios6ApiChannelId");
         TLInputPeer$inputPeerChannel *channelPeer = [[TLInputPeer$inputPeerChannel alloc] init];
-        channelPeer.channel_id = storedChannelId > 0 ? storedChannelId : TGIOS6FallbackChannelIdFromPeerId(conversationId, accessHash);
+        channelPeer.channel_id = TGChannelIdFromPeerId(conversationId);
         channelPeer.access_hash = accessHash;
         return channelPeer;
     }
-    else if (conversationId < 0)
+    else if (TGPeerIdIsGroup(conversationId))
     {
-        int64_t storedChatId = TGIOS6StoredApiPeerId(conversationId, @"ios6ApiChatId");
-        if (storedChatId > 0)
-        {
-            TLInputPeer$inputPeerChat *chatPeer = [[TLInputPeer$inputPeerChat alloc] init];
-            chatPeer.chat_id = storedChatId;
-            return chatPeer;
-        }
-
-        TGUser *modernUser = [TGDatabaseInstance() loadUser:(int)conversationId];
-        if (modernUser != nil && modernUser.phoneNumberHash != 0)
-        {
-            TLInputPeer$inputPeerUser *foreignPeer = [[TLInputPeer$inputPeerUser alloc] init];
-            foreignPeer.user_id = TGIOS6ModernUserIdFromStoredUser(modernUser, (int32_t)conversationId);
-            foreignPeer.access_hash = modernUser.phoneNumberHash;
-            return foreignPeer;
-        }
-        
         TLInputPeer$inputPeerChat *chatPeer = [[TLInputPeer$inputPeerChat alloc] init];
-        chatPeer.chat_id = (int64_t)TGGroupIdFromPeerId(conversationId);
+        chatPeer.chat_id = TGGroupIdFromPeerId(conversationId);
         return chatPeer;
     }
     else if (conversationId == _clientUserId)
@@ -3981,32 +3898,46 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         TLInputPeer$inputPeerSelf *selfPeer = [[TLInputPeer$inputPeerSelf alloc] init];
         return selfPeer;
     }
-    else
+    else if (TGPeerIdIsUser(conversationId))
     {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int)conversationId];
-        int64_t userId = TGModernUserIdForLegacyId((int32_t)conversationId);
+        TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
         int64_t userAccessHash = accessHash;
-
-        if (user != nil)
-        {
-            userId = TGIOS6ModernUserIdFromStoredUser(user, (int32_t)conversationId);
-            if (user.phoneNumberHash != 0)
-                userAccessHash = user.phoneNumberHash;
-        }
+        if (user != nil && user.phoneNumberHash != 0)
+            userAccessHash = user.phoneNumberHash;
 
         if (userAccessHash != 0)
         {
             TLInputPeer$inputPeerUser *foreignPeer = [[TLInputPeer$inputPeerUser alloc] init];
-            foreignPeer.user_id = userId;
+            foreignPeer.user_id = conversationId;
             foreignPeer.access_hash = userAccessHash;
             return foreignPeer;
         }
-
-        return [[TLInputPeer$inputPeerEmpty alloc] init];
     }
+
+    return [[TLInputPeer$inputPeerEmpty alloc] init];
 }
 
-- (TLInputUser *)createInputUserForUid:(int)uid
+- (TLInputPeer *)monoforumInputPeerForPreparedMessage:(TGPreparedMessage *)preparedMessage
+{
+    if (preparedMessage.monoforumPeerId == 0)
+        return nil;
+    TLInputPeer *peer = [self createInputPeerForConversation:preparedMessage.monoforumPeerId accessHash:0];
+    return [peer isKindOfClass:[TLInputPeer$inputPeerEmpty class]] ? nil : peer;
+}
+
+- (bool)failActorsWithUnresolvableThread:(NSArray *)actors
+{
+    TGPreparedMessage *preparedMessage = ((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage;
+    if (preparedMessage.monoforumPeerId == 0 || [self monoforumInputPeerForPreparedMessage:preparedMessage] != nil)
+        return false;
+
+    TGLog(@"SEND monoforum.unresolvedPeer peer=%lld", preparedMessage.monoforumPeerId);
+    for (TGModernSendCommonMessageActor *actor in actors)
+        [actor conversationSendMessageRequestFailed:@"PEER_ID_INVALID" errorCode:400];
+    return true;
+}
+
+- (TLInputUser *)createInputUserForUid:(int64_t)uid
 {
     if (uid == _clientUserId)
     {
@@ -4019,9 +3950,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         if (user != nil)
         {
             TLInputUser$inputUser *foreignUser = [[TLInputUser$inputUser alloc] init];
-            foreignUser.user_id = TGIOS6ModernUserIdFromStoredUser(user, (int32_t)uid);
+            foreignUser.user_id = uid;
             foreignUser.access_hash = user.phoneNumberHash;
-            TGLog(@"AUTH inputUser bridge legacy=%d modern=%lld hash=%lld", uid, foreignUser.user_id, user.phoneNumberHash);
             return foreignUser;
         }
         
@@ -4032,7 +3962,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 - (NSObject *)doRequestConversationHistory:(int64_t)conversationId accessHash:(int64_t)accessHash maxMid:(int)maxMid orOffset:(int)offset limit:(int)limit actor:(TGConversationHistoryAsyncRequestActor *)actor
 {
     NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:conversationId name:murMurHash32(@"ios6InvalidPeer")];
-    if (invalidPeerMarker.length != 0 && TGIOS6PeerIdIsChannel(conversationId, accessHash))
+    if (invalidPeerMarker.length != 0 && TGPeerIdIsChannel(conversationId))
     {
         if ([actor respondsToSelector:@selector(conversationHistoryRequestInvalidPeer:)])
             [actor conversationHistoryRequestInvalidPeer:@"IOS6_INVALID_PEER_CACHED"];
@@ -4075,7 +4005,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
             NSString *errorDescription = [error.errorDescription uppercaseString];
             if (error.errorCode == 400 && ([errorDescription rangeOfString:@"PEER_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHAT_ID_INVALID"].location != NSNotFound || [errorDescription rangeOfString:@"CHANNEL_INVALID"].location != NSNotFound))
             {
-                if (TGIOS6PeerIdIsChannel(conversationId, accessHash))
+                if (TGPeerIdIsChannel(conversationId))
                 {
                     uint8_t one = 1;
                     [TGDatabaseInstance() setConversationCustomProperty:conversationId name:murMurHash32(@"ios6InvalidPeer") value:[NSData dataWithBytes:&one length:1]];
@@ -4121,11 +4051,14 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doConversationSendMessage:(int64_t)conversationId accessHash:(int64_t)accessHash messageText:(NSString *)messageText messageGuid:(NSString *)__unused messageGuid tmpId:(int64_t)tmpId replyMessageId:(int32_t)replyMessageId disableLinkPreviews:(bool)disableLinkPreviews postAsChannel:(bool)postAsChannel notifyMembers:(bool)notifyMembers entities:(NSArray *)entities actor:(TGModernSendCommonMessageActor *)actor
 {
+    if ([self failActorsWithUnresolvableThread:@[actor]])
+        return nil;
+
     TLRPCmessages_sendMessage_manual *sendMessage = [[TLRPCmessages_sendMessage_manual alloc] init];
     sendMessage.flags |= replyMessageId != 0 ? (1 << 0) : 0;
     if (disableLinkPreviews)
         sendMessage.flags |= (1 << 1);
-    if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+    if (TGPeerIdIsChannel(conversationId)) {
         if (postAsChannel) {
             sendMessage.flags |= 16;
         }
@@ -4143,6 +4076,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendMessage.random_id = tmpId;
     sendMessage.reply_to_msg_id = replyMessageId;
     sendMessage.forumTopicId = actor.preparedMessage.forumTopicId;
+    sendMessage.sendAs = [actor.preparedMessage.sendAs inputPeer];
+    sendMessage.monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
     CFAbsoluteTime sendStart = CFAbsoluteTimeGetCurrent();
     
     return [[TGTelegramNetworking instance] performRpc:sendMessage completionBlock:^(id result, __unused int64_t responseTime, MTRpcError *error)
@@ -4205,14 +4140,18 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 }
 
 - (NSObject *)doConversationBotContextResult:(int64_t)conversationId accessHash:(int64_t)accessHash botContextResult:(TGBotContextResultAttachment *)botContextResult tmpId:(int64_t)tmpId replyMessageId:(int32_t)replyMessageId postAsChannel:(bool)postAsChannel notifyMembers:(bool)notifyMembers actor:(TGModernSendCommonMessageActor *)actor {
+    if ([self failActorsWithUnresolvableThread:@[actor]])
+        return nil;
+
     TLRPCmessages_sendInlineBotResult *sendContextBotResult = [[TLRPCmessages_sendInlineBotResult alloc] init];
+    sendContextBotResult.sendAs = [actor.preparedMessage.sendAs inputPeer];
     sendContextBotResult.peer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
     
     if (replyMessageId != 0) {
         sendContextBotResult.flags |= (1 << 0);
     }
     
-    if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+    if (TGPeerIdIsChannel(conversationId)) {
         if (postAsChannel) {
             sendContextBotResult.flags |= (1 << 4);
         }
@@ -4225,6 +4164,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendContextBotResult.random_id = tmpId;
     sendContextBotResult.reply_to_msg_id = replyMessageId;
     sendContextBotResult.forumTopicId = actor.preparedMessage.forumTopicId;
+    sendContextBotResult.monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
     
     sendContextBotResult.n_id = botContextResult.resultId;
     sendContextBotResult.query_id = botContextResult.queryId;
@@ -4244,9 +4184,12 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doConversationSendMedia:(int64_t)conversationId accessHash:(int64_t)accessHash media:(TLInputMedia *)media messageGuid:(NSString *)__unused messageGuid tmpId:(int64_t)tmpId messageText:(NSString *)messageText entities:(NSArray *)entities replyMessageId:(int32_t)replyMessageId postAsChannel:(bool)postAsChannel notifyMembers:(bool)notifyMembers actor:(TGModernSendCommonMessageActor *)actor
 {
+    if ([self failActorsWithUnresolvableThread:@[actor]])
+        return nil;
+
     TLRPCmessages_sendMedia_manual *sendMedia = [[TLRPCmessages_sendMedia_manual alloc] init];
     sendMedia.flags |= replyMessageId != 0 ? (1 << 0) : 0;
-    if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+    if (TGPeerIdIsChannel(conversationId)) {
         if (postAsChannel) {
             sendMedia.flags |= 16;
         }
@@ -4260,6 +4203,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendMedia.random_id = tmpId;
     sendMedia.reply_to_msg_id = replyMessageId;
     sendMedia.forumTopicId = actor.preparedMessage.forumTopicId;
+    sendMedia.sendAs = [actor.preparedMessage.sendAs inputPeer];
+    sendMedia.monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
     sendMedia.message = messageText;
     if (entities.count != 0) {
         sendMedia.entities = entities;
@@ -4283,9 +4228,12 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doConversationSendMultiMedia:(int64_t)conversationId accessHash:(int64_t)accessHash multiMedia:(NSArray *)multiMedia replyMessageId:(int32_t)replyMessageId postAsChannel:(bool)postAsChannel notifyMembers:(bool)notifyMembers groupedId:(int64_t)__unused groupedId actors:(NSArray *)actors
 {
+    if ([self failActorsWithUnresolvableThread:actors])
+        return nil;
+
     TLRPCmessages_sendMultiMedia *sendMultiMedia = [[TLRPCmessages_sendMultiMedia alloc] init];
     sendMultiMedia.flags |= replyMessageId != 0 ? (1 << 0) : 0;
-    if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+    if (TGPeerIdIsChannel(conversationId)) {
         if (postAsChannel) {
             sendMultiMedia.flags |= 16;
         }
@@ -4298,6 +4246,8 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     sendMultiMedia.multi_media = multiMedia;
     sendMultiMedia.reply_to_msg_id = replyMessageId;
     sendMultiMedia.forumTopicId = ((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage.forumTopicId;
+    sendMultiMedia.sendAs = [((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage.sendAs inputPeer];
+    sendMultiMedia.monoforumPeer = [self monoforumInputPeerForPreparedMessage:((TGModernSendCommonMessageActor *)actors.firstObject).preparedMessage];
     
     
     return [[TGTelegramNetworking instance] performRpc:sendMultiMedia completionBlock:^(id message, __unused int64_t responseTime, TLError *error)
@@ -4322,7 +4272,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     
     for (NSNumber *nUid in userIds)
     {
-        id peer = [self createInputUserForUid:[nUid intValue]];
+        id peer = [self createInputUserForUid:[nUid longLongValue]];
         if (peer != nil)
             [array addObject:peer];
     }
@@ -4346,18 +4296,31 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doConversationForwardMessage:(int64_t)conversationId accessHash:(int64_t)accessHash messageId:(int)messageId fromPeer:(int64_t)fromPeer fromPeerAccessHash:(int64_t)fromPeerAccessHash topMessageId:(int32_t)topMessageId postAsChannel:(bool)postAsChannel notifyMembers:(bool)notifyMembers tmpId:(int64_t)tmpId actor:(TGModernSendCommonMessageActor *)actor
 {
-    TLMetaRpc *request = nil;
+    if ([self failActorsWithUnresolvableThread:@[actor]])
+        return nil;
 
-    if (topMessageId != 0)
+    TLMetaRpc *request = nil;
+    TLInputPeer *monoforumPeer = [self monoforumInputPeerForPreparedMessage:actor.preparedMessage];
+
+    if (topMessageId != 0 || monoforumPeer != nil || actor.preparedMessage.sendAs != nil)
     {
-        TGIOS6ForwardMessagesToTopicRpc *forwardMessages = [[TGIOS6ForwardMessagesToTopicRpc alloc] init];
-        forwardMessages.flags = (1 << 9);
+        TGIOS6ForwardMessagesToThreadRpc *forwardMessages = [[TGIOS6ForwardMessagesToThreadRpc alloc] init];
         forwardMessages.toPeer = [self createInputPeerForConversation:conversationId accessHash:accessHash];
+        forwardMessages.sendAs = [actor.preparedMessage.sendAs inputPeer];
         forwardMessages.fromPeer = [self createInputPeerForConversation:fromPeer accessHash:fromPeerAccessHash];
         forwardMessages.messageIds = @[@(messageId)];
         forwardMessages.randomIds = @[@(tmpId)];
-        forwardMessages.topMessageId = topMessageId;
-        if (TGIOS6PeerIdIsChannel(conversationId, accessHash) && !notifyMembers)
+        if (monoforumPeer != nil)
+        {
+            forwardMessages.flags |= (1 << 22);
+            forwardMessages.monoforumPeer = monoforumPeer;
+        }
+        else if (topMessageId != 0)
+        {
+            forwardMessages.flags |= (1 << 9);
+            forwardMessages.topMessageId = topMessageId;
+        }
+        if (TGPeerIdIsChannel(conversationId) && !notifyMembers)
             forwardMessages.flags |= (1 << 5);
         request = forwardMessages;
     }
@@ -4368,7 +4331,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         forwardMessages.from_peer = [self createInputPeerForConversation:fromPeer accessHash:fromPeerAccessHash];
         forwardMessages.n_id = @[@(messageId)];
         forwardMessages.random_id = @[@(tmpId)];
-        if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+        if (TGPeerIdIsChannel(conversationId)) {
             if (postAsChannel) {
                 forwardMessages.flags |= 16;
             }
@@ -4453,7 +4416,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doChangeConversationTitle:(int64_t)conversationId accessHash:(int64_t)accessHash title:(NSString *)title actor:(TGConversationChangeTitleRequestActor *)requestActor
 {
-    if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+    if (TGPeerIdIsChannel(conversationId)) {
         TLRPCchannels_editTitle$channels_editTitle *editTitle = [[TLRPCchannels_editTitle$channels_editTitle alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
         TGIOS6FillInputChannel(inputChannel, conversationId, accessHash);
@@ -4492,7 +4455,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 
 - (NSObject *)doChangeConversationPhoto:(int64_t)conversationId accessHash:(int64_t)accessHash photo:(TLInputChatPhoto *)photo actor:(TGConversationChangePhotoActor *)actor
 {
-    if (TGIOS6PeerIdIsChannel(conversationId, accessHash)) {
+    if (TGPeerIdIsChannel(conversationId)) {
         TLRPCchannels_editPhoto$channels_editPhoto *editPhoto = [[TLRPCchannels_editPhoto$channels_editPhoto alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
         TGIOS6FillInputChannel(inputChannel, conversationId, accessHash);
@@ -4537,8 +4500,9 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     NSMutableArray *inputUsers = [[NSMutableArray alloc] init];
     for (NSNumber *nUid in uidList)
     {
-        int uid = [nUid intValue];
-        [inputUsers addObject:[self createInputUserForUid:uid]];
+        TLInputUser *inputUser = [self createInputUserForUid:[nUid longLongValue]];
+        if (inputUser != nil)
+            [inputUsers addObject:inputUser];
     }
     createChat.users = inputUsers;
     
@@ -4555,7 +4519,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric | TGRequestClassFailOnServerErrors];
 }
 
-- (NSObject *)doAddConversationMember:(int64_t)conversationId uid:(int)uid actor:(TGConversationAddMemberRequestActor *)actor
+- (NSObject *)doAddConversationMember:(int64_t)conversationId uid:(int64_t)uid actor:(TGConversationAddMemberRequestActor *)actor
 {
     TLRPCmessages_addChatUser$messages_addChatUser *addChatUser = [[TLRPCmessages_addChatUser$messages_addChatUser alloc] init];
     addChatUser.chat_id = TGGroupIdFromPeerId(conversationId);
@@ -4586,7 +4550,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric];
 }
 
-- (NSObject *)doDeleteConversationMember:(int64_t)conversationId uid:(int)uid actor:(id<TGDeleteChatMemberProtocol>)actor
+- (NSObject *)doDeleteConversationMember:(int64_t)conversationId uid:(int64_t)uid actor:(id<TGDeleteChatMemberProtocol>)actor
 {
     TLRPCmessages_deleteChatUser$messages_deleteChatUser *deleteChatUser = [[TLRPCmessages_deleteChatUser$messages_deleteChatUser alloc] init];
     deleteChatUser.chat_id = TGGroupIdFromPeerId(conversationId);
@@ -4646,7 +4610,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric | TGRequestClassFailOnServerErrors];
 }
 
-- (NSObject *)doRequestTimeline:(int)timelineId maxItemId:(int64_t)maxItemId limit:(int)limit actor:(TGTimelineHistoryRequestBuilder *)actor
+- (NSObject *)doRequestTimeline:(int64_t)timelineId maxItemId:(int64_t)maxItemId limit:(int)limit actor:(TGTimelineHistoryRequestBuilder *)actor
 {
     TLRPCphotos_getWall$photos_getWall *getWall = [[TLRPCphotos_getWall$photos_getWall alloc] init];
 
@@ -4746,15 +4710,15 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 {
     TLRPCaccount_getNotifySettings$account_getNotifySettings *getPeerNotifySettings = [[TLRPCaccount_getNotifySettings$account_getNotifySettings alloc] init];
     
-    if (peerId == INT_MAX - 1)
+    if (peerId == TGPeerIdNotificationDefaultsPrivate)
     {
         getPeerNotifySettings.peer = [[TLInputNotifyPeer$inputNotifyUsers alloc] init];
     }
-    else if (peerId == INT_MAX - 2)
+    else if (peerId == TGPeerIdNotificationDefaultsGroup)
     {
         getPeerNotifySettings.peer = [[TLInputNotifyPeer$inputNotifyChats alloc] init];
     }
-    else if (peerId == INT_MAX - 4)
+    else if (peerId == TGPeerIdNotificationDefaultsChannel)
     {
         getPeerNotifySettings.peer = [[TLInputNotifyPeer$inputNotifyBroadcasts alloc] init];
     }
@@ -4781,27 +4745,14 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 - (NSObject *)doRequestConversationData:(int64_t)conversationId actor:(TGExtendedChatDataRequestActor *)actor
 {
     NSData *invalidPeerMarker = [TGDatabaseInstance() conversationCustomPropertySync:conversationId name:murMurHash32(@"ios6InvalidPeer")];
-    TGConversation *conversationForInvalidCheck = [TGDatabaseInstance() loadConversationWithId:conversationId];
-    int64_t invalidCheckAccessHash = conversationForInvalidCheck != nil ? conversationForInvalidCheck.accessHash : 0;
-    if (invalidPeerMarker.length != 0 && TGIOS6PeerIdIsChannel(conversationId, invalidCheckAccessHash))
+    if (invalidPeerMarker.length != 0 && TGPeerIdIsChannel(conversationId))
     {
         [actor chatFullRequestFailed];
         return nil;
     }
     
-    int64_t apiChatId = TGIOS6StoredApiPeerId(conversationId, @"ios6ApiChatId");
-    if (conversationId < 0 && apiChatId == 0)
-    {
-        TGUser *modernUser = [TGDatabaseInstance() loadUser:(int)conversationId];
-        if (modernUser != nil && modernUser.phoneNumberHash != 0)
-        {
-            [actor chatFullRequestFailed];
-            return nil;
-        }
-    }
-    
     TLRPCmessages_getFullChat$messages_getFullChat *getFullChat = [[TLRPCmessages_getFullChat$messages_getFullChat alloc] init];
-    getFullChat.chat_id = apiChatId > 0 ? apiChatId : TGIOS6ChatIdFromPeerId(conversationId);
+    getFullChat.chat_id = TGGroupIdFromPeerId(conversationId);
     
     return [[TGTelegramNetworking instance] performRpc:getFullChat completionBlock:^(TLmessages_ChatFull *chatFull, __unused int64_t responseTime, MTRpcError *error)
     {
@@ -4820,7 +4771,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 {
     TLRPCphotos_getUserPhotos$photos_getUserPhotos *getPhotos = [[TLRPCphotos_getUserPhotos$photos_getUserPhotos alloc] init];
     
-    getPhotos.user_id = [self createInputUserForUid:(int)peerId];
+    getPhotos.user_id = [self createInputUserForUid:peerId];
     getPhotos.offset = 0;
     getPhotos.limit = 80;
     getPhotos.max_id = 0;
@@ -4842,15 +4793,15 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 {
     TLRPCaccount_updateNotifySettings$account_updateNotifySettings *updatePeerNotifySettings = [[TLRPCaccount_updateNotifySettings$account_updateNotifySettings alloc] init];
     
-    if (peerId == INT_MAX - 1)
+    if (peerId == TGPeerIdNotificationDefaultsPrivate)
     {
         updatePeerNotifySettings.peer = [[TLInputNotifyPeer$inputNotifyUsers alloc] init];
     }
-    else if (peerId == INT_MAX - 2)
+    else if (peerId == TGPeerIdNotificationDefaultsGroup)
     {
         updatePeerNotifySettings.peer = [[TLInputNotifyPeer$inputNotifyChats alloc] init];
     }
-    else if (peerId == INT_MAX - 4)
+    else if (peerId == TGPeerIdNotificationDefaultsChannel)
     {
         updatePeerNotifySettings.peer = [[TLInputNotifyPeer$inputNotifyBroadcasts alloc] init];
     }
@@ -4890,6 +4841,20 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
         
         peerNotifySettings.flags |= (1 << 3);
         peerNotifySettings.sound = stringSoundId;
+        if (soundId.intValue >= 100)
+        {
+            NSArray *titles = [TGAppDelegateInstance modernAlertSoundTitles];
+            NSUInteger index = (NSUInteger)(soundId.intValue - 99);
+            if (index < titles.count)
+                peerNotifySettings.soundTitle = titles[index];
+        }
+        else if (soundId.intValue >= 2)
+        {
+            NSArray *titles = [TGAppDelegateInstance classicAlertSoundTitles];
+            NSUInteger index = (NSUInteger)(soundId.intValue - 2);
+            if (index < titles.count)
+                peerNotifySettings.soundTitle = titles[index];
+        }
     }
     
     updatePeerNotifySettings.settings = peerNotifySettings;
@@ -4997,11 +4962,17 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 - (id)doRequestWallpaperList:(TGWallpaperListRequestActor *)actor
 {
     TLRPCaccount_getWallPapers$account_getWallPapers *getWallpapers = [[TLRPCaccount_getWallPapers$account_getWallPapers alloc] init];
+    getWallpapers.n_hash = 0;
     return [[TGTelegramNetworking instance] performRpc:getWallpapers completionBlock:^(id<TLObject> result, __unused int64_t responseTime, MTRpcError *error)
     {
         if (error == nil)
         {
-            [actor wallpaperListRequestSuccess:(NSArray *)result];
+            if ([result isKindOfClass:[TLaccount_WallPapers$account_wallPapers class]])
+                [actor wallpaperListRequestSuccess:((TLaccount_WallPapers$account_wallPapers *)result).wallpapers];
+            else if ([result isKindOfClass:[NSArray class]])
+                [actor wallpaperListRequestSuccess:(NSArray *)result];
+            else
+                [actor wallpaperListRequestFailed];
         }
         else
         {
@@ -5029,7 +5000,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
     } progressBlock:nil quickAckBlock:nil requiresCompletion:true requestClass:TGRequestClassGeneric datacenterId:TG_DEFAULT_DATACENTER_ID];
 }
 
-- (id)doRequestEncryptedChat:(int)uid randomId:(int64_t)randomId gABytes:(NSData *)gABytes actor:(TGRequestEncryptedChatActor *)actor
+- (id)doRequestEncryptedChat:(int64_t)uid randomId:(int64_t)randomId gABytes:(NSData *)gABytes actor:(TGRequestEncryptedChatActor *)actor
 {
     TLRPCmessages_requestEncryption$messages_requestEncryption *requestEncryption = [[TLRPCmessages_requestEncryption$messages_requestEncryption alloc] init];
     requestEncryption.user_id = [self createInputUserForUid:uid];
@@ -5261,7 +5232,7 @@ static int64_t TGIOS6ModernUserIdFromStoredUser(TGUser *user, int32_t uid)
 - (id)doDownloadMessages:(NSArray *)mids peerId:(int64_t)peerId accessHash:(int64_t)accessHash actor:(TGDownloadMessagesActor *)actor
 {
     id rpc = nil;
-    if (TGIOS6PeerIdIsChannel(peerId, accessHash)) {
+    if (TGPeerIdIsChannel(peerId)) {
         TLRPCchannels_getMessages$channels_getMessages *getMessages = [[TLRPCchannels_getMessages$channels_getMessages alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
         TGIOS6FillInputChannel(inputChannel, peerId, accessHash);

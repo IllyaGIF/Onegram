@@ -50,9 +50,9 @@
 {
     TLpayments_PaymentForm$payments_paymentFormMeta *object = [[TLpayments_PaymentForm$payments_paymentFormMeta alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
-    object.bot_id = metaObject->getInt32((int32_t)0x214f3dba);
+    object.bot_id = metaObject->getInt64((int32_t)0x214f3dba);
     object.invoice = metaObject->getObject((int32_t)0xdb2f8b58);
-    object.provider_id = metaObject->getInt32((int32_t)0x50f236f6);
+    object.provider_id = metaObject->getInt64((int32_t)0x50f236f6);
     object.url = metaObject->getString((int32_t)0xeaf7861e);
     object.native_provider = metaObject->getString((int32_t)0x8ed215fa);
     object.native_params = metaObject->getObject((int32_t)0xdd888a7c);
@@ -72,8 +72,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.bot_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.bot_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x214f3dba, value));
     }
     {
@@ -84,8 +84,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.provider_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.provider_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x50f236f6, value));
     }
     {

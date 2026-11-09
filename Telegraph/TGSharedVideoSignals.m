@@ -76,6 +76,24 @@
     }];
 }
 
++ (SSignal *)localImageForStrippedVideoThumbnail:(TGVideoMediaAttachment *)videoAttachment
+{
+    return [[SSignal alloc] initWithGenerator:^id<SDisposable> (SSubscriber *subscriber)
+    {
+        NSString *strippedPath = videoAttachment.strippedThumbnailUrl.length == 0 ? nil : [[TGRemoteImageView sharedCache] pathForCachedData:videoAttachment.strippedThumbnailUrl];
+        UIImage *strippedImage = strippedPath == nil ? nil : [[UIImage alloc] initWithContentsOfFile:strippedPath];
+        if (strippedImage != nil)
+        {
+            [subscriber putNext:strippedImage];
+            [subscriber putCompletion];
+        }
+        else
+            [subscriber putError:nil];
+        
+        return nil;
+    }];
+}
+
 + (SSignal *)localImageForFullSizeVideo:(TGVideoMediaAttachment *)videoAttachment
 {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable> (SSubscriber *subscriber)
@@ -104,6 +122,11 @@
 
 + (SSignal *)squareVideoThumbnail:(TGVideoMediaAttachment *)videoAttachment ofSize:(CGSize)size threadPool:(SThreadPool *)threadPool memoryCache:(TGMemoryImageCache *)memoryCache pixelProcessingBlock:(void (^)(void *, int, int, int))pixelProcessingBlock
 {
+    return [self squareVideoThumbnail:videoAttachment ofSize:size threadPool:threadPool memoryCache:memoryCache pixelProcessingBlock:pixelProcessingBlock downloadLargeThumbnail:false];
+}
+
++ (SSignal *)squareVideoThumbnail:(TGVideoMediaAttachment *)videoAttachment ofSize:(CGSize)size threadPool:(SThreadPool *)threadPool memoryCache:(TGMemoryImageCache *)memoryCache pixelProcessingBlock:(void (^)(void *, int, int, int))pixelProcessingBlock downloadLargeThumbnail:(bool)downloadLargeThumbnail
+{
     CGSize imageSize = videoAttachment.dimensions;
     CGSize renderSize = TGScaleToFill(imageSize, size);
     
@@ -113,16 +136,39 @@
     
     NSString *genericThumbnailPath = [photoDirectoryPath stringByAppendingPathComponent:@"video-thumb.jpg"];
     
+    NSString *highQualityUrl = nil;
+    NSString *highQualityIdentifier = nil;
+    
+    if (downloadLargeThumbnail)
+    {
+        CGSize pixelSize = renderSize;
+        if (TGIsRetina())
+        {
+            pixelSize.width *= 2.0f;
+            pixelSize.height *= 2.0f;
+        }
+        CGSize highQualitySize = CGSizeZero;
+        highQualityUrl = [videoAttachment.thumbnailInfo closestImageUrlWithSize:pixelSize resultingSize:&highQualitySize pickLargest:true];
+        if (highQualityUrl != nil)
+            highQualityIdentifier = [[NSString alloc] initWithFormat:@"%dx%d", (int)highQualitySize.width, (int)highQualitySize.height];
+    }
+    
     return [TGSharedMediaSignals squareThumbnail:cachedSizeLowPath cachedSizePath:cachedSizePath ofSize:size renderSize:renderSize pixelProcessingBlock:pixelProcessingBlock fullSizeImageSignalGenerator:^SSignal *
     {
         return [self localImageForFullSizeVideo:videoAttachment];
     } lowQualityThumbnailSignalGenerator:^SSignal *
     {
-        return [self localImageForLowQualityVideoThumbnail:videoAttachment];
+        SSignal *lowQualitySignal = [self localImageForLowQualityVideoThumbnail:videoAttachment];
+        if (highQualityUrl == nil)
+            return lowQualitySignal;
+        return [lowQualitySignal catch:^SSignal *(__unused id error)
+        {
+            return [self localImageForStrippedVideoThumbnail:videoAttachment];
+        }];
     } localCachedImageSignalGenerator:^SSignal *(CGSize size, CGSize renderSize, bool lowQuality)
     {
         return [self localCachedImageForVideoThumbnail:videoAttachment ofSize:size renderSize:renderSize lowQuality:lowQuality];
-    } lowQualityImagePath:genericThumbnailPath lowQualityImageUrl:[videoAttachment.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL] highQualityImageUrl:nil highQualityImageIdentifier:nil threadPool:threadPool memoryCache:memoryCache placeholder:nil blurLowQuality:size.width > 40 || size.height > 40 originInfo:videoAttachment.originInfo];
+    } lowQualityImagePath:genericThumbnailPath lowQualityImageUrl:[videoAttachment.thumbnailInfo closestImageUrlWithSize:CGSizeZero resultingSize:NULL] highQualityImageUrl:highQualityUrl highQualityImageIdentifier:highQualityIdentifier threadPool:threadPool memoryCache:memoryCache placeholder:nil blurLowQuality:size.width > 40 || size.height > 40 originInfo:videoAttachment.originInfo];
 }
 
 @end

@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGContentBubbleViewModel.h"
 #import "IOS6FeatureProbe.h"
 
@@ -170,7 +171,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
                 if (title.length == 0 && ((TGUser *)authorPeer).userName.length != 0)
                     title = ((TGUser *)authorPeer).userName;
                 if (title.length == 0)
-                    title = [NSString stringWithFormat:@"%d", ((TGUser *)authorPeer).uid];
+                    title = [NSString stringWithFormat:@"%lld", ((TGUser *)authorPeer).uid];
             } else if ([authorPeer isKindOfClass:[TGConversation class]]) {
                 title = ((TGConversation *)authorPeer).chatTitle;
                 if (title.length == 0)
@@ -283,7 +284,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
         [_reactionsModel updateWithMessage:message parent:self viewStorage:nil container:nil];
         
         if (!_ignoreEditing && message.isEdited && !(context.isBot || ([_authorPeer isKindOfClass:[TGUser class]] && ((TGUser *)_authorPeer).kind != TGUserKindGeneric))) {
-            _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGLocalized(@"Conversation.MessageEditedLabel") textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
+            _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGOnegramEditedLabel() textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
             [_contentModel addSubmodel:_editedLabelModel];
         }
         
@@ -740,6 +741,8 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     if (_read != previousRead) {
         if (_read) {
             _checkSecondModel.alpha = 1.0f;
+            if (_checkSecondEmbeddedInContent)
+                [_contentModel setNeedsSubmodelContentsUpdate];
             
             if (!previousRead && [_checkSecondModel boundView] != nil) {
                 CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
@@ -1138,7 +1141,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     
     if (!_ignoreEditing && message.isEdited && !(_context.isBot || ([_authorPeer isKindOfClass:[TGUser class]] && ((TGUser *)_authorPeer).kind != TGUserKindGeneric)) && (_authorPeer == nil || ![_authorPeer isKindOfClass:[TGConversation class]] || !((TGConversation *)_authorPeer).isChannel || ((TGConversation *)_authorPeer).isChannelGroup)) {
         if (_editedLabelModel == nil) {
-            _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGLocalized(@"Conversation.MessageEditedLabel") textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
+            _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGOnegramEditedLabel() textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
             [_contentModel addSubmodel:_editedLabelModel];
             
             if (sizeUpdated) {
@@ -1169,6 +1172,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
 {
     if (!_incoming && !_inhibitChecks && [_contentModel boundView] == nil && !_incomingAppearance)
     {
+        bool contentChanged = false;
         if (_deliveryState == TGMessageDeliveryStateDelivered)
         {
             if (!_checkFirstEmbeddedInContent)
@@ -1180,6 +1184,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
                     [self removeSubmodel:_checkFirstModel viewStorage:viewStorage];
                     _checkFirstModel.frame = CGRectOffset(_checkFirstModel.frame, -_contentModel.frame.origin.x, -_contentModel.frame.origin.y);
                     [_contentModel addSubmodel:_checkFirstModel];
+                    contentChanged = true;
                 }
             }
             
@@ -1191,10 +1196,14 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
                     
                     [self removeSubmodel:_checkSecondModel viewStorage:viewStorage];
                     _checkSecondModel.frame = CGRectOffset(_checkSecondModel.frame, -_contentModel.frame.origin.x, -_contentModel.frame.origin.y);
+                    _checkSecondModel.alpha = 1.0f;
                     [_contentModel addSubmodel:_checkSecondModel];
+                    contentChanged = true;
                 }
             }
         }
+        if (contentChanged)
+            [_contentModel setNeedsSubmodelContentsUpdate];
     }
 }
 
@@ -1233,6 +1242,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     [_webPageFooterModel bindSpecialViewsToContainer:_contentModel.boundView viewStorage:viewStorage atItemPosition:CGPointMake(_webPageFooterModel.frame.origin.x, _webPageFooterModel.frame.origin.y)];
     
     _boundDoubleTapRecognizer = TGModernViewModelAcquireGestureRecognizer([_backgroundModel boundView], &TGContentBubbleViewModelDoubleTapRecognizerPoolKey, [TGDoubleTapGestureRecognizer class], self, @selector(messageDoubleTapGesture:));
+    _boundDoubleTapRecognizer.longPressDuration = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0.5 : 1.5;
     _boundDoubleTapRecognizer.cancelsTouchesInView = true;
     _boundDoubleTapRecognizer.delegate = self;
     _boundDoubleTapRecognizer.avoidControls = true;
@@ -1317,12 +1327,12 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
             if (recognizer.longTapped)
                 [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             else if (recognizer.doubleTapped)
-                [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+                [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             else if (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)) {
                 if (TGPeerIdIsChannel(_forwardedPeerId)) {
                     [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
                 } else {
-                    [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
+                    [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @(_forwardedPeerId)}];
                 }
             }
             else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
@@ -1359,6 +1369,8 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
 
 - (void)doubleTapGestureRecognizerSingleTapped:(TGDoubleTapGestureRecognizer *)__unused recognizer
 {
+    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
+        [_context.companionHandle requestAction:@"messageSingleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
 }
 
 - (void)setCollapseFlags:(int)collapseFlags
@@ -1384,7 +1396,7 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
 
 - (bool)usesInlineMessageLayout
 {
-    return ![TGPresentation brandedIOS6Style] && ![_authorPeer isKindOfClass:[TGConversation class]] && ![self reactionsShareTimeRow] && _messageViewsModel == nil;
+    return ![TGPresentation brandedIOS6Style] && ![_authorPeer isKindOfClass:[TGConversation class]] && _messageViewsModel == nil;
 }
 
 - (CGSize)contentSizeForContainerSize:(CGSize)__unused containerSize needsContentsUpdate:(bool *)__unused needsContentsUpdate infoWidth:(CGFloat)__unused infoWidth
@@ -1440,7 +1452,8 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     }
     
     bool updateContents = false;
-    CTFontRef dateFont = inlineMessageLayout ? [TGModernDateViewModel inlineDateFont] : [TGModernDateViewModel dateFont];
+    bool usesInlineDateFont = !brandedIOS6Style && !isPost && _messageViewsModel == nil;
+    CTFontRef dateFont = usesInlineDateFont ? [TGModernDateViewModel inlineDateFont] : [TGModernDateViewModel dateFont];
     if ([_dateModel updateFont:dateFont])
         updateContents = true;
     if ([_editedLabelModel updateFont:dateFont])
@@ -1698,14 +1711,15 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
     }
 
     CGSize previousContentModelSize = _contentModel.frame.size;
-    CGFloat contentWidth = inlineMessageLayout ? MAX(32.0f, MAX(headerSize.width, contentSize.width) + 2.0f + (_incomingAppearance ? 0.0f : 5.0f)) : MAX(32.0f, backgroundFrame.size.width - contentLeftInset - contentTrailingInset);
+    CGFloat contentWidth = MAX(32.0f, backgroundFrame.size.width - contentLeftInset - contentTrailingInset);
+    if (inlineMessageLayout)
+        contentWidth = hasReactions ? MAX(32.0f, backgroundFrame.size.width - backgroundHorizontalChrome) : MAX(32.0f, MAX(headerSize.width, contentSize.width) + 2.0f + (_incomingAppearance ? 0.0f : 5.0f));
     CGFloat contentTop = inlineMessageLayout ? topSpacing + 2.0f : (brandedIOS6Style ? (topSpacing + brandedBubbleInsets.top + brandedBubblePadding.top - layoutConstants->textBubbleTextOffsetTop) : (topSpacing + TGMessageFontMetric(6.0f) - layoutConstants->textBubbleTextOffsetTop));
     CGFloat contentBottomPadding = inlineMessageLayout ? 5.0f : layoutConstants->textBubbleTextOffsetTop;
     CGFloat contentHeight = MAX(headerSize.height + contentSize.height + contentBottomPadding, (_hasAvatar && webPageSize.height <= FLT_EPSILON) ? 30.0f : (webpageOnly ? 0.0f : 14.0f)) + webPageSize.height + reactionsBlockHeight;
     if (!brandedIOS6Style && !inlineMessageLayout)
         contentHeight = MAX(contentHeight, backgroundFrame.size.height - commentsFooterHeight - (contentTop - topSpacing) - TGMessageFontMetric(6.0f));
-    CGFloat statusVerticalOffset = !brandedIOS6Style && reactionsLayout != nil ? TGMessageFontMetric(3.0f) : 0.0f;
-    CGFloat contentDrawingHeight = contentHeight + statusVerticalOffset;
+    CGFloat contentDrawingHeight = contentHeight;
     if (_inhibitContentAnimation)
     {
         [UIView performWithoutAnimation:^
@@ -1789,9 +1803,8 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
         if (brandedIOS6Style)
             dateY = reactionsTop + reactionsLayout.size.height - _dateModel.frame.size.height;
         else
-            dateY = TGRetinaFloor(reactionsTop + CGRectGetMaxY(reactionsLayout.trailingFrame) - (CGFloat)CTFontGetDescent(dateFont)) - _dateModel.frame.size.height;
+            dateY = TGRetinaFloor(reactionsTop + CGRectGetMinY(reactionsLayout.trailingFrame));
     }
-    dateY += statusVerticalOffset;
     CGFloat brandedFooterTop = 0.0f;
     if (brandedIOS6Style && [self brandedCommentsFooterTop:&brandedFooterTop bubbleFrame:backgroundFrame])
     {
@@ -1872,11 +1885,22 @@ static char TGContentBubbleViewModelDoubleTapRecognizerPoolKey;
         checkWidth = 12.0f;
         checkHeight = 11.0f;
     }
+    bool embeddedChecksMoved = false;
     if (_checkFirstModel != nil)
-        _checkFirstModel.frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - firstCheckRightInset + dateShiftX, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + checksY, checkWidth, checkHeight);
+    {
+        CGRect frame = CGRectMake((_checkFirstEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - firstCheckRightInset + dateShiftX, (_checkFirstEmbeddedInContent ? 0.0f : stateOffset.y) + checksY, checkWidth, checkHeight);
+        embeddedChecksMoved = embeddedChecksMoved || (_checkFirstEmbeddedInContent && !CGRectEqualToRect(_checkFirstModel.frame, frame));
+        _checkFirstModel.frame = frame;
+    }
     
     if (_checkSecondModel != nil)
-        _checkSecondModel.frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - secondCheckRightInset + dateShiftX, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + checksY, checkWidth, checkHeight);
+    {
+        CGRect frame = CGRectMake((_checkSecondEmbeddedInContent ? 0.0f : stateOffset.x) + _contentModel.frame.size.width - secondCheckRightInset + dateShiftX, (_checkSecondEmbeddedInContent ? 0.0f : stateOffset.y) + checksY, checkWidth, checkHeight);
+        embeddedChecksMoved = embeddedChecksMoved || (_checkSecondEmbeddedInContent && !CGRectEqualToRect(_checkSecondModel.frame, frame));
+        _checkSecondModel.frame = frame;
+    }
+    if (embeddedChecksMoved)
+        [_contentModel setNeedsSubmodelContentsUpdate];
 
     if (_unsentButtonModel != nil)
     {

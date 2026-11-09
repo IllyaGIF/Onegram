@@ -22,7 +22,7 @@
 @interface TLPhoto$wallPhoto : TLPhoto
 
 @property (nonatomic) int64_t access_hash;
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic) int32_t date;
 @property (nonatomic, retain) NSString *caption;
 @property (nonatomic, retain) TLGeoPoint *geo;

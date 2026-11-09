@@ -38,6 +38,7 @@
     
     NSString *_defaultTitle;
     TGMessage *_resolvedAuthorMessage;
+    TGMessage *_userResolutionAttemptedMessage;
     id _resolvedAuthor;
     NSString *_resolvedTitle;
     bool _compactMode;
@@ -271,6 +272,35 @@
     }];
 }
 
+- (TGUser *)resolveUser:(int64_t)userId pendingUserIds:(NSMutableArray *)pendingUserIds
+{
+    if (![NSThread isMainThread])
+        return [TGDatabaseInstance() loadUser:userId];
+    TGUser *user = [TGDatabaseInstance() loadCachedUser:userId];
+    if (user == nil && userId != 0)
+        [pendingUserIds addObject:@(userId)];
+    return user;
+}
+
+- (void)resolvePendingUserIds:(NSArray *)userIds forMessage:(TGMessage *)message
+{
+    __weak TGModenConcersationReplyAssociatedPanel *weakSelf = self;
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
+    {
+        for (NSNumber *userId in userIds)
+            [TGDatabaseInstance() loadUser:[userId longLongValue]];
+        TGDispatchOnMainThread(^
+        {
+            __strong TGModenConcersationReplyAssociatedPanel *strongSelf = weakSelf;
+            if (strongSelf != nil && strongSelf->_message == message)
+            {
+                strongSelf->_userResolutionAttemptedMessage = message;
+                [strongSelf updateMessage:message];
+            }
+        });
+    } synchronous:false];
+}
+
 - (void)updateMessage:(TGMessage *)message {
     _message = message;
     
@@ -294,6 +324,7 @@
     NSString *title = @"";
     id author = nil;
     bool authorResolved = message != nil && message == _resolvedAuthorMessage;
+    NSMutableArray *pendingUserIds = [[NSMutableArray alloc] init];
     
     if (authorResolved)
     {
@@ -309,7 +340,7 @@
                 title = conversation.chatTitle;
             }
         } else {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+            TGUser *user = [self resolveUser:message.fromUid pendingUserIds:pendingUserIds];
             author = user;
             title = user.displayName;
         }
@@ -330,7 +361,7 @@
                 }
                 else
                 {
-                    TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)forwardPeerId];
+                    TGUser *user = [self resolveUser:forwardPeerId pendingUserIds:pendingUserIds];
                     author = user;
                     title = user.displayName;
                 }
@@ -348,13 +379,15 @@
                     title = conversation.chatTitle;
                 }
             } else {
-                TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+                TGUser *user = [self resolveUser:message.fromUid pendingUserIds:pendingUserIds];
                 author = user;
                 title = user.displayName;
             }
         }
     }
-    if (!authorResolved)
+    if (pendingUserIds.count != 0 && message != _userResolutionAttemptedMessage)
+        [self resolvePendingUserIds:pendingUserIds forMessage:message];
+    else if (!authorResolved)
     {
         _resolvedAuthorMessage = message;
         _resolvedAuthor = author;

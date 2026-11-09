@@ -45,7 +45,7 @@ static NSArray *sortedConversations(NSArray *conversations) {
 
 @implementation TGGroupsInCommonController
 
-- (instancetype)initWithUserId:(int32_t)userId {
+- (instancetype)initWithUserId:(int64_t)userId {
     self = [super init];
     if (self != nil) {
         _navigateDisposable = [[SMetaDisposable alloc] init];

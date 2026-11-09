@@ -13,11 +13,14 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGTimerTarget.h"
 
 #import "TGModernConversationAudioPlayerContext.h"
+#import "OGMediaStreamServer.h"
 
 
 @interface TGModernConversationAudioPlayer () <TGAudioPlayerDelegate>
 {
     NSString *_filePath;
+    NSString *_pathExtension;
+    NSTimeInterval _knownDuration;
     bool _music;
     bool _controlAudioSession;
     
@@ -52,9 +55,41 @@
     return self;
 }
 
+- (instancetype)initWithStream:(OGMediaStream *)stream pathExtension:(NSString *)pathExtension duration:(NSTimeInterval)duration music:(bool)music controlAudioSession:(bool)controlAudioSession
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _stream = stream;
+        _pathExtension = [pathExtension copy];
+        _knownDuration = duration;
+        _music = music;
+        _controlAudioSession = controlAudioSession;
+        _rate = 1.0f;
+        
+        _audioPlayer = [self makeAudioPlayer];
+        _audioPlayer.delegate = self;
+        _queue = [SQueue mainQueue];
+    }
+    return self;
+}
+
+- (TGAudioPlayer *)makeAudioPlayer
+{
+    if (_stream != nil)
+        return [TGAudioPlayer audioPlayerForStream:_stream pathExtension:_pathExtension music:_music controlAudioSession:_controlAudioSession];
+    return [TGAudioPlayer audioPlayerForPath:_filePath music:_music controlAudioSession:_controlAudioSession];
+}
+
+- (bool)isStreaming
+{
+    return _stream != nil;
+}
+
 - (void)dealloc
 {
     [self cleanup];
+    [_stream invalidate];
 }
 
 - (void)cleanup
@@ -92,7 +127,7 @@
 - (void)play
 {
     if (_audioPlayer == nil) {
-        _audioPlayer = [TGAudioPlayer audioPlayerForPath:_filePath music:_music controlAudioSession:_controlAudioSession];
+        _audioPlayer = [self makeAudioPlayer];
         [_audioPlayer setRate:_rate];
         _audioPlayer.delegate = self;
     }
@@ -123,7 +158,7 @@
         _timer = nil;
     }
     
-    NSTimeInterval preciseDuration = [_audioPlayer duration];
+    NSTimeInterval preciseDuration = [self duration];
     if (preciseDuration > 0.1)
     {
         [_audioPlayer playFromPosition:MAX(0.0, MIN(preciseDuration, playbackPosition * preciseDuration))];
@@ -182,7 +217,7 @@
 
 - (bool)replaceWithFilePath:(NSString *)filePath
 {
-    if (!_music || _audioPlayer == nil || ![_audioPlayer replaceWithPath:filePath])
+    if (!_music || _audioPlayer == nil || _stream != nil || ![_audioPlayer replaceWithPath:filePath])
         return false;
     _filePath = [filePath copy];
     _isPaused = false;
@@ -192,7 +227,7 @@
 
 - (bool)prepareNextFilePath:(NSString *)filePath
 {
-    if (!_music || _audioPlayer == nil)
+    if (!_music || _audioPlayer == nil || _stream != nil)
         return false;
     return [_audioPlayer prepareNextPath:filePath];
 }
@@ -204,7 +239,7 @@
 
 - (float)playbackPositionSync:(bool)sync
 {
-    NSTimeInterval duration = [_audioPlayer duration];
+    NSTimeInterval duration = [self duration];
     if (duration > 0.1)
         return (float)([_audioPlayer currentPositionSync:sync] / duration);
     
@@ -217,7 +252,8 @@
 
 - (NSTimeInterval)duration
 {
-    return [_audioPlayer duration];
+    NSTimeInterval duration = [_audioPlayer duration];
+    return duration > 0.1 ? duration : _knownDuration;
 }
 
 - (bool)isPaused

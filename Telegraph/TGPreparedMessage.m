@@ -7,6 +7,7 @@
  */
 
 #import "TGPreparedMessage.h"
+#import "TGSendAsSignals.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGMessage.h"
 
 @implementation TGPreparedMessage
@@ -18,13 +19,24 @@
     return _forumTopicId > 1 ? _forumTopicId : 0;
 }
 
-- (void)applyForumTopicToMessage:(TGMessage *)message
+- (void)applyThreadToMessage:(TGMessage *)message
 {
-    if (_forumTopicId == 0)
-        return;
-    NSMutableDictionary *properties = message.contentProperties != nil ? [message.contentProperties mutableCopy] : [[NSMutableDictionary alloc] init];
-    properties[@"ios6ForumTopicId"] = [[TGMessageForumTopicContentProperty alloc] initWithTopicId:_forumTopicId];
-    message.contentProperties = properties;
+    if (_sendAs != nil)
+    {
+        NSMutableDictionary *properties = [message.contentProperties mutableCopy] ?: [[NSMutableDictionary alloc] init];
+        properties[@"onegramSendAs"] = _sendAs;
+        message.contentProperties = properties;
+        message.fromUid = _sendAs.peerId;
+    }
+
+    if (_forumTopicId != 0)
+    {
+        NSMutableDictionary *properties = message.contentProperties != nil ? [message.contentProperties mutableCopy] : [[NSMutableDictionary alloc] init];
+        properties[@"ios6ForumTopicId"] = [[TGMessageForumTopicContentProperty alloc] initWithTopicId:_forumTopicId];
+        message.contentProperties = properties;
+    }
+    if (_monoforumPeerId != 0)
+        message.savedPeerId = _monoforumPeerId;
 }
 
 - (TGMessage *)message

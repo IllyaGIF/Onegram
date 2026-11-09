@@ -4,7 +4,7 @@
 
 @implementation TGMessageEntityMentionName
 
-- (instancetype)initWithRange:(NSRange)range userId:(int32_t)userId {
+- (instancetype)initWithRange:(NSRange)range userId:(int64_t)userId {
     self = [super initWithRange:range];
     if (self != nil) {
         _userId = userId;
@@ -15,27 +15,27 @@
 - (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder {
     self = [super initWithKeyValueCoder:coder];
     if (self != nil) {
-        _userId = [coder decodeInt32ForCKey:"userId"];
+        _userId = [coder decodeInt64ForCKey:"userId"];
     }
     return self;
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder {
     [super encodeWithKeyValueCoder:coder];
-    [coder encodeInt32:_userId forCKey:"userId"];
+    [coder encodeInt64:_userId forCKey:"userId"];
 }
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
     self = [super initWithCoder:aDecoder];
     if (self != nil) {
-        _userId = [aDecoder decodeInt32ForKey:@"userId"];
+        _userId = [aDecoder decodeInt64ForKey:@"userId"];
     }
     return self;
 }
 
 - (void)encodeWithCoder:(NSCoder *)aCoder {
     [super encodeWithCoder:aCoder];
-    [aCoder encodeInt32:_userId forKey:@"userId"];
+    [aCoder encodeInt64:_userId forKey:@"userId"];
 }
 
 @end

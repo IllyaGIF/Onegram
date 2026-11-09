@@ -135,6 +135,7 @@ public:
 #import "TLPayments_PaymentCeceipt$payments_paymentReceipt.h"
 #import "TLpayments_ValidatedRequestedInfo$payments_validatedRequestedInfo.h"
 #import "TLLangPackStringPluralized.h"
+#import "TLLangPackDifference.h"
 #import "TLChat$channelForbidden.h"
 #import "TLMessageMedia$messageMediaPhoto.h"
 #import "TLMessageMedia$messageMediaDocument.h"
@@ -1159,7 +1160,15 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         [is readInt32];
     }
     if (flags & (1 << 15))
-        CodexReadObject(is, environment, error);
+    {
+        int32_t reactionSignature = [is readInt32];
+        if (reactionSignature == (int32_t)0x1b2286b8)
+            result.reactions_default = [is readString];
+        else if (reactionSignature == (int32_t)0x8935fc73)
+            result.reactions_default = [NSString stringWithFormat:@"◆%lld", [is readInt64]];
+        else
+            TLMetaClassStore::constructObject(is, reactionSignature, environment, nil, error);
+    }
     if (flags & (1 << 16))
         [is readString];
     if (error != NULL && *error != nil)
@@ -1451,7 +1460,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             int64_t userId = [is readInt64];
             TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
             TLUpdate$updateUserTyping *result = [[TLUpdate$updateUserTyping alloc] init];
-            result.user_id = TGModernLegacyIdForModernId(userId);
+            result.user_id = userId;
             result.action = action;
             return result;
         }
@@ -1463,7 +1472,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
             TLUpdate$updateUserTyping *result = [[TLUpdate$updateUserTyping alloc] init];
-            result.user_id = TGModernLegacyIdForModernId(userId);
+            result.user_id = userId;
             result.action = action;
             return result;
         }
@@ -1475,7 +1484,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             if (![fromPeer isKindOfClass:[TLPeer$peerUser class]])
                 return nil;
             TLUpdate$updateChatUserTyping *result = [[TLUpdate$updateChatUserTyping alloc] init];
-            result.chat_id = (int32_t)chatId;
+            result.chat_id = chatId;
             result.user_id = ((TLPeer$peerUser *)fromPeer).user_id;
             result.action = action;
             return result;
@@ -1781,7 +1790,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             int64_t channelId = [is readInt64];
             int32_t availableMinId = [is readInt32];
             TLUpdate$updateChannelAvailableMessages *result = [[TLUpdate$updateChannelAvailableMessages alloc] init];
-            result.channel_id = (int32_t)channelId;
+            result.channel_id = channelId;
             result.available_min_id = availableMinId;
             return result;
         }
@@ -4109,7 +4118,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             NSArray *messages = CodexReadInt32Vector(is);
             TLUpdate$updateChannelReadMessagesContents *result = [[TLUpdate$updateChannelReadMessagesContents alloc] init];
-            result.channel_id = (int32_t)channelId;
+            result.channel_id = channelId;
             result.messages = messages;
             return result;
         }
@@ -4149,7 +4158,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
         {
             int64_t channelId = [is readInt64];
             TLUpdate$updateChannel *result = [[TLUpdate$updateChannel alloc] init];
-            result.channel_id = (int32_t)channelId;
+            result.channel_id = channelId;
             return result;
         }
         case (int32_t)0x922e6e10:
@@ -4162,7 +4171,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             [is readInt32];
             [is readInt32];
             TLUpdate$updateReadChannelInbox *result = [[TLUpdate$updateReadChannelInbox alloc] init];
-            result.channel_id = (int32_t)channelId;
+            result.channel_id = channelId;
             result.max_id = maxId;
             return result;
         }
@@ -4194,7 +4203,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             int64_t channelId = [is readInt64];
             int32_t maxId = [is readInt32];
             TLUpdate$updateReadChannelOutbox *result = [[TLUpdate$updateReadChannelOutbox alloc] init];
-            result.channel_id = (int32_t)channelId;
+            result.channel_id = channelId;
             result.max_id = maxId;
             return result;
         }
@@ -4204,7 +4213,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             int32_t messageId = [is readInt32];
             int32_t views = [is readInt32];
             TLUpdate$updateChannelMessageViews *result = [[TLUpdate$updateChannelMessageViews alloc] init];
-            result.channel_id = (int32_t)channelId;
+            result.channel_id = channelId;
             result.n_id = messageId;
             result.views = views;
             return result;
@@ -4269,13 +4278,13 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
                 [is readInt32];
             TLPeer *fromPeer = (TLPeer *)CodexReadObject(is, environment, error);
             TLSendMessageAction *action = (TLSendMessageAction *)CodexReadObject(is, environment, error);
-            int32_t userId = 0;
+            int64_t userId = 0;
             if ([fromPeer isKindOfClass:[TLPeer$peerUser class]])
                 userId = ((TLPeer$peerUser *)fromPeer).user_id;
             if (userId == 0)
                 return nil;
             TLUpdate$updateChatUserTyping *result = [[TLUpdate$updateChatUserTyping alloc] init];
-            result.chat_id = (int32_t)channelId;
+            result.chat_id = channelId;
             result.user_id = userId;
             result.action = action;
             return result;
@@ -4969,11 +4978,7 @@ static NSData *CodexDecodedStrippedThumbnail(NSData *data)
             result.last_name = [is readString];
             result.vcard = [is readString];
 
-            int64_t modernUserId = [is readInt64];
-            if (modernUserId > 0 && modernUserId <= 2147483647LL)
-                result.user_id = (int32_t)modernUserId;
-            else
-                result.user_id = 0;
+            result.user_id = [is readInt64];
 
             return result;
         }
@@ -5511,7 +5516,7 @@ static NSString *CodexPollText(id text)
     TLCodexModernMessageEntityMentionNameParser *result = [[TLCodexModernMessageEntityMentionNameParser alloc] init];
     result.offset = [is readInt32];
     result.length = [is readInt32];
-    result.user_id = TGModernLegacyIdForModernId([is readInt64]);
+    result.user_id = [is readInt64];
     return result;
 }
 
@@ -5540,7 +5545,15 @@ static NSString *CodexPollText(id text)
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
-    TLCodexModernMessageEntitySimpleParser *result = [[TLCodexModernMessageEntitySimpleParser alloc] init];
+    TLMessageEntity *result = nil;
+    if (signature == (int32_t)0x9c4e7e8b)
+        result = [[TLMessageEntity$messageEntityUnderline alloc] init];
+    else if (signature == (int32_t)0xbf0693d4)
+        result = [[TLMessageEntity$messageEntityStrike alloc] init];
+    else if (signature == (int32_t)0x32ca960f)
+        result = [[TLMessageEntity$messageEntitySpoiler alloc] init];
+    else
+        result = [[TLCodexModernMessageEntitySimpleParser alloc] init];
     if (signature == (int32_t)0xf1ccaaac || signature == (int32_t)0x904ac7c7)
         [is readInt32];
     result.offset = [is readInt32];
@@ -5640,7 +5653,7 @@ static NSString *CodexPollText(id text)
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {
     TLCodexModernContactParser *result = [[TLCodexModernContactParser alloc] init];
-    result.user_id = TGModernLegacyIdForModernId([is readInt64]);
+    result.user_id = [is readInt64];
     TLBool *mutual = (TLBool *)CodexReadObject(is, environment, error);
     result.mutual = [mutual boolValue];
     return result;
@@ -5678,7 +5691,7 @@ static NSString *CodexPollText(id text)
         if (contactSignature == (int32_t)0x145ade0b)
         {
             TLContact$contact *contact = [[TLContact$contact alloc] init];
-            contact.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            contact.user_id = [is readInt64];
             int32_t mutualSignature = [is readInt32];
             contact.mutual = mutualSignature == (int32_t)TL_BOOL_TRUE_CONSTRUCTOR;
             [contacts addObject:contact];
@@ -5712,6 +5725,128 @@ static NSString *CodexPollText(id text)
         int32_t usersMarker = [is readInt32];
         result.users = CodexReadMaybeDoubleObjectVectorWithMarker(is, usersMarker, environment, error);
     }
+    return result;
+}
+
+@end
+
+static NSError *TLCodexLangPackError(NSString *description)
+{
+    return [[NSError alloc] initWithDomain:@"TL" code:-1 userInfo:@{NSLocalizedDescriptionKey: description}];
+}
+
+static TLLangPackString *TLCodexReadLangPackString(NSInputStream *is, int32_t signature, bool *failed)
+{
+    switch (signature)
+    {
+        case (int32_t)0xcad181f6:
+        {
+            TLLangPackString$langPackString *string = [[TLLangPackString$langPackString alloc] init];
+            string.key = [is readString:failed];
+            string.value = [is readString:failed];
+            return string;
+        }
+        case (int32_t)0x6c47ac9f:
+        {
+            TLLangPackString$langPackStringPluralized *string = [[TLLangPackString$langPackStringPluralized alloc] init];
+            int32_t flags = [is readInt32:failed];
+            string.flags = flags;
+            string.key = [is readString:failed];
+            if (flags & (1 << 0))
+                string.zero_value = [is readString:failed];
+            if (flags & (1 << 1))
+                string.one_value = [is readString:failed];
+            if (flags & (1 << 2))
+                string.two_value = [is readString:failed];
+            if (flags & (1 << 3))
+                string.few_value = [is readString:failed];
+            if (flags & (1 << 4))
+                string.many_value = [is readString:failed];
+            string.other_value = [is readString:failed];
+            return string;
+        }
+        case (int32_t)0x2979eeb2:
+        {
+            TLLangPackString$langPackStringDeleted *string = [[TLLangPackString$langPackStringDeleted alloc] init];
+            string.key = [is readString:failed];
+            return string;
+        }
+        default:
+            return nil;
+    }
+}
+
+@interface TLCodexLangPackStringParser : TLLangPackString$langPackString
+@end
+
+@implementation TLCodexLangPackStringParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    bool failed = false;
+    TLLangPackString *result = TLCodexReadLangPackString(is, signature, &failed);
+    if (failed || result == nil)
+    {
+        if (error != NULL)
+            *error = TLCodexLangPackError([NSString stringWithFormat:@"Invalid LangPackString %08x", signature]);
+        return nil;
+    }
+    return result;
+}
+
+@end
+
+@interface TLCodexLangPackDifferenceParser : TLLangPackDifference$langPackDifference
+@end
+
+@implementation TLCodexLangPackDifferenceParser
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
+{
+    bool failed = false;
+    TLLangPackDifference$langPackDifference *result = [[TLLangPackDifference$langPackDifference alloc] init];
+    result.lang_code = [is readString:&failed];
+    result.from_version = [is readInt32:&failed];
+    result.version = [is readInt32:&failed];
+    int32_t vectorMarker = [is readInt32:&failed];
+    int32_t count = failed ? 0 : [is readInt32:&failed];
+    if (failed || vectorMarker != TL_UNIVERSAL_VECTOR_CONSTRUCTOR || count < 0 || count > 100000)
+    {
+        if (error != NULL)
+            *error = TLCodexLangPackError(failed ? @"Unexpected end of stream in langPackDifference" : [NSString stringWithFormat:@"Invalid langPackDifference strings vector %08x count %d", vectorMarker, count]);
+        return nil;
+    }
+
+    NSMutableArray *strings = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
+    for (int32_t i = 0; i < count; i++)
+    {
+        @autoreleasepool
+        {
+            int32_t stringSignature = [is readInt32:&failed];
+            if (failed)
+                break;
+            id string = TLCodexReadLangPackString(is, stringSignature, &failed);
+            if (string == nil && !failed)
+            {
+                string = TLMetaClassStore::constructObject(is, stringSignature, environment, nil, error);
+                if (error != NULL && *error != nil)
+                    return nil;
+            }
+            if (failed)
+                break;
+            if (string != nil)
+                [strings addObject:string];
+        }
+        CodexCooperateWithInteraction(i);
+    }
+    if (failed)
+    {
+        if (error != NULL)
+            *error = TLCodexLangPackError(@"Unexpected end of stream in langPackDifference strings");
+        return nil;
+    }
+
+    result.strings = strings;
     return result;
 }
 
@@ -6175,8 +6310,8 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         case (int32_t)0xc02d4007:
         {
             TLChatParticipant$chatParticipant *participant = [[TLChatParticipant$chatParticipant alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
-            participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
+            participant.inviter_id = [is readInt64];
             participant.date = [is readInt32];
             result = participant;
             break;
@@ -6184,15 +6319,15 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         case (int32_t)0xe46bcee4:
         {
             TLChatParticipant$chatParticipantCreator *participant = [[TLChatParticipant$chatParticipantCreator alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
             result = participant;
             break;
         }
         case (int32_t)0xa0933f5b:
         {
             TLChatParticipant$chatParticipantAdmin *participant = [[TLChatParticipant$chatParticipantAdmin alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
-            participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
+            participant.inviter_id = [is readInt64];
             participant.date = [is readInt32];
             result = participant;
             break;
@@ -6217,7 +6352,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         case (int32_t)0xc00c07c0:
         {
             TLChannelParticipant$channelParticipant *participant = [[TLChannelParticipant$channelParticipant alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
             participant.date = [is readInt32];
             result = participant;
             break;
@@ -6226,7 +6361,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         {
             flags = [is readInt32];
             TLChannelParticipant$channelParticipant *participant = [[TLChannelParticipant$channelParticipant alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
             participant.date = [is readInt32];
             if (flags & (1 << 0)) [is readInt32];
             if (flags & (1 << 2)) [is readString];
@@ -6237,8 +6372,8 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         {
             flags = [is readInt32];
             TLChannelParticipant$channelParticipantSelf *participant = [[TLChannelParticipant$channelParticipantSelf alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
-            participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
+            participant.inviter_id = [is readInt64];
             participant.date = [is readInt32];
             result = participant;
             break;
@@ -6247,8 +6382,8 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         {
             flags = [is readInt32];
             TLChannelParticipant$channelParticipantSelf *participant = [[TLChannelParticipant$channelParticipantSelf alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
-            participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
+            participant.inviter_id = [is readInt64];
             participant.date = [is readInt32];
             if (flags & (1 << 1)) [is readInt32];
             if (flags & (1 << 2)) [is readString];
@@ -6259,7 +6394,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         {
             flags = [is readInt32];
             TLChannelParticipant$channelParticipantCreator *participant = [[TLChannelParticipant$channelParticipantCreator alloc] init];
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
             CodexReadObject(is, environment, error);
             if (flags & (1 << 0)) [is readString];
             result = participant;
@@ -6270,10 +6405,10 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             flags = [is readInt32];
             TLChannelParticipant$channelParticipantAdmin *participant = [[TLChannelParticipant$channelParticipantAdmin alloc] init];
             participant.flags = flags;
-            participant.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            participant.user_id = [is readInt64];
             if (flags & (1 << 1))
-                participant.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
-            participant.promoted_by = TGModernLegacyIdForModernId([is readInt64]);
+                participant.inviter_id = [is readInt64];
+            participant.promoted_by = [is readInt64];
             participant.date = [is readInt32];
             participant.admin_rights = (TLChannelAdminRights *)CodexReadObject(is, environment, error);
             if (flags & (1 << 2)) [is readString];
@@ -6286,7 +6421,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             TLChannelParticipant$channelParticipantBanned *participant = [[TLChannelParticipant$channelParticipantBanned alloc] init];
             participant.flags = flags;
             CodexReadObject(is, environment, error);
-            participant.kicked_by = TGModernLegacyIdForModernId([is readInt64]);
+            participant.kicked_by = [is readInt64];
             participant.date = [is readInt32];
             participant.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
             result = participant;
@@ -6298,7 +6433,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
             TLChannelParticipant$channelParticipantBanned *participant = [[TLChannelParticipant$channelParticipantBanned alloc] init];
             participant.flags = flags;
             CodexReadObject(is, environment, error);
-            participant.kicked_by = TGModernLegacyIdForModernId([is readInt64]);
+            participant.kicked_by = [is readInt64];
             participant.date = [is readInt32];
             participant.banned_rights = (TLChannelBannedRights *)CodexReadObject(is, environment, error);
             if (flags & (1 << 2)) [is readString];
@@ -6805,7 +6940,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
 {
     TLauth_ExportedAuthorization$auth_exportedAuthorization *result = [[TLauth_ExportedAuthorization$auth_exportedAuthorization alloc] init];
-    result.n_id = (int32_t)[is readInt64];
+    result.n_id = [is readInt64];
     result.bytes = [is readBytes];
     return result;
 }
@@ -6824,7 +6959,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     if (flags & (1 << 0))
     {
         int64_t userId = [is readInt64];
-        result.user_id = TGModernLegacyIdForModernId(userId);
+        result.user_id = userId;
     }
     if (flags & (1 << 1))
         result.n_description = [is readString];
@@ -7120,13 +7255,13 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         case (int32_t)0xa43f30cc:
         {
             TLMessageAction$messageActionChatDeleteUser *result = [[TLMessageAction$messageActionChatDeleteUser alloc] init];
-            result.user_id = TGModernLegacyIdForModernId([is readInt64]);
+            result.user_id = [is readInt64];
             return result;
         }
         case (int32_t)0x31224c3:
         {
             TLMessageAction$messageActionChatJoinedByLink *result = [[TLMessageAction$messageActionChatJoinedByLink alloc] init];
-            result.inviter_id = TGModernLegacyIdForModernId([is readInt64]);
+            result.inviter_id = [is readInt64];
             return result;
         }
         case (int32_t)0x95d2ac92:
@@ -7138,14 +7273,14 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         case (int32_t)0xe1037f92:
         {
             TLMessageAction$messageActionChatMigrateTo *result = [[TLMessageAction$messageActionChatMigrateTo alloc] init];
-            result.channel_id = (int32_t)[is readInt64];
+            result.channel_id = [is readInt64];
             return result;
         }
         case (int32_t)0xea3948e9:
         {
             TLMessageAction$messageActionChannelMigrateFrom *result = [[TLMessageAction$messageActionChannelMigrateFrom alloc] init];
             result.title = [is readString];
-            result.chat_id = (int32_t)[is readInt64];
+            result.chat_id = [is readInt64];
             return result;
         }
         case (int32_t)0x94bd38ed:
@@ -7578,11 +7713,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         case (int32_t)0xd7c0ff9c:
             return [[TLMessageAction$messageActionEmpty alloc] init];
         case (int32_t)0xebbca3cb:
-        {
-            TLMessageAction$messageActionChatJoinedByLink *result = [[TLMessageAction$messageActionChatJoinedByLink alloc] init];
-            result.inviter_id = -2147483647 - 1;
-            return result;
-        }
+            return [[TLMessageAction$messageActionChatJoinedByRequest alloc] init];
         default:
             return [[TLMessageAction$messageActionEmpty alloc] init];
     }
@@ -7645,6 +7776,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         }
 
         result.thumb = bestThumbnail;
+        result.thumbs = thumbs;
     }
     
     if (flags & (1 << 1))
@@ -7652,6 +7784,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
         NSArray *videoThumbnails = CodexReadObjectVectorOrSingle(is, environment, error);
         if (error != nil && *error != nil)
             return nil;
+        result.video_thumbs = videoThumbnails;
 
         if (result.thumb == nil)
         {
@@ -7742,7 +7875,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     if (flags & (1 << 4))
         [is readDouble];
     if (flags & (1 << 5))
-        [is readString];
+        result.video_codec = [is readString];
     return result;
 }
 
@@ -7853,8 +7986,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     result.left = (flags & (1 << 2));
     result.deactivated = (flags & (1 << 5));
     int64_t chatId = [is readInt64];
-    result.n_id = (int32_t)chatId;
-    objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_apiChatId"), [NSNumber numberWithLongLong:chatId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    result.n_id = chatId;
     result.title = [is readString];
     result.photo = (TLChatPhoto *)CodexReadObject(is, environment, error);
     result.participants_count = [is readInt32];
@@ -7880,8 +8012,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
 {
     TLChat$chatForbidden *result = [[TLChat$chatForbidden alloc] init];
     int64_t chatId = [is readInt64];
-    result.n_id = (int32_t)chatId;
-    objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_apiChatId"), [NSNumber numberWithLongLong:chatId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    result.n_id = chatId;
     result.title = [is readString];
     return result;
 }
@@ -7931,8 +8062,7 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     result.flags = flags;
     result.flags2 = flags2;
     int64_t channelId = [is readInt64];
-    result.n_id = (int32_t)channelId;
-    objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_apiChannelId"), [NSNumber numberWithLongLong:channelId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    result.n_id = channelId;
     if (flags & (1 << 13))
         result.access_hash = [is readInt64];
     result.title = [is readString];
@@ -7985,9 +8115,9 @@ static TLCodexModernInputPeerValue *CodexReadModernInputPeerValue(NSInputStream 
     if (flags2 & (1 << 13))
         [is readInt64];
     if (flags2 & (1 << 14))
-        [is readInt64];
+        result.send_paid_messages_stars = [is readInt64];
     if (flags2 & (1 << 18))
-        [is readInt64];
+        result.linked_monoforum_id = [is readInt64];
     if (signature == (int32_t)0xd49f34c6 && (flags2 & (1 << 20)))
         result.linked_community_id = [is readInt64];
     return result;
@@ -8061,8 +8191,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
     if (!isModernChannelFull)
     {
         TLCodexModernChannelFullParser *result = [[TLCodexModernChannelFullParser alloc] init];
-        result.n_id = (int32_t)channelId;
-        objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_apiChannelId"), [NSNumber numberWithLongLong:channelId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        result.n_id = channelId;
         objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_chatAbout"), about == nil ? @"" : about, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         result.participants = (TLChatParticipants *)CodexReadObject(is, environment, error);
         if (flags & (1 << 2))
@@ -8089,9 +8218,8 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
     result.canViewParticipants = (flags & (1 << 3)) != 0;
     result.can_set_username = (flags & (1 << 6)) != 0;
     result.can_set_stickers = (flags & (1 << 7)) != 0;
-    result.n_id = (int32_t)channelId;
+    result.n_id = channelId;
     result.about = about;
-    objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_apiChannelId"), [NSNumber numberWithLongLong:channelId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     if (flags & (1 << 0))
         result.participants_count = [is readInt32];
@@ -8116,7 +8244,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
 
     if (flags & (1 << 4))
     {
-        result.migrated_from_chat_id = (int32_t)[is readInt64];
+        result.migrated_from_chat_id = [is readInt64];
         result.migrated_from_max_id = [is readInt32];
     }
     if (flags & (1 << 5))
@@ -8170,8 +8298,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
     int32_t flags = [is readInt32];
     result.flags = flags;
     int64_t channelId = [is readInt64];
-    result.n_id = (int32_t)channelId;
-    objc_setAssociatedObject(result, NSSelectorFromString(@"tg_ios6_apiChannelId"), [NSNumber numberWithLongLong:channelId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    result.n_id = channelId;
     result.access_hash = [is readInt64];
     result.title = [is readString];
     if (flags & (1 << 16))
@@ -8190,7 +8317,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
 {
     TLPeer$peerUser *result = [[TLPeer$peerUser alloc] init];
     int64_t userId = [is readInt64];
-    result.user_id = TGModernLegacyIdForModernId(userId);
+    result.user_id = userId;
     return result;
 }
 
@@ -8205,7 +8332,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
 {
     TLPeer$peerChat *result = [[TLPeer$peerChat alloc] init];
     int64_t chatId = [is readInt64];
-    result.chat_id = (int32_t)chatId;
+    result.chat_id = chatId;
     return result;
 }
 
@@ -8220,7 +8347,7 @@ static void TLCodexStoreChatReactionPolicy(id object, NSDictionary *policy)
 {
     TLPeer$peerChannel *result = [[TLPeer$peerChannel alloc] init];
     int64_t channelId = [is readInt64];
-    result.channel_id = (int32_t)channelId;
+    result.channel_id = channelId;
     return result;
 }
 
@@ -8349,11 +8476,22 @@ static bool CodexReadNotificationSound(NSInputStream *is, NSString *__autoreleas
     int32_t flags = [is readInt32];
     NSError *nestedError = nil;
     if (flags & (1 << 1))
+    {
         CodexReadObject(is, environment, &nestedError);
-    nestedError = nil;
+        if (nestedError != nil)
+        {
+            if (error != NULL)
+                *error = nestedError;
+            return nil;
+        }
+    }
     CodexReadObject(is, environment, &nestedError);
-    if (error != NULL)
-        *error = nil;
+    if (nestedError != nil)
+    {
+        if (error != NULL)
+            *error = nestedError;
+        return nil;
+    }
     return self;
 }
 
@@ -8618,7 +8756,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 {
     TLImportedContact$importedContact *result = [[TLImportedContact$importedContact alloc] init];
     int64_t userId = [is readInt64];
-    result.user_id = TGModernLegacyIdForModernId(userId);
+    result.user_id = userId;
     result.client_id = [is readInt64];
     return result;
 }
@@ -8698,7 +8836,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     TLContactStatus$contactStatus *result = [[TLContactStatus$contactStatus alloc] init];
     int64_t userId = [is readInt64];
     int32_t statusSignature = [is readInt32];
-    result.user_id = TGModernLegacyIdForModernId(userId);
+    result.user_id = userId;
     result.status = (TLUserStatus *)TLMetaClassStore::constructObject(is, statusSignature, environment, nil, error);
     return result;
 }
@@ -8926,7 +9064,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     TLUpdate$updateUserStatus *result = [[TLUpdate$updateUserStatus alloc] init];
     int64_t userId = [is readInt64];
     int32_t statusSignature = [is readInt32];
-    result.user_id = TGModernLegacyIdForModernId(userId);
+    result.user_id = userId;
     result.status = (TLUserStatus *)TLMetaClassStore::constructObject(is, statusSignature, environment, nil, error);
     return result;
 }
@@ -8942,7 +9080,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
 {
     TLUpdate$updateDeleteChannelMessages *result = [[TLUpdate$updateDeleteChannelMessages alloc] init];
     int64_t channelId = [is readInt64];
-    result.channel_id = (int32_t)channelId;
+    result.channel_id = channelId;
     result.messages = CodexReadInt32Vector(is);
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
@@ -8962,7 +9100,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     int32_t flags = [is readInt32];
     int64_t channelId = [is readInt64];
     result.flags = flags;
-    result.channel_id = (int32_t)channelId;
+    result.channel_id = channelId;
     if (flags & 1)
         result.pts = [is readInt32];
     return result;
@@ -8980,7 +9118,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     TLUpdates$modernUpdateShortMessage *result = [[TLUpdates$modernUpdateShortMessage alloc] init];
     result.flags = [is readInt32];
     result.n_id = [is readInt32];
-    result.user_id = TGModernLegacyIdForModernId([is readInt64]);
+    result.user_id = [is readInt64];
     result.message = [is readString];
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
@@ -8988,7 +9126,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     if (result.flags & (1 << 2))
         result.fwd_header = (TLMessageFwdHeader *)CodexReadObject(is, environment, error);
     if (result.flags & (1 << 11))
-        result.via_bot_id = TGModernLegacyIdForModernId([is readInt64]);
+        result.via_bot_id = [is readInt64];
     if (result.flags & (1 << 3))
         result.reply_to_msg_id = CodexReadReplyHeaderCompat(is, environment, error);
     if (result.flags & (1 << 7))
@@ -9010,8 +9148,8 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     TLUpdates$modernUpdateShortChatMessage *result = [[TLUpdates$modernUpdateShortChatMessage alloc] init];
     result.flags = [is readInt32];
     result.n_id = [is readInt32];
-    result.from_id = TGModernLegacyIdForModernId([is readInt64]);
-    result.chat_id = (int32_t)[is readInt64];
+    result.from_id = [is readInt64];
+    result.chat_id = [is readInt64];
     result.message = [is readString];
     result.pts = [is readInt32];
     result.pts_count = [is readInt32];
@@ -9019,7 +9157,7 @@ static NSString *TLCodexReadReactionSummary(NSInputStream *is, id<TLSerializatio
     if (result.flags & (1 << 2))
         result.fwd_header = (TLMessageFwdHeader *)CodexReadObject(is, environment, error);
     if (result.flags & (1 << 11))
-        result.via_bot_id = TGModernLegacyIdForModernId([is readInt64]);
+        result.via_bot_id = [is readInt64];
     if (result.flags & (1 << 3))
         result.reply_to_msg_id = CodexReadReplyHeaderCompat(is, environment, error);
     if (result.flags & (1 << 7))
@@ -11052,6 +11190,9 @@ void TLMetaClassStore::mergeSchemeEntries(TLMetaSchemeEntries &entries, bool mat
     manualObjectParsers[(int32_t)0xd0a1d008] = TLLazyManualObjectParser(TLUser$modernUser);
     manualObjectParsers[(int32_t)0x145ade0b] = TLLazyManualObjectParser(TLCodexModernContactParser);
     manualObjectParsers[(int32_t)0xeae87e42] = TLLazyManualObjectParser(TLCodexModernContactsParser);
+    manualObjectParsers[(int32_t)0xf385c1f6] = TLLazyManualObjectParser(TLCodexLangPackDifferenceParser);
+    manualObjectParsers[(int32_t)0xcad181f6] = TLLazyManualObjectParser(TLCodexLangPackStringParser);
+    manualObjectParsers[(int32_t)0x2979eeb2] = TLLazyManualObjectParser(TLCodexLangPackStringParser);
     manualObjectParsers[(int32_t)0x0ade1591] = TLLazyManualObjectParser(TLCodexModernBlockedParser);
     manualObjectParsers[(int32_t)0xe1664194] = TLLazyManualObjectParser(TLCodexModernBlockedParser);
     manualObjectParsers[(int32_t)0xe8fd8014] = sharedSkipObjectParser;
@@ -11545,7 +11686,7 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
     {
         if (context != nil)
         {
-            if (context.impliedSignature != 0)
+            if (context.impliedSignature != 0 && context.impliedSignature != TL_UNIVERSAL_VECTOR_CONSTRUCTOR)
                 signature = context.impliedSignature;
             else
             {
@@ -11613,8 +11754,8 @@ TLConstructedValue TLMetaClassStore::constructValue(NSInputStream *is, int32_t s
         object.n_id = callId;
         object.access_hash = accessHash;
         object.date = date;
-        object.admin_id = TGModernLegacyIdForModernId(adminId);
-        object.participant_id = TGModernLegacyIdForModernId(participantId);
+        object.admin_id = adminId;
+        object.participant_id = participantId;
         object.protocol = protocolValue.nativeObject;
         object.receive_date = (flags & (1 << 0)) != 0 ? [is readInt32] : 0;
 

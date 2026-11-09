@@ -6,6 +6,7 @@
 
 #import "TL/TLMetaScheme.h"
 #import "TGTelegramNetworking.h"
+#import "../OnegramRuntime/OGRuntime.h"
 
 #import "TLUpdates+TG.h"
 #import "TGDatabase.h"
@@ -46,6 +47,7 @@
 
 #import "TLRPCchannels_getAdminLog.h"
 #import "TLRPCmessages_markDialogUnread.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static SMulticastSignalManager *TGIOS6ChannelExtendedInfoSignalManagerInstance = nil;
 
@@ -57,36 +59,6 @@ static SMulticastSignalManager *TGIOS6ChannelExtendedInfoSignalManager(void)
             TGIOS6ChannelExtendedInfoSignalManagerInstance = [[SMulticastSignalManager alloc] init];
         return TGIOS6ChannelExtendedInfoSignalManagerInstance;
     }
-}
-
-static inline bool TGIOS6ChannelPeerIdIsModernRawChannel(int64_t peerId, int64_t accessHash)
-{
-    int64_t channelId = -peerId - 4294967296LL;
-    return accessHash != 0 && channelId > 0 && channelId <= UINT32_MAX;
-}
-
-static inline bool TGIOS6ChannelPeerIdIsModernChannel(int64_t peerId, int64_t accessHash)
-{
-    return TGIOS6ChannelPeerIdIsModernRawChannel(peerId, accessHash) || TGPeerIdIsChannel(peerId);
-}
-
-static inline int64_t TGIOS6ChannelIdFromPeerId(int64_t peerId, int64_t accessHash)
-{
-    NSData *apiIdData = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6ApiChannelId")];
-    int64_t apiChannelId = 0;
-    if (apiIdData.length == sizeof(int64_t))
-        [apiIdData getBytes:&apiChannelId length:sizeof(apiChannelId)];
-    if (apiChannelId > 0)
-        return apiChannelId;
-
-    if (TGIOS6ChannelPeerIdIsModernRawChannel(peerId, accessHash))
-        return -peerId - 4294967296LL;
-
-    int32_t channelId = TGChannelIdFromPeerId(peerId);
-    if (channelId != 0)
-        return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
-    
-    return 0;
 }
 
 static inline int64_t TGIOS6ChannelAccessHashForPeerId(int64_t peerId, int64_t accessHash)
@@ -104,7 +76,7 @@ static inline int64_t TGIOS6ChannelAccessHashForPeerId(int64_t peerId, int64_t a
 static inline TLInputPeer *TGIOS6ChannelInputPeer(int64_t peerId, int64_t accessHash)
 {
     TLInputPeer$inputPeerChannel *inputPeer = [[TLInputPeer$inputPeerChannel alloc] init];
-    inputPeer.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputPeer.channel_id = TGChannelIdFromPeerId(peerId);
     inputPeer.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     return inputPeer;
 }
@@ -128,12 +100,7 @@ static void TGIOS6StoreChannelHistoryChats(NSArray *chats)
         if (conversation == nil || !TGPeerIdIsChannel(conversation.conversationId))
             continue;
 
-        int64_t apiChannelId = TGIOS6ApiChannelIdForConversation(conversation);
-        if (apiChannelId > 0)
-        {
-            [TGDatabaseInstance() setConversationCustomProperty:conversation.conversationId name:murMurHash32(@"ios6ApiChannelId") value:[NSData dataWithBytes:&apiChannelId length:sizeof(apiChannelId)]];
-            [TGDatabaseInstance() setConversationCustomProperty:conversation.conversationId name:murMurHash32(@"ios6InvalidPeer") value:nil];
-        }
+        [TGDatabaseInstance() setConversationCustomProperty:conversation.conversationId name:murMurHash32(@"ios6InvalidPeer") value:nil];
         [channels addObject:conversation];
     }
 
@@ -145,7 +112,7 @@ static void TGIOS6StoreChannelHistoryChats(NSArray *chats)
 
 + (TLInputChannel *)inputChannelForPeerId:(int64_t)peerId accessHash:(int64_t)accessHash
 {
-    int64_t channelId = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    int64_t channelId = TGChannelIdFromPeerId(peerId);
     if (channelId == 0)
         return nil;
 
@@ -338,7 +305,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         
         TLRPCmessages_getHistory$messages_getHistory *getHistory = [[TLRPCmessages_getHistory$messages_getHistory alloc] init];
         TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         if (inputChannel.access_hash == 0)
         {
@@ -370,6 +337,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             int32_t maxParsedDate = 0;
             int32_t minParsedDate = 0;
             NSMutableArray *parsedMessages = [[NSMutableArray alloc] init];
+            id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:messages.messages];
             for (id desc in messages.messages) {
                 TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:desc];
                 message.pts = pts;
@@ -386,6 +354,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                     }
                 }
             }
+            [TGMessage endReplyPreload:replyPreload];
             
             return [[self messagesWithDownloadedReplyMessages:peerId accessHash:accessHash messages:parsedMessages] mapToSignal:^SSignal *(NSArray *parsedMessages) {
                 TGMessageHole *closedHole = [[TGMessageHole alloc] initWithMinId:minParsedId minTimestamp:minParsedDate maxId:maxParsedId maxTimestamp:maxParsedDate];
@@ -417,13 +386,12 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             }
         }];
         
-        bool forceRemoteTailRefresh = TGIOS6ChannelPeerIdIsModernRawChannel(peerId, accessHash);
-        if (existingCount >= 20 && !hasHoles && !forceRemoteTailRefresh) {
+        if (existingCount >= 20 && !hasHoles) {
             return [SSignal single:@{}];
         }
         TLRPCmessages_getHistory$messages_getHistory *getHistory = [[TLRPCmessages_getHistory$messages_getHistory alloc] init];
         TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         if (inputChannel.access_hash == 0)
         {
@@ -454,6 +422,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
             int32_t maxParsedDate = 0;
             int32_t minParsedDate = 0;
             NSMutableArray *parsedMessages = [[NSMutableArray alloc] init];
+            id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:messages.messages];
             for (id desc in messages.messages) {
                 TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:desc];
                 message.pts = pts;
@@ -470,6 +439,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                     }
                 }
             }
+            [TGMessage endReplyPreload:replyPreload];
             SSignal *readyMessages = nil;
 #if defined(ONEGRAM_ARMV6)
             readyMessages = [SSignal single:parsedMessages];
@@ -553,7 +523,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     id request = nil;
     TLRPCmessages_getHistory$messages_getHistory *getHistory = [[TLRPCmessages_getHistory$messages_getHistory alloc] init];
     TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     if (inputChannel.access_hash == 0)
     {
@@ -594,6 +564,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         int32_t maxParsedDate = 0;
         int32_t minParsedDate = 0;
         NSMutableArray *parsedMessages = [[NSMutableArray alloc] init];
+        id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:messages.messages];
         for (id desc in messages.messages) {
             TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:desc];
             message.pts = pts;
@@ -610,6 +581,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                 }
             }
         }
+        [TGMessage endReplyPreload:replyPreload];
         
         NSMutableArray *unimportantGroups = [[NSMutableArray alloc] init];
         if (important) {
@@ -749,7 +721,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     }
     
     int32_t limit = 100;
-    int64_t channelId = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    int64_t channelId = TGChannelIdFromPeerId(peerId);
     int64_t resolvedAccessHash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     if (channelId == 0 || resolvedAccessHash == 0)
     {
@@ -774,7 +746,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     return [[TGDatabaseInstance() enqueuedDeleteChannelMessages] mapToQueue:^SSignal *(TGQueuedDeleteChannelMessages *queued) {
         TLRPCchannels_deleteMessages$channels_deleteMessages *deleteChannelMessages = [[TLRPCchannels_deleteMessages$channels_deleteMessages alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(queued.peerId, queued.accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(queued.peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(queued.peerId, queued.accessHash);
         deleteChannelMessages.channel = inputChannel;
         deleteChannelMessages.n_id = queued.messageIds;
@@ -792,7 +764,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 
 + (SSignal *)readChannelMessages {
     return [[TGDatabaseInstance() enqueuedReadChannelMessages] mapToQueue:^SSignal *(TGQueuedReadChannelMessages *queued) {
-        bool isChannel = TGIOS6ChannelPeerIdIsModernChannel(queued.peerId, queued.accessHash);
+        bool isChannel = TGPeerIdIsChannel(queued.peerId);
         if (queued.unread) {
             TLRPCmessages_markDialogUnread *markDialogUnread = [[TLRPCmessages_markDialogUnread alloc] init];
             TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:queued.peerId accessHash:queued.accessHash];
@@ -814,7 +786,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         else if (isChannel) {
             TLRPCchannels_readHistory$channels_readHistory *readChannelHistory = [[TLRPCchannels_readHistory$channels_readHistory alloc] init];
             TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-            inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(queued.peerId, queued.accessHash);
+            inputChannel.channel_id = TGChannelIdFromPeerId(queued.peerId);
             inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(queued.peerId, queued.accessHash);
             readChannelHistory.channel = inputChannel;
             readChannelHistory.max_id = queued.maxId;
@@ -849,7 +821,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     return [[TGDatabaseInstance() enqueuedLeaveChannels] mapToQueue:^SSignal *(TGQueuedLeaveChannel *queued) {
         TLRPCchannels_leaveChannel$channels_leaveChannel *leaveChannel = [[TLRPCchannels_leaveChannel$channels_leaveChannel alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(queued.peerId, queued.accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(queued.peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(queued.peerId, queued.accessHash);
         leaveChannel.channel = inputChannel;
         
@@ -880,7 +852,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     return [[[TGDatabaseInstance() existingChannel:peerId] take:1] mapToSignal:^SSignal *(TGConversation *next) {
         TLRPCchannels_joinChannel$channels_joinChannel *joinChannel = [[TLRPCchannels_joinChannel$channels_joinChannel alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, next.accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
         inputChannel.access_hash = next.accessHash;
         joinChannel.channel = inputChannel;
 
@@ -905,7 +877,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)inviteUsers:(int64_t)peerId accessHash:(int64_t)accessHash users:(NSArray *)users {
     TLRPCchannels_inviteToChannel$channels_inviteToChannel *inviteToChannel = [[TLRPCchannels_inviteToChannel$channels_inviteToChannel alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     inviteToChannel.channel = inputChannel;
     
@@ -937,7 +909,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     TLRPCchannels_checkUsername$channels_checkUsername *checkChannelUsername = [[TLRPCchannels_checkUsername$channels_checkUsername alloc] init];
     if (peerId != 0) {
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         checkChannelUsername.channel = inputChannel;
     } else {
@@ -956,7 +928,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)updateChannelUsername:(int64_t)peerId accessHash:(int64_t)accessHash username:(NSString *)username {
     TLRPCchannels_updateUsername$channels_updateUsername *updateChannelUsername = [[TLRPCchannels_updateUsername$channels_updateUsername alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     updateChannelUsername.channel = inputChannel;
     updateChannelUsername.username = username;
@@ -992,7 +964,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     return [uploadedFile mapToSignal:^SSignal *(TLInputFile *inputFile) {
         TLRPCchannels_editPhoto$channels_editPhoto *editPhoto = [[TLRPCchannels_editPhoto$channels_editPhoto alloc] init];
         TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         editPhoto.channel = inputChannel;
         TLInputChatPhoto$inputChatUploadedPhoto *uploadedPhoto = [[TLInputChatPhoto$inputChatUploadedPhoto alloc] init];
@@ -1017,7 +989,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)updateChannelStickerPack:(int64_t)peerId accessHash:(int64_t)accessHash stickerPack:(TGStickerPack *)stickerPack {
     TLRPCchannels_setStickers$channels_setStickers *setStickers = [[TLRPCchannels_setStickers$channels_setStickers alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     setStickers.channel = inputChannel;
     
@@ -1058,7 +1030,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     
     TLRPCchannels_getFullChannel$channels_getFullChannel *getFullChat = [[TLRPCchannels_getFullChannel$channels_getFullChannel alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     getFullChat.channel = inputChannel;
     SSignal *signal = [[[[TGTelegramNetworking instance] requestSignal:getFullChat] mapToSignal:^SSignal *(TLmessages_ChatFull *result) {
@@ -1165,7 +1137,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                         messagesMuted = @(concreteSettings.silent);
                     }
                     if (concreteSettings.flags & (1 << 2)) {
-                        if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+                        if (concreteSettings.mute_until > OGRemoteClockTime())
                             peerMuteUntil = @(concreteSettings.mute_until);
                         else
                             peerMuteUntil = @0;
@@ -1246,7 +1218,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     TGIOS6MessageViewsRpc *getMessageViews = [[TGIOS6MessageViewsRpc alloc] init];
     if (TGPeerIdIsChannel(peerId)) {
         TLInputPeer$inputPeerChannel *inputChannel = [[TLInputPeer$inputPeerChannel alloc] init];
-        inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+        inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
         inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
         getMessageViews.peer = inputChannel;
     } else {
@@ -1304,7 +1276,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 
 + (SSignal *)toggleChannelEverybodyCanInviteMembers:(int64_t)peerId accessHash:(int64_t)accessHash enabled:(bool)enabled {
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     TLRPCchannels_getChannels$channels_getChannels *getChannels = [[TLRPCchannels_getChannels$channels_getChannels alloc] init];
     getChannels.n_id = @[inputChannel];
@@ -1353,7 +1325,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)updateChannelAdminRights:(int64_t)peerId accessHash:(int64_t)accessHash user:(TGUser *)user rights:(TGChannelAdminRights *)rights {
     TLRPCchannels_editAdmin$channels_editAdmin *editAdmin = [[TLRPCchannels_editAdmin$channels_editAdmin alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     editAdmin.channel = inputChannel;
     editAdmin.user_id = [TGTelegraphInstance createInputUserForUid:user.uid];
@@ -1369,7 +1341,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)updateChannelBannedRightsAndGetMembership:(int64_t)peerId accessHash:(int64_t)accessHash user:(TGUser *)user rights:(TGChannelBannedRights *)rights {
     TLRPCchannels_editBanned$channels_editBanned *editBanned = [[TLRPCchannels_editBanned$channels_editBanned alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     editBanned.channel = inputChannel;
     editBanned.participant = [TGTelegraphInstance createInputPeerForConversation:user.uid accessHash:user.phoneNumberHash];
@@ -1387,7 +1359,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)channelRole:(int64_t)peerId accessHash:(int64_t)accessHash user:(TGUser *)user {
     TLRPCchannels_getParticipant$channels_getParticipant *getParticipant = [[TLRPCchannels_getParticipant$channels_getParticipant alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     getParticipant.channel = inputChannel;
     getParticipant.participant = [TGTelegraphInstance createInputPeerForConversation:user.uid accessHash:user.phoneNumberHash];
@@ -1398,9 +1370,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         bool isCreator = false;
         TGChannelAdminRights *adminRights = nil;
         TGChannelBannedRights *bannedRights = nil;
-        int32_t inviterId = 0;
-        int32_t adminInviterId = 0;
-        int32_t kickedById = 0;
+        int64_t inviterId = 0;
+        int64_t adminInviterId = 0;
+        int64_t kickedById = 0;
         bool adminCanManage = false;
         
         if ([participant isKindOfClass:[TLChannelParticipant$channelParticipant class]]) {
@@ -1433,7 +1405,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)channelMembers:(int64_t)peerId accessHash:(int64_t)accessHash filter:(TLChannelParticipantsFilter *)filter offset:(NSUInteger)offset count:(NSUInteger)count hash:(int64_t)hash {
     TLRPCchannels_getParticipants$channels_getParticipants *getParticipants = [[TLRPCchannels_getParticipants$channels_getParticipants alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     getParticipants.channel = inputChannel;
     getParticipants.filter = filter;
@@ -1455,9 +1427,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                     bool isCreator = false;
                     TGChannelAdminRights *adminRights = nil;
                     TGChannelBannedRights *bannedRights = nil;
-                    int32_t inviterId = 0;
-                    int32_t adminInviterId = 0;
-                    int32_t kickedById = 0;
+                    int64_t inviterId = 0;
+                    int64_t adminInviterId = 0;
+                    int64_t kickedById = 0;
                     bool adminCanManage = false;
                     
                     if ([participant isKindOfClass:[TLChannelParticipant$channelParticipant class]]) {
@@ -1515,7 +1487,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)channelInviterUser:(int64_t)peerId accessHash:(int64_t)accessHash {
     TLRPCchannels_getParticipant$channels_getParticipant *getParticipant = [[TLRPCchannels_getParticipant$channels_getParticipant alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     getParticipant.channel = inputChannel;
     getParticipant.participant = [[TLInputPeer$inputPeerSelf alloc] init];
@@ -1542,7 +1514,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
         
         TLChannelParticipant *participant = result.participant;
-        int32_t inviterUid = 0;
+        int64_t inviterUid = 0;
         int32_t timestamp = 0;
         
         if (cachedData.migrationData == nil && [participant isKindOfClass:[TLChannelParticipant$channelParticipantSelf class]]) {
@@ -1559,7 +1531,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)deleteChannel:(int64_t)peerId accessHash:(int64_t)accessHash {
     TLRPCchannels_deleteChannel$channels_deleteChannel *deleteChannel = [[TLRPCchannels_deleteChannel$channels_deleteChannel alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     deleteChannel.channel = inputChannel;
     
@@ -1576,7 +1548,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     TLRPCchannels_toggleSignatures$channels_toggleSignatures *toggleSignatures = [[TLRPCchannels_toggleSignatures$channels_toggleSignatures alloc] init];
     
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     toggleSignatures.channel = inputChannel;
     toggleSignatures.flags = enabled ? (1 << 0) : 0;
@@ -1598,7 +1570,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)messageEditData:(int64_t)peerId accessHash:(int64_t)accessHash messageId:(int32_t)messageId {
     TLRPCmessages_getMessageEditData$messages_getMessageEditData *getMessageEditData = [[TLRPCmessages_getMessageEditData$messages_getMessageEditData alloc] init];
     TLInputPeer$inputPeerChannel *inputPeerChannel = [[TLInputPeer$inputPeerChannel alloc] init];
-    inputPeerChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputPeerChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputPeerChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     getMessageEditData.peer = inputPeerChannel;
     getMessageEditData.n_id = messageId;
@@ -1635,7 +1607,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)deleteParticipantHistory:(int64_t)peerId accessHash:(int64_t)accessHash participant:(TLInputPeer *)participant {
     TLRPCchannels_deleteParticipantHistory$channels_deleteParticipantHistory *deleteParticipantHistory = [[TLRPCchannels_deleteParticipantHistory$channels_deleteParticipantHistory alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     deleteParticipantHistory.channel = inputChannel;
     deleteParticipantHistory.participant = participant;
@@ -1660,7 +1632,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)reportUserSpam:(int64_t)peerId accessHash:(int64_t)accessHash user:(TGUser *)user messageIds:(NSArray *)messageIds {
     TLRPCchannels_reportSpam$channels_reportSpam *reportSpam = [[TLRPCchannels_reportSpam$channels_reportSpam alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     reportSpam.channel = inputChannel;
     reportSpam.participant = [TGTelegraphInstance createInputPeerForConversation:user.uid accessHash:user.phoneNumberHash];
@@ -1689,7 +1661,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)channelAdminLogEvents:(int64_t)peerId accessHash:(int64_t)accessHash minEntryId:(int64_t)minEntryId count:(int32_t)count filter:(TGChannelEventFilter)filter searchQuery:(NSString *)searchQuery userIds:(NSArray *)userIds {
     TLRPCchannels_getAdminLog *getAdminLog = [[TLRPCchannels_getAdminLog alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     getAdminLog.channel = inputChannel;
     getAdminLog.max_id = minEntryId;
@@ -1749,7 +1721,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     if (userIds != nil) {
         NSMutableArray *users = [[NSMutableArray alloc] init];
         for (NSNumber *userId in userIds) {
-            TGUser *user = [TGDatabaseInstance() loadUser:[userId intValue]];
+            TGUser *user = [TGDatabaseInstance() loadUser:[userId longLongValue]];
             if (user != nil) {
                 TLInputUser$inputUser *inputUser = [[TLInputUser$inputUser alloc] init];
                 inputUser.user_id = user.uid;
@@ -1779,9 +1751,9 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     bool isCreator = false;
     TGChannelAdminRights *adminRights = nil;
     TGChannelBannedRights *bannedRights = nil;
-    int32_t inviterId = 0;
-    int32_t adminInviterId = 0;
-    int32_t kickedById = 0;
+    int64_t inviterId = 0;
+    int64_t adminInviterId = 0;
+    int64_t kickedById = 0;
     bool adminCanManage = false;
     
     if ([participant isKindOfClass:[TLChannelParticipant$channelParticipant class]]) {
@@ -1810,7 +1782,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
 + (SSignal *)togglePreHistoryHidden:(int64_t)peerId accessHash:(int64_t)accessHash enabled:(bool)enabled {
     TLRPCchannels_togglePreHistoryHidden$channels_togglePreHistoryHidden *toggleRequest = [[TLRPCchannels_togglePreHistoryHidden$channels_togglePreHistoryHidden alloc] init];
     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-    inputChannel.channel_id = TGIOS6ChannelIdFromPeerId(peerId, accessHash);
+    inputChannel.channel_id = TGChannelIdFromPeerId(peerId);
     inputChannel.access_hash = TGIOS6ChannelAccessHashForPeerId(peerId, accessHash);
     toggleRequest.channel = inputChannel;
     toggleRequest.enabled = enabled;
@@ -1827,14 +1799,12 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
     }];
 }
 
-static int32_t hashForAdminIds(NSArray *contactIds) {
-    uint32_t acc = 0;
-    
+static int64_t hashForAdminIds(NSArray *contactIds) {
+    int64_t acc = 0;
     for (NSNumber *nUid in contactIds) {
-        uint32_t uid = (uint32_t)[nUid intValue];
-        acc = (acc * 20261) + uid;
+        acc = TGApiHashCombine(acc, [nUid longLongValue]);
     }
-    return acc % 0x7FFFFFFF;
+    return acc;
 }
 
 + (void)reloadForAccountSwitch {
@@ -1907,9 +1877,19 @@ static int32_t hashForAdminIds(NSArray *contactIds) {
 }
 
 + (SSignal *)pollQueuedChannels {
-    return [[TGDatabaseInstance() enqueuedChannelPolls] mapToSignal:^SSignal *(TGQueuedPeerPoll *poll) {
-        [TGChannelStateSignals requestChannelPoll:poll.peerId];
-        return [SSignal complete];
+    SSignal *polls = [TGDatabaseInstance() enqueuedChannelPolls];
+    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(__unused SSubscriber *subscriber) {
+        OGRuntimeSyncActivity *activity = [[OGRuntimeSyncActivity alloc] init];
+        id<SDisposable> disposable = [polls startWithNext:^(TGQueuedPeerPoll *poll) {
+            [TGChannelStateSignals requestChannelPoll:poll.peerId];
+        }];
+        [TGDatabaseInstance() dispatchOnDatabaseThread:^{
+            [activity end];
+        } synchronous:false];
+        return [[SBlockDisposable alloc] initWithBlock:^{
+            [activity end];
+            [disposable dispose];
+        }];
     }];
 }
 

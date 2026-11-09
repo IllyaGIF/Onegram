@@ -58,11 +58,11 @@
     }];
 }
 
-- (SSignal *)requestCallWithPeerId:(int64_t)peerId {
-    return [self requestCallWithPeerId:peerId uuid:[NSUUID UUID] session:nil];
+- (SSignal *)requestCallWithPeerId:(int64_t)peerId video:(bool)video {
+    return [self requestCallWithPeerId:peerId video:video uuid:[NSUUID UUID] session:nil];
 }
 
-- (SSignal *)requestCallWithPeerId:(int64_t)peerId uuid:(NSUUID *)uuid session:(TGCallSession *)session {
+- (SSignal *)requestCallWithPeerId:(int64_t)peerId video:(bool)video uuid:(NSUUID *)uuid session:(TGCallSession *)session {
     return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
         SMetaDisposable *disposable = [[SMetaDisposable alloc] init];
         
@@ -105,7 +105,7 @@
             if ([TGCallManager useCallKit])
             {
                 TGDispatchOnMainThread(^{
-                    [_callKitAdapter startCallWithPeerId:peerId uuid:context.uuid];
+                    [_callKitAdapter startCallWithPeerId:peerId uuid:context.uuid video:video];
                 });
                 
                 session.onStartedConnecting = ^{
@@ -127,7 +127,7 @@
                 };
             }
             
-            [context.disposable setDisposable:[[[TGCallSignals requestedOutgoingCallWithPeerId:peerId] deliverOn:_queue] startWithNext:^(id next) {
+            [context.disposable setDisposable:[[[TGCallSignals requestedOutgoingCallWithPeerId:peerId video:video] deliverOn:_queue] startWithNext:^(id next) {
                 
                 __strong TGCallManager *strongSelf = weakSelf;
                 if (strongSelf != nil) {
@@ -139,7 +139,7 @@
                 if ([error isKindOfClass:[MTRpcError class]])
                     rpcError = ((MTRpcError *)error).errorDescription;
                 
-                TGLog(@"CALL manager.request.error peer=%lld internal=%d error=%@ rpc=%@", peerId, internalId, error, rpcError);
+                TGDiagnosticLog(@"CALL manager.request.error peer=%lld internal=%d error=%@ rpc=%@", peerId, internalId, error, rpcError);
                 
                 __strong TGCallManager *strongSelf = weakSelf;
                 
@@ -250,6 +250,7 @@
                 context.session = [[TGCallSession alloc]
                                    initWithSignal:[self callStateWithInternalId:@(internalId)]
                                    outgoing:false];
+                context.session.isVideoCall = requestedContext.video && [TGCallSession supportsVideoReceiving];
                 
                 if ([TGCallManager useCallKit])
                     [_callKitAdapter addCallSession:context.session uuid:context.uuid];
@@ -265,6 +266,7 @@
                                    adminId:requestedContext.adminId
                                    participantId:requestedContext.participantId
                                    gAHash:requestedContext.gAHash
+                                   video:requestedContext.video
                                    declined:true];
                 
                 context.session = [[TGCallSession alloc]
@@ -276,10 +278,10 @@
         }
         else if ([callContext isKindOfClass:[TGCallDiscardedContext class]]) {
             [_discardedCallIds addObject:@(callId)];
-            TGLog(@"CallManager: Added unknown discarded call with id %lld", callId);
+            TGDiagnosticLog(@"CallManager: Added unknown discarded call with id %lld", callId);
         }
         else {
-            TGLog(@"CallManager: Unknown call context with id %lld", callId);
+            TGDiagnosticLog(@"CallManager: Unknown call context with id %lld", callId);
         }
     }];
 }
@@ -325,6 +327,16 @@
     TGCallContext *context = _callContexts[@(internalId)];
     NSAssert(context != nil, @"context != nil");
     
+    if ([toCallContext isKindOfClass:[TGCallDiscardedContext class]])
+    {
+        TGCallDiscardedContext *discardedContext = (TGCallDiscardedContext *)toCallContext;
+        TGDiagnosticLog(@"CALL transition internal=%d from=%@ to=%@ call=%lld reason=%d outside=%d error=%@", internalId, NSStringFromClass([context.context class]), NSStringFromClass([toCallContext class]), discardedContext.callId, (int)discardedContext.reason, (int)discardedContext.outside, discardedContext.error);
+    }
+    else
+    {
+        TGDiagnosticLog(@"CALL transition internal=%d from=%@ to=%@", internalId, NSStringFromClass([context.context class]), NSStringFromClass([toCallContext class]));
+    }
+    
     void (^invalidTransition)(id, id) = ^(id from, id to)
     {
         [self setContextState:internalId state:[[TGCallStateData alloc]
@@ -339,7 +351,7 @@
                                                 needsDebug:false
                                                 error:@"INVALID_TRANSITION"]];
         
-        TGLog(@"CallManager: Invalid call context transition %@ -> %@", from, to);
+        TGDiagnosticLog(@"CallManager: Invalid call context transition %@ -> %@", from, to);
         
         [self cleanupContext:internalId];
     };
@@ -433,7 +445,7 @@
                                                                       needsDebug:false
                                                                       error:rpcError]];
                         
-                        TGLog(@"CallManager: call received error %@", rpcError);
+                        TGDiagnosticLog(@"CallManager: call received error %@", rpcError);
                         
                         [strongSelf cleanupContext:internalId];
                     }
@@ -635,7 +647,7 @@
                                                                   needsDebug:false
                                                                   error:rpcError]];
                     
-                    TGLog(@"CallManager: call confirmed error %@", rpcError);
+                    TGDiagnosticLog(@"CallManager: call confirmed error %@", rpcError);
                     
                     [strongSelf cleanupContext:internalId];
                 }
@@ -804,7 +816,7 @@
                                                         needsDebug:false
                                                         error:@"FINGERPRINT_MISMATCH"]];
                 
-                TGLog(@"Call key gA hash or fingerprint mismatch");
+                TGDiagnosticLog(@"Call key gA hash or fingerprint mismatch");
                 
                 [self cleanupContext:internalId];
             }
@@ -1163,18 +1175,20 @@
     __block TGCallSession *session;
     
     [_queue dispatchSync:^{
-        session = [_callContexts[internalId] session];
+        TGCallContext *context = _callContexts[internalId];
+        session = context.session;
     }];
     
     return session;
 }
 
-- (TGCallSession *)sessionForOutgoingCallWithPeerId:(int64_t)peerId {
+- (TGCallSession *)sessionForOutgoingCallWithPeerId:(int64_t)peerId video:(bool)video {
     NSUUID *uuid = [NSUUID UUID];
     
     TGCallSession *session = [[TGCallSession alloc] initOutgoing:true];
+    session.isVideoCall = video;
     
-    [session startWithSignal:[self requestCallWithPeerId:peerId uuid:uuid session:session]];
+    [session startWithSignal:[self requestCallWithPeerId:peerId video:video uuid:uuid session:session]];
     
     return session;
 }

@@ -19,10 +19,6 @@
 + (bool)isVideoDownloaded:(NSFileManager *)fileManager url:(NSString *)url;
 + (NSString *)localPathForVideoUrl:(NSString *)url;
 
-- (void)videoPartDownloadSuccess:(int)offset length:(int)length data:(NSData *)data;
-- (void)videoPartDownloadFailed:(int)offset length:(int)length;
-- (void)videoPartDownloadProgress:(int)offset packetLength:(int)packetLength progress:(float)progress;
-
 + (void)reloadForAccountSwitch;
 
 @end

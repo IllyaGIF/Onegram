@@ -293,7 +293,7 @@
              {
                  [self.conversationList removeObjectAtIndex:i];
                  
-                 TGUser *user = conversation.conversationId > 0 ? [TGDatabaseInstance() loadUser:(int)conversation.conversationId] : nil;
+                 TGUser *user = conversation.conversationId > 0 ? [TGDatabaseInstance() loadUser:conversation.conversationId] : nil;
                  if (user != nil && (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot))
                  {
                      NSNumber *removedIndex = [[NSNumber alloc] initWithInt:i];
@@ -447,7 +447,7 @@
                 NSArray *uids = actionAttachment.actionData[@"uids"];
                 if (uids != nil) {
                     for (NSNumber *nUid in uids) {
-                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
                         if (user != nil)
                             [messageUsers setObject:user forKey:nUid];
                     }
@@ -455,17 +455,17 @@
                     NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
                     if (nUid != nil)
                     {
-                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
                         if (user != nil)
                             [messageUsers setObject:user forKey:nUid];
                     }
                 }
             }
             
-            TGUser *user = conversation.fromUid == selfUser.uid ? selfUser : [TGDatabaseInstance() loadUser:(int)conversation.fromUid];
+            TGUser *user = conversation.fromUid == selfUser.uid ? selfUser : [TGDatabaseInstance() loadUser:conversation.fromUid];
             if (user != nil)
             {
-                [messageUsers setObject:user forKey:[[NSNumber alloc] initWithInt:user.uid]];
+                [messageUsers setObject:user forKey:[[NSNumber alloc] initWithLongLong:user.uid]];
                 [messageUsers setObject:user forKey:@"author"];
             }
         }
@@ -508,7 +508,7 @@
                     TGConversation *conversation = (TGConversation *)loadedItems[i];
                     if (conversation.isChannel && conversation.isChannelGroup && (!self.botStartMode || conversation.channelRole == TGChannelRoleCreator || conversation.channelRole == TGChannelRoleModerator || conversation.channelRole == TGChannelRolePublisher)) {
                         
-                    } else if (conversation.conversationId <= INT_MIN)
+                    } else if (TGPeerIdIsSecretChat(conversation.conversationId))
                     {
                         [loadedItems removeObjectAtIndex:i];
                         i--;
@@ -543,7 +543,7 @@
                 {
                     TGConversation *conversation = loadedItems[i];
                     if (conversation.isChannel && conversation.isChannelGroup && (!self.botStartMode || conversation.channelRole == TGChannelRoleCreator || conversation.channelRole == TGChannelRoleModerator || conversation.channelRole == TGChannelRolePublisher)) {
-                    } else if (conversation.conversationId <= INT_MIN || conversation.conversationId > 0) {
+                    } else if (TGPeerIdIsSecretChat(conversation.conversationId) || TGPeerIdIsUser(conversation.conversationId)) {
                         [loadedItems removeObjectAtIndex:i];
                         i--;
                     }
@@ -707,7 +707,7 @@
                 if (conversation.isChannel && conversation.isChannelGroup && (!self.botStartMode || conversation.channelRole == TGChannelRoleCreator || conversation.channelRole == TGChannelRoleModerator || conversation.channelRole == TGChannelRolePublisher)) {
                     
                 } else {
-                    if (conversation.conversationId <= INT_MIN)
+                    if (TGPeerIdIsSecretChat(conversation.conversationId))
                     {
                         [conversations removeObjectAtIndex:i];
                         i--;
@@ -735,7 +735,7 @@
                 TGConversation *conversation = conversations[i];
                 if (conversation.isChannel && conversation.isChannelGroup && (!self.botStartMode || conversation.channelRole == TGChannelRoleCreator || conversation.channelRole == TGChannelRoleModerator || conversation.channelRole == TGChannelRolePublisher)) {
                     
-                } else if (conversation.conversationId <= INT_MIN || conversation.conversationId > 0) {
+                } else if (TGPeerIdIsSecretChat(conversation.conversationId) || TGPeerIdIsUser(conversation.conversationId)) {
                     [conversations removeObjectAtIndex:i];
                     i--;
                 }
@@ -892,13 +892,13 @@
     }
     else if ([path isEqualToString:@"/tg/userdatachanges"])
     {
-        std::map<int, int> userIdToIndex;
+        std::map<int64_t, int> userIdToIndex;
         int index = -1;
         NSArray *users = (((SGraphObjectNode *)resource).object);
         for (TGUser *user in users)
         {
             index++;
-            userIdToIndex.insert(std::pair<int, int>(user.uid, index));
+            userIdToIndex.insert(std::pair<int64_t, int>(user.uid, index));
         }
         
         TGUser *selfUser = [[TGDatabase instance] loadUser:TGTelegraphInstance.clientUserId];
@@ -912,18 +912,18 @@
         {
             TGConversation *conversation = [_conversationList objectAtIndex:index];
             
-            int userId = 0;
+            int64_t userId = 0;
             if (conversation.isEncrypted)
             {
                 if (conversation.chatParticipants.chatParticipantUids.count != 0)
-                    userId = [conversation.chatParticipants.chatParticipantUids[0] intValue];
+                    userId = [conversation.chatParticipants.chatParticipantUids[0] longLongValue];
             }
             else if (conversation.isChat)
                 userId = conversation.outgoing ? TGTelegraphInstance.clientUserId : conversation.fromUid;
             else
-                userId = (int)conversation.conversationId;
+                userId = conversation.conversationId;
             
-            std::map<int, int>::iterator it = userIdToIndex.find(userId);
+            std::map<int64_t, int>::iterator it = userIdToIndex.find(userId);
             if (it != userIdToIndex.end() || (updateAllOutgoing && conversation.outgoing))
             {
                 TGConversation *newConversation = [conversation copy];
@@ -961,7 +961,7 @@
             if (conversation.isEncrypted)
             {
                 if (conversation.chatParticipants.chatParticipantUids.count != 0)
-                    mutePeerId = [conversation.chatParticipants.chatParticipantUids[0] intValue];
+                    mutePeerId = [conversation.chatParticipants.chatParticipantUids[0] longLongValue];
             }
             
             if (mutePeerId == peerId)

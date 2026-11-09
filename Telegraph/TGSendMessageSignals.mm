@@ -26,6 +26,7 @@
 #import "TLMessage$modernMessage.h"
 #import "TLMessage$modernMessageService.h"
 #import "TLUpdates$updateShortSentMessage.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 NSString *const TGAccessHashKey = @"accessHash";
 NSString *const TGChannelGroupKey = @"channelGroup";
@@ -188,7 +189,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         message.mediaAttachments = attachments;
         
         message.mid = [[[TGDatabaseInstance() generateLocalMids:1] firstObject] intValue];
-        message.date = (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        message.date = (int)OGRemoteClockTime();
         
         [TGDatabaseInstance() transactionAddMessages:@[message] updateConversationDatas:nil notifyAdded:true];
         
@@ -523,7 +524,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         if (keepForwarded)
         {
             forwardAttachment = [[TGForwardedMessageMediaAttachment alloc] init];
-            forwardAttachment.forwardPeerId = (int32_t)forwardedMessage.fromUid;
+            forwardAttachment.forwardPeerId = forwardedMessage.fromUid;
             forwardAttachment.forwardDate = (int32_t)forwardedMessage.date;
             forwardAttachment.forwardMid = forwardMid;
         }
@@ -550,7 +551,7 @@ NSString *const TGChannelGroupKey = @"channelGroup";
         message.mediaAttachments = attachments;
         
         message.mid = [[[TGDatabaseInstance() generateLocalMids:1] firstObject] intValue];
-        message.date = (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        message.date = (int)OGRemoteClockTime();
         
         [TGDatabaseInstance() transactionAddMessages:@[message] updateConversationDatas:nil notifyAdded:true];
         

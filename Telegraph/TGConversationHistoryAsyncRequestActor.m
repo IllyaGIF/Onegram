@@ -20,7 +20,7 @@
 @class TGBotReplyMarkup;
 
 @interface TGDatabase (IOS6BotReplyMarkupStore)
-- (void)storeBotReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup hideMarkupAuthorId:(int32_t)hideMarkupAuthorId forPeerId:(int64_t)peerId messageId:(int32_t)messageId;
+- (void)storeBotReplyMarkup:(TGBotReplyMarkup *)botReplyMarkup hideMarkupAuthorId:(int64_t)hideMarkupAuthorId forPeerId:(int64_t)peerId messageId:(int32_t)messageId;
 @end
 
 @interface TGConversationHistoryAsyncRequestActor ()
@@ -228,6 +228,7 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
         sourceMessages = filteredSourceMessages;
     }
     
+    id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:sourceMessages];
     for (TLMessage *messageDesc in sourceMessages)
     {
         TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
@@ -253,9 +254,10 @@ static NSString *TGIOS6HistoryChosenReaction(TGMessage *message)
         }
         [messageItems addObject:message];
     }
+    [TGMessage endReplyPreload:replyPreload];
     if (latestIncomingBotReplyMarkupMessage != nil)
     {
-        [TGDatabaseInstance() storeBotReplyMarkup:latestIncomingBotReplyMarkupMessage.replyMarkup hideMarkupAuthorId:(int32_t)latestIncomingBotReplyMarkupMessage.fromUid forPeerId:conversationId messageId:latestIncomingBotReplyMarkupMessage.mid];
+        [TGDatabaseInstance() storeBotReplyMarkup:latestIncomingBotReplyMarkupMessage.replyMarkup hideMarkupAuthorId:latestIncomingBotReplyMarkupMessage.fromUid forPeerId:conversationId messageId:latestIncomingBotReplyMarkupMessage.mid];
     }
     
     [TGDatabaseInstance() storePeerMinMid:conversationId minMid:messageItems.count == 0 || minRemoteMid <= 1 ? 1 : 0];

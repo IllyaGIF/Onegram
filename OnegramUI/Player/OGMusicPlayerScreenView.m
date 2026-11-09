@@ -703,6 +703,17 @@ static NSString *const OGMusicPlayerScreenCellIdentifier = @"OGMusicPlayerScreen
     _progressKnobView.hidden = !_knobVisible;
 }
 
+- (void)setProgressAccessoryView:(UIView *)progressAccessoryView
+{
+    if (_progressAccessoryView == progressAccessoryView)
+        return;
+    [_progressAccessoryView removeFromSuperview];
+    _progressAccessoryView = progressAccessoryView;
+    if (progressAccessoryView != nil)
+        [self addSubview:progressAccessoryView];
+    [self setNeedsLayout];
+}
+
 - (void)layoutSubviews
 {
     [super layoutSubviews];
@@ -749,6 +760,14 @@ static NSString *const OGMusicPlayerScreenCellIdentifier = @"OGMusicPlayerScreen
     _progressBorderView.frame = CGRectMake(_appearance.progressLeftInset, _appearance.progressTopInset, MAX(0.0f, displaySize.width - _appearance.progressLeftInset - _appearance.progressRightInset), _appearance.progressHeight);
     _progressTouchView.frame = CGRectInset(_progressBorderView.frame, -_appearance.progressTouchOutset, -_appearance.progressTouchOutset);
     [self layoutProgress];
+
+    if (_progressAccessoryView != nil)
+    {
+        CGFloat accessoryTop = CGRectGetMaxY(_displayView.frame);
+        CGFloat accessoryGap = MAX(0.0f, top + _appearance.playlistTopInset - accessoryTop);
+        CGFloat accessoryHeight = MIN(16.0f, accessoryGap);
+        _progressAccessoryView.frame = CGRectMake(_displayView.frame.origin.x, OGPixelRound(accessoryTop + (accessoryGap - accessoryHeight) / 2.0f), _displayView.frame.size.width, accessoryHeight);
+    }
 
     CGFloat largeTop = bottom - _appearance.transportBottomInset;
     CGFloat centerX = OGPixelRound(width / 2.0f + _appearance.transportCenterOffset);

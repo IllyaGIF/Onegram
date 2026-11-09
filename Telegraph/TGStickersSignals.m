@@ -23,6 +23,7 @@
 #import "TGTelegraph.h"
 
 #import "TLRPCmessages_searchStickerSets.h"
+#import "../OnegramPlatform/OGPlatformDispatch.h"
 
 #import "../submodules/LegacyComponents/SSignalKitCompat/SMulticastSignalManager.h"
 
@@ -37,35 +38,163 @@ static pthread_mutex_t TGStickerPacksPersistenceMutex = PTHREAD_MUTEX_INITIALIZE
 static NSDictionary *TGStickerPacksPendingDictionary = nil;
 static NSString *TGStickerPacksPendingPath = nil;
 static bool TGStickerPacksPersistenceScheduled = false;
+static uint64_t TGStickerPacksPersistenceGeneration = 0;
 static const NSTimeInterval TGStickerPacksPersistenceDelay = 2.0;
 
-static void TGStickerPacksWriteData(NSData *data, NSString *path)
+static bool TGStickerPacksWriteData(NSData *data, NSString *path)
 {
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:true attributes:nil error:NULL];
     if (data.length == 0 || ![data writeToFile:path atomically:true])
+    {
         TGLog(@"***** TGStickersSignalsClass storePacksData couldn't write to file");
+        return false;
+    }
+    return true;
 }
 
-static void TGStickerPacksPersistPending(void)
+static NSString *TGStickerPacksShardDirectory(NSString *path)
+{
+    return [path stringByAppendingString:@".packs"];
+}
+
+static NSString *TGStickerPacksShardName(TGStickerPack *pack, NSString *prefix)
+{
+    NSString *reference = nil;
+    if ([pack.packReference isKindOfClass:[TGStickerPackIdReference class]])
+    {
+        TGStickerPackIdReference *value = (TGStickerPackIdReference *)pack.packReference;
+        reference = [NSString stringWithFormat:@"%lld:%lld:%@", value.packId, value.packAccessHash, value.shortName ?: @""];
+    }
+    else if ([pack.packReference isKindOfClass:[TGStickerPackShortnameReference class]])
+        reference = ((TGStickerPackShortnameReference *)pack.packReference).shortName;
+    else
+        reference = NSStringFromClass([pack.packReference class]);
+    NSString *identity = [NSString stringWithFormat:@"%@:%@:%d:%d:%d:%d:%d:%@", reference, prefix, pack.packHash, pack.hidden, pack.isMask, pack.isFeatured, pack.installedDate, pack.title ?: @""];
+    return [NSString stringWithFormat:@"%@-%@.data", prefix, [TGStringUtils md5:identity]];
+}
+
+static NSArray *TGStickerPacksStoreShards(NSArray *packs, NSString *prefix, NSString *directory, NSMutableSet *usedFiles, NSUInteger *writtenCount)
+{
+    NSMutableArray *names = [[NSMutableArray alloc] initWithCapacity:packs.count];
+    for (TGStickerPack *pack in packs)
+    {
+        if (![pack isKindOfClass:[TGStickerPack class]])
+            continue;
+        NSString *name = TGStickerPacksShardName(pack, prefix);
+        NSString *file = [directory stringByAppendingPathComponent:name];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:file])
+        {
+            NSData *data = [NSKeyedArchiver archivedDataWithRootObject:pack];
+            if (!TGStickerPacksWriteData(data, file))
+                return nil;
+            (*writtenCount)++;
+        }
+        [names addObject:name];
+        [usedFiles addObject:name];
+    }
+    return names;
+}
+
+static NSArray *TGStickerPacksLoadShards(NSArray *names, NSString *directory, bool *complete)
+{
+    NSMutableArray *packs = [[NSMutableArray alloc] init];
+    if (![names isKindOfClass:[NSArray class]])
+    {
+        *complete = false;
+        return packs;
+    }
+    for (id name in names)
+    {
+        if (![name isKindOfClass:[NSString class]] || [name rangeOfString:@"/"].location != NSNotFound || ![name hasSuffix:@".data"])
+        {
+            *complete = false;
+            continue;
+        }
+        TGStickerPack *pack = nil;
+        @try
+        {
+            pack = [NSKeyedUnarchiver unarchiveObjectWithFile:[directory stringByAppendingPathComponent:name]];
+        }
+        @catch (__unused NSException *exception)
+        {
+        }
+        if ([pack isKindOfClass:[TGStickerPack class]])
+            [packs addObject:pack];
+        else
+        {
+            [[NSFileManager defaultManager] removeItemAtPath:[directory stringByAppendingPathComponent:name] error:NULL];
+            *complete = false;
+        }
+    }
+    return packs;
+}
+
+static void TGStickerPacksPersistPendingGeneration(uint64_t generation)
 {
     pthread_mutex_lock(&TGStickerPacksPersistenceMutex);
+    if (generation != 0 && generation != TGStickerPacksPersistenceGeneration)
+    {
+        pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
+        return;
+    }
     NSDictionary *dictionary = TGStickerPacksPendingDictionary;
     NSString *path = TGStickerPacksPendingPath;
     TGStickerPacksPendingDictionary = nil;
     TGStickerPacksPendingPath = nil;
     TGStickerPacksPersistenceScheduled = false;
+    TGStickerPacksPersistenceGeneration++;
     pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
     if (dictionary == nil || path == nil)
         return;
 
-    @try
+    @autoreleasepool
     {
-        TGStickerPacksWriteData([NSKeyedArchiver archivedDataWithRootObject:dictionary], path);
+        @try
+        {
+            NSString *directory = TGStickerPacksShardDirectory(path);
+            [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
+            NSMutableSet *usedFiles = [[NSMutableSet alloc] init];
+            NSUInteger writtenCount = 0;
+            NSArray *packs = TGStickerPacksStoreShards(dictionary[@"packs"], @"installed", directory, usedFiles, &writtenCount);
+            NSArray *featured = TGStickerPacksStoreShards(dictionary[@"featuredPacks"], @"featured", directory, usedFiles, &writtenCount);
+            if (packs == nil || featured == nil)
+                return;
+            NSMutableDictionary *manifest = [[NSMutableDictionary alloc] initWithDictionary:dictionary];
+            manifest[@"packs"] = packs;
+            manifest[@"featuredPacks"] = featured;
+            manifest[@"ios6ShardedStickerPacks"] = @true;
+            NSDictionary *previousManifest = nil;
+            @try
+            {
+                previousManifest = [NSKeyedUnarchiver unarchiveObjectWithFile:path];
+            }
+            @catch (__unused NSException *exception)
+            {
+            }
+            if ([previousManifest isKindOfClass:[NSDictionary class]] && [previousManifest isEqualToDictionary:manifest])
+            {
+                OGPlatformDiagnosticLog(@"STICKERCACHE state=unchanged shards_written=%lu shards_reused=%lu", (unsigned long)writtenCount, (unsigned long)(usedFiles.count - writtenCount));
+                return;
+            }
+            if (!TGStickerPacksWriteData([NSKeyedArchiver archivedDataWithRootObject:manifest], path))
+                return;
+            for (NSString *name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:NULL])
+            {
+                if ([name hasSuffix:@".data"] && ![usedFiles containsObject:name])
+                    [[NSFileManager defaultManager] removeItemAtPath:[directory stringByAppendingPathComponent:name] error:NULL];
+            }
+            OGPlatformDiagnosticLog(@"STICKERCACHE state=saved shards_written=%lu shards_reused=%lu packs=%lu", (unsigned long)writtenCount, (unsigned long)(usedFiles.count - writtenCount), (unsigned long)usedFiles.count);
+        }
+        @catch (NSException *exception)
+        {
+            TGLog(@"***** TGStickersSignalsClass couldn't archive packs cache: %@", exception);
+        }
     }
-    @catch (NSException *exception)
-    {
-        TGLog(@"***** TGStickersSignalsClass couldn't archive packs cache: %@", exception);
-    }
+}
+
+static void TGStickerPacksPersistPending(void)
+{
+    TGStickerPacksPersistPendingGeneration(0);
 }
 
 static void TGStickerPacksDiscardPending(void)
@@ -73,6 +202,8 @@ static void TGStickerPacksDiscardPending(void)
     pthread_mutex_lock(&TGStickerPacksPersistenceMutex);
     TGStickerPacksPendingDictionary = nil;
     TGStickerPacksPendingPath = nil;
+    TGStickerPacksPersistenceScheduled = false;
+    TGStickerPacksPersistenceGeneration++;
     pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
 }
 
@@ -486,6 +617,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     dispatch_queue_t queue = TGStickerPacksPersistenceQueue();
     NSString *path = [self filePath];
     bool schedule = false;
+    uint64_t generation = 0;
     pthread_mutex_lock(&TGStickerPacksPersistenceMutex);
     TGStickerPacksPendingDictionary = dictionary;
     TGStickerPacksPendingPath = path;
@@ -493,6 +625,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     {
         TGStickerPacksPersistenceScheduled = true;
         schedule = true;
+        generation = ++TGStickerPacksPersistenceGeneration;
     }
     pthread_mutex_unlock(&TGStickerPacksPersistenceMutex);
 
@@ -500,7 +633,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(TGStickerPacksPersistenceDelay * NSEC_PER_SEC)), queue, ^
         {
-            TGStickerPacksPersistPending();
+            TGStickerPacksPersistPendingGeneration(generation);
         });
     }
 }
@@ -519,6 +652,7 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     dispatch_sync(TGStickerPacksPersistenceQueue(), ^
     {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:TGStickerPacksShardDirectory(path) error:nil];
     });
     alreadyReloadedStickerPacksFromRemote = false;
 }
@@ -608,6 +742,22 @@ static NSDictionary *TGIOS6SafeStickerPacks(id dict)
     if (dict == nil || ![dict isKindOfClass:[NSDictionary class]])
     {
         dict = TGIOS6EmptyStickerPacks();
+    }
+    if ([dict[@"ios6ShardedStickerPacks"] boolValue])
+    {
+        bool completeInstalled = true;
+        bool completeFeatured = true;
+        NSString *directory = TGStickerPacksShardDirectory([self filePath]);
+        NSArray *packs = TGStickerPacksLoadShards(dict[@"packs"], directory, &completeInstalled);
+        NSArray *featured = TGStickerPacksLoadShards(dict[@"featuredPacks"], directory, &completeFeatured);
+        NSMutableDictionary *expanded = [[NSMutableDictionary alloc] initWithDictionary:dict];
+        expanded[@"packs"] = packs;
+        expanded[@"featuredPacks"] = featured;
+        if (!completeInstalled)
+            expanded[@"cacheUpdateDate"] = @0;
+        if (!completeFeatured)
+            expanded[@"featuredCacheUpdateDate"] = @0;
+        dict = expanded;
     }
     
     NSMutableDictionary *normalizedDict = [[NSMutableDictionary alloc] initWithDictionary:dict];

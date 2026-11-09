@@ -114,6 +114,8 @@
     MTDisposableSet *_cleanupSessionInfoDisposables;
 }
 
+- (void)_notifyGlobalTimeDifferenceUpdated:(NSTimeInterval)globalTimeDifference;
+
 @end
 
 @implementation MTContext
@@ -276,6 +278,7 @@
                 pthread_mutex_lock(&_globalTimeDifferenceLock);
                 _globalTimeDifference = difference;
                 pthread_mutex_unlock(&_globalTimeDifferenceLock);
+                [self _notifyGlobalTimeDifferenceUpdated:difference];
             }
             
             NSDictionary *datacenterAddressSetById = [keychain objectForKey:@"datacenterAddressSetById" group:@"persistent"];
@@ -389,7 +392,18 @@
         
         
         [_keychain setObject:@(globalTimeDifference) forKey:@"globalTimeDifference" group:@"temp"];
+        [self _notifyGlobalTimeDifferenceUpdated:globalTimeDifference];
     }];
+}
+
+- (void)_notifyGlobalTimeDifferenceUpdated:(NSTimeInterval)globalTimeDifference
+{
+    NSArray *currentListeners = [[NSArray alloc] initWithArray:_changeListeners];
+    for (id<MTContextChangeListener> listener in currentListeners)
+    {
+        if ([listener respondsToSelector:@selector(contextGlobalTimeDifferenceUpdated:globalTimeDifference:)])
+            [listener contextGlobalTimeDifferenceUpdated:self globalTimeDifference:globalTimeDifference];
+    }
 }
 
 - (void)setSeedAddressSetForDatacenterWithId:(NSInteger)datacenterId seedAddressSet:(MTDatacenterAddressSet *)seedAddressSet

@@ -25,6 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)invalidateAllKeychains;
 
 - (NSDictionary *)contentsForGroup:(NSString *)group;
+- (void)preloadGroups:(NSArray *)groups;
 
 @end
 

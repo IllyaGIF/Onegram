@@ -447,6 +447,16 @@ static void MTFileBasedKeychainWriteFallbackAes(NSString *documentsPath, NSStrin
     TG_SYNCHRONIZED_END(_dictByGroup);
 }
 
+- (void)preloadGroups:(NSArray *)groups
+{
+    for (NSString *group in groups)
+    {
+        TG_SYNCHRONIZED_BEGIN(_dictByGroup);
+        [self _loadKeychainIfNeeded:group];
+        TG_SYNCHRONIZED_END(_dictByGroup);
+    }
+}
+
 - (id)objectForKey:(id<NSCopying>)aKey group:(NSString *)group
 {
     if (aKey == nil)

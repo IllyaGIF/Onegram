@@ -73,26 +73,35 @@ static UIImage *TGMediaAssetLegacyImageForRepresentation(ALAssetRepresentation *
 }
 #endif
 
+static SSignal *TGMediaAssetLegacyImageSignal(UIImage *image)
+{
+    return image == nil ? [SSignal fail:nil] : [SSignal single:image];
+}
+
 @implementation TGMediaAssetLegacyImageSignals
 
 + (SSignal *)imageForAsset:(TGMediaAsset *)asset imageType:(TGMediaAssetImageType)imageType size:(CGSize)size allowNetworkAccess:(bool)__unused allowNetworkAccess
 {
     if (imageType == TGMediaAssetImageTypeFastScreen)
     {
-        return [[self imageForAsset:asset imageType:TGMediaAssetImageTypeAspectRatioThumbnail size:CGSizeZero] then:[self imageForAsset:asset imageType:TGMediaAssetImageTypeScreen size:size]];
+        SSignal *thumbnailSignal = [[self imageForAsset:asset imageType:TGMediaAssetImageTypeAspectRatioThumbnail size:CGSizeZero] catch:^SSignal *(__unused id error)
+        {
+            return [SSignal complete];
+        }];
+        return [thumbnailSignal then:[self imageForAsset:asset imageType:TGMediaAssetImageTypeScreen size:size]];
     }
     
     switch (imageType)
     {
         case TGMediaAssetImageTypeThumbnail:
         {
-            return [SSignal single:[UIImage imageWithCGImage:asset.backingLegacyAsset.thumbnail]];
+            return TGMediaAssetLegacyImageSignal([UIImage imageWithCGImage:asset.backingLegacyAsset.thumbnail]);
         }
             break;
             
         case TGMediaAssetImageTypeAspectRatioThumbnail:
         {
-            return [SSignal single:TGMediaAssetLegacyAspectRatioThumbnailImage(asset.backingLegacyAsset)];
+            return TGMediaAssetLegacyImageSignal(TGMediaAssetLegacyAspectRatioThumbnailImage(asset.backingLegacyAsset));
         }
             break;
             
@@ -100,7 +109,7 @@ static UIImage *TGMediaAssetLegacyImageForRepresentation(ALAssetRepresentation *
         case TGMediaAssetImageTypeFullSize:
         {
             if (imageType == TGMediaAssetImageTypeScreen && asset.isVideo)
-                return [SSignal single:[UIImage imageWithCGImage:asset.backingLegacyAsset.defaultRepresentation.fullScreenImage]];
+                return TGMediaAssetLegacyImageSignal([UIImage imageWithCGImage:asset.backingLegacyAsset.defaultRepresentation.fullScreenImage]);
             
             if (imageType == TGMediaAssetImageTypeFullSize)
                 size = TGMediaAssetImageLegacySizeLimit;

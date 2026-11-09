@@ -4,6 +4,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
+#import "TGAnimatedStickerView.h"
 
 #import "TGStickerPackStatusView.h"
 
@@ -14,6 +15,7 @@
     UIImageView *_unreadView;
     TGImageView *_imageView;
     UILabel *_altLabel;
+    TGAnimatedStickerView *_animatedView;
     UILabel *_titleLabel;
     UILabel *_subtitleLabel;
     UIImageView *_reorderingControl;
@@ -86,6 +88,8 @@
     _imageView.hidden = false;
     _altLabel.hidden = true;
     _altLabel.text = nil;
+    [_animatedView reset];
+    _animatedView.hidden = true;
 }
 
 - (void)setSearchStatus:(TGStickerPackItemSearchStatus)searchStatus
@@ -164,6 +168,7 @@
     _titleLabel.alpha = 1.0f;
     _subtitleLabel.alpha = _titleLabel.alpha;
     _imageView.alpha = _titleLabel.alpha;
+    _animatedView.alpha = _titleLabel.alpha;
     
     if (stickerPack.documents.count != 0)
     {
@@ -204,9 +209,27 @@
                 break;
             }
         }
-        bool showAltFallback = alt.length != 0 && ([documentMedia.mimeType isEqualToString:@"video/webm"] || [documentMedia.mimeType isEqualToString:@"application/x-tgsticker"]);
-        if (showAltFallback)
+        bool animated = [TGAnimatedStickerView isAnimatedStickerDocument:documentMedia];
+        bool showAltFallback = !animated && alt.length != 0 && [documentMedia.mimeType isEqualToString:@"video/webm"];
+        if (animated)
         {
+            [_imageView reset];
+            _imageView.hidden = true;
+            _altLabel.hidden = true;
+            _altLabel.text = nil;
+            if (_animatedView == nil)
+            {
+                _animatedView = [[TGAnimatedStickerView alloc] initWithFrame:_imageView.frame];
+                _animatedView.playing = false;
+                [self.editingContentView insertSubview:_animatedView aboveSubview:_imageView];
+            }
+            _animatedView.hidden = false;
+            [_animatedView setDocument:documentMedia placeholderUri:uri];
+        }
+        else if (showAltFallback)
+        {
+            [_animatedView reset];
+            _animatedView.hidden = true;
             [_imageView reset];
             _imageView.hidden = true;
             _altLabel.hidden = false;
@@ -214,6 +237,8 @@
         }
         else
         {
+            [_animatedView reset];
+            _animatedView.hidden = true;
             _imageView.hidden = false;
             _altLabel.hidden = true;
             _altLabel.text = nil;
@@ -276,6 +301,7 @@
     
     _imageView.frame = CGRectMake(13.0f + leftInset , CGFloor((self.frame.size.height - 34.0f) / 2.0f), 34.0f, 34.0f);
     _altLabel.frame = _imageView.frame;
+    _animatedView.frame = _imageView.frame;
     _activityIndicator.center = _imageView.center;
     
     CGFloat titleSubtitleSpacing = 2.0f;

@@ -15,8 +15,9 @@
 @property (nonatomic, readonly) bool canChangeInviteLink;
 @property (nonatomic, readonly) bool canPinMessages;
 @property (nonatomic, readonly) bool canAddAdmins;
+@property (nonatomic, readonly) bool canManageDirectMessages;
 
-- (instancetype)initWithCanChangeInfo:(bool)canChangeInfo canPostMessages:(bool)canPostMessages canEditMessages:(bool)canEditMessages canDeleteMessages:(bool)canDeleteMessages canBanUsers:(bool)canBanUsers canInviteUsers:(bool)canInviteUsers canChangeInviteLink:(bool)canChangeInviteLink canPinMessages:(bool)canPinMessages canAddAdmins:(bool)canAddAdmins;
+- (instancetype)initWithCanChangeInfo:(bool)canChangeInfo canPostMessages:(bool)canPostMessages canEditMessages:(bool)canEditMessages canDeleteMessages:(bool)canDeleteMessages canBanUsers:(bool)canBanUsers canInviteUsers:(bool)canInviteUsers canChangeInviteLink:(bool)canChangeInviteLink canPinMessages:(bool)canPinMessages canAddAdmins:(bool)canAddAdmins canManageDirectMessages:(bool)canManageDirectMessages;
 
 - (instancetype)initWithFlags:(int32_t)flags;
 

@@ -3,6 +3,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGAppDelegate.h"
+#import "TGCrashReportCenter.h"
 
 #import "TGTabletMainView.h"
 
@@ -11,6 +12,11 @@
 #import "TGContactsController.h"
 #import "TGAccountSettingsController.h"
 #import "TGRecentCallsController.h"
+#import "TGTelegraphUserInfoController.h"
+#import "TGOnegramSettings.h"
+#import "TGUserSignal.h"
+#import "TGDatabase.h"
+#import "TGTelegraph.h"
 #import "TGMainTabsController.h"
 #import "TGModernConversationController.h"
 
@@ -21,6 +27,7 @@
 #import "TGPresentation.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
 #import "../OnegramRuntime/OGRuntime.h"
+#import "../OnegramRuntime/OGStartupDiagnostics.h"
 
 @interface TGRootController ()
 {
@@ -32,6 +39,9 @@
     TGContactsController *_contactsController;
     TGAccountSettingsController *_accountSettingsController;
     TGRecentCallsController *_callsController;
+    TGTelegraphUserInfoController *_profileController;
+    SMetaDisposable *_profileUserDisposable;
+    int64_t _profileUserId;
     
     UIUserInterfaceSizeClass _currentSizeClass;
     
@@ -45,6 +55,11 @@
 @end
 
 @implementation TGRootController
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 - (void)ensureSecondaryControllers
 {
@@ -71,6 +86,89 @@
     }
 }
 
+- (bool)modernTabsAvailable
+{
+    return TGOnegramModernInterfaceEnabled() && TGTelegraphInstance.clientUserId != 0;
+}
+
+- (TGTelegraphUserInfoController *)profileController
+{
+    int64_t uid = TGTelegraphInstance.clientUserId;
+    if (uid == 0)
+        return nil;
+    if (_profileController == nil || _profileController.uid != uid)
+    {
+        _profileController = [[TGTelegraphUserInfoController alloc] initWithUid:uid];
+        _profileController.presentation = _presentation;
+        _profileController.ownProfileTab = true;
+    }
+    return _profileController;
+}
+
+- (NSArray *)mainTabControllers
+{
+    [self ensureSecondaryControllers];
+    NSMutableArray *controllers = [[NSMutableArray alloc] initWithObjects:_contactsController, _callsController, _dialogListController, _accountSettingsController, nil];
+    if ([self modernTabsAvailable])
+    {
+        TGTelegraphUserInfoController *profileController = [self profileController];
+        if (profileController != nil)
+            [controllers addObject:profileController];
+    }
+    return controllers;
+}
+
+- (void)updateProfileUserSubscription:(bool)enabled
+{
+    int64_t uid = enabled ? TGTelegraphInstance.clientUserId : 0;
+    if (uid == _profileUserId)
+        return;
+    _profileUserId = uid;
+    if (_profileUserDisposable == nil)
+        _profileUserDisposable = [[SMetaDisposable alloc] init];
+    if (uid == 0)
+    {
+        [_profileUserDisposable setDisposable:nil];
+        [_mainTabsController setProfileUser:nil];
+        return;
+    }
+    TGMainTabsController *mainTabsController = _mainTabsController;
+    TGUser *cachedUser = [TGDatabaseInstance() loadUser:uid];
+    if (cachedUser != nil)
+        [mainTabsController setProfileUser:cachedUser];
+    [_profileUserDisposable setDisposable:[[[TGUserSignal userWithUserId:uid] deliverOn:[SQueue mainQueue]] startWithNext:^(TGUser *user)
+    {
+        if ([user isKindOfClass:[TGUser class]])
+            [mainTabsController setProfileUser:user];
+    }]];
+}
+
+- (void)updateModernTabs
+{
+    bool modern = [self modernTabsAvailable];
+    if (!modern)
+    {
+        [_mainTabsController setModernTabsEnabled:false animated:false];
+        if (_mainTabsController.viewControllers.count > 4)
+            [_mainTabsController setViewControllers:[self mainTabControllers] animated:false];
+        _profileController = nil;
+    }
+    else
+    {
+        NSArray *controllers = [self mainTabControllers];
+        if (_mainTabsController.viewControllers.count > 1 && ![_mainTabsController.viewControllers isEqualToArray:controllers])
+            [_mainTabsController setViewControllers:controllers animated:false];
+        [_mainTabsController setModernTabsEnabled:controllers.count > 4 animated:false];
+    }
+    [self updateProfileUserSubscription:modern];
+}
+
+- (void)onegramSettingsChanged:(NSNotification *)notification
+{
+    if ([notification.userInfo[TGOnegramSettingsChangedKey] isEqual:TGOnegramSettingInterfaceModern])
+        [self updateModernTabs];
+}
+
 - (TGContactsController *)contactsController
 {
     [self ensureSecondaryControllers];
@@ -92,6 +190,13 @@
 - (void)setAccountSettingsController:(TGAccountSettingsController *)accountSettingsController
 {
     _accountSettingsController = accountSettingsController;
+    __weak TGRootController *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGRootController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf updateModernTabs];
+    });
 }
 
 - (instancetype)init
@@ -99,7 +204,6 @@
     self = [super init];
     if (self != nil)
     {
-        CFAbsoluteTime rootInitPhase = CFAbsoluteTimeGetCurrent();
         [self setNavigationBarHidden:true animated:false];
         self.automaticallyManageScrollViewInsets = false;
         
@@ -111,11 +215,12 @@
                 [strongSelf setPresentation:next];
         }];
         
+        OGStartupDiagnosticsMark("root.presentation");
         TGTelegraphDialogListCompanion *dialogListCompanion = [[TGTelegraphDialogListCompanion alloc] init];
-        rootInitPhase = CFAbsoluteTimeGetCurrent();
+        OGStartupDiagnosticsMark("root.dialogCompanion");
         _dialogListController = [[TGDialogListController alloc] initWithCompanion:dialogListCompanion];
         _dialogListController.presentation = _presentation;
-        rootInitPhase = CFAbsoluteTimeGetCurrent();
+        OGStartupDiagnosticsMark("root.dialogController");
         
         _mainTabsController = [[TGMainTabsController alloc] initWithPresentation:_presentation];
         if (iosMajorVersion() <= 6)
@@ -125,8 +230,7 @@
                 __strong TGRootController *strongSelf = weakSelf;
                 if (strongSelf == nil)
                     return nil;
-                [strongSelf ensureSecondaryControllers];
-                return @[strongSelf.contactsController, strongSelf.callsController, strongSelf.dialogListController, strongSelf.accountSettingsController];
+                return [strongSelf mainTabControllers];
             }];
             if (iosMajorVersion() >= 4)
             {
@@ -143,12 +247,13 @@
         }
         else
         {
-            [self ensureSecondaryControllers];
-            [_mainTabsController setViewControllers:@[_contactsController, _callsController, _dialogListController, _accountSettingsController]];
-            [_mainTabsController setSelectedIndex:2];
+            [_mainTabsController setViewControllers:[self mainTabControllers]];
+            [_mainTabsController setSelectedIndex:TGMainTabsChatsLogicalIndex];
         }
         [_mainTabsController setCallsHidden:!TGAppDelegateInstance.showCallsTab animated:false];
-        rootInitPhase = CFAbsoluteTimeGetCurrent();
+        [self updateModernTabs];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramSettingsChanged:) name:TGOnegramSettingsDidChangeNotification object:nil];
+        OGStartupDiagnosticsMark("root.tabs");
         _mainTabsController.onControllerInsetUpdated = ^(CGFloat inset)
         {
             __strong TGRootController *strongSelf = weakSelf;
@@ -159,6 +264,7 @@
         _masterNavigationController = [TGNavigationController navigationControllerWithControllers:@[]];
         _detailNavigationController = [TGNavigationController navigationControllerWithControllers:@[]];
         [_detailNavigationController setDisplayPlayer:true];
+        OGStartupDiagnosticsMark("root.navigation");
         
         if (iosMajorVersion() >= 8)
         {
@@ -209,6 +315,7 @@
             [_detailNavigationController viewDidAppear:animated];
         _ios4ManualContainerAppeared = true;
     }
+    [TGCrashReportCenter mainInterfaceDidAppear];
 }
 
 - (void)viewWillDisappear:(BOOL)animated
@@ -253,6 +360,7 @@
     [_contactsController setPresentation:presentation];
     [_callsController setPresentation:presentation];
     [_dialogListController setPresentation:presentation];
+    [_profileController setPresentation:presentation];
     
     if ([self.presentedViewController isKindOfClass:[TGNavigationController class]])
     {
@@ -287,18 +395,28 @@
     _volumeBarView.presentation = presentation;
 }
 
-- (bool)shouldAutorotate {
-    UIViewController *controller = nil;
+- (UIViewController *)autorotationController {
     if (self.associatedWindowStack.count > 0)
-        controller = [self.associatedWindowStack.lastObject rootViewController];
-    else
-        controller = (UIViewController *)[self viewControllers].lastObject;
+        return [self.associatedWindowStack.lastObject rootViewController];
+    return (UIViewController *)[self viewControllers].lastObject;
+}
 
+- (bool)shouldAutorotate {
+    UIViewController *controller = [self autorotationController];
     if (controller == nil)
         return true;
     if ([controller respondsToSelector:@selector(shouldAutorotate)])
         return [controller shouldAutorotate];
     return [controller shouldAutorotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation];
+}
+
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation {
+    if (!TGIsPad() && iosMajorVersion() < 6)
+        return interfaceOrientation == UIInterfaceOrientationPortrait;
+    UIViewController *controller = [self autorotationController];
+    if (controller == nil || controller == self)
+        return [super shouldAutorotateToInterfaceOrientation:interfaceOrientation];
+    return [controller shouldAutorotateToInterfaceOrientation:interfaceOrientation];
 }
 
 - (void)loadView

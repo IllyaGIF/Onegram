@@ -484,7 +484,7 @@ static CGAffineTransform TGCheckButtonDefaultTransform;
     {
         _numberLabel = [[UILabel alloc] init];
         _numberLabel.backgroundColor = [UIColor clearColor];
-        _numberLabel.frame = CGRectMake(0.0f, -TGScreenPixel, _wrapperView.frame.size.width, _wrapperView.frame.size.height);
+        _numberLabel.frame = CGRectMake(0.0f, -TGScreenPixel, _size.width, _size.height);
         _numberLabel.textColor = _checkColor;
         _numberLabel.textAlignment = NSTextAlignmentCenter;
         _numberLabel.userInteractionEnabled = false;

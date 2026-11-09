@@ -1,9 +1,14 @@
 #import <Foundation/Foundation.h>
+#include <time.h>
 
 @interface TGDateUtils : NSObject
 
 + (void)reset;
 + (void)prepare;
+
++ (void)setShowsSeconds:(bool)showsSeconds;
++ (void)setPrefersExactLastSeen:(bool)prefersExactLastSeen;
++ (void)setTimeZoneOffsetOverride:(bool)enabled minutes:(NSInteger)minutes;
 
 + (NSString *)stringForShortTime:(int)time;
 + (NSString *)stringForShortTime:(int)time daytimeVariant:(int *)daytimeVariant;
@@ -28,6 +33,7 @@ extern "C" {
 #endif
 
 bool TGUse12hDateFormat();
+void TGDateUtilsLocalTime(time_t time, struct tm *result);
     
 NSString *TGWeekdayNameFull(int number);
 NSString *TGMonthNameFull(int number);

@@ -26,7 +26,7 @@
 
 - (void)contactStatusesRequestSuccess:(NSArray *)contactStatuses currentDate:(int)__unused currentDate
 {
-    std::tr1::shared_ptr<std::map<int, TGUserPresence> > presenceMap(new std::map<int, TGUserPresence>());
+    std::tr1::shared_ptr<std::map<int64_t, TGUserPresence> > presenceMap(new std::map<int64_t, TGUserPresence>());
     
     for (TLContactStatus *statusDesc in contactStatuses)
     {

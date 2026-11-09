@@ -40,6 +40,16 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
     return [[NSString alloc] initWithFormat:@"documentthumb:%d:%lld:%lld:%d:%@:%@", document.dc_id, document.n_id, document.access_hash, fileSize, thumbSize, fileReference];
 }
 
+static TLDocumentAttribute$documentAttributeVideo *TGTelegraphDocumentVideoAttribute(TLDocument$document *document)
+{
+    for (id attribute in document.attributes)
+    {
+        if ([attribute isKindOfClass:[TLDocumentAttribute$documentAttributeVideo class]])
+            return attribute;
+    }
+    return nil;
+}
+
 @implementation TGDocumentMediaAttachment (Telegraph)
 
 + (NSArray *)parseAttribtues:(NSArray *)descs {
@@ -101,6 +111,65 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
     return attributes;
 }
 
++ (NSString *)strippedThumbnailUrlForTelegraphDocumentDesc:(TLDocument *)desc
+{
+    if (![desc isKindOfClass:[TLDocument$document class]])
+        return nil;
+    
+    TLDocument$document *concreteDocument = (TLDocument$document *)desc;
+    for (id thumbnail in concreteDocument.thumbs)
+    {
+        if (![thumbnail isKindOfClass:[TLPhotoSize$photoCachedSize class]])
+            continue;
+        
+        TLPhotoSize$photoCachedSize *cachedSize = (TLPhotoSize$photoCachedSize *)thumbnail;
+        if (![cachedSize.type isEqualToString:@"i"] || cachedSize.bytes.length == 0)
+            continue;
+        
+        NSString *url = TGModernDocumentThumbnailUrl(concreteDocument, cachedSize);
+        if (url != nil)
+            [[TGRemoteImageView sharedCache] cacheImage:nil withData:cachedSize.bytes url:url availability:TGCacheDisk];
+        return url;
+    }
+    return nil;
+}
+
++ (TGVideoInfo *)videoInfoForTelegraphDocumentDesc:(TLDocument *)desc alternativeDocuments:(NSArray *)alternativeDocuments alternativeFileReferences:(NSDictionary **)alternativeFileReferences
+{
+    if (alternativeFileReferences != NULL)
+        *alternativeFileReferences = nil;
+    if (![desc isKindOfClass:[TLDocument$document class]])
+        return nil;
+
+    TLDocument$document *document = (TLDocument$document *)desc;
+    TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
+    [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", document.n_id, document.access_hash, document.dc_id, document.size] size:document.size codec:TGTelegraphDocumentVideoAttribute(document).video_codec];
+
+    NSMutableDictionary *references = nil;
+    for (id alternative in alternativeDocuments)
+    {
+        if (![alternative isKindOfClass:[TLDocument$document class]])
+            continue;
+        TLDocument$document *alternativeDocument = alternative;
+        if (alternativeDocument.n_id == document.n_id || alternativeDocument.size <= 0 || [[alternativeDocument.mime_type lowercaseString] rangeOfString:@"mpegurl"].location != NSNotFound)
+            continue;
+        TLDocumentAttribute$documentAttributeVideo *video = TGTelegraphDocumentVideoAttribute(alternativeDocument);
+        int32_t shortSide = video == nil ? 0 : MIN(video.w, video.h);
+        if (shortSide <= 0)
+            continue;
+        [videoInfo addVideoWithQuality:TGVideoInfoAlternativeQualityBase + shortSide url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", alternativeDocument.n_id, alternativeDocument.access_hash, alternativeDocument.dc_id, alternativeDocument.size] size:alternativeDocument.size codec:video.video_codec];
+        if (alternativeDocument.file_reference.length != 0)
+        {
+            if (references == nil)
+                references = [[NSMutableDictionary alloc] init];
+            references[[NSString stringWithFormat:@"%lld_%lld", alternativeDocument.n_id, alternativeDocument.access_hash]] = alternativeDocument.file_reference;
+        }
+    }
+    if (alternativeFileReferences != NULL)
+        *alternativeFileReferences = references;
+    return videoInfo;
+}
+
 - (instancetype)initWithTelegraphDocumentDesc:(TLDocument *)desc
 {
     self = [super init];
@@ -142,7 +211,46 @@ static NSString *TGModernDocumentThumbnailUrl(TLDocument$document *document, TLP
             
             NSData *cachedData = nil;
             TGImageInfo *thumbmailInfo = nil;
-            if (concreteDocument.thumb != nil)
+            if (concreteDocument.thumbs.count != 0 || concreteDocument.video_thumbs.count != 0)
+            {
+                thumbmailInfo = [[TGImageInfo alloc] init];
+                for (NSArray *thumbnails in @[concreteDocument.thumbs ?: @[], concreteDocument.video_thumbs ?: @[]])
+                {
+                    for (TLPhotoSize *thumbnail in thumbnails)
+                    {
+                        CGSize dimensions = CGSizeZero;
+                        NSData *embeddedData = nil;
+                        int32_t fileSize = 0;
+                        NSString *thumbnailType = nil;
+                        if ([thumbnail isKindOfClass:[TLPhotoSize$photoSize class]])
+                        {
+                            TLPhotoSize$photoSize *size = (TLPhotoSize$photoSize *)thumbnail;
+                            dimensions = CGSizeMake(size.w, size.h);
+                            fileSize = size.size;
+                            thumbnailType = size.type;
+                        }
+                        else if ([thumbnail isKindOfClass:[TLPhotoSize$photoCachedSize class]])
+                        {
+                            TLPhotoSize$photoCachedSize *size = (TLPhotoSize$photoCachedSize *)thumbnail;
+                            dimensions = CGSizeMake(size.w, size.h);
+                            embeddedData = size.bytes;
+                            fileSize = (int32_t)embeddedData.length;
+                            thumbnailType = size.type;
+                        }
+                        if ([thumbnailType isEqualToString:@"i"] || dimensions.width <= 0 || dimensions.height <= 0)
+                            continue;
+                        NSString *url = TGModernDocumentThumbnailUrl(concreteDocument, thumbnail);
+                        if (url.length == 0)
+                            continue;
+                        [thumbmailInfo addImageWithSize:dimensions url:url fileSize:fileSize];
+                        if (embeddedData.length != 0)
+                            [[TGRemoteImageView sharedCache] cacheImage:nil withData:embeddedData url:url availability:TGCacheDisk];
+                    }
+                    if ([thumbmailInfo imageUrlForPreviewWithSize:NULL].length != 0)
+                        break;
+                }
+            }
+            else if (concreteDocument.thumb != nil)
             {
                 thumbmailInfo = [[TGImageInfo alloc] initWithTelegraphSizesDescription:@[concreteDocument.thumb] cachedData:&cachedData];
                 if (thumbmailInfo.empty || [thumbmailInfo imageUrlForLargestSize:NULL].length == 0)

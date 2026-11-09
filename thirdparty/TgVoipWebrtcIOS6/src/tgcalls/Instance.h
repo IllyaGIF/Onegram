@@ -14,6 +14,8 @@
 #ifdef TGCALLS_IOS6_AUDIO_ONLY
 namespace tgcalls {
 class WrappedAudioDeviceModule;
+class VideoSourceHub;
+class VideoSinkHub;
 }
 #else
 #include "platform/PlatformInterface.h"
@@ -222,6 +224,10 @@ public:
 	virtual void setVideoCapture(std::shared_ptr<VideoCaptureInterface> videoCapture) = 0;
 	virtual void sendVideoDeviceUpdated() = 0;
     virtual void setRequestedVideoAspect(float aspect) = 0;
+#ifdef TGCALLS_IOS6_AUDIO_ONLY
+	virtual void setOutgoingVideoEnabled(bool enabled) {
+	}
+#endif
 
 	virtual void stop(std::function<void(FinalState)> completion) = 0;
 
@@ -253,6 +259,10 @@ struct Descriptor {
     std::string initialInputDeviceId;
     std::string initialOutputDeviceId;
     std::shared_ptr<DirectConnectionChannel> directConnectionChannel;
+#ifdef TGCALLS_IOS6_AUDIO_ONLY
+	std::shared_ptr<VideoSourceHub> outgoingVideoSource;
+	std::shared_ptr<VideoSinkHub> incomingVideoSink;
+#endif
 };
 
 class Meta {

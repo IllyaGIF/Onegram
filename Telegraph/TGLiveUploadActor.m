@@ -23,6 +23,8 @@
 #import "TGDataItem.h"
 
 #import "../OnegramRuntime/OGRuntime.h"
+#import "TGNetworkTypeManager.h"
+#import <QuartzCore/QuartzCore.h>
 
 static NSMutableDictionary *TGLiveUploadActiveActors(void)
 {
@@ -407,7 +409,12 @@ static NSMutableDictionary *TGLiveUploadActiveActors(void)
     }
     else
     {
-        NSInteger availableUploadSlots = MAX(0, (_liveMode ? (_lateHeaderMode ? 8 : 2) : 8) - (NSInteger)_uploadingParts.count);
+        OGTransferParameters parameters = [TGNetworkTypeManager transferParametersForUpload:true];
+        NSInteger maximumUploadSlots = MIN(8, parameters.maximumRequests * 2);
+        maximumUploadSlots = MIN(maximumUploadSlots, (NSInteger)(parameters.maximumInFlightBytes / (16 * 1024)));
+        if (_liveMode && !_lateHeaderMode)
+            maximumUploadSlots = MIN(maximumUploadSlots, 2);
+        NSInteger availableUploadSlots = MAX(0, maximumUploadSlots - (NSInteger)_uploadingParts.count);
 
         for (NSInteger slotIndex = 0; slotIndex < availableUploadSlots; slotIndex++)
         {
@@ -510,7 +517,10 @@ static NSMutableDictionary *TGLiveUploadActiveActors(void)
                     request.body = saveFilePart;
                     
                     int32_t partIndex = saveFilePart.file_part;
-                    
+                    NSTimeInterval started = CACurrentMediaTime();
+                    int64_t transferredBytes = alignedPartData.length;
+                    uint32_t transferGeneration = parameters.generation;
+
                     TGLiveUploadPart *part = [[TGLiveUploadPart alloc] init];
                     part.partIndex = partIndex;
                     part.offset = isHeader ? 0 : processedSize;
@@ -526,10 +536,20 @@ static NSMutableDictionary *TGLiveUploadActiveActors(void)
                         dispatch_async(transferQueue, ^
                         {
                             __strong TGLiveUploadActor *strongSelf = weakSelf;
+                            if (strongSelf == nil || strongSelf->_transferFinished)
+                                return;
                             if (error == nil)
+                            {
+                                [TGNetworkTypeManager recordTransferBytes:transferredBytes started:started upload:true generation:transferGeneration];
                                 [strongSelf partUploadSuccess:partIndex];
+                            }
                             else
+                            {
+                                int32_t errorCode = [[TGTelegramNetworking instance] extractNetworkErrorCode:error];
+                                if (errorCode <= 0 || errorCode >= 420)
+                                    [TGNetworkTypeManager recordTransferFailureForUpload:true generation:transferGeneration];
                                 [strongSelf partUploadFailed];
+                            }
                         });
                     }];
                     

@@ -259,6 +259,10 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
     
     CVPixelBufferRef _previousPixelBuffer;
     int32_t _repeatingCount;
+    CVPixelBufferRef _lastRecordedPixelBuffer;
+    CMTime _lastRecordedFrameTime;
+    bool _cameraSwitching;
+    bool _cameraSwitchNeedsFormatUpdate;
     
     NSMutableData *_audioBuffer;
     int32_t _micLevelPeak;
@@ -339,6 +343,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 #endif
         
         _thumbnails = [[NSMutableDictionary alloc] init];
+        _lastRecordedFrameTime = kCMTimeInvalid;
 	}
 	return self;
 }
@@ -350,6 +355,8 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
         CFRelease(_currentPreviewPixelBuffer);
     if (_previousPixelBuffer != NULL)
         CFRelease(_previousPixelBuffer);
+    if (_lastRecordedPixelBuffer != NULL)
+        CFRelease(_lastRecordedPixelBuffer);
 #if !OS_OBJECT_USE_OBJC
     dispatch_release(_videoDataOutputQueue);
     dispatch_release(_audioDataOutputQueue);
@@ -809,9 +816,12 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 
 - (void)setRenderingEnabled:(bool)renderingEnabled
 {
-	@synchronized (self)
-    {
-		_renderingEnabled = renderingEnabled;
+	@synchronized (_renderer)
+	{
+		@synchronized (self)
+		{
+			_renderingEnabled = renderingEnabled;
+		}
 	}
 }
 
@@ -829,6 +839,19 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 	
 	if (captureOutput == _videoOutput)
 	{
+        bool needsFormatUpdate = false;
+        @synchronized (self)
+        {
+            needsFormatUpdate = _cameraSwitchNeedsFormatUpdate;
+            _cameraSwitchNeedsFormatUpdate = false;
+        }
+        if (needsFormatUpdate)
+        {
+            @synchronized (_renderer)
+            {
+                [_renderer updateInputFormatDescription:formatDescription];
+            }
+        }
         if (!_receivedFirstVideoFrame)
         {
             _receivedFirstVideoFrame = true;
@@ -876,7 +899,18 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 		@synchronized (self)
         {
 			if (_recordingStatus == TGVideoCameraRecordingStatusRecording)
-				[_recorder appendAudioSampleBuffer:sampleBuffer];
+			{
+                if (_cameraSwitching && _lastRecordedPixelBuffer != NULL)
+                {
+                    CMTime time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+                    if (CMTIME_IS_VALID(time) && (!CMTIME_IS_VALID(_lastRecordedFrameTime) || CMTimeGetSeconds(CMTimeSubtract(time, _lastRecordedFrameTime)) >= 1.0 / (double)TGVideoCameraPipelineFrameRate()))
+                    {
+                        [_recorder appendVideoPixelBuffer:_lastRecordedPixelBuffer withPresentationTime:time];
+                        _lastRecordedFrameTime = time;
+                    }
+                }
+                [_recorder appendAudioSampleBuffer:sampleBuffer];
+            }
 		}
 
         CMBlockBufferRef blockBuffer = NULL;
@@ -1103,11 +1137,26 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
         _failedRenderFrameCount = 0;
 		@synchronized (self)
 		{
+            if (_cameraSwitching)
+            {
+                _cameraSwitching = false;
+                TGLegacyLog(@"VIDEOMSG camera_switch recording=%d first_frame=1", _recordingStatus == TGVideoCameraRecordingStatusRecording ? 1 : 0);
+            }
             if (!self.usesNativePreview)
 			    [self outputPreviewPixelBuffer:renderedPixelBuffer];
             
 			if (_recordingStatus == TGVideoCameraRecordingStatusRecording)
-				[_recorder appendVideoPixelBuffer:renderedPixelBuffer withPresentationTime:timestamp];
+			{
+                if (!CMTIME_IS_VALID(_lastRecordedFrameTime) || CMTimeCompare(timestamp, _lastRecordedFrameTime) > 0)
+                {
+                    [_recorder appendVideoPixelBuffer:renderedPixelBuffer withPresentationTime:timestamp];
+                    _lastRecordedFrameTime = timestamp;
+                    if (_lastRecordedPixelBuffer != NULL)
+                        CFRelease(_lastRecordedPixelBuffer);
+                    _lastRecordedPixelBuffer = renderedPixelBuffer;
+                    CFRetain(_lastRecordedPixelBuffer);
+                }
+            }
 		}
 		
 		CFRelease(renderedPixelBuffer);
@@ -1251,6 +1300,12 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 			return;
 
         _stopRecordAfterPreparing = false;
+        _lastRecordedFrameTime = kCMTimeInvalid;
+        if (_lastRecordedPixelBuffer != NULL)
+        {
+            CFRelease(_lastRecordedPixelBuffer);
+            _lastRecordedPixelBuffer = NULL;
+        }
 		
 		[self transitionToRecordingStatus:TGVideoCameraRecordingStatusStartingRecording error:nil];
 	}
@@ -1343,6 +1398,7 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 
 - (void)movieRecorder:(TGVideoCameraMovieRecorder *)__unused recorder didFailWithError:(NSError *)error
 {
+    TGLegacyLog(@"VIDEOMSG recorder_error %@", error);
 	@synchronized (self)
 	{
 		_stopRecordAfterPreparing = false;
@@ -1388,6 +1444,19 @@ static CGFloat TGVideoCameraPipelineMaximumOutputSide(void)
 {
 	TGVideoCameraRecordingStatus oldStatus = _recordingStatus;
 	_recordingStatus = newStatus;
+    if (newStatus == TGVideoCameraRecordingStatusIdle && oldStatus != TGVideoCameraRecordingStatusIdle)
+    {
+        @synchronized (self)
+        {
+            _cameraSwitching = false;
+            _lastRecordedFrameTime = kCMTimeInvalid;
+            if (_lastRecordedPixelBuffer != NULL)
+            {
+                CFRelease(_lastRecordedPixelBuffer);
+                _lastRecordedPixelBuffer = NULL;
+            }
+        }
+    }
     TGLegacyLog(@"VIDEOMESSAGE recording status %d -> %d after %.0fms error=%@", (int)oldStatus, (int)newStatus, (CFAbsoluteTimeGetCurrent() - _startRunningTime) * 1000.0, error);
     
 	if (newStatus != oldStatus)
@@ -1473,6 +1542,12 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
     {
         if (!_running || _stopRunningPending)
             return;
+        bool recording = false;
+        @synchronized (self)
+        {
+            recording = _recordingStatus == TGVideoCameraRecordingStatusRecording;
+        }
+        TGLegacyLog(@"VIDEOMSG camera_switch recording=%d from=%d to=%d", recording ? 1 : 0, (int)_videoDevice.position, (int)position);
         AVCaptureDevice *deviceForTargetPosition = nil;
         for (AVCaptureDevice *device in [AVCaptureDevice devicesWithMediaType:AVMediaTypeVideo])
         {
@@ -1486,16 +1561,14 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         AVCaptureDeviceInput *newVideoInput = deviceForTargetPosition == nil ? nil : [[AVCaptureDeviceInput alloc] initWithDevice:deviceForTargetPosition error:&error];
         if (newVideoInput == nil)
         {
-            [self handleNonRecoverableCaptureSessionRuntimeError:error ?: [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorDeviceNotConnected userInfo:nil]];
+            TGLegacyLog(@"VIDEOMSG camera_switch recording=%d input_error=%@", recording ? 1 : 0, error);
             return;
         }
         [_videoOutput setSampleBufferDelegate:nil queue:NULL];
-        [_audioOutput setSampleBufferDelegate:nil queue:NULL];
         dispatch_sync(_videoDataOutputQueue, ^{});
-        dispatch_sync(_audioDataOutputQueue, ^{});
         @synchronized (self)
         {
-            _recorder.paused = true;
+            _cameraSwitching = recording;
         }
         [_captureSession beginConfiguration];
         [_captureSession removeInput:_videoInput];
@@ -1512,7 +1585,13 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         [_captureSession commitConfiguration];
         if (!added)
         {
-            [self handleNonRecoverableCaptureSessionRuntimeError:[NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session rejected the selected camera input."}]];
+            NSError *switchError = [NSError errorWithDomain:AVFoundationErrorDomain code:AVErrorUnknown userInfo:@{NSLocalizedFailureReasonErrorKey: @"The capture session rejected the selected camera input."}];
+            TGLegacyLog(@"VIDEOMSG camera_switch recording=%d configuration_error=%@", recording ? 1 : 0, switchError);
+            @synchronized (self)
+            {
+                _cameraSwitching = false;
+            }
+            [_videoOutput setSampleBufferDelegate:self queue:_videoDataOutputQueue];
             return;
         }
         @synchronized (_renderer)
@@ -1525,8 +1604,11 @@ static CGFloat angleOffsetFromPortraitOrientationToOrientation(AVCaptureVideoOri
         [self _enableLowLightBoost];
         [self _enableVideoStabilization];
         _videoBufferOrientation = _videoConnection.videoOrientation;
+        @synchronized (self)
+        {
+            _cameraSwitchNeedsFormatUpdate = true;
+        }
         [_videoOutput setSampleBufferDelegate:self queue:_videoDataOutputQueue];
-        [_audioOutput setSampleBufferDelegate:self queue:_audioDataOutputQueue];
     }];
 }
 

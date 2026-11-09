@@ -13,6 +13,7 @@
 @interface TGTLSerialization : NSObject <MTSerialization>
 
 + (NSData *)serializeMessage:(id)message;
++ (id)parseObject:(NSData *)data;
 + (id)parseResponse:(NSData *)data request:(TLMetaRpc *)request;
 + (NSArray *)parseProfileSavedMusicResponse:(NSData *)data;
 

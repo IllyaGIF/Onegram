@@ -26,6 +26,7 @@
     if (self != nil)
     {
         self.optionText = TGLocalized(@"Common.Close");
+        self.revealsOptionsOnSwipe = false;
         _rightSwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(rightSwipe:)];
         _rightSwipe.direction = UISwipeGestureRecognizerDirectionRight;
         _rightSwipe.delegate = self;

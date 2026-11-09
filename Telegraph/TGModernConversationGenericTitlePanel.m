@@ -98,7 +98,7 @@
     
     if (_buttons.count != 0)
     {
-        CGSize buttonSize = CGSizeMake(76.0f, 54.0f);
+        CGSize buttonSize = CGSizeMake(MIN(76.0f, (CGFloat)floor(width / _buttons.count)), 54.0f);
         CGFloat spacing = (width - buttonSize.width * _buttons.count) / (_buttons.count + 1);
         CGFloat sideSpacing = floor(spacing * 0.8f);
         spacing = floor((width - sideSpacing * 2.0f - buttonSize.width * _buttons.count) / (_buttons.count - 1));

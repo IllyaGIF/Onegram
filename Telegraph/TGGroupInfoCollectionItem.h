@@ -18,6 +18,8 @@
 @property (nonatomic) bool editing;
 @property (nonatomic) bool isBroadcast;
 @property (nonatomic) bool isChannel;
+@property (nonatomic) int32_t memberCount;
+@property (nonatomic) int storyRingState;
 
 - (void)setConversation:(TGConversation *)conversation;
 - (void)setUpdatingTitle:(NSString *)updatingTitle;

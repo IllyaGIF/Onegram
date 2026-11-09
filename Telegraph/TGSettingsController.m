@@ -36,8 +36,8 @@
 
 static NSString *TGGroqApiKeyDefaultsKey(void)
 {
-    int32_t userId = TGTelegraphInstance.clientUserId;
-    return userId != 0 ? [NSString stringWithFormat:@"TGGroqAPIKey.%d", userId] : @"TGGroqAPIKey";
+    int64_t userId = TGTelegraphInstance.clientUserId;
+    return userId != 0 ? [NSString stringWithFormat:@"TGGroqAPIKey.%lld", userId] : @"TGGroqAPIKey";
 }
 
 @implementation TGSettingsController
@@ -384,7 +384,7 @@ static NSString *TGGroqApiKeyDefaultsKey(void)
 
 - (void)logoutButtonPressed
 {
-    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%d)", TGTelegraphInstance.clientUserId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
+    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%lld)", TGTelegraphInstance.clientUserId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
 }
 
 - (void)revokeButtonPressed

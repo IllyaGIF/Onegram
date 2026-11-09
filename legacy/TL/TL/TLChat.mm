@@ -47,7 +47,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChat$chatEmpty *object = [[TLChat$chatEmpty alloc] init];
-    object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
+    object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     return object;
 }
 
@@ -55,8 +55,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.n_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7a5601fb, value));
     }
 }
@@ -80,7 +80,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChat$chatForbidden *object = [[TLChat$chatForbidden alloc] init];
-    object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
+    object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.title = metaObject->getString((int32_t)0xcdebf414);
     return object;
 }
@@ -89,8 +89,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.n_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7a5601fb, value));
     }
     {
@@ -121,7 +121,7 @@
 {
     TLChat$channelMeta *object = [[TLChat$channelMeta alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
-    object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
+    object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.title = metaObject->getString((int32_t)0xcdebf414);
     object.username = metaObject->getString((int32_t)0x626830ca);
@@ -143,8 +143,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.n_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7a5601fb, value));
     }
     {
@@ -217,7 +217,7 @@
 {
     TLChat$channelForbiddenMeta *object = [[TLChat$channelForbiddenMeta alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
-    object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
+    object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.title = metaObject->getString((int32_t)0xcdebf414);
     object.until_date = metaObject->getInt32((int32_t)0xbf578ee4);
@@ -234,8 +234,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.n_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7a5601fb, value));
     }
     {

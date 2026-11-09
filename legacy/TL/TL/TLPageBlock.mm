@@ -301,7 +301,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return (int32_t)0x3a58c7f4;
+    return (int32_t)0xe4e88011;
 }
 
 - (int32_t)TLconstructorName
@@ -312,19 +312,12 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLPageBlock$pageBlockList *object = [[TLPageBlock$pageBlockList alloc] init];
-    object.ordered = metaObject->getBool((int32_t)0x6fd9c719);
     object.items = metaObject->getArray((int32_t)0x18406025);
     return object;
 }
 
 - (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
 {
-    {
-        TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveBool;
-        value.primitive.boolValue = self.ordered;
-        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x6fd9c719, value));
-    }
     {
         TLConstructedValue value;
         value.type = TLConstructedValueTypeVector;
@@ -938,3 +931,58 @@
 
 @end
 
+@implementation TLPageBlock$pageBlockOrderedList : TLPageBlock
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0x1fd6f6c1;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0xf31424c;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLPageBlock$pageBlockOrderedList *object = [[TLPageBlock$pageBlockOrderedList alloc] init];
+    object.flags = metaObject->getInt32((int32_t)0x81915c23);
+    object.items = metaObject->getArray((int32_t)0x18406025);
+    object.start = metaObject->getInt32((int32_t)0x7539e5dc);
+    object.n_type = metaObject->getString((int32_t)0x9211ab0a);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.flags;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x81915c23, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeVector;
+        value.nativeObject = self.items;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x18406025, value));
+    }
+    if (self.flags & (1 << 0))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.start;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7539e5dc, value));
+    }
+    if (self.flags & (1 << 1))
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypeString;
+        value.nativeObject = self.n_type;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9211ab0a, value));
+    }
+}
+
+
+@end

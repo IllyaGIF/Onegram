@@ -11,6 +11,7 @@ import urllib.request
 from generate import OUT
 from xcode_graph import ROOT
 from build_pst import build_pst
+from build_webp_demux import build_webp_demux, plugins_enabled
 
 
 def main():
@@ -133,6 +134,8 @@ def main():
               compiler + ['-fobjc-arc', '-std=gnu99', '-Os'], libtool, lipo, 'arm64',
               products / 'libPSTCollectionView.a', output,
               sorted((pst / 'PSTCollectionView').glob('*.h')) + [pst / 'PSTCollectionView.podspec'])
+    if plugins_enabled():
+        build_webp_demux(OUT, compiler, libtool, lipo, 'arm64')
 
 
 if __name__ == '__main__':

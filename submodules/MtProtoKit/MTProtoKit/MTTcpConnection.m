@@ -558,12 +558,7 @@ NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
 
 - (void)onegramWebSocketTrace:(NSString *)stage detail:(NSString *)detail
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformDiagnosticLog(@"WSTRACE connection=%p primary=%d attempt=%ld domain=%@ target=%@ stage=%@ %@", self, _usageCalculationInfo.primaryConnection ? 1 : 0, (long)_onegramWebSocketAttempt, _onegramWebSocketDomain ?: @"none", [self onegramWebSocketTargetForAttempt:_onegramWebSocketAttempt] ?: @"none", stage, detail ?: @"");
-#else
-    (void)stage;
-    (void)detail;
-#endif
 }
 
 - (void)onegramPostWebSocketEvent:(MTTcpConnectionOnegramWebSocketEvent)event error:(NSError *)error
@@ -1249,9 +1244,7 @@ NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
 
 - (void)responseTimeout
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformDiagnosticLog(@"NETSTATE response timeout connection=%p primary=%d", self, _usageCalculationInfo.primaryConnection ? 1 : 0);
-#endif
     [_responseTimeoutTimer invalidate];
     _responseTimeoutTimer = nil;
     
@@ -1951,9 +1944,7 @@ NSString *const MTTcpConnectionOnegramWebSocketErrorKey = @"error";
     if (_closed || socket != _socket)
         return;
 
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformDiagnosticLog(@"NETSTATE disconnected connection=%p primary=%d closed=%d domain=%@ code=%ld description=%@", self, _usageCalculationInfo.primaryConnection ? 1 : 0, _closed ? 1 : 0, error.domain ?: @"none", (long)error.code, error.localizedDescription ?: @"none");
-#endif
 #if TARGET_OS_IPHONE
     BOOL isPrimaryDataConnection = _usageCalculationInfo.primaryConnection;
     if (OGPlatformSupportsBackgroundVoipTransport() && isPrimaryDataConnection)

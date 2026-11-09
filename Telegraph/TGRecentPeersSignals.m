@@ -135,7 +135,7 @@
                 }
             }
         } else {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int)peerId];
+            TGUser *user = [TGDatabaseInstance() loadUser:peerId];
             if (user != nil) {
                 if (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot) {
                     return [[TLTopPeerCategory$topPeerCategoryBotsPM alloc] init];

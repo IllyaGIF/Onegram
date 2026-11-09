@@ -43,6 +43,7 @@
     CGFloat _currentLayoutWidth;
     
     NSArray *_wallpaperItems;
+    NSArray *_remoteWallpaperItems;
     
     TGDisclosureActionCollectionItem *_photoLibraryItem;
     
@@ -68,10 +69,26 @@
         
         TGPresentation *presentation = TGPresentation.current;
         NSMutableArray *wallpaperItems = [[NSMutableArray alloc] init];
+        NSMutableArray *colorWallpapers = [[NSMutableArray alloc] init];
         if (![presentation.pallete isMemberOfClass:[TGDefaultPresentationPallete class]])
-            [wallpaperItems addObject:[[TGColorWallpaperInfo alloc] initWithColor:TGColorHexCode(presentation.pallete.backgroundColor)]];
+            [colorWallpapers addObject:@(TGColorHexCode(presentation.pallete.backgroundColor))];
+        for (NSNumber *color in @[@(0xffffff), @(0x000000)])
+        {
+            if (![colorWallpapers containsObject:color])
+                [colorWallpapers addObject:color];
+        }
+        for (NSNumber *color in colorWallpapers)
+        {
+            uint32_t rgb = [color unsignedIntValue];
+            CGFloat luminance = (0.299f * ((rgb >> 16) & 0xff) + 0.587f * ((rgb >> 8) & 0xff) + 0.114f * (rgb & 0xff)) / 255.0f;
+            if (luminance < 0.2f)
+                [wallpaperItems addObject:[[TGColorWallpaperInfo alloc] initWithColor:rgb tintColor:0xffffff systemAlpha:0.2f buttonsAlpha:0.3f highlightedButtonAlpha:0.45f progressAlpha:0.3f]];
+            else
+                [wallpaperItems addObject:[[TGColorWallpaperInfo alloc] initWithColor:rgb]];
+        }
         [wallpaperItems addObjectsFromArray:[[TGWallpaperManager instance] builtinWallpaperList]];
-        [wallpaperItems addObjectsFromArray:[TGModernRemoteWallpaperListActor cachedList]];
+        _remoteWallpaperItems = [TGModernRemoteWallpaperListActor cachedList];
+        [wallpaperItems addObjectsFromArray:_remoteWallpaperItems];
         _wallpaperItems = wallpaperItems;
         
         [ActionStageInstance() requestActor:@"/tg/remoteWallpapers/(cached)" options:nil flags:0 watcher:self];
@@ -444,11 +461,12 @@
                 
                 for (TGWallpaperInfo *wallpaperInfo in _wallpaperItems)
                 {
-                    if (![wallpaperInfo isKindOfClass:[TGRemoteWallpaperInfo class]])
+                    if ([_remoteWallpaperItems indexOfObjectIdenticalTo:wallpaperInfo] == NSNotFound)
                         [wallpaperItems addObject:wallpaperInfo];
                 }
                 
                 [wallpaperItems addObjectsFromArray:wallpaperInfos];
+                _remoteWallpaperItems = wallpaperInfos;
                 
                 bool changed = false;
                 

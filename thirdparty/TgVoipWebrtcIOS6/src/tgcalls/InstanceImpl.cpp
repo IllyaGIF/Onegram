@@ -73,6 +73,10 @@ InstanceImpl::InstanceImpl(Descriptor &&descriptor)
     descriptorPtr->initialInputDeviceId = descriptor.initialInputDeviceId;
     descriptorPtr->initialOutputDeviceId = descriptor.initialOutputDeviceId;
     descriptorPtr->directConnectionChannel = descriptor.directConnectionChannel;
+#ifdef TGCALLS_IOS6_AUDIO_ONLY
+    descriptorPtr->outgoingVideoSource = descriptor.outgoingVideoSource;
+    descriptorPtr->incomingVideoSink = descriptor.incomingVideoSink;
+#endif
 	fprintf(stderr, "IOS6WEBRTC cxx.instance.manager.thread.before\n");
 	fflush(stderr);
 	syslog(LOG_NOTICE, "IOS6WEBRTC cxx.instance.manager.thread.before");
@@ -150,6 +154,14 @@ void InstanceImpl::setMuteMicrophone(bool muteMicrophone) {
 		manager->setMuteOutgoingAudio(muteMicrophone);
 	});
 }
+
+#ifdef TGCALLS_IOS6_AUDIO_ONLY
+void InstanceImpl::setOutgoingVideoEnabled(bool enabled) {
+	_manager->perform([enabled](Manager *manager) {
+		manager->setOutgoingVideoEnabled(enabled);
+	});
+}
+#endif
 
 void InstanceImpl::setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
 	_manager->perform([sink](Manager *manager) {
@@ -249,9 +261,14 @@ int InstanceImpl::GetConnectionMaxLayer() {
 
 std::vector<std::string> InstanceImpl::GetVersions() {
     std::vector<std::string> result;
+#ifdef TGCALLS_IOS6_AUDIO_ONLY
+    result.push_back("7.0.0");
+    result.push_back("8.0.0");
+    result.push_back("9.0.0");
+#else
     result.push_back("2.7.7");
     result.push_back("5.0.0");
-    result.push_back("8.0.0");
+#endif
     return result;
 }
 

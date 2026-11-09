@@ -148,7 +148,7 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
     }
     else if ([type isEqualToString:@"user-avatar"])
     {
-        int32_t uid = [args[@"uid"] intValue];
+        int64_t uid = [args[@"uid"] longLongValue];
         if (uid == 0)
             name = @"DialogListAvatarSystem";
         else
@@ -230,7 +230,7 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
 {
     if ([args[@"type"] isEqualToString:@"user-avatar"])
     {
-        int uid = [args[@"uid"] intValue];
+        int64_t uid = [args[@"uid"] longLongValue];
         int colorIndex = [[TGInterfaceAssets instance] userColorIndex:uid];
         
         return [[NSString alloc] initWithFormat:@"%@:%d:%@x%@:%d", args[@"type"], uid == 0 ? -1 : colorIndex, args[@"w"], args[@"h"], TGClassicIOS6StyleEnabled() ? 1 : 0];
@@ -264,7 +264,7 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
     return [self _createAndCachePlaceholderWithArgs:args];
 }
 
-- (TGTwoColors)_colorsForUid:(int32_t)uid
+- (TGTwoColors)_colorsForUid:(int64_t)uid
 {
     if (uid == 0)
         return (TGTwoColors){.top = 0xb1b1b1, .bottom = 0xcdcdcd };
@@ -313,7 +313,7 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
 
         TGTwoColors twoColors;
         if ([type isEqualToString:@"user-avatar"])
-            twoColors = [self _colorsForUid:[args[@"uid"] intValue]];
+            twoColors = [self _colorsForUid:[args[@"uid"] longLongValue]];
         else if ([type isEqualToString:@"group-avatar"])
             twoColors = [self _colorsForGroupId:[args[@"cid"] longLongValue]];
         else
@@ -362,7 +362,7 @@ static UIImage *TGClassicIOS6AvatarPlaceholder(NSDictionary *args, CGSize size)
 
     if ([type isEqualToString:@"user-avatar"])
     {
-        int32_t uid = [args[@"uid"] intValue];
+        int64_t uid = [args[@"uid"] longLongValue];
         
         UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
         CGContextRef context = UIGraphicsGetCurrentContext();

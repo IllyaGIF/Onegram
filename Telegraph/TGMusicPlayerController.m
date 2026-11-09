@@ -5,6 +5,8 @@
 #import "TGLegacyComponentsContext.h"
 
 #import "TGMusicPlayerFullView.h"
+#import "TGBrandedMusicPlayerController.h"
+#import "TGPresentation.h"
 #import "TGTelegraph.h"
 
 #import "TGPreparedLocalDocumentMessage.h"
@@ -30,11 +32,35 @@ static char TGMusicPlayerLegacyOverlayKey;
 
 @implementation TGMusicPlayerController
 
++ (void)presentFromNavigationController:(UINavigationController *)navigationController presentation:(TGPresentation *)presentation
+{
+    if (navigationController == nil)
+        return;
+    if ([TGPresentation brandedIOS6Style])
+    {
+        for (UIViewController *viewController in navigationController.viewControllers)
+        {
+            if ([viewController isKindOfClass:[TGBrandedMusicPlayerController class]])
+                return;
+        }
+        [navigationController pushViewController:[[TGBrandedMusicPlayerController alloc] init] animated:true];
+        return;
+    }
+    
+    TGMusicPlayerController *controller = [[TGMusicPlayerController alloc] init];
+    controller.presentation = presentation;
+    UIViewController *rootController = navigationController.parentViewController;
+    if (rootController == nil)
+        rootController = navigationController;
+    [controller presentFromController:rootController];
+}
+
 - (instancetype)init
 {
     self = [super init];
     if (self != nil)
     {
+        self.navigationBarShouldBeHidden = true;
         _statusDisposable = [[SMetaDisposable alloc] init];
     }
     return self;
@@ -252,7 +278,8 @@ static char TGMusicPlayerLegacyOverlayKey;
 {
     [super controllerInsetUpdated:previousInset];
     
-    _view.safeAreaInset = self.controllerSafeAreaInset;
+    UIEdgeInsets safeAreaInset = self.controllerSafeAreaInset;
+    _view.safeAreaInset = UIEdgeInsetsMake(self.controllerInset.top, safeAreaInset.left, safeAreaInset.bottom, safeAreaInset.right);
 }
 
 @end

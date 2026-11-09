@@ -18,7 +18,7 @@ static NSInteger OGAssetsPreferredScale(void)
 {
     self = [super init];
     if (self != nil)
-        _imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:8 * 1024 * 1024];
+        _imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:OGMemoryCacheBudget(8 * 1024 * 1024)];
     return self;
 }
 

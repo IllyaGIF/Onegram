@@ -65,7 +65,6 @@
 
 @interface TLPageBlock$pageBlockList : TLPageBlock
 
-@property (nonatomic) bool ordered;
 @property (nonatomic, retain) NSArray *items;
 
 @end
@@ -171,6 +170,15 @@
 
 @property (nonatomic) int64_t audio_id;
 @property (nonatomic, retain) TLRichText *caption;
+
+@end
+
+@interface TLPageBlock$pageBlockOrderedList : TLPageBlock
+
+@property (nonatomic) int32_t flags;
+@property (nonatomic, retain) NSArray *items;
+@property (nonatomic) int32_t start;
+@property (nonatomic, retain) NSString *n_type;
 
 @end
 

@@ -266,7 +266,10 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
                 videoMedia.videoId = documentAttachment.documentId;
                 videoMedia.accessHash = documentAttachment.accessHash;
                 videoMedia.duration = video.duration;
-                videoMedia.dimensions = video.size;
+                CGSize dimensions = video.size;
+                if (dimensions.width < 1.0f || dimensions.height < 1.0f)
+                    [documentAttachment.thumbnailInfo imageUrlForLargestSize:&dimensions];
+                videoMedia.dimensions = dimensions;
                 videoMedia.thumbnailInfo = documentAttachment.thumbnailInfo;
                 videoMedia.roundMessage = video.isRoundMessage;
                 videoMedia.originInfo = origin;
@@ -277,8 +280,15 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
                         break;
                     }
                 }
-                TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
-                [videoInfo addVideoWithQuality:1 url:[[NSString alloc] initWithFormat:@"video:%lld:%lld:%d:%d", videoMedia.videoId, videoMedia.accessHash, documentAttachment.datacenterId, documentAttachment.size] size:documentAttachment.size];
+                NSDictionary *alternativeReferences = nil;
+                TGVideoInfo *videoInfo = [TGDocumentMediaAttachment videoInfoForTelegraphDocumentDesc:documentMedia.document alternativeDocuments:documentMedia.alt_documents alternativeFileReferences:&alternativeReferences];
+                if (alternativeReferences != nil) {
+                    NSMutableDictionary *fileReferences = [[NSMutableDictionary alloc] initWithDictionary:origin.fileReferences != nil ? origin.fileReferences : @{}];
+                    [fileReferences addEntriesFromDictionary:alternativeReferences];
+                    origin = [TGMediaOriginInfo mediaOriginInfoWithFileReference:origin.fileReference fileReferences:fileReferences cid:cid mid:mid];
+                    documentAttachment.originInfo = origin;
+                    videoMedia.originInfo = origin;
+                }
                 videoMedia.videoInfo = videoInfo;
             } else if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
                 TGDocumentAttributeAudio *audio = (TGDocumentAttributeAudio *)attribute;
@@ -383,6 +393,7 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         }
         
         if (videoMedia != nil && !isAnimated) {
+            videoMedia.strippedThumbnailUrl = [TGDocumentMediaAttachment strippedThumbnailUrlForTelegraphDocumentDesc:documentMedia.document];
             [mediaAttachments addObject:videoMedia];
         } else if (audioMedia != nil && !isAnimated && !isSticker) {
             [mediaAttachments addObject:audioMedia];
@@ -459,6 +470,15 @@ static bool TGIOS6ShouldTreatSmallMp4DocumentAsGifLike(TGDocumentMediaAttachment
         } else if ([entity isKindOfClass:[TLMessageEntity$messageEntityItalic class]]) {
             TLMessageEntity$messageEntityItalic *italicEntity = entity;
             [result addObject:[[TGMessageEntityItalic alloc] initWithRange:NSMakeRange(italicEntity.offset, italicEntity.length)]];
+        } else if ([entity isKindOfClass:[TLMessageEntity$messageEntityUnderline class]]) {
+            TLMessageEntity$messageEntityUnderline *underlineEntity = entity;
+            [result addObject:[[TGMessageEntityUnderline alloc] initWithRange:NSMakeRange(underlineEntity.offset, underlineEntity.length)]];
+        } else if ([entity isKindOfClass:[TLMessageEntity$messageEntityStrike class]]) {
+            TLMessageEntity$messageEntityStrike *strikeEntity = entity;
+            [result addObject:[[TGMessageEntityStrikethrough alloc] initWithRange:NSMakeRange(strikeEntity.offset, strikeEntity.length)]];
+        } else if ([entity isKindOfClass:[TLMessageEntity$messageEntitySpoiler class]]) {
+            TLMessageEntity$messageEntitySpoiler *spoilerEntity = entity;
+            [result addObject:[[TGMessageEntitySpoiler alloc] initWithRange:NSMakeRange(spoilerEntity.offset, spoilerEntity.length)]];
         } else if ([entity isKindOfClass:[TLMessageEntity$messageEntityCode class]]) {
             TLMessageEntity$messageEntityCode *codeEntity = entity;
             [result addObject:[[TGMessageEntityCode alloc] initWithRange:NSMakeRange(codeEntity.offset, codeEntity.length)]];
@@ -513,6 +533,29 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return [[TGRichMessageMediaAttachment alloc] initWithRichMessage:richMessage];
 }
 
++ (id)beginReplyPreloadForTelegraphMessageDescs:(NSArray *)descs
+{
+    NSMutableArray *keys = [[NSMutableArray alloc] init];
+    for (id desc in descs)
+    {
+        if (![desc isKindOfClass:[TLMessage$messageMeta class]])
+            continue;
+        TLMessage$messageMeta *message = (TLMessage$messageMeta *)desc;
+        if (message.reply_to_msg_id == 0)
+            continue;
+        int64_t peerId = 0;
+        if ([message.to_id isKindOfClass:[TLPeer$peerChannel class]])
+            peerId = TGPeerIdFromChannelId(((TLPeer$peerChannel *)message.to_id).channel_id);
+        [keys addObject:@[@(peerId), @(message.reply_to_msg_id)]];
+    }
+    return [TGDatabaseInstance() beginMessageLookupScopeWithKeys:keys];
+}
+
++ (void)endReplyPreload:(id)scope
+{
+    [TGDatabaseInstance() endMessageLookupScope:scope];
+}
+
 - (id)initWithTelegraphMessageDesc:(TLMessage *)desc
 {
     self = [super init];
@@ -541,8 +584,6 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 int64_t senderPeerId = ((TLMessage$modernMessage *)desc).senderPeerId;
                 if (senderPeerId != 0)
                     self.fromUid = senderPeerId;
-                else if (self.fromUid > 0)
-                    self.fromUid = TGModernLegacyIdForModernId(self.fromUid);
             }
             
             self.text = concreteMessage.message;
@@ -764,9 +805,9 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                 bool hidePreviousMarkup = false;
                 bool forceReply = false;
                 bool onlyIfRelevantToUser = false;
-                int32_t markupUserId = (int32_t)self.fromUid;
+                int64_t markupUserId = self.fromUid;
                 if (markupUserId == 0 && self.cid < 0)
-                    markupUserId = (int32_t)self.cid;
+                    markupUserId = self.cid;
                 TGBotReplyMarkup *replyMarkup = [TGBotSignals botReplyMarkupForMarkup:((TLMessage$modernMessage *)desc).reply_markup userId:markupUserId messageId:self.mid hidePreviousMarkup:&hidePreviousMarkup forceReply:&forceReply onlyIfRelevantToUser:&onlyIfRelevantToUser];
                 
                 if (!onlyIfRelevantToUser || ((TLMessage$modernMessage *)desc).flags & (1 << 4))
@@ -811,8 +852,6 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
             self.mid = concreteMessage.n_id;
             self.outgoing = concreteMessage.flags & 2;
             self.fromUid = concreteMessage.senderPeerId != 0 ? concreteMessage.senderPeerId : concreteMessage.from_id;
-            if (concreteMessage.senderPeerId == 0 && self.fromUid > 0)
-                self.fromUid = TGModernLegacyIdForModernId(self.fromUid);
             
             self.text = @"";
             self.date = concreteMessage.date;
@@ -949,11 +988,19 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
         }
 
         self.mediaAttachments = mediaAttachments;
+
+        int64_t savedPeerId = 0;
+        if ([desc isKindOfClass:[TLMessage$modernMessage class]])
+            savedPeerId = ((TLMessage$modernMessage *)desc).saved_peer_id;
+        else if ([desc isKindOfClass:[TLMessage$modernMessageService class]])
+            savedPeerId = ((TLMessage$modernMessageService *)desc).saved_peer_id;
+        if (savedPeerId != 0)
+            self.savedPeerId = savedPeerId;
     }
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc1:(Secret1_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date
+- (instancetype)initWithDecryptedMessageDesc1:(Secret1_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date
 {
     self = [super init];
     if (self != nil)
@@ -1199,7 +1246,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     
@@ -1245,7 +1292,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc17:(Secret17_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date
+- (instancetype)initWithDecryptedMessageDesc17:(Secret17_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date
 {
     self = [super init];
     if (self != nil)
@@ -1492,7 +1539,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     
@@ -1557,7 +1604,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc20:(Secret20_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date
+- (instancetype)initWithDecryptedMessageDesc20:(Secret20_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date
 {
     self = [super init];
     if (self != nil)
@@ -1804,7 +1851,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     
@@ -1869,7 +1916,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc23:(Secret23_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date
+- (instancetype)initWithDecryptedMessageDesc23:(Secret23_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date
 {
     self = [super init];
     if (self != nil)
@@ -2116,7 +2163,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     
@@ -2199,7 +2246,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc45:(Secret46_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date {
+- (instancetype)initWithDecryptedMessageDesc45:(Secret46_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date {
     self = [super init];
     if (self != nil)
     {
@@ -2554,7 +2601,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     
@@ -2694,7 +2741,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc66:(Secret66_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date {
+- (instancetype)initWithDecryptedMessageDesc66:(Secret66_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date {
     self = [super init];
     if (self != nil)
     {
@@ -3080,7 +3127,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     
@@ -3220,7 +3267,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
     return self;
 }
 
-- (instancetype)initWithDecryptedMessageDesc73:(Secret73_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int)fromUid date:(int)date {
+- (instancetype)initWithDecryptedMessageDesc73:(Secret73_DecryptedMessage *)desc encryptedFile:(TGStoredIncomingMessageFileInfo *)encryptedFile conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid date:(int)date {
     self = [super init];
     if (self != nil)
     {
@@ -3608,7 +3655,7 @@ static TGRichMessageMediaAttachment *TGRichMessageAttachmentForModernMessage(TLM
                     convertedContact.phone_number = mediaContact.phoneNumber;
                     convertedContact.first_name = mediaContact.firstName;
                     convertedContact.last_name = mediaContact.lastName;
-                    convertedContact.user_id = [mediaContact.userId intValue];
+                    convertedContact.user_id = [mediaContact.userId longLongValue];
                     
                     TGContactMediaAttachment *contactAttachment = [[TGContactMediaAttachment alloc] initWithTelegraphContactDesc:convertedContact];
                     

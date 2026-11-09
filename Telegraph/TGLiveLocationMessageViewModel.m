@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGLiveLocationMessageViewModel.h"
 
 #import "TGTelegramNetworking.h"
@@ -28,6 +29,7 @@
 #import "TGImageMessageViewModel.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGLiveLocationMessageViewModel ()
 {
@@ -68,7 +70,7 @@
         _message = message;
         _period = period;
         
-        int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+        int32_t currentTime = (int32_t)OGRemoteClockTime();
         _expired = currentTime >= message.date + period;
         
         _bottomModel = [[TGModernFlatteningViewModel alloc] init];
@@ -194,6 +196,7 @@
     [super bindViewToContainer:container viewStorage:viewStorage];
     
     _boundDoubleTapRecognizer = [[TGDoubleTapGestureRecognizer alloc] initWithTarget:self action:@selector(messageDoubleTapGesture:)];
+    _boundDoubleTapRecognizer.longPressDuration = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0.5 : 1.5;
     _boundDoubleTapRecognizer.delegate = self;
     [[_imageModel boundView] addGestureRecognizer:_boundDoubleTapRecognizer];
     
@@ -231,7 +234,7 @@
 - (void)updateMessage:(TGMessage *)message viewStorage:(TGModernViewStorage *)viewStorage sizeUpdated:(bool *)sizeUpdated
 {
     TGLocationMediaAttachment *location = message.locationAttachment;
-    int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+    int32_t currentTime = (int32_t)OGRemoteClockTime();
     int32_t period = location.period;
     
     bool previousExpired = _expired;
@@ -379,6 +382,10 @@
         if (recognizer.longTapped)
         {
             [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+        }
+        else if (recognizer.doubleTapped)
+        {
+            [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
         }
         else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
         {

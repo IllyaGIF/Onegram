@@ -89,5 +89,7 @@
 - (void)updateImageOverlay:(bool)animated;
 
 - (bool)isInstant;
+- (bool)isStreamable;
+- (bool)isStreamingDownload;
 
 @end

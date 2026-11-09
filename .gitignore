@@ -33,3 +33,7 @@ xcuserdata/
 
 __pycache__/
 *.py[cod]
+
+/theos/*.d
+.ruff_cache/
+*.oxipng

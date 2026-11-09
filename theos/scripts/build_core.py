@@ -10,11 +10,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from xcode_graph import ROOT
 from generate import OUT
+from build_libvpx import LIBVPX_VERSION, build_libvpx
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--cc", required=True)
+    p.add_argument("--c-compiler", required=True)
     p.add_argument("--sdk", required=True)
     p.add_argument("--toolchain", required=True)
     p.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -30,7 +32,7 @@ def main():
         return match[1]
 
     arch = os.environ.get("ONEGRAM_ARCH", "armv7")
-    minimum = {"armv6": "3.1.3", "armv7": "4.3", "arm64": "7.0"}[arch]
+    minimum = {"armv6": "3.0", "armv7": "4.3", "arm64": "7.0"}[arch]
 
     substitutions = {
         "ROOT": str(core),
@@ -65,8 +67,9 @@ def main():
             )
             for f in flags
         ]
-    elif arch == "armv6":
-        flags += [
+    platform_flags = []
+    if arch == "armv6":
+        platform_flags = [
             "-DONEGRAM_ARMV6=1",
             "-D__AVAILABILITY_INTERNAL__IPHONE_4_0=",
             "-D__AVAILABILITY_INTERNAL__IPHONE_4_3=",
@@ -74,6 +77,19 @@ def main():
             "-I" + str(OUT / "dependency-sources/libdispatch-libdispatch-187.10"),
             "-I" + str(OUT / "dependency-sources/libclosure-libclosure-38"),
         ]
+    flags += platform_flags
+
+    libvpx = build_libvpx(
+        arch,
+        shlex.split(args.c_compiler),
+        args.sdk,
+        minimum,
+        args.toolchain,
+        args.jobs,
+        OUT,
+        platform_flags,
+    )
+    flags += ["-I" + str(libvpx.include)]
 
     sources = [
         core / "src" / source
@@ -124,6 +140,7 @@ def main():
     signature.update(args.sdk.encode())
     signature.update(args.toolchain.encode())
     signature.update(arch.encode())
+    signature.update(LIBVPX_VERSION.encode())
     signature.update(Path(__file__).read_bytes())
 
     stamp = output / "signature"

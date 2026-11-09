@@ -17,6 +17,9 @@
 
 #import "TGPresentation.h"
 #import "TGReusableLabel.h"
+#import "TGOnegramSettings.h"
+#import "TGProfileHeaderLayout.h"
+#import "TGStoryRingView.h"
 
 @interface TGGroupInfoCollectionItemView ()
 {
@@ -37,6 +40,12 @@
     UIView *_editingSeparator;
     
     int64_t _groupId;
+
+    UILabel *_subtitleLabel;
+    TGStoryRingView *_storyRingView;
+    NSString *_avatarUri;
+    CGFloat _avatarDiameter;
+    bool _avatarShowsImage;
 }
 
 @end
@@ -79,7 +88,49 @@
     [super setPresentation:presentation];
     
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
+    _subtitleLabel.textColor = presentation.pallete.collectionMenuVariantColor;
     _verifiedIcon.image = presentation.images.profileVerifiedIcon;
+}
+
+- (bool)usesModernLayout
+{
+    return !_editing && TGOnegramModernInterfaceEnabled();
+}
+
+- (CGFloat)currentAvatarDiameter
+{
+    return [self usesModernLayout] ? TGProfileHeaderAvatarSize : 64.0f;
+}
+
+- (void)setStoryRingState:(int)storyRingState
+{
+    if (storyRingState != TGStoryRingStateNone && _storyRingView == nil)
+    {
+        _storyRingView = [[TGStoryRingView alloc] init];
+        _storyRingView.lineWidth = 3.0f;
+        [self insertSubview:_storyRingView belowSubview:_avatarView];
+    }
+    _storyRingView.state = (TGStoryRingState)storyRingState;
+    [self setNeedsLayout];
+}
+
+- (void)setSubtitle:(NSString *)subtitle
+{
+    if (_subtitleLabel == nil)
+    {
+        _subtitleLabel = [[UILabel alloc] init];
+        _subtitleLabel.backgroundColor = [UIColor clearColor];
+        _subtitleLabel.font = TGProfileHeaderSubtitleFont();
+        _subtitleLabel.textAlignment = NSTextAlignmentCenter;
+        _subtitleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        _subtitleLabel.textColor = self.presentation.pallete.collectionMenuVariantColor;
+        [self addSubview:_subtitleLabel];
+    }
+    if (!TGStringCompare(_subtitleLabel.text, subtitle))
+    {
+        _subtitleLabel.text = subtitle;
+        [self setNeedsLayout];
+    }
 }
 
 - (id)avatarView
@@ -114,22 +165,40 @@
 
 - (void)setAvatarUri:(NSString *)avatarUri animated:(bool)animated
 {
-    UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:64.0f];
+    _avatarUri = avatarUri;
+    _avatarShowsImage = false;
+    CGFloat diameter = [self currentAvatarDiameter];
+    bool diameterChanged = fabs(_avatarDiameter - diameter) > FLT_EPSILON;
+    if (diameterChanged)
+    {
+        _avatarDiameter = diameter;
+        CGFloat fontSize = diameter > 64.0f ? 42.0f : 28.0f;
+        [_avatarView setSingleFontSize:fontSize doubleFontSize:fontSize useBoldFont:false];
+    }
+    UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:diameter];
     UIImage *currentPlaceholder = [_avatarView currentImage];
     if (currentPlaceholder == nil)
         currentPlaceholder = placeholder;
     
     if (avatarUri.length == 0)
-        [_avatarView loadGroupPlaceholderWithSize:CGSizeMake(64.0f, 64.0f) conversationId:_groupId title:_isBroadcast ? @"" : _titleLabel.text placeholder:placeholder];
-    else if (!TGStringCompare([_avatarView currentUrl], avatarUri))
+        [_avatarView loadGroupPlaceholderWithSize:CGSizeMake(diameter, diameter) conversationId:_groupId title:_isBroadcast ? @"" : _titleLabel.text placeholder:placeholder];
+    else if (diameterChanged || !TGStringCompare([_avatarView currentUrl], avatarUri))
     {
         _avatarView.fadeTransitionDuration = animated ? 0.3 : 0.1;
-        [_avatarView loadImage:avatarUri filter:@"circle:64x64" placeholder:currentPlaceholder forceFade:animated];
+        [_avatarView loadImage:avatarUri filter:[[NSString alloc] initWithFormat:@"circle:%.0fx%.0f", diameter, diameter] placeholder:currentPlaceholder forceFade:animated];
     }
+}
+
+- (void)updateAvatarForCurrentLayout
+{
+    if (_avatarShowsImage || _avatarDiameter < FLT_EPSILON || fabs(_avatarDiameter - [self currentAvatarDiameter]) < FLT_EPSILON)
+        return;
+    [self setAvatarUri:_avatarUri animated:false];
 }
 
 - (void)setAvatarImage:(UIImage *)avatarImage animated:(bool)__unused animated
 {
+    _avatarShowsImage = true;
     if (avatarImage == nil) {
         static UIImage *placeholder = nil;
         static dispatch_once_t onceToken;
@@ -393,7 +462,20 @@
     
     CGRect bounds = self.bounds;
     
+    if ([self usesModernLayout])
+    {
+        [self layoutModernHeader];
+        return;
+    }
+    
+    self.backgroundView.hidden = false;
+    _subtitleLabel.hidden = true;
+    _storyRingView.hidden = true;
+    _titleLabel.font = TGBoldSystemFontOfSize(20);
+    _titleLabel.numberOfLines = 2;
     _avatarView.frame = CGRectMake(15 + self.safeAreaInset.left, 10, 66, 66);
+    [self updateAvatarForCurrentLayout];
+    _avatarOverlay.frame = _avatarView.frame;
     
     CGSize iconSize = _avatarIconView.image.size;
     _avatarIconView.frame = (CGRect){{CGFloor((_avatarView.frame.size.width - iconSize.width) / 2.0f), CGFloor((_avatarView.frame.size.height - iconSize.height) / 2.0f + 1.0f)}, iconSize};
@@ -425,6 +507,46 @@
     }
     
     _editingSeparator.frame = CGRectMake(92.0f + self.safeAreaInset.left, 62.0f, bounds.size.width - 92.0f - self.safeAreaInset.left, TGScreenPixel);
+}
+
+- (void)layoutModernHeader
+{
+    CGRect bounds = self.bounds;
+    self.backgroundView.hidden = true;
+    _avatarView.frame = TGProfileHeaderAvatarFrame(bounds);
+    [self updateAvatarForCurrentLayout];
+    _avatarOverlay.frame = _avatarView.frame;
+    _storyRingView.hidden = _storyRingView.state == TGStoryRingStateNone;
+    [_storyRingView layoutAroundFrame:_avatarView.frame spacing:2.5f];
+    _activityIndicator.center = CGPointMake(CGRectGetMidX(_avatarView.frame), CGRectGetMidY(_avatarView.frame));
+
+    CGSize iconSize = _avatarIconView.image.size;
+    _avatarIconView.frame = (CGRect){{CGFloor((_avatarView.frame.size.width - iconSize.width) / 2.0f), CGFloor((_avatarView.frame.size.height - iconSize.height) / 2.0f + 1.0f)}, iconSize};
+
+    CGFloat horizontalInset = 15.0f;
+    CGFloat contentLeft = horizontalInset + self.safeAreaInset.left;
+    CGFloat contentWidth = MAX(0.0f, bounds.size.width - contentLeft - horizontalInset - self.safeAreaInset.right);
+    bool showsVerified = _verifiedIcon.superview != nil && !_verifiedIcon.hidden;
+    CGFloat badgeWidth = showsVerified ? _verifiedIcon.bounds.size.width + 4.0f : 0.0f;
+
+    if (_titleLabel.font != TGProfileHeaderTitleFont())
+        _titleLabel.font = TGProfileHeaderTitleFont();
+    _titleLabel.numberOfLines = 1;
+    CGFloat titleLineHeight = TGProfileHeaderTitleLineHeight();
+    CGFloat maxTitleWidth = MAX(0.0f, contentWidth - badgeWidth);
+    CGSize titleSize = [_titleLabel sizeThatFits:CGSizeMake(maxTitleWidth, titleLineHeight)];
+    titleSize.width = MIN(CGCeil(titleSize.width), maxTitleWidth);
+    CGFloat titleTop = TGProfileHeaderTitleTop();
+    CGFloat titleX = contentLeft + CGFloor((contentWidth - titleSize.width - badgeWidth) / 2.0f);
+    _titleLabel.frame = CGRectMake(titleX, titleTop + CGFloor((titleLineHeight - titleSize.height) / 2.0f), titleSize.width, titleSize.height);
+    if (showsVerified)
+    {
+        CGSize verifiedSize = _verifiedIcon.bounds.size;
+        _verifiedIcon.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + 4.0f, titleTop + CGFloor((titleLineHeight - verifiedSize.height) / 2.0f), verifiedSize.width, verifiedSize.height);
+    }
+
+    _subtitleLabel.hidden = _subtitleLabel.text.length == 0;
+    _subtitleLabel.frame = CGRectMake(contentLeft, TGProfileHeaderSubtitleTop(), contentWidth, TGProfileHeaderSubtitleLineHeight());
 }
 
 #pragma mark -

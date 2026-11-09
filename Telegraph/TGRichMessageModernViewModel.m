@@ -2102,7 +2102,7 @@ static NSString *TGRichMessageFormatNumber(NSInteger value, NSString *type)
             break;
         case TGRichMessageButtonActionUserProfile:
             if (button.identifier != 0)
-                [_context.companionHandle requestAction:@"openLinkRequested" options:@{@"url": [[NSString alloc] initWithFormat:@"tg-user://%d", (int)TGModernLegacyIdForModernId(button.identifier)], @"mid": @(_mid)}];
+                [_context.companionHandle requestAction:@"openLinkRequested" options:@{@"url": [[NSString alloc] initWithFormat:@"tg-user://%lld", button.identifier], @"mid": @(_mid)}];
             break;
         case TGRichMessageButtonActionCopy:
             if (button.string.length != 0)
@@ -2249,7 +2249,7 @@ static NSString *TGRichMessageFormatNumber(NSInteger value, NSString *type)
             [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
     }
     else if (recognizer.doubleTapped)
-        [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+        [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
     else if (link != nil)
         [self activateLink:link linkText:linkText];
     else if (region != nil)

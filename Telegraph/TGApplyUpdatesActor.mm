@@ -47,6 +47,8 @@
 #import "TLMessage$modernMessageService.h"
 
 #import "TLUser$modernUser.h"
+#import "TLChat$channel.h"
+#import "TLChat$channelForbidden.h"
 #import "TLUpdates+TG.h"
 
 #import "TLMessageFwdHeader$messageFwdHeader.h"
@@ -55,6 +57,7 @@
 
 #import <set>
 #import <map>
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @protocol TGSyntheticUpdateWithPts <NSObject>
 
@@ -91,16 +94,19 @@
 
 @end
 
-static inline void maybeProcessUser(TLUser *user, std::map<int, TLUser *> &processedUsers)
+static inline void maybeProcessUser(TLUser *user, std::map<int64_t, TLUser *> &processedUsers)
 {
     if (((TLUser$modernUser *)user).n_id != 0)
         processedUsers[((TLUser$modernUser *)user).n_id] = user;
 }
 
-static inline void maybeProcessChat(TLChat *chat, std::map<int, TLChat *> &processedChats)
+static inline void maybeProcessChat(TLChat *chat, std::map<int64_t, TLChat *> &processedChats)
 {
-    if (chat.n_id != 0)
-        processedChats[chat.n_id] = chat;
+    if (chat.n_id == 0)
+        return;
+    
+    bool isChannel = [chat isKindOfClass:[TLChat$channel class]] || [chat isKindOfClass:[TLChat$channelForbidden class]];
+    processedChats[isChannel ? TGPeerIdFromChannelId(chat.n_id) : TGPeerIdFromGroupId(chat.n_id)] = chat;
 }
 
 static int64_t TGIOS6PeerIdFromFolderPeer(TLPeer *peer)
@@ -282,9 +288,7 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     {
         if (now < aggregateBlockUntil)
         {
-#if defined(ONEGRAM_DIAGNOSTICS)
             OGPlatformDiagnosticLog(@"NOTIFY coalesced into aggregate");
-#endif
             return;
         }
 
@@ -308,9 +312,7 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
     bool deferred = presentationTime > now;
     if (deferred)
         OGPlatformSetLocalNotificationFireDate(notification, [NSDate dateWithTimeIntervalSinceReferenceDate:presentationTime]);
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformDiagnosticLog(@"NOTIFY present delay=%.1f aggregate=%d", presentationTime - now, isAggregate ? 1 : 0);
-#endif
 
     dispatch_async(dispatch_get_main_queue(), ^
     {
@@ -322,6 +324,38 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
         else
             OGPlatformPresentLocalNotificationNow(application, notification);
     });
+}
+
++ (bool)claimNotificationForPeerId:(int64_t)peerId messageId:(int32_t)messageId
+{
+    return [self claimNotificationForPeerId:peerId messageId:messageId accountId:TGTelegraphInstance.clientUserId];
+}
+
++ (bool)claimNotificationForPeerId:(int64_t)peerId messageId:(int32_t)messageId accountId:(int64_t)accountId
+{
+    if (peerId == 0 || messageId == 0)
+        return false;
+    static NSMutableSet *recentKeys = nil;
+    static NSMutableArray *recentOrder = nil;
+    @synchronized(self)
+    {
+        if (recentKeys == nil)
+        {
+            recentKeys = [[NSMutableSet alloc] init];
+            recentOrder = [[NSMutableArray alloc] init];
+        }
+        NSString *key = [NSString stringWithFormat:@"%lld:%lld:%d", accountId, peerId, messageId];
+        if ([recentKeys containsObject:key])
+            return false;
+        [recentKeys addObject:key];
+        [recentOrder addObject:key];
+        while (recentOrder.count > 256)
+        {
+            [recentKeys removeObject:recentOrder[0]];
+            [recentOrder removeObjectAtIndex:0];
+        }
+        return true;
+    }
 }
 
 + (void)presentLocalNotificationsForMessageDescriptions:(NSArray *)messageDescriptions
@@ -338,15 +372,6 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 
         [ActionStageInstance() dispatchOnStageQueue:^
         {
-            static NSMutableSet *recentNotificationKeys = nil;
-            static NSMutableArray *recentNotificationKeyOrder = nil;
-            static dispatch_once_t onceToken;
-            dispatch_once(&onceToken, ^
-            {
-                recentNotificationKeys = [[NSMutableSet alloc] init];
-                recentNotificationKeyOrder = [[NSMutableArray alloc] init];
-            });
-
             NSMutableArray *acceptedDescriptions = [[NSMutableArray alloc] init];
             NSMutableArray *mids = [[NSMutableArray alloc] init];
             NSMutableSet *midsWithoutSound = [[NSMutableSet alloc] init];
@@ -372,19 +397,9 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
                     continue;
                 }
 
-                NSString *key = [[NSString alloc] initWithFormat:@"%lld:%d", message.cid, message.mid];
-                if ([recentNotificationKeys containsObject:key]) {
+                if (![self claimNotificationForPeerId:message.cid messageId:message.mid]) {
                     IOS6NotificationProbe(@"NOTIFY_SKIP", @"reason=duplicate peer=%lld mid=%d", message.cid, message.mid);
                     continue;
-                }
-
-                [recentNotificationKeys addObject:key];
-                [recentNotificationKeyOrder addObject:key];
-                while (recentNotificationKeyOrder.count > 256)
-                {
-                    NSString *oldestKey = recentNotificationKeyOrder[0];
-                    [recentNotificationKeys removeObject:oldestKey];
-                    [recentNotificationKeyOrder removeObjectAtIndex:0];
                 }
 
                 [acceptedDescriptions addObject:messageDescription];
@@ -394,9 +409,7 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
                 maxMid = MAX(maxMid, message.mid);
             }
 
-#if defined(ONEGRAM_DIAGNOSTICS)
             OGPlatformDiagnosticLog(@"NOTIFY candidates=%d accepted=%d", (int)descriptions.count, (int)acceptedDescriptions.count);
-#endif
 
             if (acceptedDescriptions.count != 0)
             {
@@ -933,13 +946,13 @@ static NSString *TGIOS6AggregateNotificationText(NSUInteger count)
 }
 
 template<typename T>
-static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
+static int64_t extractMessageConversationId(T concreteMessage, int64_t &outFromUid)
 {
     int64_t fromUid = concreteMessage.from_id;
     bool outgoing = concreteMessage.flags & 2;
     
     if (!outgoing)
-        outFromUid = (int)fromUid;
+        outFromUid = fromUid;
     
     if ([concreteMessage.to_id isKindOfClass:[TLPeer$peerUser class]])
     {
@@ -1016,12 +1029,12 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             stateQts = MAX(stateQts, [(id<TGSyntheticUpdateWithQts>)update.update qts]);
     }
     
-    std::map<int, TLUser *> processedUsers;
-    std::map<int, TLChat *> processedChats;
+    std::map<int64_t, TLUser *> processedUsers;
+    std::map<int64_t, TLChat *> processedChats;
     
     NSMutableArray *updatesWithDates = [[NSMutableArray alloc] init];
     
-    std::set<int> knownUsers;
+    std::set<int64_t> knownUsers;
     std::set<int64_t> knownChats;
     
     NSMutableArray *addedMessages = [[NSMutableArray alloc] init];
@@ -1031,7 +1044,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     NSMutableArray *reactionMessageUpdates = [[NSMutableArray alloc] init];
     NSMutableDictionary *archiveStateByPeerId = [[NSMutableDictionary alloc] init];
     
-    int currentTime = (int)[[TGTelegramNetworking instance] globalTime];
+    int currentTime = (int)OGRemoteClockTime();
     
     bool failedProcessing = false;
     bool updatesTooLong = false;
@@ -1159,7 +1172,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                 TGLog(@"Message %d does not match for local notification", (int)message.n_id);
             
             int64_t conversationId = 0;
-            int fromUid = 0;
+            int64_t fromUid = 0;
             
             if ([message isKindOfClass:messageClass])
                 conversationId = extractMessageConversationId((TLMessage$message *)message, fromUid);
@@ -1170,7 +1183,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             {
                 if (conversationId < 0)
                 {
-                    if (knownChats.find(conversationId) == knownChats.end() && processedChats.find(-(int)conversationId) == processedChats.end())
+                    if (knownChats.find(conversationId) == knownChats.end() && processedChats.find(conversationId) == processedChats.end())
                     {
                         bool contains = [TGDatabaseInstance() containsConversationWithId:conversationId];
                         if (contains)
@@ -1184,11 +1197,11 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                 }
                 else
                 {
-                    if (knownUsers.find((int)conversationId) == knownUsers.end() && processedUsers.find((int)conversationId) == processedUsers.end())
+                    if (knownUsers.find(conversationId) == knownUsers.end() && processedUsers.find(conversationId) == processedUsers.end())
                     {
-                        bool contains = [TGDatabaseInstance() loadUser:(int)conversationId];
+                        bool contains = [TGDatabaseInstance() loadUser:conversationId];
                         if (contains)
-                            knownUsers.insert((int)conversationId);
+                            knownUsers.insert(conversationId);
                         else
                         {
                             TGLog(@"Unknown user %" PRId64 "", conversationId);
@@ -1207,7 +1220,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         knownUsers.insert(fromUid);
                     else
                     {
-                        TGLog(@"Unknown user %" PRId32 "", fromUid);
+                        TGLog(@"Unknown user %" PRId64 "", fromUid);
                         failedProcessing = true;
                     }
                 }
@@ -1227,7 +1240,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                     knownUsers.insert(fwd_header.from_id);
                                 else
                                 {
-                                    TGLog(@"Unknown user %" PRId32 "", fwd_header.from_id);
+                                    TGLog(@"Unknown user %" PRId64 "", fwd_header.from_id);
                                     failedProcessing = true;
                                 }
                             }
@@ -1235,10 +1248,10 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         if (fwd_header.channel_id != 0) {
                             int64_t peerId = TGPeerIdFromChannelId(fwd_header.channel_id);
                             if (peerId != 0) {
-                                if (knownChats.find(peerId) == knownChats.end() && processedChats.find(TGChannelIdFromPeerId(peerId)) == processedChats.end()) {
+                                if (knownChats.find(peerId) == knownChats.end() && processedChats.find(peerId) == processedChats.end()) {
                                     bool contains = [TGDatabaseInstance() _channelExists:peerId];
                                     if (contains)
-                                        knownChats.insert(TGChannelIdFromPeerId(peerId));
+                                        knownChats.insert(peerId);
                                     else
                                     {
                                         TGLog(@"Unknown channel %" PRId64 "", peerId);
@@ -1284,7 +1297,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             
             if (conversationId < 0)
             {
-                if (knownChats.find(conversationId) == knownChats.end() && processedChats.find(-(int)conversationId) == processedChats.end())
+                if (knownChats.find(conversationId) == knownChats.end() && processedChats.find(conversationId) == processedChats.end())
                 {
                     bool contains = [TGDatabaseInstance() containsConversationWithId:conversationId];
                     if (contains)
@@ -1299,7 +1312,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
         else if ([update isKindOfClass:updateChatParticipantAddClass] || [update isKindOfClass:updateChatParticipantDeleteClass])
         {
             int64_t conversationId = 0;
-            int32_t userId = 0;
+            int64_t userId = 0;
             if ([update isKindOfClass:updateChatParticipantAddClass])
             {
                 conversationId = -((TLUpdate$updateChatParticipantAdd *)update).chat_id;
@@ -1313,7 +1326,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             
             if (conversationId < 0)
             {
-                if (knownChats.find(conversationId) == knownChats.end() && processedChats.find(-(int)conversationId) == processedChats.end())
+                if (knownChats.find(conversationId) == knownChats.end() && processedChats.find(conversationId) == processedChats.end())
                 {
                     bool contains = [TGDatabaseInstance() containsConversationWithId:conversationId];
                     if (contains)
@@ -1332,7 +1345,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         knownUsers.insert(userId);
                     else
                     {
-                        TGLog(@"Unknown user %" PRId32 "", userId);
+                        TGLog(@"Unknown user %" PRId64 "", userId);
                         failedProcessing = true;
                     }
                 }
@@ -1351,7 +1364,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             {
                 if (conversation.chatParticipants.chatParticipantUids.count != 0)
                 {
-                    int userId = [conversation.chatParticipants.chatParticipantUids[0] intValue];
+                    int64_t userId = [conversation.chatParticipants.chatParticipantUids[0] longLongValue];
                     if ([TGDatabaseInstance() loadUser:userId] != nil)
                         [allUpdates addObject:update];
                     else
@@ -1394,14 +1407,14 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     {
         NSMutableArray *usersToProcess = [[NSMutableArray alloc] initWithCapacity:processedUsers.size()];
         
-        for (std::map<int, TLUser *>::iterator it = processedUsers.begin(); it != processedUsers.end(); it++)
+        for (std::map<int64_t, TLUser *>::iterator it = processedUsers.begin(); it != processedUsers.end(); it++)
         {
             [usersToProcess addObject:it->second];
         }
         
         NSMutableArray *chatsToProcess = [[NSMutableArray alloc] initWithCapacity:processedChats.size()];
         
-        for (std::map<int, TLChat *>::iterator it = processedChats.begin(); it != processedChats.end(); it++)
+        for (std::map<int64_t, TLChat *>::iterator it = processedChats.begin(); it != processedChats.end(); it++)
         {
             [chatsToProcess addObject:it->second];
         }
@@ -1520,7 +1533,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     bool globalMessagePreviewText = true;
     int globalMessageMuteUntil = 0;
     bool notFound = false;
-    [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 1 soundId:&globalMessageSoundIdVal muteUntil:&globalMessageMuteUntilVal previewText:&globalMessagePreviewTextVal messagesMuted:NULL notFound:&notFound];
+    [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsPrivate soundId:&globalMessageSoundIdVal muteUntil:&globalMessageMuteUntilVal previewText:&globalMessagePreviewTextVal messagesMuted:NULL notFound:&notFound];
     if (notFound) {
         globalMessageSoundId = 1;
         globalMessagePreviewText = true;
@@ -1539,7 +1552,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
     bool globalGroupPreviewText = true;
     int globalGroupMuteUntil = 0;
     notFound = false;
-    [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 2 soundId:&globalGroupSoundIdVal muteUntil:&globalGroupMuteUntilVal previewText:&globalGroupPreviewTextVal messagesMuted:NULL notFound:&notFound];
+    [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsGroup soundId:&globalGroupSoundIdVal muteUntil:&globalGroupMuteUntilVal previewText:&globalGroupPreviewTextVal messagesMuted:NULL notFound:&notFound];
     if (notFound) {
         globalGroupSoundId = 1;
         globalGroupPreviewText = true;
@@ -1720,20 +1733,20 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             {
                 notificationPeerId = message.cid;
                 if (message.fromUid != 0)
-                    user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
+                    user = [TGDatabaseInstance() loadUser:message.fromUid];
                 TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
                 if (conversation != nil)
                     chatName = conversation.chatTitle;
                 else
                     chatName = [TGDatabaseInstance() loadConversationWithId:message.cid].chatTitle;
             }
-            else if (message.cid <= INT_MIN)
+            else if (TGPeerIdIsSecretChat(message.cid))
             {
                 notificationPeerId = [TGDatabaseInstance() encryptedParticipantIdForConversationId:message.cid];
             }
             else if (message.cid > 0)
             {
-                user = [TGDatabaseInstance() loadUser:(int)message.cid];
+                user = [TGDatabaseInstance() loadUser:message.cid];
                 notificationPeerId = message.cid;
             }
             else
@@ -1742,7 +1755,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                     notificationPeerId = message.fromUid;
                 else
                     notificationPeerId = message.cid;
-                user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
+                user = [TGDatabaseInstance() loadUser:message.fromUid];
                 TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
                 if (conversation != nil)
                     chatName = conversation.chatTitle;
@@ -1760,7 +1773,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
             {
                 if (TGPeerIdIsUser(message.fromUid))
                 {
-                    TGUser *authorUser = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+                    TGUser *authorUser = [TGDatabaseInstance() loadUser:message.fromUid];
                     if (user == nil)
                         user = authorUser;
                     authorName = authorUser.displayName;
@@ -1777,7 +1790,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                 authorName = chatName;
             if (authorName.length == 0 && message.cid > 0)
             {
-                TGUser *peerUser = [TGDatabaseInstance() loadUser:(int32_t)message.cid];
+                TGUser *peerUser = [TGDatabaseInstance() loadUser:message.cid];
                 if (user == nil)
                     user = peerUser;
                 authorName = peerUser.displayName;
@@ -1832,7 +1845,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 TGUser *authorUser = user;
                                 NSMutableArray *subjectUsers = [[NSMutableArray alloc] init];
                                 for (NSNumber *nUid in uids) {
-                                    TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                                    TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
                                     if (user != nil) {
                                         [subjectUsers addObject:subjectUser];
                                     }
@@ -1855,7 +1868,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                                 NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
                                 if (nUid != nil)
                                 {
-                                    TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                                    TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
 
                                     if (subjectUser.uid == user.uid)
                                         text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_RETURNED"), authorName, chatName];
@@ -1874,7 +1887,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                             NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
                             if (nUid != nil)
                             {
-                                TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                                TGUser *subjectUser = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
 
                                 if (subjectUser.uid == user.uid)
                                     text = [[NSString alloc] initWithFormat:TGLocalized(@"CHAT_LEFT"), authorName, chatName];
@@ -2281,7 +2294,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                         text = [[NSString alloc] initWithFormat:@"%@", chatName];
                     }
                 }
-                else if (message.cid <= INT_MIN)
+                else if (TGPeerIdIsSecretChat(message.cid))
                 {
                     text = [[NSString alloc] initWithFormat:TGLocalized(@"ENCRYPTED_MESSAGE"), @""];
                 }
@@ -2301,9 +2314,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                 }
             }
 
-            bool isLocked = false;
-            if ([TGAppDelegateInstance respondsToSelector:@selector(isCurrentlyLocked)])
-                isLocked = [TGAppDelegateInstance isCurrentlyLocked];
+            bool isLocked = [TGAppDelegateInstance isCurrentlyLocked];
             if (isLocked)
             {
                 text = [[NSString alloc] initWithFormat:TGLocalized(@"LOCKED_MESSAGE"), @""];
@@ -2325,7 +2336,7 @@ static int64_t extractMessageConversationId(T concreteMessage, int &outFromUid)
                     OGPlatformSetLocalNotificationCategory(localNotification, @"m");
                 else if (TGPeerIdIsChannel(message.cid))
                     OGPlatformSetLocalNotificationCategory(localNotification, @"c");
-                else if (message.cid > INT_MIN)
+                else if (!TGPeerIdIsSecretChat(message.cid))
                     OGPlatformSetLocalNotificationCategory(localNotification, @"r");
             }
 

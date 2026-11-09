@@ -250,7 +250,6 @@ static void TGModernDrawingSnapshotOperation(CGContextRef context, TGModernDrawi
 
 @end
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 static Class TGModernDrawingRecordingFailedClass = Nil;
 
 Class TGModernDrawingRecordingTakeFailedClass(void)
@@ -381,7 +380,6 @@ NSString *TGModernViewModelBindTraceEnd(Class rootClass, CFAbsoluteTime rootDura
     TGModernViewModelBindTraceEntryCount = 0;
     return result;
 }
-#endif
 
 static char TGModernViewModelGestureRecognizerInUseKey;
 
@@ -537,40 +535,32 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
 
 - (void)bindViewToContainer:(UIView *)container viewStorage:(TGModernViewStorage *)viewStorage
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
-    bool trace = TGModernViewModelBindTraceActive();
+    bool trace = OGDiagnosticsEnabled() && TGModernViewModelBindTraceActive();
     CFAbsoluteTime traceTime = trace ? CFAbsoluteTimeGetCurrent() : 0.0;
-#endif
     if (!_modelFlags.hasNoView)
         _view = [self _dequeueView:viewStorage preferredSuperview:container];
-#if defined(ONEGRAM_DIAGNOSTICS)
     if (trace)
     {
         CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
         TGModernViewModelBindTraceAddPhase("dequeue", now - traceTime);
         traceTime = now;
     }
-#endif
     
     if (_view != nil || _modelFlags.hasNoView)
     {
         if (!_modelFlags.hasNoView)
         {
-#if defined(ONEGRAM_DIAGNOSTICS)
-            const char *attachPhase = _view.superview == container ? "attach.inplace" : (_view.superview == nil ? "attach.new" : "attach.moved");
-#endif
+            const char *attachPhase = !trace ? NULL : (_view.superview == container ? "attach.inplace" : (_view.superview == nil ? "attach.new" : "attach.moved"));
             if (_view.superview == container)
                 [container bringSubviewToFront:_view];
             else
                 [container addSubview:_view];
-#if defined(ONEGRAM_DIAGNOSTICS)
             if (trace)
             {
                 CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
                 TGModernViewModelBindTraceAddPhase(attachPhase, now - traceTime);
                 traceTime = now;
             }
-#endif
             
             if (isnan(_frame.origin.x))
                 _frame.origin.x = 0;
@@ -582,10 +572,8 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
             [_view setHidden:_hidden];
             
             _view.userInteractionEnabled = !_modelFlags.viewUserInteractionDisabled;
-#if defined(ONEGRAM_DIAGNOSTICS)
             if (trace)
                 TGModernViewModelBindTraceAddPhase("geometry", CFAbsoluteTimeGetCurrent() - traceTime);
-#endif
         }
 
         bool disableSubmodelAutomaticBinding = _modelFlags.disableSubmodelAutomaticBinding;
@@ -594,14 +582,10 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
         {
             if (!disableSubmodelAutomaticBinding || submodel.skipDrawInContext)
             {
-#if defined(ONEGRAM_DIAGNOSTICS)
                 CFAbsoluteTime submodelStartTime = trace ? CFAbsoluteTimeGetCurrent() : 0.0;
-#endif
                 [submodel bindViewToContainer:_modelFlags.hasNoView ? container : _view viewStorage:viewStorage];
-#if defined(ONEGRAM_DIAGNOSTICS)
                 if (trace)
                     TGModernViewModelBindTraceAddModel([submodel class], [self class], CFAbsoluteTimeGetCurrent() - submodelStartTime);
-#endif
             }
         }
     }
@@ -751,10 +735,8 @@ static NSString *TGModernViewModelIdentifierForViewClass(Class viewClass)
         [recording popOffset:origin];
         if (!recorded)
         {
-#if defined(ONEGRAM_DIAGNOSTICS)
             if (TGModernDrawingRecordingFailedClass == Nil)
                 TGModernDrawingRecordingFailedClass = [submodel class];
-#endif
             return false;
         }
     }

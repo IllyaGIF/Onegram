@@ -14,6 +14,7 @@ from xcode_graph import ROOT, actual_path, parse_text
 from build_identity import write_build_identity
 from artifact_cache import cache_matches, cache_record, fingerprint
 from app_signing import sign_app, verify_app, verify_ipa
+from launch_screen import LAUNCH_SCREEN_NAME, launch_screen_nib
 
 STARTUP_LOCALIZATION_KEYS = (
     'Contacts.TabTitle',
@@ -66,6 +67,9 @@ def main():
     app=source_app if args.resources_only else output/'Payload/Telegram.app'
     if args.resources_only and OUT not in app.parents:raise ValueError('Resource audit must be inside generated/')
     ipa=output/'Onegram.ipa'
+    plugins=arch!='armv6' and os.environ.get('ONEGRAM_PLUGINS','1')=='1'
+    python_runtime=OUT/'python-runtime' if plugins else None
+    if python_runtime is not None and not (python_runtime/'python311.zip').is_file():raise SystemExit('Python runtime is missing: '+str(python_runtime))
     state=OUT/'package-state.json'
     entitlement=settings.get('CODE_SIGN_ENTITLEMENTS','') or 'theos/Telegram.entitlements'
     package_outputs=[app] + ([OUT/'signing.entitlements'] if entitlement else [])
@@ -87,16 +91,17 @@ def main():
         print('IPA ready: '+str(ipa))
     if not args.resources_only:
         inputs=[source_app/'Telegram',ROOT/settings['INFOPLIST_FILE'],
-                ROOT/'thirdparty/quirc/LICENSE',ROOT/'OnegramDante/LICENSE.Monocypher',
+                ROOT/'thirdparty/quirc/LICENSE',ROOT/'OnegramCore/LICENSE.Monocypher',
                 Path(__file__),ROOT/'theos/scripts/generate.py',ROOT/'theos/scripts/xcode_graph.py',
                 ROOT/'theos/scripts/build_identity.py',ROOT/'theos/scripts/artifact_cache.py',
-                ROOT/'theos/scripts/app_signing.py',
+                ROOT/'theos/scripts/app_signing.py',ROOT/'theos/scripts/launch_screen.py',
                 ROOT/'tools/patch_ios7_sdk_version.py',
                 Path(shutil.which(shlex.split(args.ldid)[0]) or shlex.split(args.ldid)[0])]
         inputs += [actual_path(ROOT/entry['path']) for entry in target['resources'] if entry['path'] is not None]
+        if python_runtime is not None:inputs.append(python_runtime)
         if entitlement:inputs.append(ROOT/entitlement)
         signature=fingerprint(inputs,values=[settings,target['resources'],arch,args.ldid,
-                                            os.environ.get('ONEGRAM_DEPLOYMENT'),os.environ.get('ONEGRAM_DIAGNOSTICS')=='1',
+                                            os.environ.get('ONEGRAM_DEPLOYMENT'),os.environ.get('ONEGRAM_DIAGNOSTICS')=='1',plugins,
                                             os.environ.get('IBTOOL')])
         if cache_matches(state,signature,package_outputs):
             finish_package()
@@ -145,10 +150,11 @@ def main():
             shutil.copytree(source,dest,dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns('.DS_Store','CVS','.svn','.git','.hg'))
         else:shutil.copy2(source,dest)
+    if python_runtime is not None:shutil.copytree(python_runtime,app/'Python')
     licenses=app/'Licenses'
     licenses.mkdir(exist_ok=True)
     for source,name in ((ROOT/'thirdparty/quirc/LICENSE','LICENSE.quirc'),
-                        (ROOT/'OnegramDante/LICENSE.Monocypher','LICENSE.Monocypher')):
+                        (ROOT/'OnegramCore/LICENSE.Monocypher','LICENSE.Monocypher')):
         shutil.copy2(source,licenses/name)
     for lproj in app.glob('*.lproj'):
         source_strings=lproj/'Localizable.strings'
@@ -179,6 +185,8 @@ def main():
         return value
     plist=resolve(plist)
     plist.update(partial)
+    (app/(LAUNCH_SCREEN_NAME+'.nib')).write_bytes(launch_screen_nib())
+    plist['UILaunchStoryboardName']=LAUNCH_SCREEN_NAME
     plist['MinimumOSVersion']=os.environ.get('ONEGRAM_DEPLOYMENT',settings['IPHONEOS_DEPLOYMENT_TARGET'])
     plist['UIDeviceFamily']=[int(x) for x in settings['TARGETED_DEVICE_FAMILY'].split(',')]
     if arch=='armv6':plist.pop('UIRequiredDeviceCapabilities',None)

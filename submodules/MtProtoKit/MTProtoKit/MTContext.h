@@ -14,6 +14,7 @@
 @class MTContext;
 @class MTTransportScheme;
 @protocol MTKeychain;
+@protocol MTRequestInterceptor;
 @class MTSessionInfo;
 @class MTApiEnvironment;
 @class MTSignal;
@@ -31,6 +32,7 @@
 - (void)contextDatacenterPublicKeysUpdated:(MTContext *)context datacenterId:(NSInteger)datacenterId publicKeys:(NSArray *)publicKeys;
 - (MTSignal *)fetchContextDatacenterPublicKeys:(MTContext *)context datacenterId:(NSInteger)datacenterId;
 - (void)contextApiEnvironmentUpdated:(MTContext *)context apiEnvironment:(MTApiEnvironment *)apiEnvironment;
+- (void)contextGlobalTimeDifferenceUpdated:(MTContext *)context globalTimeDifference:(NSTimeInterval)globalTimeDifference;
 - (MTSignal *)isContextNetworkAccessAllowed:(MTContext *)context;
 
 @end
@@ -46,6 +48,7 @@
 @interface MTContext : NSObject
 
 @property (nonatomic, strong) id<MTKeychain> keychain;
+@property (strong) id<MTRequestInterceptor> requestInterceptor;
 
 @property (nonatomic, strong, readonly) id<MTSerialization> serialization;
 @property (nonatomic, strong, readonly) MTApiEnvironment *apiEnvironment;

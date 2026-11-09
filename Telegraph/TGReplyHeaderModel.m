@@ -1,3 +1,5 @@
+#import "TGInterfaceAssets.h"
+#import "TGOnegramSettings.h"
 #import "TGReplyHeaderModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -87,7 +89,23 @@ static NSString *TGReplyHeaderSafeText(NSString *text)
         _system = system;
         
         bool brandedOutgoing = [TGPresentation brandedIOS6Style] && !incoming && !system;
-        UIColor *lineColor = brandedOutgoing ? [UIColor whiteColor] : (incoming ? presentation.pallete.chatIncomingLineColor : presentation.pallete.chatOutgoingLineColor);
+        UIColor *authorColor = nil;
+        if (incoming && !system && [TGOnegramSettings boolForKey:TGOnegramSettingMessagesReplyAuthorColor])
+        {
+            if ([peer isKindOfClass:[TGUser class]])
+            {
+                TGUser *user = peer;
+                int colorIndex = user.nameColorId >= 0 && user.nameColorId < 7 ? user.nameColorId : [[TGInterfaceAssets instance] userColorIndexForId:user.uid];
+                authorColor = [[TGInterfaceAssets instance] userColorForIndex:colorIndex dark:presentation.pallete.isDark];
+            }
+            else if ([peer isKindOfClass:[TGConversation class]])
+            {
+                TGConversation *conversation = peer;
+                int colorIndex = conversation.nameColorId >= 0 && conversation.nameColorId < 7 ? conversation.nameColorId : [[TGInterfaceAssets instance] groupColorIndex:conversation.conversationId];
+                authorColor = [[TGInterfaceAssets instance] userColorForIndex:colorIndex dark:presentation.pallete.isDark];
+            }
+        }
+        UIColor *lineColor = brandedOutgoing ? [UIColor whiteColor] : (authorColor ?: (incoming ? presentation.pallete.chatIncomingLineColor : presentation.pallete.chatOutgoingLineColor));
         _lineModel = [[TGModernColorViewModel alloc] initWithColor:system ? presentation.pallete.chatSystemTextColor : lineColor cornerRadius:1.0f];
         [self addSubmodel:_lineModel];
         
@@ -100,7 +118,7 @@ static NSString *TGReplyHeaderSafeText(NSString *text)
         title = TGReplyHeaderSafeText(title);
         text = TGReplyHeaderSafeText(text);
         
-        UIColor *titleColor = brandedOutgoing ? [UIColor whiteColor] : (incoming ? presentation.pallete.chatIncomingAccentColor : presentation.pallete.chatOutgoingAccentColor);
+        UIColor *titleColor = brandedOutgoing ? [UIColor whiteColor] : (authorColor ?: (incoming ? presentation.pallete.chatIncomingAccentColor : presentation.pallete.chatOutgoingAccentColor));
         _nameModel = [[TGModernTextViewModel alloc] initWithText:title font:nameFont()];
         _nameModel.textColor = system ? presentation.pallete.chatSystemTextColor : titleColor;
         [self addSubmodel:_nameModel];

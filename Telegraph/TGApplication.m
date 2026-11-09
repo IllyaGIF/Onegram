@@ -10,53 +10,164 @@
 #import "TGWebAppController.h"
 #import "TGHashtagOverviewController.h"
 #import "TGRootController.h"
+#import "TGPluginHost.h"
 #import <dlfcn.h>
 
-static NSString *TGAppDelegateIos6CompatPath(NSSearchPathDirectory directory)
+#import <QuartzCore/QuartzCore.h>
+#import "../OnegramPlatform/OGPlatformDispatch.h"
+
+enum
 {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(directory, NSUserDomainMask, true);
-    NSString *path = paths.count == 0 ? nil : [paths objectAtIndex:0];
-    
-    if (path.length == 0)
-        path = NSTemporaryDirectory();
-    if (path.length == 0)
-        path = @"/tmp";
-    
-    [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:true attributes:nil error:nil];
-    return path;
+    TGApplicationLoopPhaseOther = 0,
+    TGApplicationLoopPhaseTimers = 1,
+    TGApplicationLoopPhaseSources = 2,
+    TGApplicationLoopPhaseCommit = 3,
+    TGApplicationLoopPhaseCount = 4
+};
+
+typedef struct
+{
+    bool hasMinimumOffset;
+    double minimumOffset;
+    double windowStart;
+    unsigned int events;
+    unsigned int moves;
+    unsigned int late;
+    double ageTotal;
+    double ageMaximum;
+    double handleTotal;
+    double handleMaximum;
+    double loopBusy;
+    double loopMaximum;
+    unsigned int loops;
+    unsigned int slowLoops;
+    unsigned int slowReports;
+    double phases[TGApplicationLoopPhaseCount];
+} TGApplicationInputStatistics;
+
+typedef struct
+{
+    double start;
+    double phaseStart;
+    int phase;
+    double phases[TGApplicationLoopPhaseCount];
+    double events;
+    unsigned int eventCount;
+} TGApplicationLoopIteration;
+
+static TGApplicationInputStatistics TGApplicationInput = {};
+static TGApplicationLoopIteration TGApplicationLoop = {};
+static double TGApplicationLastTouch = 0.0;
+static CFRunLoopObserverRef TGApplicationLoopPhaseObserver = NULL;
+static CFRunLoopObserverRef TGApplicationLoopCommitObserver = NULL;
+
+static void TGApplicationCloseLoopPhase(double now, int nextPhase)
+{
+    if (TGApplicationLoop.start <= 0.0)
+        return;
+    TGApplicationLoop.phases[TGApplicationLoop.phase] += now - TGApplicationLoop.phaseStart;
+    TGApplicationLoop.phaseStart = now;
+    TGApplicationLoop.phase = nextPhase;
 }
 
-@implementation TGAppDelegate (Ios6RuntimeCompat)
-
-+ (NSString *)documentsPath
+static void TGApplicationFinishLoopIteration(double now)
 {
-    return TGAppDelegateIos6CompatPath(NSDocumentDirectory);
+    if (TGApplicationLoop.start <= 0.0)
+        return;
+    TGApplicationCloseLoopPhase(now, TGApplicationLoopPhaseOther);
+    double busy = now - TGApplicationLoop.start;
+    TGApplicationLoop.start = 0.0;
+    if (TGApplicationInput.events == 0)
+        return;
+    TGApplicationInput.loopBusy += busy;
+    TGApplicationInput.loopMaximum = MAX(TGApplicationInput.loopMaximum, busy);
+    TGApplicationInput.loops++;
+    for (int phase = 0; phase < TGApplicationLoopPhaseCount; phase++)
+        TGApplicationInput.phases[phase] += TGApplicationLoop.phases[phase];
+    if (busy < 0.1)
+        return;
+    TGApplicationInput.slowLoops++;
+    if (now - TGApplicationLastTouch > 1.0 || TGApplicationInput.slowReports >= 20)
+        return;
+    TGApplicationInput.slowReports++;
+    OGPlatformDiagnosticLog(@"LOOPSLOW busy_ms=%.0f timers_ms=%.0f sources_ms=%.0f events_ms=%.0f events=%u commit_ms=%.0f other_ms=%.0f", busy * 1000.0, TGApplicationLoop.phases[TGApplicationLoopPhaseTimers] * 1000.0, TGApplicationLoop.phases[TGApplicationLoopPhaseSources] * 1000.0, TGApplicationLoop.events * 1000.0, TGApplicationLoop.eventCount, TGApplicationLoop.phases[TGApplicationLoopPhaseCommit] * 1000.0, TGApplicationLoop.phases[TGApplicationLoopPhaseOther] * 1000.0);
 }
 
-+ (NSString *)cachePath
+static void TGApplicationLoopPhaseActivity(__unused CFRunLoopObserverRef observer, CFRunLoopActivity activity, __unused void *info)
 {
-    return TGAppDelegateIos6CompatPath(NSCachesDirectory);
+    double now = CACurrentMediaTime();
+    switch (activity)
+    {
+        case kCFRunLoopAfterWaiting:
+            memset(&TGApplicationLoop, 0, sizeof(TGApplicationLoop));
+            TGApplicationLoop.start = now;
+            TGApplicationLoop.phaseStart = now;
+            TGApplicationLoop.phase = TGApplicationLoopPhaseOther;
+            break;
+        case kCFRunLoopBeforeTimers:
+            TGApplicationCloseLoopPhase(now, TGApplicationLoopPhaseTimers);
+            break;
+        case kCFRunLoopBeforeSources:
+            TGApplicationCloseLoopPhase(now, TGApplicationLoopPhaseSources);
+            break;
+        case kCFRunLoopBeforeWaiting:
+            TGApplicationCloseLoopPhase(now, TGApplicationLoopPhaseCommit);
+            break;
+        default:
+            break;
+    }
 }
 
-+ (NSUserDefaults *)userDefaults
+static void TGApplicationLoopCommitActivity(__unused CFRunLoopObserverRef observer, __unused CFRunLoopActivity activity, __unused void *info)
 {
-    return [NSUserDefaults standardUserDefaults];
+    TGApplicationFinishLoopIteration(CACurrentMediaTime());
 }
 
-+ (void)movePathsToContainer
+static void TGApplicationInstallLoopObservers(void)
 {
+    if (TGApplicationLoopPhaseObserver != NULL)
+        return;
+    TGApplicationLoopPhaseObserver = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopAfterWaiting | kCFRunLoopBeforeTimers | kCFRunLoopBeforeSources | kCFRunLoopBeforeWaiting, true, 1999999, TGApplicationLoopPhaseActivity, NULL);
+    TGApplicationLoopCommitObserver = CFRunLoopObserverCreate(kCFAllocatorDefault, kCFRunLoopBeforeWaiting | kCFRunLoopExit, true, 2000001, TGApplicationLoopCommitActivity, NULL);
+    if (TGApplicationLoopPhaseObserver != NULL)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), TGApplicationLoopPhaseObserver, kCFRunLoopCommonModes);
+    if (TGApplicationLoopCommitObserver != NULL)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), TGApplicationLoopCommitObserver, kCFRunLoopCommonModes);
 }
 
-- (bool)willBeLocked
+static void TGApplicationRecordInput(double arrival, double offset, double handled, bool moved)
 {
-    return false;
+    TGApplicationInputStatistics *statistics = &TGApplicationInput;
+    TGApplicationInstallLoopObservers();
+    TGApplicationLastTouch = arrival;
+    TGApplicationLoop.events += handled;
+    TGApplicationLoop.eventCount++;
+    if (!statistics->hasMinimumOffset || offset < statistics->minimumOffset)
+    {
+        statistics->minimumOffset = offset;
+        statistics->hasMinimumOffset = true;
+    }
+    double age = MAX(0.0, offset - statistics->minimumOffset);
+    if (statistics->events == 0)
+        statistics->windowStart = arrival;
+    statistics->events++;
+    if (moved)
+        statistics->moves++;
+    if (age >= 0.05)
+        statistics->late++;
+    statistics->ageTotal += age;
+    statistics->ageMaximum = MAX(statistics->ageMaximum, age);
+    statistics->handleTotal += handled;
+    statistics->handleMaximum = MAX(statistics->handleMaximum, handled);
+    double window = arrival - statistics->windowStart;
+    if (window < 5.0)
+        return;
+    OGPlatformDiagnosticLog(@"INPUT window_ms=%.0f events=%u moves=%u late=%u age_avg_ms=%.1f age_max_ms=%.1f handle_avg_ms=%.1f handle_max_ms=%.1f handle_total_ms=%.0f loops=%u slow=%u loop_busy_ms=%.0f loop_max_ms=%.0f timers_ms=%.0f sources_ms=%.0f commit_ms=%.0f other_ms=%.0f", window * 1000.0, statistics->events, statistics->moves, statistics->late, statistics->ageTotal * 1000.0 / statistics->events, statistics->ageMaximum * 1000.0, statistics->handleTotal * 1000.0 / statistics->events, statistics->handleMaximum * 1000.0, statistics->handleTotal * 1000.0, statistics->loops, statistics->slowLoops, statistics->loopBusy * 1000.0, statistics->loopMaximum * 1000.0, statistics->phases[TGApplicationLoopPhaseTimers] * 1000.0, statistics->phases[TGApplicationLoopPhaseSources] * 1000.0, statistics->phases[TGApplicationLoopPhaseCommit] * 1000.0, statistics->phases[TGApplicationLoopPhaseOther] * 1000.0);
+    double minimumOffset = statistics->minimumOffset;
+    memset(statistics, 0, sizeof(*statistics));
+    statistics->hasMinimumOffset = true;
+    statistics->minimumOffset = minimumOffset;
 }
-
-- (void)resetRemoteDeviceLocked
-{
-}
-
-@end
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 70000
 @implementation UIPercentDrivenInteractiveTransition
@@ -480,11 +591,55 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
     return self;
 }
 
+- (void)sendEvent:(UIEvent *)event
+{
+    if (!OGDiagnosticsEnabled() || event.type != UIEventTypeTouches)
+    {
+        [super sendEvent:event];
+        return;
+    }
+    double arrival = CACurrentMediaTime();
+    double offset = arrival - event.timestamp;
+    bool moved = false;
+    bool transition = false;
+    for (UITouch *touch in [event allTouches])
+    {
+        UITouchPhase phase = touch.phase;
+        if (phase == UITouchPhaseMoved)
+            moved = true;
+        else if (phase != UITouchPhaseStationary)
+            transition = true;
+    }
+    [super sendEvent:event];
+    TGApplicationRecordInput(arrival, offset, CACurrentMediaTime() - arrival, moved && !transition);
+}
+
 - (NSMutableDictionary *)gameShareDict {
     if (_gameShareDict == nil) {
         _gameShareDict = [[NSMutableDictionary alloc] init];
     }
     return _gameShareDict;
+}
+
+- (NSString *)addThemeSlugFromURL:(NSURL *)url
+{
+    NSString *scheme = [url.scheme lowercaseString];
+    NSString *host = [url.host lowercaseString];
+    if (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"])
+        return nil;
+    if (![host isEqualToString:@"t.me"] && ![host isEqualToString:@"telegram.me"] && ![host isEqualToString:@"telegram.dog"])
+        return nil;
+    NSMutableArray *components = [[NSMutableArray alloc] init];
+    for (NSString *component in [url.path componentsSeparatedByString:@"/"])
+    {
+        if (component.length != 0)
+            [components addObject:component];
+    }
+    if (components.count < 2 || ![[components[0] lowercaseString] isEqualToString:@"addtheme"])
+        return nil;
+    NSString *slug = components[1];
+    NSCharacterSet *invalidCharacters = [[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"] invertedSet];
+    return [slug rangeOfCharacterFromSet:invalidCharacters].location == NSNotFound ? slug : nil;
 }
 
 - (NSString *)telegramMeLinkFromText:(NSString *)text startPrivatePayload:(__autoreleasing NSString **)startPrivatePayload startGroupPayload:(__autoreleasing NSString **)startGroupPayload gamePayload:(__autoreleasing NSString **)gamePayload groupedSingle:(bool *)groupedSingle
@@ -613,6 +768,23 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
 
 - (BOOL)openURL:(NSURL *)url forceNative:(BOOL)__unused forceNative keepStack:(bool)keepStack
 {
+#if OG_PLUGINS_AVAILABLE
+    __block BOOL result = true;
+    [TGPluginHost resolveLink:url completion:^(NSURL *resolved)
+    {
+        if (resolved == nil)
+            return;
+        result = [self routeURL:resolved keepStack:keepStack];
+        [TGPluginHost completeLink:resolved];
+    }];
+    return result;
+#else
+    return [self routeURL:url keepStack:keepStack];
+#endif
+}
+
+- (BOOL)routeURL:(NSURL *)url keepStack:(bool)keepStack
+{
     if (url.absoluteString.length == 0)
         return true;
     
@@ -647,6 +819,14 @@ static NSString *TGIos6YouTubeVideoIdFromURL(NSURL *url, NSUInteger depth)
     if ([url.scheme isEqualToString:@"tg"] || [url.scheme isEqualToString:@"telegram"])
     {
         [(TGAppDelegate *)self.delegate handleOpenDocument:url animated:true];
+        return true;
+    }
+    
+    NSString *themeSlug = [self addThemeSlugFromURL:url];
+    if (themeSlug.length != 0)
+    {
+        NSString *internalUrl = [[NSString alloc] initWithFormat:@"tg://addtheme?slug=%@", themeSlug];
+        [(TGAppDelegate *)self.delegate handleOpenDocument:[NSURL URLWithString:internalUrl] animated:true];
         return true;
     }
     

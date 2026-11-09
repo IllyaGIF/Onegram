@@ -146,15 +146,14 @@
                     TGVideoMediaAttachment *videoAttachment = (TGVideoMediaAttachment *)attachment;
                     if (mediaBar == nil)
                     {
-                        static UIImage *videoIconImage = nil;
                         static UIFont *labelFont = nil;
                         static UIColor *barColor = nil;
-                        if (videoIconImage == nil)
+                        if (labelFont == nil)
                         {
-                            videoIconImage = [UIImage imageNamed:@"MessageInlineVideoIcon.png"];
                             labelFont = [UIFont boldSystemFontOfSize:10];
                             barColor = UIColorRGBA(0x000000, 0.6f);
                         }
+                        UIImage *videoIconImage = [UIImage imageNamed:@"MessageInlineVideoIcon.png"];
                         
                         mediaBar = [[UIView alloc] initWithFrame:CGRectMake(0, side - 19, side, 19)];
                         mediaBar.userInteractionEnabled = false;

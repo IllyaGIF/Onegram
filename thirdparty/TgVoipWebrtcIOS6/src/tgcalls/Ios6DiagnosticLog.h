@@ -10,6 +10,7 @@
 extern "C" {
 #endif
 void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length);
+int TGIOS6NativeDiagnosticsEnabled(void);
 #ifdef __cplusplus
 }
 #endif
@@ -32,15 +33,10 @@ static inline void TGIOS6DiagnosticSyslog(int priority, const char *format, ...)
         safeLength = sizeof(buffer) - 1;
     buffer[safeLength] = 0;
 
-    // Preserve the old device syslog while also feeding the in-app crash
-    // breadcrumbs. This makes one shared Onegram log sufficient.
     syslog(priority, "%s", buffer);
     TGIOS6NativeDiagnosticWrite(buffer, safeLength);
 }
 
-// Source files in the legacy tgcalls port already use syslog() extensively.
-// Route those calls through the diagnostic mirror without touching hundreds
-// of individual log call sites.
-#define syslog TGIOS6DiagnosticSyslog
+#define syslog(...) do { if (TGIOS6NativeDiagnosticsEnabled()) TGIOS6DiagnosticSyslog(__VA_ARGS__); } while (0)
 
 #endif

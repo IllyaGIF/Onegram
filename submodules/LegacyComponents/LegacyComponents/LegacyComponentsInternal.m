@@ -15,7 +15,19 @@ TGLocalization *legacyEffectiveLocalization() {
 }
 
 NSString *TGLocalized(NSString *s) {
-    return [legacyEffectiveLocalization() get:s];
+    TGLocalization *localization = legacyEffectiveLocalization();
+    if (localization == nil) {
+        static TGLocalization *bundledLocalization = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            NSString *code = [[[NSBundle mainBundle] preferredLocalizations] firstObject];
+            if (code.length == 0 || [code isEqualToString:@"Base"])
+                code = @"en";
+            bundledLocalization = [[TGLocalization alloc] initWithVersion:0 code:code preparedDict:@{} isActive:false];
+        });
+        localization = bundledLocalization;
+    }
+    return [localization get:s];
 }
 
 bool TGObjectCompare(id obj1, id obj2) {
@@ -38,10 +50,8 @@ bool TGStringCompare(NSString *s1, NSString *s2) {
 #undef TGLegacyLog
 void TGLegacyLog(NSString *format, ...)
 {
-#if !defined(ONEGRAM_DIAGNOSTICS)
-    (void)format;
-    return;
-#endif
+    if (!OGDiagnosticsEnabled())
+        return;
     va_list L;
     va_start(L, format);
     NSString *string = [[NSString alloc] initWithFormat:format arguments:L];
@@ -141,7 +151,7 @@ static OGMemoryCache *TGComponentsImageCache(void) {
     static OGMemoryCache *cache = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:6u * 1024u * 1024u];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:OGMemoryCacheBudget(6u * 1024u * 1024u)];
     });
     return cache;
 }

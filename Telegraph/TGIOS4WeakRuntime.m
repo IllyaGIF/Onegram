@@ -32,13 +32,24 @@ typedef struct
     TGWeakDispatchStack deallocFrames;
 } TGWeakThreadState;
 
+enum
+{
+    TGWeakStripeCount = 64
+};
+
+typedef struct
+{
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    CFMutableDictionaryRef references;
+    CFMutableBagRef releasing;
+} TGWeakStripe;
+
 static pthread_once_t TGWeakRuntimeOnce = PTHREAD_ONCE_INIT;
-static pthread_mutex_t TGWeakRuntimeMutex;
-static pthread_cond_t TGWeakRuntimeCondition;
+static pthread_mutex_t TGWeakClassMutex;
+static TGWeakStripe TGWeakStripes[TGWeakStripeCount];
 static pthread_key_t TGWeakRuntimeThreadKey;
-static CFMutableDictionaryRef TGWeakRuntimeReferences;
 static CFMutableSetRef TGWeakRuntimeSwizzledClasses;
-static CFMutableBagRef TGWeakRuntimeReleasing;
 static CFMutableDictionaryRef TGWeakRuntimeReleaseImplementationClasses;
 static CFMutableDictionaryRef TGWeakRuntimeDeallocImplementationClasses;
 static TGWeakLoadRetainedFunction TGNativeLoadWeakRetained;
@@ -139,8 +150,15 @@ static Class TGWeakResolveImplementationClass(Class startClass, SEL selector, IM
     return Nil;
 }
 
-static Class TGWeakCachedImplementationClassLocked(CFMutableDictionaryRef cache, Class cls, SEL selector, IMP hook)
+static TGWeakStripe *TGWeakStripeForObject(const void *object)
 {
+    uintptr_t value = (uintptr_t)object;
+    return &TGWeakStripes[((value >> 4) ^ (value >> 10)) & (TGWeakStripeCount - 1)];
+}
+
+static Class TGWeakCachedImplementationClass(CFMutableDictionaryRef cache, Class cls, SEL selector, IMP hook)
+{
+    pthread_mutex_lock(&TGWeakClassMutex);
     Class implementationClass = (Class)CFDictionaryGetValue(cache, cls);
     if (implementationClass == Nil)
     {
@@ -148,6 +166,7 @@ static Class TGWeakCachedImplementationClassLocked(CFMutableDictionaryRef cache,
         if (implementationClass != Nil)
             CFDictionarySetValue(cache, cls, implementationClass);
     }
+    pthread_mutex_unlock(&TGWeakClassMutex);
     return implementationClass;
 }
 
@@ -168,19 +187,21 @@ static void TGWeakSwizzleClassLocked(Class cls, SEL selector, SEL originalSelect
     class_replaceMethod(cls, selector, hook, types);
 }
 
-static void TGWeakEnsureHooksLocked(id object)
+static void TGWeakEnsureHooks(id object)
 {
     Class cls = object_getClass(object);
     if (cls == Nil)
         abort();
-    if (CFSetContainsValue(TGWeakRuntimeSwizzledClasses, cls))
-        return;
-
-    TGWeakSwizzleClassLocked(cls, TGWeakReleaseSelector, TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
-    TGWeakSwizzleClassLocked(cls, TGWeakDeallocSelector, TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
-    CFSetAddValue(TGWeakRuntimeSwizzledClasses, cls);
-    CFDictionaryRemoveAllValues(TGWeakRuntimeReleaseImplementationClasses);
-    CFDictionaryRemoveAllValues(TGWeakRuntimeDeallocImplementationClasses);
+    pthread_mutex_lock(&TGWeakClassMutex);
+    if (!CFSetContainsValue(TGWeakRuntimeSwizzledClasses, cls))
+    {
+        TGWeakSwizzleClassLocked(cls, TGWeakReleaseSelector, TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
+        TGWeakSwizzleClassLocked(cls, TGWeakDeallocSelector, TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
+        CFSetAddValue(TGWeakRuntimeSwizzledClasses, cls);
+        CFDictionaryRemoveAllValues(TGWeakRuntimeReleaseImplementationClasses);
+        CFDictionaryRemoveAllValues(TGWeakRuntimeDeallocImplementationClasses);
+    }
+    pthread_mutex_unlock(&TGWeakClassMutex);
 }
 
 static void TGWeakClearLocation(const void *value, void *context)
@@ -194,15 +215,16 @@ static void TGWeakReleaseHook(id target, SEL selector)
 {
     TGWeakThreadState *state = TGWeakGetThreadState();
     Class lastClass = TGWeakDispatchStackLookup(&state->releaseFrames, target);
+    TGWeakStripe *stripe = TGWeakStripeForObject(target);
+
+    pthread_mutex_lock(&stripe->mutex);
+    CFBagAddValue(stripe->releasing, target);
+    pthread_mutex_unlock(&stripe->mutex);
+
     Class targetClass = Nil;
-
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    CFBagAddValue(TGWeakRuntimeReleasing, target);
     if (lastClass == Nil)
-        targetClass = TGWeakCachedImplementationClassLocked(TGWeakRuntimeReleaseImplementationClasses, object_getClass(target), TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
-
-    if (lastClass != Nil)
+        targetClass = TGWeakCachedImplementationClass(TGWeakRuntimeReleaseImplementationClasses, object_getClass(target), TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
+    else
     {
         targetClass = TGWeakResolveImplementationClass(class_getSuperclass(lastClass), TGWeakOriginalReleaseSelector, (IMP)TGWeakReleaseHook);
         if (targetClass == Nil)
@@ -220,31 +242,32 @@ static void TGWeakReleaseHook(id target, SEL selector)
     ((void (*)(id, SEL))implementation)(target, selector);
     state->releaseFrames.count = depth;
 
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    CFBagRemoveValue(TGWeakRuntimeReleasing, target);
-    pthread_cond_broadcast(&TGWeakRuntimeCondition);
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
+    pthread_mutex_lock(&stripe->mutex);
+    CFBagRemoveValue(stripe->releasing, target);
+    pthread_cond_broadcast(&stripe->condition);
+    pthread_mutex_unlock(&stripe->mutex);
 }
 
 static void TGWeakDeallocHook(id target, SEL selector)
 {
     TGWeakThreadState *state = TGWeakGetThreadState();
     Class lastClass = TGWeakDispatchStackLookup(&state->deallocFrames, target);
-    Class targetClass = Nil;
+    TGWeakStripe *stripe = TGWeakStripeForObject(target);
 
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    CFSetRef locations = (CFSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, target);
+    pthread_mutex_lock(&stripe->mutex);
+    CFSetRef locations = (CFSetRef)CFDictionaryGetValue(stripe->references, target);
     if (locations != NULL)
     {
         CFSetApplyFunction(locations, TGWeakClearLocation, NULL);
-        CFDictionaryRemoveValue(TGWeakRuntimeReferences, target);
-        pthread_cond_broadcast(&TGWeakRuntimeCondition);
+        CFDictionaryRemoveValue(stripe->references, target);
+        pthread_cond_broadcast(&stripe->condition);
     }
-    if (lastClass == Nil)
-        targetClass = TGWeakCachedImplementationClassLocked(TGWeakRuntimeDeallocImplementationClasses, object_getClass(target), TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
+    pthread_mutex_unlock(&stripe->mutex);
 
-    if (lastClass != Nil)
+    Class targetClass = Nil;
+    if (lastClass == Nil)
+        targetClass = TGWeakCachedImplementationClass(TGWeakRuntimeDeallocImplementationClasses, object_getClass(target), TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
+    else
         targetClass = TGWeakResolveImplementationClass(class_getSuperclass(lastClass), TGWeakOriginalDeallocSelector, (IMP)TGWeakDeallocHook);
     if (targetClass == Nil)
         abort();
@@ -285,20 +308,26 @@ static void TGWeakRuntimeInitialize(void)
         abort();
     if (pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE) != 0)
         abort();
-    if (pthread_mutex_init(&TGWeakRuntimeMutex, &attributes) != 0)
+    if (pthread_mutex_init(&TGWeakClassMutex, &attributes) != 0)
         abort();
+    for (int index = 0; index < TGWeakStripeCount; index++)
+    {
+        TGWeakStripe *stripe = &TGWeakStripes[index];
+        if (pthread_mutex_init(&stripe->mutex, &attributes) != 0 || pthread_cond_init(&stripe->condition, NULL) != 0)
+            abort();
+        stripe->references = CFDictionaryCreateMutable(NULL, 0, NULL, &kCFTypeDictionaryValueCallBacks);
+        stripe->releasing = CFBagCreateMutable(NULL, 0, NULL);
+        if (stripe->references == NULL || stripe->releasing == NULL)
+            abort();
+    }
     pthread_mutexattr_destroy(&attributes);
-    if (pthread_cond_init(&TGWeakRuntimeCondition, NULL) != 0)
-        abort();
     if (pthread_key_create(&TGWeakRuntimeThreadKey, TGWeakThreadStateDestroy) != 0)
         abort();
 
-    TGWeakRuntimeReferences = CFDictionaryCreateMutable(NULL, 0, NULL, &kCFTypeDictionaryValueCallBacks);
     TGWeakRuntimeSwizzledClasses = CFSetCreateMutable(NULL, 0, NULL);
-    TGWeakRuntimeReleasing = CFBagCreateMutable(NULL, 0, NULL);
     TGWeakRuntimeReleaseImplementationClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
     TGWeakRuntimeDeallocImplementationClasses = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-    if (TGWeakRuntimeReferences == NULL || TGWeakRuntimeSwizzledClasses == NULL || TGWeakRuntimeReleasing == NULL || TGWeakRuntimeReleaseImplementationClasses == NULL || TGWeakRuntimeDeallocImplementationClasses == NULL)
+    if (TGWeakRuntimeSwizzledClasses == NULL || TGWeakRuntimeReleaseImplementationClasses == NULL || TGWeakRuntimeDeallocImplementationClasses == NULL)
         abort();
 
     TGWeakReleaseSelector = sel_registerName("release");
@@ -312,34 +341,40 @@ static void TGWeakRuntimeEnsureInitialized(void)
     pthread_once(&TGWeakRuntimeOnce, TGWeakRuntimeInitialize);
 }
 
-static void TGWeakUnregisterLocation(id *location)
+static bool TGWeakObjectIsDeallocatingOnCurrentThread(id object)
 {
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    id object = *location;
-    if (object != nil)
-    {
-        CFMutableSetRef locations = (CFMutableSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, object);
-        if (locations != NULL)
-            CFSetRemoveValue(locations, location);
-    }
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
+    return TGWeakDispatchStackLookup(&TGWeakGetThreadState()->deallocFrames, object) != Nil;
 }
 
-static void TGWeakRegisterLocation(id *location, id object)
+static void TGWeakLockStripes(TGWeakStripe *first, TGWeakStripe *second)
 {
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    CFMutableSetRef locations = (CFMutableSetRef)CFDictionaryGetValue(TGWeakRuntimeReferences, object);
-    if (locations == NULL)
+    if (first == NULL || first == second)
     {
-        locations = CFSetCreateMutable(NULL, 0, NULL);
-        if (locations == NULL)
-            abort();
-        CFDictionarySetValue(TGWeakRuntimeReferences, object, locations);
-        CFRelease(locations);
+        if (second != NULL)
+            pthread_mutex_lock(&second->mutex);
+        return;
     }
-    CFSetAddValue(locations, location);
-    TGWeakEnsureHooksLocked(object);
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
+    if (second == NULL)
+    {
+        pthread_mutex_lock(&first->mutex);
+        return;
+    }
+    if (first > second)
+    {
+        TGWeakStripe *lower = second;
+        second = first;
+        first = lower;
+    }
+    pthread_mutex_lock(&first->mutex);
+    pthread_mutex_lock(&second->mutex);
+}
+
+static void TGWeakUnlockStripes(TGWeakStripe *first, TGWeakStripe *second)
+{
+    if (first != NULL)
+        pthread_mutex_unlock(&first->mutex);
+    if (second != NULL && second != first)
+        pthread_mutex_unlock(&second->mutex);
 }
 
 id objc_storeWeak(id *location, id value)
@@ -348,11 +383,46 @@ id objc_storeWeak(id *location, id value)
     if (TGNativeStoreWeak != NULL)
         return TGNativeStoreWeak(location, value);
 
-    TGWeakUnregisterLocation(location);
-    *location = value;
+    if (value != nil && TGWeakObjectIsDeallocatingOnCurrentThread(value))
+        value = nil;
     if (value != nil)
-        TGWeakRegisterLocation(location, value);
-    return value;
+        TGWeakEnsureHooks(value);
+
+    TGWeakStripe *valueStripe = value == nil ? NULL : TGWeakStripeForObject(value);
+    for (;;)
+    {
+        id previous = *(id volatile *)location;
+        TGWeakStripe *previousStripe = previous == nil ? NULL : TGWeakStripeForObject(previous);
+        TGWeakLockStripes(previousStripe, valueStripe);
+        if (*(id volatile *)location != previous)
+        {
+            TGWeakUnlockStripes(previousStripe, valueStripe);
+            continue;
+        }
+
+        if (previous != nil)
+        {
+            CFMutableSetRef previousLocations = (CFMutableSetRef)CFDictionaryGetValue(previousStripe->references, previous);
+            if (previousLocations != NULL)
+                CFSetRemoveValue(previousLocations, location);
+        }
+        if (value != nil)
+        {
+            CFMutableSetRef locations = (CFMutableSetRef)CFDictionaryGetValue(valueStripe->references, value);
+            if (locations == NULL)
+            {
+                locations = CFSetCreateMutable(NULL, 0, NULL);
+                if (locations == NULL)
+                    abort();
+                CFDictionarySetValue(valueStripe->references, value, locations);
+                CFRelease(locations);
+            }
+            CFSetAddValue(locations, location);
+        }
+        *location = value;
+        TGWeakUnlockStripes(previousStripe, valueStripe);
+        return value;
+    }
 }
 
 id objc_initWeak(id *location, id value)
@@ -383,16 +453,33 @@ id objc_loadWeakRetained(id *location)
     if (TGNativeLoadWeakRetained != NULL)
         return TGNativeLoadWeakRetained(location);
 
-    pthread_mutex_lock(&TGWeakRuntimeMutex);
-    id value = *location;
-    while (value != nil && CFBagContainsValue(TGWeakRuntimeReleasing, value))
+    for (;;)
     {
-        pthread_cond_wait(&TGWeakRuntimeCondition, &TGWeakRuntimeMutex);
-        value = *location;
+        id value = *(id volatile *)location;
+        if (value == nil)
+            return nil;
+        TGWeakStripe *stripe = TGWeakStripeForObject(value);
+        pthread_mutex_lock(&stripe->mutex);
+        if (*(id volatile *)location != value)
+        {
+            pthread_mutex_unlock(&stripe->mutex);
+            continue;
+        }
+        if (CFBagContainsValue(stripe->releasing, value))
+        {
+            if (TGWeakObjectIsDeallocatingOnCurrentThread(value))
+            {
+                pthread_mutex_unlock(&stripe->mutex);
+                return nil;
+            }
+            pthread_cond_wait(&stripe->condition, &stripe->mutex);
+            pthread_mutex_unlock(&stripe->mutex);
+            continue;
+        }
+        [value retain];
+        pthread_mutex_unlock(&stripe->mutex);
+        return value;
     }
-    [value retain];
-    pthread_mutex_unlock(&TGWeakRuntimeMutex);
-    return value;
 }
 
 id objc_loadWeak(id *location)

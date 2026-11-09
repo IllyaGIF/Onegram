@@ -25,6 +25,7 @@
 #import "TGAppDelegate.h"
 
 #import "TGMessageGroupedLayout.h"
+#import "OGMediaFetchDescriptor+Telegraph.h"
 
 @interface TGVideoMessageViewModel ()
 {
@@ -91,6 +92,8 @@
         [previewUri appendFormat:@"&legacy-video-file-path=%@", legacyVideoFilePath];
         if (legacyThumbnailCacheUri != nil)
             [previewUri appendFormat:@"&legacy-thumbnail-cache-url=%@", legacyThumbnailCacheUri];
+        if (video.strippedThumbnailUrl.length != 0 && ![video.strippedThumbnailUrl isEqualToString:legacyThumbnailCacheUri])
+            [previewUri appendFormat:@"&legacy-stripped-cache-url=%@", [TGStringUtils stringByEscapingForURL:video.strippedThumbnailUrl]];
         
         if (message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17)
             [previewUri appendString:@"&secret=1"];
@@ -178,6 +181,8 @@
         [previewUri appendFormat:@"&legacy-video-file-path=%@", legacyVideoFilePath];
         if (legacyThumbnailCacheUri != nil)
             [previewUri appendFormat:@"&legacy-thumbnail-cache-url=%@", legacyThumbnailCacheUri];
+        if (video.strippedThumbnailUrl.length != 0 && ![video.strippedThumbnailUrl isEqualToString:legacyThumbnailCacheUri])
+            [previewUri appendFormat:@"&legacy-stripped-cache-url=%@", [TGStringUtils stringByEscapingForURL:video.strippedThumbnailUrl]];
         
         if (message.messageLifetime > 0 && message.messageLifetime <= 60 && message.layer >= 17)
             [previewUri appendString:@"&secret=1"];
@@ -236,6 +241,8 @@
         {
             labelText = [[NSString alloc] initWithFormat:TGLocalized(@"%.02f MB / %.02f MB"), ((float)_videoSize * progress / (1024 * 1024)), ((float)_videoSize / (1024 * 1024))];
         }
+        if (labelText != nil && [self isStreamingDownload])
+            labelText = [@"\u00d7 " stringByAppendingString:labelText];
     }
     else
     {
@@ -310,6 +317,10 @@
 
 - (bool)isInstant {
     return self.isSecret;
+}
+
+- (bool)isStreamable {
+    return !self.isSecret && [OGMediaFetchDescriptor isStreamableVideoAttachment:_video];
 }
 
 @end

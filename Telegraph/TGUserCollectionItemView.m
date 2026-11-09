@@ -58,7 +58,7 @@
 #endif
 }
 
-- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int32_t)uidForPlaceholderCalculation avatarUri:(NSString *)avatarUri
+- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int64_t)uidForPlaceholderCalculation avatarUri:(NSString *)avatarUri
 {
     if (firstName.length != 0 && lastName.length != 0)
     {

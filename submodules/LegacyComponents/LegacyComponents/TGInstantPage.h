@@ -179,8 +179,10 @@
 
 @property (nonatomic, readonly) bool ordered;
 @property (nonatomic, strong, readonly) NSArray *items;
+@property (nonatomic, strong, readonly) NSArray *indices;
 
 - (instancetype)initWithOrdered:(bool)ordered items:(NSArray *)items;
+- (instancetype)initWithOrdered:(bool)ordered items:(NSArray *)items indices:(NSArray *)indices;
 
 @end
 

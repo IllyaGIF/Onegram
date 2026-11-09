@@ -18,7 +18,7 @@
 
 @required
 
-- (int)currentUserId;
+- (int64_t)currentUserId;
 
 - (CTFontRef)messageTextFont;
 - (CTFontRef)messageActionTitleFont;
@@ -51,7 +51,7 @@
 - (UIColor *)messageForwardNameColorOutgoing;
 - (UIColor *)messageForwardPhoneColor;
 - (UIImage *)messageInlineGenericAvatarPlaceholder;
-- (UIImage *)messageInlineAvatarPlaceholder:(int)uid;
+- (UIImage *)messageInlineAvatarPlaceholder:(int64_t)uid;
 
 - (UIColor *)messageActionTextColor;
 - (UIColor *)messageActionShadowColor;

@@ -1,23 +1,42 @@
 #import "TLRPCmessages_sendMessage_manual.h"
 
 #import "TL/TLMetaScheme.h"
+#import "TL/TLBool.h"
 #import "TLMetaClassStore.h"
 
-int32_t TGMessageSendFlags(int32_t flags, int32_t replyMessageId, int32_t topicId)
+bool TGMessageSendUsesReplyTo(int32_t topicId, TLInputPeer *monoforumPeer)
 {
-    if (topicId == 0)
+    return topicId != 0 || monoforumPeer != nil;
+}
+
+int32_t TGMessageSendFlags(int32_t flags, int32_t replyMessageId, int32_t topicId, TLInputPeer *monoforumPeer, bool modernReply)
+{
+    if (!modernReply)
         return flags;
     flags &= ~((1 << 4) | (1 << 0));
-    if (replyMessageId != 0 || topicId > 1)
+    if (replyMessageId != 0 || topicId > 1 || monoforumPeer != nil)
         flags |= (1 << 0);
     return flags;
 }
 
-void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t replyMessageId, int32_t topicId)
+void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t replyMessageId, int32_t topicId, TLInputPeer *monoforumPeer, bool modernReply)
 {
     if ((flags & (1 << 0)) == 0)
         return;
-    if (topicId == 0)
+    if (monoforumPeer != nil)
+    {
+        if (replyMessageId != 0)
+        {
+            [stream writeInt32:(int32_t)0x3bd4b7c2];
+            [stream writeInt32:(1 << 5)];
+            [stream writeInt32:replyMessageId];
+        }
+        else
+            [stream writeInt32:(int32_t)0x69d66c45];
+        TLMetaClassStore::serializeObject(stream, monoforumPeer, true);
+        return;
+    }
+    if (!modernReply)
     {
         [stream writeInt32:replyMessageId];
         return;
@@ -35,7 +54,7 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 
 - (int32_t)TLconstructorSignature
 {
-    return _forumTopicId != 0 ? (int32_t)0x545cd15a : (int32_t)0xFA88427A;
+    return (TGMessageSendUsesReplyTo(_forumTopicId, _monoforumPeer) || _sendAs != nil) ? (int32_t)0x545cd15a : (int32_t)0xFA88427A;
 }
 
 - (int32_t)TLconstructorName
@@ -55,17 +74,19 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 
 - (int)layerVersion
 {
-    return _forumTopicId != 0 ? 225 : 26;
+    return (TGMessageSendUsesReplyTo(_forumTopicId, _monoforumPeer) || _sendAs != nil) ? 225 : 26;
 }
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    int32_t flags = TGMessageSendFlags(_flags, _reply_to_msg_id, _forumTopicId);
+    int32_t flags = TGMessageSendFlags(_flags, _reply_to_msg_id, _forumTopicId, _monoforumPeer, TGMessageSendUsesReplyTo(_forumTopicId, _monoforumPeer) || _sendAs != nil);
+    if (_sendAs != nil)
+        flags |= (1 << 13);
     [os writeInt32:flags];
     
     TLMetaClassStore::serializeObject(os, _peer, true);
     
-    TGSerializeMessageReply(os, flags, _reply_to_msg_id, _forumTopicId);
+    TGSerializeMessageReply(os, flags, _reply_to_msg_id, _forumTopicId, _monoforumPeer, TGMessageSendUsesReplyTo(_forumTopicId, _monoforumPeer) || _sendAs != nil);
     
     [os writeString:_message];
     [os writeInt64:_random_id];
@@ -79,6 +100,8 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
             TLMetaClassStore::serializeObject(os, entity, true);
         }
     }
+    if (_sendAs != nil)
+        TLMetaClassStore::serializeObject(os, _sendAs, true);
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
@@ -179,6 +202,35 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 - (void)TLserialize:(NSOutputStream *)os
 {
     [os writeInt32:_hashValue];
+}
+
+- (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error
+{
+    return nil;
+}
+
+@end
+
+@implementation TLRPCmessages_setDefaultReaction_manual
+
+- (int32_t)TLconstructorSignature { return (int32_t)0x4f47a016; }
+- (int32_t)TLconstructorName { return -1; }
+- (Class)responseClass { return [TLBool class]; }
+- (int)impliedResponseSignature { return 0; }
+- (int)layerVersion { return 228; }
+
+- (void)TLserialize:(NSOutputStream *)os
+{
+    if ([_reaction hasPrefix:@"◆"] && _reaction.length > 1)
+    {
+        [os writeInt32:(int32_t)0x8935fc73];
+        [os writeInt64:[[_reaction substringFromIndex:1] longLongValue]];
+    }
+    else
+    {
+        [os writeInt32:(int32_t)0x1b2286b8];
+        [os writeString:_reaction];
+    }
 }
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)__unused is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)__unused environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)__unused error

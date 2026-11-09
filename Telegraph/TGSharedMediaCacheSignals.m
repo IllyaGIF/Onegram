@@ -46,7 +46,7 @@
                     [subscriber putCompletion];
                 }
             } buildIndex:false isCancelled:nil];
-        } buildIndex:peerId <= INT_MIN isCancelled:^bool
+        } buildIndex:TGPeerIdIsSecretChat(peerId) isCancelled:^bool
         {
             return isCancelled;
         }];

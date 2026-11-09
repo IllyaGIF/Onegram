@@ -86,7 +86,7 @@ static OGMemoryCache *TGModernTextLayoutCache(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:3 * 1024 * 1024];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:OGMemoryCacheBudget(3 * 1024 * 1024)];
     });
     return cache;
 }
@@ -112,6 +112,7 @@ static OGMemoryCache *TGModernTextLayoutCache(void)
     CGFloat _cachedLayoutContainerWidth;
     int _cachedLayoutFlags;
     CGFloat _cachedAdditionalTrailingWidth;
+    NSUInteger _pluginColorGeneration;
 }
 
 @end
@@ -222,6 +223,16 @@ static void TGModernTextViewModelDrawOperation(__unused CGContextRef context, TG
     }
 }
 
+- (void)setMaxNumberOfLines:(NSUInteger)maxNumberOfLines
+{
+    if (_maxNumberOfLines != maxNumberOfLines)
+    {
+        _maxNumberOfLines = maxNumberOfLines;
+        _cachedLayoutContainerWidth = 0.0f;
+        _cachedLayoutFlags = 0;
+    }
+}
+
 - (void)setFont:(CTFontRef)font
 {
     if (_font != font)
@@ -293,6 +304,74 @@ static void TGModernTextViewModelDrawOperation(__unused CGContextRef context, TG
     frame.size.height = CGFloor(frame.size.height);
     self.frame = frame;
 
+}
+
+- (void)refreshPluginColors
+{
+    CGFloat width = _cachedLayoutContainerWidth > FLT_EPSILON ? _cachedLayoutContainerWidth : MAX(1.0f, self.frame.size.width);
+    NSUInteger generation = ++_pluginColorGeneration;
+    NSString *text = [_text copy];
+    NSArray *attributes = [_additionalAttributes copy];
+    NSArray *checks = [_textCheckingResults copy];
+    CTFontRef font = _font != NULL ? (CTFontRef)CFRetain(_font) : NULL;
+    UIColor *textColor = _textColor;
+    UIColor *linkColor = _linkColor;
+    int flags = _layoutFlags;
+    NSTextAlignment alignment = _alignment;
+    CGFloat trailingWidth = _additionalTrailingWidth;
+    NSUInteger maxLines = _maxNumberOfLines;
+    NSUInteger insetLines = _linesInset.numberOfLinesToInset;
+    CGFloat linesInset = _linesInset.inset;
+    CGFloat spacing = _additionalLineSpacing;
+    NSString *ellipsis = [_ellipsisString copy];
+    bool underline = _underlineAllLinks;
+    __weak TGModernTextViewModel *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+    {
+        TGModernTextLayoutKey *key = [[TGModernTextLayoutKey alloc] init];
+        key->_text = text;
+        key->_additionalAttributes = attributes;
+        key->_textCheckingResults = checks;
+        key->_font = font != NULL ? (CTFontRef)CFRetain(font) : NULL;
+        key->_textColor = textColor;
+        key->_linkColor = linkColor;
+        key->_width = (CGFloat)(float)width;
+        key->_flags = flags;
+        key->_alignment = alignment;
+        key->_additionalTrailingWidth = trailingWidth;
+        key->_maxNumberOfLines = maxLines;
+        key->_numberOfLinesToInset = insetLines;
+        key->_linesInset = linesInset;
+        key->_additionalLineSpacing = spacing;
+        key->_ellipsisString = ellipsis;
+        key->_underlineAllLinks = underline;
+        OGMemoryCache *cache = TGModernTextLayoutCache();
+        if ([cache objectForKey:key] == nil)
+        {
+            bool rtl = false;
+            bool containsNewline = false;
+            TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:text additionalAttributes:attributes textCheckingResults:checks font:font textColor:textColor linkColor:linkColor frame:CGRectZero orMaxWidth:(float)width flags:flags textAlignment:alignment outIsRTL:&rtl additionalTrailingWidth:trailingWidth maxNumberOfLines:maxLines numberOfLinesToInset:insetLines linesInset:linesInset containsEmptyNewline:&containsNewline additionalLineSpacing:spacing ellipsisString:ellipsis underlineAllLinks:underline];
+            if (layout != nil)
+            {
+                TGModernTextLayoutResult *value = [[TGModernTextLayoutResult alloc] init];
+                value->_layoutData = layout;
+                value->_isRTL = rtl;
+                value->_containsEmptyNewline = containsNewline;
+                [cache setObject:value forKey:key cost:512 + text.length * 8];
+            }
+        }
+        if (font != NULL)
+            CFRelease(font);
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            TGModernTextViewModel *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf->_pluginColorGeneration != generation || !TGStringCompare(strongSelf->_text, text) || strongSelf->_textColor != textColor || strongSelf->_linkColor != linkColor)
+                return;
+            strongSelf->_cachedLayoutContainerWidth = 0.0f;
+            [strongSelf layoutForContainerSize:CGSizeMake(width, 0.0f)];
+            [[strongSelf boundView] setNeedsDisplay];
+        });
+    });
 }
 
 - (NSString *)linkAtPoint:(CGPoint)point regionData:(__autoreleasing NSArray **)regionData

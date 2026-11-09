@@ -36,6 +36,7 @@ FOUNDATION_EXPORT void OGPlatformSetSwitchThumbTintColor(UISwitch *switchView, U
 FOUNDATION_EXPORT BOOL OGPlatformPresentActivityItems(UIViewController *presenter, NSArray *items, UIView *sourceView, CGRect sourceRect, UIBarButtonItem *barButtonItem, NSUInteger permittedArrowDirections, void (^completion)(void));
 
 FOUNDATION_EXPORT void OGPlatformBeginReceivingRemoteControlEvents(UIApplication *application);
+FOUNDATION_EXPORT void OGPlatformEndReceivingRemoteControlEvents(UIApplication *application);
 FOUNDATION_EXPORT void OGPlatformSetStatusBarHidden(UIApplication *application, BOOL hidden, NSInteger animation);
 typedef NSUInteger OGPlatformBackgroundTaskIdentifier;
 #define OGPlatformBackgroundTaskInvalid ((OGPlatformBackgroundTaskIdentifier)-1)
@@ -81,6 +82,7 @@ FOUNDATION_EXPORT void OGPlatformPresentLocalNotificationNow(UIApplication *appl
 FOUNDATION_EXPORT BOOL OGPlatformSetBackgroundFetchEnabled(UIApplication *application, BOOL enabled);
 FOUNDATION_EXPORT void OGPlatformScheduleLocalNotification(UIApplication *application, id notification);
 FOUNDATION_EXPORT void OGPlatformCancelLocalNotification(UIApplication *application, id notification);
+FOUNDATION_EXPORT NSArray *OGPlatformScheduledLocalNotifications(UIApplication *application);
 FOUNDATION_EXPORT void OGPlatformCancelAllLocalNotifications(UIApplication *application);
 FOUNDATION_EXPORT id OGPlatformCreateUserNotificationAction(NSString *identifier, NSString *title, BOOL destructive, BOOL authenticationRequired, BOOL foreground, BOOL textInput);
 FOUNDATION_EXPORT id OGPlatformCreateUserNotificationCategory(NSString *identifier, NSArray *defaultActions, NSArray *minimalActions);

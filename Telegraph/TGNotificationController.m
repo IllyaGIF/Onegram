@@ -821,7 +821,7 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
         NSMutableDictionary *userDict = [[NSMutableDictionary alloc] init];
         for (NSNumber *nUid in chatParticipantUids)
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+            TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
             if (user != nil && user.uid != TGTelegraphInstance.clientUserId && user.userName.length != 0 && (normalizedMention.length == 0 || [[user.userName lowercaseString] hasPrefix:normalizedMention]))
             {
                 userDict[@(user.uid)] = user;
@@ -833,7 +833,7 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
             NSMutableArray *sortedUserList = [[NSMutableArray alloc] init];
             for (TGMessage *message in messageListView.messages)
             {
-                int32_t uid = (int32_t)message.fromUid;
+                int64_t uid = message.fromUid;
                 TGUser *user = userDict[@(uid)];
  
                 if (user != nil)
@@ -929,7 +929,7 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
         if (url.length != 0) {
             bool hiddenLink = true;
             if (TGPeerIdIsUser(peerId)) {
-                TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+                TGUser *user = [TGDatabaseInstance() loadUser:peerId];
                 if (user.isVerified) {
                     hiddenLink = false;
                 }
@@ -965,7 +965,7 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
                         if (url.length != 0) {
                             bool hiddenLink = true;
                             if (TGPeerIdIsUser(peerId)) {
-                                TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+                                TGUser *user = [TGDatabaseInstance() loadUser:peerId];
                                 if (user.isVerified) {
                                     hiddenLink = false;
                                 }
@@ -987,7 +987,7 @@ const NSUInteger TGNotificationExpandedTimeout = 60;
             
             if ([action isKindOfClass:[TGBotReplyMarkupButtonActionGame class]]) {
                 TGMessage *message = [TGDatabaseInstance() loadMessageWithMid:messageId peerId:peerId];
-                int32_t userId = (int32_t)message.fromUid;
+                int64_t userId = message.fromUid;
                 for (id attachment in message.mediaAttachments) {
                     if ([attachment isKindOfClass:[TGViaUserAttachment class]]) {
                         userId = ((TGViaUserAttachment *)attachment).userId;
@@ -1201,7 +1201,7 @@ static id mediaIdForAttachment(TGMediaAttachment *attachment)
             contentProperties[@"contentsRead"] = [[TGMessageViewedContentProperty alloc] init];
             
             int32_t convType = 0;
-            int32_t convPeerId = 0;
+            int64_t convPeerId = 0;
             if (TGPeerIdIsChannel(message.cid)) {
                 convType = 1;
                 convPeerId = TGChannelIdFromPeerId(message.cid);

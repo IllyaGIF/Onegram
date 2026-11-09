@@ -13,6 +13,7 @@
 
 #import "TGPresentation.h"
 #import "TGReusableLabel.h"
+#import <QuartzCore/QuartzCore.h>
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 
 const NSTimeInterval typingIntervalFirst = 0.16;
@@ -105,6 +106,13 @@ static CGSize TGConversationStatusShadowOffset(void)
     
     UIImageView *_arrowView;
     UIImageView *_markedUserBadgeView;
+#if OG_PLUGINS_AVAILABLE
+    UIColor *_pluginNameColor;
+    NSArray *_pluginNameGradient;
+    CAGradientLayer *_pluginNameLayer;
+    CATextLayer *_pluginNameMask;
+    UIView *_pluginNameEmoji;
+#endif
 }
 
 @end
@@ -128,6 +136,10 @@ static CGSize TGConversationStatusShadowOffset(void)
     _presentation = presentation;
     
     _titleLabel.textColor = TGClassicAwareNavigationTitleColor(presentation);
+#if OG_PLUGINS_AVAILABLE
+    if (_pluginNameColor != nil || _pluginNameGradient.count != 0)
+        _titleLabel.textColor = _pluginNameGradient.count != 0 ? [UIColor clearColor] : _pluginNameColor;
+#endif
     _titleLabel.shadowColor = TGConversationTitleShadowColor(presentation);
     _titleLabel.shadowOffset = CGSizeMake(0.0f, -1.0f);
     _statusLabel.shadowColor = TGConversationStatusShadowColor(presentation);
@@ -261,6 +273,9 @@ static CGSize TGConversationStatusShadowOffset(void)
     {
         _title = title;
         [self titleLabel].text = title;
+#if OG_PLUGINS_AVAILABLE
+        _pluginNameMask.string = title;
+#endif
         [self setNeedsLayout];
     }
 }
@@ -277,6 +292,45 @@ static CGSize TGConversationStatusShadowOffset(void)
     _markedUserBadgeView.hidden = !visible;
     [self setNeedsLayout];
 }
+
+#if OG_PLUGINS_AVAILABLE
+- (void)setPluginNameDecorationColor:(UIColor *)color gradient:(NSArray *)gradient emojiView:(UIView *)emojiView
+{
+    [_pluginNameEmoji removeFromSuperview];
+    _pluginNameEmoji = emojiView;
+    if (_pluginNameEmoji != nil)
+    {
+        _pluginNameEmoji.userInteractionEnabled = NO;
+        [self addSubview:_pluginNameEmoji];
+    }
+    _pluginNameColor = color;
+    _pluginNameGradient = [gradient copy];
+    if (_pluginNameGradient.count >= 2)
+    {
+        if (_pluginNameLayer == nil)
+        {
+            _pluginNameLayer = [CAGradientLayer layer];
+            _pluginNameMask = [CATextLayer layer];
+            _pluginNameLayer.mask = _pluginNameMask;
+            [self.layer addSublayer:_pluginNameLayer];
+        }
+        NSMutableArray *colors = [[NSMutableArray alloc] initWithCapacity:_pluginNameGradient.count];
+        for (UIColor *entry in _pluginNameGradient)
+            [colors addObject:(id)entry.CGColor];
+        _pluginNameLayer.colors = colors;
+        _pluginNameLayer.startPoint = CGPointMake(0.0f, 0.5f);
+        _pluginNameLayer.endPoint = CGPointMake(1.0f, 0.5f);
+    }
+    else
+    {
+        [_pluginNameLayer removeFromSuperlayer];
+        _pluginNameLayer = nil;
+        _pluginNameMask = nil;
+    }
+    [self titleLabel].textColor = _pluginNameLayer != nil ? [UIColor clearColor] : (_pluginNameColor ?: TGClassicAwareNavigationTitleColor(_presentation));
+    [self setNeedsLayout];
+}
+#endif
 
 - (void)setStatus:(NSString *)status
 {
@@ -936,14 +990,20 @@ static UIView *findNavigationBar(UIView *view)
             iconsTotalWidth += icon.bounds.size.width;
             maxTitleWidth -= icon.bounds.size.width;
         }
+#if OG_PLUGINS_AVAILABLE
+        CGFloat pluginEmojiWidth = _pluginNameEmoji != nil ? 23.0f : 0.0f;
+#else
+        CGFloat pluginEmojiWidth = 0.0f;
+#endif
+        maxTitleWidth -= pluginEmojiWidth;
         
         if (!UIInterfaceOrientationIsPortrait(_orientation)) {
             CGFloat availableWidth = MAX(0.0f, screenWidth - buttonsWidth);
             CGFloat spacing = _showStatus ? 6.0f + (_typingStatus != nil ? 18.0f : 0.0f) : 0.0f;
             CGFloat naturalTitleWidth = CGCeil([_titleLabel.text sizeWithFont:_titleLabel.font].width) + 1.0f;
             CGFloat naturalStatusWidth = _showStatus ? CGCeil([_statusLabel.text sizeWithFont:_statusLabel.font].width) : 0.0f;
-            maxStatusWidth = MIN(naturalStatusWidth, MAX(availableWidth / 2.0f, availableWidth - naturalTitleWidth - iconsTotalWidth - spacing));
-            maxTitleWidth = MAX(0.0f, availableWidth - maxStatusWidth - iconsTotalWidth - spacing);
+            maxStatusWidth = MIN(naturalStatusWidth, MAX(availableWidth / 2.0f, availableWidth - naturalTitleWidth - iconsTotalWidth - pluginEmojiWidth - spacing));
+            maxTitleWidth = MAX(0.0f, availableWidth - maxStatusWidth - iconsTotalWidth - pluginEmojiWidth - spacing);
         }
         maxTitleWidth = MAX(0.0f, maxTitleWidth);
         maxStatusWidth = MAX(0.0f, maxStatusWidth);
@@ -954,7 +1014,7 @@ static UIView *findNavigationBar(UIView *view)
         
         if (UIInterfaceOrientationIsPortrait(_orientation))
         {
-            CGFloat titleTotalWidth = titleLabelSize.width + iconsWeightedWidth;
+            CGFloat titleTotalWidth = titleLabelSize.width + iconsWeightedWidth + pluginEmojiWidth;
             
             CGFloat titleHorizontalAdjustment = CGFloor(MAX(0, titleTotalWidth - portraitAdjustmentBounds) / 2.0f);
             CGFloat statusHorizontalAdjustment = CGFloor(MAX(0, statusLabelSize.width - portraitAdjustmentBounds) / 2.0f);
@@ -982,13 +1042,13 @@ static UIView *findNavigationBar(UIView *view)
             _statusLabel.frame = CGRectMake(statusHorizontalAdjustment + (_typingStatus == nil ? 0.0f : 10.0f) + CGFloor((bounds.size.width - statusLabelSize.width) / 2.0f), 2.0f + statusPortraitOffset, statusLabelSize.width, statusLabelSize.height);
 
             if (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden)
-                _markedUserBadgeView.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + 4.0f, CGRectGetMinY(_titleLabel.frame) + 2.0f, 38.0f, 16.0f);
+                _markedUserBadgeView.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 4.0f, CGRectGetMinY(_titleLabel.frame) + 2.0f, 38.0f, 16.0f);
             
             if (_arrowView != nil) {
                 CGSize arrowSize = _arrowView.image.size;
                 arrowSize.width *= 0.6f;
                 arrowSize.height *= 0.6f;
-                CGFloat arrowX = (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden) ? CGRectGetMaxX(_markedUserBadgeView.frame) + 3.0f : CGRectGetMaxX(_titleLabel.frame) + 3.0f;
+                CGFloat arrowX = (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden) ? CGRectGetMaxX(_markedUserBadgeView.frame) + 3.0f : CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 3.0f;
                 _arrowView.frame = CGRectMake(arrowX, CGRectGetMinY(_titleLabel.frame) + 8.0f, arrowSize.width, arrowSize.height);
             }
             
@@ -1001,7 +1061,7 @@ static UIView *findNavigationBar(UIView *view)
             
             int index = -1;
             CGPoint currentLeftIconOrigin = titleOrigin;
-            CGPoint currentRightIconOrigin = CGPointMake(titleOrigin.x + titleHorizontalOffset + titleLabelSize.width, titleOrigin.y);
+            CGPoint currentRightIconOrigin = CGPointMake(titleOrigin.x + titleHorizontalOffset + titleLabelSize.width + pluginEmojiWidth, titleOrigin.y);
             for (TGModernConversationTitleIcon *icon in _icons)
             {
                 index++;
@@ -1033,7 +1093,7 @@ static UIView *findNavigationBar(UIView *view)
             if (_showStatus && _typingStatus != nil)
                 spacing += 18.0f;
             
-            CGFloat totalTitleWidth = titleLabelSize.width + iconsTotalWidth;
+            CGFloat totalTitleWidth = titleLabelSize.width + iconsTotalWidth + pluginEmojiWidth;
             CGFloat commonWidth = totalTitleWidth + spacing + statusLabelSize.width;
             
             CGPoint titleOrigin = CGPointMake(CGFloor((bounds.size.width - commonWidth) / 2.0f), -12.0f + titleLandscapeOffset);
@@ -1042,7 +1102,7 @@ static UIView *findNavigationBar(UIView *view)
             _statusLabel.frame = CGRectMake(CGFloor((bounds.size.width - commonWidth) / 2.0f) + totalTitleWidth + spacing, -9.0f + TGRetinaPixel + statusLandscapeOffset, statusLabelSize.width, statusLabelSize.height);
 
             if (_markedUserBadgeView != nil && !_markedUserBadgeView.hidden)
-                _markedUserBadgeView.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + 4.0f, CGRectGetMinY(_titleLabel.frame) + 2.0f, 38.0f, 16.0f);
+                _markedUserBadgeView.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + pluginEmojiWidth + 4.0f, CGRectGetMinY(_titleLabel.frame) + 2.0f, 38.0f, 16.0f);
             
             if (_toggleIcon != nil) {
                 _toggleIcon.frame = CGRectOffset(_toggleIcon.bounds, CGFloor((bounds.size.width - commonWidth) / 2.0f) + totalTitleWidth + spacing, -9.0f + TGRetinaPixel + statusLandscapeOffset + 3.0f);
@@ -1051,7 +1111,7 @@ static UIView *findNavigationBar(UIView *view)
             
             int index = -1;
             CGPoint currentLeftIconOrigin = titleOrigin;
-            CGPoint currentRightIconOrigin = CGPointMake(titleOrigin.x + titleHorizontalOffset + titleLabelSize.width, titleOrigin.y);
+            CGPoint currentRightIconOrigin = CGPointMake(titleOrigin.x + titleHorizontalOffset + titleLabelSize.width + pluginEmojiWidth, titleOrigin.y);
             
             for (TGModernConversationTitleIcon *icon in _icons)
             {
@@ -1079,6 +1139,20 @@ static UIView *findNavigationBar(UIView *view)
         }
     }
     
+#if OG_PLUGINS_AVAILABLE
+    if (_pluginNameEmoji != nil && _titleLabel != nil)
+        _pluginNameEmoji.frame = CGRectMake(CGRectGetMaxX(_titleLabel.frame) + 3.0f, CGRectGetMidY(_titleLabel.frame) - 10.0f, 20.0f, 20.0f);
+    if (_pluginNameLayer != nil && _titleLabel != nil)
+    {
+        _pluginNameLayer.frame = _titleLabel.frame;
+        _pluginNameMask.frame = CGRectMake(0, 0, _titleLabel.frame.size.width, _titleLabel.frame.size.height);
+        _pluginNameMask.string = _titleLabel.text;
+        _pluginNameMask.font = (__bridge CFTypeRef)_titleLabel.font.fontName;
+        _pluginNameMask.fontSize = _titleLabel.font.pointSize;
+        _pluginNameMask.contentsScale = [UIScreen mainScreen].scale;
+        _pluginNameMask.alignmentMode = kCAAlignmentCenter;
+    }
+#endif
     if (_titleModalProgressLabel != nil && _modalProgressStatus != nil)
     {
         CGRect titleStatusLabelFrame = _titleModalProgressLabel.frame;

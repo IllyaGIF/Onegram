@@ -45,8 +45,8 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChatParticipant$chatParticipant *object = [[TLChatParticipant$chatParticipant alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
-    object.inviter_id = metaObject->getInt32((int32_t)0x9ddfbd93);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
+    object.inviter_id = metaObject->getInt64((int32_t)0x9ddfbd93);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     return object;
 }
@@ -55,14 +55,14 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.inviter_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.inviter_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9ddfbd93, value));
     }
     {
@@ -92,7 +92,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChatParticipant$chatParticipantCreator *object = [[TLChatParticipant$chatParticipantCreator alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     return object;
 }
 
@@ -100,8 +100,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
 }
@@ -125,8 +125,8 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChatParticipant$chatParticipantAdmin *object = [[TLChatParticipant$chatParticipantAdmin alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
-    object.inviter_id = metaObject->getInt32((int32_t)0x9ddfbd93);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
+    object.inviter_id = metaObject->getInt64((int32_t)0x9ddfbd93);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     return object;
 }
@@ -135,14 +135,14 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.inviter_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.inviter_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9ddfbd93, value));
     }
     {

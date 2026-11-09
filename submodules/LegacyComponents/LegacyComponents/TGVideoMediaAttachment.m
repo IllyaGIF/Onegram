@@ -44,6 +44,7 @@
     videoAttachment.dimensions = _dimensions;
     videoAttachment.videoInfo = _videoInfo;
     videoAttachment.thumbnailInfo = _thumbnailInfo;
+    videoAttachment.strippedThumbnailUrl = _strippedThumbnailUrl;
     videoAttachment.caption = _caption;
     videoAttachment.hasStickers = _hasStickers;
     videoAttachment.embeddedStickerDocuments = _embeddedStickerDocuments;
@@ -80,6 +81,7 @@
         _dimensions = CGSizeMake(width, height);
         _videoInfo = [aDecoder decodeObjectForKey:@"videoInfo"];
         _thumbnailInfo = [aDecoder decodeObjectForKey:@"thumbInfo"];
+        _strippedThumbnailUrl = [aDecoder decodeObjectForKey:@"strippedThumbUrl"];
         _caption = [aDecoder decodeObjectForKey:@"caption"];
         _hasStickers = [aDecoder decodeBoolForKey:@"hasStickers"];
         _embeddedStickerDocuments = [aDecoder decodeObjectForKey:@"embeddedStickerDocuments"];
@@ -101,6 +103,7 @@
     [aCoder encodeDouble:_dimensions.height forKey:@"dimensionsHeight"];
     [aCoder encodeObject:_videoInfo forKey:@"videoInfo"];
     [aCoder encodeObject:_thumbnailInfo forKey:@"thumbInfo"];
+    [aCoder encodeObject:_strippedThumbnailUrl forKey:@"strippedThumbUrl"];
     [aCoder encodeObject:_caption forKey:@"caption"];
     [aCoder encodeBool:_hasStickers forKey:@"hasStickers"];
     if (_embeddedStickerDocuments != nil) {
@@ -126,6 +129,9 @@
     if (!TGObjectCompare(_thumbnailInfo, other.thumbnailInfo))
         return false;
     
+    if (!TGStringCompare(_strippedThumbnailUrl, other.strippedThumbnailUrl))
+        return false;
+    
     if (!TGObjectCompare(_caption, other.caption))
         return false;
     
@@ -145,7 +151,7 @@
     int32_t modernTag = 0x7abacaf1;
     [data appendBytes:&modernTag length:4];
     
-    uint8_t version = 5;
+    uint8_t version = 6;
     [data appendBytes:&version length:1];
     
     int dataLengthPtr = (int)data.length;
@@ -207,6 +213,12 @@
     if (originData != nil) {
         [data appendData:originData];
     }
+    
+    NSData *strippedThumbnailUrlData = [_strippedThumbnailUrl dataUsingEncoding:NSUTF8StringEncoding];
+    int32_t strippedThumbnailUrlLength = (int32_t)strippedThumbnailUrlData.length;
+    [data appendBytes:&strippedThumbnailUrlLength length:4];
+    if (strippedThumbnailUrlLength != 0)
+        [data appendData:strippedThumbnailUrlData];
     
     int dataLength = (int)(data.length - dataLengthPtr - 4);
     [data replaceBytesInRange:NSMakeRange(dataLengthPtr, 4) withBytes:&dataLength];
@@ -316,6 +328,18 @@
                 
             }
             videoAttachment.originInfo = origin;
+        }
+    }
+    
+    if (version >= 6)
+    {
+        int32_t strippedThumbnailUrlLength = 0;
+        [is read:(uint8_t *)&strippedThumbnailUrlLength maxLength:4];
+        if (strippedThumbnailUrlLength > 0)
+        {
+            uint8_t *strippedThumbnailUrlBytes = malloc(strippedThumbnailUrlLength);
+            [is read:strippedThumbnailUrlBytes maxLength:strippedThumbnailUrlLength];
+            videoAttachment.strippedThumbnailUrl = [[NSString alloc] initWithBytesNoCopy:strippedThumbnailUrlBytes length:strippedThumbnailUrlLength encoding:NSUTF8StringEncoding freeWhenDone:true];
         }
     }
     

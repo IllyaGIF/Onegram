@@ -7,4 +7,4 @@ FOUNDATION_EXPORT void OGPlatformDispatchOnMainThreadAfter(NSTimeInterval delay,
 FOUNDATION_EXPORT dispatch_queue_t OGPlatformBackgroundQueue(void);
 FOUNDATION_EXPORT dispatch_queue_t OGPlatformBackgroundLowQueue(void);
 FOUNDATION_EXPORT bool OGPlatformUsesConstrainedBackgroundExecution(void);
-FOUNDATION_EXPORT void OGPlatformDiagnosticLog(NSString *format, ...);
+FOUNDATION_EXPORT void OGPlatformDiagnosticLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));

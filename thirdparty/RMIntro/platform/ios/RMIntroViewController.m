@@ -8,6 +8,7 @@
 
 #import "RMIntroViewController.h"
 #import "RMIntroPageView.h"
+#import "RMIntroStillIconsView.h"
 
 #include "animations.h"
 #include "objects.h"
@@ -27,6 +28,7 @@
 #import "../../../../submodules/LegacyComponents/LegacyComponents/TGProgressWindow.h"
 
 #import "TGDatabase.h"
+#import "../../../../OnegramRuntime/OGRemoteClock.h"
 
 @interface UIScrollView (CurrentPage)
 - (int)currentPage;
@@ -68,8 +70,7 @@
     id _didEnterBackgroundObserver;
     id _willEnterBackgroundObserver;
     
-    UIImageView *_stillLogoView;
-    bool _displayedStillLogo;
+    RMIntroStillIconsView *_stillIconsView;
     
     UIButton *_switchToDebugButton;
     
@@ -98,6 +99,7 @@
 }
 
 - (void)layoutIntroViews;
+- (void)updateStillIconsPagePosition;
 
 @end
 
@@ -380,7 +382,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [_refreshTimer invalidate];
     _refreshTimer = nil;
 
-    NSTimeInterval remoteNow = [[TGTelegramNetworking instance] approximateRemoteTime];
+    NSTimeInterval remoteNow = OGRemoteClockTime();
     NSTimeInterval delay = expires > 0 ? ((NSTimeInterval)expires - remoteNow - 3.0) : 20.0;
     delay = MAX(5.0, MIN(25.0, delay));
     _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:delay target:self selector:@selector(refreshTimerFired) userInfo:nil repeats:false];
@@ -734,9 +736,14 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 
     if ([[UIApplication sharedApplication] applicationState] != UIApplicationStateBackground && !_isOpenGLLoaded)
     {
-        context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
-        if (!context)
-            NSLog(@"Failed to create ES context");
+        EAGLContext *glContext = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+        if (glContext == nil || ![EAGLContext setCurrentContext:glContext])
+        {
+            TGLog(@"RMIntro: OpenGL ES 2 context is unavailable, using still logo");
+            [EAGLContext setCurrentContext:nil];
+            return;
+        }
+        context = glContext;
         
         bool isIpad = ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
         
@@ -772,7 +779,15 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         [_glkView addSubview:v3];
         [_glkView addSubview:v4];
         
-        [self setupGL];
+        if (![self setupGL])
+        {
+            TGLog(@"RMIntro: failed to activate OpenGL ES context, using still logo");
+            _glkView.delegate = nil;
+            _glkView = nil;
+            context = nil;
+            [EAGLContext setCurrentContext:nil];
+            return;
+        }
         [self.view addSubview:_glkView];
         
         [self startTimer];
@@ -795,6 +810,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [_glkView removeFromSuperview];
     _glkView = nil;
     _isOpenGLLoaded = false;
+    _stillIconsView.hidden = false;
 }
 
 - (void)updateQrLocalization
@@ -854,7 +870,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [_qrRefreshTimer invalidate];
     _qrRefreshTimer = nil;
 
-    NSTimeInterval remoteNow = [[TGTelegramNetworking instance] approximateRemoteTime];
+    NSTimeInterval remoteNow = OGRemoteClockTime();
     NSTimeInterval delay = expires > 0 ? ((NSTimeInterval)expires - remoteNow - 3.0) : 20.0;
     delay = MAX(5.0, MIN(25.0, delay));
     _qrRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:delay target:self selector:@selector(qrRefreshTimerFired) userInfo:nil repeats:false];
@@ -1002,8 +1018,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     for (UIView *pageView in _pageViews)
         [pageView removeFromSuperview];
     _pageViews = nil;
-    [_stillLogoView removeFromSuperview];
-    _stillLogoView = nil;
+    [_stillIconsView removeFromSuperview];
+    _stillIconsView = nil;
     [_startButton removeFromSuperview];
     _startButton = nil;
     _alternativeLanguageButton.hidden = true;
@@ -1046,6 +1062,9 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         [_pageScrollView addSubview:p];
     }
     [_pageScrollView setPage:0];
+
+    _stillIconsView = [[RMIntroStillIconsView alloc] initWithImageNames:@[@"TourLogo@2x", @"TourIcon1@2x", @"TourIcon5@2x", @"TourIcon2@2x", @"TourIcon3@2x", @"TourIcon4@2x"]];
+    [self.view addSubview:_stillIconsView];
     
     _startButton = [[TGModernButton alloc] init];
     ((TGModernButton *)_startButton).modernHighlight = false;
@@ -1306,12 +1325,29 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     
     _pageScrollView.frame=CGRectMake(0, 20, self.view.bounds.size.width, self.view.bounds.size.height - 20);
     _pageScrollView.contentSize=CGSizeMake(_headlines.count * self.view.bounds.size.width, 150);
-    _pageScrollView.contentOffset = CGPointMake(_currentPage * self.view.bounds.size.width, 0);
+    if (!_pageScrollView.isDragging && !_pageScrollView.isDecelerating)
+        _pageScrollView.contentOffset = CGPointMake(_currentPage * self.view.bounds.size.width, 0);
     
     [_pageViews enumerateObjectsUsingBlock:^(UIView *pageView, NSUInteger index, __unused BOOL *stop)
     {
         pageView.frame = CGRectMake(index * self.view.bounds.size.width, (pageY - statusBarHeight), self.view.bounds.size.width, 150);
     }];
+
+    CGFloat artworkSide = [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad ? 240.0f : 200.0f;
+    CGFloat artworkTop = glViewY - statusBarHeight;
+    CGFloat availableTop = MAX(artworkTop, 20.0f);
+    CGFloat availableBottom = CGRectGetMinY(_pageScrollView.frame) + pageY - statusBarHeight;
+    CGFloat stillIconsSide = MAX(0.0f, MIN(artworkSide, availableBottom - availableTop));
+    CGFloat stillIconsTop = MAX(availableTop, MIN(availableBottom - stillIconsSide, artworkTop + (artworkSide - stillIconsSide) / 2.0f));
+    _stillIconsView.frame = CGRectMake(CGFloor((self.view.bounds.size.width - stillIconsSide) / 2.0f), CGFloor(stillIconsTop), stillIconsSide, stillIconsSide);
+    [self updateStillIconsPagePosition];
+}
+
+- (void)updateStillIconsPagePosition
+{
+    CGFloat pageWidth = _pageScrollView.bounds.size.width;
+    if (pageWidth > 0.0f)
+        [_stillIconsView setPagePosition:_pageScrollView.contentOffset.x / pageWidth];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -1328,66 +1364,6 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         return;
     }
     
-    if (_stillLogoView == nil && !_displayedStillLogo)
-    {
-        _displayedStillLogo = true;
-        
-        UIImage *stillLogoImage = TGImageNamed(@"telegram_logo_still.png");
-        if (stillLogoImage == nil)
-        {
-            NSString *logoPath = [[NSBundle mainBundle] pathForResource:@"TourLogo@2x" ofType:@"png" inDirectory:@"Tour.bundle"];
-            if (logoPath.length != 0)
-                stillLogoImage = [UIImage imageWithContentsOfFile:logoPath];
-        }
-        _stillLogoView = [[UIImageView alloc] initWithImage:stillLogoImage];
-        _stillLogoView.contentMode = UIViewContentModeScaleAspectFit;
-        _stillLogoView.bounds = CGRectMake(0, 0, 200, 200);
-        
-        UIInterfaceOrientation isVertical = (self.view.bounds.size.height / self.view.bounds.size.width > 1.0f);
-        
-        CGFloat statusBarHeight = (iosMajorVersion() >= 7) ? 0 : 20;
-        
-        CGFloat glViewY = 0;
-        DeviceScreen deviceScreen = [self deviceScreen];
-        switch (deviceScreen)
-        {
-            case iPad:
-                glViewY = isVertical ? 121 + 90 : 121;
-                break;
-                
-            case iPadPro:
-                glViewY = isVertical ? 221 + 110 : 221;
-                break;
-                
-            case Inch35:
-                glViewY = 62 - 20;
-                break;
-                
-            case Inch4:
-                glViewY = 62;
-                break;
-                
-            case Inch47:
-                glViewY = 62 + 25;
-                break;
-                
-            case Inch55:
-                glViewY = 62 + 45;
-                break;
-                
-            default:
-                break;
-        }
-        
-        CGFloat logoSize = 200.0f;
-        if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
-            logoSize *= 1.2f;
-        else if ([self deviceScreen] == Inch35 && NSClassFromString(@"GLKView") == Nil)
-            logoSize = 132.0f;
-        _stillLogoView.frame = CGRectMake(CGFloor((self.view.bounds.size.width - logoSize) / 2.0f), glViewY - statusBarHeight, logoSize, logoSize);
-        [self.view addSubview:_stillLogoView];
-    }
-    
     [self loadGL];
 }
 
@@ -1401,11 +1377,6 @@ static NSString *TGIOS6QRCodeJavaScript(void)
         return;
     }
     
-    if (_stillLogoView != nil && _isOpenGLLoaded)
-    {
-        [_stillLogoView removeFromSuperview];
-        _stillLogoView = nil;
-    }
 }
 
 - (void)viewWillDisappear:(BOOL)animated
@@ -1464,15 +1435,8 @@ static NSString *TGIOS6QRCodeJavaScript(void)
 - (void)updateAndRender
 {
     [_glkView display];
-    
-    TGDispatchOnMainThread(^
-    {
-        if (_stillLogoView != nil)
-        {
-            [_stillLogoView removeFromSuperview];
-            _stillLogoView = nil;
-        }
-    });
+    if (!_stillIconsView.hidden)
+        _stillIconsView.hidden = true;
 }
 
 - (void)dealloc
@@ -1488,9 +1452,10 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     [self freeGL];
 }
 
-- (void)setupGL
+- (bool)setupGL
 {
-    [EAGLContext setCurrentContext:_glkView.context];
+    if (_glkView.context == nil || ![EAGLContext setCurrentContext:_glkView.context])
+        return false;
     
     
     set_telegram_textures(setup_texture(@"telegram_sphere.png"), setup_texture(@"telegram_plane.png"));
@@ -1511,6 +1476,7 @@ static NSString *TGIOS6QRCodeJavaScript(void)
     
     on_surface_created();
     on_surface_changed(200, 200, 1, 0,0,0,0,0);
+    return true;
 }
 
 #pragma mark - GLKView delegate methods
@@ -1584,6 +1550,7 @@ NSInteger _current_page_end;
     }
     
     [_pageControl setCurrentPage:_currentPage];
+    [self updateStillIconsPagePosition];
 }
 
 - (void)updateLocalization {

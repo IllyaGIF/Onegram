@@ -10,6 +10,8 @@
 
 @interface TGWorkerTask : NSObject
 
+@property (nonatomic) NSOperationQueuePriority queuePriority;
+
 - (instancetype)initWithBlock:(void (^)(bool (^isCancelled)()))block;
 
 - (void)execute;

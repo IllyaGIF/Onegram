@@ -7,10 +7,6 @@
 #import "TLPhoneCallDiscardReason.h"
 #import "TLPhoneConnection.h"
 
-#ifdef __cplusplus
-extern "C" int32_t TGModernLegacyIdForModernId(int64_t modernUserId);
-#endif
-
 static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMetaObject> metaObject)
 {
     if (!metaObject || !metaObject->values)
@@ -61,8 +57,8 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     int64_t callId = metaObject->getInt64((int32_t)0x7a5601fb);
     int64_t accessHash = metaObject->getInt64((int32_t)0x8f305224);
     int32_t date = metaObject->getInt32((int32_t)0xb76958ba);
-    int32_t adminId = (int32_t)metaObject->getInt64((int32_t)0xdf3d1ee7);
-    int32_t participantId = (int32_t)metaObject->getInt64((int32_t)0x9abadf01);
+    int64_t adminId = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    int64_t participantId = metaObject->getInt64((int32_t)0x9abadf01);
     TLPhoneCallProtocol *protocol = metaObject->getObject((int32_t)0xd45aa5f2);
     
     NSData *gAHash = metaObject->getBytes((int32_t)0xb39b1140);
@@ -199,8 +195,8 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0xdf3d1ee7));
-    object.participant_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0x9abadf01));
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     object.protocol = metaObject->getObject((int32_t)0xd45aa5f2);
     object.receive_date = metaObject->getInt32((int32_t)0xeedcab88);
     return object;
@@ -234,14 +230,14 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
     {
@@ -281,8 +277,8 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0xdf3d1ee7));
-    object.participant_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0x9abadf01));
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     object.g_a_hash = metaObject->getBytes((int32_t)0xb39b1140);
     object.protocol = metaObject->getObject((int32_t)0xd45aa5f2);
     return object;
@@ -316,14 +312,14 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
     {
@@ -417,8 +413,8 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0xdf3d1ee7));
-    object.participant_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0x9abadf01));
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     object.g_b = metaObject->getBytes((int32_t)0x5643e234);
     object.protocol = metaObject->getObject((int32_t)0xd45aa5f2);
     return object;
@@ -452,14 +448,14 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
     {
@@ -499,8 +495,8 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0xdf3d1ee7));
-    object.participant_id = TGModernLegacyIdForModernId(metaObject->getInt64((int32_t)0x9abadf01));
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     object.g_a_or_b = metaObject->getBytes((int32_t)0x817dfd4a);
     object.key_fingerprint = metaObject->getInt64((int32_t)0x3633de43);
     object.protocol = metaObject->getObject((int32_t)0xd45aa5f2);
@@ -539,14 +535,14 @@ static NSArray *IOS6PhoneCallConnectionsFromMetaObject(std::tr1::shared_ptr<TLMe
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
     {

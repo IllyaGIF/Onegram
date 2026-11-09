@@ -4,10 +4,9 @@
 #include <pthread.h>
 #import "OGPlatformDispatch.h"
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 void OGPlatformTextLogSlowLayout(const char *site, CFAttributedStringRef string, CFTimeInterval duration)
 {
-    if (duration < 0.1 || string == NULL)
+    if (!OGDiagnosticsEnabled() || duration < 0.1 || string == NULL)
         return;
     CFStringRef text = CFAttributedStringGetString(string);
     CFIndex length = text != NULL ? CFStringGetLength(text) : 0;
@@ -20,7 +19,6 @@ void OGPlatformTextLogSlowLayout(const char *site, CFAttributedStringRef string,
     }
     OGPlatformDiagnosticLog(@"TEXTSLOW %s %.0fms length=%ld %@", site, duration * 1000.0, (long)length, codes);
 }
-#endif
 
 #if OG_PLATFORM_HAS_CORETEXT
 
@@ -119,6 +117,19 @@ static bool OGTextCodePointIsInvisible(uint32_t codePoint)
         (codePoint >= 0x1F3FB && codePoint <= 0x1F3FF) ||
         (codePoint >= 0xE0000 && codePoint <= 0xE0FFF);
 }
+
+static bool OGTextCodePointIsFormatControl(uint32_t codePoint)
+{
+    return (codePoint >= 0x180B && codePoint <= 0x180E) ||
+        (codePoint >= 0x200B && codePoint <= 0x200F) ||
+        (codePoint >= 0x202A && codePoint <= 0x202E) ||
+        (codePoint >= 0x2060 && codePoint <= 0x206F) ||
+        (codePoint >= 0xFE00 && codePoint <= 0xFE0F) ||
+        codePoint == 0xFEFF ||
+        (codePoint >= 0xE0000 && codePoint <= 0xE0FFF);
+}
+
+static const CTFontSymbolicTraits OGTextFontColorGlyphsTrait = (1 << 13);
 
 static pthread_mutex_t OGTextFallbackMutex = PTHREAD_MUTEX_INITIALIZER;
 static CFMutableDictionaryRef OGTextFallbackNamedFonts = NULL;
@@ -219,6 +230,28 @@ static bool OGTextFontCoversUnits(CTFontRef font, const UniChar *units, CFIndex 
         return false;
     CGGlyph glyphs[2] = {0, 0};
     return CTFontGetGlyphsForCharacters(font, units, glyphs, count);
+}
+
+static bool OGTextFontDrawsNothing(CTFontRef font, const UniChar *units, CFIndex count)
+{
+    if (font == NULL || (CTFontGetSymbolicTraits(font) & OGTextFontColorGlyphsTrait) != 0)
+        return false;
+    CGGlyph glyphs[2] = {0, 0};
+    if (!CTFontGetGlyphsForCharacters(font, units, glyphs, count))
+        return false;
+    for (CFIndex index = 0; index < count; index++)
+    {
+        if (glyphs[index] == 0)
+            continue;
+        CGPathRef path = CTFontCreatePathForGlyph(font, glyphs[index], NULL);
+        if (path == NULL)
+            continue;
+        bool empty = CGPathIsEmpty(path);
+        CGPathRelease(path);
+        if (!empty)
+            return false;
+    }
+    return true;
 }
 
 static CTFontRef OGTextFallbackNamedFontLocked(const char *name)
@@ -443,13 +476,13 @@ static UniChar OGTextFallbackFillerForFontLocked(CTFontRef font, CTFontRef *outF
     *outFillerFont = NULL;
     for (size_t index = 0; index < sizeof(candidates) / sizeof(candidates[0]); index++)
     {
-        if (OGTextFontCoversUnits(font, &candidates[index], 1))
+        if (OGTextFontDrawsNothing(font, &candidates[index], 1))
             return candidates[index];
     }
     for (size_t index = 0; index < sizeof(candidates) / sizeof(candidates[0]); index++)
     {
         CTFontRef fallback = OGTextFallbackFontForCodePointLocked(candidates[index], &candidates[index], 1);
-        if (fallback != NULL)
+        if (OGTextFontDrawsNothing(fallback, &candidates[index], 1))
         {
             *outFillerFont = fallback;
             return candidates[index];
@@ -553,14 +586,15 @@ void OGPlatformTextApplyManagedFallback(CFMutableAttributedStringRef string)
                 codePoint = OGUnicodeScalarForSurrogatePair(unit, units[index + 1]);
             }
 
-            if (codePoint < 0x80 || OGTextFontCoversUnits(runFont, units + index, count))
+            bool formatControl = OGTextCodePointIsFormatControl(codePoint);
+            if (codePoint < 0x80 || (formatControl ? OGTextFontDrawsNothing(runFont, units + index, count) : OGTextFontCoversUnits(runFont, units + index, count)))
             {
                 index += count;
                 continue;
             }
 
             CTFontRef fallback = OGTextFallbackFontForCodePointLocked(codePoint, units + index, count);
-            if (fallback != NULL)
+            if (fallback != NULL && (!formatControl || OGTextFontDrawsNothing(fallback, units + index, count)))
             {
                 CTFontRef sized = OGTextFallbackSizedFontLocked(fallback, runSize);
                 if (sized != NULL)
@@ -639,14 +673,10 @@ static CFAttributedStringRef OGPlatformTextCreateManagedString(CFAttributedStrin
 
 CTLineRef OGPlatformTextCreateLine(CFAttributedStringRef string)
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-#endif
     CFAttributedStringRef managed = OGPlatformTextCreateManagedString(string);
     CTLineRef line = CTLineCreateWithAttributedString(managed != NULL ? managed : string);
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformTextLogSlowLayout("line", managed != NULL ? managed : string, CFAbsoluteTimeGetCurrent() - start);
-#endif
     if (managed != NULL)
         CFRelease(managed);
     return line;
@@ -654,14 +684,10 @@ CTLineRef OGPlatformTextCreateLine(CFAttributedStringRef string)
 
 CTTypesetterRef OGPlatformTextCreateTypesetter(CFAttributedStringRef string)
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
-#endif
     CFAttributedStringRef managed = OGPlatformTextCreateManagedString(string);
     CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString(managed != NULL ? managed : string);
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGPlatformTextLogSlowLayout("typesetter", managed != NULL ? managed : string, CFAbsoluteTimeGetCurrent() - start);
-#endif
     if (managed != NULL)
         CFRelease(managed);
     return typesetter;

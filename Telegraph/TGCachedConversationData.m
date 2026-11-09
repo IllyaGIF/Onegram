@@ -46,7 +46,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
 
 @implementation TGCachedConversationMember
 
-- (instancetype)initWithUid:(int32_t)uid isCreator:(bool)isCreator adminRights:(TGChannelAdminRights *)adminRights bannedRights:(TGChannelBannedRights *)bannedRights timestamp:(int32_t)timestamp inviterId:(int32_t)inviterId adminInviterId:(int32_t)adminInviterId kickedById:(int32_t)kickedById adminCanManage:(bool)adminCanManage {
+- (instancetype)initWithUid:(int64_t)uid isCreator:(bool)isCreator adminRights:(TGChannelAdminRights *)adminRights bannedRights:(TGChannelBannedRights *)bannedRights timestamp:(int32_t)timestamp inviterId:(int64_t)inviterId adminInviterId:(int64_t)adminInviterId kickedById:(int64_t)kickedById adminCanManage:(bool)adminCanManage {
     self = [super init];
     if (self != nil) {
         _uid = uid;
@@ -63,24 +63,24 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
 }
 
 - (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder {
-    int32_t uid = [coder decodeInt32ForCKey:"i"];
+    int64_t uid = [coder decodeInt64ForCKey:"i"];
     int32_t isCreator = [coder decodeInt32ForCKey:"c"];
     TGChannelAdminRights *adminRights = [coder decodeObjectForCKey:"a"];
     TGChannelBannedRights *bannedRights = [coder decodeObjectForCKey:"b"];
     int32_t timestamp = [coder decodeInt32ForCKey:"t"];
     
-    return [self initWithUid:uid isCreator:isCreator adminRights:adminRights bannedRights:bannedRights timestamp:timestamp inviterId:[coder decodeInt32ForCKey:"in"] adminInviterId:[coder decodeInt32ForCKey:"aid"] kickedById:[coder decodeInt32ForCKey:"kid"] adminCanManage:[coder decodeInt32ForCKey:"akm"]];
+    return [self initWithUid:uid isCreator:isCreator adminRights:adminRights bannedRights:bannedRights timestamp:timestamp inviterId:[coder decodeInt64ForCKey:"in"] adminInviterId:[coder decodeInt64ForCKey:"aid"] kickedById:[coder decodeInt64ForCKey:"kid"] adminCanManage:[coder decodeInt32ForCKey:"akm"]];
 }
 
 - (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder {
-    [coder encodeInt32:_uid forCKey:"i"];
+    [coder encodeInt64:_uid forCKey:"i"];
     [coder encodeInt32:_isCreator forCKey:"c"];
     [coder encodeObject:_adminRights forCKey:"a"];
     [coder encodeObject:_bannedRights forCKey:"b"];
     [coder encodeInt32:_timestamp forCKey:"t"];
-    [coder encodeInt32:_inviterId forCKey:"in"];
-    [coder encodeInt32:_adminInviterId forCKey:"aid"];
-    [coder encodeInt32:_kickedById forCKey:"kid"];
+    [coder encodeInt64:_inviterId forCKey:"in"];
+    [coder encodeInt64:_adminInviterId forCKey:"aid"];
+    [coder encodeInt64:_kickedById forCKey:"kid"];
     [coder encodeInt32:_adminCanManage ? 1 : 0 forCKey:"akm"];
 }
 
@@ -92,7 +92,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
     return [[TGCachedConversationMember alloc] initWithUid:_uid isCreator:_isCreator adminRights:_adminRights bannedRights:bannedRights timestamp:_timestamp inviterId:_inviterId adminInviterId:_adminInviterId kickedById:_kickedById adminCanManage:_adminCanManage];
 }
 
-- (TGCachedConversationMember *)withUpdatedAdminRights:(TGChannelAdminRights *)adminRights adminInviterId:(int32_t)adminInviterId adminCanManage:(bool)adminCanManage {
+- (TGCachedConversationMember *)withUpdatedAdminRights:(TGChannelAdminRights *)adminRights adminInviterId:(int64_t)adminInviterId adminCanManage:(bool)adminCanManage {
     return [[TGCachedConversationMember alloc] initWithUid:_uid isCreator:_isCreator adminRights:adminRights bannedRights:_bannedRights timestamp:_timestamp inviterId:_inviterId adminInviterId:adminInviterId kickedById:_kickedById adminCanManage:adminCanManage];
 }
 
@@ -182,7 +182,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
     return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:blacklistCount bannedCount:bannedCount memberCount:memberCount managementMembers:_managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:_generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
 }
 
-- (TGCachedConversationData *)updateMemberBannedRights:(int32_t)uid rights:(TGChannelBannedRights *)rights timestamp:(int32_t)timestamp isMember:(bool)isMember kickedById:(int32_t)kickedById {
+- (TGCachedConversationData *)updateMemberBannedRights:(int64_t)uid rights:(TGChannelBannedRights *)rights timestamp:(int32_t)timestamp isMember:(bool)isMember kickedById:(int64_t)kickedById {
     int32_t memberCount = _memberCount;
     NSMutableArray *generalMembers = [[NSMutableArray alloc] initWithArray:_generalMembers];
     
@@ -261,7 +261,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
     return [[TGCachedConversationData alloc] initWithManagementCount:managementCount blacklistCount:_blacklistCount bannedCount:_bannedCount memberCount:_memberCount managementMembers:managementMembers blacklistMembers:_blacklistMembers bannedMembers:_bannedMembers generalMembers:generalMembers privateLink:_privateLink migrationData:_migrationData botInfos:_botInfos stickerPack:_stickerPack canSetStickerPack:_canSetStickerPack minAvailableMessageId:_minAvailableMessageId preHistory:_preHistory];
 }
 
-- (TGCachedConversationData *)removeManagementMember:(int32_t)uid {
+- (TGCachedConversationData *)removeManagementMember:(int64_t)uid {
     int32_t managementCount = _managementCount;
     NSMutableArray *managementMembers = [[NSMutableArray alloc] initWithArray:_managementMembers];
     NSMutableArray *generalMembers = [[NSMutableArray alloc] initWithArray:_generalMembers];
@@ -290,7 +290,7 @@ static bool updateOrAddArrayMemberWithId(NSMutableArray *array, TGCachedConversa
     NSMutableArray *bannedMembers = [[NSMutableArray alloc] initWithArray:_bannedMembers];
     
     for (NSNumber *nUid in uids) {
-        TGCachedConversationMember *member = [[TGCachedConversationMember alloc] initWithUid:[nUid intValue] isCreator:false adminRights:nil bannedRights:nil timestamp:timestamp inviterId:0 adminInviterId:0 kickedById:0 adminCanManage:false];
+        TGCachedConversationMember *member = [[TGCachedConversationMember alloc] initWithUid:[nUid longLongValue] isCreator:false adminRights:nil bannedRights:nil timestamp:timestamp inviterId:0 adminInviterId:0 kickedById:0 adminCanManage:false];
         
         if (!arrayContainsMemberWithId(generalMembers, member)) {
             memberCount++;

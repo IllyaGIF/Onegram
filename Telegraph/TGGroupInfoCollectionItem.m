@@ -3,6 +3,8 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGGroupInfoCollectionItemView.h"
+#import "TGOnegramSettings.h"
+#import "TGProfileHeaderLayout.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/ASHandle.h"
 
@@ -43,9 +45,44 @@
     return [TGGroupInfoCollectionItemView class];
 }
 
+- (bool)usesModernLayout
+{
+    return !_editing && TGOnegramModernInterfaceEnabled();
+}
+
+- (bool)transparent
+{
+    return [super transparent] || [self usesModernLayout];
+}
+
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, (self.transparent && _isChannel && !_editing) ? 88.0f : 93.0f);
+    if ([self usesModernLayout])
+        return CGSizeMake(containerSize.width, TGProfileHeaderHeight(0.0f));
+    return CGSizeMake(containerSize.width, ([super transparent] && _isChannel && !_editing) ? 88.0f : 93.0f);
+}
+
+- (NSString *)subtitle
+{
+    int32_t count = MAX(_memberCount, _conversation.chatParticipantCount);
+    if (count <= 0)
+        return nil;
+    bool subscribers = _isChannel && !_conversation.isChannelGroup;
+    return [effectiveLocalization() getPluralized:subscribers ? @"Conversation.StatusSubscribers" : @"Conversation.StatusMembers" count:count];
+}
+
+- (void)setStoryRingState:(int)storyRingState
+{
+    _storyRingState = storyRingState;
+    [(TGGroupInfoCollectionItemView *)[self boundView] setStoryRingState:storyRingState];
+}
+
+- (void)setMemberCount:(int32_t)memberCount
+{
+    if (_memberCount == memberCount)
+        return;
+    _memberCount = memberCount;
+    [(TGGroupInfoCollectionItemView *)[self boundView] setSubtitle:[self subtitle]];
 }
 
 - (void)bindView:(TGGroupInfoCollectionItemView *)view
@@ -70,6 +107,8 @@
     }
     
     [view setTitle:_updatingTitle != nil ? _updatingTitle : _conversation.chatTitle];
+    [view setSubtitle:[self subtitle]];
+    [view setStoryRingState:_storyRingState];
     
     [view setEditing:_editing animated:false];
     
@@ -102,6 +141,7 @@
             [view setAvatarImage:_updatingAvatar animated:true];
         
         [view setTitle:_updatingTitle != nil ? _updatingTitle : _conversation.chatTitle];
+        [view setSubtitle:[self subtitle]];
         
         view.isVerified = _conversation.isVerified;
     }

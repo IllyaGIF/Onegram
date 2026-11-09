@@ -73,6 +73,9 @@ typedef enum
 + (void)refreshUIAppearance;
 + (void)startAutoNight;
 + (void)switchToPallete:(TGPresentationPallete *)pallete;
++ (void)refreshAssets;
++ (void)reloadCustomColors;
++ (instancetype)presentationWithPallete:(TGPresentationPallete *)pallete bubbleRadius:(NSInteger)bubbleRadius;
 + (TGPresentation *)current;
 + (SSignal *)signal;
 

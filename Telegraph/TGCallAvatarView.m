@@ -56,7 +56,7 @@ const CGFloat TGCallAvatarNormalScale = 0.75f;
     TGCallSpeechVolumeView *_volumeView;
     TGLetteredAvatarView *_avatarView;
     
-    int32_t _currentPeerId;
+    int64_t _currentPeerId;
     bool _largeAvatar;
     bool _forcedLargeAvatar;
     
@@ -147,7 +147,7 @@ const CGFloat TGCallAvatarNormalScale = 0.75f;
     
     TGUser *displayPeer = state.peer;
     if ((displayPeer == nil || displayPeer.uid == 0) && state.stateData.peerId != 0)
-        displayPeer = [TGDatabaseInstance() loadUser:(int32_t)state.stateData.peerId];
+        displayPeer = [TGDatabaseInstance() loadUser:state.stateData.peerId];
 
     if (displayPeer != nil && _currentPeerId != displayPeer.uid)
     {

@@ -38,6 +38,9 @@ public:
 	void setAudioOutputDuckingEnabled(bool enabled) override;
     void addExternalAudioSamples(std::vector<uint8_t> &&samples) override;
     void setIsLowBatteryLevel(bool isLowBatteryLevel) override;
+#ifdef TGCALLS_IOS6_AUDIO_ONLY
+	void setOutgoingVideoEnabled(bool enabled) override;
+#endif
 	std::string getLastError() override;
 	std::string getDebugInfo() override;
 	int64_t getPreferredRelayId() override;

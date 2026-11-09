@@ -55,7 +55,7 @@ const CGFloat TGPhotoStickerSelectionViewHandleSide = 30.0f;
         _baseSize = entity.baseSize;
         _mirrored = entity.isMirrored;
         
-        _imageView = [[TGImageView alloc] init];
+        _imageView = [[TGImageView alloc] initWithFrame:CGRectZero];
         _imageView.contentMode = UIViewContentModeScaleAspectFit;
         _imageView.expectExtendedEdges = true;
         [self addSubview:_imageView];
@@ -63,20 +63,22 @@ const CGFloat TGPhotoStickerSelectionViewHandleSide = 30.0f;
         TGDocumentMediaAttachment *sticker = entity.document;
         _document = sticker;
         
-        CGSize imageSize = CGSizeZero;
-        bool isSticker = false;
-        for (id attribute in sticker.attributes)
-        {
-            if ([attribute isKindOfClass:[TGDocumentAttributeImageSize class]])
-                imageSize = ((TGDocumentAttributeImageSize *)attribute).size;
-            else if ([attribute isKindOfClass:[TGDocumentAttributeSticker class]])
-                isSticker = true;
-        }
+        CGSize imageSize = [sticker pictureSize];
+        CGSize thumbnailSize = CGSizeZero;
+        NSString *thumbnailUri = [sticker.thumbnailInfo imageUrlForLargestSize:&thumbnailSize];
+        if (!isfinite(imageSize.width) || !isfinite(imageSize.height) || imageSize.width <= 0.0f || imageSize.height <= 0.0f)
+            imageSize = thumbnailSize;
+        if (!isfinite(imageSize.width) || !isfinite(imageSize.height) || imageSize.width <= 0.0f || imageSize.height <= 0.0f)
+            imageSize = _baseSize;
+
+        NSString *mimeType = [sticker.mimeType lowercaseString];
+        NSString *extension = [[sticker.fileName pathExtension] lowercaseString];
+        bool useStaticPreview = [mimeType isEqualToString:@"video/webm"] || [mimeType isEqualToString:@"application/x-tgsticker"] || [extension isEqualToString:@"webm"] || [extension isEqualToString:@"tgs"];
         
         CGSize displaySize = [self fittedSizeForSize:imageSize maxSize:CGSizeMake(512.0f, 512.0f)];
         
         NSMutableString *imageUri = [[NSMutableString alloc] init];
-        [imageUri appendString:@"sticker://?"];
+        [imageUri appendString:useStaticPreview ? @"sticker-preview://?" : @"sticker://?"];
         if (sticker.documentId != 0)
         {
             [imageUri appendFormat:@"&documentId=%" PRId64, sticker.documentId];
@@ -91,10 +93,18 @@ const CGFloat TGPhotoStickerSelectionViewHandleSide = 30.0f;
         }
         [imageUri appendFormat:@"&accessHash=%" PRId64, sticker.accessHash];
         [imageUri appendFormat:@"&datacenterId=%d", (int)sticker.datacenterId];
-        [imageUri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:sticker.fileName]];
+        [imageUri appendFormat:@"&fileName=%@", [TGStringUtils stringByEscapingForURL:sticker.safeFileName]];
         [imageUri appendFormat:@"&size=%d", (int)sticker.size];
         [imageUri appendFormat:@"&width=%d&height=%d", (int)displaySize.width, (int)displaySize.height];
-        [imageUri appendFormat:@"&mime-type=%@", [TGStringUtils stringByEscapingForURL:sticker.mimeType]];
+        [imageUri appendFormat:@"&%@=%@", useStaticPreview ? @"mimeType" : @"mime-type", [TGStringUtils stringByEscapingForURL:sticker.mimeType]];
+        if (useStaticPreview)
+        {
+            if (thumbnailUri.length != 0)
+                [imageUri appendFormat:@"&legacyThumbnailUri=%@", [TGStringUtils stringByEscapingForURL:thumbnailUri]];
+            [imageUri appendString:@"&highQuality=1"];
+        }
+        if (sticker.documentUri.length != 0)
+            [imageUri appendFormat:@"&documentUri=%@", [TGStringUtils stringByEscapingForURL:sticker.documentUri]];
         [imageUri appendString:@"&inhibitBlur=1"];
         
         _imageView.frame = CGRectMake(CGFloor((self.frame.size.width - displaySize.width) / 2.0f), CGFloor((self.frame.size.height - displaySize.height) / 2.0f), displaySize.width, displaySize.height);

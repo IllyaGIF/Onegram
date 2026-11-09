@@ -48,7 +48,7 @@
     TLChannelAdminLogEvent$channelAdminLogEvent *object = [[TLChannelAdminLogEvent$channelAdminLogEvent alloc] init];
     object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.action = metaObject->getObject((int32_t)0xc2d4a0f7);
     return object;
 }
@@ -69,8 +69,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {

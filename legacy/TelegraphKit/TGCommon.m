@@ -7,6 +7,7 @@
 #include <time.h>
 #include <string.h>
 #include <limits.h>
+#include <sys/stat.h>
 
 
 #import "../../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -25,6 +26,7 @@
 
 #import "OGPlatformVersion.h"
 #import "../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../OnegramRuntime/OGDiagnostics.h"
 
 #import "TGAppDelegate.h"
 
@@ -886,7 +888,13 @@ NSString *TGIOS6DiagnosticBreadcrumbPath()
     return [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"ios6_diagnostic_breadcrumbs.log"];
 }
 
+NSString *TGIOS6PreviousDiagnosticBreadcrumbPath()
+{
+    return [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"ios6_diagnostic_breadcrumbs-previous.log"];
+}
+
 static int TGIOS6DiagnosticBreadcrumbFd = -1;
+static time_t TGIOS6DiagnosticRotationTime = 0;
 static pthread_mutex_t TGIOS6DiagnosticBreadcrumbMutex = PTHREAD_MUTEX_INITIALIZER;
 static char TGIOS6DiagnosticPreparedPath[PATH_MAX];
 
@@ -932,9 +940,14 @@ static bool TGIOS6NativeMessageIsUseful(const char *bytes)
     return false;
 }
 
-void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length)
+int TGIOS6NativeDiagnosticsEnabled(void)
 {
-    if (bytes == NULL || length == 0 || !TGIOS6NativeMessageIsUseful(bytes))
+    return OGDiagnosticsEnabled() ? 1 : 0;
+}
+
+static void TGIOS6DiagnosticAppendLine(const char *bytes, size_t length)
+{
+    if (bytes == NULL || length == 0)
         return;
 
     char line[4096];
@@ -963,11 +976,32 @@ void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length)
     line[total++] = '\n';
 
     pthread_mutex_lock(&TGIOS6DiagnosticBreadcrumbMutex);
+    if (TGIOS6DiagnosticRotationTime == 0)
+        TGIOS6DiagnosticRotationTime = rawtime;
+    if (TGIOS6DiagnosticBreadcrumbFd >= 0 && rawtime - TGIOS6DiagnosticRotationTime >= 3600 && TGIOS6DiagnosticPreparedPath[0] != 0)
+    {
+        size_t pathLength = strlen(TGIOS6DiagnosticPreparedPath);
+        char archive[PATH_MAX];
+        if (pathLength > 4 && snprintf(archive, sizeof(archive), "%.*s-archive-%lld-%d.log", (int)(pathLength - 4), TGIOS6DiagnosticPreparedPath, (long long)rawtime, (int)getpid()) < (int)sizeof(archive))
+        {
+            close(TGIOS6DiagnosticBreadcrumbFd);
+            TGIOS6DiagnosticBreadcrumbFd = -1;
+            if (rename(TGIOS6DiagnosticPreparedPath, archive) == 0)
+                TGIOS6DiagnosticRotationTime = rawtime;
+        }
+    }
     if (TGIOS6DiagnosticBreadcrumbFd < 0 && TGIOS6DiagnosticPreparedPath[0] != 0)
         TGIOS6DiagnosticBreadcrumbFd = open(TGIOS6DiagnosticPreparedPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (TGIOS6DiagnosticBreadcrumbFd >= 0)
         write(TGIOS6DiagnosticBreadcrumbFd, line, total);
     pthread_mutex_unlock(&TGIOS6DiagnosticBreadcrumbMutex);
+}
+
+void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length)
+{
+    if (bytes == NULL || length == 0 || !TGIOS6NativeMessageIsUseful(bytes))
+        return;
+    TGIOS6DiagnosticAppendLine(bytes, length);
 }
 
 static void TGIOS6WriteDiagnosticBreadcrumb(NSString *message)
@@ -979,12 +1013,10 @@ static void TGIOS6WriteDiagnosticBreadcrumb(NSString *message)
 
 void TGIOS6PrepareDiagnosticBreadcrumbs()
 {
-#if !defined(ONEGRAM_DIAGNOSTICS)
-    return;
-#endif
     void (^block)(void) = ^
     {
         NSString *path = TGIOS6DiagnosticBreadcrumbPath();
+        const char *previousPath = [TGIOS6PreviousDiagnosticBreadcrumbPath() fileSystemRepresentation];
         pthread_mutex_lock(&TGIOS6DiagnosticBreadcrumbMutex);
         const char *filePath = [path fileSystemRepresentation];
         TGIOS6DiagnosticPreparedPath[0] = 0;
@@ -996,7 +1028,23 @@ void TGIOS6PrepareDiagnosticBreadcrumbs()
             TGIOS6DiagnosticBreadcrumbFd = -1;
         }
         if (filePath != NULL)
-            unlink(filePath);
+        {
+            struct stat fileStat;
+            if (previousPath != NULL && stat(filePath, &fileStat) == 0 && fileStat.st_size > 0)
+            {
+                NSString *previous = TGIOS6PreviousDiagnosticBreadcrumbPath();
+                NSString *name = [NSString stringWithFormat:@"ios6_diagnostic_breadcrumbs-archive-%@.log", [[NSProcessInfo processInfo] globallyUniqueString]];
+                NSString *archive = [[previous stringByDeletingLastPathComponent] stringByAppendingPathComponent:name];
+                if (access(previousPath, F_OK) == 0 && rename(previousPath, archive.fileSystemRepresentation) != 0)
+                {
+                    pthread_mutex_unlock(&TGIOS6DiagnosticBreadcrumbMutex);
+                    return;
+                }
+                rename(filePath, previousPath);
+            }
+            else
+                unlink(filePath);
+        }
         pthread_mutex_unlock(&TGIOS6DiagnosticBreadcrumbMutex);
     };
 
@@ -1007,6 +1055,7 @@ void TGIOS6PrepareDiagnosticBreadcrumbs()
 }
 
 static NSFileHandle *TGCurrentLogFileHandle;
+static NSTimeInterval TGLogLastRotationTime;
 
 static NSFileHandle *TGLogFileHandle()
 {
@@ -1025,9 +1074,15 @@ static NSFileHandle *TGLogFileHandle()
             NSDictionary *attributes = [fileManager attributesOfItemAtPath:filePath error:nil];
             if (attributes == nil)
                 continue;
-            if (i == TGLogHistoryLimit || [attributes fileSize] == 0)
+            if ([attributes fileSize] == 0)
             {
                 [fileManager removeItemAtPath:filePath error:nil];
+                continue;
+            }
+            if (i == TGLogHistoryLimit)
+            {
+                NSString *name = [NSString stringWithFormat:@"application-archive-%@.log", [[NSProcessInfo processInfo] globallyUniqueString]];
+                [fileManager moveItemAtPath:filePath toPath:[documentsDirectory stringByAppendingPathComponent:name] error:NULL];
                 continue;
             }
             NSString *nextFilePath = [documentsDirectory stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", i + 1]];
@@ -1036,8 +1091,48 @@ static NSFileHandle *TGLogFileHandle()
         
         [fileManager createFileAtPath:currentFilePath contents:nil attributes:nil];
         TGCurrentLogFileHandle = [NSFileHandle fileHandleForWritingAtPath:currentFilePath];
+        TGLogLastRotationTime = [NSDate timeIntervalSinceReferenceDate];
     });
-    
+
+    NSTimeInterval rotationNow = [NSDate timeIntervalSinceReferenceDate];
+    if (TGCurrentLogFileHandle != nil && rotationNow - TGLogLastRotationTime >= 3600.0)
+    {
+        NSString *documents = [TGAppDelegate documentsPath];
+        NSString *current = [documents stringByAppendingPathComponent:@"application-0.log"];
+        NSString *name = [NSString stringWithFormat:@"application-archive-%@.log", [[NSProcessInfo processInfo] globallyUniqueString]];
+        NSString *archive = [documents stringByAppendingPathComponent:name];
+        [TGCurrentLogFileHandle closeFile];
+        TGCurrentLogFileHandle = nil;
+        if ([[NSFileManager defaultManager] moveItemAtPath:current toPath:archive error:NULL])
+            TGLogLastRotationTime = rotationNow;
+    }
+
+    static NSTimeInterval lastCleanup = 0;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (now - lastCleanup >= 3600.0 || lastCleanup == 0)
+    {
+        lastCleanup = now;
+        NSFileManager *fileManager = [NSFileManager defaultManager];
+        NSString *documents = [TGAppDelegate documentsPath];
+        NSMutableArray *paths = [[NSMutableArray alloc] init];
+        for (int i = 1; i <= TGLogHistoryLimit; i++)
+            [paths addObject:[documents stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", i]]];
+        [paths addObject:TGIOS6PreviousDiagnosticBreadcrumbPath()];
+        for (NSString *name in [fileManager contentsOfDirectoryAtPath:documents error:NULL])
+            if (([name hasPrefix:@"application-archive-"] || [name hasPrefix:@"ios6_diagnostic_breadcrumbs-archive-"]) && [name hasSuffix:@".log"])
+                [paths addObject:[documents stringByAppendingPathComponent:name]];
+        NSString *directory = [documents stringByAppendingPathComponent:@"OnegramLogs"];
+        for (NSString *name in [fileManager contentsOfDirectoryAtPath:directory error:NULL])
+            if ([[name pathExtension] isEqualToString:@"log"])
+                [paths addObject:[directory stringByAppendingPathComponent:name]];
+        for (NSString *path in paths)
+        {
+            NSDate *modified = [[fileManager attributesOfItemAtPath:path error:NULL] fileModificationDate];
+            if (modified != nil && -[modified timeIntervalSinceNow] > 24.0 * 60.0 * 60.0)
+                [fileManager removeItemAtPath:path error:NULL];
+        }
+    }
+
     if (TGCurrentLogFileHandle == nil) {
         NSString *path = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"application-0.log"];
         NSFileManager *fileManager = [NSFileManager defaultManager];
@@ -1049,19 +1144,28 @@ static NSFileHandle *TGLogFileHandle()
     return TGCurrentLogFileHandle;
 }
 
-bool TGDeleteLogFile(NSString *path, NSError **error)
+bool TGCanDeleteLogFile(NSString *path)
 {
     NSString *target = [path stringByStandardizingPath];
     NSString *documents = [[TGAppDelegate documentsPath] stringByStandardizingPath];
     NSString *parent = [target stringByDeletingLastPathComponent];
     NSString *name = [target lastPathComponent];
     bool valid = [parent isEqualToString:[documents stringByAppendingPathComponent:@"OnegramLogs"]] && [[name pathExtension] isEqualToString:@"log"];
+    NSString *home = [documents stringByDeletingLastPathComponent];
+    valid = valid || [parent isEqualToString:[documents stringByAppendingPathComponent:@"calls"]] || [parent isEqualToString:[home stringByAppendingPathComponent:@"Library/OnegramPlugins/logs"]];
     if ([parent isEqualToString:documents]) {
-        valid = [name isEqualToString:@"ios6_diagnostic_breadcrumbs.log"] || [name isEqualToString:@"ios6_last_crash.txt"];
+        valid = [name isEqualToString:[TGIOS6DiagnosticBreadcrumbPath() lastPathComponent]] || [name isEqualToString:[TGIOS6PreviousDiagnosticBreadcrumbPath() lastPathComponent]] || [name isEqualToString:@"ios6_last_crash.txt"] || [name isEqualToString:@"launch-order.txt"] || (([name hasPrefix:@"application-archive-"] || [name hasPrefix:@"ios6_diagnostic_breadcrumbs-archive-"]) && [name hasSuffix:@".log"]);
         for (int i = 0; !valid && i <= TGLogHistoryLimit; i++)
             valid = [name isEqualToString:[NSString stringWithFormat:@"application-%d.log", i]];
     }
-    if (!valid) {
+    return valid;
+}
+
+bool TGDeleteLogFile(NSString *path, NSError **error)
+{
+    NSString *target = [path stringByStandardizingPath];
+    NSString *documents = [[TGAppDelegate documentsPath] stringByStandardizingPath];
+    if (!TGCanDeleteLogFile(target)) {
         if (error != NULL)
             *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteNoPermissionError userInfo:nil];
         return false;
@@ -1101,9 +1205,8 @@ bool TGDeleteLogFile(NSString *path, NSError **error)
 
 void TGLogSynchronize()
 {
-#if !defined(ONEGRAM_DIAGNOSTICS)
-    return;
-#endif
+    if (!OGDiagnosticsEnabled())
+        return;
     dispatch_async(TGLogQueue(), ^
     {
         [TGLogFileHandle() synchronizeFile];
@@ -1134,38 +1237,31 @@ void TGLogClear()
         NSString *crashPath = [documentsDirectory stringByAppendingPathComponent:@"ios6_last_crash.txt"];
         if ([fileManager fileExistsAtPath:crashPath])
             [fileManager removeItemAtPath:crashPath error:nil];
-        NSString *breadcrumbsPath = [documentsDirectory stringByAppendingPathComponent:@"ios6_diagnostic_breadcrumbs.log"];
-        if ([fileManager fileExistsAtPath:breadcrumbsPath])
-            [fileManager removeItemAtPath:breadcrumbsPath error:nil];
+        for (NSString *breadcrumbsPath in @[TGIOS6DiagnosticBreadcrumbPath(), TGIOS6PreviousDiagnosticBreadcrumbPath()])
+        {
+            if ([fileManager fileExistsAtPath:breadcrumbsPath])
+                [fileManager removeItemAtPath:breadcrumbsPath error:nil];
+        }
 
         TGIOS6PrepareDiagnosticBreadcrumbs();
     });
 }
 
-static bool logEnabled =
-#if (defined(DEBUG) || defined(INTERNAL_RELEASE)) && !defined(DISABLE_LOGGING)
-    true;
-#else
-    false;
-#endif
+static int TGLogEnabledOverride = -1;
 
 void TGLogSetEnabled(bool enabled)
 {
-    logEnabled = enabled;
+    TGLogEnabledOverride = enabled ? 1 : 0;
 }
 
 bool TGLogEnabled()
 {
-    return logEnabled;
+    return TGLogEnabledOverride < 0 ? OGDiagnosticsEnabled() : TGLogEnabledOverride != 0;
 }
 
 bool TGLogAvailable()
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
-    return true;
-#else
-    return false;
-#endif
+    return OGDiagnosticsEnabled();
 }
 
 #undef TGLog
@@ -1175,12 +1271,10 @@ void TGLogv(NSString *format, va_list args);
 
 void TGLog(NSString *format, ...)
 {
-#if !defined(ONEGRAM_DIAGNOSTICS)
-    (void)format;
-    return;
-#endif
+    if (!OGDiagnosticsEnabled())
+        return;
 
-    if (!logEnabled && !TGIOS6MessageIsDiagnosticBreadcrumb(format))
+    if (!TGLogEnabled() && !TGIOS6MessageIsDiagnosticBreadcrumb(format))
         return;
 
     va_list L;
@@ -1241,11 +1335,9 @@ static double TGLogProcessUptime(void)
 
 void TGLogv(NSString *format, va_list args)
 {
-#if !defined(ONEGRAM_DIAGNOSTICS)
-    (void)format;
-    (void)args;
-    return;
-#endif
+    if (!OGDiagnosticsEnabled())
+        return;
+    bool logEnabled = TGLogEnabled();
     if (!logEnabled && !TGIOS6MessageIsDiagnosticBreadcrumb(format))
         return;
 
@@ -1262,6 +1354,26 @@ void TGLogv(NSString *format, va_list args)
     {
         TGWriteLogMessage(message, diagnosticBreadcrumb);
     });
+}
+
+void TGDiagnosticLog(NSString *format, ...)
+{
+    va_list L;
+    va_start(L, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:L];
+    va_end(L);
+
+    const char *utf8 = [message UTF8String];
+    if (utf8 != NULL)
+        TGIOS6DiagnosticAppendLine(utf8, strlen(utf8));
+
+    if (OGDiagnosticsEnabled())
+    {
+        dispatch_async(TGLogQueue(), ^
+        {
+            TGWriteLogMessage(message, true);
+        });
+    }
 }
 
 NSArray *TGGetLogFilePaths(int count)
@@ -1343,6 +1455,8 @@ NSString *TGArchiveCrashLogText(NSString *text, NSDate *date)
     NSString *path = TGArchivedLogPath(@"Crash", date ?: [NSDate date]);
     if (![text writeToFile:path atomically:true encoding:NSUTF8StringEncoding error:nil])
         return nil;
+    if (date != nil)
+        [[NSFileManager defaultManager] setAttributes:@{NSFileModificationDate: date} ofItemAtPath:path error:nil];
     return path;
 }
 
@@ -1424,6 +1538,142 @@ static NSString *TGLogLineTimestamp(NSString *line)
     return timestamp;
 }
 
+static void TGWriteLiveLogLine(NSData *data, NSFileHandle *output, NSString *cutoff, bool *include, NSUInteger *count)
+{
+    NSString *line = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (line == nil)
+        line = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+    NSString *timestamp = TGLogLineTimestamp(line);
+    if (timestamp != nil)
+        *include = [timestamp compare:cutoff options:NSLiteralSearch] != NSOrderedAscending;
+    if (*include)
+    {
+        if (output != nil)
+            [output writeData:data];
+        (*count)++;
+    }
+}
+
+static bool TGCollectLiveLogRecords(NSFileHandle *output, NSUInteger *count, NSError **error)
+{
+    *count = 0;
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [[NSLocale alloc] initWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss.SSS";
+    NSString *cutoff = [formatter stringFromDate:[NSDate dateWithTimeIntervalSinceNow:-24.0 * 60.0 * 60.0]];
+    NSString *documents = [TGAppDelegate documentsPath];
+    NSMutableArray *paths = [[NSMutableArray alloc] init];
+    for (NSString *name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:documents error:NULL])
+        if (([name hasPrefix:@"application-archive-"] || [name hasPrefix:@"ios6_diagnostic_breadcrumbs-archive-"]) && [name hasSuffix:@".log"])
+            [paths addObject:[documents stringByAppendingPathComponent:name]];
+    [paths sortUsingSelector:@selector(compare:)];
+    for (int index = TGLogHistoryLimit; index >= 0; index--)
+        [paths addObject:[documents stringByAppendingPathComponent:[NSString stringWithFormat:@"application-%d.log", index]]];
+    [paths addObject:TGIOS6PreviousDiagnosticBreadcrumbPath()];
+    [paths addObject:TGIOS6DiagnosticBreadcrumbPath()];
+    if (dispatch_get_specific(TGLogQueueSpecificKey) != NULL)
+        [TGCurrentLogFileHandle synchronizeFile];
+    else
+        dispatch_sync(TGLogQueue(), ^{ [TGCurrentLogFileHandle synchronizeFile]; });
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    @try
+    {
+        for (NSString *inputPath in paths)
+        {
+            NSDictionary *attributes = [fileManager attributesOfItemAtPath:inputPath error:NULL];
+            NSDate *modified = [attributes fileModificationDate];
+            if (modified == nil || -[modified timeIntervalSinceNow] > 24.0 * 60.0 * 60.0)
+                continue;
+            NSFileHandle *input = [NSFileHandle fileHandleForReadingAtPath:inputPath];
+            if (input == nil)
+                [NSException raise:NSInternalInconsistencyException format:@"Не удалось прочитать %@", inputPath];
+            unsigned long long remaining = [attributes fileSize];
+            NSMutableData *pending = [[NSMutableData alloc] init];
+            bool include = false;
+            while (remaining != 0)
+            {
+              @autoreleasepool
+              {
+                NSData *chunk = [input readDataOfLength:(NSUInteger)MIN(remaining, 65536ULL)];
+                if (chunk.length == 0)
+                    break;
+                remaining -= chunk.length;
+                [pending appendData:chunk];
+                const uint8_t *bytes = pending.bytes;
+                NSUInteger start = 0;
+                for (NSUInteger index = 0; index < pending.length; index++)
+                {
+                    if (bytes[index] != '\n')
+                        continue;
+                    @autoreleasepool
+                    {
+                        NSData *line = [pending subdataWithRange:NSMakeRange(start, index - start + 1)];
+                        TGWriteLiveLogLine(line, output, cutoff, &include, count);
+                    }
+                    start = index + 1;
+                }
+                if (start != 0)
+                    [pending replaceBytesInRange:NSMakeRange(0, start) withBytes:NULL length:0];
+              }
+            }
+            if (pending.length != 0)
+                TGWriteLiveLogLine(pending, output, cutoff, &include, count);
+            [input closeFile];
+        }
+    }
+    @catch (NSException *exception)
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadUnknownError userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"Не удалось прочитать лог"}];
+        return false;
+    }
+    return true;
+}
+
+bool TGCountLiveLogEntries(NSUInteger *count, NSError **error)
+{
+    if (error != NULL)
+        *error = nil;
+    return TGCollectLiveLogRecords(nil, count, error);
+}
+
+NSString *TGSaveLiveLogWithError(NSError **error)
+{
+    if (error != NULL)
+        *error = nil;
+    NSString *path = TGArchivedLogPath(@"Live", [NSDate date]);
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    if (![fileManager createFileAtPath:path contents:nil attributes:nil])
+    {
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:@{NSFilePathErrorKey: path}];
+        return nil;
+    }
+    NSFileHandle *output = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (output == nil)
+    {
+        [fileManager removeItemAtPath:path error:NULL];
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteNoPermissionError userInfo:@{NSFilePathErrorKey: path}];
+        return nil;
+    }
+    NSUInteger count = 0;
+    bool success = TGCollectLiveLogRecords(output, &count, error);
+    @try { [output closeFile]; }
+    @catch (NSException *exception)
+    {
+        success = false;
+        if (error != NULL)
+            *error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileWriteUnknownError userInfo:@{NSLocalizedDescriptionKey: exception.reason ?: @"Не удалось закрыть лог"}];
+    }
+    if (!success || count == 0)
+    {
+        [fileManager removeItemAtPath:path error:NULL];
+        return nil;
+    }
+    return path;
+}
+
 NSString *TGSaveCurrentLogLinesWithError(int lineCount, NSError **error)
 {
     if (error != NULL)
@@ -1445,7 +1695,7 @@ NSString *TGSaveCurrentLogLinesWithError(int lineCount, NSError **error)
             return;
         }
         NSString *applicationPath = [[TGAppDelegate documentsPath] stringByAppendingPathComponent:@"application-0.log"];
-        NSArray *applicationLines = TGCurrentLogFileHandle == nil ? @[] : TGCurrentLogTail(applicationPath, (NSUInteger)lineCount, &readError);
+        NSArray *applicationLines = TGCurrentLogTail(applicationPath, (NSUInteger)lineCount, &readError);
         if (applicationLines == nil)
             return;
 
@@ -1453,7 +1703,7 @@ NSString *TGSaveCurrentLogLinesWithError(int lineCount, NSError **error)
         NSArray *diagnosticLines = nil;
         @try
         {
-            diagnosticLines = TGIOS6DiagnosticPreparedPath[0] == 0 ? @[] : TGCurrentLogTail(TGIOS6DiagnosticBreadcrumbPath(), (NSUInteger)lineCount, &readError);
+            diagnosticLines = TGCurrentLogTail(TGIOS6DiagnosticBreadcrumbPath(), (NSUInteger)lineCount, &readError);
         }
         @finally
         {

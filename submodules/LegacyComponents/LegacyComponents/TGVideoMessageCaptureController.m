@@ -188,6 +188,7 @@ typedef enum
             {
                 strongSelf->_automaticDismiss = true;
                 strongSelf->_gpuAvailable = false;
+                strongSelf->_capturePipeline.renderingEnabled = false;
                 [strongSelf dismiss:true];
             }
         }];
@@ -227,6 +228,7 @@ typedef enum
     {
         _automaticDismiss = true;
         _gpuAvailable = false;
+        _capturePipeline.renderingEnabled = false;
         [self dismiss:true];
     }
 }

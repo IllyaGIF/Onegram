@@ -55,8 +55,8 @@
         self.cancelTimeout = 0;
         
         NSRange range = [self.path rangeOfString:@")/uploadPhoto/"];
-        int timelineId = [[self.path substringWithRange:NSMakeRange(14, range.location - 14)] intValue];
-        self.requestQueueName = [NSString stringWithFormat:@"timeline/%d", timelineId];
+        int64_t timelineId = [[self.path substringWithRange:NSMakeRange(14, range.location - 14)] longLongValue];
+        self.requestQueueName = [NSString stringWithFormat:@"timeline/%lld", timelineId];
     }
     return self;
 }

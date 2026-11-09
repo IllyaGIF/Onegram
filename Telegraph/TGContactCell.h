@@ -29,7 +29,7 @@
 @property (nonatomic, strong) NSString *subtitleText;
 @property (nonatomic, strong) NSAttributedString *subtitleAttributedText;
 
-@property (nonatomic) int itemId;
+@property (nonatomic) int64_t itemId;
 @property (nonatomic) int itemKind;
 @property (nonatomic) bool selectionEnabled;
 @property (nonatomic) bool contactSelected;

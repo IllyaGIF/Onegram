@@ -19,7 +19,7 @@
 
 @interface TGRequestEncryptedChatActor ()
 {
-    int _uid;
+    int64_t _uid;
     
     NSData *_aBytes;
     TLmessages_DhConfig$messages_dhConfig *_currentConfig;
@@ -36,7 +36,7 @@
 
 - (void)execute:(NSDictionary *)options
 {
-    _uid = [options[@"uid"] intValue];
+    _uid = [options[@"uid"] longLongValue];
     
     _currentConfig = [TGRequestEncryptedChatActor cachedEncryptionConfig];
 #ifdef DEBUG

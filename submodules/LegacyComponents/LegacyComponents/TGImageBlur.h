@@ -2,6 +2,11 @@
 
 @class TGTemporaryImage;
 
+typedef enum {
+    TGAttachmentSquareInnerCorners = 1 << 8,
+    TGAttachmentSquareTopCorners = 1 << 9
+} TGAttachmentCornerFlags;
+
 UIImage *TGAverageColorImage(UIColor *color);
 UIImage *TGAverageColorRoundImage(UIColor *color, CGSize size);
 UIImage *TGAverageColorAttachmentImage(UIColor *color, bool attachmentBorder, int position);

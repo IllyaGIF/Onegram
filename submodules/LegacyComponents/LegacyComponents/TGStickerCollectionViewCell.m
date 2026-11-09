@@ -10,6 +10,7 @@
 
 @interface TGStickerCollectionViewCell ()
 {
+    UIView *_stickerView;
     TGImageView *_imageView;
     CFAbsoluteTime _disableTime;
     bool _highlighted;
@@ -24,9 +25,13 @@
     self = [super initWithFrame:frame];
     if (self != nil)
     {
-        _imageView = [[TGImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 62.0f, 62.0f)];
+        _stickerView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 62.0f, 62.0f)];
+        [self.contentView addSubview:_stickerView];
+        
+        _imageView = [[TGImageView alloc] initWithFrame:_stickerView.bounds];
         _imageView.contentMode = UIViewContentModeScaleAspectFit;
-        [self.contentView addSubview:_imageView];
+        _imageView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [_stickerView addSubview:_imageView];
         
         if (iosMajorVersion() >= 11)
             _imageView.accessibilityIgnoresInvertColors = true;
@@ -40,10 +45,20 @@
     
     [_imageView reset];
     
-    [_imageView.layer removeAllAnimations];
-    _imageView.alpha = 1.0f;
+    [_stickerView.layer removeAllAnimations];
+    _stickerView.alpha = 1.0f;
     _highlighted = false;
-    _imageView.transform = CGAffineTransformIdentity;
+    _stickerView.transform = CGAffineTransformIdentity;
+}
+
+- (UIView *)stickerView
+{
+    return _stickerView;
+}
+
+- (UIImageView *)thumbnailView
+{
+    return _imageView;
 }
 
 - (void)setDocumentMedia:(TGDocumentMediaAttachment *)documentMedia
@@ -87,13 +102,13 @@
 - (void)setDisabledTimeout
 {
     [UIView animateWithDuration:0.1 animations:^{
-        _imageView.alpha = 0.3f;
+        _stickerView.alpha = 0.3f;
     } completion:^(BOOL finished)
     {
         if (finished)
         {
             [UIView animateWithDuration:1.0 animations:^{
-                _imageView.alpha = 1.0f;
+                _stickerView.alpha = 1.0f;
             }];
         }
     }];
@@ -116,9 +131,9 @@
             [UIView animateWithDuration:0.6 delay:0.0 usingSpringWithDamping:0.43f initialSpringVelocity:0.0f options:UIViewAnimationOptionBeginFromCurrentState animations:^
             {
                 if (_highlighted)
-                    _imageView.transform = CGAffineTransformMakeScale(0.8f, 0.8f);
+                    _stickerView.transform = CGAffineTransformMakeScale(0.8f, 0.8f);
                 else
-                    _imageView.transform = CGAffineTransformIdentity;
+                    _stickerView.transform = CGAffineTransformIdentity;
             } completion:nil];
         }
     }

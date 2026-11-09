@@ -9,18 +9,12 @@ static BOOL MTLogEnabledValue = true;
 #undef MTLogEnabled
 #undef MTLog
 BOOL MTLogEnabled() {
-#if defined(ONEGRAM_DIAGNOSTICS)
-    return loggingFunction != NULL && MTLogEnabledValue;
-#else
-    return NO;
-#endif
+    return OGDiagnosticsEnabled() && loggingFunction != NULL && MTLogEnabledValue;
 }
 
 void MTLog(NSString *format, ...) {
-#if !defined(ONEGRAM_DIAGNOSTICS)
-    (void)format;
-    return;
-#endif
+    if (!MTLogEnabled())
+        return;
     va_list L;
     va_start(L, format);
     if (loggingFunction != NULL) {

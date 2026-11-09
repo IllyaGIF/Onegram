@@ -6,7 +6,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return 0x9c3d198e;
+    return (int32_t)0xcacb6ae2;
 }
 
 - (int32_t)TLconstructorName
@@ -31,7 +31,16 @@
     }
     
     if (self.flags & (1 << 3)) {
-        [os writeString:self.sound];
+        if ([self.sound isEqualToString:@"default"])
+            [os writeInt32:(int32_t)0x97e8bebe];
+        else if (self.sound.length == 0)
+            [os writeInt32:(int32_t)0x6f0c34df];
+        else
+        {
+            [os writeInt32:(int32_t)0x830b9ae4];
+            [os writeString:self.soundTitle.length != 0 ? self.soundTitle : self.sound];
+            [os writeString:self.sound];
+        }
     }
 }
 

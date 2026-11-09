@@ -32,6 +32,7 @@
     {
         self.automaticallyManageUserPresence = false;
         self.useRealName = true;
+        self.modernSubtitleShowsContactDetails = true;
         
         if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
         {

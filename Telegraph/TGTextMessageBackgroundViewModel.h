@@ -29,5 +29,6 @@ typedef enum {
 
 - (void)setHighlightedIfBound;
 - (void)clearHighlight;
+- (void)setPluginBubbleStyle:(NSDictionary *)style;
 
 @end

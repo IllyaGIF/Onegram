@@ -81,8 +81,8 @@
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = metaObject->getInt32((int32_t)0xdf3d1ee7);
-    object.participant_id = metaObject->getInt32((int32_t)0x9abadf01);
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     return object;
 }
 
@@ -108,14 +108,14 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
 }
@@ -175,8 +175,8 @@
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = metaObject->getInt32((int32_t)0xdf3d1ee7);
-    object.participant_id = metaObject->getInt32((int32_t)0x9abadf01);
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     object.g_a = metaObject->getBytes((int32_t)0xa6887fe5);
     return object;
 }
@@ -203,14 +203,14 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
     {
@@ -243,8 +243,8 @@
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.admin_id = metaObject->getInt32((int32_t)0xdf3d1ee7);
-    object.participant_id = metaObject->getInt32((int32_t)0x9abadf01);
+    object.admin_id = metaObject->getInt64((int32_t)0xdf3d1ee7);
+    object.participant_id = metaObject->getInt64((int32_t)0x9abadf01);
     object.g_a_or_b = metaObject->getBytes((int32_t)0x817dfd4a);
     object.key_fingerprint = metaObject->getInt64((int32_t)0x3633de43);
     return object;
@@ -272,14 +272,14 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.admin_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.admin_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xdf3d1ee7, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.participant_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.participant_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9abadf01, value));
     }
     {

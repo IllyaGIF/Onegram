@@ -27,6 +27,13 @@
 
 #import "TLDcOption$modernDcOption.h"
 #import "TGIOS6MessageViewsRpc.h"
+#import "TGTLDynamic.h"
+
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginHooks.h"
+#import "../OnegramPlugins/OGPluginDroppedMessage.h"
+#endif
 
 @interface TGTLSerialization ()
 
@@ -79,7 +86,7 @@ static void TGLogTLParseError(id error)
     return data;
 }
 
-- (id)parseMessage:(NSData *)data
++ (id)parseObject:(NSData *)data
 {
     NSInputStream *is = [[NSInputStream alloc] initWithData:data];
     [is open];
@@ -100,6 +107,26 @@ static void TGLogTLParseError(id error)
     [is close];
     
     return topObject;
+}
+
+- (id)parseMessage:(NSData *)data
+{
+#if OG_PLUGINS_AVAILABLE
+    if (OGPluginHooksWantsPayload(OGPluginHookKindUpdates, data))
+    {
+        OGPluginHookOutcome *outcome = OGPluginHooksProcessUpdates(OGPluginHooksSelectedAccount(), data);
+        if (outcome.action == OGPluginHookActionCancel)
+            return [OGPluginDroppedMessage droppedMessage];
+        if (outcome.action == OGPluginHookActionReplace && outcome.data != nil)
+        {
+            id replacement = [TGTLSerialization parseObject:outcome.data];
+            if (replacement != nil)
+                return replacement;
+            TGLog(@"Plugin updates replacement could not be parsed, using original payload");
+        }
+    }
+#endif
+    return [TGTLSerialization parseObject:data];
 }
 
 static NSArray *TGIOS6ReadObjectVector(NSInputStream *is, NSError **error)
@@ -201,6 +228,19 @@ static NSDictionary *TGIOS6ParseDiscussionMessage(NSInputStream *is, int32_t top
     {
         [is close];
         return nil;
+    }
+
+    if ([request isKindOfClass:[TGTLDynamicRpc class]])
+    {
+        __autoreleasing NSError *dynamicError = nil;
+        id result = [TGTLDynamicRpc parseResponseFromStream:is signature:topSignature request:(TGTLDynamicRpc *)request error:&dynamicError];
+        if (dynamicError != nil)
+        {
+            TGLog(@"TLDYNAMIC %@ parse error: %@", ((TGTLDynamicRpc *)request).method, dynamicError.localizedDescription);
+            result = nil;
+        }
+        [is close];
+        return result;
     }
 
     if ([request isKindOfClass:[TGIOS6MessageViewsRpc class]])

@@ -83,7 +83,7 @@ typedef NSInteger PHAssetResourceType;
 
 #define PHAssetResourceTypePairedVideo 9
 #define PHInvalidImageRequestID 0
-#define PHImageManagerMaximumSize CGSizeZero
+#define PHImageManagerMaximumSize CGSizeMake(-1.0f, -1.0f)
 
 #define PHImageResultIsDegradedKey @"PHImageResultIsDegradedKey"
 #define PHImageCancelledKey @"PHImageCancelledKey"

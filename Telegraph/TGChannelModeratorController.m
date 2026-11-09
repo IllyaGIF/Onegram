@@ -30,6 +30,7 @@
     TGSwitchCollectionItem *_canInviteUsers;
     TGSwitchCollectionItem *_canPinMessages;
     TGSwitchCollectionItem *_canAddAdmins;
+    TGSwitchCollectionItem *_canManageDirectMessages;
     
     TGCommentCollectionItem *_rightsInfoItem;
     
@@ -72,7 +73,7 @@
     
     TGConversation *conversation = _conversation;
     
-    TGChannelAdminRights *adminRights = [[TGChannelAdminRights alloc] initWithCanChangeInfo:sourceMember.isCreator || sourceMember.adminRights.canChangeInfo canPostMessages:!conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canPostMessages) canEditMessages:!conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canEditMessages) canDeleteMessages:sourceMember.isCreator || sourceMember.adminRights.canDeleteMessages canBanUsers:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canBanUsers) canInviteUsers:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canInviteUsers) canChangeInviteLink:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canChangeInviteLink) canPinMessages:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canPinMessages) canAddAdmins:false];
+    TGChannelAdminRights *adminRights = [[TGChannelAdminRights alloc] initWithCanChangeInfo:sourceMember.isCreator || sourceMember.adminRights.canChangeInfo canPostMessages:!conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canPostMessages) canEditMessages:!conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canEditMessages) canDeleteMessages:sourceMember.isCreator || sourceMember.adminRights.canDeleteMessages canBanUsers:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canBanUsers) canInviteUsers:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canInviteUsers) canChangeInviteLink:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canChangeInviteLink) canPinMessages:conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canPinMessages) canAddAdmins:false canManageDirectMessages:!conversation.isChannelGroup && (sourceMember.isCreator || sourceMember.adminRights.canManageDirectMessages)];
     if (current.adminRights != nil) {
         adminRights = current.adminRights;
     }
@@ -125,6 +126,9 @@
     _canPinMessages = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.EditAdmin.PermissionPinMessages") isOn:_member.adminRights.canPinMessages];
     _canPinMessages.isPermission = true;
     
+    _canManageDirectMessages = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.EditAdmin.PermissionManageDirectMessages") isOn:_member.adminRights.canManageDirectMessages];
+    _canManageDirectMessages.isPermission = true;
+    
     _canAddAdmins = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.EditAdmin.PermissionAddAdmins") isOn:_member.adminRights.canAddAdmins];
     _canAddAdmins.toggled = ^(__unused bool value, __unused TGSwitchCollectionItem *item) {
         __strong TGChannelModeratorController *strongSelf = weakSelf;
@@ -170,6 +174,10 @@
     
     if (conversation.isChannelGroup && (isPreview || sourceMember.isCreator || sourceMember.adminRights.canPinMessages)) {
         [rightsItems addObject:_canPinMessages];
+    }
+    
+    if (!conversation.isChannelGroup && conversation.directMessagesEnabled && (isPreview || sourceMember.isCreator || sourceMember.adminRights.canManageDirectMessages)) {
+        [rightsItems addObject:_canManageDirectMessages];
     }
     
     if (isPreview || sourceMember.isCreator || sourceMember.adminRights.canAddAdmins) {
@@ -244,7 +252,7 @@
 
 - (void)donePressed {
     if (_done) {
-        TGChannelAdminRights *rights = [[TGChannelAdminRights alloc] initWithCanChangeInfo:_canChangeInfo.isOn canPostMessages:_canPostMessages.isOn canEditMessages:_canEditMessages.isOn canDeleteMessages:_canDeleteMessages.isOn canBanUsers:_canBanUsers.isOn canInviteUsers:_canInviteUsers.isOn canChangeInviteLink:_canInviteUsers.isOn canPinMessages:_canPinMessages.isOn canAddAdmins:_canAddAdmins.isOn];
+        TGChannelAdminRights *rights = [[TGChannelAdminRights alloc] initWithCanChangeInfo:_canChangeInfo.isOn canPostMessages:_canPostMessages.isOn canEditMessages:_canEditMessages.isOn canDeleteMessages:_canDeleteMessages.isOn canBanUsers:_canBanUsers.isOn canInviteUsers:_canInviteUsers.isOn canChangeInviteLink:_canInviteUsers.isOn canPinMessages:_canPinMessages.isOn canAddAdmins:_canAddAdmins.isOn canManageDirectMessages:_canManageDirectMessages.isOn];
         if (_originalMember != nil) {
             if ([[_originalMember adminRights] isEqual:rights]) {
                 _done(nil);

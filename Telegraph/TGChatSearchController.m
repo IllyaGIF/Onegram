@@ -170,21 +170,21 @@ extern NSString *authorNameYou;
     
     if (!conversation.isChat || conversation.isEncrypted)
     {
-        int32_t userId = 0;
+        int64_t userId = 0;
         if (conversation.isEncrypted)
         {
             if (conversation.chatParticipants.chatParticipantUids.count != 0)
-                userId = [conversation.chatParticipants.chatParticipantUids[0] intValue];
+                userId = [conversation.chatParticipants.chatParticipantUids[0] longLongValue];
         }
         else
-            userId = (int)conversation.conversationId;
+            userId = conversation.conversationId;
         mutePeerId = userId;
         
         TGUser *user = nil;
         if (customUser != nil && customUser.uid == userId)
             user = customUser;
         else
-            user = [[TGDatabase instance] loadUser:(int)userId];
+            user = [[TGDatabase instance] loadUser:(int64_t)userId];
         
         NSString *title = [user displayName];
         NSArray *titleLetters = nil;
@@ -215,7 +215,7 @@ extern NSString *authorNameYou;
             if (user.lastName != nil)
                 dict[@"lastName"] = user.lastName;
         }
-        dict[@"encryptedUserId"] = [[NSNumber alloc] initWithInt:userId];
+        dict[@"encryptedUserId"] = [[NSNumber alloc] initWithLongLong:userId];
         
         if (user.photoUrlSmall != nil)
             [dict setObject:user.photoUrlSmall forKey:@"avatarUrl"];
@@ -224,6 +224,7 @@ extern NSString *authorNameYou;
         [dict setObject:[NSNumber numberWithBool:false] forKey:@"isChat"];
         dict[@"isVerified"] = @(user.isVerified);
         dict[@"isPremium"] = @(user.isPremium);
+        dict[@"emojiStatusDocumentId"] = @(user.emojiStatusDocumentId);
         
         NSString *authorAvatarUrl = nil;
         if (selfUser != nil)
@@ -314,7 +315,7 @@ extern NSString *authorNameYou;
                 NSArray *uids = actionAttachment.actionData[@"uids"];
                 if (uids != nil) {
                     for (NSNumber *nUid in uids) {
-                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
                         if (user != nil)
                             [messageUsers setObject:user forKey:nUid];
                     }
@@ -322,17 +323,17 @@ extern NSString *authorNameYou;
                     NSNumber *nUid = [actionAttachment.actionData objectForKey:@"uid"];
                     if (nUid != nil)
                     {
-                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                        TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
                         if (user != nil)
                             [messageUsers setObject:user forKey:nUid];
                     }
                 }
             }
             
-            TGUser *user = conversation.fromUid == selfUser.uid ? selfUser : [TGDatabaseInstance() loadUser:(int)conversation.fromUid];
+            TGUser *user = conversation.fromUid == selfUser.uid ? selfUser : [TGDatabaseInstance() loadUser:conversation.fromUid];
             if (user != nil)
             {
-                [messageUsers setObject:user forKey:[[NSNumber alloc] initWithInt:user.uid]];
+                [messageUsers setObject:user forKey:[[NSNumber alloc] initWithLongLong:user.uid]];
                 [messageUsers setObject:user forKey:@"author"];
             }
         }
@@ -400,10 +401,11 @@ extern NSString *authorNameYou;
         cell.isBroadcast = [dialogListData[@"isBroadcast"] boolValue];
         cell.isVerified = [dialogListData[@"isVerified"] boolValue];
         cell.isPremium = [dialogListData[@"isPremium"] boolValue] && !cell.isSavedMessages;
+        cell.emojiStatusDocumentId = cell.isSavedMessages ? 0 : [dialogListData[@"emojiStatusDocumentId"] longLongValue];
         
         cell.isEncrypted = [dialogListData[@"isEncrypted"] boolValue];
         cell.encryptionStatus = [dialogListData[@"encryptionStatus"] intValue];
-        cell.encryptedUserId = [dialogListData[@"encryptedUserId"] intValue];
+        cell.encryptedUserId = [dialogListData[@"encryptedUserId"] longLongValue];
         cell.encryptionOutgoing = [dialogListData[@"encryptionOutgoing"] boolValue];
         cell.encryptionFirstName = dialogListData[@"encryptionFirstName"];
         

@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGMessageViewsView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -128,6 +129,8 @@ static void TGMessageViewsViewDrawOperation(CGContextRef context, TGModernDrawin
 
 + (NSString *)stringForCount:(int32_t)count {
     int64_t value = MAX(0, (int64_t)count);
+    if (value >= 1000 && TGOnegramUsesExactNumbers())
+        return TGOnegramExactCountString(value);
     int64_t divider = 0;
     NSString *suffix = nil;
     if (value >= 1000000) {

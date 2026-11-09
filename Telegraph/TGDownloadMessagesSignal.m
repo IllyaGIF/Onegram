@@ -28,36 +28,6 @@
 
 extern NSArray *TGIOS6ModernInputMessageIdsFromMessageIds(NSArray *messageIds);
 
-static inline bool TGIOS6DownloadPeerIdIsModernRawChannel(int64_t peerId, int64_t accessHash)
-{
-    int64_t channelId = -peerId - 4294967296LL;
-    return accessHash != 0 && channelId > 0 && channelId <= UINT32_MAX;
-}
-
-static inline bool TGIOS6DownloadPeerIdIsChannel(int64_t peerId, int64_t accessHash)
-{
-    return TGIOS6DownloadPeerIdIsModernRawChannel(peerId, accessHash) || TGPeerIdIsChannel(peerId);
-}
-
-static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t accessHash)
-{
-    NSData *apiIdData = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6ApiChannelId")];
-    int64_t apiChannelId = 0;
-    if (apiIdData.length == sizeof(int64_t))
-        [apiIdData getBytes:&apiChannelId length:sizeof(apiChannelId)];
-    if (apiChannelId > 0)
-        return apiChannelId;
-
-    if (TGIOS6DownloadPeerIdIsModernRawChannel(peerId, accessHash))
-        return -peerId - 4294967296LL;
-
-    int32_t channelId = TGChannelIdFromPeerId(peerId);
-    if (channelId != 0)
-        return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
-
-    return 0;
-}
-
 @implementation TGDownloadMessage
 
 - (instancetype)initWithPeerId:(int64_t)peerId accessHash:(int64_t)accessHash messageId:(int32_t)messageId {
@@ -80,13 +50,18 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
         return [SSignal single:messages];
     }
     
+    TGTelegramNetworking *networking = [TGTelegramNetworking instance];
+    if (networking == nil) {
+        return [SSignal single:@[]];
+    }
+    
     SSignal *channelSignal = [SSignal single:@[]];
     SSignal *genericSignal = [SSignal single:@[]];
     
     NSMutableDictionary *channelMessageIdsByPeerId = [[NSMutableDictionary alloc] init];
     NSMutableArray *genericMessageIds = [[NSMutableArray alloc] init];
     for (TGDownloadMessage *message in messages) {
-        if (TGIOS6DownloadPeerIdIsChannel(message.peerId, message.accessHash)) {
+        if (TGPeerIdIsChannel(message.peerId)) {
             NSMutableArray *channelMessageIds = channelMessageIdsByPeerId[@(message.peerId)];
             if (channelMessageIds == nil) {
                 channelMessageIds = [[NSMutableArray alloc] init];
@@ -106,7 +81,7 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
                 TGDownloadMessage *firstMessage = (TGDownloadMessage *)messages[0];
                 TLRPCchannels_getMessages$channels_getMessages *getChannelMessages = [[TLRPCchannels_getMessages$channels_getMessages alloc] init];
                 TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-                inputChannel.channel_id = TGIOS6DownloadChannelIdFromPeerId(firstMessage.peerId, firstMessage.accessHash);
+                inputChannel.channel_id = TGChannelIdFromPeerId(firstMessage.peerId);
                 inputChannel.access_hash = firstMessage.accessHash;
                 getChannelMessages.channel = inputChannel;
                 
@@ -117,16 +92,18 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
                 
                 getChannelMessages.n_id = TGIOS6ModernInputMessageIdsFromMessageIds(messageIds);
                 
-                SSignal *signal = [[[TGTelegramNetworking instance] requestSignal:getChannelMessages] map:^id(TLmessages_Messages *result) {
+                SSignal *signal = [[networking requestSignal:getChannelMessages] map:^id(TLmessages_Messages *result) {
                     [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
                     
                     NSMutableArray *messages = [[NSMutableArray alloc] init];
+                    id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:result.messages];
                     for (TLMessage *desc in result.messages)
                     {
                         TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:desc];
                         if (message.mid != 0)
                             [messages addObject:message];
                     }
+                    [TGMessage endReplyPreload:replyPreload];
                     
                     return messages;
                 }];
@@ -148,16 +125,18 @@ static inline int64_t TGIOS6DownloadChannelIdFromPeerId(int64_t peerId, int64_t 
     if (genericMessageIds.count != 0) {
         TLRPCmessages_getMessages$messages_getMessages *getMessages = [[TLRPCmessages_getMessages$messages_getMessages alloc] init];
         getMessages.n_id = TGIOS6ModernInputMessageIdsFromMessageIds(genericMessageIds);
-        genericSignal = [[[TGTelegramNetworking instance] requestSignal:getMessages] map:^id(TLmessages_Messages *result) {
+        genericSignal = [[networking requestSignal:getMessages] map:^id(TLmessages_Messages *result) {
             [TGUserDataRequestBuilder executeUserDataUpdate:result.users];
             
             NSMutableArray *messages = [[NSMutableArray alloc] init];
+            id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:result.messages];
             for (TLMessage *desc in result.messages)
             {
                 TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:desc];
                 if (message.mid != 0)
                     [messages addObject:message];
             }
+            [TGMessage endReplyPreload:replyPreload];
             
             return messages;
         }];
@@ -521,7 +500,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
         case TGMediaOriginTypeProfilePhoto:
         {
             TLRPCphotos_getUserPhotos$photos_getUserPhotos *getPhotos = [[TLRPCphotos_getUserPhotos$photos_getUserPhotos alloc] init];
-            getPhotos.user_id = [TGTelegraphInstance createInputUserForUid:origin.profilePhotoUserId.intValue];
+            getPhotos.user_id = [TGTelegraphInstance createInputUserForUid:origin.profilePhotoUserId.longLongValue];
             getPhotos.offset = origin.profilePhotoOffset.intValue;
             getPhotos.limit = 1;
             getPhotos.max_id = 0;
@@ -545,7 +524,7 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse))
                             fileReferences[[NSString stringWithFormat:@"%lld_%d", fileLocation.volume_id, fileLocation.local_id]] = fileLocation.file_reference;
                         }
                     }
-                    TGMediaOriginInfo *originInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:fileReferences userId:origin.profilePhotoUserId.intValue offset:origin.profilePhotoOffset.intValue];
+                    TGMediaOriginInfo *originInfo = [TGMediaOriginInfo mediaOriginInfoWithFileReference:nil fileReferences:fileReferences userId:origin.profilePhotoUserId.longLongValue offset:origin.profilePhotoOffset.intValue];
                     return @{ @0: originInfo};
                 }
                 return nil;

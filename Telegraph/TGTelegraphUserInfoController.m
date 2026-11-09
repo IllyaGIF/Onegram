@@ -1,4 +1,12 @@
+#import "TGMusicPlayerController.h"
+#import "TGOnegramSettings.h"
+#import "TGOnegramPeerIdentity.h"
 #import "TGTelegraphUserInfoController.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#import "../OnegramPlugins/OGPluginProfile.h"
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -22,6 +30,17 @@
 #import "TGSwitchCollectionItem.h"
 #import "TGUserInfoUsernameCollectionItem.h"
 #import "TGUserInfoCallsCollectionItem.h"
+#import "TGProfileActionsCollectionItem.h"
+#import "TGProfileActionsCollectionItemView.h"
+#import "TGEditProfileController.h"
+#import "TGProfileMediaSections.h"
+#import "TGProfileChannelCollectionItem.h"
+#import "TGProfileColorController.h"
+#import "TGUserExtendedInfo.h"
+#import "TGHeaderCollectionItem.h"
+#import "TGMainTabsController.h"
+#import "TGRootController.h"
+#import "TGSharedMediaController.h"
 
 #import "TGAppDelegate.h"
 #import "TGTelegraph.h"
@@ -82,13 +101,27 @@
 #import "TGMusicPlayerItem.h"
 #import "TGMusicPlayerPlaylist.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGDocumentMediaAttachment.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+#import "TGPluginHost.h"
+#import "TGPluginMenuSection.h"
 
-@interface TGTelegraphUserInfoController () <TGAlertSoundControllerDelegate, TGUserInfoEditingPhoneCollectionItemDelegate, TGPhoneLabelPickerControllerDelegate, TGCreateContactControllerDelegate, TGAddToExistingContactControllerDelegate>
+static const CGFloat TGTelegraphUserInfoActionsTopSpacing = 12.0f;
+
+@interface TGTelegraphUserInfoController () <TGAlertSoundControllerDelegate, TGUserInfoEditingPhoneCollectionItemDelegate, TGPhoneLabelPickerControllerDelegate, TGCreateContactControllerDelegate, TGAddToExistingContactControllerDelegate
+#if OG_PLUGINS_AVAILABLE
+, OGPluginUIProfileHost
+#endif
+>
 {
     bool _editing;
     UIEdgeInsets _defaultPhonesSectionInsets;
+    UIEdgeInsets _defaultActionsSectionInsets;
+    UIEdgeInsets _defaultSharedMediaSectionInsets;
     
     int64_t _sharedMediaPeerId;
+#if OG_PLUGINS_AVAILABLE
+    TGPluginMenuSection *_pluginMenuSection;
+#endif
     NSDictionary *_sharedMediaOptions;
     bool _withoutActions;
     bool _withoutCompose;
@@ -121,6 +154,16 @@
     
     TGCollectionMenuSection *_blockUserSection;
     TGUserInfoButtonCollectionItem *_blockUserItem;
+
+    TGCollectionMenuSection *_modernActionsSection;
+    TGProfileActionsCollectionItem *_modernActionsItem;
+
+    TGProfileMediaSections *_profileMedia;
+    TGUserExtendedInfo *_extendedInfo;
+    SMetaDisposable *_extendedInfoDisposable;
+    TGCollectionMenuSection *_personalChannelSection;
+    TGProfileChannelCollectionItem *_personalChannelItem;
+    TGHeaderCollectionItem *_personalChannelHeaderItem;
     
     NSIndexPath *_currentLabelPickerIndexPath;
     id<SDisposable> _profileMusicDisposable;
@@ -178,24 +221,24 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
 
 @implementation TGTelegraphUserInfoController
 
-- (instancetype)initWithUid:(int32_t)uid
+- (instancetype)initWithUid:(int64_t)uid
 {
     return [self initWithUid:uid withoutCompose:false];
 }
 
-- (instancetype)initWithUid:(int32_t)uid callMessages:(NSArray *)callMessages
+- (instancetype)initWithUid:(int64_t)uid callMessages:(NSArray *)callMessages
 {
     _callMessages = callMessages;
     return [self initWithUid:uid withoutCompose:false];
 }
 
-- (instancetype)initWithUid:(int32_t)uid withoutCompose:(bool)withoutCompose
+- (instancetype)initWithUid:(int64_t)uid withoutCompose:(bool)withoutCompose
 {
     _withoutCompose = withoutCompose;
     return [self initWithUid:uid withoutActions:false sharedMediaPeerId:uid sharedMediaOptions:nil];
 }
 
-- (instancetype)initWithUid:(int32_t)uid withoutActions:(bool)withoutActions sharedMediaPeerId:(int64_t)sharedMediaPeerId sharedMediaOptions:(NSDictionary *)sharedMediaOptions
+- (instancetype)initWithUid:(int64_t)uid withoutActions:(bool)withoutActions sharedMediaPeerId:(int64_t)sharedMediaPeerId sharedMediaOptions:(NSDictionary *)sharedMediaOptions
 {
     self = [super init];
     if (self != nil)
@@ -206,6 +249,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _withoutActions = withoutActions;
         _sharedMediaPeerId = sharedMediaPeerId;
         _sharedMediaOptions = sharedMediaOptions;
+#if OG_PLUGINS_AVAILABLE
+        _pluginMenuSection = [[TGPluginMenuSection alloc] initWithMenuType:OGPluginMenuTypeProfileAction controller:self peerId:sharedMediaPeerId];
+#endif
         
         _user = [TGDatabaseInstance() loadUser:_uid];
         _phonebookInfo = _user.phoneNumber.length != 0 ? [TGDatabaseInstance() phonebookContactByPhoneId:phoneMatchHash(_user.phoneNumber)] : nil;
@@ -216,7 +262,8 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         _defaultPhonesSectionInsets = self.phonesSection.insets;
         
         [self.userInfoItem setUser:_user animated:false];
-        self.userInfoItem.phoneNumber = _user.phoneNumber.length == 0 ? nil : [TGPhoneUtils formatPhone:_user.phoneNumber forceInternational:true];
+        NSString *formattedPhone = _user.phoneNumber.length == 0 ? nil : [TGPhoneUtils formatPhone:_user.phoneNumber forceInternational:true];
+        self.userInfoItem.phoneNumber = _uid == TGTelegraphInstance.clientUserId ? TGOnegramOwnPhoneDisplay(formattedPhone) : formattedPhone;
         self.userInfoItem.username = _user.userName.length == 0 ? nil : [NSString stringWithFormat:@"@%@", _user.userName];
         self.userInfoItem.brandedDetailsTextScale = [OGTheme brandedTheme].profileAppearance.detailsTextScale;
 
@@ -320,6 +367,14 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         }
         _blockUserSection = [[TGCollectionMenuSection alloc] initWithItems:@[_blockUserItem]];
         _blockUserSection.insets = [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.blockSectionInsets : UIEdgeInsetsMake(22.0f, 0.0f, 44.0f, 0.0f);
+
+        _defaultActionsSectionInsets = self.actionsSection.insets;
+        _defaultSharedMediaSectionInsets = _sharedMediaSection.insets;
+
+        _modernActionsItem = [[TGProfileActionsCollectionItem alloc] initWithTarget:self];
+        _modernActionsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_modernActionsItem]];
+        _modernActionsSection.insets = UIEdgeInsetsZero;
+        [self setupProfileMediaItems];
         
         bool outdated = false;
         _userLink = [TGDatabaseInstance() loadUserLink:_uid outdated:&outdated];
@@ -329,6 +384,11 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         
         if (_uid == 777000 || _uid == 333000) {
             self.userInfoItem.automaticallyManageUserPresence = false;
+        }
+        else if (_uid == TGTelegraphInstance.clientUserId)
+        {
+            self.userInfoItem.automaticallyManageUserPresence = false;
+            self.userInfoItem.customStatus = TGLocalized(@"Presence.online");
         }
         
         [self _updatePhonesAndActions];
@@ -349,10 +409,10 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 [[NSString alloc] initWithFormat:@"/tg/sharedMediaCount/(%" PRIx64 ")", (int64_t)_uid]
             ] watcher:self];
             
-            [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", _uid] watcher:self];
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ",cachedOnly)", _uid] options:@{@"peerId": @(_uid)} watcher:self];
-            [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 1] watcher:self];
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 1] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 1] forKey:@"peerId"] watcher:self];
+            [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _uid] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _uid] options:@{@"peerId": @(_uid)} watcher:self];
+            [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsPrivate] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsPrivate] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsPrivate] forKey:@"peerId"] watcher:self];
             
             [ActionStageInstance() requestActor:@"/tg/blockedUsers/(cached)" options:nil watcher:self];
         }];
@@ -460,12 +520,14 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 [strongSelf.menuSections beginRecordingChanges];
                 [strongSelf.menuSections insertItem:strongSelf->_profileMusicItem toSection:profileSectionIndex atIndex:MIN(profileItemIndex + 1, profileSection.items.count)];
                 [strongSelf.menuSections commitRecordedChanges:strongSelf.collectionView];
+                [strongSelf updateModernActionsSectionInsets];
             }
             else if (hadMusic && !hasMusic)
             {
                 [strongSelf.menuSections beginRecordingChanges];
                 [strongSelf.menuSections deleteItemFromSection:profileSectionIndex atIndex:currentMusicIndex];
                 [strongSelf.menuSections commitRecordedChanges:strongSelf.collectionView];
+                [strongSelf updateModernActionsSectionInsets];
             }
             else if (hasMusic && oldDocument.documentId != document.documentId)
             {
@@ -473,6 +535,26 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             }
         }
     }];
+}
+
+- (void)updateModernActionsSectionInsets
+{
+    if (_modernActionsSection == nil)
+        return;
+    bool hasMusic = false;
+    for (TGCollectionMenuSection *section in self.menuSections.sections)
+    {
+        if ([section.items containsObject:self.userInfoItem])
+        {
+            hasMusic = [section.items containsObject:_profileMusicItem];
+            break;
+        }
+    }
+    UIEdgeInsets insets = UIEdgeInsetsMake(hasMusic ? TGTelegraphUserInfoActionsTopSpacing : 0.0f, 0.0f, 0.0f, 0.0f);
+    if (UIEdgeInsetsEqualToEdgeInsets(_modernActionsSection.insets, insets))
+        return;
+    _modernActionsSection.insets = insets;
+    [self.collectionLayout invalidateLayout];
 }
 
 - (void)profileMusicPressed
@@ -499,7 +581,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
 
         if (status.item != nil && [status.item.key isEqual:item.key])
         {
-            [TGTelegraphInstance.musicPlayer controlPlayPause];
+            if (status.paused)
+                [TGTelegraphInstance.musicPlayer controlPlay];
+            [TGMusicPlayerController presentFromNavigationController:strongSelf.navigationController presentation:strongSelf.presentation];
             return;
         }
 
@@ -515,10 +599,13 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             [items addObject:item];
         TGMusicPlayerPlaylist *playlist = [[TGMusicPlayerPlaylist alloc] initWithVoice:false items:items itemKeyAliases:@{} markItemAsViewed:nil];
         [TGTelegraphInstance.musicPlayer setPlaylist:[SSignal single:playlist] initialItemKey:item.key metadata:@{ @"profileMusicPeerId": @(strongSelf->_uid), @"profileSavedMusic": @true }];
+        [TGMusicPlayerController presentFromNavigationController:strongSelf.navigationController presentation:strongSelf.presentation];
     }];
 }
 
 - (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGOnegramSettingsDidChangeNotification object:nil];
+    [_extendedInfoDisposable dispose];
     [_updatedCachedDataDisposable dispose];
     [_cachedDataDisposable dispose];
     [_updateAboutDisposable dispose];
@@ -550,6 +637,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     [super viewWillAppear:animated];
     
     [self check3DTouch];
+    [self requestExtendedInfoIfNeeded];
 }
 
 - (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
@@ -557,6 +645,15 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     [super willRotateToInterfaceOrientation:toInterfaceOrientation duration:duration];
     
     [self tooltipTimerTick];
+}
+
+- (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)fromInterfaceOrientation
+{
+    [super didRotateFromInterfaceOrientation:fromInterfaceOrientation];
+#if OG_PLUGINS_AVAILABLE
+    [OGPluginProfile refreshRowsForController:self];
+    [self.collectionView reloadData];
+#endif
 }
 
 #pragma mark -
@@ -585,6 +682,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
 
 - (void)_updatePhonesAndActions
 {
+#if OG_PLUGINS_AVAILABLE
+    [OGPluginProfile prepareRowsForController:self];
+#endif
     bool isContact = _phonebookInfo != nil;
     if (self.navigationItem.rightBarButtonItem == nil)
     {
@@ -610,7 +710,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             {
                 TGUserInfoTextCollectionItem *infoItem = [[TGUserInfoTextCollectionItem alloc] init];
                 infoItem.highlightLinks = _user.kind == TGUserKindBot || _user.kind == TGUserKindSmartBot;
-                infoItem.title = TGLocalized(@"Profile.About");
+                infoItem.title = [self usesModernProfileLayout] ? TGLocalized(@"OnegramProfile.LabelAbout") : TGLocalized(@"Profile.About");
                 infoItem.text = _about;
                 __weak TGTelegraphUserInfoController *weakSelf = self;
                 infoItem.followLink = ^(NSString *link) {
@@ -624,11 +724,25 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             
             if (processUsername && !_editing && _user.userName.length != 0 && ![TGPresentation brandedIOS6Style])
             {
-                TGUserInfoUsernameCollectionItem *usernameItem = [[TGUserInfoUsernameCollectionItem alloc] initWithLabel:TGLocalized(@"Profile.Username") username:[[NSString alloc] initWithFormat:@"@%@", _user.userName]];
-                usernameItem.lastInList = true;
+                TGUserInfoUsernameCollectionItem *usernameItem = [[TGUserInfoUsernameCollectionItem alloc] initWithLabel:[self usesModernProfileLayout] ? TGLocalized(@"OnegramProfile.LabelUsername") : TGLocalized(@"Profile.Username") username:[[NSString alloc] initWithFormat:@"@%@", _user.userName]];
+                usernameItem.lastInList = ![TGOnegramSettings boolForKey:TGOnegramSettingGeneralShowPeerIds];
                 usernameItem.action = @selector(shareUserInfoPressed);
                 [self.menuSections addItemToSection:usernameSectionIndex item:usernameItem];
             }
+        }
+
+        if (!_editing && [self usesModernProfileLayout] && [_extendedInfo birthdayString].length != 0)
+        {
+            TGUserInfoTextCollectionItem *birthdayItem = [[TGUserInfoTextCollectionItem alloc] init];
+            birthdayItem.title = TGLocalized(@"OnegramProfile.Birthday");
+            birthdayItem.text = [_extendedInfo birthdayString];
+            [self.menuSections addItemToSection:usernameSectionIndex item:birthdayItem];
+        }
+
+        if (!_editing && [TGOnegramSettings boolForKey:TGOnegramSettingGeneralShowPeerIds] && ![TGPresentation brandedIOS6Style])
+        {
+            for (TGCollectionItem *item in TGOnegramPeerIdentityItems(_user.uid, _user.photoUrlSmall))
+                [self.menuSections addItemToSection:usernameSectionIndex item:item];
         }
     }
     
@@ -666,7 +780,11 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         }
         else if (![TGPresentation brandedIOS6Style])
         {
-            TGUserInfoPhoneCollectionItem *phoneItem = [[TGUserInfoPhoneCollectionItem alloc] initWithLabel:phoneNumber.label phone:phoneNumber.number phoneColor:_phonebookInfo.phoneNumbers.count > 1 && [[TGPhoneUtils cleanPhone:phoneNumber.number] isEqualToString:[TGPhoneUtils cleanPhone:_user.phoneNumber]] ? self.presentation.pallete.dialogEncryptedColor : self.presentation.pallete.collectionMenuAccentColor action:@selector(phonePressed:)];
+            bool hidesOwnPhone = _user.uid == TGTelegraphInstance.clientUserId && [TGOnegramSettings boolForKey:TGOnegramSettingGeneralHidePhone];
+            NSString *formattedPhone = hidesOwnPhone ? TGOnegramOwnPhoneDisplay([TGPhoneUtils formatPhone:phoneNumber.number forceInternational:true]) : [TGPhoneUtils formatPhone:phoneNumber.number forceInternational:false];
+            if (formattedPhone.length == 0)
+                continue;
+            TGUserInfoPhoneCollectionItem *phoneItem = [[TGUserInfoPhoneCollectionItem alloc] initWithLabel:[self profilePhoneLabel:phoneNumber.label singleNumber:phoneNumbers.count == 1] phone:hidesOwnPhone ? nil : phoneNumber.number formattedPhone:formattedPhone phoneColor:_phonebookInfo.phoneNumbers.count > 1 && [[TGPhoneUtils cleanPhone:phoneNumber.number] isEqualToString:[TGPhoneUtils cleanPhone:_user.phoneNumber]] ? self.presentation.pallete.dialogEncryptedColor : self.presentation.pallete.collectionMenuAccentColor action:hidesOwnPhone ? NULL : @selector(phonePressed:)];
             phoneItem.lastInList = index == (int)_phonebookInfo.phoneNumbers.count - 1;
             [self.menuSections addItemToSection:phonesSectionIndex item:phoneItem];
         }
@@ -682,6 +800,7 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     }
     
     bool isCurrentUser = (_user.uid == TGTelegraphInstance.clientUserId);
+    bool modernLayout = [self usesModernProfileLayout];
     
     if (_editing)
     {
@@ -808,6 +927,15 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
             if (normalNotificationIndex != NSNotFound)
                 [_sharedMediaSection deleteItemAtIndex:normalNotificationIndex];
         }
+
+        if (!isCurrentUser && ![TGPresentation brandedIOS6Style])
+        {
+            NSUInteger normalNotificationIndex = [_sharedMediaSection indexOfItem:_normalNotificationsItem];
+            if (modernLayout && normalNotificationIndex != NSNotFound)
+                [_sharedMediaSection deleteItemAtIndex:normalNotificationIndex];
+            else if (!modernLayout && normalNotificationIndex == NSNotFound)
+                [_sharedMediaSection insertItem:_normalNotificationsItem atIndex:MIN((NSUInteger)1, _sharedMediaSection.items.count)];
+        }
         
         NSUInteger aboutSectionIndex = [self indexForSection:_aboutSection];
         if (aboutSectionIndex != NSNotFound)
@@ -844,6 +972,10 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                 [_sharedMediaSection deleteItem:_groupsInCommonItem];
             else if ([_sharedMediaSection indexOfItem:_groupsInCommonItem] == NSNotFound)
                 [_sharedMediaSection addItem:_groupsInCommonItem];
+            if (modernLayout)
+                [_sharedMediaSection deleteItem:_sharedMediaItem];
+            else if ([_sharedMediaSection indexOfItem:_sharedMediaItem] == NSNotFound)
+                [_sharedMediaSection insertItem:_sharedMediaItem atIndex:0];
 
             if (sharedMediaSectionIndex == NSNotFound)
             {
@@ -870,21 +1002,21 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
                     [self.menuSections deleteItemFromSection:actionsSectionIndex atIndex:0];
                 }
                 
-                if (!_withoutCompose)
+                if (!_withoutCompose && !modernLayout)
                 {
                     TGUserInfoButtonCollectionItem *sendMessageItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.SendMessage") action:@selector(sendMessagePressed)];
                     sendMessageItem.iconName = @"chat-left-dots-fill";
                     [self.menuSections addItemToSection:actionsSectionIndex item:sendMessageItem];
                 }
                 
-                if (_phonebookInfo != nil)
+                if (_phonebookInfo != nil && !modernLayout)
                 {
                     _shareContactItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.ShareContact") action:@selector(shareContactPressed)];
                     _shareContactItem.deselectAutomatically = true;
                     
                     [self.menuSections addItemToSection:actionsSectionIndex item:_shareContactItem];
                 }
-                else if (_user.phoneNumber.length != 0)
+                else if (_phonebookInfo == nil && _user.phoneNumber.length != 0)
                 {
                     TGUserInfoButtonCollectionItem *addContactItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"UserInfo.AddContact") action:@selector(addContactPressed)];
                     addContactItem.deselectAutomatically = true;
@@ -912,12 +1044,344 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         }
     }
     
+    if (![TGPresentation brandedIOS6Style])
+    {
+        self.actionsSection.insets = modernLayout && self.actionsSection.items.count == 0 ? UIEdgeInsetsZero : _defaultActionsSectionInsets;
+        _sharedMediaSection.insets = modernLayout && _sharedMediaSection.items.count == 0 ? UIEdgeInsetsZero : _defaultSharedMediaSectionInsets;
+    }
+
+    [self _updateModernActionsSection];
+    
     UIEdgeInsets phonesSectionInsets = _defaultPhonesSectionInsets;
     if (_editing)
         phonesSectionInsets.top += [TGPresentation brandedIOS6Style] ? [OGTheme brandedTheme].profileAppearance.editingPhonesTopOffset : 32.0f;
     self.phonesSection.insets = phonesSectionInsets;
     
+#if OG_PLUGINS_AVAILABLE
+    [_pluginMenuSection updateVisible:!_editing beforeSection:nil];
+    [OGPluginProfile refreshRowsForController:self];
+#endif
     [self.collectionView reloadData];
+}
+
+- (NSString *)profilePhoneLabel:(NSString *)label singleNumber:(bool)singleNumber
+{
+    if (![self usesModernProfileLayout])
+        return label;
+    if (singleNumber || label.length == 0)
+        return TGLocalized(@"OnegramProfile.LabelPhone");
+    return [[[label substringToIndex:1] uppercaseString] stringByAppendingString:[label substringFromIndex:1]];
+}
+
+- (bool)usesModernProfileLayout
+{
+    return !_editing && ![TGPresentation brandedIOS6Style] && TGOnegramModernInterfaceEnabled();
+}
+
+- (bool)notificationsMuted
+{
+    NSNumber *muteUntil = _userNotificationSettings[@"muteUntil"];
+    if (muteUntil == nil)
+        muteUntil = _defaultNotificationSettings[@"muteUntil"];
+    return muteUntil.intValue > OGRemoteClockTime();
+}
+
+- (NSArray *)modernProfileActions
+{
+    if (![self usesModernProfileLayout] || _withoutActions)
+        return @[];
+
+    NSMutableArray *actions = [[NSMutableArray alloc] init];
+    if (_user.uid == TGTelegraphInstance.clientUserId)
+    {
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.SetPhoto") icon:TGProfileActionIconCamera action:@selector(setOwnPhotoPressed)]];
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Edit") icon:TGProfileActionIconEdit action:@selector(editOwnProfilePressed)]];
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Settings") icon:TGProfileActionIconSettings action:@selector(openSettingsPressed)]];
+        return actions;
+    }
+    else
+    {
+        if (!_withoutCompose)
+            [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Message") icon:TGProfileActionIconMessage action:@selector(sendMessagePressed)]];
+        if (_supportsCalls)
+            [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Call") icon:TGProfileActionIconCall action:@selector(callPressed)]];
+        if ([self notificationsMuted])
+            [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Unmute") icon:TGProfileActionIconUnmute action:@selector(unmuteNotificationsPressed)]];
+        else
+            [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Mute") icon:TGProfileActionIconMute action:@selector(notificationsPressed)]];
+    }
+    if (_user.userName.length != 0)
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Share") icon:TGProfileActionIconShare action:@selector(shareUserInfoPressed)]];
+    else if (_phonebookInfo != nil)
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Share") icon:TGProfileActionIconShare action:@selector(shareContactPressed)]];
+    return actions;
+}
+
+- (void)_updateModernActionsSection
+{
+    NSArray *actions = [self modernProfileActions];
+    _modernActionsItem.actions = actions;
+
+    NSUInteger sectionIndex = [self indexForSection:_modernActionsSection];
+    if (actions.count != 0 && sectionIndex == NSNotFound)
+        [self.menuSections insertSection:_modernActionsSection atIndex:MIN((NSUInteger)1, self.menuSections.sections.count)];
+    else if (actions.count == 0 && sectionIndex != NSNotFound)
+        [self.menuSections deleteSection:sectionIndex];
+
+    [self updatePersonalChannelSection];
+    [self updateProfileMediaSections];
+}
+
+- (void)updatePersonalChannelSection
+{
+    TGConversation *channel = [self usesModernProfileLayout] ? _extendedInfo.personalChannel : nil;
+    NSUInteger channelSectionIndex = [self indexForSection:_personalChannelSection];
+    if (channel == nil)
+    {
+        if (channelSectionIndex != NSNotFound)
+            [self.menuSections deleteSection:channelSectionIndex];
+        return;
+    }
+    _personalChannelItem.channel = channel;
+    int32_t subscribersCount = _extendedInfo.personalChannelSubscribersCount;
+    [_personalChannelHeaderItem setBadgeText:subscribersCount > 0 ? [effectiveLocalization() getPluralized:@"Conversation.StatusSubscribers" count:subscribersCount] : nil];
+    if (channelSectionIndex == NSNotFound)
+    {
+        NSUInteger anchorIndex = [self indexForSection:_modernActionsSection];
+        if (anchorIndex == NSNotFound)
+            anchorIndex = 0;
+        [self.menuSections insertSection:_personalChannelSection atIndex:MIN(anchorIndex + 1, self.menuSections.sections.count)];
+    }
+}
+
+- (void)requestExtendedInfoIfNeeded
+{
+    if (_extendedInfoDisposable != nil || ![self usesModernProfileLayout] || _uid == 0)
+        return;
+    _extendedInfoDisposable = [[SMetaDisposable alloc] init];
+    __weak TGTelegraphUserInfoController *weakSelf = self;
+    [_extendedInfoDisposable setDisposable:[[[TGUserExtendedInfo extendedInfoForUserId:_uid] deliverOn:[SQueue mainQueue]] startWithNext:^(TGUserExtendedInfo *info)
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf applyExtendedInfo:info];
+    } error:^(__unused id error)
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            strongSelf->_extendedInfoDisposable = nil;
+    } completed:nil]];
+}
+
+- (void)applyExtendedInfo:(TGUserExtendedInfo *)info
+{
+    _extendedInfo = info;
+    self.userInfoItem.modernHeaderColor = [self usesModernProfileLayout] ? TGUserProfileColor(info.profileColor) : nil;
+    self.userInfoItem.starsRatingLevel = info.hasStarsRating ? @(info.starsRatingLevel) : nil;
+    [self _updatePhonesAndActions];
+}
+
+- (void)openPersonalChannel:(TGConversation *)channel
+{
+    if (channel == nil)
+        return;
+    [[TGInterfaceManager instance] navigateToConversationWithId:channel.conversationId conversation:channel performActions:nil atMessage:nil clearStack:false openKeyboard:false canOpenKeyboardWhileInTransition:false navigationController:(TGNavigationController *)self.navigationController selectChat:false animated:true];
+}
+
+- (void)setOwnPhotoPressed
+{
+    TGEditProfileController *controller = [[TGEditProfileController alloc] init];
+    controller.presentsPhotoPickerOnAppear = true;
+    [self.navigationController pushViewController:controller animated:true];
+}
+
+- (void)openSettingsPressed
+{
+    TGMainTabsController *mainTabsController = TGAppDelegateInstance.rootController.mainTabsController;
+    if (self.navigationController.topViewController != mainTabsController)
+        [self.navigationController popToViewController:mainTabsController animated:false];
+    [mainTabsController setSelectedIndex:TGMainTabsSettingsLogicalIndex];
+}
+
+- (void)ownProfileMorePressed
+{
+    NSMutableArray *actions = [[NSMutableArray alloc] init];
+    [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.ChangeColor") action:@"color"]];
+    [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.ChangeName") action:@"name"]];
+    if (_user.userName.length != 0)
+        [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.CopyLink") action:@"link"]];
+    [actions addObject:[[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]];
+    [[[TGCustomActionSheet alloc] initWithTitle:nil actions:actions actionBlock:^(TGTelegraphUserInfoController *controller, NSString *action)
+    {
+        if ([action isEqualToString:@"color"])
+            [controller changeProfileColorPressed];
+        else if ([action isEqualToString:@"name"])
+            [controller editOwnProfilePressed];
+        else if ([action isEqualToString:@"link"])
+            [controller copyOwnLinkPressed];
+    } target:self] showInView:self.view];
+}
+
+- (void)changeProfileColorPressed
+{
+    TGProfileColorController *controller = [[TGProfileColorController alloc] initWithProfileColor:_extendedInfo == nil ? -1 : _extendedInfo.profileColor nameColor:_extendedInfo == nil ? -1 : _extendedInfo.nameColor];
+    __weak TGTelegraphUserInfoController *weakSelf = self;
+    controller.colorsChanged = ^(int32_t profileColor, __unused int32_t nameColor)
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf.userInfoItem.modernHeaderColor = TGUserProfileColor(profileColor);
+        [strongSelf->_extendedInfoDisposable dispose];
+        strongSelf->_extendedInfoDisposable = nil;
+        [strongSelf requestExtendedInfoIfNeeded];
+    };
+    [self.navigationController pushViewController:controller animated:true];
+}
+
+- (void)copyOwnLinkPressed
+{
+    if (_user.userName.length == 0)
+        return;
+    [[UIPasteboard generalPasteboard] setString:[[NSString alloc] initWithFormat:@"https://t.me/%@", _user.userName]];
+    [[[TGProgressWindow alloc] init] dismissWithSuccess];
+}
+
+- (void)onegramSettingsChanged:(NSNotification *)notification
+{
+    if (![notification.userInfo[TGOnegramSettingsChangedKey] isEqual:TGOnegramSettingGeneralHidePhone] || _uid != TGTelegraphInstance.clientUserId)
+        return;
+    NSString *formattedPhone = _user.phoneNumber.length == 0 ? nil : [TGPhoneUtils formatPhone:_user.phoneNumber forceInternational:true];
+    self.userInfoItem.phoneNumber = TGOnegramOwnPhoneDisplay(formattedPhone);
+    [self _updatePhonesAndActions];
+}
+
+- (bool)isOwnProfile
+{
+    return _uid == TGTelegraphInstance.clientUserId;
+}
+
+- (bool)canReceiveGifts
+{
+    return ![self isOwnProfile] && _user.kind != TGUserKindBot && _user.kind != TGUserKindSmartBot && _uid != 777000;
+}
+
+- (void)setupProfileMediaItems
+{
+    _profileMedia = [[TGProfileMediaSections alloc] initWithPeerId:_uid parentController:self];
+    __weak TGTelegraphUserInfoController *weakSelf = self;
+    _profileMedia.heightChanged = ^
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        [strongSelf.collectionLayout invalidateLayout];
+        [strongSelf.collectionView layoutSubviews];
+    };
+    _profileMedia.mediaPressed = ^
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        [strongSelf sharedMediaPressed];
+    };
+
+    _personalChannelItem = [[TGProfileChannelCollectionItem alloc] init];
+    _personalChannelItem.pressed = ^(TGConversation *channel)
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        [strongSelf openPersonalChannel:channel];
+    };
+    _personalChannelHeaderItem = [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramProfile.Channel")];
+    _personalChannelSection = [[TGCollectionMenuSection alloc] initWithItems:@[
+        _personalChannelHeaderItem,
+        _personalChannelItem
+    ]];
+    _personalChannelSection.insets = UIEdgeInsetsMake(22.0f, 0.0f, 0.0f, 0.0f);
+
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramSettingsChanged:) name:TGOnegramSettingsDidChangeNotification object:nil];
+    _profileMedia.contentChanged = ^
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        if (strongSelf != nil && [strongSelf updateProfileMediaSections])
+            [strongSelf.collectionView reloadData];
+    };
+    _profileMedia.storyRingChanged = ^(TGStoryRingState state)
+    {
+        __strong TGTelegraphUserInfoController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            strongSelf.userInfoItem.storyRingState = [strongSelf usesModernProfileLayout] ? state : TGStoryRingStateNone;
+    };
+}
+
+- (bool)updateProfileMediaSections
+{
+    if ([self usesModernProfileLayout])
+        [self requestExtendedInfoIfNeeded];
+    _profileMedia.canPostStories = [self isOwnProfile];
+    _profileMedia.canReceiveGifts = [self canReceiveGifts];
+    _profileMedia.showsMediaTab = ![self isOwnProfile];
+    _profileMedia.canManageGifts = [self isOwnProfile];
+    _profileMedia.loadsActiveStories = _user.kind != TGUserKindBot && _user.kind != TGUserKindSmartBot;
+
+    NSUInteger anchorIndex = NSNotFound;
+    TGCollectionMenuSection *anchorCandidates[] = {_sharedMediaSection, self.actionsSection, self.usernameSection, self.phonesSection, _modernActionsSection};
+    for (size_t i = 0; i < sizeof(anchorCandidates) / sizeof(anchorCandidates[0]); i++)
+    {
+        if (anchorCandidates[i] == nil)
+            continue;
+        anchorIndex = [self indexForSection:anchorCandidates[i]];
+        if (anchorIndex != NSNotFound)
+            break;
+    }
+    if (anchorIndex == NSNotFound)
+        anchorIndex = 0;
+    bool enabled = [self usesModernProfileLayout] && !_withoutActions;
+#if OG_PLUGINS_AVAILABLE
+    enabled = enabled && ![OGPluginProfile isSectionHidden:@"shared_media" forController:self];
+#endif
+    bool changed = [_profileMedia updateSectionsEnabled:enabled afterSectionIndex:anchorIndex];
+    self.userInfoItem.storyRingState = [self usesModernProfileLayout] ? [_profileMedia storyRingState] : TGStoryRingStateNone;
+    return changed;
+}
+
+- (void)postStoryPressed
+{
+    [_profileMedia postStory];
+}
+
+- (void)setOwnProfileTab:(bool)ownProfileTab
+{
+    _ownProfileTab = ownProfileTab;
+    if (ownProfileTab)
+    {
+        [self setTitleText:TGLocalized(@"OnegramProfile.TabTitle")];
+        UIImage *moreImage = TGProfileActionGlyphImage(TGProfileActionIconMore, self.presentation.pallete.navigationButtonColor ?: self.presentation.pallete.accentColor);
+        [self setRightBarButtonItem:[[UIBarButtonItem alloc] initWithImage:moreImage style:UIBarButtonItemStylePlain target:self action:@selector(ownProfileMorePressed)] animated:false];
+    }
+    else
+    {
+        [self setTitleText:TGLocalized(@"UserInfo.Title")];
+        [self setRightBarButtonItem:[TGPresentation navigationBarButtonItemWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)] animated:false];
+    }
+}
+
+- (void)editOwnProfilePressed
+{
+    [self.navigationController pushViewController:[[TGEditProfileController alloc] init] animated:true];
+}
+
+- (void)unmuteNotificationsPressed
+{
+    [self _commitEnableNotifications:@true orMuteFor:0];
+}
+
+- (CGRect)shareSourceRectForSelector:(SEL)selector
+{
+    UIView *sourceView = [_modernActionsItem sourceViewForActionWithSelector:selector];
+    if (sourceView == nil)
+        sourceView = _shareContactItem.view;
+    if (sourceView == nil)
+        return CGRectZero;
+    return [sourceView convertRect:sourceView.bounds toView:self.view];
 }
 
 - (void)_updateNotificationSettings:(bool)__unused animated
@@ -934,13 +1398,13 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
         usesDefault = true;
     }
     
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
     {
         variant = usesDefault ? TGLocalized(@"UserInfo.NotificationsDefaultEnabled") : TGLocalized(@"UserInfo.NotificationsEnabled");
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         if (muteExpiration >= 7 * 24 * 60 * 60)
             variant = usesDefault ? TGLocalized(@"UserInfo.NotificationsDefaultDisabled"): TGLocalized(@"UserInfo.NotificationsDisabled");
         else
@@ -953,8 +1417,9 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     
     [_notificationsItem setVariant:variant];
     [_normalNotificationsItem setVariant:variant];
-    _normalNotificationsItem.iconName = muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime] ? @"bell-fill" : @"bell-slash-fill";
-    [_brandedNotificationsItem setIsOn:muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime] animated:false];
+    _normalNotificationsItem.iconName = muteUntil.intValue <= OGRemoteClockTime() ? @"bell-fill" : @"bell-slash-fill";
+    [_brandedNotificationsItem setIsOn:muteUntil.intValue <= OGRemoteClockTime() animated:false];
+    _modernActionsItem.actions = [self modernProfileActions];
 
     bool isDefault = false;
     NSNumber *privateSoundId = _userNotificationSettings[@"soundId"];
@@ -974,13 +1439,13 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
     {
         variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         variant = [TGStringUtils stringForRemainingMuteInterval:muteExpiration];
     }
     
@@ -988,7 +1453,8 @@ static NSString *TGIOS6UserProfileMusicTitle(TGDocumentMediaAttachment *document
     {
         [_notificationsItem setVariant:variant];
         [_normalNotificationsItem setVariant:variant];
-        _normalNotificationsItem.iconName = muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime] ? @"bell-fill" : @"bell-slash-fill";
+        _normalNotificationsItem.iconName = muteUntil.intValue <= OGRemoteClockTime() ? @"bell-fill" : @"bell-slash-fill";
+        _modernActionsItem.actions = [self modernProfileActions];
     }
 }
 
@@ -1317,7 +1783,7 @@ static UIView *_findBackArrow(UIView *view)
     if (displayed)
         return;
     
-    if (_tooltipContainerView != nil)
+    if (_tooltipContainerView != nil || [self usesModernProfileLayout])
         return;
     
     _tooltipTimer = [TGTimerTarget scheduledMainThreadTimerWithTarget:self action:@selector(tooltipTimerTick) interval:3.5 repeat:false];
@@ -1359,7 +1825,7 @@ static UIView *_findBackArrow(UIView *view)
     }
     else
     {
-        [[TGInterfaceManager instance] callPeerWithId:_uid];
+        [[TGInterfaceManager instance] presentCallOptionsForPeerId:_uid inView:self.view];
     }
 }
 
@@ -1367,7 +1833,7 @@ static UIView *_findBackArrow(UIView *view)
 {
     NSMutableArray *actions = [[NSMutableArray alloc] init];
     
-    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= [[TGTelegramNetworking instance] approximateRemoteTime];
+    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= OGRemoteClockTime();
     NSString *defaultTitle = defaultEnabled ? TGLocalized(@"UserInfo.NotificationsDefaultEnabled") : TGLocalized(@"UserInfo.NotificationsDefaultDisabled");
     
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:defaultTitle action:@"default"]];
@@ -1410,7 +1876,7 @@ static UIView *_findBackArrow(UIView *view)
     }
     else
     {
-        muteUntil = @((int)([[TGTelegramNetworking instance] approximateRemoteTime] + muteFor));
+        muteUntil = @((int)(OGRemoteClockTime() + muteFor));
     }
     
     if (!TGObjectCompare(muteUntil, _userNotificationSettings[@"muteUntil"]))
@@ -1424,7 +1890,7 @@ static UIView *_findBackArrow(UIView *view)
             muteUntil = @(INT32_MIN);
         
         static int actionId = 0;
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId32 ")/(userInfoControllerMute%d)", _uid, actionId++] options:@{
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId64 ")/(userInfoControllerMute%d)", _uid, actionId++] options:@{
             @"peerId": @(_uid),
             @"muteUntil": muteUntil
         } watcher:TGTelegraphInstance];
@@ -1471,7 +1937,7 @@ static UIView *_findBackArrow(UIView *view)
         [self _updateNotificationSettings:false];
 
         static int actionId = 0;
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId32 ")/(userInfoControllerSound%d)", _uid, actionId++] options:@{
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%" PRId64 ")/(userInfoControllerSound%d)", _uid, actionId++] options:@{
             @"peerId": @(_uid),
             @"soundId": @(soundId)
         } watcher:TGTelegraphInstance];
@@ -1543,7 +2009,7 @@ static UIView *_findBackArrow(UIView *view)
         if (strongSelf == nil)
             return CGRectZero;
         
-        return [strongSelf->_shareContactItem.view convertRect:strongSelf->_shareContactItem.view.bounds toView:strongSelf.view];
+        return [strongSelf shareSourceRectForSelector:@selector(shareContactPressed)];
     };
     
     [TGShareMenu presentInParentController:self menuController:nil buttonTitle:nil buttonAction:nil shareAction:^(NSArray *peerIds, NSString *caption)
@@ -1858,7 +2324,7 @@ static UIView *_findBackArrow(UIView *view)
             [ActionStageInstance() removeWatcher:self fromPath:@"/tg/phonebook"];
             
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%d,%d,breakLinkLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithInt:_uid], @"uid", [[NSNumber alloc] initWithInt:nativeId], @"nativeId", nil] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%lld,%d,breakLinkLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_uid], @"uid", [[NSNumber alloc] initWithInt:nativeId], @"nativeId", nil] watcher:self];
         }
     }];
 }
@@ -1883,7 +2349,7 @@ static UIView *_findBackArrow(UIView *view)
         else
         {
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%d,%d,changeNameLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithInt:_uid], @"uid", firstName == nil ? @"" : firstName, @"firstName", lastName == nil ? @"" : lastName, @"lastName", [[NSNumber alloc] initWithInt:nativeId],  @"nativeId", nil] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%lld,%d,changeNameLocal)", _uid, actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_uid], @"uid", firstName == nil ? @"" : firstName, @"firstName", lastName == nil ? @"" : lastName, @"lastName", [[NSNumber alloc] initWithInt:nativeId],  @"nativeId", nil] watcher:self];
         }
     }];
 }
@@ -1913,7 +2379,7 @@ static UIView *_findBackArrow(UIView *view)
             static int actionId = 0;
             
             NSMutableDictionary *options = [[NSMutableDictionary alloc] init];
-            [options setObject:[[NSNumber alloc] initWithInt:_uid] forKey:@"uid"];
+            [options setObject:[[NSNumber alloc] initWithLongLong:_uid] forKey:@"uid"];
             [options setObject:[[NSNumber alloc] initWithInt:_phonebookInfo.nativeId] forKey:@"nativeId"];
             if (phoneNumbers != nil)
                 [options setObject:phoneNumbers forKey:@"phones"];
@@ -2055,7 +2521,10 @@ static UIView *_findBackArrow(UIView *view)
     }
     if ([action isEqualToString:@"avatarTapped"])
     {
-        [self createAvatarGalleryControllerForPreviewMode:false];
+        if ([self usesModernProfileLayout] && [_profileMedia hasActiveStories])
+            [_profileMedia openActiveStories];
+        else
+            [self createAvatarGalleryControllerForPreviewMode:false];
     }
     else if ([action isEqualToString:@"callTapped"])
     {
@@ -2127,7 +2596,7 @@ static UIView *_findBackArrow(UIView *view)
             [self.userInfoItem updateTimestamp];
         });
     }
-    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", _uid]])
+    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", _uid]])
     {
         [self actorCompleted:ASStatusSuccess path:path result:resource];
     }
@@ -2178,7 +2647,7 @@ static UIView *_findBackArrow(UIView *view)
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", _uid]])
+    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", _uid]])
     {
         TGDispatchOnMainThread(^
         {
@@ -2186,7 +2655,7 @@ static UIView *_findBackArrow(UIView *view)
             [self _updateNotificationSettings:false];
         });
     }
-    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 1]])
+    else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsPrivate]])
     {
         TGDispatchOnMainThread(^
         {
@@ -2321,7 +2790,7 @@ static UIView *_findBackArrow(UIView *view)
         if (strongSelf == nil)
             return CGRectZero;
         
-        return [strongSelf->_shareContactItem.view convertRect:strongSelf->_shareContactItem.view.bounds toView:strongSelf.view];
+        return [strongSelf shareSourceRectForSelector:@selector(shareUserInfoPressed)];
     };
     
     [TGShareMenu presentInParentController:self menuController:nil buttonTitle:TGLocalized(@"ShareMenu.CopyShareLink") buttonAction:^
@@ -2376,5 +2845,19 @@ static UIView *_findBackArrow(UIView *view)
 - (void)groupsInCommonPressed {
     [self.navigationController pushViewController:[[TGGroupsInCommonController alloc] initWithUserId:_uid] animated:true];
 }
+
+#if OG_PLUGINS_AVAILABLE
+
+- (int64_t)pluginUIProfilePeerId
+{
+    return _uid;
+}
+
+- (UIView *)pluginUIOverlayContainer
+{
+    return self.view;
+}
+
+#endif
 
 @end

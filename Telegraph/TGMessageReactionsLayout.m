@@ -9,6 +9,8 @@
 #import "TGMessageViewsView.h"
 #import "TGRichMessageInlineImageStore.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformText.h"
 
 static NSString *const TGMessageReactionCustomPrefix = @"◆";
 static NSString *const TGMessageReactionPaid = @"★";
@@ -238,29 +240,42 @@ static UIImage *TGMessageReactionPillImage(TGMessageReactionItem *item, TGMessag
         }
     }
 
-    CGSize textSize = [countText sizeWithFont:font];
-    CGFloat textWidth = CGCeil(textSize.width);
+    CTLineRef countLine = NULL;
+    CTFontRef countFont = CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
+    if (countFont != NULL)
+    {
+        NSAttributedString *countString = [[NSAttributedString alloc] initWithString:countText attributes:[[NSDictionary alloc] initWithObjectsAndKeys:(__bridge id)countFont, (__bridge id)kCTFontAttributeName, kCFBooleanTrue, (__bridge id)kCTForegroundColorFromContextAttributeName, nil]];
+        countLine = OGPlatformTextCreateLine((__bridge CFAttributedStringRef)countString);
+        CFRelease(countFont);
+    }
+    CGFloat textWidth = countLine == NULL ? 0.0f : CGCeil((CGFloat)CTLineGetTypographicBounds(countLine, NULL, NULL, NULL));
     CGSize size = CGSizeMake(CGCeil(paddingLeft + emojiSize + textSkip + textWidth + paddingRight), height);
-
-    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    CGContextSetFillColorWithColor(context, background.CGColor);
-    CGContextAddPath(context, [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0.0f, 0.0f, size.width, size.height) cornerRadius:size.height / 2.0f].CGPath);
-    CGContextFillPath(context);
-
     CGRect emojiRect = CGRectMake(paddingLeft, TGRetinaFloor((height - emojiSize) / 2.0f), emojiSize, emojiSize);
-    if (item.paid)
-        TGMessageReactionDrawPaidStar(context, CGRectInset(emojiRect, emojiSize * 0.06f, emojiSize * 0.06f));
-    else if (emojiImage != nil)
-        [emojiImage drawInRect:emojiRect];
-    else
-        TGMessageReactionDrawPlaceholder(context, emojiRect, placeholder);
+    CGPoint countBaseline = CGPointMake(CGRectGetMaxX(emojiRect) + textSkip, TGRetinaFloor((height + font.capHeight) / 2.0f - font.ascender) + font.ascender);
 
-    CGContextSetFillColorWithColor(context, foreground.CGColor);
-    [countText drawAtPoint:CGPointMake(CGRectGetMaxX(emojiRect) + textSkip, TGRetinaFloor((height + font.capHeight) / 2.0f - font.ascender)) withFont:font];
+    UIImage *image = OGPlatformRenderImage(size, 0.0f, false, ^(CGContextRef context)
+    {
+        CGContextSetFillColorWithColor(context, background.CGColor);
+        OGPlatformAddRoundedRectPath(context, CGRectMake(0.0f, 0.0f, size.width, size.height), size.height / 2.0f);
+        CGContextFillPath(context);
 
-    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
+        if (item.paid)
+            TGMessageReactionDrawPaidStar(context, CGRectInset(emojiRect, emojiSize * 0.06f, emojiSize * 0.06f));
+        else if (emojiImage != nil)
+            OGPlatformDrawImageInRect(context, emojiImage, emojiRect);
+        else
+            TGMessageReactionDrawPlaceholder(context, emojiRect, placeholder);
+
+        if (countLine != NULL)
+        {
+            CGContextSetFillColorWithColor(context, foreground.CGColor);
+            CGContextSetTextMatrix(context, CGAffineTransformMakeScale(1.0f, -1.0f));
+            CGContextSetTextPosition(context, countBaseline.x, countBaseline.y);
+            CTLineDraw(countLine, context);
+        }
+    });
+    if (countLine != NULL)
+        CFRelease(countLine);
     if (image != nil)
         [cache setObject:image forKey:cacheKey];
     return image;
@@ -564,7 +579,7 @@ static UIImage *TGMessageReactionPillImage(TGMessageReactionItem *item, TGMessag
         CGFloat lineWidth = [lineWidths[lineIndex] floatValue];
         if (isLastLine && trailingOnLastLine && hasTrailing)
         {
-            trailingFrame = CGRectMake(availableWidth - trailingWidth, y + lineHeight - trailingHeight, trailingWidth, trailingHeight);
+            trailingFrame = CGRectMake(availableWidth - trailingWidth, y + floorf((lineHeight - trailingHeight) / 2.0f), trailingWidth, trailingHeight);
             lineWidth += trailingSpacing + trailingWidth;
         }
         width = MAX(width, lineWidth);

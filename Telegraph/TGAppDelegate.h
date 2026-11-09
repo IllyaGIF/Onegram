@@ -34,6 +34,12 @@ FOUNDATION_EXPORT UIViewController *TGCreateLoginQRController(void);
 
 @protocol TGStickerPackReference;
 
+@protocol TGInterfaceRebuildRestorable <NSObject>
+
+- (UIViewController *)controllerForInterfaceRebuild;
+
+@end
+
 extern NSString *TGDeviceProximityStateChangedNotification;
 
 extern NSString *const TGIOS6BackgroundNotificationsEnabledKey;
@@ -81,6 +87,8 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 
 - (void)displayPrivacyNoticeIfNeeded;
 
+- (bool)usesPushKitNotifications;
+
 @property (nonatomic) bool soundEnabled;
 @property (nonatomic) bool outgoingSoundEnabled;
 @property (nonatomic) bool vibrationEnabled;
@@ -94,6 +102,7 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 
 @property (nonatomic) TGAutoDownloadMode autoSavePhotosMode;
 @property (nonatomic, strong) TGAutoDownloadPreferences *autoDownloadPreferences;
+- (void)refreshAutomaticMediaDownloads;
 
 @property (nonatomic) bool autoPlayAudio;
 @property (nonatomic) bool autoPlayAnimations;
@@ -141,6 +150,7 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 - (void)presentMainController;
 - (void)prepareInterfaceForAccountSwitch;
 - (void)startSessionAfterAccountSwitch:(bool)inheritSettings;
+- (void)rebuildInterfaceApplyingChange:(dispatch_block_t)change;
 
 - (void)presentLoginController:(bool)clearControllerStates animated:(bool)animated phoneNumber:(NSString *)phoneNumber phoneCode:(NSString *)phoneCode phoneCodeHash:(NSString *)phoneCodeHash codeSentToTelegram:(bool)codeSentToTelegram codeSentViaPhone:(bool)codeSentViaPhone profileFirstName:(NSString *)profileFirstName profileLastName:(NSString *)profileLastName resetAccountState:(TGResetAccountState *)resetAccountState termsOfService:(TGTermsOfService *)termsOfService;
 - (void)presentContentController:(UIViewController *)controller;
@@ -161,7 +171,7 @@ extern bool TGIOS6APNsNotificationsEnabled(void);
 
 - (void)requestDeviceToken:(id<TGDeviceTokenListener>)listener;
 
-- (void)reloadSettingsController:(int)uid;
+- (void)reloadSettingsController:(int64_t)uid;
 
 - (void)readyToApplyLocalizationFromFile:(NSString *)filePath warnings:(NSString *)warnings;
 

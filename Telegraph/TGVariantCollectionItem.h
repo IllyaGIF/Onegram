@@ -13,6 +13,7 @@
 @property (nonatomic, strong) NSString *title;
 @property (nonatomic, strong) UIColor *titleColor;
 @property (nonatomic, strong) NSString *variant;
+@property (nonatomic, strong) NSString *descriptionText;
 @property (nonatomic, strong) UIImage *icon;
 @property (nonatomic, strong) UIImage *variantIcon;
 @property (nonatomic) SEL action;

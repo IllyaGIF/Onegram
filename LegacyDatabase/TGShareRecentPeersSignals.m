@@ -4,37 +4,7 @@
 #import "TGLegacyDatabase.h"
 #import "TGLegacyUser.h"
 
-static inline bool TGPeerIdIsGroup(int64_t peerId) {
-    return peerId < 0 && peerId > INT32_MIN;
-}
-
-static inline bool TGPeerIdIsChannel(int64_t peerId) {
-    return peerId <= ((int64_t)INT32_MIN) * 2 && peerId > ((int64_t)INT32_MIN) * 3;
-}
-
-static inline int32_t TGChannelIdFromPeerId(int64_t peerId) {
-    if (TGPeerIdIsChannel(peerId)) {
-        return (int32_t)(((int64_t)INT32_MIN) * 2 - peerId);
-    } else {
-        return 0;
-    }
-}
-
-static inline int64_t TGPeerIdFromChannelId(int32_t channelId) {
-    return ((int64_t)INT32_MIN) * 2 - ((int64_t)channelId);
-}
-
-static inline int64_t TGPeerIdFromGroupId(int32_t groupId) {
-    return -groupId;
-}
-
-static inline int32_t TGGroupIdFromPeerId(int64_t peerId) {
-    if (TGPeerIdIsGroup(peerId)) {
-        return (int32_t)-peerId;
-    } else {
-        return 0;
-    }
-}
+#import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
 #import "TGUserModel.h"
 #import "TGChatModel.h"
@@ -149,7 +119,7 @@ const NSInteger TGRecentSearchLimit = 20;
     NSArray *recentChatsIds = [[self userDefaults] objectForKey:TGRecentSearchDefaultsKey];
     for (NSNumber *peerIdVal in recentChatsIds)
     {
-        int64_t peerId = peerIdVal.integerValue;
+        int64_t peerId = peerIdVal.longLongValue;
         if (TGPeerIdIsGroup(peerId))
         {
             TGChatModel *chat = chatMapping[@(TGPeerIdGroup)][@(TGGroupIdFromPeerId(peerId))];
@@ -176,7 +146,7 @@ const NSInteger TGRecentSearchLimit = 20;
             
             if (chat == nil || usersMapping[@(peerId)] == nil)
             {
-                TGLegacyUser *user = [database userWithIdSync:(int32_t)peerId];
+                TGLegacyUser *user = [database userWithIdSync:peerId];
                 chat = [[TGPrivateChatModel alloc] initWithUserId:user.userId];
                 
                 TGUserModel *userModel = [[TGUserModel alloc] initWithUserId:user.userId accessHash:user.accessHash firstName:user.firstName lastName:user.lastName avatarLocation:[[TGFileLocation alloc] initWithFileUrl:user.photoSmall]];

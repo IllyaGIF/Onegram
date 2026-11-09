@@ -12,6 +12,16 @@ from build_identity import write_build_identity
 from artifact_cache import cache_matches, cache_record, fingerprint
 from app_signing import sign_app, verify_app, verify_ipa
 
+def write_checksum(ipa):
+    digest = hashlib.sha256()
+    with open(ipa, 'rb') as source:
+        for block in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(block)
+    checksum = ipa.with_name(ipa.name + '.sha256')
+    checksum.write_text(digest.hexdigest() + '  ' + ipa.name + '\n')
+    return checksum
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--ldid', required=True)
@@ -41,15 +51,17 @@ def main():
     if cache_matches(stamp, signature, [app, ipa]):
         verify_app(app, entitlements)
         verify_ipa(ipa, entitlements)
+        write_checksum(ipa)
         print('IPA up to date: ' + str(ipa))
         return
     legacy = apps['armv7']
-    def resources(app):
+    def resources(app, include_python=True):
         return {str(p.relative_to(app)): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in app.rglob('*') if p.is_file() and p.name not in ('Telegram', 'Info.plist') and '_CodeSignature' not in p.parts}
+                for p in app.rglob('*') if p.is_file() and p.name not in ('Telegram', 'Info.plist') and '_CodeSignature' not in p.parts
+                and (include_python or p.relative_to(app).parts[0] != 'Python')}
     def metadata(source):
         info = plistlib.loads((source / 'Info.plist').read_bytes())
-        info['MinimumOSVersion'] = '3.1.3' if triple else '4.3'
+        info['MinimumOSVersion'] = '3.0' if triple else '4.3'
         for key in ('OGOnegramBuildIdentifier', 'OGOnegramBuildArchitecture'):
             info.pop(key, None)
         if triple:
@@ -57,8 +69,11 @@ def main():
         return info
     expected_resources = resources(legacy)
     expected_info = metadata(legacy)
-    for source in apps.values():
-        if expected_resources != resources(source):
+    for arch, source in apps.items():
+        if arch == 'armv6':
+            if (source / 'Python').exists() or resources(legacy, False) != resources(source):
+                raise SystemExit('Architecture resource sets differ')
+        elif expected_resources != resources(source):
             raise SystemExit('Architecture resource sets differ')
         if expected_info != metadata(source):
             raise SystemExit('Architecture application metadata differs')
@@ -80,6 +95,7 @@ def main():
     verify_ipa(ipa, entitlements)
     cache_record(stamp, signature, [app, ipa])
     print(ipa)
+    print(write_checksum(ipa))
 
 
 if __name__ == '__main__':

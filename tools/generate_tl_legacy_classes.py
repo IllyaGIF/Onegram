@@ -207,7 +207,7 @@ class Generator:
             self.created.append(os.path.basename(path))
         text = '\n'.join(lines)
         if path.endswith('.mm'):
-            text += '\n'
+            text = text.rstrip('\n') + '\n'
         with open(path, 'w', encoding='utf-8') as handle:
             handle.write(text)
 
@@ -282,6 +282,10 @@ class Generator:
         if base_block is None:
             raise GeneratorError('%s has no base interface' % header_path)
         inherited = set(re.findall(r'@property \([^)]*\) [A-Za-z0-9_]+ \*?(\w+);', base_block.group(1)))
+        for field in fields:
+            if field['property'] in inherited:
+                declaration = re.compile(r'@property \([^)]*\) [A-Za-z0-9_]+ \*?' + re.escape(field['property']) + r';')
+                header = declaration.sub(field['declaration'], header, count=1)
         own = [field['declaration'] for field in fields if field['property'] not in inherited]
         interface = '@interface %s : %s\n\n%s\n@end\n' % (class_name, base_name, '\n'.join(own) + '\n' if own else '')
         pattern = re.compile(r'@interface %s : %s\n.*?@end\n' % (re.escape(class_name), re.escape(base_name)), re.S)
@@ -310,7 +314,7 @@ class Generator:
         with open(header_path, 'w', encoding='utf-8') as handle:
             handle.write(header)
         with open(source_path, 'w', encoding='utf-8') as handle:
-            handle.write(source)
+            handle.write(source.rstrip('\n') + '\n')
 
     def generate(self, name):
         if name in self.methods:

@@ -52,6 +52,14 @@
     return self.flags & (1 << 12);
 }
 
+- (bool)broadcast_messages_allowed {
+    return self.flags2 & (1 << 16);
+}
+
+- (bool)monoforum {
+    return self.flags2 & (1 << 17);
+}
+
 
 - (id<TLObject>)TLdeserialize:(NSInputStream *)is signature:(int32_t)__unused signature environment:(id<TLSerializationEnvironment>)environment context:(TLSerializationContext *)__unused context error:(__autoreleasing NSError **)error
 {

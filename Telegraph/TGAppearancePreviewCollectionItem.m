@@ -5,6 +5,7 @@
 @interface TGAppearancePreviewCollectionItem ()
 {
     CGFloat _cachedHeight;
+    bool _heightChangeScheduled;
 }
 @end
 
@@ -21,24 +22,55 @@
     return self;
 }
 
+- (void)updateCachedHeightFromView:(TGAppearancePreviewCollectionItemView *)view
+{
+    if (view == nil || fabs(view.contentHeight - _cachedHeight) <= FLT_EPSILON)
+        return;
+    _cachedHeight = view.contentHeight;
+    [self scheduleHeightChanged];
+}
+
+- (void)scheduleHeightChanged
+{
+    if (_heightChangeScheduled)
+        return;
+    _heightChangeScheduled = true;
+
+    __weak TGAppearancePreviewCollectionItem *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGAppearancePreviewCollectionItem *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf->_heightChangeScheduled = false;
+        if (strongSelf.heightChanged)
+            strongSelf.heightChanged();
+    });
+}
+
 - (void)bindView:(TGAppearancePreviewCollectionItemView *)view
 {
     [super bindView:view];
     
+    __weak TGAppearancePreviewCollectionItem *weakSelf = self;
+    __weak TGAppearancePreviewCollectionItemView *weakView = view;
+    view.contentHeightChanged = ^
+    {
+        __strong TGAppearancePreviewCollectionItem *strongSelf = weakSelf;
+        [strongSelf updateCachedHeightFromView:weakView];
+    };
+    view.stickerScale = _stickerScale;
+    view.messagePresentation = _messagePresentation;
     view.messages = _messages;
     view.fontSize = _fontSize;
     [view updateWallpaper];
     
-    if (fabs(view.contentHeight - _cachedHeight) > FLT_EPSILON)
-    {
-        _cachedHeight = view.contentHeight;
-        if (self.heightChanged)
-            self.heightChanged();
-    }
+    [self updateCachedHeightFromView:view];
 }
 
 - (void)unbindView
 {
+    ((TGAppearancePreviewCollectionItemView *)self.boundView).contentHeightChanged = nil;
     [super unbindView];
 }
 
@@ -49,12 +81,26 @@
     TGAppearancePreviewCollectionItemView *view = (TGAppearancePreviewCollectionItemView *)self.boundView;
     [view setMessages:messages];
     
-    if (fabs(view.contentHeight - _cachedHeight) > FLT_EPSILON)
-    {
-        _cachedHeight = view.contentHeight;
-        if (self.heightChanged)
-            self.heightChanged();
-    }
+    [self updateCachedHeightFromView:view];
+}
+
+- (void)setMessagePresentation:(TGPresentation *)messagePresentation
+{
+    _messagePresentation = messagePresentation;
+    
+    TGAppearancePreviewCollectionItemView *view = (TGAppearancePreviewCollectionItemView *)self.boundView;
+    [view setMessagePresentation:messagePresentation];
+    
+    [self updateCachedHeightFromView:view];
+}
+
+- (void)setStickerScale:(CGFloat)stickerScale
+{
+    _stickerScale = stickerScale;
+    
+    TGAppearancePreviewCollectionItemView *view = (TGAppearancePreviewCollectionItemView *)self.boundView;
+    [view setStickerScale:stickerScale];
+    [self updateCachedHeightFromView:view];
 }
 
 - (void)setFontSize:(int32_t)fontSize
@@ -64,12 +110,7 @@
     TGAppearancePreviewCollectionItemView *view = (TGAppearancePreviewCollectionItemView *)self.boundView;
     [view setFontSize:fontSize];
 
-    if (fabs(view.contentHeight - _cachedHeight) > FLT_EPSILON)
-    {
-        _cachedHeight = view.contentHeight;
-        if (self.heightChanged)
-            self.heightChanged();
-    }
+    [self updateCachedHeightFromView:view];
 }
 
 - (void)updateWallpaper
@@ -89,12 +130,7 @@
     TGAppearancePreviewCollectionItemView *view = (TGAppearancePreviewCollectionItemView *)self.boundView;
     [view refreshMetrics];
     
-    if (fabs(view.contentHeight - _cachedHeight) > FLT_EPSILON)
-    {
-        _cachedHeight = view.contentHeight;
-        if (self.heightChanged)
-            self.heightChanged();
-    }
+    [self updateCachedHeightFromView:view];
 }
 
 - (Class)itemViewClass

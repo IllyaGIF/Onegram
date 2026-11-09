@@ -19,5 +19,7 @@
 + (void)applyDelayedNotifications:(int)maxMid mids:(NSArray *)mids midsWithoutSound:(NSSet *)midsWithoutSound maxQts:(int)maxQts randomIds:(NSArray *)randomIds;
 + (void)presentLocalNotificationsForMessageDescriptions:(NSArray *)messageDescriptions;
 + (void)presentSafeLocalNotification:(UILocalNotification *)notification text:(NSString *)text;
++ (bool)claimNotificationForPeerId:(int64_t)peerId messageId:(int32_t)messageId;
++ (bool)claimNotificationForPeerId:(int64_t)peerId messageId:(int32_t)messageId accountId:(int64_t)accountId;
 
 @end

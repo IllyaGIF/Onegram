@@ -7,8 +7,88 @@
 #import "TGCallButton.h"
 #import "TGCallAcceptButton.h"
 #import "TGCallMessageButton.h"
+#import "TGCallVideoCapturer.h"
 
 const CGFloat TGCallButtonsSpacing = 28.0f;
+
+static void TGCallAddRoundedRect(CGContextRef context, CGRect rect, CGFloat radius)
+{
+    CGFloat minX = CGRectGetMinX(rect);
+    CGFloat maxX = CGRectGetMaxX(rect);
+    CGFloat minY = CGRectGetMinY(rect);
+    CGFloat maxY = CGRectGetMaxY(rect);
+    CGContextMoveToPoint(context, minX + radius, minY);
+    CGContextAddArcToPoint(context, maxX, minY, maxX, maxY, radius);
+    CGContextAddArcToPoint(context, maxX, maxY, minX, maxY, radius);
+    CGContextAddArcToPoint(context, minX, maxY, minX, minY, radius);
+    CGContextAddArcToPoint(context, minX, minY, maxX, minY, radius);
+    CGContextClosePath(context);
+}
+
+static UIImage *TGCallCameraIcon(void)
+{
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        CGSize size = CGSizeMake(34.0f, 22.0f);
+        UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
+        TGCallAddRoundedRect(context, CGRectMake(0.0f, 0.0f, 23.0f, 22.0f), 4.5f);
+        CGContextFillPath(context);
+        CGContextMoveToPoint(context, 25.0f, 8.0f);
+        CGContextAddLineToPoint(context, 34.0f, 2.0f);
+        CGContextAddLineToPoint(context, 34.0f, 20.0f);
+        CGContextAddLineToPoint(context, 25.0f, 14.0f);
+        CGContextClosePath(context);
+        CGContextFillPath(context);
+        image = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    });
+    return image;
+}
+
+static void TGCallAddArrowArc(CGContextRef context, CGPoint center, CGFloat radius, CGFloat startAngle, CGFloat endAngle)
+{
+    CGContextAddArc(context, center.x, center.y, radius, startAngle, endAngle, 0);
+    CGContextStrokePath(context);
+    CGPoint tip = CGPointMake(center.x + radius * cos(endAngle), center.y + radius * sin(endAngle));
+    CGFloat tangent = endAngle + (CGFloat)M_PI_2;
+    CGFloat length = 4.5f;
+    CGFloat spread = 0.55f;
+    CGContextMoveToPoint(context, tip.x + length * cos(tangent + (CGFloat)M_PI - spread), tip.y + length * sin(tangent + (CGFloat)M_PI - spread));
+    CGContextAddLineToPoint(context, tip.x + 1.0f * cos(tangent), tip.y + 1.0f * sin(tangent));
+    CGContextAddLineToPoint(context, tip.x + length * cos(tangent + (CGFloat)M_PI + spread), tip.y + length * sin(tangent + (CGFloat)M_PI + spread));
+    CGContextClosePath(context);
+    CGContextFillPath(context);
+}
+
+static UIImage *TGCallFlipCameraIcon(void)
+{
+    static UIImage *image = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        CGSize size = CGSizeMake(34.0f, 26.0f);
+        UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        CGContextSetFillColorWithColor(context, [UIColor whiteColor].CGColor);
+        CGContextSetStrokeColorWithColor(context, [UIColor whiteColor].CGColor);
+        CGContextSetLineWidth(context, 2.0f);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        TGCallAddRoundedRect(context, CGRectMake(1.0f, 5.0f, 32.0f, 20.0f), 4.0f);
+        CGContextStrokePath(context);
+        TGCallAddRoundedRect(context, CGRectMake(11.0f, 1.0f, 12.0f, 5.0f), 1.5f);
+        CGContextFillPath(context);
+        CGPoint center = CGPointMake(17.0f, 15.0f);
+        TGCallAddArrowArc(context, center, 6.0f, (CGFloat)(M_PI * 1.05), (CGFloat)(M_PI * 1.85));
+        TGCallAddArrowArc(context, center, 6.0f, (CGFloat)(M_PI * 0.05), (CGFloat)(M_PI * 0.85));
+        image = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    });
+    return image;
+}
 
 @interface TGCallButtonsView ()
 {
@@ -19,6 +99,8 @@ const CGFloat TGCallButtonsSpacing = 28.0f;
     TGCallButton *_cancelButton;
     TGCallButton *_muteButton;
     TGCallButton *_speakerButton;
+    TGCallButton *_cameraButton;
+    TGCallButton *_flipCameraButton;
     
     TGCallState _currentState;
     bool _twoButtons;
@@ -61,6 +143,20 @@ const CGFloat TGCallButtonsSpacing = 28.0f;
         [_speakerButton setImage:[UIImage imageNamed:@"CallSpeakerIcon"] forState:UIControlStateNormal];
         [_speakerButton addTarget:self action:@selector(speakerButtonPressed) forControlEvents:UIControlEventTouchUpInside];
         [self addSubview:_speakerButton];
+        
+        _cameraButton = [[TGCallButton alloc] init];
+        _cameraButton.hasBorder = true;
+        _cameraButton.hidden = true;
+        [_cameraButton setImage:TGCallCameraIcon() forState:UIControlStateNormal];
+        [_cameraButton addTarget:self action:@selector(cameraButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_cameraButton];
+        
+        _flipCameraButton = [[TGCallButton alloc] init];
+        _flipCameraButton.hasBorder = true;
+        _flipCameraButton.hidden = true;
+        [_flipCameraButton setImage:TGCallFlipCameraIcon() forState:UIControlStateNormal];
+        [_flipCameraButton addTarget:self action:@selector(flipCameraButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_flipCameraButton];
         
         _messageButton = [[TGCallMessageButton alloc] init];
         [_messageButton setImage:[UIImage imageNamed:@"CallQuickMessageIcon"] forState:UIControlStateNormal];
@@ -282,6 +378,11 @@ const CGFloat TGCallButtonsSpacing = 28.0f;
     
     _muteButton.selected = state.mute;
     
+    bool videoControlsAllowed = state.canSendVideo && (state.state == TGCallStateRequesting || state.state == TGCallStateWaiting || state.state == TGCallStateWaitingReceived || state.state == TGCallStateAccepting || state.state == TGCallStateOngoing);
+    _cameraButton.hidden = !videoControlsAllowed;
+    _cameraButton.selected = state.localVideoEnabled;
+    _flipCameraButton.hidden = !videoControlsAllowed || !state.localVideoEnabled || ![TGCallVideoCapturer hasFrontAndBackCameras];
+    
     bool hasBluetoothRoute = false;
     for (TGAudioRoute *route in state.audioRoutes)
     {
@@ -349,6 +450,18 @@ const CGFloat TGCallButtonsSpacing = 28.0f;
         self.speakerPressed();
 }
 
+- (void)cameraButtonPressed
+{
+    if (self.cameraPressed != nil)
+        self.cameraPressed();
+}
+
+- (void)flipCameraButtonPressed
+{
+    if (self.flipCameraPressed != nil)
+        self.flipCameraPressed();
+}
+
 - (void)messageButtonPressed
 {
     if (self.messagePressed != nil)
@@ -382,6 +495,9 @@ const CGFloat TGCallButtonsSpacing = 28.0f;
     _speakerButton.frame = CGRectMake(_declineButton.frame.size.width + _speakerButton.frame.size.width + 2 * TGCallButtonsSpacing, offset, _speakerButton.frame.size.width, _speakerButton.frame.size.height);
     
     _messageButton.frame = CGRectMake(floor((self.frame.size.width - _callButton.frame.size.width) / 2.0f) + 90.0f, _speakerButton.frame.origin.y - 90.0f, _speakerButton.frame.size.width, 55.0f);
+    
+    _cameraButton.frame = CGRectMake(_muteButton.frame.origin.x, 0.0f, _cameraButton.frame.size.width, _cameraButton.frame.size.height);
+    _flipCameraButton.frame = CGRectMake(_speakerButton.frame.origin.x, 0.0f, _flipCameraButton.frame.size.width, _flipCameraButton.frame.size.height);
     
     for (TGCallButton *button in self.subviews)
     {

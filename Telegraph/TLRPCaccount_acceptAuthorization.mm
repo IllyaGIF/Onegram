@@ -8,7 +8,7 @@
 
 - (int32_t)TLconstructorSignature
 {
-    return 0xe7027c94;
+    return 0xf3ed4c73;
 }
 
 - (int32_t)TLconstructorName
@@ -33,7 +33,7 @@
 
 - (void)TLserialize:(NSOutputStream *)os
 {
-    [os writeInt32:self.bot_id];
+    [os writeInt64:self.bot_id];
     
     [os writeString:self.scope];
     

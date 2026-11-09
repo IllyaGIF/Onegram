@@ -1,5 +1,6 @@
 #import "TLMessageAction$messageActionPhoneCall.h"
 #import "TLMessage$modernMessageService.h"
+#import "TGTLDynamic.h"
 
 #import "TLMetaClassStore.h"
 #import "TLMessageAction.h"
@@ -57,19 +58,19 @@ static TLPeer *TGModernServiceReadPeerCompat(NSInputStream *is, id<TLSerializati
         if (signature == (int32_t)0x59511722 || signature == (int32_t)0x15752102)
         {
             TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-            peer.user_id = TGModernLegacyIdForModernId(modernPeerId);
+            peer.user_id = modernPeerId;
             return peer;
         }
         else if (signature == (int32_t)0x36c6019a)
         {
             TLPeer$peerChat *peer = [[TLPeer$peerChat alloc] init];
-            peer.chat_id = (int32_t)modernPeerId;
+            peer.chat_id = modernPeerId;
             return peer;
         }
         else
         {
             TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-            peer.channel_id = (int32_t)modernPeerId;
+            peer.channel_id = modernPeerId;
             return peer;
         }
     }
@@ -83,13 +84,13 @@ static TLPeer *TGModernServiceReadPeerCompat(NSInputStream *is, id<TLSerializati
     if (rawPeerId < 0)
     {
         TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-        peer.channel_id = (int32_t)-rawPeerId;
+        peer.channel_id = -rawPeerId;
         return peer;
     }
     else
     {
         TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-        peer.user_id = TGModernLegacyIdForModernId(rawPeerId);
+        peer.user_id = rawPeerId;
         return peer;
     }
 }
@@ -138,6 +139,10 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
     return 0;
 }
 
+@implementation TGStarGiftTLMessageAction
+
+@end
+
 @implementation TLMessage$modernMessageService
 
 - (void)TLserialize:(NSOutputStream *)__unused os
@@ -164,7 +169,7 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
             if (error != nil && *error != nil)
                 return nil;
             result.senderPeerId = TGModernServicePeerLegacyId(fromPeer);
-            result.from_id = TGPeerIdIsUser(result.senderPeerId) ? (int32_t)result.senderPeerId : 0;
+            result.from_id = TGPeerIdIsUser(result.senderPeerId) ? result.senderPeerId : 0;
         }
         else
             result.from_id = [is readInt32];
@@ -177,9 +182,10 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
     
     if (isModernMessageService && !isLayer181MessageService && (flags & (1 << 28)))
     {
-        TGModernServiceReadObject(is, environment, error);
+        TLPeer *savedPeer = TGModernServiceReadPeerCompat(is, environment, error);
         if (error != nil && *error != nil)
             return nil;
+        result.saved_peer_id = TGModernServicePeerLegacyId(savedPeer);
     }
     
     if (flags & (1 << 3)) {
@@ -191,7 +197,17 @@ static int32_t TGModernServiceReadReplyHeader(NSInputStream *is, id<TLSerializat
     result.date = [is readInt32];
     
     int32_t actionSignature = [is readInt32];
-    if (isModernMessageService && actionSignature == (int32_t)0x80e11a7f)
+    if (actionSignature == (int32_t)0xea2c31d3 || actionSignature == (int32_t)0xe6c31522 ||
+        actionSignature == (int32_t)0x774278d4 || actionSignature == (int32_t)0x73ada76b)
+    {
+        TGTLDynamicObject *giftAction = [TGTLDynamicObject parseObjectFromStream:is signature:actionSignature error:error];
+        if (giftAction == nil)
+            return nil;
+        TGStarGiftTLMessageAction *action = [[TGStarGiftTLMessageAction alloc] init];
+        action.giftAction = giftAction;
+        result.action = action;
+    }
+    else if (isModernMessageService && actionSignature == (int32_t)0x80e11a7f)
     {
         TLMessageAction$messageActionPhoneCall *phoneAction =
             [[TLMessageAction$messageActionPhoneCall alloc] init];

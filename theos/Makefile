@@ -11,8 +11,8 @@ APPLICATION_OUTPUT := build/arm64
 THEOS_OBJ_DIR_NAME := obj/arm64-build
 else ifeq ($(ONEGRAM_ARCH),armv6)
 ONEGRAM_SDK_VERSION := 3.1.3
-ONEGRAM_DEPLOYMENT := 3.1.3
-THEOS_DEPLOYMENT := 3.1
+ONEGRAM_DEPLOYMENT := 3.0
+THEOS_DEPLOYMENT := 3.0
 TARGET_OS_DEPLOYMENT_VERSION := $(ONEGRAM_DEPLOYMENT)
 GENERATED_DIR := generated/armv6
 APPLICATION_OUTPUT := build/armv6
@@ -27,10 +27,27 @@ GENERATED_DIR := generated
 APPLICATION_OUTPUT := build
 THEOS_OBJ_DIR_NAME := obj/armv7-build
 endif
-ifeq ($(ONEGRAM_DIAGNOSTICS),1)
-THEOS_OBJ_DIR_NAME := $(THEOS_OBJ_DIR_NAME)-diag
+ifeq ($(ONEGRAM_ARCH),armv6)
+override ONEGRAM_PLUGINS := 0
+else
+ifeq ($(wildcard $(ONEGRAM_ROOT)/OnegramPlugins/OGPlugins.h),)
+ifeq ($(ONEGRAM_PLUGINS),1)
+$(error ONEGRAM_PLUGINS=1 requires $(ONEGRAM_ROOT)/OnegramPlugins)
 endif
-export ONEGRAM_ARCH ONEGRAM_SDK_VERSION ONEGRAM_DEPLOYMENT ONEGRAM_DIAGNOSTICS
+override ONEGRAM_PLUGINS := 0
+endif
+ONEGRAM_PLUGINS ?= 1
+ifneq ($(filter-out 0 1,$(ONEGRAM_PLUGINS)),)
+$(error Unsupported ONEGRAM_PLUGINS $(ONEGRAM_PLUGINS); expected 0 or 1)
+endif
+ifeq ($(ONEGRAM_PLUGINS),0)
+THEOS_OBJ_DIR_NAME := $(THEOS_OBJ_DIR_NAME)-noplugins
+endif
+endif
+ifeq ($(ONEGRAM_LAUNCH_PROFILE),1)
+THEOS_OBJ_DIR_NAME := $(THEOS_OBJ_DIR_NAME)-launch
+endif
+export ONEGRAM_ARCH ONEGRAM_SDK_VERSION ONEGRAM_DEPLOYMENT ONEGRAM_DIAGNOSTICS ONEGRAM_LAUNCH_PROFILE ONEGRAM_PLUGINS
 export ONEGRAM_GENERATED_DIR := $(GENERATED_DIR)
 THEOS_DEPLOYMENT ?= $(ONEGRAM_DEPLOYMENT)
 TARGET := iphone:clang:$(ONEGRAM_SDK_VERSION):$(THEOS_DEPLOYMENT)
@@ -79,6 +96,7 @@ TARGET_CC += -target $(ONEGRAM_ARCH)-apple-ios$(ONEGRAM_DEPLOYMENT)
 TARGET_CXX += -target $(ONEGRAM_ARCH)-apple-ios$(ONEGRAM_DEPLOYMENT)
 endif
 CORE_CXX := ccache $(REAL_TARGET_CXX)
+CORE_CC := ccache $(REAL_TARGET_CC)
 CORE_JOBS ?= 8
 ARMV6_JOBS ?= $(CORE_JOBS)
 XCODE_ARCLITE ?= $(ONEGRAM_ROOT)/theos/lib/libarclite_iphoneos.a
@@ -110,17 +128,22 @@ $(GENERATED_DIR)/dependencies.mk: Makefile $(GRAPH_INPUTS) scripts/generate.py s
 $(GENERATED_DIR)/%.mk: $(GENERATED_DIR)/dependencies.mk
 	@test -f "$@" || python3 scripts/generate.py --configuration "$(XCODE_CONFIGURATION)"
 include $(GENERATED_DIR)/dependencies.mk
-XCODE_LIBRARIES += libOnegramRuntime libOnegramPlatform libOnegramUI libOnegramUIBridge libOnegramDante
+XCODE_LIBRARIES += libOnegramRuntime libOnegramPlatform libOnegramUI libOnegramUIBridge libOnegramCore
+ifeq ($(ONEGRAM_PLUGINS),1)
+XCODE_LIBRARIES += libOnegramPlugins
+endif
 ifeq ($(XCODE_TARGET),libOnegramRuntime)
 include OnegramRuntime.mk
-else ifeq ($(XCODE_TARGET),libOnegramDante)
-include OnegramDante.mk
+else ifeq ($(XCODE_TARGET),libOnegramCore)
+include OnegramCore.mk
 else ifeq ($(XCODE_TARGET),libOnegramPlatform)
 include OnegramPlatform.mk
 else ifeq ($(XCODE_TARGET),libOnegramUI)
 include OnegramUI.mk
 else ifeq ($(XCODE_TARGET),libOnegramUIBridge)
 include OnegramUIBridge.mk
+else ifeq ($(XCODE_TARGET),libOnegramPlugins)
+include OnegramPlugins.mk
 else
 include $(GENERATED_DIR)/$(XCODE_TARGET).mk
 endif
@@ -135,20 +158,32 @@ Telegram_LINK_INPUTS := $(filter-out $(ONEGRAM_ROOT)/thirdparty/WebP.framework/W
 Telegram_LINK_INPUTS += $(GENERATED_DIR)/products/libWebP.a
 endif
 Telegram_CFLAGS += -I$(ONEGRAM_ROOT)/OnegramRuntime -I$(ONEGRAM_ROOT)/OnegramPlatform -I$(ONEGRAM_ROOT)/OnegramUI -I$(ONEGRAM_ROOT)/OnegramUIBridge
-Telegram_LDFLAGS += $(GENERATED_DIR)/products/libOnegramUIBridge.a $(GENERATED_DIR)/products/libOnegramUI.a $(GENERATED_DIR)/products/libOnegramPlatform.a $(GENERATED_DIR)/products/libOnegramRuntime.a $(GENERATED_DIR)/products/libOnegramDante.a
-Telegram_LINK_INPUTS += $(GENERATED_DIR)/products/libOnegramUIBridge.a $(GENERATED_DIR)/products/libOnegramUI.a $(GENERATED_DIR)/products/libOnegramPlatform.a $(GENERATED_DIR)/products/libOnegramRuntime.a $(GENERATED_DIR)/products/libOnegramDante.a
+Telegram_CFLAGS += -I$(ONEGRAM_ROOT)/theos/$(GENERATED_DIR)/libvpx/include
+Telegram_LDFLAGS += $(GENERATED_DIR)/products/libOnegramUIBridge.a $(GENERATED_DIR)/products/libOnegramUI.a $(GENERATED_DIR)/products/libOnegramPlatform.a $(GENERATED_DIR)/products/libOnegramRuntime.a $(GENERATED_DIR)/products/libOnegramCore.a
+Telegram_LINK_INPUTS += $(GENERATED_DIR)/products/libOnegramUIBridge.a $(GENERATED_DIR)/products/libOnegramUI.a $(GENERATED_DIR)/products/libOnegramPlatform.a $(GENERATED_DIR)/products/libOnegramRuntime.a $(GENERATED_DIR)/products/libOnegramCore.a
+ifeq ($(ONEGRAM_PLUGINS),1)
+Telegram_LDFLAGS += $(GENERATED_DIR)/products/libOnegramPlugins.a $(GENERATED_DIR)/products/libpython3.11.a $(GENERATED_DIR)/products/libwebpdemux.a -lz -lbz2
+Telegram_LINK_INPUTS += $(GENERATED_DIR)/products/libOnegramPlugins.a $(GENERATED_DIR)/products/libpython3.11.a $(GENERATED_DIR)/products/libwebpdemux.a
+endif
 ifneq ($(ONEGRAM_ARCH),arm64)
 Telegram_LDFLAGS += $(XCODE_COMPILER_RT)
 Telegram_LINK_INPUTS += $(XCODE_COMPILER_RT)
 endif
 ifeq ($(ONEGRAM_ARCH),armv6)
-ARMV6_CRT := $(GENERATED_DIR)/products/crt1.3.1-armv6.o
+ARMV6_CRT := $(GENERATED_DIR)/products/crt1-armv6.o
 Telegram_LDFLAGS := -L$(GENERATED_DIR)/products $(Telegram_LDFLAGS)
 Telegram_LDFLAGS += -Wl,-alias_list,$(ONEGRAM_ROOT)/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt
-Telegram_LDFLAGS += -Wl,-unexported_symbols_list,$(ONEGRAM_ROOT)/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt
-Telegram_LINK_INPUTS += $(ONEGRAM_ROOT)/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt $(ONEGRAM_ROOT)/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt
+Telegram_LDFLAGS += -Wl,-exported_symbols_list,$(ONEGRAM_ROOT)/theos/compat/ios3/OnegramExportedSymbols.txt
+Telegram_LINK_INPUTS += $(ONEGRAM_ROOT)/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt $(ONEGRAM_ROOT)/theos/compat/ios3/OnegramExportedSymbols.txt
 Telegram_LDFLAGS += -nostartfiles $(ARMV6_CRT) $(GENERATED_DIR)/products/libdispatch.a
 Telegram_LINK_INPUTS += $(ARMV6_CRT) $(GENERATED_DIR)/products/libdispatch.a
+endif
+ifneq ($(ONEGRAM_LAUNCH_PROFILE),1)
+ONEGRAM_LAUNCH_ORDER_FILE := $(wildcard $(ONEGRAM_ROOT)/theos/launch-order/$(ONEGRAM_ARCH).order)
+ifneq ($(ONEGRAM_LAUNCH_ORDER_FILE),)
+Telegram_LDFLAGS += -Wl,-order_file,$(ONEGRAM_LAUNCH_ORDER_FILE)
+Telegram_LINK_INPUTS += $(ONEGRAM_LAUNCH_ORDER_FILE)
+endif
 endif
 endif
 OPTFLAG = $($(XCODE_TARGET)_OPTFLAG)
@@ -178,16 +213,18 @@ endif
 ifeq ($(ONEGRAM_ARCH),arm64)
 $(XCODE_TARGET)_CFLAGS += -fmodules-cache-path=$(abspath .theos/$(THEOS_OBJ_DIR_NAME)/modules)
 endif
-ifeq ($(ONEGRAM_DIAGNOSTICS),1)
-$(XCODE_TARGET)_CFLAGS += -DONEGRAM_DIAGNOSTICS=1
-else
-$(XCODE_TARGET)_CFLAGS += -include $(ONEGRAM_ROOT)/OnegramRuntime/OGReleaseLogging.h
+ifeq ($(ONEGRAM_LAUNCH_PROFILE),1)
+$(XCODE_TARGET)_CFLAGS += -DONEGRAM_LAUNCH_PROFILE=1 -finstrument-functions
 endif
+ifeq ($(ONEGRAM_PLUGINS),0)
+$(XCODE_TARGET)_CFLAGS += -DONEGRAM_PLUGINS=0
+endif
+$(XCODE_TARGET)_CFLAGS += -include $(ONEGRAM_ROOT)/OnegramRuntime/OGDiagnosticsLogging.h
 _THEOS_INTERNAL_IFLAGS_C =
 _THEOS_INTERNAL_CFLAGS = $(OPTFLAG) $(DEBUGFLAG)
 ifeq ($(XCODE_TARGET),Telegram)
 Telegram_RESOURCE_DIRS := $(ONEGRAM_ROOT)/ios6style
-Telegram_RESOURCE_FILES += $(ONEGRAM_ROOT)/thirdparty/quirc/LICENSE
+Telegram_RESOURCE_FILES += $(ONEGRAM_ROOT)/thirdparty/quirc/LICENSE $(ONEGRAM_ROOT)/OnegramCore/LICENSE.mlkem-native
 Telegram_CODESIGN_FLAGS = -S$(ONEGRAM_ROOT)/theos/Telegram.entitlements
 include $(THEOS_MAKE_PATH)/rules.mk
 include response-link.mk
@@ -200,9 +237,10 @@ before-all::
 	@if test "$(ONEGRAM_ARCH)" = armv6; then python3 scripts/build_armv6_dependencies.py --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --cc "$(REAL_TARGET_CC)" --jobs "$(ARMV6_JOBS)"; fi
 	@if test "$(ONEGRAM_ARCH)" = arm64; then python3 scripts/build_arm64_dependencies.py --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)"; fi
 	@if test "$(ONEGRAM_ARCH)" = armv7; then python3 scripts/build_armv7_dependencies.py --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --deployment "$(ONEGRAM_DEPLOYMENT)"; fi
+	@if test "$(ONEGRAM_PLUGINS)" = 1; then python3 scripts/build_python.py --arch "$(ONEGRAM_ARCH)" --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --deployment "$(ONEGRAM_DEPLOYMENT)" --jobs "$(CORE_JOBS)"; fi
 	@python3 scripts/preflight.py --toolchain "$(XCODE_TOOLCHAIN_DIR)" --sdk "$(ISYSROOT)" --sdk-version "$(ONEGRAM_SDK_VERSION)" --arclite "$(XCODE_ARCLITE)" --compiler-rt "$(XCODE_COMPILER_RT)"
 	@for target in $(XCODE_LIBRARIES); do $(MAKE) --no-print-directory XCODE_TARGET=$$target all || exit $$?; done
-	@python3 scripts/build_core.py --cc "$(CORE_CXX)" --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --jobs "$(CORE_JOBS)"
+	@python3 scripts/build_core.py --cc "$(CORE_CXX)" --c-compiler "$(CORE_CC)" --sdk "$(ISYSROOT)" --toolchain "$(XCODE_TOOLCHAIN_DIR)" --jobs "$(CORE_JOBS)"
 after-all::
 	@python3 scripts/package_app.py --app "$(THEOS_OBJ_DIR)/Telegram.app" --ldid "$(TARGET_CODESIGN)" $(if $(filter 0,$(ONEGRAM_PACKAGE_IPA)),--stage-only)
 ifneq ($(ONEGRAM_PACKAGE_IPA),0)

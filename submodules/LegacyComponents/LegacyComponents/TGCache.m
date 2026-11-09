@@ -2,9 +2,17 @@
 
 #import "LegacyComponentsInternal.h"
 #import "../../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../../OnegramPlatform/OGPlatformGraphics.h"
 
 #import "TGImageUtils.h"
 #import "../../../OnegramPlatform/OGMemoryCache.h"
+#if __has_include("../../../OnegramRuntime/OGDeviceTier.h")
+#import "../../../OnegramRuntime/OGDeviceTier.h"
+#import "../../../OnegramRuntime/OGCPUProfiler.h"
+#define TG_IMAGE_DEVICE_TIER_AVAILABLE 1
+#else
+#define TG_IMAGE_DEVICE_TIER_AVAILABLE 0
+#endif
 
 #import <objc/runtime.h>
 #include <stdio.h>
@@ -210,6 +218,83 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
 
 @end
 
+static NSRecursiveLock *TGImageCacheRegistryLock(void)
+{
+    static NSRecursiveLock *lock = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ lock = [[NSRecursiveLock alloc] init]; });
+    return lock;
+}
+
+static NSSet *TGImageCacheRegistry(void)
+{
+    static CFMutableSetRef registry = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{ registry = CFSetCreateMutable(NULL, 0, NULL); });
+    return (__bridge NSSet *)registry;
+}
+
+static uint64_t TGImageCacheBudget(void)
+{
+#if TG_IMAGE_DEVICE_TIER_AVAILABLE
+    switch (OGDeviceTierCurrent())
+    {
+        case OGDeviceTierLow: return 20ULL * 1024 * 1024;
+        case OGDeviceTierMedium: return 36ULL * 1024 * 1024;
+        case OGDeviceTierHigh: return 72ULL * 1024 * 1024;
+    }
+#endif
+    int memory = deviceMemorySize();
+    return (memory <= 512 ? 20ULL : memory <= 2048 ? 36ULL : 72ULL) * 1024 * 1024;
+}
+
+static uint64_t TGImageCacheBytes(void)
+{
+    NSRecursiveLock *lock = TGImageCacheRegistryLock();
+    [lock lock];
+    uint64_t result = 0;
+    for (__unsafe_unretained TGCache *cache in TGImageCacheRegistry())
+        result += cache.memoryCache.totalCost + cache.thumbnailCache.totalCost + cache.avatarMemoryCache.totalCost;
+    [lock unlock];
+    return result + OGPlatformCachedGraphicsBytes();
+}
+
+static void TGImageCacheTrim(uint64_t limit)
+{
+    uint64_t graphicsReserve = OGMemoryCacheBudget(2 * 1024 * 1024);
+    limit = graphicsReserve >= limit ? 0 : limit - graphicsReserve;
+    NSRecursiveLock *lock = TGImageCacheRegistryLock();
+    [lock lock];
+    uint64_t total = 0;
+    for (__unsafe_unretained TGCache *cache in TGImageCacheRegistry())
+        total += cache.memoryCache.totalCost + cache.thumbnailCache.totalCost + cache.avatarMemoryCache.totalCost;
+    while (total > limit)
+    {
+        OGMemoryCache *largest = nil;
+        uint64_t largestCost = 0;
+        for (__unsafe_unretained TGCache *cache in TGImageCacheRegistry())
+        {
+            for (OGMemoryCache *candidate in @[cache.memoryCache, cache.thumbnailCache, cache.avatarMemoryCache])
+            {
+                uint64_t cost = candidate.totalCost;
+                if (cost > largestCost)
+                {
+                    largestCost = cost;
+                    largest = candidate;
+                }
+            }
+        }
+        if (largest == nil || largestCost == 0)
+            break;
+        uint64_t reduction = MIN(largestCost, total - limit);
+        [largest trimToCost:(NSUInteger)(largestCost - reduction)];
+        total = 0;
+        for (__unsafe_unretained TGCache *cache in TGImageCacheRegistry())
+            total += cache.memoryCache.totalCost + cache.thumbnailCache.totalCost + cache.avatarMemoryCache.totalCost;
+    }
+    [lock unlock];
+}
+
 @implementation TGCache
 
 + (dispatch_queue_t)diskCacheQueue
@@ -242,13 +327,12 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
         int memorySize = deviceMemorySize();
         if (memorySize <= 512)
         {
-            _imageMemoryLimit = 12 * 1024 * 1024;
-            _thumbnailMemoryLimit = 1536 * 1024;
-            _dataMemoryLimit = 1024 * 1024;
-            _avatarMemoryLimit = 6 * 1024 * 1024;
+            _imageMemoryLimit = OGMemoryCacheBudget(12 * 1024 * 1024);
+            _thumbnailMemoryLimit = OGMemoryCacheBudget(1536 * 1024);
+            _dataMemoryLimit = OGMemoryCacheBudget(1024 * 1024);
+            _avatarMemoryLimit = OGMemoryCacheBudget(6 * 1024 * 1024);
             _diskLimit = 64 * 1024 * 1024;
-            _memoryWarningBaseline = 1536 * 1024;
-            _backgroundBaseline = 4 * 1024 * 1024;
+            _backgroundBaseline = OGMemoryCacheBudget(4 * 1024 * 1024);
         }
         else if (memorySize <= 1024)
         {
@@ -257,7 +341,6 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
             _dataMemoryLimit = 2 * 1024 * 1024;
             _avatarMemoryLimit = 10 * 1024 * 1024;
             _diskLimit = 96 * 1024 * 1024;
-            _memoryWarningBaseline = 2 * 1024 * 1024;
             _backgroundBaseline = 8 * 1024 * 1024;
         }
         else if (memorySize <= 2048)
@@ -267,7 +350,6 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
             _dataMemoryLimit = 3 * 1024 * 1024;
             _avatarMemoryLimit = 16 * 1024 * 1024;
             _diskLimit = 128 * 1024 * 1024;
-            _memoryWarningBaseline = 3 * 1024 * 1024;
             _backgroundBaseline = 12 * 1024 * 1024;
         }
         else if (memorySize <= 4096)
@@ -277,7 +359,6 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
             _dataMemoryLimit = 6 * 1024 * 1024;
             _avatarMemoryLimit = 24 * 1024 * 1024;
             _diskLimit = 192 * 1024 * 1024;
-            _memoryWarningBaseline = 4 * 1024 * 1024;
             _backgroundBaseline = 20 * 1024 * 1024;
         }
         else
@@ -287,7 +368,6 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
             _dataMemoryLimit = 8 * 1024 * 1024;
             _avatarMemoryLimit = 32 * 1024 * 1024;
             _diskLimit = 256 * 1024 * 1024;
-            _memoryWarningBaseline = 6 * 1024 * 1024;
             _backgroundBaseline = 32 * 1024 * 1024;
         }
 #if defined(ONEGRAM_ARMV6)
@@ -296,7 +376,6 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
         _dataMemoryLimit = 512 * 1024;
         _avatarMemoryLimit = 3 * 1024 * 1024;
         _diskLimit = 48 * 1024 * 1024;
-        _memoryWarningBaseline = 512 * 1024;
         _backgroundBaseline = 2 * 1024 * 1024;
 #endif
         _imageMemoryEvictionInterval = MAX(512 * 1024, _imageMemoryLimit / 8);
@@ -310,6 +389,18 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
         _thumbnailCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_thumbnailMemoryLimit];
         _dataMemoryCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_dataMemoryLimit];
         _avatarMemoryCache = [[OGMemoryCache alloc] initWithCountLimit:0 costLimit:(NSUInteger)_avatarMemoryLimit];
+        NSRecursiveLock *registryLock = TGImageCacheRegistryLock();
+        [registryLock lock];
+        CFSetAddValue((__bridge CFMutableSetRef)TGImageCacheRegistry(), (__bridge const void *)self);
+        [registryLock unlock];
+#if TG_IMAGE_DEVICE_TIER_AVAILABLE
+        static dispatch_once_t memoryCounterOnce;
+        dispatch_once(&memoryCounterOnce, ^
+        {
+            OGCPUProfilerRegisterMemoryCounter(@"images", ^uint64_t { return TGImageCacheBytes(); });
+            OGCPUProfilerRegisterMemoryCounter(@"count.decodes", ^uint64_t { return OGPlatformActiveImageDecodes(); });
+        });
+#endif
         _renderedAvatarStoredKeys = [[NSMutableSet alloc] init];
         _renderedAvatarMissingKeys = [[NSMutableSet alloc] init];
         _renderedAvatarPendingPrefetchKeys = [[NSMutableSet alloc] init];
@@ -329,19 +420,26 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
 
 - (void)dealloc
 {
+    NSRecursiveLock *registryLock = TGImageCacheRegistryLock();
+    [registryLock lock];
+    CFSetRemoveValue((__bridge CFMutableSetRef)TGImageCacheRegistry(), (__bridge const void *)self);
+    [registryLock unlock];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (void)didReceiveMemoryWarning:(NSNotification *)__unused notification
 {
-    [self freeMemoryCache:_memoryWarningBaseline];
-    [_avatarMemoryCache trimToCost:(NSUInteger)MAX(0, _avatarMemoryLimit / 4)];
+    [_memoryCache removeAllObjects];
+    [_thumbnailCache removeAllObjects];
+    [_avatarMemoryCache removeAllObjects];
 }
 
 - (void)didEnterBackground:(NSNotification *)__unused notification
 {
     [self freeMemoryCache:_backgroundBaseline];
     [_avatarMemoryCache trimToCost:(NSUInteger)MAX(0, _avatarMemoryLimit / 2)];
+    OGPlatformTrimGraphicsCacheToCost(OGMemoryCacheBudget(1024 * 1024));
+    TGImageCacheTrim(TGImageCacheBudget() / 2);
 }
 
 - (NSString *)diskPathForUrl:(NSString *)url
@@ -440,11 +538,13 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
     {
         _avatarMemoryCache.costLimit = (NSUInteger)_avatarMemoryLimit;
         [_avatarMemoryCache setObject:image forKey:key cost:cost];
+        TGImageCacheTrim(TGImageCacheBudget());
     }
     else if (!storeInMemory && _avatarMemoryLimit > 0 && _avatarMemoryCache.totalCost + cost <= (uint64_t)_avatarMemoryLimit * 9 / 10)
     {
         _avatarMemoryCache.costLimit = (NSUInteger)_avatarMemoryLimit;
         [_avatarMemoryCache setObject:image forKey:key cost:cost];
+        TGImageCacheTrim(TGImageCacheBudget());
     }
     return image;
 }
@@ -610,6 +710,7 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
             _memoryCache.costLimit = (NSUInteger)_imageMemoryLimit;
             [_memoryCache setObject:image forKey:url cost:TGCacheImageCost(image)];
         }
+        TGImageCacheTrim(TGImageCacheBudget());
     }
     
     if ((data != nil || image != nil) && (availability & TGCacheDisk) && url != nil)
@@ -795,6 +896,7 @@ static dispatch_queue_t TGCacheRenderedAvatarPrefetchQueue(void)
         {
             _thumbnailCache.costLimit = (NSUInteger)_thumbnailMemoryLimit;
             [_thumbnailCache setObject:image forKey:url cost:TGCacheImageCost(image)];
+            TGImageCacheTrim(TGImageCacheBudget());
         }
     }
 }

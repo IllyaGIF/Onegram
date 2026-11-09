@@ -8,6 +8,11 @@
 #include "Instance.h"
 #include "Ios6DtlsCertificate.h"
 #include "Stats.h"
+#include "MediaTransport.h"
+#include "v2/MediaNegotiator.h"
+#include "v2/Signaling.h"
+#include "media/VideoFrame.h"
+#include "media/VideoSource.h"
 
 namespace tgcalls {
 
@@ -47,6 +52,7 @@ public:
 	void setOutputVolume(float level);
 
     void addExternalAudioSamples(std::vector<uint8_t> &&samples);
+	void setOutgoingVideoEnabled(bool enabled);
 
 private:
 	#ifdef TGCALLS_IOS6_AUDIO_ONLY
@@ -56,6 +62,14 @@ private:
 	    int cause);
 	#endif
 	void sendSignalingAsync(int delayMs, int cause);
+	static MediaNegotiator::Capabilities localMediaCapabilities();
+	uint32_t emitRawSignaling(const std::vector<uint8_t> &serialized, bool requiresAck);
+	uint32_t sendIos6Bootstrap(const CandidatesListMessage &candidates);
+	void sendPendingOffer();
+	void handleRemoteNegotiation(const signaling::NegotiateChannelsMessage &message);
+	void handleRemoteMediaState(const signaling::MediaStateMessage &state);
+	void applyNegotiatedMedia();
+	void sendMediaState();
 	void receiveMessage(DecryptedMessage &&message);
     void updateCurrentResolvedNetworkStatus();
     void sendInitialSignalingMessages();
@@ -68,6 +82,7 @@ private:
 	std::string _ios6RemoteDtlsSetup;
 	bool _ios6RemoteDtlsReady = false;
 	EncryptedConnection _signaling;
+	bool _useRawSignaling = false;
 	bool _enableP2P = false;
     bool _enableTCP = false;
     bool _enableStunMarking = false;
@@ -98,8 +113,13 @@ private:
     bool _remoteNetworkIsLowCost = false;
     bool _remoteIsLowDataRequested = false;
     bool _sentIos6V2Bootstrap = false;
-    bool _ios6LocalAudioOfferAccepted = false;
-    bool _ios6LocalAudioReofferSent = false;
+    std::shared_ptr<MediaTransport> _mediaTransport;
+    std::unique_ptr<MediaNegotiator> _negotiator;
+    signaling::MediaStateMessage _localMediaState;
+    bool _mediaStateReady = false;
+    bool _negotiationStarted = false;
+    std::shared_ptr<VideoSourceHub> _outgoingVideoSource;
+    std::shared_ptr<VideoSinkHub> _incomingVideoSink;
     absl::optional<ResolvedNetworkStatus> _currentResolvedLocalNetworkStatus;
     absl::optional<ResolvedNetworkStatus> _currentResolvedNetworkStatus;
 

@@ -17,6 +17,7 @@
 
 #import "TGObserverProxy.h"
 #import "../../../OnegramPlatform/OGPlatformUIKit.h"
+#import "../../../OnegramPlatform/OGPlatformVersion.h"
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <UIKit/UIGestureRecognizerSubclass.h>
@@ -307,6 +308,8 @@ typedef enum
 - (void)dealloc
 {
     [_dimView removeTarget:self action:@selector(dimViewPressed) forControlEvents:UIControlEventTouchUpInside];
+    _gestureRecognizer.delegate = nil;
+    [_gestureRecognizer removeTarget:self action:NULL];
     _nativeActionSheet.delegate = nil;
     if (_nativeActionSheet != nil)
         objc_setAssociatedObject(_nativeActionSheet, @selector(_presentNativeActionSheetInViewController:sourceView:), nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -526,7 +529,7 @@ typedef enum
         
         if (_sheetView != nil)
         {
-            [_parentController dismissViewControllerAnimated:false completion:^
+            [self _dismissPopoverPresentationWithCompletion:^
             {
                 [_sheetView menuWillDisappearAnimated:animated];
                 [_sheetView removeFromSuperview];
@@ -609,6 +612,7 @@ typedef enum
 - (void)popoverControllerDidDismissPopover:(UIPopoverController *)__unused popoverController
 {
     _popoverController = nil;
+    [self _popoverDismissedByUser];
 }
 
 - (void)popoverController:(UIPopoverController *)__unused popoverController willRepositionPopoverToRect:(inout CGRect *)rect inView:(inout UIView **)__unused view
@@ -619,12 +623,26 @@ typedef enum
 
 #pragma mark -
 
+- (void)_dismissPopoverPresentationWithCompletion:(void (^)(void))completion
+{
+    if (_popoverController != nil)
+    {
+        [_popoverController dismissPopoverAnimated:false];
+        _popoverController = nil;
+        completion();
+    }
+    else
+    {
+        [self.presentingViewController dismissViewControllerAnimated:false completion:completion];
+    }
+}
+
 - (void)_presentPopoverInController:(UIViewController *)controller
 {
     if (_sourceView == nil && self.barButtonItem == nil)
         return;
     
-    if (iosMajorVersion() >= 8)
+    if (OGPlatformSupportsAdaptivePresentation())
     {
         [controller presentViewController:self animated:false completion:nil];
         if (self.popoverPresentationController == nil)
@@ -652,6 +670,7 @@ typedef enum
     {
         [self _updateLegacyPopoverContentSizeAnimated:false];
         _popoverController = [[UIPopoverController alloc] initWithContentViewController:self];
+        _popoverController.delegate = self;
         [self _updateLegacyPopoverContentSizeAnimated:false];
         
         UIColor *backgroundColor = self.pallete != nil ? self.pallete.backgroundColor : [UIColor whiteColor];
@@ -681,9 +700,8 @@ typedef enum
     bool compact = (sizeClass == UIUserInterfaceSizeClassCompact);
     if (compact || _forceFullScreen)
         self.modalPresentationStyle = UIModalPresentationFullScreen;
-    else {
+    else if (OGPlatformSupportsAdaptivePresentation())
         self.modalPresentationStyle = UIModalPresentationPopover;
-    }
     
     if (!self.stickWithSpecifiedParentController && viewController.navigationController != nil)
         viewController = viewController.navigationController.parentViewController ?: viewController.navigationController;
@@ -873,15 +891,7 @@ typedef enum
             }
         };
         
-        if (_popoverController == nil)
-        {
-            [self.presentingViewController dismissViewControllerAnimated:false completion:dismissedBlock];
-        }
-        else
-        {
-            [_popoverController dismissPopoverAnimated:false];
-            dismissedBlock();
-        }
+        [self _dismissPopoverPresentationWithCompletion:dismissedBlock];
     }
 }
 
@@ -1120,7 +1130,8 @@ typedef enum
         if (sizeClass == UIUserInterfaceSizeClassRegular && !_forceFullScreen) {
             _dimView.hidden = true;
             
-            self.modalPresentationStyle = UIModalPresentationPopover;
+            if (OGPlatformSupportsAdaptivePresentation())
+                self.modalPresentationStyle = UIModalPresentationPopover;
             
             [self.view removeFromSuperview];
             [self removeFromParentViewController];
@@ -1132,7 +1143,7 @@ typedef enum
         } else {
             _dimView.hidden = false;
             
-            [self.presentingViewController dismissViewControllerAnimated:false completion:^
+            [self _dismissPopoverPresentationWithCompletion:^
             {
                 self.modalPresentationStyle = UIModalPresentationFullScreen;
                 
@@ -1355,6 +1366,10 @@ typedef enum
 }
 
 - (void)popoverPresentationControllerDidDismissPopover:(UIPopoverPresentationController *)__unused popoverPresentationController {
+    [self _popoverDismissedByUser];
+}
+
+- (void)_popoverDismissedByUser {
     if ([self.parentViewController isKindOfClass:[TGOverlayController class]]) {
         TGOverlayControllerWindow *window = ((TGOverlayController *)self.parentViewController).overlayWindow;
         if (window.dismissByMenuSheet) {

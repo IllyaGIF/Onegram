@@ -49,6 +49,7 @@ typedef struct {
 @property (nonatomic, strong) NSSet *adminIds;
 
 @property (nonatomic, strong) TGPresentation *presentation;
+@property (nonatomic) CGFloat stickerScale;
 
 @property (nonatomic) bool outgoingMessagesAreAlwaysRead;
 @property (nonatomic) bool isAdminLog;

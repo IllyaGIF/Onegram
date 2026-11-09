@@ -17,7 +17,7 @@ static const CGFloat TGAccountSwitcherPanelSideInset = 8.0f;
 static const CGFloat TGAccountSwitcherPanelMaxWidth = 420.0f;
 static const CGFloat TGAccountSwitcherPanelCornerRadius = 12.0f;
 
-static UIImage *TGAccountSwitcherPanelCircularImage(NSString *path, CGFloat diameter)
+UIImage *TGAccountAvatarCircularImage(NSString *path, CGFloat diameter)
 {
     UIImage *image = [[UIImage alloc] initWithContentsOfFile:path];
     if (image == nil || image.size.width < 1.0f || image.size.height < 1.0f)
@@ -351,7 +351,7 @@ static UIImage *TGAccountSwitcherPanelCircularImage(NSString *path, CGFloat diam
         if (![[NSFileManager defaultManager] fileExistsAtPath:path])
             return;
 
-        UIImage *image = TGAccountSwitcherPanelCircularImage(path, TGAccountSwitcherPanelAvatarSize);
+        UIImage *image = TGAccountAvatarCircularImage(path, TGAccountSwitcherPanelAvatarSize);
         if (image == nil)
             return;
 

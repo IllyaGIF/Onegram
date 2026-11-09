@@ -5,6 +5,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGStickerAssociation.h"
 
 #import "TGMessageImageView.h"
+#import "TGAnimatedStickerView.h"
 
 static const CGFloat TGStickersTopMargin = 100.0f;
 
@@ -13,6 +14,7 @@ static const CGFloat TGStickersTopMargin = 100.0f;
     UIView *_dimView;
     UIView *_imageViewContainer;
     TGMessageImageView *_imageView;
+    TGAnimatedStickerView *_animatedView;
     
     UIView *_altWrapperView;
 }
@@ -47,6 +49,10 @@ static const CGFloat TGStickersTopMargin = 100.0f;
         _imageView = [[TGMessageImageView alloc] init];
         _imageView.expectExtendedEdges = true;
         [_imageViewContainer addSubview:_imageView];
+        
+        _animatedView = [[TGAnimatedStickerView alloc] init];
+        _animatedView.hidden = true;
+        [_imageViewContainer addSubview:_animatedView];
     }
     return self;
 }
@@ -104,6 +110,8 @@ static const CGFloat TGStickersTopMargin = 100.0f;
             _altWrapperView.frame = CGRectMake(CGFloor(_imageViewContainer.frame.size.width - _altWrapperView.frame.size.width) / 2.0f, -TGStickersTopMargin, _altWrapperView.frame.size.width, _altWrapperView.frame.size.height);
         }
         
+        if ((imageSize.width < 1.0f || imageSize.height < 1.0f) && [TGAnimatedStickerView isAnimatedStickerDocument:document])
+            imageSize = CGSizeMake(512.0f, 512.0f);
         CGSize displaySize = [self displaySizeForSize:imageSize];
         
         NSMutableString *imageUri = [[NSMutableString alloc] init];
@@ -129,7 +137,21 @@ static const CGFloat TGStickersTopMargin = 100.0f;
         
         _imageView.frame = CGRectMake(CGFloor((100.0f - displaySize.width) / 2.0f), CGFloor((100.0f - displaySize.height) / 2.0f), displaySize.width, displaySize.height);
         
-        [_imageView loadUri:imageUri withOptions:@{}];
+        if ([TGAnimatedStickerView isAnimatedStickerDocument:_document])
+        {
+            [_imageView reset];
+            _imageView.hidden = true;
+            _animatedView.frame = _imageView.frame;
+            _animatedView.hidden = false;
+            [_animatedView setDocument:_document placeholderUri:[TGAnimatedStickerView placeholderUriForDocument:_document size:displaySize]];
+        }
+        else
+        {
+            [_animatedView reset];
+            _animatedView.hidden = true;
+            _imageView.hidden = false;
+            [_imageView loadUri:imageUri withOptions:@{}];
+        }
         
         if (animated)
         {

@@ -3,6 +3,7 @@
 #import "TGAppDelegate.h"
 
 #import "TGTelegraph.h"
+#import "TGAccountSignals.h"
 
 static NSString *devicePushToken = nil;
 
@@ -44,6 +45,35 @@ static NSString *devicePushToken = nil;
             self.cancelToken = [TGTelegraphInstance doUpdatePushSubscription:false deviceToken:tokenToRemove requestBuilder:self];
         else
             [ActionStageInstance() actionCompleted:self.path result:nil];
+        return;
+    }
+
+    if ([action isEqualToString:@"subscribe"] && [TGAppDelegateInstance usesPushKitNotifications])
+    {
+        TGDispatchOnMainThread(^
+        {
+            [TGAppDelegateInstance requestDeviceToken:nil];
+        });
+        [ActionStageInstance() actionCompleted:self.path result:nil];
+        return;
+    }
+
+    if ([action isEqualToString:@"unsubscribe"] && [TGAppDelegateInstance usesPushKitNotifications])
+    {
+        NSString *voipToken = [[NSUserDefaults standardUserDefaults] stringForKey:@"Onegram.PushKit.VoIPToken"];
+        if (voipToken.length == 0)
+        {
+            [ActionStageInstance() actionCompleted:self.path result:nil];
+            return;
+        }
+        self.cancelToken = [[TGAccountSignals unregisterDeviceToken:voipToken voip:true] startWithNext:^(__unused id result)
+        {
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"Onegram.PushKit.VoIPToken"];
+            [ActionStageInstance() actionCompleted:self.path result:nil];
+        } error:^(__unused id error)
+        {
+            [ActionStageInstance() actionFailed:self.path reason:-1];
+        } completed:nil];
         return;
     }
 

@@ -31,6 +31,8 @@ typedef enum {
     TGAutoDownloadChatChannel
 } TGAutoDownloadChat;
 
+extern NSString *const TGAutoDownloadPreferencesDidChangeNotification;
+
 @interface TGAutoDownloadPreferences : NSObject <NSCoding>
 
 @property (nonatomic, readonly) bool disabled;

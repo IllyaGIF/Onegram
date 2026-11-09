@@ -41,7 +41,9 @@ typedef enum {
 
 - (void)setLeftButtonTypes:(NSArray *)leftButtonTypes rightButtonTypes:(NSArray *)rightButtonTypes;
 - (void)setExpanded:(bool)expanded animated:(bool)animated;
+- (void)setExpanded:(bool)expanded toLeft:(bool)toLeft animated:(bool)animated;
 - (bool)isExpanded;
+- (bool)isExpandedToLeft;
 - (void)setExpandable:(bool)expandable;
 - (void)setSwipeGesturesEnabled:(bool)enabled;
 - (void)setCommunitySwipeEnabled:(bool)enabled;

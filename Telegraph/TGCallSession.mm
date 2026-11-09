@@ -6,6 +6,7 @@
 
 #import <AVFoundation/AVFoundation.h>
 #import <AudioToolbox/AudioToolbox.h>
+#include <syslog.h>
 #import "../submodules/MtProtoKit/MTProtoKit/MTProtoKit.h"
 
 #import "TGAppDelegate.h"
@@ -13,6 +14,8 @@
 #import "TGTelegraph.h"
 #import "TGDatabase.h"
 #import "TGAudioSessionManager.h"
+#import "TGCallVideoCapturer.h"
+#import "TGCallVideoView.h"
 
 #import "TGCallUtils.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGObserverProxy.h"
@@ -41,6 +44,11 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
 - (void)addSignalingData:(NSData *)data;
 - (void)setIsMuted:(bool)isMuted;
 - (void)setNetworkType:(int32_t)networkType;
++ (bool)supportsVideoSending;
++ (bool)supportsVideoReceiving;
+- (void)setOutgoingVideoEnabled:(bool)enabled;
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
+- (void)setIncomingVideoView:(TGCallVideoView *)view;
 - (void)stop:(void (^)(NSString *debugLog, int64_t bytesSentWifi, int64_t bytesReceivedWifi, int64_t bytesSentMobile, int64_t bytesReceivedMobile))completion;
 
 @end
@@ -83,6 +91,13 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
 @property (nonatomic, strong) id context;
 @property (nonatomic, strong) TGCallWebrtcQueue *queue;
 @property (nonatomic, readonly) bool started;
+@property (nonatomic, copy) void (^remoteMediaChanged)(int32_t videoState, int32_t audioState);
+
++ (bool)supportsVideoSending;
++ (bool)supportsVideoReceiving;
+- (void)setOutgoingVideoEnabled:(bool)enabled;
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
+- (void)setIncomingVideoView:(TGCallVideoView *)view;
 
 - (bool)startWithState:(TGCallStateData *)state outgoing:(bool)outgoing logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath signalBarsChanged:(void (^)(int32_t))signalBarsChanged stateChanged:(void (^)(TGCallTransmissionState))stateChanged;
 - (void)receiveSignalingData:(NSData *)data;
@@ -103,7 +118,7 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
     Class connectionClass = NSClassFromString(@"OngoingCallConnectionDescriptionWebrtc");
     if (contextClass == nil || connectionClass == nil) {
-        TGLog(@"CALL webrtc.runtime.missing contextClass=%@ connectionClass=%@", contextClass, connectionClass);
+        TGDiagnosticLog(@"CALL webrtc.runtime.missing contextClass=%@ connectionClass=%@", contextClass, connectionClass);
         return false;
     }
     
@@ -136,7 +151,7 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     
     if (version.length == 0)
     {
-        TGLog(@"CALL webrtc.version.mismatch call=%lld server=%@ local=%@",
+        TGDiagnosticLog(@"CALL webrtc.version.mismatch call=%lld server=%@ local=%@",
               state.callId,
               serverVersions,
               supportedVersions);
@@ -193,7 +208,7 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     
     void (^sendSignalingData)(NSData *) = ^(NSData *data) {
         [[TGCallSignals sendSignalingDataForCallId:state.callId accessHash:state.accessHash data:data] startWithNext:nil error:^(id error) {
-            TGLog(@"CALL webrtc.signaling.send.error call=%lld error=%@", state.callId, error);
+            TGDiagnosticLog(@"CALL webrtc.signaling.send.error call=%lld error=%@", state.callId, error);
         } completed:nil];
     };
     
@@ -232,8 +247,12 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     
     if ([context respondsToSelector:@selector(setStateChanged:)])
     {
-        [context setStateChanged:^(int32_t callState, int32_t videoState, int32_t remoteVideoState, int32_t remoteAudioState, int32_t remoteBatteryLevel, float remotePreferredAspectRatio)
+        __weak TGCallWebrtcRuntime *weakRuntime = self;
+        [context setStateChanged:^(int32_t callState, int32_t __unused videoState, int32_t remoteVideoState, int32_t remoteAudioState, int32_t __unused remoteBatteryLevel, float __unused remotePreferredAspectRatio)
          {
+             __strong TGCallWebrtcRuntime *strongRuntime = weakRuntime;
+             if (strongRuntime != nil && strongRuntime.remoteMediaChanged != nil)
+                 strongRuntime.remoteMediaChanged(remoteVideoState, remoteAudioState);
              TGCallTransmissionState transmissionState = TGCallTransmissionStateInitializing;
              
              switch (callState)
@@ -279,6 +298,36 @@ static NSString *TGIOS6CurrentCallsConfig = nil;
     
     if ([self.context respondsToSelector:@selector(addSignalingData:)])
         [self.context addSignalingData:data];
+}
+
++ (bool)supportsVideoSending
+{
+    Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+    return contextClass != nil && [contextClass respondsToSelector:@selector(supportsVideoSending)] && [contextClass supportsVideoSending];
+}
+
++ (bool)supportsVideoReceiving
+{
+    Class contextClass = NSClassFromString(@"OngoingCallThreadLocalContextWebrtc");
+    return contextClass != nil && [contextClass respondsToSelector:@selector(supportsVideoReceiving)] && [contextClass supportsVideoReceiving];
+}
+
+- (void)setOutgoingVideoEnabled:(bool)enabled
+{
+    if (self.context != nil && [self.context respondsToSelector:@selector(setOutgoingVideoEnabled:)])
+        [self.context setOutgoingVideoEnabled:enabled];
+}
+
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer
+{
+    if (self.context != nil && [self.context respondsToSelector:@selector(setVideoCapturer:)])
+        [self.context setVideoCapturer:capturer];
+}
+
+- (void)setIncomingVideoView:(TGCallVideoView *)view
+{
+    if (self.context != nil && [self.context respondsToSelector:@selector(setIncomingVideoView:)])
+        [self.context setIncomingVideoView:view];
 }
 
 - (void)setMuted:(bool)muted
@@ -432,6 +481,14 @@ const NSTimeInterval TGCallPacketTimeout = 10;
     NSUInteger _receivedSignalingPackets;
     NSMutableArray *_pendingSignalingData;
     TGCallWebrtcRuntime *_webrtcRuntime;
+
+    SPipe *_videoPipe;
+    bool _localVideoEnabled;
+    int32_t _remoteVideoState;
+    bool _remoteMuted;
+    TGCallVideoCapturer *_videoCapturer;
+    __weak TGCallVideoView *_incomingVideoView;
+    bool _speakerForcedForVideo;
 }
 
 @property (nonatomic, copy) void (^hangUpCompletion)(void);
@@ -464,6 +521,7 @@ const NSTimeInterval TGCallPacketTimeout = 10;
         
         _audioTogglesPipe = [[SPipe alloc] init];
         [self _updateAudioToggles];
+        _videoPipe = [[SPipe alloc] init];
         
         _applicationWillResignActiveProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(applicationWillResignActive:) name:UIApplicationWillResignActiveNotification];
         _applicationDidBecomeActiveProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(applicationDidBecomeActive:) name:UIApplicationDidBecomeActiveNotification];
@@ -483,6 +541,7 @@ const NSTimeInterval TGCallPacketTimeout = 10;
 
 - (void)dealloc
 {
+    [_videoCapturer stop];
     [_webrtcRuntime stopWithCompletion:nil];
     [_disposable dispose];
     [_networkDisposable dispose];
@@ -649,7 +708,7 @@ static void loggingFunction(NSString *string)
                                if (tranmissionState == TGCallTransmissionStateReconnecting)
                                {
                                    if (_webrtcRuntime.started)
-                                       TGLog(@"CALL webrtc.skipTone reconnecting");
+                                       TGDiagnosticLog(@"CALL webrtc.skipTone reconnecting");
                                    else
                                        [self playTone:TGCallToneConnecting];
                                }
@@ -687,7 +746,7 @@ static void loggingFunction(NSString *string)
                                if (tranmissionState == TGCallTransmissionStateReconnecting)
                                {
                                    if (_webrtcRuntime.started)
-                                       TGLog(@"CALL webrtc.skipTone reconnecting");
+                                       TGDiagnosticLog(@"CALL webrtc.skipTone reconnecting");
                                    else
                                        [self playTone:TGCallToneConnecting];
                                }
@@ -831,6 +890,10 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      _webrtcRuntime = [[TGCallWebrtcRuntime alloc] init];
                  
                  __weak TGCallSession *weakSession = self;
+                 _webrtcRuntime.remoteMediaChanged = ^(int32_t videoState, int32_t audioState) {
+                     __strong TGCallSession *strongSession = weakSession;
+                     [strongSession _remoteMediaChangedWithVideoState:videoState audioState:audioState];
+                 };
                  bool runtimeStarted = [_webrtcRuntime startWithState:state outgoing:_outgoing logPath:logPath statsLogPath:statsLogPath signalBarsChanged:^(int32_t bars) {
                      __strong TGCallSession *strongSession = weakSession;
                      if (strongSession != nil)
@@ -844,13 +907,14 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                  if (runtimeStarted) {
                      [self _flushPendingSignalingData];
                      [_webrtcRuntime setMuted:_muted];
+                     [self _webrtcRuntimeDidStart];
                      [self startNetworkTypeMonitoring];
                      if (self.onStartedConnecting != nil)
                          self.onStartedConnecting();
                      return;
                  }
                  
-                 TGLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
+                 TGDiagnosticLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
                  [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
                  return;
              }
@@ -878,6 +942,10 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                          _webrtcRuntime = [[TGCallWebrtcRuntime alloc] init];
                      
                      __weak TGCallSession *weakSession = self;
+                     _webrtcRuntime.remoteMediaChanged = ^(int32_t videoState, int32_t audioState) {
+                         __strong TGCallSession *strongSession = weakSession;
+                         [strongSession _remoteMediaChangedWithVideoState:videoState audioState:audioState];
+                     };
                      bool runtimeStarted = [_webrtcRuntime startWithState:state outgoing:_outgoing logPath:logPath statsLogPath:statsLogPath signalBarsChanged:^(int32_t bars) {
                          __strong TGCallSession *strongSession = weakSession;
                          if (strongSession != nil)
@@ -891,12 +959,13 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                      if (runtimeStarted) {
                          [self _flushPendingSignalingData];
                          [_webrtcRuntime setMuted:_muted];
+                         [self _webrtcRuntimeDidStart];
                          [self startNetworkTypeMonitoring];
                          didStartTransmission = true;
                          return nil;
                      }
                      
-                     TGLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
+                     TGDiagnosticLog(@"CALL webrtc.engine.missing call=%lld storedWebRtc=%d usingLegacyLibtgvoip=0 signalingApiReady=1 hardBlock=1", state.callId, (int)state.connection.webrtcConnections.count);
                      [self _discardCurrentCallWithReason:TGCallDiscardReasonDisconnect];
                      return nil;
                  }
@@ -923,7 +992,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                          
                          if (inet_aton(connection.ipv4.UTF8String, &addrIpV4) == 0)
                          {
-                             TGLog(@"CALL voip.endpoint.skip call=%lld id=%lld reason=invalidIPv4 ip=%@",
+                             TGDiagnosticLog(@"CALL voip.endpoint.skip call=%lld id=%lld reason=invalidIPv4 ip=%@",
                                    state.callId,
                                    connection.identifier,
                                    connection.ipv4);
@@ -975,7 +1044,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                          
                          if (!inet_aton(connection.ipv4.UTF8String, &addrIpV4))
                          {
-                             TGLog(@"CallSession: invalid ipv4 address %@",
+                             TGDiagnosticLog(@"CallSession: invalid ipv4 address %@",
                                    connection.ipv4);
                              continue;
                          }
@@ -994,7 +1063,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                                         connection.ipv6.UTF8String,
                                         &addrIpV6))
                          {
-                             TGLog(@"CallSession: invalid ipv6 address %@",
+                             TGDiagnosticLog(@"CallSession: invalid ipv6 address %@",
                                    connection.ipv6);
                              continue;
                          }
@@ -1067,7 +1136,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
                  switch (p2pMode)
                  {
                      case 0:
-                         allowP2P = [TGDatabaseInstance() uidIsRemoteContact:(int32_t)state.peerId];
+                         allowP2P = [TGDatabaseInstance() uidIsRemoteContact:state.peerId];
                          break;
                          
                      case 2:
@@ -1132,6 +1201,13 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
     {
         [_pendingSignalingData removeAllObjects];
     }
+    TGDispatchOnMainThread(^
+    {
+        [_videoCapturer stop];
+        _localVideoEnabled = false;
+        _remoteVideoState = 0;
+        [self _updateVideoState];
+    });
     if (_webrtcRuntime.started) {
         TGCallWebrtcRuntime *runtime = _webrtcRuntime;
         _webrtcRuntime = nil;
@@ -1456,7 +1532,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         if (notification == nil)
             return;
         
-        TGUser *peer = [TGDatabaseInstance() loadUser:(int)peerId];
+        TGUser *peer = [TGDatabaseInstance() loadUser:peerId];
         NSString *peerName = peer.displayName;
         if (peerName.length == 0)
             peerName = TGLocalized(@"Call.UnknownCaller");
@@ -1468,7 +1544,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         int globalMessageSoundId = 1;
         bool notFound = false;
         
-        [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 1 soundId:&globalMessageSoundIdVal muteUntil:NULL previewText:NULL messagesMuted:NULL notFound:&notFound];
+        [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsPrivate soundId:&globalMessageSoundIdVal muteUntil:NULL previewText:NULL messagesMuted:NULL notFound:&notFound];
         if (notFound) {
             globalMessageSoundId = 1;
         }
@@ -1480,7 +1556,7 @@ static void signalBarsCallback(tgvoip::VoIPController *controller, int bars)
         
         NSNumber *soundIdVal = nil;
         int soundId = 1;
-        [TGDatabaseInstance() loadPeerNotificationSettings:(int32_t)peerId soundId:&soundIdVal muteUntil:NULL previewText:NULL messagesMuted:NULL notFound:&notFound];
+        [TGDatabaseInstance() loadPeerNotificationSettings:peerId soundId:&soundIdVal muteUntil:NULL previewText:NULL messagesMuted:NULL notFound:&notFound];
         
         if (soundIdVal != nil) {
             soundId = soundIdVal.intValue;
@@ -1580,6 +1656,7 @@ static id<SDisposable> audioSession;
              return;
          }
          
+         const CFAbsoluteTime startedTime = CFAbsoluteTimeGetCurrent();
          audioSession = [[TGAudioSessionManager instance] requestSessionWithType:TGAudioSessionTypeCall interrupted:^{}];
          
          if (iosMajorVersion() >= 6)
@@ -1592,6 +1669,7 @@ static id<SDisposable> audioSession;
              Float32 duration = (Float32)[TGAudioSessionManager callPreferredIOBufferDuration];
              AudioSessionSetProperty(kAudioSessionProperty_PreferredHardwareIOBufferDuration, sizeof(duration), &duration);
          }
+         syslog(LOG_NOTICE, "IOS6MEDIA audio.session ms=%d", (int)((CFAbsoluteTimeGetCurrent() - startedTime) * 1000.0));
          
          TGDispatchOnMainThread(^
                                 {
@@ -1697,6 +1775,155 @@ static id<SDisposable> audioSession;
 - (void)_updateAudioToggles
 {
     _audioTogglesPipe.sink(@true);
+}
+
+#pragma mark - Video
+
++ (bool)supportsVideoSending
+{
+    return [TGCallWebrtcRuntime supportsVideoSending];
+}
+
++ (bool)supportsVideoReceiving
+{
+    return [TGCallWebrtcRuntime supportsVideoReceiving];
+}
+
+- (bool)localVideoEnabled
+{
+    return _localVideoEnabled;
+}
+
+- (TGCallVideoCapturer *)videoCapturer
+{
+    return _videoCapturer;
+}
+
+- (void)setOutgoingVideoEnabled:(bool)enabled
+{
+    TGDispatchOnMainThread(^
+    {
+        bool value = enabled && [TGCallSession supportsVideoSending];
+        if (value == _localVideoEnabled)
+            return;
+        _localVideoEnabled = value;
+        if (value)
+        {
+            if (_videoCapturer == nil)
+                _videoCapturer = [[TGCallVideoCapturer alloc] initWithMediaQueue:[TGCallSession audioQueue]];
+            [_videoCapturer start];
+            [self _routeToSpeakerForVideo];
+        }
+        else
+        {
+            [_videoCapturer stop];
+        }
+        if (_webrtcRuntime.started)
+        {
+            if (value)
+                [_webrtcRuntime setVideoCapturer:_videoCapturer];
+            [_webrtcRuntime setOutgoingVideoEnabled:value];
+        }
+        [self _updateVideoState];
+    });
+}
+
+- (void)switchCamera
+{
+    TGDispatchOnMainThread(^
+    {
+        [_videoCapturer switchCamera];
+        [self _updateVideoState];
+    });
+}
+
+- (void)setIncomingVideoView:(TGCallVideoView *)view
+{
+    TGDispatchOnMainThread(^
+    {
+        _incomingVideoView = view;
+        if (_webrtcRuntime.started)
+            [_webrtcRuntime setIncomingVideoView:view];
+    });
+}
+
+- (void)_webrtcRuntimeDidStart
+{
+    TGDispatchOnMainThread(^
+    {
+        if (!_webrtcRuntime.started)
+            return;
+        if (_incomingVideoView != nil)
+            [_webrtcRuntime setIncomingVideoView:_incomingVideoView];
+        if (_localVideoEnabled)
+        {
+            [_webrtcRuntime setVideoCapturer:_videoCapturer];
+            [_webrtcRuntime setOutgoingVideoEnabled:true];
+        }
+    });
+}
+
+- (void)_remoteMediaChangedWithVideoState:(int32_t)videoState audioState:(int32_t)audioState
+{
+    TGDispatchOnMainThread(^
+    {
+        const bool changed = _remoteVideoState != videoState || _remoteMuted != (audioState == 0);
+        _remoteVideoState = videoState;
+        _remoteMuted = audioState == 0;
+        if (videoState == 1)
+            [self _routeToSpeakerForVideo];
+        if (changed)
+            [self _updateVideoState];
+    });
+}
+
+static bool TGCallOutputIsBuiltInReceiver()
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+    if (iosMajorVersion() >= 6)
+    {
+        AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+        NSArray *outputs = audioSession.currentRoute.outputs;
+        for (AVAudioSessionPortDescription *output in outputs)
+        {
+            if (![output.portType isEqualToString:AVAudioSessionPortBuiltInReceiver])
+                return false;
+        }
+        return outputs.count != 0;
+    }
+#endif
+    CFStringRef routeString = NULL;
+    UInt32 routeStringSize = sizeof(routeString);
+    if (AudioSessionGetProperty(kAudioSessionProperty_AudioRoute, &routeStringSize, &routeString) != noErr || routeString == NULL)
+        return false;
+    bool receiver = CFStringFind(routeString, CFSTR("Receiver"), 0).location != kCFNotFound && CFStringFind(routeString, CFSTR("Headset"), 0).location == kCFNotFound;
+    CFRelease(routeString);
+    return receiver;
+}
+
+- (void)_routeToSpeakerForVideo
+{
+    if (_speakerForcedForVideo || _speaker)
+        return;
+    __weak TGCallSession *weakSelf = self;
+    [[TGCallSession audioQueue] dispatch:^
+    {
+        if (!TGCallOutputIsBuiltInReceiver())
+            return;
+        TGDispatchOnMainThread(^
+        {
+            __strong TGCallSession *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf->_speakerForcedForVideo || strongSelf->_speaker)
+                return;
+            strongSelf->_speakerForcedForVideo = true;
+            [strongSelf toggleSpeaker];
+        });
+    }];
+}
+
+- (void)_updateVideoState
+{
+    _videoPipe.sink(@true);
 }
 
 - (void)_startRingtonePlayer
@@ -1806,7 +2033,7 @@ static id<SDisposable> audioSession;
     _internalId = state.internalId;
     if (state.peerId != 0)
     {
-        TGUser *resolvedPeer = [TGDatabaseInstance() loadUser:(int32_t)state.peerId];
+        TGUser *resolvedPeer = [TGDatabaseInstance() loadUser:state.peerId];
         if (resolvedPeer != nil)
         {
             _peer = resolvedPeer;
@@ -1941,7 +2168,7 @@ static id<SDisposable> audioSession;
     }
     
     if (state.error != nil)
-        TGLog(@"Call Session: failed with error: %@", state.error);
+        TGDiagnosticLog(@"Call Session: failed with error: %@", state.error);
     
     _statePipe.sink(state);
 }
@@ -1957,7 +2184,7 @@ static id<SDisposable> audioSession;
 {
     __weak TGCallSession *weakSelf = self;
     
-    SSignal *combinedSignal = [SSignal combineSignals:@[_state.signal, _signalBarsState.signal, [self audioContextSignal], _transmissionState.signal, _audioTogglesPipe.signalProducer()] withInitialStates:@[ [NSNull null], @0, [NSNull null], @0, @0 ]];
+    SSignal *combinedSignal = [SSignal combineSignals:@[_state.signal, _signalBarsState.signal, [self audioContextSignal], _transmissionState.signal, _audioTogglesPipe.signalProducer(), _videoPipe.signalProducer()] withInitialStates:@[ [NSNull null], @0, [NSNull null], @0, @0, @0 ]];
     
     return [[combinedSignal deliverOn:[SQueue mainQueue]] map:^id(NSArray *values)
             {
@@ -1968,7 +2195,7 @@ static id<SDisposable> audioSession;
                 TGCallStateData *stateData = [values[0] isKindOfClass:[NSNull class]] ? nil : (TGCallStateData *)values[0];
                 if (stateData != nil && stateData.peerId != 0)
                 {
-                    TGUser *resolvedPeer = [TGDatabaseInstance() loadUser:(int32_t)stateData.peerId];
+                    TGUser *resolvedPeer = [TGDatabaseInstance() loadUser:stateData.peerId];
                     if (resolvedPeer != nil)
                     {
                         strongSelf->_peer = resolvedPeer;
@@ -1981,7 +2208,7 @@ static id<SDisposable> audioSession;
                 bool muted = strongSelf->_muted;
                 bool speaker = strongSelf->_targetSpeaker ? strongSelf->_targetSpeaker.boolValue : audioContext.speaker;
                 
-                return [[TGCallSessionState alloc] initWithOutgoing:strongSelf->_outgoing callStateData:stateData transmissionState:transmissionState peer:strongSelf->_peer keySha256:strongSelf->_keySha256 startTime:strongSelf->_startTime signalBars:signalBars mute:muted speaker:speaker audioRoutes:audioContext.availableRoutes activeAudioRoute:audioContext.activeRoute];
+                return [[TGCallSessionState alloc] initWithOutgoing:strongSelf->_outgoing callStateData:stateData transmissionState:transmissionState peer:strongSelf->_peer keySha256:strongSelf->_keySha256 startTime:strongSelf->_startTime signalBars:signalBars mute:muted speaker:speaker audioRoutes:audioContext.availableRoutes activeAudioRoute:audioContext.activeRoute isVideoCall:strongSelf.isVideoCall canSendVideo:[TGCallSession supportsVideoSending] localVideoEnabled:strongSelf->_localVideoEnabled remoteVideoActive:strongSelf->_remoteVideoState == 1 remoteVideoPaused:strongSelf->_remoteVideoState == 2 remoteMuted:strongSelf->_remoteMuted];
             }];
 }
 
@@ -2220,7 +2447,7 @@ static id<SDisposable> audioSession;
 
 @implementation TGCallSessionState
 
-- (instancetype)initWithOutgoing:(bool)outgoing callStateData:(TGCallStateData *)stateData transmissionState:(TGCallTransmissionState)transmissionState peer:(TGUser *)peer keySha256:(NSData *)keySha256 startTime:(CFAbsoluteTime)startTime signalBars:(NSInteger)signalBars mute:(bool)mute speaker:(bool)speaker audioRoutes:(NSArray *)audioRoutes activeAudioRoute:(TGAudioRoute *)activeAudioRoute
+- (instancetype)initWithOutgoing:(bool)outgoing callStateData:(TGCallStateData *)stateData transmissionState:(TGCallTransmissionState)transmissionState peer:(TGUser *)peer keySha256:(NSData *)keySha256 startTime:(CFAbsoluteTime)startTime signalBars:(NSInteger)signalBars mute:(bool)mute speaker:(bool)speaker audioRoutes:(NSArray *)audioRoutes activeAudioRoute:(TGAudioRoute *)activeAudioRoute isVideoCall:(bool)isVideoCall canSendVideo:(bool)canSendVideo localVideoEnabled:(bool)localVideoEnabled remoteVideoActive:(bool)remoteVideoActive remoteVideoPaused:(bool)remoteVideoPaused remoteMuted:(bool)remoteMuted
 {
     self = [super init];
     if (self != nil)
@@ -2237,6 +2464,12 @@ static id<SDisposable> audioSession;
         _speaker = speaker;
         _audioRoutes = audioRoutes;
         _activeAudioRoute = activeAudioRoute;
+        _isVideoCall = isVideoCall;
+        _canSendVideo = canSendVideo;
+        _localVideoEnabled = localVideoEnabled;
+        _remoteVideoActive = remoteVideoActive;
+        _remoteVideoPaused = remoteVideoPaused;
+        _remoteMuted = remoteMuted;
     }
     return self;
 }

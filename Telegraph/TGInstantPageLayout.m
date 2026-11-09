@@ -1460,7 +1460,8 @@ typedef enum {
                 if (presentation.fontSerif)
                     [styleStack pushItem:[[TGInstantPageStyleFontSerifItem alloc] initWithSerif:true]];
                 
-                TGInstantPageTextItem *textItem = [self layoutTextItemWithString:[self attributedStringForRichText:[[TGRichTextPlain alloc] initWithText:[NSString stringWithFormat:@"%d.", (int)i + 1]] styleStack:styleStack] boundingWidth:boundingWidth - horizontalInset - horizontalInset];
+                NSString *label = i < listBlock.indices.count ? listBlock.indices[i] : [NSString stringWithFormat:@"%d.", (int)i + 1];
+                TGInstantPageTextItem *textItem = [self layoutTextItemWithString:[self attributedStringForRichText:[[TGRichTextPlain alloc] initWithText:label] styleStack:styleStack] boundingWidth:boundingWidth - horizontalInset - horizontalInset];
                 maxIndexWidth = MAX(((TGInstantPageTextLine *)textItem->_lines.firstObject).frame.size.width, maxIndexWidth);
                 [indexItems addObject:textItem];
             } else {
@@ -1470,25 +1471,43 @@ typedef enum {
         }
         NSInteger index = -1;
         CGFloat indexSpacing = listBlock.ordered ? 7.0f : 20.0f;
-        for (TGRichText *text in listBlock.items) {
+        for (id item in listBlock.items) {
             index++;
             if (index != 0) {
                 contentSize.height += 20.0f;
             }
-            TGInstantPageStyleStack *styleStack = [[TGInstantPageStyleStack alloc] init];
-            [styleStack pushItem:[[TGInstantPageStyleFontSizeItem alloc] initWithSize:round(17.0f * multiplier)]];
-            [styleStack pushItem:[[TGInstantPageStyleTextColorItem alloc] initWithColor:presentation.textColor]];
-            if (presentation.fontSerif)
-                [styleStack pushItem:[[TGInstantPageStyleFontSerifItem alloc] initWithSerif:true]];
-            
-            TGInstantPageTextItem *textItem = [self layoutTextItemWithString:[self attributedStringForRichText:text styleStack:styleStack] boundingWidth:boundingWidth - horizontalInset - horizontalInset - indexSpacing - maxIndexWidth];
-            textItem.frame = CGRectOffset(textItem.frame, horizontalInset + indexSpacing + maxIndexWidth, contentSize.height);
-            
-            contentSize.height += textItem.frame.size.height;
+            CGFloat itemOrigin = contentSize.height;
+            CGFloat textInset = horizontalInset + indexSpacing + maxIndexWidth;
+            CGFloat textWidth = MAX(1.0f, boundingWidth - textInset - horizontalInset);
+            if ([item isKindOfClass:[NSArray class]]) {
+                TGInstantPageBlock *previousBlock = nil;
+                CGFloat subblocksHeight = 0.0f;
+                for (TGInstantPageBlock *subBlock in (NSArray *)item) {
+                    if (previousBlock != nil)
+                        subblocksHeight += spacingBetweenBlocks(previousBlock, subBlock);
+                    TGInstantPageLayout *subLayout = [self layoutBlock:subBlock boundingWidth:textWidth horizontalInset:0.0f isCover:false previousItems:listItems fillToWidthAndHeight:false images:images videos:videos documents:documents webPage:webPage peerId:peerId messageId:messageId mediaIndexCounter:mediaIndexCounter embedIndexCounter:embedIndexCounter overlay:overlay presentation:presentation groupedId:groupedId];
+                    for (id<TGInstantPageLayoutItem> subItem in subLayout.items) {
+                        subItem.frame = CGRectOffset(subItem.frame, textInset, itemOrigin + subblocksHeight);
+                        [listItems addObject:subItem];
+                    }
+                    subblocksHeight += subLayout.contentSize.height;
+                    previousBlock = subBlock;
+                }
+                contentSize.height += MAX(subblocksHeight, round(17.0f * multiplier));
+            } else {
+                TGInstantPageStyleStack *styleStack = [[TGInstantPageStyleStack alloc] init];
+                [styleStack pushItem:[[TGInstantPageStyleFontSizeItem alloc] initWithSize:round(17.0f * multiplier)]];
+                [styleStack pushItem:[[TGInstantPageStyleTextColorItem alloc] initWithColor:presentation.textColor]];
+                if (presentation.fontSerif)
+                    [styleStack pushItem:[[TGInstantPageStyleFontSerifItem alloc] initWithSerif:true]];
+                TGInstantPageTextItem *textItem = [self layoutTextItemWithString:[self attributedStringForRichText:item styleStack:styleStack] boundingWidth:textWidth];
+                textItem.frame = CGRectOffset(textItem.frame, textInset, itemOrigin);
+                contentSize.height += textItem.frame.size.height;
+                [listItems addObject:textItem];
+            }
             id<TGInstantPageLayoutItem> indexItem = indexItems[index];
-            indexItem.frame = CGRectOffset(indexItem.frame, horizontalInset, textItem.frame.origin.y);
+            indexItem.frame = CGRectOffset(indexItem.frame, horizontalInset, itemOrigin);
             [listItems addObject:indexItem];
-            [listItems addObject:textItem];
         }
         return [[TGInstantPageLayout alloc] initWithOrigin:CGPointMake(0.0f, 0.0f) contentSize:contentSize items:listItems];
     } else if ([block isKindOfClass:[TGInstantPageBlockBlockQuote class]]) {

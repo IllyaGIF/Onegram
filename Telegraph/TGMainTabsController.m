@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGMainTabsController.h"
 #import "../OnegramPlatform/OGPlatformGraphics.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
@@ -248,6 +249,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         {
             if (count < 1000)
                 text = [[NSString alloc] initWithFormat:@"%d", count];
+            else if (TGOnegramUsesExactNumbers())
+                text = TGOnegramExactCountString(count);
             else if (count < 1000000)
                 text = [[NSString alloc] initWithFormat:@"%dK", count / 1000];
             else
@@ -292,12 +295,19 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 @end
 
+static const CGFloat TGTabBarButtonAvatarSide = 26.0f;
+static const CGFloat TGTabBarButtonAvatarRingSide = 31.0f;
+
 @interface TGTabBarButton : UIView
 {
     UILabel *_label;
     TGPresentation *_presentation;
     UIImage *_classicSelectedImage;
     CAGradientLayer *_classicSelectionLayer;
+    TGLetteredAvatarView *_avatarView;
+    UIView *_avatarRingView;
+    TGUser *_avatarUser;
+    NSString *_avatarUrl;
 }
 
 @property (nonatomic, readonly) UIImageView *imageView;
@@ -308,6 +318,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 - (void)setClassicSelectedImage:(UIImage *)image;
 - (void)setTitle:(NSString *)title;
+- (void)setAvatarUser:(TGUser *)user;
 
 @end
 
@@ -368,7 +379,96 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     TGMainTabsApplyTabLabelStyle(_label, presentation);
     _label.font = TGMainTabsTabLabelFont(_landscape);
     [_label sizeToFit];
+    [self updateAvatarRing];
     [self setNeedsLayout];
+}
+
+- (void)setAvatarUser:(TGUser *)user
+{
+    if (user == nil)
+    {
+        [_avatarView removeFromSuperview];
+        _avatarView = nil;
+        [_avatarRingView removeFromSuperview];
+        _avatarRingView = nil;
+        _avatarUser = nil;
+        _avatarUrl = nil;
+        _imageView.hidden = false;
+        return;
+    }
+
+    if (_avatarView == nil)
+    {
+        _avatarRingView = [[UIView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, TGTabBarButtonAvatarRingSide, TGTabBarButtonAvatarRingSide)];
+        _avatarRingView.userInteractionEnabled = false;
+        _avatarRingView.backgroundColor = [UIColor clearColor];
+        _avatarRingView.layer.cornerRadius = TGTabBarButtonAvatarRingSide / 2.0f;
+        _avatarRingView.layer.borderWidth = 1.5f;
+        [self addSubview:_avatarRingView];
+
+        _avatarView = [[TGLetteredAvatarView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, TGTabBarButtonAvatarSide, TGTabBarButtonAvatarSide)];
+        _avatarView.userInteractionEnabled = false;
+        [_avatarView setSingleFontSize:11.0f doubleFontSize:11.0f useBoldFont:true];
+        _avatarView.fadeTransition = true;
+        __weak TGTabBarButton *weakSelf = self;
+        _avatarView.progressHandler = ^(TGRemoteImageView *imageView, float progress)
+        {
+            __strong TGTabBarButton *strongSelf = weakSelf;
+            if (strongSelf != nil && progress >= 1.0f && [imageView currentImage] == nil)
+                TGLog(@"TABAVATAR load failed url=%@", strongSelf->_avatarUrl);
+        };
+        [self addSubview:_avatarView];
+    }
+
+    NSString *avatarUrl = user.photoFullUrlSmall.length != 0 ? user.photoFullUrlSmall : user.photoUrlSmall;
+    bool changed = _avatarUser.uid != user.uid || !TGStringCompare(_avatarUrl, avatarUrl) || !TGStringCompare(_avatarUser.firstName, user.firstName) || !TGStringCompare(_avatarUser.lastName, user.lastName);
+    _avatarUser = user;
+    _avatarUrl = avatarUrl;
+    if (changed)
+        [self loadAvatarImage];
+    else
+        [self reloadAvatarImageIfFailed];
+
+    _imageView.hidden = true;
+    [self updateAvatarRing];
+    [self setNeedsLayout];
+}
+
+- (void)loadAvatarImage
+{
+    UIImage *placeholder = [_presentation.images avatarPlaceholderWithDiameter:TGTabBarButtonAvatarSide];
+    if (_avatarUrl.length != 0)
+        [_avatarView loadImage:_avatarUrl filter:[[NSString alloc] initWithFormat:@"circle:%.0fx%.0f", TGTabBarButtonAvatarSide, TGTabBarButtonAvatarSide] placeholder:placeholder];
+    else
+        [_avatarView loadUserPlaceholderWithSize:CGSizeMake(TGTabBarButtonAvatarSide, TGTabBarButtonAvatarSide) uid:_avatarUser.uid firstName:_avatarUser.firstName lastName:_avatarUser.lastName placeholder:placeholder];
+}
+
+- (void)reloadAvatarImageIfFailed
+{
+    if (_avatarView != nil && _avatarUrl.length != 0 && [_avatarView currentImage] == nil)
+        [self loadAvatarImage];
+}
+
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+    if (self.window != nil)
+        [self reloadAvatarImageIfFailed];
+}
+
+- (void)updateAvatarRing
+{
+    _avatarRingView.layer.borderColor = (_presentation.pallete.tabActiveIconColor ?: [UIColor blackColor]).CGColor;
+    _avatarRingView.hidden = !_selected;
+}
+
+- (void)layoutAvatar
+{
+    if (_avatarView == nil)
+        return;
+    CGPoint center = _imageView.center;
+    _avatarView.center = center;
+    _avatarRingView.center = center;
 }
 
 - (void)setClassicSelectedImage:(UIImage *)image
@@ -391,11 +491,14 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 - (void)setSelected:(bool)selected
 {
     _selected = selected;
+    if (selected)
+        [self reloadAvatarImageIfFailed];
     _classicSelectionLayer.hidden = _classicSelectedImage == nil || !selected || [TGPresentation brandedIOS6Style];
     if (_imageView.highlightedImage == nil && selected)
         _imageView.highlightedImage = _classicSelectedImage != nil ? _classicSelectedImage : TGTintedImage(_imageView.image, [TGPresentation classicIOS6Style] ? TGMainTabsClassicSelectedColor(_presentation) : _presentation.pallete.tabActiveIconColor);
     _imageView.highlighted = selected;
     _label.highlighted = selected;
+    [self updateAvatarRing];
 }
 
 - (void)setContentCenterX:(CGFloat)contentCenterX
@@ -443,6 +546,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     if ([TGPresentation brandedIOS6Style] && !_landscape)
     {
         [self layoutBrandedPortrait];
+        [self layoutAvatar];
         return;
     }
 
@@ -486,6 +590,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         _imageView.center = CGPointMake(self.frame.size.width / 2, imageVerticalOffset + _imageView.bounds.size.height / 2.0f);
         _label.frame = CGRectMake(round((self.frame.size.width - _label.frame.size.width) / 2.0f), [self labelVerticalOffset], _label.frame.size.width, _label.frame.size.height);
     }
+    [self layoutAvatar];
 }
 
 - (void)setLandscape:(bool)landscape
@@ -549,8 +654,11 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 @property (nonatomic, strong) TGTabBarButton *callsButton;
 @property (nonatomic, strong) TGTabBarButton *chatsButton;
 @property (nonatomic, strong) TGTabBarButton *settingsButton;
+@property (nonatomic, strong) TGTabBarButton *profileButton;
 @property (nonatomic, assign) bool callsHidden;
 @property (nonatomic, assign) bool contactsHidden;
+@property (nonatomic, assign) bool profileHidden;
+@property (nonatomic, strong) NSArray *displayOrder;
 
 @property (nonatomic, strong) TGTabBarBadge *callsBadge;
 @property (nonatomic, strong) TGTabBarBadge *messagesBadge;
@@ -562,6 +670,13 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 
 @property (nonatomic, strong) TGPresentation *presentation;
+
++ (NSArray *)classicDisplayOrder;
++ (NSArray *)modernDisplayOrder;
+- (void)setModernLayout:(bool)modernLayout animated:(bool)animated;
+- (void)setProfileUser:(TGUser *)user;
+- (NSArray *)visibleTabButtons;
+
 @end
 
 @implementation TGTabBar
@@ -573,6 +688,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     [_callsButton setTitle:TGStartupLocalized(@"Calls.TabTitle")];
     [_chatsButton setTitle:TGStartupLocalized(@"DialogList.TabTitle")];
     [_settingsButton setTitle:TGStartupLocalized(@"Settings.TabTitle")];
+    [_profileButton setTitle:TGLocalized(@"OnegramProfile.TabTitle")];
 }
 
 - (void)dealloc
@@ -636,6 +752,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         _settingsButton = [[TGTabBarButton alloc] initWithImage:settingsImage title:settingsTitle presentation:presentation];
         buttonPhaseStart = CFAbsoluteTimeGetCurrent();
         _callsButton = [[TGTabBarButton alloc] initWithImage:callsImage title:callsTitle presentation:presentation];
+        _profileButton = [[TGTabBarButton alloc] initWithImage:presentation.images.tabBarProfileIcon title:TGLocalized(@"OnegramProfile.TabTitle") presentation:presentation];
         phaseStart = CFAbsoluteTimeGetCurrent();
         if ([TGPresentation classicIOS6Style])
         {
@@ -657,11 +774,16 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
         _callsHidden = true;
         _callsButton.hidden = true;
         _callsButton.alpha = 0.0f;
+        _profileHidden = true;
+        _profileButton.hidden = true;
+        _profileButton.alpha = 0.0f;
         
         [_tabButtons addObject:_contactsButton];
         [_tabButtons addObject:_callsButton];
         [_tabButtons addObject:_chatsButton];
         [_tabButtons addObject:_settingsButton];
+        [_tabButtons addObject:_profileButton];
+        _displayOrder = [TGTabBar classicDisplayOrder];
         
         for (TGTabBarButton *button in _tabButtons)
         {
@@ -747,6 +869,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     [_chatsButton setImage:chatsImage presentation:presentation];
     [_settingsButton setImage:settingsImage presentation:presentation];
     [_callsButton setImage:callsImage presentation:presentation];
+    [_profileButton setImage:presentation.images.tabBarProfileIcon presentation:presentation];
     
     [_messagesBadge setPresentation:presentation];
     [_callsBadge setPresentation:presentation];
@@ -762,24 +885,68 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     return CGFloor(width / 21.5f);
 }
 
++ (NSArray *)classicDisplayOrder
+{
+    return @[@0, @1, @2, @3, @4];
+}
+
++ (NSArray *)modernDisplayOrder
+{
+    return @[@2, @0, @1, @3, @4];
+}
+
 - (bool)isTabButtonHidden:(TGTabBarButton *)button
 {
     if (button == _callsButton)
         return _callsHidden;
     if (button == _contactsButton)
         return _contactsHidden;
+    if (button == _profileButton)
+        return _profileHidden;
     return false;
+}
+
+- (NSArray *)orderedTabButtons
+{
+    NSMutableArray *buttons = [[NSMutableArray alloc] initWithCapacity:_tabButtons.count];
+    for (NSNumber *logicalIndex in _displayOrder)
+    {
+        NSUInteger index = [logicalIndex unsignedIntegerValue];
+        if (index < _tabButtons.count)
+            [buttons addObject:[_tabButtons objectAtIndex:index]];
+    }
+    return buttons;
 }
 
 - (NSArray *)visibleTabButtons
 {
     NSMutableArray *buttons = [[NSMutableArray alloc] initWithCapacity:_tabButtons.count];
-    for (TGTabBarButton *button in _tabButtons)
+    for (TGTabBarButton *button in [self orderedTabButtons])
     {
         if (![self isTabButtonHidden:button])
             [buttons addObject:button];
     }
     return buttons;
+}
+
+- (void)setModernLayout:(bool)modernLayout animated:(bool)animated
+{
+    NSArray *displayOrder = modernLayout ? [TGTabBar modernDisplayOrder] : [TGTabBar classicDisplayOrder];
+    bool orderChanged = ![_displayOrder isEqualToArray:displayOrder];
+    bool profileChanged = _profileHidden != !modernLayout;
+    if (!orderChanged && !profileChanged)
+        return;
+    _displayOrder = displayOrder;
+    _profileHidden = !modernLayout;
+    if (profileChanged)
+        [self updateVisibilityOfTabButton:_profileButton animated:animated];
+    else
+        [self setNeedsLayout];
+}
+
+- (void)setProfileUser:(TGUser *)user
+{
+    [_profileButton setAvatarUser:user];
 }
 
 - (void)updateVisibilityOfTabButton:(TGTabBarButton *)button animated:(bool)animated
@@ -960,8 +1127,9 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     OGTabBarLayout *brandedLayout = brandedPortrait ? [[OGTheme brandedTheme].tabBarAppearance layoutForItemCount:buttonsCount] : nil;
     
     __block NSUInteger slot = 0;
-    [_tabButtons enumerateObjectsUsingBlock:^(TGTabBarButton *button, NSUInteger index, __unused BOOL *stop)
+    [[self orderedTabButtons] enumerateObjectsUsingBlock:^(TGTabBarButton *button, __unused NSUInteger orderIndex, __unused BOOL *stop)
     {
+        NSUInteger index = [_tabButtons indexOfObject:button];
         NSUInteger buttonSlot = MIN(slot, buttonsCount - 1);
         if (![self isTabButtonHidden:button])
             slot++;
@@ -1065,6 +1233,8 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     int _unreadCount;
     bool _callsHidden;
     bool _contactsHidden;
+    bool _modernTabs;
+    TGUser *_profileUser;
     NSTimeInterval _lastSameIndexTapTime;
     int _tapsInSuccession;
     
@@ -1170,11 +1340,43 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     _customTabBar.safeAreaInset = safeAreaInset;
     _customTabBar.landscape = landscape;
     _customTabBar.tabDelegate = self;
-    [_customTabBar setCallsTabHidden:_callsHidden animated:false];
+    [_customTabBar setCallsTabHidden:[self effectiveCallsHidden] animated:false];
     [_customTabBar setContactsTabHidden:_contactsHidden animated:false];
+    [_customTabBar setModernLayout:_modernTabs animated:false];
+    [_customTabBar setProfileUser:_profileUser];
     [self.view insertSubview:_customTabBar aboveSubview:self.tabBar];
     
     self.tabBar.hidden = true;
+}
+
+- (bool)effectiveCallsHidden
+{
+    return _callsHidden || _modernTabs;
+}
+
+- (bool)modernTabsEnabled
+{
+    return _modernTabs;
+}
+
+- (void)setModernTabsEnabled:(bool)enabled animated:(bool)animated
+{
+    if (_modernTabs == enabled)
+        return;
+    _modernTabs = enabled;
+    [_customTabBar setModernLayout:enabled animated:animated];
+    [_customTabBar setCallsTabHidden:[self effectiveCallsHidden] animated:animated];
+    NSUInteger selectedIndex = [self logicalSelectedIndex];
+    if (!enabled && selectedIndex == TGMainTabsProfileLogicalIndex)
+        [self setSelectedIndex:TGMainTabsSettingsLogicalIndex];
+    else if (enabled && selectedIndex == TGMainTabsCallsLogicalIndex)
+        [self setSelectedIndex:TGMainTabsChatsLogicalIndex];
+}
+
+- (void)setProfileUser:(TGUser *)user
+{
+    _profileUser = user;
+    [_customTabBar setProfileUser:user];
 }
 
 - (void)setPresentation:(TGPresentation *)presentation
@@ -1285,7 +1487,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
 {
-    if (iosMajorVersion() < 6)
+    if (iosMajorVersion() < 6 && !TGIsPad())
         return interfaceOrientation == UIInterfaceOrientationPortrait;
     
     return [TGViewController autorotationAllowed] && (interfaceOrientation != UIInterfaceOrientationPortraitUpsideDown);
@@ -1503,7 +1705,7 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     if ([TGPresentation classicIOS6Style] && ![TGPresentation brandedIOS6Style])
         hidden = true;
     _callsHidden = hidden;
-    [_customTabBar setCallsTabHidden:hidden animated:animated];
+    [_customTabBar setCallsTabHidden:[self effectiveCallsHidden] animated:animated];
 }
 
 - (void)setContactsHidden:(bool)hidden animated:(bool)animated
@@ -1554,8 +1756,10 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
     [self.view insertSubview:_customTabBar aboveSubview:self.tabBar];
     
     [_customTabBar setSelectedIndex:(int)self.selectedIndex];
-    [_customTabBar setCallsTabHidden:_callsHidden animated:false];
+    [_customTabBar setCallsTabHidden:[self effectiveCallsHidden] animated:false];
     [_customTabBar setContactsTabHidden:_contactsHidden animated:false];
+    [_customTabBar setModernLayout:_modernTabs animated:false];
+    [_customTabBar setProfileUser:_profileUser];
     [_customTabBar setMissedCallsCount:_missedCallsCount];
     [_customTabBar setUnreadCount:_unreadCount];
     
@@ -1587,11 +1791,11 @@ static void TGMainTabsConfigureClassicIOS4TitleLabel(UILabel *label, NSString *t
 }
 
 - (CGRect)frameForRightmostTab {
-    return [(TGTabBarButton *)_customTabBar.tabButtons.lastObject frame];
+    return [(TGTabBarButton *)[_customTabBar visibleTabButtons].lastObject frame];
 }
 
 - (UIView *)viewForRightmostTab {
-    return _customTabBar.tabButtons.lastObject;
+    return [_customTabBar visibleTabButtons].lastObject;
 }
 
 @end

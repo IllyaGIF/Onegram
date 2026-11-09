@@ -9,6 +9,7 @@
 #import "TGConversationSwitchCollectionItem.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/ASWatcher.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGFeedNotificationsController () <ASWatcher>
 {
@@ -123,7 +124,7 @@
             bool enabled = false;
             
             int muteUntil = [notificationSettings[@"muteUntil"] intValue];
-            enabled = (muteUntil <= [[TGTelegramNetworking instance] approximateRemoteTime]);
+            enabled = (muteUntil <= OGRemoteClockTime());
             
             item.isOn = enabled;
         });

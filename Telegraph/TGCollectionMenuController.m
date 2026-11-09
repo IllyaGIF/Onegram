@@ -1,4 +1,8 @@
 #import "TGCollectionMenuController.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -383,6 +387,9 @@ TGCollectionMenuLayoutDelegateFlowLayout
         [self controllerInsetUpdated:UIEdgeInsetsZero];
 
     [self updateBrandedScreenBackground];
+#if OG_PLUGINS_AVAILABLE
+    OGPluginUIProfileEvent(self, OGPluginUIConversationPhaseCreate);
+#endif
 }
 
 - (void)viewWillLayoutSubviews
@@ -429,6 +436,9 @@ TGCollectionMenuLayoutDelegateFlowLayout
         if (navController != nil)
             navController.interactivePopGestureRecognizer.enabled = false;
     }
+#if OG_PLUGINS_AVAILABLE
+    OGPluginUIProfileEvent(self, OGPluginUIConversationPhaseVisible);
+#endif
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -440,6 +450,9 @@ TGCollectionMenuLayoutDelegateFlowLayout
     }
     
     [super viewWillAppear:animated];
+#if OG_PLUGINS_AVAILABLE
+    OGPluginUIProfileEvent(self, OGPluginUIConversationPhaseResume);
+#endif
 }
 
 - (void)viewWillDisappear:(BOOL)animated
@@ -447,6 +460,9 @@ TGCollectionMenuLayoutDelegateFlowLayout
     if (!self.disableStopScrolling)
         [_collectionView stopScrollingAnimation];
     
+#if OG_PLUGINS_AVAILABLE
+    OGPluginUIProfileEvent(self, OGPluginUIConversationPhasePause);
+#endif
     [super viewWillDisappear:animated];
 }
 
@@ -461,6 +477,9 @@ TGCollectionMenuLayoutDelegateFlowLayout
     }
     
     [super viewDidDisappear:animated];
+#if OG_PLUGINS_AVAILABLE
+    OGPluginUIProfileEvent(self, OGPluginUIConversationPhaseHidden);
+#endif
 }
 
 

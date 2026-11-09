@@ -15,6 +15,8 @@
 @property (nonatomic, copy) void (^messagePressed)(void);
 @property (nonatomic, copy) void (^mutePressed)(void);
 @property (nonatomic, copy) void (^speakerPressed)(void);
+@property (nonatomic, copy) void (^cameraPressed)(void);
+@property (nonatomic, copy) void (^flipCameraPressed)(void);
 
 - (void)setState:(TGCallSessionState *)state;
 - (void)setBackground:(NSObject<TGPasscodeBackground> *)background;

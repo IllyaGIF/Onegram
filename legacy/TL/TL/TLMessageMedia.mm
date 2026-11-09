@@ -114,7 +114,7 @@
     object.first_name = metaObject->getString((int32_t)0xa604f05d);
     object.last_name = metaObject->getString((int32_t)0x10662e0e);
     object.vcard = metaObject->getString((int32_t)0x5116b203);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     return object;
 }
 
@@ -146,8 +146,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
 }

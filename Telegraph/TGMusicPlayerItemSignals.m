@@ -22,6 +22,8 @@
 #import "TL/TLMetaScheme.h"
 
 #import "TGTelegramNetworking.h"
+#import "TGTLDynamic.h"
+#import "TGDatabase.h"
 
 #import "TGAudioMediaAttachment+Telegraph.h"
 
@@ -365,21 +367,36 @@ static int64_t TGMusicPlayerItemAvailabilityPack(TGMusicPlayerItemAvailability v
     }];
 }
 
-NSData *cacheKeyForItemAlbumArt(TGDocumentMediaAttachment *media, bool thumbnail, bool final, bool web) {
-    int64_t documentId = 0;
-    if ([media isKindOfClass:[TGDocumentMediaAttachment class]])
-        documentId = media.documentId;
+static NSUInteger const TGMusicAlbumArtRequestLimit = 512 * 1024;
+
+static NSData *TGMusicAlbumArtCacheKey(TGDocumentMediaAttachment *document, bool thumbnail, bool final)
+{
+    NSString *key = nil;
+    if (document.documentId != 0)
+        key = [[NSString alloc] initWithFormat:@"musicAlbumArt-%lld", document.documentId];
+    else
+        key = [[NSString alloc] initWithFormat:@"musicAlbumArt-local%lld", document.localDocumentId];
     
-    NSString *key = [[NSString alloc] initWithFormat:@"musicItemAlbumArt-%lld", documentId];
     if (thumbnail)
         key = [key stringByAppendingString:@"-thumb"];
-    
     if (final)
         key = [key stringByAppendingString:@"-final"];
-    else if (web)
-        key = [key stringByAppendingString:@"-web"];
     
     return [key dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+static bool TGMusicAlbumArtFileIsComplete(TGDocumentMediaAttachment *document, NSString *path)
+{
+    NSDictionary *attributes = path.length == 0 ? nil : [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+    if (attributes == nil)
+        return false;
+    return document.size <= 0 || [attributes fileSize] >= (unsigned long long)document.size;
+}
+
+static bool TGMusicAlbumArtQueryIsValid(NSString *performer, NSString *song)
+{
+    NSString *normalizedPerformer = [[performer lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    return normalizedPerformer.length != 0 && ![normalizedPerformer isEqualToString:@"unknown artist"] && song.length != 0;
 }
 
 + (SSignal *)albumArtForItem:(TGMusicPlayerItem *)item thumbnail:(bool)thumbnail
@@ -409,112 +426,114 @@ NSData *cacheKeyForItemAlbumArt(TGDocumentMediaAttachment *media, bool thumbnail
     return [self albumArtForMedia:document path:[self pathForDocument:document messageId:messageId] performer:performer song:song thumbnail:thumbnail];
 }
 
-+ (SSignal *)albumArtForMedia:(id)media path:(NSString *)path performer:(NSString *)performer song:(NSString *)song thumbnail:(bool)thumbnail
++ (SSignal *)albumArtForMedia:(TGDocumentMediaAttachment *)document path:(NSString *)path performer:(NSString *)performer song:(NSString *)song thumbnail:(bool)thumbnail
 {
-    SSignal *(^cachedSignal)(bool, bool) = ^(bool final, bool web)
-    {
-        return [[[TGMediaStoreContext instance] temporaryFilesCache] cachedItemForKey:cacheKeyForItemAlbumArt(media, thumbnail, final, web)];
-    };
+    NSData *finalKey = TGMusicAlbumArtCacheKey(document, thumbnail, true);
+    NSData *remoteKey = TGMusicAlbumArtCacheKey(document, thumbnail, false);
     
-    SSignal *availabilitySignal = [SSignal defer:^SSignal *
+    SSignal *remoteSignal = [[self _cachedAlbumArtForKey:remoteKey] catch:^SSignal *(__unused id error)
     {
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path])
-            return [SSignal single:path];
-        else
-            return [SSignal single:nil];
+        return [self _albumArt:[self _remoteAlbumArtForDocument:document performer:performer song:song thumbnail:thumbnail] storedForKey:remoteKey];
     }];
     
-    SSignal *messageThumbnailSignal = [SSignal defer:^SSignal *
+    return [[self _cachedAlbumArtForKey:finalKey] catch:^SSignal *(__unused id error)
     {
-        if (thumbnail)
+        if (!TGMusicAlbumArtFileIsComplete(document, path))
+            return remoteSignal;
+        
+        SSignal *embeddedSignal = [[self _albumArtForUrl:[NSURL fileURLWithPath:path] multicastManager:nil] map:^UIImage *(UIImage *image)
         {
-            return [[TGSharedFileSignals squareFileThumbnail:media ofSize:CGSizeMake(90.0f, 90.0f) threadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool] memoryCache:[TGSharedMediaUtils sharedMediaMemoryImageCache] inhibitBlur:true pixelProcessingBlock:nil] map:^NSData *(UIImage *image)
-            {
-                return UIImageJPEGRepresentation(image, 0.8f);
-            }];
-        }
-        else
-        {
-            return [SSignal fail:nil];
-        }
-    }];
-    
-    uint8_t zero = 0;
-    NSData *emptyData = [NSData dataWithBytes:&zero length:1];
-    
-    SSignal *webAlbumArtSignal = OGPlatformMediaDownloadsRequireUserAction() ? [SSignal fail:nil] : [TGMusicPlayerItemSignals _webAlbumArtForPerformer:performer song:song thumbnail:thumbnail];
-    SSignal *(^cachedWebSignal)(bool) = ^(bool storeAsFinal)
-    {
-        return [cachedSignal(false, true) mapToSignal:^SSignal *(NSData *data)
-        {
-            if (data.length == 0)
-            {
-                return [[[[webAlbumArtSignal catch:^SSignal *(__unused id error)
-                {
-                    return messageThumbnailSignal;
-                }]
-                  onNext:^(NSData *next)
-                {
-                    [[[TGMediaStoreContext instance] temporaryFilesCache] setValue:next forKey:cacheKeyForItemAlbumArt(media, thumbnail, storeAsFinal, !storeAsFinal)];
-                }] onError:^(id error)
-                {
-                    if ([error isKindOfClass:[NSNull class]])
-                    {
-                        [[[TGMediaStoreContext instance] temporaryFilesCache] setValue:emptyData forKey:cacheKeyForItemAlbumArt(media, thumbnail, storeAsFinal, !storeAsFinal)];
-                    }
-                }] map:^UIImage *(NSData *result)
-                {
-                    return [[UIImage alloc] initWithData:result];
-                }];
-            }
-            else if (data.length > 2)
-            {
-                return [SSignal single:[[UIImage alloc] initWithData:data]];
-            }
-            else
-            {
-                return [SSignal fail:nil];
-            }
+            return [TGMusicUtils albumArtwork:image thumbnail:thumbnail];
         }];
-    };
-    
-    return [cachedSignal(true, false) mapToSignal:^SSignal *(NSData *data)
+        return [self _albumArt:[embeddedSignal catch:^SSignal *(__unused id error)
+        {
+            return remoteSignal;
+        }] storedForKey:finalKey];
+    }];
+}
+
++ (SSignal *)_cachedAlbumArtForKey:(NSData *)key
+{
+    return [[[[TGMediaStoreContext instance] temporaryFilesCache] cachedItemForKey:key] mapToSignal:^SSignal *(NSData *data)
     {
-        if (data.length == 0)
+        UIImage *image = data.length == 0 ? nil : [[UIImage alloc] initWithData:data];
+        return image == nil ? [SSignal fail:nil] : [SSignal single:image];
+    }];
+}
+
++ (SSignal *)_albumArt:(SSignal *)signal storedForKey:(NSData *)key
+{
+    return [signal onNext:^(UIImage *image)
+    {
+        NSData *data = UIImageJPEGRepresentation(image, 0.9f);
+        if (data.length != 0)
+            [[[TGMediaStoreContext instance] temporaryFilesCache] setValue:data forKey:key];
+    }];
+}
+
++ (SSignal *)_albumArtFromDataSignal:(SSignal *)signal thumbnail:(bool)thumbnail
+{
+    return [signal mapToSignal:^SSignal *(NSData *data)
+    {
+        UIImage *image = data.length == 0 ? nil : [TGMusicUtils albumArtwork:[[UIImage alloc] initWithData:data] thumbnail:thumbnail];
+        return image == nil ? [SSignal fail:nil] : [SSignal single:image];
+    }];
+}
+
++ (SSignal *)_remoteAlbumArtForDocument:(TGDocumentMediaAttachment *)document performer:(NSString *)performer song:(NSString *)song thumbnail:(bool)thumbnail
+{
+    SSignal *documentThumbnailSignal = [[[TGSharedFileSignals fileThumbnail:document] map:^UIImage *(UIImage *image)
+    {
+        return [TGMusicUtils albumArtwork:image thumbnail:thumbnail];
+    }] startOnThreadPool:[TGSharedMediaUtils sharedMediaImageProcessingThreadPool]];
+    
+    SSignal *webSignal = [SSignal fail:nil];
+    if (!OGPlatformMediaDownloadsRequireUserAction())
+    {
+        webSignal = [[self _albumArtFromDataSignal:[self _telegramAlbumArtForPerformer:performer song:song thumbnail:thumbnail] thumbnail:thumbnail] catch:^SSignal *(__unused id error)
         {
-            return [availabilitySignal mapToSignal:^SSignal *(NSString *path)
-            {
-                if (path.length > 0)
-                {
-                    return [[[[TGMusicPlayerItemSignals _albumArtForUrl:[NSURL fileURLWithPath:path] multicastManager:nil] map:^id(UIImage *image)
-                    {
-                        if (thumbnail)
-                            return TGScaleImage(image, CGSizeMake(96.0f, 96.0f));
-                        else
-                            return image;
-                    }] onNext:^(UIImage *next)
-                    {
-                        NSData *data = UIImageJPEGRepresentation(next, 0.8f);
-                        [[[TGMediaStoreContext instance] temporaryFilesCache] setValue:data forKey:cacheKeyForItemAlbumArt(media, thumbnail, true, false)];
-                    }] catch:^SSignal *(__unused id error)
-                    {
-                        return cachedWebSignal(true);
-                    }];
-                }
-                else
-                {
-                    return cachedWebSignal(false);
-                }
-            }];
-        }
-        else if (data.length > 2)
+            return [self _albumArtFromDataSignal:[self _iTunesAlbumArtForPerformer:performer song:song thumbnail:thumbnail] thumbnail:thumbnail];
+        }];
+    }
+    
+    CGSize documentThumbnailSize = CGSizeZero;
+    [document.thumbnailInfo imageUrlForLargestSize:&documentThumbnailSize];
+    bool preferDocumentThumbnail = MAX(documentThumbnailSize.width, documentThumbnailSize.height) * 2.0f >= [TGMusicUtils albumArtworkPixelSize:thumbnail].width;
+    
+    SSignal *fallbackSignal = preferDocumentThumbnail ? webSignal : documentThumbnailSignal;
+    return [(preferDocumentThumbnail ? documentThumbnailSignal : webSignal) catch:^SSignal *(__unused id error)
+    {
+        return fallbackSignal;
+    }];
+}
+
++ (SSignal *)_telegramAlbumArtForPerformer:(NSString *)performer song:(NSString *)song thumbnail:(bool)thumbnail
+{
+    if (!TGMusicAlbumArtQueryIsValid(performer, song))
+        return [SSignal fail:nil];
+    
+    int32_t datacenterId = 0;
+    NSData *datacenterData = [TGDatabaseInstance() customProperty:@"webFileDatacenterId"];
+    if (datacenterData.length == 4)
+        [datacenterData getBytes:&datacenterId length:4];
+    if (datacenterId <= 0)
+        return [SSignal fail:nil];
+    
+    TGTLDynamicObject *location = [TGTLDynamicObject objectWithConstructor:@"inputWebFileAudioAlbumThumbLocation" fields:@{@"small": @(thumbnail), @"title": song, @"performer": performer}];
+    return [[[TGTelegramNetworking instance] downloadWorkerForDatacenterId:datacenterId type:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(TGNetworkWorkerGuard *worker)
+    {
+        TGTLDynamicRpc *request = [[TGTLDynamicRpc alloc] initWithMethod:@"upload.getWebFile" parameters:@{@"location": location, @"offset": @0, @"limit": @(TGMusicAlbumArtRequestLimit)}];
+        if (request.encodingError != nil)
+            return [SSignal fail:request.encodingError];
+        
+        return [[[[TGTelegramNetworking instance] requestSignal:request worker:worker] filter:^bool(id next)
         {
-            return [SSignal single:[[UIImage alloc] initWithData:data]];
-        }
-        else
+            return ![next isKindOfClass:[NSNumber class]];
+        }] mapToSignal:^SSignal *(id result)
         {
-            return [SSignal fail:nil];
-        }
+            NSData *bytes = [result isKindOfClass:[TGTLDynamicObject class]] ? [(TGTLDynamicObject *)result dataField:@"bytes"] : nil;
+            return bytes.length == 0 ? [SSignal fail:nil] : [SSignal single:bytes];
+        }];
     }];
 }
 
@@ -529,9 +548,9 @@ NSString *TGURLEncodedStringFromString(NSString *string)
     return (__bridge_transfer NSString *)CFURLCreateStringByAddingPercentEscapes(kCFAllocatorDefault, (__bridge CFStringRef)string, NULL, (__bridge CFStringRef)kAFLegalCharactersToBeEscaped, CFStringConvertNSStringEncodingToEncoding(encoding));
 }
 
-+ (SSignal *)_webAlbumArtForPerformer:(NSString *)performer song:(NSString *)song thumbnail:(bool)thumbnail
++ (SSignal *)_iTunesAlbumArtForPerformer:(NSString *)performer song:(NSString *)song thumbnail:(bool)thumbnail
 {
-    if (performer.length == 0 || [[[performer lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] isEqualToString:@"unknown artist"] || song.length == 0)
+    if (!TGMusicAlbumArtQueryIsValid(performer, song))
         return [SSignal fail:nil];
     
     NSArray *badWords =
@@ -555,16 +574,15 @@ NSString *TGURLEncodedStringFromString(NSString *string)
         performer = [performer stringByReplacingOccurrencesOfString:word withString:@" "];
     
     NSString *metaUrl = [[NSString alloc] initWithFormat:@"https://itunes.apple.com/search?term=%@&entity=song&limit=4", TGURLEncodedStringFromString([NSString stringWithFormat:@"%@ %@", performer, song])];
+    CGSize pixelSize = [TGMusicUtils albumArtworkPixelSize:thumbnail];
+    NSString *artworkSize = [[NSString alloc] initWithFormat:@"%dx%d", (int)pixelSize.width, (int)pixelSize.height];
     
     return [[[LegacyComponentsGlobals provider] jsonForHttpLocation:metaUrl] mapToSignal:^SSignal *(NSDictionary *json)
     {
         NSDictionary *result = [json[@"results"] firstObject];
-        NSString *artworkUrl = result[@"artworkUrl100"];
-        if (!thumbnail)
-            artworkUrl = [artworkUrl stringByReplacingOccurrencesOfString:@"100x100" withString:@"600x600"];
-        
+        NSString *artworkUrl = [result[@"artworkUrl100"] stringByReplacingOccurrencesOfString:@"100x100" withString:artworkSize];
         if (artworkUrl.length == 0)
-            return [SSignal fail:[NSNull null]];
+            return [SSignal fail:nil];
         
         return [[LegacyComponentsGlobals provider] dataForHttpLocation:artworkUrl];
     }];
@@ -600,12 +618,7 @@ NSString *TGURLEncodedStringFromString(NSString *string)
             
             if (image != nil)
             {
-                CGSize screenSize = TGScreenSize();
-                CGFloat screenSide = MIN(screenSize.width, screenSize.height);
-                CGFloat scale = TGIsRetina() ? 1.7f : 1.0f;
-                CGSize pixelSize = CGSizeMake(screenSide * scale, screenSide * scale);
-                image = TGScaleImageToPixelSize(image, TGFitSize(CGSizeMake(image.size.width * image.scale, image.size.height * image.scale), pixelSize));
-                [subscriber putNext:image];
+                [subscriber putNext:[TGMusicUtils albumArtwork:image thumbnail:false]];
                 [subscriber putCompletion];
             }
             else

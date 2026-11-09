@@ -22,6 +22,7 @@
 #import "TGTelegramNetworking.h"
 
 #import "TGTelegraph.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGModernConversationEditingMessageInputPanel () {
     TGMessage *_message;
@@ -153,7 +154,7 @@
     if (_editingTimeout <= DBL_EPSILON) {
         _timerLabel.hidden = true;
     } else {
-        NSTimeInterval remainingTime = _message.date + _editingTimeout - [[TGTelegramNetworking instance] approximateRemoteTime];
+        NSTimeInterval remainingTime = _message.date + _editingTimeout - OGRemoteClockTime();
         if (remainingTime > 5.0 * 60.0) {
             _timerLabel.hidden = true;
         } else if (remainingTime < 0.0) {
@@ -296,7 +297,7 @@
             title = conversation.chatTitle;
         }
     } else {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+        TGUser *user = [TGDatabaseInstance() loadUser:message.fromUid];
         author = user;
         title = user.displayName;
     }

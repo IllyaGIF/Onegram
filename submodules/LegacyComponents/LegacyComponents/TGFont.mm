@@ -1,6 +1,7 @@
 #import "TGFont.h"
 #import "../../../OnegramRuntime/OGRuntime.h"
 #import "../../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../../OnegramPlatform/OGFontCmap.h"
 
 #import "LegacyComponentsInternal.h"
 #import "NSObject+TGLock.h"
@@ -157,7 +158,8 @@ static void TGEmojiLoadPack(void)
             TGEmojiPackIndex = [NSDictionary dictionaryWithContentsOfFile:indexPath];
         }
         TGEmojiImageCache = [[NSCache alloc] init];
-        TGEmojiImageCache.countLimit = iosMajorVersion() <= 3 ? 128 : 256;
+        TGEmojiImageCache.countLimit = iosMajorVersion() <= 3 ? 256 : 2048;
+        TGEmojiImageCache.totalCostLimit = (NSUInteger)MAX(1024ULL * 1024ULL, MIN(8ULL * 1024ULL * 1024ULL, [NSProcessInfo processInfo].physicalMemory / 128ULL));
         TGEmojiFileLock = [[NSObject alloc] init];
         TGEmojiSupportCache = [[NSMutableDictionary alloc] init];
 
@@ -650,9 +652,12 @@ static bool TGEmojiPackContainsEmoji(NSString *emoji)
 #if OG_PLATFORM_HAS_CORETEXT
 static bool TGEmojiFontContainsCharacters(CTFontRef font, NSString *emoji)
 {
-    CFCharacterSetRef characters = CTFontCopyCharacterSet(font);
-    if (characters == NULL)
+    CFDataRef table = CTFontCopyTable(font, kCTFontTableCmap, kCTFontTableOptionNoOptions);
+    if (table == NULL)
         return false;
+
+    const uint8_t *bytes = CFDataGetBytePtr(table);
+    size_t tableLength = (size_t)CFDataGetLength(table);
 
     bool supported = true;
     for (NSUInteger index = 0; index < emoji.length; )
@@ -668,14 +673,14 @@ static bool TGEmojiFontContainsCharacters(CTFontRef font, NSString *emoji)
 
         if (codepoint == 0x200d || codepoint == 0xfe0e || codepoint == 0xfe0f || (codepoint >= 0xe0020 && codepoint <= 0xe007f))
             continue;
-        if (!CFCharacterSetIsLongCharacterMember(characters, codepoint))
+        if (OGFontCmapGlyph(bytes, tableLength, codepoint) == 0)
         {
             supported = false;
             break;
         }
     }
 
-    CFRelease(characters);
+    CFRelease(table);
     return supported;
 }
 #endif
@@ -1075,6 +1080,12 @@ UIImage *TGEmojiCachedImageOfSize(NSString *emoji, CGFloat size)
     return [TGEmojiImageCache objectForKey:cacheKey];
 }
 
+static NSUInteger TGEmojiImageCost(UIImage *image)
+{
+    CGImageRef cgImage = image.CGImage;
+    return cgImage == NULL ? 0 : CGImageGetBytesPerRow(cgImage) * CGImageGetHeight(cgImage);
+}
+
 UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size)
 {
     if (emoji.length == 0 || size <= 0.0f)
@@ -1108,7 +1119,7 @@ UIImage *TGEmojiImageOfSize(NSString *emoji, CGFloat size)
     }
 
     if (result != nil)
-        [TGEmojiImageCache setObject:result forKey:cacheKey];
+        [TGEmojiImageCache setObject:result forKey:cacheKey cost:TGEmojiImageCost(result)];
     return result;
 }
 
@@ -1138,7 +1149,7 @@ static void TGEmojiFinishLegacyImageRender(NSString *cacheKey, UIImage *image)
     OGPlatformDispatchOnMainThread(^
     {
         if (image != nil)
-            [TGEmojiImageCache setObject:image forKey:cacheKey];
+            [TGEmojiImageCache setObject:image forKey:cacheKey cost:TGEmojiImageCost(image)];
         NSArray *completions = TGEmojiFinishImageWork(cacheKey);
         if (image != nil)
             TGEmojiRunImageWorkCompletions(completions);
@@ -1290,10 +1301,28 @@ CTFontRef TGCoreTextFontForUIFont(UIFont *font);
 
 + (UIFont *)roundedFontOfSize:(CGFloat)size
 {
-    return [UIFont fontWithName:@".SFCompactRounded-Semibold" size:size];
+    UIFont *font = [UIFont fontWithName:@".SFCompactRounded-Semibold" size:size];
+    return font ?: TGBoldSystemFontOfSize(size);
 }
 
 @end
+
+#if OG_PLATFORM_HAS_CORETEXT
+static void TGRegisterCascadeFonts(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        NSArray *fontNames = @[@"NotoSans-Regular", @"NotoSansMath-Regular", @"NotoSansSymbols2-Regular"];
+        for (NSString *fontName in fontNames)
+        {
+            NSURL *url = [[NSBundle mainBundle] URLForResource:fontName withExtension:@"ttf"];
+            if (url != nil)
+                CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url, kCTFontManagerScopeProcess, NULL);
+        }
+    });
+}
+#endif
 
 static CTFontRef TGCreateCoreTextFont(UIFont *font)
 {
@@ -1303,6 +1332,8 @@ static CTFontRef TGCreateCoreTextFont(UIFont *font)
 #if OG_PLATFORM_HAS_CORETEXT
     if (iosMajorVersion() < 6)
         return CTFontCreateWithName((__bridge CFStringRef)font.fontName, font.pointSize, NULL);
+
+    TGRegisterCascadeFonts();
 
     CTFontRef result = NULL;
     CTFontDescriptorRef baseDescriptor = CTFontDescriptorCreateWithNameAndSize((__bridge CFStringRef)font.fontName, font.pointSize);

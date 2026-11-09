@@ -30,7 +30,7 @@ const CGFloat TGCallInfoNormalStatusFontSize = 18.0f;
     bool _legacyMode;
     bool _needsFontUpdate;
 
-    int32_t _currentPeerId;
+    int64_t _currentPeerId;
     NSInteger _peerRefreshAttempts;
     bool _peerRefreshScheduled;
     
@@ -308,7 +308,7 @@ static NSString *TGCallInfoLocalizedStatus(NSString *key, NSString *fallback)
 
 - (void)setState:(TGCallSessionState *)state duration:(NSTimeInterval)duration
 {
-    int32_t peerId = (int32_t)state.stateData.peerId;
+    int64_t peerId = state.stateData.peerId;
     if (_currentPeerId != peerId)
     {
         _currentPeerId = peerId;
@@ -364,7 +364,7 @@ static NSString *TGCallInfoLocalizedStatus(NSString *key, NSString *fallback)
         case TGCallStateHandshake:
         case TGCallStateReady:
         {
-            _statusLabel.text = TGCallInfoLocalizedStatus(@"Call.StatusIncoming", @"Incoming call...");
+            _statusLabel.text = state.isVideoCall ? TGCallInfoLocalizedStatus(@"Call.StatusIncomingVideo", @"Incoming video call...") : TGCallInfoLocalizedStatus(@"Call.StatusIncoming", @"Incoming call...");
             _statusWidth = 0.0f;
         }
             break;

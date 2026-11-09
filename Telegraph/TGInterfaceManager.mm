@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGInterfaceManager.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -19,6 +20,10 @@
 #import "TGSecretModernConversationCompanion.h"
 #import "TGChannelConversationCompanion.h"
 #import "TGChannelGroupInfoController.h"
+#import "TGChannelDirectMessagesSignals.h"
+#import "TGChannelDirectMessagesController.h"
+#import "TGChannelDirectMessagesConversationCompanion.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGProgressWindow.h"
 
 #import "TGTelegraphUserInfoController.h"
 #import "TGSecretChatUserInfoController.h"
@@ -43,6 +48,7 @@
 #import "TGCallStatusBarView.h"
 #import "TGCallAlertView.h"
 #import "TGCallUtils.h"
+#import "TGCustomActionSheet.h"
 
 #import "TGCallRatingView.h"
 
@@ -135,7 +141,7 @@
 @implementation TGIOS6GetCustomEmojiDocumentsRpc
 - (int32_t)TLconstructorSignature { return (int32_t)0xd9ab0f54; }
 - (int32_t)TLconstructorName { return -1; }
-- (Class)responseClass { return [TLDocument class]; }
+- (Class)responseClass { return [NSArray class]; }
 - (int)impliedResponseSignature { return 0; }
 - (int)layerVersion { return 181; }
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)__unused metaObject { return nil; }
@@ -283,6 +289,13 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
 - (void)setDiscussionThread:(bool)discussionThread;
 - (void)setDiscussionRootMessage:(TGMessage *)rootMessage;
 @end
+
+static NSUInteger TGIOS6ForumTopicInitialBatchCount(void)
+{
+    if ([[UIDevice currentDevice] userInterfaceIdiom] != UIUserInterfaceIdiomPhone)
+        return 18;
+    return [TGViewController isWidescreen] ? 14 : 12;
+}
 
 @implementation TGIOS6ForumTopicConversationCompanion
 
@@ -543,55 +556,60 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
     [_ios6TopicHistoryDisposable dispose];
     int generation = ++_ios6TopicHistoryGeneration;
     TGIOS6ForumTopicConversationCompanionReference *reference = _ios6LifetimeReference;
-    _ios6TopicHistoryDisposable = [[[[TGTelegramNetworking instance] requestSignal:rpc]
-        deliverOn:[SQueue mainQueue]]
+    _ios6TopicHistoryDisposable = [[[TGTelegramNetworking instance] requestSignal:rpc]
         startWithNext:^(TLmessages_Messages *result)
         {
-            TGIOS6ForumTopicConversationCompanion *strongSelf = TGIOS6ResolveForumTopicConversationCompanion(reference);
-            if (strongSelf == nil || strongSelf->_ios6TopicHistoryGeneration != generation)
-                return;
+            [TGModernConversationCompanion dispatchOnMessageQueue:^{
+                TGIOS6ForumTopicConversationCompanion *strongSelf = TGIOS6ResolveForumTopicConversationCompanion(reference);
+                if (strongSelf == nil || strongSelf->_ios6TopicHistoryGeneration != generation)
+                    return;
 
-            NSArray *parsedMessages = [strongSelf _ios6ParsedTopicMessages:result];
-            NSUInteger serverMessageCount = parsedMessages.count;
-            NSMutableArray *messages = [parsedMessages mutableCopy];
+                NSArray *parsedMessages = [strongSelf _ios6ParsedTopicMessages:result];
+                NSUInteger serverMessageCount = parsedMessages.count;
+                NSMutableArray *messages = [parsedMessages mutableCopy];
 
-            if (initial && strongSelf->_ios6DiscussionThread && strongSelf->_ios6DiscussionRootMessage != nil)
-            {
-                bool containsRoot = false;
-                for (TGMessage *message in messages)
+                if (initial && strongSelf->_ios6DiscussionThread && strongSelf->_ios6DiscussionRootMessage != nil)
                 {
-                    if (message.mid == strongSelf->_ios6TopicId)
+                    bool containsRoot = false;
+                    for (TGMessage *message in messages)
                     {
-                        containsRoot = true;
-                        break;
+                        if (message.mid == strongSelf->_ios6TopicId)
+                        {
+                            containsRoot = true;
+                            break;
+                        }
                     }
+
+                    if (!containsRoot)
+                        [messages addObject:[strongSelf->_ios6DiscussionRootMessage copy]];
+
+                    [messages sortUsingComparator:^NSComparisonResult(TGMessage *a, TGMessage *b)
+                    {
+                        if (a.date != b.date)
+                            return a.date > b.date ? NSOrderedAscending : NSOrderedDescending;
+                        if (a.mid != b.mid)
+                            return a.mid > b.mid ? NSOrderedAscending : NSOrderedDescending;
+                        return NSOrderedSame;
+                    }];
                 }
 
-                if (!containsRoot)
-                    [messages addObject:[strongSelf->_ios6DiscussionRootMessage copy]];
+                bool hasMore = serverMessageCount >= (NSUInteger)pageSize;
 
-                [messages sortUsingComparator:^NSComparisonResult(TGMessage *a, TGMessage *b)
-                {
-                    if (a.date != b.date)
-                        return a.date > b.date ? NSOrderedAscending : NSOrderedDescending;
-                    if (a.mid != b.mid)
-                        return a.mid > b.mid ? NSOrderedAscending : NSOrderedDescending;
-                    return NSOrderedSame;
-                }];
-            }
-
-            bool hasMore = serverMessageCount >= (NSUInteger)pageSize;
-
-            [TGModernConversationCompanion dispatchOnMessageQueue:^{
                 if (initial)
-                    [strongSelf _replaceMessages:messages];
+                {
+                    NSUInteger visibleCount = MIN(messages.count, TGIOS6ForumTopicInitialBatchCount());
+                    [strongSelf _replaceMessages:[messages subarrayWithRange:NSMakeRange(0, visibleCount)]];
+                    if (visibleCount < messages.count)
+                        [strongSelf _addMessages:[messages subarrayWithRange:NSMakeRange(visibleCount, messages.count - visibleCount)] animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
+                }
                 else
                     [strongSelf _addMessages:messages animated:false intent:TGModernConversationAddMessageIntentLoadMoreMessagesAbove];
 
-                strongSelf->_ios6TopicHasMoreAbove = hasMore;
-                strongSelf->_ios6TopicLoadingAbove = false;
-
                 TGDispatchOnMainThread(^{
+                    if (strongSelf->_ios6TopicHistoryGeneration != generation)
+                        return;
+                    strongSelf->_ios6TopicHasMoreAbove = hasMore;
+                    strongSelf->_ios6TopicLoadingAbove = false;
                     TGModernConversationController *controller = strongSelf.controller;
                     [controller setLoadingMessages:false];
                     [controller setEnableBelowHistoryRequests:false];
@@ -603,16 +621,16 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
         }
         error:^(id error)
         {
-            TGIOS6ForumTopicConversationCompanion *strongSelf = TGIOS6ResolveForumTopicConversationCompanion(reference);
-            if (strongSelf == nil || strongSelf->_ios6TopicHistoryGeneration != generation)
-                return;
-
-            NSLog(@"FORUM thread.history.error peer=%lld topic=%d offset=%d error=%@",
-                  strongSelf->_ios6TopicConversation.conversationId,
-                  strongSelf->_ios6TopicId, offsetId, error);
-            strongSelf->_ios6TopicLoadingAbove = false;
-            TGModernConversationController *controller = strongSelf.controller;
             TGDispatchOnMainThread(^{
+                TGIOS6ForumTopicConversationCompanion *strongSelf = TGIOS6ResolveForumTopicConversationCompanion(reference);
+                if (strongSelf == nil || strongSelf->_ios6TopicHistoryGeneration != generation)
+                    return;
+
+                NSLog(@"FORUM thread.history.error peer=%lld topic=%d offset=%d error=%@",
+                      strongSelf->_ios6TopicConversation.conversationId,
+                      strongSelf->_ios6TopicId, offsetId, error);
+                strongSelf->_ios6TopicLoadingAbove = false;
+                TGModernConversationController *controller = strongSelf.controller;
                 [controller setLoadingMessages:false];
                 [controller setEnableAboveHistoryRequests:false];
             });
@@ -657,11 +675,7 @@ static TGIOS6ForumTopicConversationCompanion *TGIOS6ResolveForumTopicConversatio
 {
 }
 
-- (void)unloadMessagesAbove
-{
-}
-
-- (void)unloadMessagesBelow
+- (void)unloadMessagesAroundMessageId:(int32_t)__unused messageId conversationId:(int64_t)__unused conversationId date:(int32_t)__unused date
 {
 }
 
@@ -1286,7 +1300,7 @@ static UIImage *TGIOS6ForumDefaultTopicIcon(int32_t rgb)
     cell.textLabel.font = [UIFont systemFontOfSize:15.0f];
     cell.textLabel.numberOfLines = 2;
 
-    TGUser *user = message.fromUid > 0 ? [TGDatabaseInstance() loadUser:(int32_t)message.fromUid] : nil;
+    TGUser *user = message.fromUid > 0 ? [TGDatabaseInstance() loadUser:message.fromUid] : nil;
     NSString *name = nil;
     if (user != nil)
         name = user.displayName;
@@ -1936,7 +1950,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     }
     else if (message.fromUid > 0)
     {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+        TGUser *user = [TGDatabaseInstance() loadUser:message.fromUid];
         if (user != nil)
             authorName = user.displayName;
     }
@@ -2125,6 +2139,48 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
 {
 }
 
+- (void)navigateToDirectMessagesOfChannel:(TGConversation *)channel navigationController:(TGNavigationController *)navigationController
+{
+    if (![TGChannelDirectMessagesSignals channelAcceptsDirectMessages:channel])
+        return;
+
+    bool manageDirectMessages = [TGChannelDirectMessagesSignals canManageDirectMessagesInChannel:channel];
+    if (!manageDirectMessages && channel.sendPaidMessagesStars > 0)
+    {
+        NSString *price = [[NSString alloc] initWithFormat:@"%lld", channel.sendPaidMessagesStars];
+        [TGCustomAlertView presentAlertWithTitle:nil message:[[NSString alloc] initWithFormat:TGLocalized(@"Channel.DirectMessages.PaidUnsupported"), price] cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+        return;
+    }
+
+    TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
+    [progressWindow showWithDelay:0.2];
+
+    __weak TGInterfaceManager *weakSelf = self;
+    [[[TGChannelDirectMessagesSignals monoforumForChannel:channel] deliverOn:[SQueue mainQueue]] startWithNext:^(TGConversation *monoforum)
+    {
+        [progressWindow dismiss:true];
+        __strong TGInterfaceManager *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+
+        if (manageDirectMessages)
+        {
+            TGChannelDirectMessagesController *directMessagesController = [[TGChannelDirectMessagesController alloc] initWithMonoforum:monoforum];
+            if (navigationController != nil)
+                [navigationController pushViewController:directMessagesController animated:true];
+            else
+                [TGAppDelegateInstance.rootController pushContentController:directMessagesController];
+            return;
+        }
+
+        [strongSelf navigateToConversationWithId:monoforum.conversationId conversation:monoforum performActions:nil atMessage:nil clearStack:false openKeyboard:true canOpenKeyboardWhileInTransition:false navigationController:navigationController selectChat:false animated:true];
+    } error:^(__unused id error)
+    {
+        [progressWindow dismiss:true];
+        [TGCustomAlertView presentAlertWithTitle:nil message:TGLocalized(@"Channel.DirectMessages.Unavailable") cancelButtonTitle:TGLocalized(@"Common.OK") okButtonTitle:nil completionBlock:nil];
+    } completed:nil];
+}
+
 - (void)navigateToCommentsForChannelConversation:(TGConversation *)conversation
                                       messageId:(int32_t)messageId
                             discussionChannelId:(int64_t)discussionChannelId
@@ -2159,7 +2215,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
 
         NSMutableArray *conversations = [[NSMutableArray alloc] init];
         TGConversation *discussionConversation = nil;
-        int64_t expectedPeerId = discussionChannelId != 0 ? TGPeerIdFromChannelId((int32_t)discussionChannelId) : 0;
+        int64_t expectedPeerId = discussionChannelId != 0 ? TGPeerIdFromChannelId(discussionChannelId) : 0;
 
         NSArray *chats = [result[@"chats"] isKindOfClass:[NSArray class]] ? result[@"chats"] : @[];
         for (TLChat *chatDesc in chats)
@@ -2302,6 +2358,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     int32_t requestedForumTopicTopMessageId = [performActions[@"ios6ForumTopicTopMessageId"] intValue];
     NSString *requestedForumTopicTitle = [performActions[@"ios6ForumTopicTitle"] isKindOfClass:[NSString class]] ? performActions[@"ios6ForumTopicTitle"] : nil;
     bool forceForumTopicPicker = [performActions[@"ios6ForceForumTopicPicker"] boolValue];
+    int64_t requestedMonoforumPeerId = [performActions[@"monoforumPeerId"] longLongValue];
 
 
     if (selectChat)
@@ -2322,6 +2379,9 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
             {
                 if (((TGGenericModernConversationCompanion *)companion).conversationId == conversationId)
                 {
+                    int64_t companionMonoforumPeerId = [companion isKindOfClass:[TGChannelDirectMessagesConversationCompanion class]] ? ((TGChannelDirectMessagesConversationCompanion *)companion).threadPeerId : 0;
+                    if (companionMonoforumPeerId != requestedMonoforumPeerId)
+                        continue;
                     if (requestedForumTopicId != 0)
                     {
                         if ([companion isKindOfClass:[TGIOS6ForumTopicConversationCompanion class]] &&
@@ -2383,9 +2443,22 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                     return;
                 }
 
+                bool manageDirectMessages = conversation.isMonoforum && [TGChannelDirectMessagesSignals canManageDirectMessagesInMonoforum:conversation];
+                if (manageDirectMessages && requestedMonoforumPeerId == 0)
+                {
+                    TGChannelDirectMessagesController *directMessagesController = [[TGChannelDirectMessagesController alloc] initWithMonoforum:conversation];
+                    if (navigationController != nil)
+                        [navigationController pushViewController:directMessagesController animated:animated];
+                    else if (clearStack)
+                        [TGAppDelegateInstance.rootController replaceContentController:directMessagesController];
+                    else
+                        [TGAppDelegateInstance.rootController pushContentController:directMessagesController];
+                    return;
+                }
+
                 bool cachedForum = forumResolvedOverride ? forumResolvedIsForum : ((conversation.flags & TGConversationFlagIsForum) != 0);
                 bool forumKnown = forumResolvedOverride ? true : ((conversation.flags & TGConversationFlagForumKnown) != 0);
-                bool skipForumTopics = [performActions[@"ios6SkipForumTopics"] boolValue];
+                bool skipForumTopics = [performActions[@"ios6SkipForumTopics"] boolValue] || conversation.isMonoforum;
 
                 NSUInteger internalActionCount = 0;
                 if (performActions[@"ios6SkipForumTopics"] != nil)
@@ -2507,7 +2580,11 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                 }
 
                 TGChannelConversationCompanion *companion = nil;
-                if (requestedForumTopicId != 0)
+                if (manageDirectMessages)
+                {
+                    companion = [[TGChannelDirectMessagesConversationCompanion alloc] initWithMonoforum:conversation threadPeerId:requestedMonoforumPeerId];
+                }
+                else if (requestedForumTopicId != 0)
                 {
                     companion = [[TGIOS6ForumTopicConversationCompanion alloc]
                         initWithConversation:conversation
@@ -2530,11 +2607,11 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                 conversationController.companion = companion;
             }
         }
-        else if (conversationId <= INT_MIN)
+        else if (TGPeerIdIsSecretChat(conversationId))
         {
             int64_t encryptedConversationId = [TGDatabaseInstance() encryptedConversationIdForPeerId:conversationId];
             int64_t accessHash = [TGDatabaseInstance() encryptedConversationAccessHash:conversationId];
-            int32_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:conversationId];
+            int64_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:conversationId];
             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
             TGSecretModernConversationCompanion *companion = [[TGSecretModernConversationCompanion alloc] initWithConversation:conversation encryptedConversationId:encryptedConversationId accessHash:accessHash uid:uid activity:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId][@(uid)] mayHaveUnreadMessages:conversationUnreadCount != 0];
             if (atMessage != nil)
@@ -2558,7 +2635,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         }
         else
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)conversationId];
+            TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
             if (user.hasExplicitContent) {
                 if (!navigationController)
                     [TGAppDelegateInstance.rootController.dialogListController selectConversationWithId:0];
@@ -2572,7 +2649,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
             if (conversation == nil) {
                 conversation = [[TGConversation alloc] initWithConversationId:conversationId unreadCount:0 serviceUnreadCount:0];
             }
-            TGPrivateModernConversationCompanion *companion = [[TGPrivateModernConversationCompanion alloc] initWithConversation:conversation activity:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId][@((int)conversationId)] mayHaveUnreadMessages:conversationUnreadCount != 0];
+            TGPrivateModernConversationCompanion *companion = [[TGPrivateModernConversationCompanion alloc] initWithConversation:conversation activity:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId][@(conversationId)] mayHaveUnreadMessages:conversationUnreadCount != 0];
             companion.botStartPayload = performActions[@"botStartPayload"];
             companion.botContextPeerId = performActions[@"contextPeerId"];
             companion.botAutostartPayload = performActions[@"botAutostartPayload"];
@@ -2797,11 +2874,11 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
             conversationController.companion = companion;
         }
     }
-    else if (conversationId <= INT_MIN)
+    else if (TGPeerIdIsSecretChat(conversationId))
     {
         int64_t encryptedConversationId = [TGDatabaseInstance() encryptedConversationIdForPeerId:conversationId];
         int64_t accessHash = [TGDatabaseInstance() encryptedConversationAccessHash:conversationId];
-        int32_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:conversationId];
+        int64_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:conversationId];
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
         if (conversation == nil) {
             conversation = [[TGConversation alloc] initWithConversationId:conversationId unreadCount:0 serviceUnreadCount:0];
@@ -2830,7 +2907,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     }
     else
     {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)conversationId];
+        TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
         if (user.hasExplicitContent) {
             [TGAppDelegateInstance.rootController.dialogListController selectConversationWithId:0];
             
@@ -2843,7 +2920,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         if (conversation == nil) {
             conversation = [[TGConversation alloc] initWithConversationId:conversationId unreadCount:0 serviceUnreadCount:0];
         }
-        TGPrivateModernConversationCompanion *companion = [[TGPrivateModernConversationCompanion alloc] initWithConversation:conversation activity:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId][@((int)conversationId)] mayHaveUnreadMessages:conversationUnreadCount != 0];
+        TGPrivateModernConversationCompanion *companion = [[TGPrivateModernConversationCompanion alloc] initWithConversation:conversation activity:[TGTelegraphInstance typingUserActivitiesInConversationFromMainThread:conversationId][@(conversationId)] mayHaveUnreadMessages:conversationUnreadCount != 0];
         companion.previewMode = preview;
         companion.botStartPayload = performActions[@"botStartPayload"];
         companion.botAutostartPayload = performActions[@"botAutostartPayload"];
@@ -2887,12 +2964,12 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     [TGAppDelegateInstance.rootController.dialogListController selectConversationWithId:0];
 }
 
-- (void)navigateToProfileOfUser:(int)uid
+- (void)navigateToProfileOfUser:(int64_t)uid
 {
     [self navigateToProfileOfUser:uid preferNativeContactId:0];
 }
 
-- (void)navigateToProfileOfUser:(int)uid shareVCard:(void (^)())shareVCard
+- (void)navigateToProfileOfUser:(int64_t)uid shareVCard:(void (^)())shareVCard
 {
     TGUser *user = [TGDatabaseInstance() loadUser:uid];
     if (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot)
@@ -2908,22 +2985,22 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     }
 }
 
-- (void)navigateToProfileOfUser:(int)uid encryptedConversationId:(int64_t)encryptedConversationId
+- (void)navigateToProfileOfUser:(int64_t)uid encryptedConversationId:(int64_t)encryptedConversationId
 {
     [self navigateToProfileOfUser:uid preferNativeContactId:0 encryptedConversationId:encryptedConversationId callMessages:nil];
 }
 
-- (void)navigateToProfileOfUser:(int)uid callMessages:(NSArray *)callMessages
+- (void)navigateToProfileOfUser:(int64_t)uid callMessages:(NSArray *)callMessages
 {
     [self navigateToProfileOfUser:uid preferNativeContactId:0 encryptedConversationId:0 callMessages:callMessages];
 }
 
-- (void)navigateToProfileOfUser:(int)uid preferNativeContactId:(int)preferNativeContactId
+- (void)navigateToProfileOfUser:(int64_t)uid preferNativeContactId:(int)preferNativeContactId
 {
     [self navigateToProfileOfUser:uid preferNativeContactId:preferNativeContactId encryptedConversationId:0 callMessages:nil];
 }
 
-- (void)navigateToProfileOfUser:(int)uid preferNativeContactId:(int)__unused preferNativeContactId encryptedConversationId:(int64_t)encryptedConversationId callMessages:(NSArray *)callMessages
+- (void)navigateToProfileOfUser:(int64_t)uid preferNativeContactId:(int)__unused preferNativeContactId encryptedConversationId:(int64_t)encryptedConversationId callMessages:(NSArray *)callMessages
 {
     void (^pushController)(TGViewController *) = ^(TGViewController *controller)
     {
@@ -3149,7 +3226,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:conversationId];
         
         if (!conversation.isChannel || conversation.isChannelGroup)
-            user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
+            user = [TGDatabaseInstance() loadUser:message.fromUid];
         
         if (conversationId > 0 || conversation != nil)
         {
@@ -3222,7 +3299,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
                             }
                             else
                             {
-                                TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+                                TGUser *user = [TGDatabaseInstance() loadUser:peerId];
                                 if (user != nil)
                                     peers[@(user.uid)] = user;
                             }
@@ -3247,7 +3324,7 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
     [_notificationController dismissNotificationsForConversationId:conversationId];
 }
 
-- (void)resetForAccountSwitch
+- (void)resetInterface
 {
     _feedContr = nil;
     _preloadWindow = nil;
@@ -3313,6 +3390,51 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
 
 - (void)callPeerWithId:(int64_t)peerId completion:(void (^)(void))completion
 {
+    [self callPeerWithId:peerId video:false completion:completion];
+}
+
+- (void)requestCallToPeerId:(int64_t)peerId video:(bool)video completion:(void (^)(void))completion
+{
+    if (peerId == 0)
+        return;
+    if (![TGOnegramSettings boolForKey:TGOnegramSettingConfirmCalls])
+    {
+        [self callPeerWithId:peerId video:video completion:completion];
+        return;
+    }
+    TGUser *user = [TGDatabaseInstance() loadUser:peerId];
+    NSString *title = user.displayName.length != 0 ? [[NSString alloc] initWithFormat:TGLocalized(@"OnegramConfirm.CallTitle"), user.displayName] : TGLocalized(@"OnegramConfirm.CallUnknown");
+    [TGCustomAlertView presentAlertWithTitle:title message:nil cancelButtonTitle:TGLocalized(@"Common.Cancel") okButtonTitle:TGLocalized(video ? @"Call.VideoCall" : @"OnegramConfirm.Call") completionBlock:^(bool okButtonPressed)
+    {
+        if (okButtonPressed)
+            [self callPeerWithId:peerId video:video completion:completion];
+    }];
+}
+
+- (void)presentCallOptionsForPeerId:(int64_t)peerId inView:(UIView *)view
+{
+    if (![TGCallSession supportsVideoSending] || view == nil)
+    {
+        [self requestCallToPeerId:peerId video:false completion:nil];
+        return;
+    }
+    
+    NSArray *actions = @[
+        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Call.AudioCall") action:@"audio"],
+        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Call.VideoCall") action:@"video"],
+        [[TGActionSheetAction alloc] initWithTitle:TGLocalized(@"Common.Cancel") action:@"cancel" type:TGActionSheetActionTypeCancel]
+    ];
+    [[[TGCustomActionSheet alloc] initWithTitle:nil actions:actions actionBlock:^(TGInterfaceManager *target, NSString *action)
+    {
+        if ([action isEqualToString:@"audio"])
+            [target callPeerWithId:peerId video:false completion:nil];
+        else if ([action isEqualToString:@"video"])
+            [target callPeerWithId:peerId video:true completion:nil];
+    } target:self] showInView:view];
+}
+
+- (void)callPeerWithId:(int64_t)peerId video:(bool)video completion:(void (^)(void))completion
+{
     if (peerId == 0)
         return;
     
@@ -3343,13 +3465,13 @@ static NSString *TGIOS6ForumMessagePreview(TGMessage *message)
         void (^actionBlock)(void) = ^
         {
             [self presentCallWithSessionInitializer:^TGCallSession *{
-                return [TGTelegraphInstance.callManager sessionForOutgoingCallWithPeerId:peerId];
+                return [TGTelegraphInstance.callManager sessionForOutgoingCallWithPeerId:peerId video:video];
             } completion:completion];
         };
         
         if (currentCallController != nil)
         {
-            TGUser *newUser = [TGDatabaseInstance() loadUser:(int)peerId];
+            TGUser *newUser = [TGDatabaseInstance() loadUser:peerId];
             NSString *message = [NSString stringWithFormat:TGLocalized(@"Call.CallInProgressMessage"), currentCallController.peer.displayName, newUser.displayName];
            
             [TGCustomAlertView presentAlertWithTitle:TGLocalized(@"Call.CallInProgressTitle") message:message cancelButtonTitle:TGLocalized(@"Common.No") okButtonTitle:TGLocalized(@"Common.Yes") completionBlock:^(bool okButtonPressed)

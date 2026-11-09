@@ -1,3 +1,4 @@
+@class TGSendAsPeer;
 /*
  * This is the source code of Telegram for iOS v. 1.1
  * It is licensed under GNU GPL v. 2 or later.
@@ -49,7 +50,7 @@
 - (void)inputPanelRequestedSendData:(TGModernConversationInputTextPanel *)inputTextPanel data:(NSData *)data;
 - (void)inputPanelRequestedSendSticker:(TGModernConversationInputTextPanel *)inputTextPanel sticker:(TGDocumentMediaAttachment *)sticker;
 - (void)inputPanelRequestedSendGif:(TGModernConversationInputTextPanel *)inputTextPanel document:(TGDocumentMediaAttachment *)document;
-- (void)inputPanelRequestedActivateCommand:(TGModernConversationInputTextPanel *)inputTextPanel button:(TGBotReplyMarkupButton *)button userId:(int32_t)userId messageId:(int32_t)messageId;
+- (void)inputPanelRequestedActivateCommand:(TGModernConversationInputTextPanel *)inputTextPanel button:(TGBotReplyMarkupButton *)button userId:(int64_t)userId messageId:(int32_t)messageId;
 - (void)inputPanelRequestedToggleCommandKeyboard:(TGModernConversationInputTextPanel *)inputTextPanel showCommandKeyboard:(bool)showCommandKeyboard;
 - (void)inputPanelTextChanged:(TGModernConversationInputTextPanel *)inputTextPanel text:(NSString *)text;
 - (void)inputPanelMentionEntered:(TGModernConversationInputTextPanel *)inputTextPanel mention:(NSString *)mention startOfLine:(bool)startOfLine;
@@ -84,6 +85,9 @@
 - (void)inputPanelPannedFastCamera:(TGModernConversationInputTextPanel *)inputTextPanel location:(CGPoint)location;
 - (void)inputPanelReleasedFastCamera:(TGModernConversationInputTextPanel *)inputTextPanel location:(CGPoint)location;
 
+@optional
+- (void)inputPanelRequestedSenderMenu:(TGModernConversationInputTextPanel *)inputTextPanel;
+
 @end
 
 @interface TGModernConversationInputTextPanel : TGModernConversationInputPanel
@@ -93,6 +97,8 @@
 @property (nonatomic, strong) UIButton *attachButton;
 @property (nonatomic, strong) TGModernConversationInputMicButton *micButton;
 @property (nonatomic, strong) UIButton *broadcastButton;
+@property (nonatomic, readonly) UIButton *senderButton;
+- (void)setSenderPeer:(TGSendAsPeer *)peer;
 
 @property (nonatomic, weak) UIScrollView *scrollView;
 
@@ -151,7 +157,7 @@
 
 - (void)shakeControls;
 
-- (void)replaceMention:(NSString *)mention username:(bool)username userId:(int32_t)userId;
+- (void)replaceMention:(NSString *)mention username:(bool)username userId:(int64_t)userId;
 - (void)replaceHashtag:(NSString *)hashtag;
 
 - (void)startMention;
@@ -181,7 +187,7 @@
 + (NSString *)linkCandidateInText:(NSString *)text;
 
 + (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField;
-+ (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int32_t)userId;
++ (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int64_t)userId;
 + (void)replaceHashtag:(NSString *)hashtag inputField:(HPGrowingTextView *)inputField;
 
 - (void)animateRecordingIn;

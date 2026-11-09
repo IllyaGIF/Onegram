@@ -28,7 +28,7 @@
 
 - (void)serialize:(NSMutableData *)data
 {
-    int32_t magic = 0x72413fad;
+    int32_t magic = 0x72413fae;
     [data appendBytes:&magic length:4];
     
     int dataLengthPtr = (int)data.length;
@@ -39,7 +39,7 @@
     [data appendBytes:&_forwardDate length:4];
     [data appendBytes:&_forwardMid length:4];
     
-    [data appendBytes:&_forwardAuthorUserId length:4];
+    [data appendBytes:&_forwardAuthorUserId length:8];
     [data appendBytes:&_forwardPostId length:4];
     
     [data appendBytes:&_forwardSourcePeerId length:8];
@@ -74,6 +74,9 @@
     } else if (magic == 0x72413fad) {
         version = 5;
         [is read:(uint8_t *)&dataLength maxLength:4];
+    } else if (magic == 0x72413fae) {
+        version = 6;
+        [is read:(uint8_t *)&dataLength maxLength:4];
     } else {
         dataLength = magic;
     }
@@ -99,9 +102,15 @@
     messageAttachment.forwardMid = forwardMid;
     
     if (version >= 3) {
-        int32_t forwardAuthorUserId = 0;
-        [is read:(uint8_t *)&forwardAuthorUserId maxLength:4];
-        messageAttachment.forwardAuthorUserId = forwardAuthorUserId;
+        if (version >= 6) {
+            int64_t forwardAuthorUserId = 0;
+            [is read:(uint8_t *)&forwardAuthorUserId maxLength:8];
+            messageAttachment.forwardAuthorUserId = forwardAuthorUserId;
+        } else {
+            int32_t forwardAuthorUserId = 0;
+            [is read:(uint8_t *)&forwardAuthorUserId maxLength:4];
+            messageAttachment.forwardAuthorUserId = forwardAuthorUserId;
+        }
         
         int32_t forwardPostId = 0;
         [is read:(uint8_t *)&forwardPostId maxLength:4];

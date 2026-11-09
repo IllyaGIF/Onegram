@@ -13,6 +13,8 @@
 @property (nonatomic, strong) TLInputPeer *peer;
 @property (nonatomic) int32_t reply_to_msg_id;
 @property (nonatomic) int32_t forumTopicId;
+@property (nonatomic, strong) TLInputPeer *monoforumPeer;
+@property (nonatomic, strong) TLInputPeer *sendAs;
 @property (nonatomic, strong) TLInputMedia *media;
 @property (nonatomic, strong) NSString *message;
 @property (nonatomic) int64_t random_id;

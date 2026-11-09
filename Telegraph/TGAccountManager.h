@@ -3,7 +3,7 @@
 @interface TGAccountRecord : NSObject
 
 @property (nonatomic, strong, readonly) NSString *accountId;
-@property (nonatomic, readonly) int32_t userId;
+@property (nonatomic, readonly) int64_t userId;
 @property (nonatomic, strong, readonly) NSString *firstName;
 @property (nonatomic, strong, readonly) NSString *lastName;
 @property (nonatomic, strong, readonly) NSString *phoneNumber;
@@ -21,9 +21,9 @@
 - (NSArray *)authorizedAccounts;
 - (TGAccountRecord *)activeAccount;
 - (TGAccountRecord *)accountWithId:(NSString *)accountId;
-- (TGAccountRecord *)accountWithUserId:(int32_t)userId;
+- (TGAccountRecord *)accountWithUserId:(int64_t)userId;
 
-- (bool)updateActiveAccountWithUserId:(int32_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber;
+- (bool)updateActiveAccountWithUserId:(int64_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber;
 - (NSString *)avatarPathForAccount:(TGAccountRecord *)account;
 
 - (TGAccountRecord *)createAccount;

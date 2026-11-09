@@ -32,8 +32,23 @@
 #import "TGTelegramNetworking.h"
 
 #import "../OnegramPlatform/OGPlatformDispatch.h"
+#import "../OnegramPlatform/OGPlatformGraphics.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 #import "../OnegramRuntime/OGRuntime.h"
 
+static CGSize OnegramImageDecodeSize(NSData *data, NSString *processorName, NSDictionary *userProperties);
+
+static UIImage *TGImageDownloadVideoPoster(NSData *data, NSString *path, CGSize maximumSize, NSInteger priority, bool (^isCancelled)(void))
+{
+    if (data.length < 12 || memcmp((const uint8_t *)data.bytes + 4, "ftyp", 4) != 0)
+        return nil;
+    if (maximumSize.width <= 0.0f || maximumSize.height <= 0.0f)
+        maximumSize = CGSizeMake(1024, 1024);
+    return OGPlatformDecodeImageWithBlock(^UIImage *
+    {
+        return OGPlatformVideoThumbnailAtURL([NSURL fileURLWithPath:path], 0.0, maximumSize);
+    }, maximumSize, priority, isCancelled);
+}
 
 static bool TGImageDownloadUsesPeerAvatarPipeline(void)
 {
@@ -73,6 +88,41 @@ static bool OnegramPeerAvatarProcessorSize(NSString *name, CGSize *size, bool *c
     return true;
 }
 
+static CGSize OnegramImageDecodeSize(NSData *data, NSString *processorName, NSDictionary *userProperties)
+{
+    NSDictionary *thumbnailContext = [userProperties objectForKey:@"thumbnailContext"];
+    if ([thumbnailContext isKindOfClass:[NSDictionary class]])
+    {
+        CGFloat width = [thumbnailContext[@"renderWidth"] floatValue] * TGScreenScaling();
+        CGFloat height = [thumbnailContext[@"renderHeight"] floatValue] * TGScreenScaling();
+        if (width > 0.0f && height > 0.0f)
+        {
+            CGSize sourceSize = OGPlatformImagePixelSizeFromData(data);
+            if (sourceSize.width <= 0.0f || sourceSize.height <= 0.0f)
+                sourceSize = CGSizeMake([thumbnailContext[@"width"] floatValue], [thumbnailContext[@"height"] floatValue]);
+            if (sourceSize.width > 0.0f && sourceSize.height > 0.0f)
+            {
+                CGFloat scale = MIN(1.0f, MAX(width / sourceSize.width, height / sourceSize.height));
+                CGFloat maximumSide = MIN(4096.0f, ceilf(MAX(sourceSize.width, sourceSize.height) * scale));
+                return CGSizeMake(maximumSide, maximumSide);
+            }
+            return CGSizeMake(MIN(4096.0f, width), MIN(4096.0f, height));
+        }
+    }
+    CGSize targetSize = CGSizeZero;
+    if (OnegramPeerAvatarProcessorSize(processorName, &targetSize, NULL))
+    {
+        CGSize sourceSize = OGPlatformImagePixelSizeFromData(data);
+        if (sourceSize.width > 0.0f && sourceSize.height > 0.0f)
+        {
+            CGFloat scale = MIN(1.0f, MAX(targetSize.width * TGScreenScaling() / sourceSize.width, targetSize.height * TGScreenScaling() / sourceSize.height));
+            CGFloat maximumSide = ceilf(MAX(sourceSize.width, sourceSize.height) * scale);
+            return CGSizeMake(maximumSide, maximumSide);
+        }
+    }
+    return [processorName isEqualToString:@"maybeScale"] ? CGSizeMake(1024.0f, 1024.0f) : CGSizeZero;
+}
+
 static UIImage *OnegramProcessPeerAvatar(UIImage *source, NSString *processorName)
 {
     if (source == nil || source.CGImage == NULL)
@@ -100,6 +150,16 @@ static UIImage *OnegramApplyImageProcessor(UIImage *source, TGImageProcessor pro
         [TGLetteredAvatarView prewarmImage:result cornerRadius:size == 50.0f ? 8.0f : 7.0f boundsSize:CGSizeMake(size, size)];
     }
     return result;
+}
+
+static UIImage *OnegramPreloadDownloadedImage(UIImage *source, NSInteger priority, bool (^isCancelled)(void))
+{
+    if (source == nil)
+        return nil;
+    return OGPlatformDecodeImageWithBlock(^UIImage *
+    {
+        return [source preloadedImage];
+    }, source.pixelSize, priority, isCancelled);
 }
 
 static NSMutableDictionary *urlRewrites()
@@ -365,7 +425,7 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
     _thumbnailOnly = [options[@"thumbnailOnly"] boolValue];
     if ([options[@"thumbnailOnly"] boolValue])
     {
-        NSUInteger laneCount = OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice() ? 1 : 2;
+        NSUInteger laneCount = OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice() ? 2 : 4;
         self.requestQueueName = [NSString stringWithFormat:@"onegramMediaThumbnail-%lu", (unsigned long)([self.path hash] % laneCount)];
         return;
     }
@@ -381,6 +441,8 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
         int contentHints = [[options objectForKey:@"contentHints"] intValue];
         if (contentHints & TGRemoteImageContentHintLargeFile)
         {
+            if ([options[@"automaticDownload"] boolValue])
+                return;
             if ([[self.path substringFromIndex:6] hasPrefix:@"download:"]) {
                 int datacenterId = 0;
                 NSDictionary *userProperties = options[@"userProperties"];
@@ -389,13 +451,19 @@ typedef void (^TGRemoteImageDownloadCompletionBlock)(NSData *data);
                     if (imageInfo != nil) {
                         NSString *url = [imageInfo imageUrlForLargestSize:nil];
                         if (url != nil) {
-                            if (!extractFileUrlComponents(url, &datacenterId, nil, nil, nil)) {
-                                datacenterId = 0;
+                            if ([url hasPrefix:@"photo:"] || [url hasPrefix:@"documentthumb:"])
+                            {
+                                NSArray *parts = [url componentsSeparatedByString:@":"];
+                                if (parts.count >= 2)
+                                    datacenterId = [parts[1] intValue];
                             }
+                            else
+                                extractFileUrlComponents(url, &datacenterId, nil, nil, nil);
                         }
                     }
                 }
-                self.requestQueueName = [NSString stringWithFormat:@"imageDownload-%d", datacenterId];
+                NSUInteger laneCount = OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice() ? 1 : 2;
+                self.requestQueueName = [NSString stringWithFormat:@"imageDownload-%d-%lu", datacenterId, (unsigned long)([self.path hash] % laneCount)];
             }
         }
     }
@@ -569,7 +637,10 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
         if (strongSelf == nil || strongSelf.cancelled)
             return;
 
-        UIImage *sourceImage = [[UIImage alloc] initWithData:imageData];
+        UIImage *sourceImage = OGPlatformDecodeImageData(imageData, OnegramImageDecodeSize(imageData, processorName, nil), effectivePriority, ^bool
+        {
+            return strongSelf.cancelled;
+        });
         UIImage *image = sourceImage;
         if (image != nil && processorName.length != 0)
         {
@@ -578,7 +649,10 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
         }
         else if (image != nil)
         {
-            image = [image preloadedImage];
+            image = OnegramPreloadDownloadedImage(image, effectivePriority, ^bool
+            {
+                return strongSelf.cancelled;
+            });
         }
 
         if (image == nil)
@@ -611,6 +685,7 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
     
     bool allowThumbnailCache = false;
     bool allowMemoryCache = true;
+    bool thumbnailOnly = _thumbnailOnly;
     
     int contentHints = 0;
     id userProperties = nil;
@@ -733,7 +808,7 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
     {
         int64_t conversationId = [[url substringFromIndex:@"dialogListPlaceholder:".length] longLongValue];
         
-        UIImage *image = conversationId < 0 ? [[TGInterfaceAssets instance] groupAvatarPlaceholder:conversationId] : [[TGInterfaceAssets instance] avatarPlaceholder:(int)conversationId];
+        UIImage *image = conversationId < 0 ? [[TGInterfaceAssets instance] groupAvatarPlaceholder:conversationId] : [[TGInterfaceAssets instance] avatarPlaceholder:conversationId];
         
         if (image != nil && allowMemoryCache && (!TG_CACHE_INPLACE || forceMemoryCache))
             [cache cacheImage:image withData:nil url:storeUrl availability:TGCacheMemory];
@@ -795,7 +870,27 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                         bool imageFromDisc = false;
                         if (cachedImage == nil)
                         {
-                            cachedImage = [cache cachedImage:cachedUrl availability:TGCacheDisk];
+                            NSData *cachedData = [cache cachedDataForUrl:cachedUrl];
+                            if (cachedData.length != 0)
+                                cachedImage = OGPlatformDecodeImageData(cachedData, OnegramImageDecodeSize(cachedData, processorName, userProperties), onegramImagePriority, ^bool
+                                {
+                                    NSOperation *currentOperation = blockOperation;
+                                    return currentOperation.isCancelled;
+                                });
+                            if (cachedImage == nil && !blockOperation.isCancelled)
+                                cachedImage = OGPlatformDecodeImageWithBlock(^UIImage *
+                                {
+                                    return [cache cachedImage:cachedUrl availability:TGCacheDisk];
+                                }, CGSizeZero, onegramImagePriority, ^bool
+                                {
+                                    return blockOperation.isCancelled;
+                                });
+                            if (cachedImage == nil && [cachedUrl hasPrefix:@"documentthumb:"])
+                                cachedImage = TGImageDownloadVideoPoster([cache cachedDataForUrl:cachedUrl], [cache pathForCachedData:cachedUrl],
+                                    OnegramImageDecodeSize(nil, processorName, userProperties), onegramImagePriority, ^bool
+                                {
+                                    return blockOperation.isCancelled;
+                                });
                             imageFromDisc = true;
                         }
                         
@@ -823,11 +918,17 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                         [cache cacheImage:nil withData:filteredData url:storeUrl availability:TGCacheDisk];
                                     }
                                     
-                                    if (cachedImage == originalImage && imageFromDisc)
-                                        cachedImage = [cachedImage preloadedImage];
+                                    if (cachedImage == originalImage && imageFromDisc && !thumbnailOnly)
+                                        cachedImage = OnegramPreloadDownloadedImage(cachedImage, onegramImagePriority, ^bool
+                                        {
+                                            return blockOperation.isCancelled;
+                                        });
                                 }
-                                else if (imageFromDisc)
-                                    cachedImage = [cachedImage preloadedImage];
+                                else if (imageFromDisc && !thumbnailOnly)
+                                    cachedImage = OnegramPreloadDownloadedImage(cachedImage, onegramImagePriority, ^bool
+                                    {
+                                        return blockOperation.isCancelled;
+                                    });
                             }
                             
                             strongBlockOperation = blockOperation;
@@ -919,7 +1020,6 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                         return;
                                     if (onegramPeerPhoto)
                                     {
-                                        [cache cacheImage:nil withData:imageData url:trimmedUrl availability:TGCacheDisk];
                                         [weakSelf onegramCompletePeerAvatarData:imageData path:path cache:cache storeUrl:storeUrl processorName:processorName allowMemoryCache:allowMemoryCache forceMemoryCache:forceMemoryCache allowThumbnailCache:allowThumbnailCache priority:onegramImagePriority];
                                         return;
                                     }
@@ -927,7 +1027,28 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                     UIImage *image = nil;
                                     NSData *data = nil;
                                     
-                                    image = [[UIImage alloc] initWithData:imageData];
+                                    TGImageDownloadActor *actor = weakSelf;
+                                    if (actor == nil || actor.cancelled)
+                                        return;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+                                    bool decodedAtSize = [processorName isEqualToString:@"maybeScale"];
+#else
+                                    bool decodedAtSize = false;
+#endif
+                                    image = OGPlatformDecodeImageData(imageData, OnegramImageDecodeSize(imageData, processorName, userProperties), onegramImagePriority, ^bool
+                                    {
+                                        NSOperation *currentOperation = weakBlockOperation;
+                                        TGImageDownloadActor *currentActor = weakSelf;
+                                        return currentOperation.isCancelled || currentActor == nil || currentActor.cancelled;
+                                    });
+                                    if (image == nil && [trimmedUrl hasPrefix:@"documentthumb:"])
+                                        image = TGImageDownloadVideoPoster(imageData, [cache pathForCachedData:trimmedUrl],
+                                            OnegramImageDecodeSize(nil, processorName, userProperties), onegramImagePriority, ^bool
+                                        {
+                                            NSOperation *currentOperation = weakBlockOperation;
+                                            TGImageDownloadActor *currentActor = weakSelf;
+                                            return currentOperation.isCancelled || currentActor == nil || currentActor.cancelled;
+                                        });
                                     data = imageData;
                                     
                                     if (image == nil || data == nil)
@@ -944,14 +1065,17 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                         
                                         if (image != nil)
                                         {
-                                            [cache cacheImage:nil withData:data url:trimmedUrl availability:TGCacheDisk];
                                             
                                             if (processor != nil)
                                             {   
                                                 UIImage *originalImage = image;
                                                 image = OnegramApplyImageProcessor(image, processor, processorName, trimmedUrl);
-                                                if (image == originalImage)
-                                                    image = [image preloadedImage];
+                                                if (image == originalImage && !decodedAtSize && !thumbnailOnly)
+                                                    image = OnegramPreloadDownloadedImage(image, onegramImagePriority, ^bool
+                                                    {
+                                                        NSOperation *currentOperation = weakBlockOperation;
+                                                        return currentOperation.isCancelled;
+                                                    });
                                                 
                                                 if (allowMemoryCache && (!TG_CACHE_INPLACE || forceMemoryCache))
                                                     [cache cacheImage:image withData:nil url:storeUrl availability:TGCacheMemory];
@@ -961,7 +1085,12 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                             }
                                             else
                                             {
-                                                image = [image preloadedImage];
+                                                if (!thumbnailOnly)
+                                                    image = OnegramPreloadDownloadedImage(image, onegramImagePriority, ^bool
+                                                    {
+                                                        NSOperation *currentOperation = weakBlockOperation;
+                                                        return currentOperation.isCancelled;
+                                                    });
                                                 
                                                 if (allowMemoryCache && (!TG_CACHE_INPLACE || forceMemoryCache))
                                                     [cache cacheImage:image withData:nil url:storeUrl availability:TGCacheMemory];
@@ -984,50 +1113,43 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                                     lastCompletionTime = currentTime;
                                             }
                                             
+                                            NSString *thumbnailUrl = nil;
+                                            NSData *thumbnailData = nil;
+                                            if (imageInfo != nil && imageForThumbnail != nil && ![url hasPrefix:@"upload"])
+                                            {
+                                                CGSize thumbnailSize = CGSizeZero;
+                                                thumbnailUrl = [imageInfo closestImageUrlWithSize:CGSizeMake(90, 90) resultingSize:&thumbnailSize];
+                                                NSString *thumbnailPath = thumbnailUrl != nil ? [cache pathForCachedData:thumbnailUrl] : nil;
+                                                if (thumbnailUrl != nil && ![thumbnailUrl isEqualToString:trimmedUrl] && ![[NSFileManager defaultManager] fileExistsAtPath:thumbnailPath])
+                                                {
+                                                    thumbnailSize = TGFitSize(imageForThumbnail.pixelSize, [TGGenericModernConversationCompanion preferredInlineThumbnailSize]);
+                                                    UIImage *thumbnailImage = TGScaleImageToPixelSize(imageForThumbnail, thumbnailSize);
+                                                    if (thumbnailImage != nil)
+                                                        thumbnailData = UIImageJPEGRepresentation(thumbnailImage, 0.85f);
+                                                }
+                                            }
                                             [ActionStageInstance() dispatchOnStageQueue:^
                                             {
+                                                TGImageDownloadActor *currentActor = weakSelf;
+                                                if (currentActor == nil || currentActor.cancelled)
+                                                    return;
                                                 [ActionStageInstance() nodeRetrieved:path node:[[SGraphObjectNode alloc] initWithObject:image]];
-                                                
-                                                if (imageInfo != nil && imageForThumbnail != nil && ![url hasPrefix:@"upload"])
+                                            
+                                                if (thumbnailData != nil)
                                                 {
-                                                    CGSize thumbnailSize = CGSizeZero;
-                                                    NSString *thumbnailUrl = [imageInfo closestImageUrlWithSize:CGSizeMake(90, 90) resultingSize:&thumbnailSize];
-                                                    if (thumbnailUrl != nil)
-                                                    {
-                                                        thumbnailSize = TGFitSize(CGSizeMake(imageForThumbnail.size.width * imageForThumbnail.scale, imageForThumbnail.size.height * imageForThumbnail.scale), [TGGenericModernConversationCompanion preferredInlineThumbnailSize]);
-                                                        
-                                                        UIImage *thumbnailImage = TGScaleImageToPixelSize(imageForThumbnail, thumbnailSize);
-                                                        if (thumbnailImage != nil)
-                                                        {
-                                                            NSData *thumbnailData = UIImageJPEGRepresentation(thumbnailImage, 0.85f);
-                                                            if (thumbnailData != nil)
-                                                            {
-                                                                [cache removeFromMemoryCache:thumbnailUrl matchEnd:true];
-                                                                
-                                                                
-                                                                [cache cacheImage:nil withData:thumbnailData url:thumbnailUrl availability:TGCacheDisk];
-                                                                
-                                                                TGFileDownloadActor *fileActor = (TGFileDownloadActor *)[ActionStageInstance() executingActorWithPath:[[NSString alloc] initWithFormat:@"/tg/file/(%@)", thumbnailUrl]];
-                                                                if (fileActor != nil)
-                                                                {
-                                                                    [fileActor completeWithData:thumbnailData];
-                                                                }
-                                                                else
-                                                                {
-                                                                    TGDispatchAfter(0.08, [ActionStageInstance() globalStageDispatchQueue], ^
-                                                                    {
-                                                                        [ActionStageInstance() dispatchResource:[[NSString alloc] initWithFormat:@"/as/media/imageThumbnailUpdated"] resource:thumbnailUrl];
-                                                                    });
-                                                                }
-                                                            }
-                                                        }
-                                                    }
+                                                    [cache removeFromMemoryCache:thumbnailUrl matchEnd:true];
+                                                    [cache cacheImage:nil withData:thumbnailData url:thumbnailUrl availability:TGCacheDisk];
+                                                    TGFileDownloadActor *fileActor = (TGFileDownloadActor *)[ActionStageInstance() executingActorWithPath:[[NSString alloc] initWithFormat:@"/tg/file/(%@)", thumbnailUrl]];
+                                                    if (fileActor != nil)
+                                                        [fileActor completeWithData:thumbnailData];
                                                 }
-                                                
+                                                if (thumbnailUrl != nil)
+                                                    [ActionStageInstance() dispatchResource:@"/as/media/imageThumbnailUpdated" resource:thumbnailUrl];
+                                            
                                                 if ([[userProperties objectForKey:@"storeAsAsset"] boolValue])
                                                 {
                                                     bool shouldSave = true;
-                                                    
+                                                
                                                     if (![userProperties[@"forceSave"] boolValue])
                                                     {
                                                         int mid = [userProperties[@"messageId"] intValue];
@@ -1036,12 +1158,12 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                                                         {
                                                             int minAutosaveMid = [TGDatabaseInstance() minAutosaveMessageIdForConversation:conversationId];
                                                         }
-                                                        
+                                                    
                                                         if (TGPeerIdIsChannel(conversationId)) {
                                                             shouldSave = false;
                                                         }
                                                     }
-                                                    
+                                                
                                                     if (shouldSave)
                                                     {
                                                         [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/checkImageStored/(%lu)", (unsigned long)[trimmedUrl hash]] options:[[NSDictionary alloc] initWithObjectsAndKeys:trimmedUrl, @"url", nil] watcher:TGTelegraphInstance];
@@ -1058,9 +1180,13 @@ static void OnegramPumpPeerAvatarRenderQueue(void)
                             }];
                             
                             processingOperation.threadPriority = imageProcessingPriority();
-                            if (TGImageDownloadUsesPeerAvatarPipeline())
+                            if (thumbnailOnly)
+                                processingOperation.queuePriority = NSOperationQueuePriorityVeryHigh;
+                            else if (TGImageDownloadUsesPeerAvatarPipeline())
                                 processingOperation.queuePriority = OnegramImageQueuePriority(onegramImagePriority);
-                            [[TGImageDownloadActor operationQueue] addOperation:processingOperation];
+                            [cache cacheImage:nil withData:imageData url:trimmedUrl availability:TGCacheDisk completion:^{
+                                [[TGImageDownloadActor operationQueue] addOperation:processingOperation];
+                            }];
                         }
                         else
                         {

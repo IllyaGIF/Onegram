@@ -4,7 +4,7 @@
 
 @implementation TGChannelAdminRights
 
-- (instancetype)initWithCanChangeInfo:(bool)canChangeInfo canPostMessages:(bool)canPostMessages canEditMessages:(bool)canEditMessages canDeleteMessages:(bool)canDeleteMessages canBanUsers:(bool)canBanUsers canInviteUsers:(bool)canInviteUsers canChangeInviteLink:(bool)canChangeInviteLink canPinMessages:(bool)canPinMessages canAddAdmins:(bool)canAddAdmins {
+- (instancetype)initWithCanChangeInfo:(bool)canChangeInfo canPostMessages:(bool)canPostMessages canEditMessages:(bool)canEditMessages canDeleteMessages:(bool)canDeleteMessages canBanUsers:(bool)canBanUsers canInviteUsers:(bool)canInviteUsers canChangeInviteLink:(bool)canChangeInviteLink canPinMessages:(bool)canPinMessages canAddAdmins:(bool)canAddAdmins canManageDirectMessages:(bool)canManageDirectMessages {
     self = [super init];
     if (self != nil) {
         _canChangeInfo = canChangeInfo;
@@ -16,12 +16,13 @@
         _canChangeInviteLink = canChangeInviteLink;
         _canPinMessages = canPinMessages;
         _canAddAdmins = canAddAdmins;
+        _canManageDirectMessages = canManageDirectMessages;
     }
     return self;
 }
 
 - (instancetype)initWithFlags:(int32_t)flags {
-    return [self initWithCanChangeInfo:flags & (1 << 0) canPostMessages:flags & (1 << 1) canEditMessages:flags & (1 << 2) canDeleteMessages:flags & (1 << 3) canBanUsers:flags & (1 << 4) canInviteUsers:flags & (1 << 5) canChangeInviteLink:flags & (1 << 6) canPinMessages:flags & (1 << 7) canAddAdmins:flags & (1 << 9)];
+    return [self initWithCanChangeInfo:flags & (1 << 0) canPostMessages:flags & (1 << 1) canEditMessages:flags & (1 << 2) canDeleteMessages:flags & (1 << 3) canBanUsers:flags & (1 << 4) canInviteUsers:flags & (1 << 5) canChangeInviteLink:flags & (1 << 6) canPinMessages:flags & (1 << 7) canAddAdmins:flags & (1 << 9) canManageDirectMessages:flags & (1 << 17)];
 }
 
 - (int32_t)tlFlags {
@@ -52,6 +53,9 @@
     }
     if (_canAddAdmins) {
         flags |= (1 << 9);
+    }
+    if (_canManageDirectMessages) {
+        flags |= (1 << 17);
     }
     return flags;
 }

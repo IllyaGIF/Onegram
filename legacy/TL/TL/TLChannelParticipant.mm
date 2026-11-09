@@ -47,7 +47,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChannelParticipant$channelParticipant *object = [[TLChannelParticipant$channelParticipant alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     return object;
 }
@@ -56,8 +56,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -87,8 +87,8 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChannelParticipant$channelParticipantSelf *object = [[TLChannelParticipant$channelParticipantSelf alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
-    object.inviter_id = metaObject->getInt32((int32_t)0x9ddfbd93);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
+    object.inviter_id = metaObject->getInt64((int32_t)0x9ddfbd93);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     return object;
 }
@@ -97,14 +97,14 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.inviter_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.inviter_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9ddfbd93, value));
     }
     {
@@ -134,7 +134,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLChannelParticipant$channelParticipantCreator *object = [[TLChannelParticipant$channelParticipantCreator alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     return object;
 }
 
@@ -142,8 +142,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
 }
@@ -168,9 +168,9 @@
 {
     TLChannelParticipant$channelParticipantAdmin *object = [[TLChannelParticipant$channelParticipantAdmin alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
-    object.inviter_id = metaObject->getInt32((int32_t)0x9ddfbd93);
-    object.promoted_by = metaObject->getInt32((int32_t)0x525bb9d2);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
+    object.inviter_id = metaObject->getInt64((int32_t)0x9ddfbd93);
+    object.promoted_by = metaObject->getInt64((int32_t)0x525bb9d2);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.admin_rights = metaObject->getObject((int32_t)0x86c3114f);
     return object;
@@ -186,20 +186,20 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.inviter_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.inviter_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9ddfbd93, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.promoted_by;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.promoted_by;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x525bb9d2, value));
     }
     {
@@ -236,8 +236,8 @@
 {
     TLChannelParticipant$channelParticipantBanned *object = [[TLChannelParticipant$channelParticipantBanned alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
-    object.kicked_by = metaObject->getInt32((int32_t)0xd6716483);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
+    object.kicked_by = metaObject->getInt64((int32_t)0xd6716483);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.banned_rights = metaObject->getObject((int32_t)0x7ecb6900);
     return object;
@@ -253,14 +253,14 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.kicked_by;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.kicked_by;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xd6716483, value));
     }
     {

@@ -20,8 +20,8 @@ static const CGFloat TGModernFlatteningPrefetchTileInset = 384.0f;
 static const NSUInteger TGModernFlatteningPrerenderTileCount = 2;
 static const CGFloat TGModernFlatteningVisibleTaskPriority = -4096.0f;
 static const CGFloat TGModernFlatteningUnboundTaskPriority = 200000.0f;
-static const double TGModernFlatteningVisibleThreadPriority = 0.55;
-static const double TGModernFlatteningPrerenderThreadPriority = 0.5;
+static const double TGModernFlatteningVisibleThreadPriority = 0.75;
+static const double TGModernFlatteningPrerenderThreadPriority = 0.4;
 static const NSUInteger TGModernFlatteningSingleCorePendingTaskLimit = 24;
 static const NSUInteger TGModernFlatteningMultiCorePendingTaskLimit = 96;
 static NSString *const TGModernFlatteningTileViewIdentifier = @"TGModernFlatteningView";
@@ -44,10 +44,8 @@ enum {
     bool _cancelled;
     CGImageRef _image;
     __weak TGModernFlatteningViewModel *_model;
-#if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime _enqueuedAt;
     CFAbsoluteTime _visibleAt;
-#endif
 }
 
 @end
@@ -137,7 +135,6 @@ static void TGModernFlatteningCacheLockRelease(void)
     pthread_mutex_unlock(&TGModernFlatteningCacheLock);
 }
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 static NSUInteger TGModernFlatteningStatsCacheHits = 0;
 static NSUInteger TGModernFlatteningStatsAsyncHits = 0;
 static NSUInteger TGModernFlatteningStatsWaits = 0;
@@ -153,7 +150,6 @@ static double TGModernFlatteningStatsRenderDuration = 0.0;
 static double TGModernFlatteningStatsVisibleDuration = 0.0;
 static double TGModernFlatteningStatsMaximumVisibleDuration = 0.0;
 static NSUInteger TGModernFlatteningStatsVisibleDeliveries = 0;
-#endif
 
 static NSUInteger TGModernFlatteningCacheBudget(void)
 {
@@ -284,13 +280,12 @@ static CGImageRef TGModernFlatteningRenderRecordedImage(TGModernDrawingRecording
     return image;
 }
 
-static void TGModernFlatteningSetWorkerPriority(double priority)
+static void TGModernFlatteningSetWorkerPriority(double *currentPriority, double priority)
 {
-    static double currentPriority = -1.0;
-    if (currentPriority != priority)
+    if (*currentPriority != priority)
     {
         [NSThread setThreadPriority:priority];
-        currentPriority = priority;
+        *currentPriority = priority;
     }
 }
 
@@ -299,10 +294,10 @@ static void TGModernFlatteningWorkerLock(void)
     pthread_mutex_lock(&TGModernFlatteningTaskLock);
 }
 
-static void TGModernFlatteningWorkerUnlock(double priority)
+static void TGModernFlatteningWorkerUnlock(double *currentPriority, double priority)
 {
     pthread_mutex_unlock(&TGModernFlatteningTaskLock);
-    TGModernFlatteningSetWorkerPriority(priority);
+    TGModernFlatteningSetWorkerPriority(currentPriority, priority);
 }
 
 static void TGModernFlatteningPurgeCancelledTasksLocked(void)
@@ -352,8 +347,9 @@ static TGModernFlatteningRenderTask *TGModernFlatteningWaitForTaskLocked(void)
 
 + (void)renderThreadMain:(id)__unused object
 {
+    double appliedPriority = -1.0;
     double currentPriority = TGModernFlatteningPrerenderThreadPriority;
-    TGModernFlatteningSetWorkerPriority(currentPriority);
+    TGModernFlatteningSetWorkerPriority(&appliedPriority, currentPriority);
 
     for (;;)
     {
@@ -364,11 +360,9 @@ static TGModernFlatteningRenderTask *TGModernFlatteningWaitForTaskLocked(void)
             currentPriority = task->_priority < 0.0f ? TGModernFlatteningVisibleThreadPriority : TGModernFlatteningPrerenderThreadPriority;
             TGModernDrawingRecording *recording = task->_recording;
             CGRect rect = task->_rect;
-            TGModernFlatteningWorkerUnlock(currentPriority);
+            TGModernFlatteningWorkerUnlock(&appliedPriority, currentPriority);
 
-#if defined(ONEGRAM_DIAGNOSTICS)
             CFAbsoluteTime renderStart = CFAbsoluteTimeGetCurrent();
-#endif
             CGImageRef image = TGModernFlatteningRenderRecordedImage(recording, rect, task);
             task->_recording = nil;
             recording = nil;
@@ -386,12 +380,10 @@ static TGModernFlatteningRenderTask *TGModernFlatteningWaitForTaskLocked(void)
                 task->_image = image;
                 deliver = true;
             }
-#if defined(ONEGRAM_DIAGNOSTICS)
             TGModernFlatteningStatsRendered++;
             TGModernFlatteningStatsQueueDuration += renderStart - task->_enqueuedAt;
             TGModernFlatteningStatsRenderDuration += CFAbsoluteTimeGetCurrent() - renderStart;
-#endif
-            TGModernFlatteningWorkerUnlock(currentPriority);
+            TGModernFlatteningWorkerUnlock(&appliedPriority, currentPriority);
 
             if (deliver)
             {
@@ -438,23 +430,17 @@ static void TGModernFlatteningEnqueueTask(TGModernFlatteningRenderTask *task)
         else
         {
             task->_cancelled = true;
-#if defined(ONEGRAM_DIAGNOSTICS)
             TGModernFlatteningStatsRejected++;
-#endif
         }
     }
     if (!task->_cancelled)
     {
         task->_state = TGModernFlatteningRenderTaskQueued;
-#if defined(ONEGRAM_DIAGNOSTICS)
         task->_enqueuedAt = CFAbsoluteTimeGetCurrent();
         if (task->_priority < 0.0f)
             task->_visibleAt = task->_enqueuedAt;
-#endif
         [TGModernFlatteningTasks addObject:task];
-#if defined(ONEGRAM_DIAGNOSTICS)
         TGModernFlatteningStatsScheduled++;
-#endif
         if (!TGModernFlatteningWorkerStarted)
         {
             TGModernFlatteningWorkerStarted = true;
@@ -466,9 +452,13 @@ static void TGModernFlatteningEnqueueTask(TGModernFlatteningRenderTask *task)
 
     if (startWorker)
     {
-        NSThread *thread = [[NSThread alloc] initWithTarget:[TGModernFlatteningRenderThread class] selector:@selector(renderThreadMain:) object:nil];
-        [thread setName:@"org.telegram.TGModernFlatteningViewModel.render"];
-        [thread start];
+        NSUInteger workerCount = OGRuntimeSingleCoreDevice() ? 1 : 2;
+        for (NSUInteger index = 0; index < workerCount; index++)
+        {
+            NSThread *thread = [[NSThread alloc] initWithTarget:[TGModernFlatteningRenderThread class] selector:@selector(renderThreadMain:) object:nil];
+            [thread setName:@"org.telegram.TGModernFlatteningViewModel.render"];
+            [thread start];
+        }
     }
 }
 
@@ -488,10 +478,8 @@ static void TGModernFlatteningSetTaskPriority(TGModernFlatteningRenderTask *task
         return;
     pthread_mutex_lock(&TGModernFlatteningTaskLock);
     task->_priority = priority;
-#if defined(ONEGRAM_DIAGNOSTICS)
     if (priority < 0.0f && task->_visibleAt == 0.0)
         task->_visibleAt = CFAbsoluteTimeGetCurrent();
-#endif
     pthread_mutex_unlock(&TGModernFlatteningTaskLock);
 }
 
@@ -797,17 +785,13 @@ static void TGModernFlatteningCacheListEnsure(void)
 
 - (void)_renderTileSynchronously:(TGModernFlatteningTile *)tile
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
-#endif
     TGReusableLabelResetMissedEmoji();
     TGModernDrawingRecording *recording = [_recording recordingForDrawingRect:tile->_rect];
     CGImageRef image = recording != nil ? TGModernFlatteningCreateRecordedImage(recording, tile->_rect, nil) : [self _createDirectImageForRect:tile->_rect];
     bool missedEmoji = TGReusableLabelMissedEmoji();
-#if defined(ONEGRAM_DIAGNOSTICS)
     TGModernFlatteningStatsSyncRenders++;
     TGModernFlatteningStatsSyncDuration += CFAbsoluteTimeGetCurrent() - startTime;
-#endif
     [self _setTile:tile image:(__bridge_transfer id)image];
 
     if (missedEmoji && _recording != nil)
@@ -826,9 +810,7 @@ static void TGModernFlatteningCacheListEnsure(void)
 {
     if (tile->_image != nil)
     {
-#if defined(ONEGRAM_DIAGNOSTICS)
         TGModernFlatteningStatsCacheHits++;
-#endif
         return;
     }
     if (tile->_task != nil)
@@ -837,9 +819,7 @@ static void TGModernFlatteningCacheListEnsure(void)
         if (image != NULL)
         {
             tile->_task = nil;
-#if defined(ONEGRAM_DIAGNOSTICS)
             TGModernFlatteningStatsAsyncHits++;
-#endif
             [self _setTile:tile image:(__bridge_transfer id)image];
             return;
         }
@@ -1003,14 +983,15 @@ static void TGModernFlatteningCacheListEnsure(void)
         return;
     }
 
-#if defined(ONEGRAM_DIAGNOSTICS)
-    double visibleDuration = task->_visibleAt == 0.0 ? 0.0 : CFAbsoluteTimeGetCurrent() - task->_visibleAt;
-    TGModernFlatteningWorkerLock();
-    TGModernFlatteningStatsVisibleDuration += visibleDuration;
-    TGModernFlatteningStatsMaximumVisibleDuration = MAX(TGModernFlatteningStatsMaximumVisibleDuration, visibleDuration);
-    TGModernFlatteningStatsVisibleDeliveries++;
-    pthread_mutex_unlock(&TGModernFlatteningTaskLock);
-#endif
+    if (OGDiagnosticsEnabled())
+    {
+        double visibleDuration = task->_visibleAt == 0.0 ? 0.0 : CFAbsoluteTimeGetCurrent() - task->_visibleAt;
+        TGModernFlatteningWorkerLock();
+        TGModernFlatteningStatsVisibleDuration += visibleDuration;
+        TGModernFlatteningStatsMaximumVisibleDuration = MAX(TGModernFlatteningStatsMaximumVisibleDuration, visibleDuration);
+        TGModernFlatteningStatsVisibleDeliveries++;
+        pthread_mutex_unlock(&TGModernFlatteningTaskLock);
+    }
     [UIView performWithoutAnimation:^
     {
         if (!_tiledMode)
@@ -1303,7 +1284,6 @@ static void TGModernFlatteningCacheListEnsure(void)
     }
 }
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 + (void)logRenderingStatistics
 {
     pthread_mutex_lock(&TGModernFlatteningTaskLock);
@@ -1338,6 +1318,5 @@ static void TGModernFlatteningCacheListEnsure(void)
     TGModernFlatteningStatsSyncDuration = 0.0;
     TGModernFlatteningStatsScheduled = 0;
 }
-#endif
 
 @end

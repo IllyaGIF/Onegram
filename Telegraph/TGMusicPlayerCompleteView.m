@@ -13,6 +13,30 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
 
 #import <MediaPlayer/MediaPlayer.h>
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginMusicSpectrum.h"
+#endif
+
+@class TGMusicPlayerCompleteView;
+
+@interface TGMusicPlayerSpectrumTicker : NSObject
+@property (nonatomic, weak) TGMusicPlayerCompleteView *owner;
+- (void)tick;
+@end
+
+@interface TGMusicPlayerCompleteView (Spectrum)
+- (void)updateSpectrum;
+@end
+
+@implementation TGMusicPlayerSpectrumTicker
+
+- (void)tick
+{
+    [self.owner updateSpectrum];
+}
+
+@end
 
 @interface TGMusicPlayerCompleteViewLayer : CALayer
 
@@ -33,6 +57,10 @@
 @interface TGMusicPlayerCompleteView ()
 {
     UIView *_albumArtBackgroundView;
+    UIView *_spectrumStrip;
+    NSMutableArray *_spectrumBars;
+    CADisplayLink *_spectrumDisplayLink;
+    TGMusicPlayerSpectrumTicker *_spectrumTicker;
     UIImageView *_albumArtPlaceholderView;
     TGImageView *_albumArtImageView;
     
@@ -110,6 +138,25 @@
         
         _albumArtImageView = [[TGImageView alloc] init];
         [_albumArtBackgroundView addSubview:_albumArtImageView];
+
+#if OG_PLUGINS_AVAILABLE
+        _spectrumStrip = [[UIView alloc] init];
+        _spectrumStrip.userInteractionEnabled = NO;
+        _spectrumStrip.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.18f];
+        _spectrumStrip.hidden = YES;
+        _spectrumBars = [[NSMutableArray alloc] initWithCapacity:16];
+        for (NSUInteger index = 0; index < 16; index++)
+        {
+            CALayer *bar = [CALayer layer];
+            bar.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.75f].CGColor;
+            bar.cornerRadius = 1.0f;
+            [_spectrumStrip.layer addSublayer:bar];
+            [_spectrumBars addObject:bar];
+        }
+        [_albumArtBackgroundView addSubview:_spectrumStrip];
+        _spectrumTicker = [[TGMusicPlayerSpectrumTicker alloc] init];
+        _spectrumTicker.owner = self;
+#endif
         
         _tapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleArtTap:)];
         [_albumArtBackgroundView addGestureRecognizer:_tapGestureRecognizer];
@@ -246,7 +293,60 @@
 
 - (void)dealloc
 {
+    [_spectrumDisplayLink invalidate];
     [_playerStatusDisposable dispose];
+}
+
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+#if OG_PLUGINS_AVAILABLE
+    if (self.window != nil && _spectrumDisplayLink == nil)
+    {
+        _spectrumDisplayLink = [CADisplayLink displayLinkWithTarget:_spectrumTicker selector:@selector(tick)];
+        _spectrumDisplayLink.frameInterval = 4;
+        [_spectrumDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+    }
+    else if (self.window == nil && _spectrumDisplayLink != nil)
+    {
+        [_spectrumDisplayLink invalidate];
+        _spectrumDisplayLink = nil;
+    }
+#endif
+}
+
+- (void)updateSpectrum
+{
+#if OG_PLUGINS_AVAILABLE
+    if (_currentStatus == nil || _currentStatus.paused || _currentStatus.isVoice ||
+        _spectrumStrip.bounds.size.width < 16)
+    {
+        _spectrumStrip.hidden = YES;
+        return;
+    }
+    float bands[16];
+    if (!OGPluginMusicSpectrumCopyBands(bands, 16))
+    {
+        _spectrumStrip.hidden = YES;
+        return;
+    }
+    _spectrumStrip.hidden = NO;
+    CGFloat width = _spectrumStrip.bounds.size.width;
+    CGFloat height = _spectrumStrip.bounds.size.height;
+    CGFloat step = width / 16.0f;
+    CGFloat spacing = MIN(2.5f, step * 0.28f);
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (NSUInteger index = 0; index < _spectrumBars.count; index++)
+    {
+        CGFloat level = MAX(0.0f, MIN(1.0f, bands[index]));
+        CGFloat barHeight = 3.0f + level * (height - 6.0f);
+        CALayer *bar = _spectrumBars[index];
+        bar.frame = CGRectMake(index * step + spacing, height - barHeight,
+                               MAX(1.0f, step - spacing * 2.0f), barHeight);
+    }
+    [CATransaction commit];
+#endif
 }
 
 - (void)setFrame:(CGRect)frame
@@ -437,6 +537,8 @@ typedef enum {
     }
     
     _albumArtBackgroundView.frame = CGRectMake(0.0f, 0.0f, self.bounds.size.width, albumArtHeight + _topInset);
+    _spectrumStrip.frame = CGRectMake(14.0f, MAX(0.0f, albumArtHeight + _topInset - 48.0f),
+                                     MAX(0.0f, self.bounds.size.width - 28.0f), 36.0f);
     CGSize filledSize = TGScaleToFill(albumArtImageSize, _albumArtBackgroundView.frame.size);
     _albumArtImageView.frame = CGRectMake(CGFloor((self.frame.size.width - filledSize.width) / 2.0f), _topInset + CGFloor((albumArtHeight - filledSize.height) / 2.0f), filledSize.width, filledSize.height);
     _albumArtPlaceholderView.frame = CGRectMake(CGFloor((self.frame.size.width - _albumArtPlaceholderView.frame.size.width) / 2.0f) - 8.0f, _topInset + CGFloor((albumArtHeight - _albumArtPlaceholderView.frame.size.height) / 2.0f), _albumArtPlaceholderView.frame.size.width, _albumArtPlaceholderView.frame.size.height);
@@ -590,9 +692,9 @@ typedef enum {
     
     CGFloat disabledAlpha = 0.6f;
     
-    _scrubbingHandle.hidden = !status.downloadedStatus.downloaded;
+    _scrubbingHandle.hidden = !status.downloadedStatus.playable;
     
-    bool buttonsEnabled = status.downloadedStatus.downloaded;
+    bool buttonsEnabled = status.downloadedStatus.playable;
     if (buttonsEnabled != _controlPlayButton.enabled)
     {
         _controlPlayButton.enabled = buttonsEnabled;

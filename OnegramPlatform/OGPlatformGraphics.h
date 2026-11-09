@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#include <stdint.h>
 
 FOUNDATION_EXPORT CGFloat OGPlatformPixelFloor(CGFloat value);
 FOUNDATION_EXPORT CGFloat OGPlatformPixelCeil(CGFloat value);
@@ -12,9 +13,16 @@ FOUNDATION_EXPORT void OGPlatformApplyViewShadow(UIView *view, UIColor *color, C
 FOUNDATION_EXPORT void OGPlatformApplyRoundedViewShadow(UIView *view, UIColor *color, CGFloat opacity, CGFloat radius, CGSize offset, CGFloat cornerRadius);
 FOUNDATION_EXPORT UIImage *OGPlatformImageWithShadow(UIImage *image, UIColor *color, CGFloat opacity, CGFloat radius, CGSize offset);
 FOUNDATION_EXPORT void OGPlatformAddRoundedRectPath(CGContextRef context, CGRect rect, CGFloat radius);
+FOUNDATION_EXPORT UIImage *OGPlatformRenderImage(CGSize size, CGFloat scale, BOOL opaque, void (^drawing)(CGContextRef context));
+FOUNDATION_EXPORT void OGPlatformDrawImageInRect(CGContextRef context, UIImage *image, CGRect rect);
 FOUNDATION_EXPORT void OGPlatformDrawVerticalGradient(CGContextRef context, CGRect rect, UIColor *topColor, UIColor *bottomColor);
 FOUNDATION_EXPORT UIImage *OGPlatformImageFromData(NSData *data);
 FOUNDATION_EXPORT UIImage *OGPlatformThumbnailFromImageData(NSData *data, CGSize maximumSize);
+FOUNDATION_EXPORT UIImage *OGPlatformDecodeImageData(NSData *data, CGSize maximumPixelSize, NSInteger priority, bool (^isCancelled)(void));
+FOUNDATION_EXPORT UIImage *OGPlatformDecodeImageWithBlock(UIImage *(^decode)(void), CGSize maximumPixelSize, NSInteger priority, bool (^isCancelled)(void));
+FOUNDATION_EXPORT uint64_t OGPlatformActiveImageDecodes(void);
+FOUNDATION_EXPORT uint64_t OGPlatformCachedGraphicsBytes(void);
+FOUNDATION_EXPORT void OGPlatformTrimGraphicsCacheToCost(NSUInteger bytes);
 FOUNDATION_EXPORT UIImage *OGPlatformThumbnailFromImageFile(NSString *path, size_t maximumPixelSize);
 FOUNDATION_EXPORT CGSize OGPlatformImagePixelSizeFromData(NSData *data);
 FOUNDATION_EXPORT NSData *OGPlatformJPEGRepresentation(UIImage *image, CGFloat quality);

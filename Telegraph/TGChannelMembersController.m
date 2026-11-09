@@ -61,6 +61,7 @@
 #import "TGGroupInfoUserCell.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGChannelMembersController () <ASWatcher, TGGroupInfoSelectContactControllerDelegate, UITableViewDelegate, UITableViewDataSource, TGSearchDisplayMixinDelegate, TGSearchBarDelegate> {
     TGConversation *_conversation;
@@ -675,7 +676,7 @@
                     continue;
                 }
                 
-                updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:nil bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:0 adminInviterId:0 kickedById:0 adminCanManage:false];
+                updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:nil bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:0 adminInviterId:0 kickedById:0 adminCanManage:false];
                 [updatedUsers addObject:user];
             }
             
@@ -689,13 +690,13 @@
 - (void)actionStageActionRequested:(NSString *)action options:(id)options {
     if ([action isEqualToString:@"deleteUser"])
     {
-        int32_t uid = [options[@"uid"] intValue];
+        int64_t uid = [options[@"uid"] longLongValue];
         if (uid != 0)
             [self _commitDeleteParticipant:uid completion:nil];
     }
     else if ([action isEqualToString:@"openUser"])
     {
-        int32_t uid = [options[@"uid"] intValue];
+        int64_t uid = [options[@"uid"] longLongValue];
         if (uid != 0)
         {
             TGUser *user = [TGDatabaseInstance() loadUser:uid];
@@ -755,7 +756,7 @@
                                             }
                                             
                                             if (rights.hasAnyRights) {
-                                                return [data addManagementMember:[[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true]];
+                                                return [data addManagementMember:[[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true]];
                                             } else {
                                                 return [data removeManagementMember:user.uid];
                                             }
@@ -769,7 +770,7 @@
                                                 [updatedUsers addObject:user];
                                             }
                                             
-                                            updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true];
+                                            updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true];
                                         } else {
                                             NSUInteger index = 0;
                                             for (TGUser *current in updatedUsers) {
@@ -841,7 +842,7 @@
                                                     data = [[TGCachedConversationData alloc] init];
                                                 }
                                                 
-                                                return [data updateMemberBannedRights:user.uid rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
+                                                return [data updateMemberBannedRights:user.uid rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
                                             }];
                                             
                                             if (rights.numberOfRestrictions == 0) {
@@ -939,7 +940,7 @@
                                             data = [[TGCachedConversationData alloc] init];
                                         }
                                         
-                                        return [data updateMemberBannedRights:user.uid rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
+                                        return [data updateMemberBannedRights:user.uid rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
                                     }];
                                     
                                     if (rights.numberOfRestrictions == 0) {
@@ -1029,7 +1030,7 @@
     }
 }
 
-- (void)_commitDeleteParticipant:(int32_t)userId completion:(void (^)())completion {
+- (void)_commitDeleteParticipant:(int64_t)userId completion:(void (^)())completion {
     TGProgressWindow *progressWindow = [[TGProgressWindow alloc] init];
     [progressWindow showWithDelay:0.5];
     
@@ -1047,7 +1048,7 @@
                         data = [[TGCachedConversationData alloc] init];
                     }
                     
-                    return [data updateMemberBannedRights:userId rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:updatedMember.kickedById];
+                    return [data updateMemberBannedRights:userId rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:updatedMember.kickedById];
                 }];
             }];
             break;
@@ -1060,7 +1061,7 @@
                         data = [[TGCachedConversationData alloc] init];
                     }
                     
-                    return [data updateMemberBannedRights:userId rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:updatedMember.kickedById];
+                    return [data updateMemberBannedRights:userId rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:updatedMember.kickedById];
                 }];
             }];
             break;
@@ -1284,7 +1285,7 @@
                                         data = [[TGCachedConversationData alloc] init];
                                     }
                                     
-                                    return [data addManagementMember:[[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true]];
+                                    return [data addManagementMember:[[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true]];
                                 }];
 
                                 NSMutableArray *updatedUsers = [[NSMutableArray alloc] initWithArray:strongSelf->_users];
@@ -1293,7 +1294,7 @@
                                     [updatedUsers addObject:user];
                                 }
                                 
-                                updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true];
+                                updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true];
                                 
                                 [strongSelf setUsers:updatedUsers memberDatas:updatedMemberDatas isFinal:true];
                                 [strongSelf updateEditing];
@@ -1351,7 +1352,7 @@
                     data = [[TGCachedConversationData alloc] init];
                 }
                 
-                return [data addMembers:@[@(user.uid)] timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime]];
+                return [data addMembers:@[@(user.uid)] timestamp:(int32_t)OGRemoteClockTime()];
             }];
         }] onError:^(id error) {
             TGDispatchOnMainThread(^{
@@ -1389,7 +1390,7 @@
                     NSMutableArray *updatedUsers = [[NSMutableArray alloc] initWithArray:strongSelf->_users];
                     [updatedUsers addObject:user];
                     NSMutableDictionary *updatedMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:strongSelf->_memberDatas];
-                    updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:nil bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:TGTelegraphInstance.clientUserId adminInviterId:0 kickedById:0 adminCanManage:false];
+                    updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:nil bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:TGTelegraphInstance.clientUserId adminInviterId:0 kickedById:0 adminCanManage:false];
                     
                     [strongSelf setUsers:updatedUsers memberDatas:updatedMemberDatas isFinal:true];
                     [strongSelf updateEditing];
@@ -1539,9 +1540,9 @@
                 [userItem setCanEdit:member.adminCanManage];
                 TGChannelAdminRights *filtered = nil;
                 if (_conversation.isChannelGroup) {
-                    filtered = [[TGChannelAdminRights alloc] initWithCanChangeInfo:member.adminRights.canChangeInfo canPostMessages:false canEditMessages:member.adminRights.canEditMessages canDeleteMessages:member.adminRights.canDeleteMessages canBanUsers:member.adminRights.canBanUsers canInviteUsers:member.adminRights.canInviteUsers canChangeInviteLink:member.adminRights.canChangeInviteLink canPinMessages:member.adminRights.canPinMessages canAddAdmins:member.adminRights.canAddAdmins];
+                    filtered = [[TGChannelAdminRights alloc] initWithCanChangeInfo:member.adminRights.canChangeInfo canPostMessages:false canEditMessages:member.adminRights.canEditMessages canDeleteMessages:member.adminRights.canDeleteMessages canBanUsers:member.adminRights.canBanUsers canInviteUsers:member.adminRights.canInviteUsers canChangeInviteLink:member.adminRights.canChangeInviteLink canPinMessages:member.adminRights.canPinMessages canAddAdmins:member.adminRights.canAddAdmins canManageDirectMessages:false];
                 } else {
-                    filtered = [[TGChannelAdminRights alloc] initWithCanChangeInfo:member.adminRights.canChangeInfo canPostMessages:member.adminRights.canPostMessages canEditMessages:member.adminRights.canEditMessages canDeleteMessages:member.adminRights.canDeleteMessages canBanUsers:false canInviteUsers:false canChangeInviteLink:false canPinMessages:member.adminRights.canPinMessages canAddAdmins:member.adminRights.canAddAdmins];
+                    filtered = [[TGChannelAdminRights alloc] initWithCanChangeInfo:member.adminRights.canChangeInfo canPostMessages:member.adminRights.canPostMessages canEditMessages:member.adminRights.canEditMessages canDeleteMessages:member.adminRights.canDeleteMessages canBanUsers:false canInviteUsers:false canChangeInviteLink:false canPinMessages:member.adminRights.canPinMessages canAddAdmins:member.adminRights.canAddAdmins canManageDirectMessages:member.adminRights.canManageDirectMessages];
                 }
                 
                 TGUser *inviter = [TGDatabaseInstance() loadUser:member.adminInviterId];
@@ -1795,7 +1796,7 @@
     return tableView;
 }
 
-- (void)removeParticipantFromList:(int32_t)uid {
+- (void)removeParticipantFromList:(int64_t)uid {
     if (_searchResultUsers != nil) {
         NSMutableArray *updatedSearchResultUsers = [[NSMutableArray alloc] initWithArray:_searchResultUsers];
         NSMutableDictionary *updatedSearchResultMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_searchResultsMemberDatas];

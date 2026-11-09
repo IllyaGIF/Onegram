@@ -36,7 +36,24 @@
 
 - (BOOL)isEqual:(id)object
 {
-    return [object isKindOfClass:[TGMessageEntity class]] && ((TGMessageEntity *)object)->_range.location == _range.location && ((TGMessageEntity *)object)->_range.length == _range.length;
+    return [object class] == [self class] && ((TGMessageEntity *)object)->_range.location == _range.location && ((TGMessageEntity *)object)->_range.length == _range.length;
 }
+
+- (NSUInteger)hash
+{
+    return _range.location ^ (_range.length << 16);
+}
+
+@end
+
+@implementation TGMessageEntityUnderline
+
+@end
+
+@implementation TGMessageEntityStrikethrough
+
+@end
+
+@implementation TGMessageEntitySpoiler
 
 @end

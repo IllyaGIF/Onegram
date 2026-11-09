@@ -39,9 +39,30 @@
     
     if (isLayer181MediaDocument && (flags & (1 << 5))) {
         int32_t signature = [is readInt32];
-        TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+        id document = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
         if (error != nil && *error != nil)
             return nil;
+        if (document != nil)
+            result.alt_documents = @[document];
+    }
+    
+    if (signature == (int32_t)0x52d8ccd9 && (flags & (1 << 5))) {
+        int32_t vectorSignature = [is readInt32];
+        if (vectorSignature != (int32_t)0x1cb5c415)
+            return nil;
+        int32_t count = [is readInt32];
+        if (count < 0)
+            return nil;
+        NSMutableArray *documents = [[NSMutableArray alloc] initWithCapacity:(NSUInteger)count];
+        for (int32_t i = 0; i < count; i++) {
+            int32_t documentSignature = [is readInt32];
+            id document = TLMetaClassStore::constructObject(is, documentSignature, environment, nil, error);
+            if (error != nil && *error != nil)
+                return nil;
+            if (document != nil)
+                [documents addObject:document];
+        }
+        result.alt_documents = documents;
     }
     
     if (signature == (int32_t)0x52d8ccd9 && (flags & (1 << 9))) {

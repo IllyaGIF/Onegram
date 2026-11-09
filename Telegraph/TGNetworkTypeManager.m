@@ -1,4 +1,6 @@
 #import "TGNetworkTypeManager.h"
+#import <QuartzCore/QuartzCore.h>
+#import "TGAppDelegate.h"
 
 #import "Reachability.h"
 
@@ -8,6 +10,17 @@
 #endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGObserverProxy.h"
+
+static OSSpinLock TGTransferPolicyLock = OS_SPINLOCK_INIT;
+static OGTransferPolicy TGCurrentTransferPolicy;
+
+static void TGEnsureTransferPolicy(void)
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        OGTransferPolicyReset(&TGCurrentTransferPolicy, 0, cpuCoreCount() <= 1, CACurrentMediaTime());
+    });
+}
 
 @interface TGObserverBlockProxy : TGObserverProxy
 
@@ -29,6 +42,31 @@
 
 @implementation TGNetworkTypeManager
 
++ (OGTransferParameters)transferParametersForUpload:(bool)upload
+{
+    TGEnsureTransferPolicy();
+    OSSpinLockLock(&TGTransferPolicyLock);
+    OGTransferParameters parameters = OGTransferPolicyParameters(&TGCurrentTransferPolicy, upload, CACurrentMediaTime());
+    OSSpinLockUnlock(&TGTransferPolicyLock);
+    return parameters;
+}
+
++ (void)recordTransferBytes:(int64_t)bytes started:(NSTimeInterval)started upload:(bool)upload generation:(uint32_t)generation
+{
+    TGEnsureTransferPolicy();
+    OSSpinLockLock(&TGTransferPolicyLock);
+    OGTransferPolicyRecordSuccess(&TGCurrentTransferPolicy, upload, generation, bytes, started, CACurrentMediaTime());
+    OSSpinLockUnlock(&TGTransferPolicyLock);
+}
+
++ (void)recordTransferFailureForUpload:(bool)upload generation:(uint32_t)generation
+{
+    TGEnsureTransferPolicy();
+    OSSpinLockLock(&TGTransferPolicyLock);
+    OGTransferPolicyRecordFailure(&TGCurrentTransferPolicy, upload, generation, CACurrentMediaTime());
+    OSSpinLockUnlock(&TGTransferPolicyLock);
+}
+
 - (instancetype)init
 {
     self = [super init];
@@ -46,9 +84,20 @@
                 return;
             
             OSSpinLockLock(&_lock);
+            TGNetworkType previousType = strongSelf->_type;
             strongSelf->_type = (TGNetworkType)[next integerValue];
             OSSpinLockUnlock(&_lock);
             
+            if (previousType != strongSelf->_type)
+            {
+                TGNetworkType type = strongSelf->_type;
+                int networkClass = type == TGNetworkTypeWiFi || type == TGNetworkTypeLTE ? 3 : (type == TGNetworkType3G ? 2 : 1);
+                TGEnsureTransferPolicy();
+                OSSpinLockLock(&TGTransferPolicyLock);
+                OGTransferPolicyReset(&TGCurrentTransferPolicy, networkClass, cpuCoreCount() <= 1, CACurrentMediaTime());
+                OSSpinLockUnlock(&TGTransferPolicyLock);
+                [TGAppDelegateInstance refreshAutomaticMediaDownloads];
+            }
             strongSelf->_pipe.sink(next);
         }];
     }

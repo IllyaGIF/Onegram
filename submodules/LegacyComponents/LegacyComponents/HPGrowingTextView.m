@@ -368,15 +368,22 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
         return;
     }
 
-    NSMutableAttributedString *fixedFontString = [[NSMutableAttributedString alloc] initWithAttributedString:newText];
+    NSMutableAttributedString *fixedFontString = newText == nil
+        ? [[NSMutableAttributedString alloc] initWithString:@""]
+        : [[NSMutableAttributedString alloc] initWithAttributedString:newText];
     if (!keepFormatting)
     {
         [fixedFontString removeAttribute:NSFontAttributeName range:NSMakeRange(0, fixedFontString.length)];
         [fixedFontString addAttribute:NSFontAttributeName value:_intrinsicTextFont == nil ? [UIFont systemFontOfSize:17.0f] : _intrinsicTextFont range:NSMakeRange(0, fixedFontString.length)];
     }
+
+    if (_intrinsicTextColor != nil)
+        [fixedFontString addAttribute:NSForegroundColorAttributeName value:_intrinsicTextColor range:NSMakeRange(0, fixedFontString.length)];
     
     _internalTextView.attributedText = fixedFontString;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
+    if (fixedFontString.length == 0 && _intrinsicTextColor != nil)
+        _internalTextView.textColor = _intrinsicTextColor;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
     _internalTextView.typingAttributes = [self defaultAttributes];
 #endif
     _placeholderView.hidden = fixedFontString.length != 0 || [_internalTextView isFirstResponder];
@@ -776,7 +783,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
          {
              [result addObject:[[TGMessageEntityMentionName alloc]
                                 initWithRange:range
-                                userId:[((TGInputTextTag *)value).attachment intValue]]];
+                                userId:[((TGInputTextTag *)value).attachment longLongValue]]];
          }
      }];
     
@@ -819,7 +826,7 @@ NSString *TGMentionBoldAttributeName = @"TGMentionBoldAttributeName";
     return [characters characterIsMember:character];
 }
 
-+ (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int32_t)userId
++ (void)replaceMention:(NSString *)mention inputField:(HPGrowingTextView *)inputField username:(bool)username userId:(int64_t)userId
 {
     NSString *replacementText = [mention stringByAppendingString:@" "];
 

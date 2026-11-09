@@ -57,5 +57,6 @@
 - (void)enumerateSearchRegionsForString:(NSString *)string withBlock:(void (^)(CGRect))block;
 
 - (NSUInteger)measuredNumberOfLines;
+- (void)refreshPluginColors;
 
 @end

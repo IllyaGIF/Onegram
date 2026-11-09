@@ -17,6 +17,7 @@
 
 const CGFloat TGCallAlertViewWidth = 270.0f;
 const CGFloat TGCallAlertViewButtonHeight = 44.0f;
+static const CGFloat TGCallAlertViewContentInset = 20.0f;
 
 @interface TGCallAlertView ()
 {
@@ -76,7 +77,7 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
             _wide = true;
         }
         
-        CGFloat inset = 20.0f;
+        CGFloat inset = TGCallAlertViewContentInset;
         
         if (title.length > 0)
         {
@@ -219,6 +220,19 @@ const CGFloat TGCallAlertViewButtonHeight = 44.0f;
             [self layoutSubviews];
         }
     }
+}
+
+- (void)setMessage:(NSString *)message
+{
+    if (_messageLabel == nil || [_messageLabel.text isEqualToString:message])
+        return;
+    _messageLabel.text = message;
+    CGSize size = [_messageLabel sizeThatFits:CGSizeMake([self alertWidth] - TGCallAlertViewContentInset * 2, FLT_MAX)];
+    _messageLabel.frame = CGRectMake(_messageLabel.frame.origin.x, _messageLabel.frame.origin.y, ceil(size.width), ceil(size.height));
+    [UIView animateWithDuration:0.2 animations:^
+    {
+        [self layoutSubviews];
+    }];
 }
 
 - (void)updateCustomViewHeight:(CGFloat)height

@@ -13,5 +13,6 @@
 - (instancetype)initWithTitle:(NSString *)title;
 
 - (void)setTitle:(NSString *)title;
+- (void)setBadgeText:(NSString *)badgeText;
 
 @end

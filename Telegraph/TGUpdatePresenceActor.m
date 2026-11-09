@@ -1,6 +1,7 @@
 #import "TGUpdatePresenceActor.h"
 
 #import "TGTelegraph.h"
+#import "TGTelegramNetworking.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
@@ -30,8 +31,11 @@
     }
 }
 
-- (void)execute:(NSDictionary *)__unused options
+- (void)execute:(NSDictionary *)options
 {
+    if ([TGTelegramNetworking deferActorUntilInstanceReady:self options:options])
+        return;
+
     NSString *presence = [self.path substringWithRange:NSMakeRange(28, self.path.length - 1 - 28)];
     if ([presence isEqualToString:@"timeout"])
     {

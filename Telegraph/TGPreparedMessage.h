@@ -10,6 +10,7 @@
 #import "TGMediaPostingContext.h"
 
 @class TGMessage;
+@class TGSendAsPeer;
 @class TGBotContextResultAttachment;
 @class TGReplyMarkupAttachment;
 
@@ -32,6 +33,8 @@
 
 @property (nonatomic, strong) TGMessage *replyMessage;
 @property (nonatomic) int32_t forumTopicId;
+@property (nonatomic, strong) TGSendAsPeer *sendAs;
+@property (nonatomic) int64_t monoforumPeerId;
 @property (nonatomic, readonly) int32_t replyMessageId;
 @property (nonatomic, strong) TGBotContextResultAttachment *botContextResult;
 @property (nonatomic, strong) TGReplyMarkupAttachment *replyMarkup;
@@ -40,7 +43,7 @@
 
 @property (nonatomic, copy) void (^executeOnAdd)();
 
-- (void)applyForumTopicToMessage:(TGMessage *)message;
+- (void)applyThreadToMessage:(TGMessage *)message;
 - (TGMessage *)message;
 
 @end

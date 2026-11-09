@@ -18,5 +18,8 @@
 #endif
 
 - (instancetype)initWithPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+- (instancetype)initWithURL:(NSURL *)url music:(bool)music controlAudioSession:(bool)controlAudioSession;
+#endif
 
 @end

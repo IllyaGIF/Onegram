@@ -23,6 +23,8 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
+    if (_subtitle.length != 0 && ![TGPresentation brandedIOS6Style])
+        return CGSizeMake(containerSize.width, 60.0f);
     return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] && _brandedSettingsStyle ? 35.0f : ([TGPresentation brandedIOS6Style] && _brandedProfileMusic ? 40.0f : 44.0f));
 }
 
@@ -46,6 +48,7 @@
     
     [view setBrandedProfileMusic:_brandedProfileMusic];
     [view setTitle:_title];
+    [view setSubtitle:_subtitle];
     [view setIcon:_icon];
     [view setBadge:_badge];
     [view setHideArrow:_hideArrow];
@@ -62,6 +65,14 @@
     
     if (self.boundView != nil)
         [(TGDisclosureActionCollectionItemView *)self.view setTitle:title];
+}
+
+- (void)setSubtitle:(NSString *)subtitle
+{
+    _subtitle = subtitle;
+
+    if (self.boundView != nil)
+        [(TGDisclosureActionCollectionItemView *)self.view setSubtitle:subtitle];
 }
 
 - (void)setIcon:(UIImage *)icon

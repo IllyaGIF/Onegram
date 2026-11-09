@@ -14,6 +14,7 @@
 @property (nonatomic, weak, readonly) UIWindow *alertWindow;
 
 - (void)updateCustomViewHeight:(CGFloat)height;
+- (void)setMessage:(NSString *)message;
 
 - (void)dismiss:(bool)done fromDim:(bool)fromDim animated:(bool)animated;
 

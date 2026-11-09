@@ -7,6 +7,210 @@
 #include <regex.h>
 #include <mach/mach.h>
 #include <pthread.h>
+#include <dlfcn.h>
+#include <libkern/OSAtomic.h>
+
+typedef void (*OnegramIOS3SetAssociatedObjectFunction)(id object, void *key, id value, objc_AssociationPolicy policy);
+typedef id (*OnegramIOS3GetAssociatedObjectFunction)(id object, void *key);
+typedef void (*OnegramIOS3RemoveAssociatedObjectsFunction)(id object);
+
+enum
+{
+    OnegramIOS3AssociationFilterSize = 4096
+};
+
+typedef struct
+{
+    id value;
+    objc_AssociationPolicy policy;
+} OnegramIOS3Association;
+
+static pthread_once_t OnegramIOS3AssociationsOnce = PTHREAD_ONCE_INIT;
+static OnegramIOS3SetAssociatedObjectFunction OnegramIOS3NativeSetAssociatedObject = NULL;
+static OnegramIOS3GetAssociatedObjectFunction OnegramIOS3NativeGetAssociatedObject = NULL;
+static OnegramIOS3RemoveAssociatedObjectsFunction OnegramIOS3NativeRemoveAssociatedObjects = NULL;
+static pthread_mutex_t OnegramIOS3AssociationsMutex = PTHREAD_MUTEX_INITIALIZER;
+static CFMutableDictionaryRef OnegramIOS3AssociationsByObject = NULL;
+static volatile uint32_t OnegramIOS3AssociationFilter[OnegramIOS3AssociationFilterSize];
+static IMP OnegramIOS3OriginalNSObjectDealloc = NULL;
+
+static NSUInteger OnegramIOS3AssociationFilterIndex(id object)
+{
+    uintptr_t address = (uintptr_t)object;
+    return (NSUInteger)((address >> 4) ^ (address >> 16)) & (OnegramIOS3AssociationFilterSize - 1);
+}
+
+static bool OnegramIOS3AssociationPolicyRetains(objc_AssociationPolicy policy)
+{
+    return policy != OBJC_ASSOCIATION_ASSIGN;
+}
+
+static bool OnegramIOS3AssociationPolicyIsAtomic(objc_AssociationPolicy policy)
+{
+    return policy == OBJC_ASSOCIATION_RETAIN || policy == OBJC_ASSOCIATION_COPY;
+}
+
+static void OnegramIOS3ReleaseAssociations(OnegramIOS3Association *associations, CFIndex count)
+{
+    for (CFIndex index = 0; index < count; index++)
+    {
+        if (OnegramIOS3AssociationPolicyRetains(associations[index].policy))
+            [associations[index].value release];
+    }
+}
+
+static void OnegramIOS3FreeAssociationEntry(__unused const void *key, const void *value, void *context)
+{
+    OnegramIOS3Association *association = (OnegramIOS3Association *)value;
+    OnegramIOS3Association **cursor = (OnegramIOS3Association **)context;
+    **cursor = *association;
+    (*cursor)++;
+    free(association);
+}
+
+static CFIndex OnegramIOS3DetachAssociationsLocked(id object, OnegramIOS3Association **detached)
+{
+    *detached = NULL;
+    if (OnegramIOS3AssociationsByObject == NULL)
+        return 0;
+    CFMutableDictionaryRef associations = (CFMutableDictionaryRef)CFDictionaryGetValue(OnegramIOS3AssociationsByObject, object);
+    if (associations == NULL)
+        return 0;
+    CFIndex count = CFDictionaryGetCount(associations);
+    if (count != 0)
+    {
+        *detached = (OnegramIOS3Association *)malloc(sizeof(OnegramIOS3Association) * (size_t)count);
+        OnegramIOS3Association *cursor = *detached;
+        CFDictionaryApplyFunction(associations, OnegramIOS3FreeAssociationEntry, &cursor);
+    }
+    CFDictionaryRemoveValue(OnegramIOS3AssociationsByObject, object);
+    CFRelease(associations);
+    OnegramIOS3AssociationFilter[OnegramIOS3AssociationFilterIndex(object)]--;
+    return count;
+}
+
+static void OnegramIOS3RemoveFallbackAssociations(id object)
+{
+    OnegramIOS3Association *detached = NULL;
+    pthread_mutex_lock(&OnegramIOS3AssociationsMutex);
+    CFIndex count = OnegramIOS3DetachAssociationsLocked(object, &detached);
+    pthread_mutex_unlock(&OnegramIOS3AssociationsMutex);
+    OnegramIOS3ReleaseAssociations(detached, count);
+    free(detached);
+}
+
+static void OnegramIOS3NSObjectDealloc(id self, SEL _cmd)
+{
+    OSMemoryBarrier();
+    if (OnegramIOS3AssociationFilter[OnegramIOS3AssociationFilterIndex(self)] != 0)
+        OnegramIOS3RemoveFallbackAssociations(self);
+    ((void (*)(id, SEL))OnegramIOS3OriginalNSObjectDealloc)(self, _cmd);
+}
+
+static void OnegramIOS3InitializeAssociations(void)
+{
+    OnegramIOS3NativeSetAssociatedObject = (OnegramIOS3SetAssociatedObjectFunction)dlsym(RTLD_NEXT, "objc_setAssociatedObject");
+    OnegramIOS3NativeGetAssociatedObject = (OnegramIOS3GetAssociatedObjectFunction)dlsym(RTLD_NEXT, "objc_getAssociatedObject");
+    OnegramIOS3NativeRemoveAssociatedObjects = (OnegramIOS3RemoveAssociatedObjectsFunction)dlsym(RTLD_NEXT, "objc_removeAssociatedObjects");
+    if (OnegramIOS3NativeSetAssociatedObject != NULL && OnegramIOS3NativeGetAssociatedObject != NULL && OnegramIOS3NativeRemoveAssociatedObjects != NULL)
+        return;
+
+    OnegramIOS3NativeSetAssociatedObject = NULL;
+    OnegramIOS3NativeGetAssociatedObject = NULL;
+    OnegramIOS3NativeRemoveAssociatedObjects = NULL;
+    OnegramIOS3AssociationsByObject = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
+    Method dealloc = class_getInstanceMethod([NSObject class], @selector(dealloc));
+    OnegramIOS3OriginalNSObjectDealloc = method_getImplementation(dealloc);
+    method_setImplementation(dealloc, (IMP)OnegramIOS3NSObjectDealloc);
+}
+
+void objc_setAssociatedObject(id object, void *key, id value, objc_AssociationPolicy policy)
+{
+    pthread_once(&OnegramIOS3AssociationsOnce, OnegramIOS3InitializeAssociations);
+    if (OnegramIOS3NativeSetAssociatedObject != NULL)
+    {
+        OnegramIOS3NativeSetAssociatedObject(object, key, value, policy);
+        return;
+    }
+    if (object == nil)
+        return;
+
+    id storedValue = value;
+    if (value != nil && (policy == OBJC_ASSOCIATION_COPY || policy == OBJC_ASSOCIATION_COPY_NONATOMIC))
+        storedValue = [value copy];
+    else if (value != nil && OnegramIOS3AssociationPolicyRetains(policy))
+        storedValue = [value retain];
+
+    OnegramIOS3Association previous = { nil, OBJC_ASSOCIATION_ASSIGN };
+    pthread_mutex_lock(&OnegramIOS3AssociationsMutex);
+    CFMutableDictionaryRef associations = (CFMutableDictionaryRef)CFDictionaryGetValue(OnegramIOS3AssociationsByObject, object);
+    OnegramIOS3Association *association = associations == NULL ? NULL : (OnegramIOS3Association *)CFDictionaryGetValue(associations, key);
+    if (association != NULL)
+        previous = *association;
+    if (storedValue != nil)
+    {
+        if (associations == NULL)
+        {
+            associations = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, NULL, NULL);
+            CFDictionarySetValue(OnegramIOS3AssociationsByObject, object, associations);
+            OnegramIOS3AssociationFilter[OnegramIOS3AssociationFilterIndex(object)]++;
+        }
+        if (association == NULL)
+        {
+            association = (OnegramIOS3Association *)malloc(sizeof(OnegramIOS3Association));
+            CFDictionarySetValue(associations, key, association);
+        }
+        association->value = storedValue;
+        association->policy = policy;
+    }
+    else if (association != NULL)
+    {
+        CFDictionaryRemoveValue(associations, key);
+        free(association);
+        if (CFDictionaryGetCount(associations) == 0)
+        {
+            CFDictionaryRemoveValue(OnegramIOS3AssociationsByObject, object);
+            CFRelease(associations);
+            OnegramIOS3AssociationFilter[OnegramIOS3AssociationFilterIndex(object)]--;
+        }
+    }
+    pthread_mutex_unlock(&OnegramIOS3AssociationsMutex);
+    OnegramIOS3ReleaseAssociations(&previous, previous.value == nil ? 0 : 1);
+}
+
+id objc_getAssociatedObject(id object, void *key)
+{
+    pthread_once(&OnegramIOS3AssociationsOnce, OnegramIOS3InitializeAssociations);
+    if (OnegramIOS3NativeGetAssociatedObject != NULL)
+        return OnegramIOS3NativeGetAssociatedObject(object, key);
+    if (object == nil)
+        return nil;
+
+    id value = nil;
+    pthread_mutex_lock(&OnegramIOS3AssociationsMutex);
+    CFMutableDictionaryRef associations = (CFMutableDictionaryRef)CFDictionaryGetValue(OnegramIOS3AssociationsByObject, object);
+    OnegramIOS3Association *association = associations == NULL ? NULL : (OnegramIOS3Association *)CFDictionaryGetValue(associations, key);
+    if (association != NULL)
+    {
+        value = association->value;
+        if (OnegramIOS3AssociationPolicyIsAtomic(association->policy))
+            [[value retain] autorelease];
+    }
+    pthread_mutex_unlock(&OnegramIOS3AssociationsMutex);
+    return value;
+}
+
+void objc_removeAssociatedObjects(id object)
+{
+    pthread_once(&OnegramIOS3AssociationsOnce, OnegramIOS3InitializeAssociations);
+    if (OnegramIOS3NativeRemoveAssociatedObjects != NULL)
+    {
+        OnegramIOS3NativeRemoveAssociatedObjects(object);
+        return;
+    }
+    if (object != nil)
+        OnegramIOS3RemoveFallbackAssociations(object);
+}
 
 static void OnegramIOS3InstallFallbackMethodsIntoClass(Class targetClass)
 {
@@ -2298,7 +2502,193 @@ static OnegramIOS3GestureRecognizerRegistry *OnegramIOS3GestureRecognizerRegistr
 
 @end
 
+@class OnegramIOS3GestureReference;
+
+@interface UIGestureRecognizer (OnegramIOS3ReferenceTracking)
+- (void)onegramReferenceInvalidated:(OnegramIOS3GestureReference *)reference;
+@end
+
+@interface OnegramIOS3GestureReference : NSObject
+{
+    id _object;
+    CFMutableSetRef _recognizers;
+}
+- (instancetype)initWithObject:(id)object;
+- (id)object;
+- (void)addRecognizer:(UIGestureRecognizer *)gestureRecognizer;
+- (void)removeRecognizer:(UIGestureRecognizer *)gestureRecognizer;
+- (void)invalidate;
+@end
+
+@implementation OnegramIOS3GestureReference
+
+- (instancetype)initWithObject:(id)object
+{
+    self = [super init];
+    if (self != nil)
+    {
+        _object = object;
+        _recognizers = CFSetCreateMutable(kCFAllocatorDefault, 0, NULL);
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    CFRelease(_recognizers);
+    [super dealloc];
+}
+
+- (id)object
+{
+    return _object;
+}
+
+- (void)addRecognizer:(UIGestureRecognizer *)gestureRecognizer
+{
+    CFSetAddValue(_recognizers, gestureRecognizer);
+}
+
+- (void)removeRecognizer:(UIGestureRecognizer *)gestureRecognizer
+{
+    CFSetRemoveValue(_recognizers, gestureRecognizer);
+}
+
+- (void)invalidate
+{
+    CFIndex count = CFSetGetCount(_recognizers);
+    if (count > 0)
+    {
+        const void **recognizers = malloc(sizeof(void *) * (size_t)count);
+        if (recognizers != NULL)
+        {
+            CFSetGetValues(_recognizers, recognizers);
+            for (CFIndex index = 0; index < count; index++)
+            {
+                UIGestureRecognizer *gestureRecognizer = (UIGestureRecognizer *)recognizers[index];
+                if (!CFSetContainsValue(_recognizers, gestureRecognizer))
+                    continue;
+                CFSetRemoveValue(_recognizers, gestureRecognizer);
+                [gestureRecognizer onegramReferenceInvalidated:self];
+            }
+            free(recognizers);
+        }
+        CFSetRemoveAllValues(_recognizers);
+    }
+    _object = nil;
+}
+
+@end
+
+static const void *OnegramIOS3GestureReferenceSentinelKey = &OnegramIOS3GestureReferenceSentinelKey;
+
+@interface OnegramIOS3GestureReferenceSentinel : NSObject
+{
+    OnegramIOS3GestureReference *_reference;
+}
+- (instancetype)initWithReference:(OnegramIOS3GestureReference *)reference;
+- (OnegramIOS3GestureReference *)reference;
+@end
+
+@implementation OnegramIOS3GestureReferenceSentinel
+
+- (instancetype)initWithReference:(OnegramIOS3GestureReference *)reference
+{
+    self = [super init];
+    if (self != nil)
+        _reference = [reference retain];
+    return self;
+}
+
+- (void)dealloc
+{
+    [_reference invalidate];
+    [_reference release];
+    [super dealloc];
+}
+
+- (OnegramIOS3GestureReference *)reference
+{
+    return _reference;
+}
+
+@end
+
+static OnegramIOS3GestureReference *OnegramIOS3GestureReferenceForObject(id object)
+{
+    OnegramIOS3GestureReferenceSentinel *sentinel = objc_getAssociatedObject(object, OnegramIOS3GestureReferenceSentinelKey);
+    if (sentinel == nil)
+    {
+        OnegramIOS3GestureReference *reference = [[OnegramIOS3GestureReference alloc] initWithObject:object];
+        sentinel = [[OnegramIOS3GestureReferenceSentinel alloc] initWithReference:reference];
+        [reference release];
+        objc_setAssociatedObject(object, OnegramIOS3GestureReferenceSentinelKey, sentinel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [sentinel release];
+    }
+    return [sentinel reference];
+}
+
 @implementation UIGestureRecognizer
+
+- (BOOL)onegramReferencesObject:(id)object
+{
+    if (object == nil)
+        return NO;
+    if (_onegramDelegate == object)
+        return YES;
+    for (OnegramIOS3GestureTargetAction *targetAction in _onegramTargetActions)
+    {
+        if (targetAction->target == object)
+            return YES;
+    }
+    return NO;
+}
+
+- (OnegramIOS3GestureReference *)onegramReferenceForObject:(id)object
+{
+    for (OnegramIOS3GestureReference *reference in _onegramReferences)
+    {
+        if ([reference object] == object)
+            return reference;
+    }
+    return nil;
+}
+
+- (void)onegramTrackReference:(id)object
+{
+    if (object == nil || object == self || [self onegramReferenceForObject:object] != nil)
+        return;
+    OnegramIOS3GestureReference *reference = OnegramIOS3GestureReferenceForObject(object);
+    [reference addRecognizer:self];
+    if (_onegramReferences == nil)
+        _onegramReferences = [[NSMutableArray alloc] init];
+    [_onegramReferences addObject:reference];
+}
+
+- (void)onegramUntrackReference:(id)object
+{
+    if (object == nil || [self onegramReferencesObject:object])
+        return;
+    OnegramIOS3GestureReference *reference = [self onegramReferenceForObject:object];
+    if (reference == nil)
+        return;
+    [reference removeRecognizer:self];
+    [_onegramReferences removeObjectIdenticalTo:reference];
+}
+
+- (void)onegramReferenceInvalidated:(OnegramIOS3GestureReference *)reference
+{
+    id object = [reference object];
+    if (_onegramDelegate == object)
+        _onegramDelegate = nil;
+    for (NSInteger index = (NSInteger)[_onegramTargetActions count] - 1; index >= 0; index--)
+    {
+        OnegramIOS3GestureTargetAction *targetAction = [_onegramTargetActions objectAtIndex:(NSUInteger)index];
+        if (targetAction->target == object)
+            [_onegramTargetActions removeObjectAtIndex:(NSUInteger)index];
+    }
+    [_onegramReferences removeObjectIdenticalTo:reference];
+}
 
 - (instancetype)initWithTarget:(id)target action:(SEL)action
 {
@@ -2316,6 +2706,9 @@ static OnegramIOS3GestureRecognizerRegistry *OnegramIOS3GestureRecognizerRegistr
 
 - (void)dealloc
 {
+    for (OnegramIOS3GestureReference *reference in _onegramReferences)
+        [reference removeRecognizer:self];
+    [_onegramReferences release];
     [_onegramTargetActions release];
     [_onegramTouches release];
     [super dealloc];
@@ -2333,20 +2726,36 @@ static OnegramIOS3GestureRecognizerRegistry *OnegramIOS3GestureRecognizerRegistr
     OnegramIOS3GestureTargetAction *targetAction = [[OnegramIOS3GestureTargetAction alloc] initWithTarget:target action:action];
     [_onegramTargetActions addObject:targetAction];
     [targetAction release];
+    [self onegramTrackReference:target];
 }
 
 - (void)removeTarget:(id)target action:(SEL)action
 {
+    NSMutableArray *removedTargets = [[NSMutableArray alloc] init];
     for (NSInteger index = (NSInteger)[_onegramTargetActions count] - 1; index >= 0; index--)
     {
         OnegramIOS3GestureTargetAction *targetAction = [_onegramTargetActions objectAtIndex:(NSUInteger)index];
         if ((target == nil || targetAction->target == target) && (action == NULL || targetAction->action == action))
+        {
+            [removedTargets addObject:[NSValue valueWithNonretainedObject:targetAction->target]];
             [_onegramTargetActions removeObjectAtIndex:(NSUInteger)index];
+        }
     }
+    for (NSValue *removedTarget in removedTargets)
+        [self onegramUntrackReference:[removedTarget nonretainedObjectValue]];
+    [removedTargets release];
 }
 
 - (id<UIGestureRecognizerDelegate>)delegate { return _onegramDelegate; }
-- (void)setDelegate:(id<UIGestureRecognizerDelegate>)delegate { _onegramDelegate = delegate; }
+- (void)setDelegate:(id<UIGestureRecognizerDelegate>)delegate
+{
+    if (_onegramDelegate == delegate)
+        return;
+    id previousDelegate = _onegramDelegate;
+    _onegramDelegate = delegate;
+    [self onegramTrackReference:delegate];
+    [self onegramUntrackReference:previousDelegate];
+}
 - (UIGestureRecognizerState)state { return _onegramState; }
 - (UIView *)view { return OnegramIOS3GestureRecognizerView(self); }
 - (BOOL)isEnabled { return _onegramEnabled; }
@@ -2379,6 +2788,8 @@ static OnegramIOS3GestureRecognizerRegistry *OnegramIOS3GestureRecognizerRegistr
         NSArray *targetActions = [[_onegramTargetActions copy] autorelease];
         for (OnegramIOS3GestureTargetAction *targetAction in targetActions)
         {
+            if ([_onegramTargetActions indexOfObjectIdenticalTo:targetAction] == NSNotFound)
+                continue;
             if (targetAction->target != nil && targetAction->action != NULL && [targetAction->target respondsToSelector:targetAction->action])
                 ((void (*)(id, SEL, id))objc_msgSend)(targetAction->target, targetAction->action, self);
         }
@@ -3477,6 +3888,15 @@ static UIImage *OnegramIOS3ImageWithCGImageOrientation(CGImageRef cgImage, UIIma
     return [self stretchableImageWithLeftCapWidth:left topCapHeight:top];
 }
 
+- (UIEdgeInsets)onegramIOS3Fallback_capInsets
+{
+    CGFloat left = self.leftCapWidth;
+    CGFloat top = self.topCapHeight;
+    CGFloat right = left > 0.0f ? MAX(0.0f, self.size.width - left - 1.0f) : 0.0f;
+    CGFloat bottom = top > 0.0f ? MAX(0.0f, self.size.height - top - 1.0f) : 0.0f;
+    return UIEdgeInsetsMake(top, left, bottom, right);
+}
+
 @end
 
 @implementation UIScreen (OnegramIOS3ScaleCompatibilityFallback)
@@ -3622,6 +4042,11 @@ static char OnegramIOS3PresentingViewControllerKey;
     return _onegramObjects;
 }
 
+- (id)firstObject
+{
+    return [_onegramObjects firstObject];
+}
+
 - (id)copyWithZone:(NSZone *)zone
 {
     return [self retain];
@@ -3630,6 +4055,41 @@ static char OnegramIOS3PresentingViewControllerKey;
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(id *)buffer count:(NSUInteger)len
 {
     return [_onegramObjects countByEnumeratingWithState:state objects:buffer count:len];
+}
+
+@end
+
+@implementation TGIOS3MutableOrderedSet
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+        _onegramObjects = [[NSMutableArray alloc] init];
+    return self;
+}
+
+- (instancetype)initWithArray:(NSArray *)array
+{
+    self = [super initWithArray:array];
+    if (self != nil)
+    {
+        NSArray *objects = _onegramObjects;
+        _onegramObjects = [objects mutableCopy];
+        [objects release];
+    }
+    return self;
+}
+
+- (void)addObject:(id)object
+{
+    if (![_onegramObjects containsObject:object])
+        [(NSMutableArray *)_onegramObjects addObject:object];
+}
+
+- (id)copyWithZone:(NSZone *)zone
+{
+    return [[TGIOS3OrderedSet allocWithZone:zone] initWithArray:_onegramObjects];
 }
 
 @end
@@ -5167,6 +5627,92 @@ static char OnegramIOS3ButtonAttributedTitlesKey;
 
 #endif
 
+typedef BOOL (*OnegramIOS3VideoCompatibilityFunction)(NSString *videoPath);
+typedef void (*OnegramIOS3SaveVideoFunction)(NSString *videoPath, id completionTarget, SEL completionSelector, void *contextInfo);
+
+static NSString *const OnegramIOS3CompatibilityErrorDomain = @"OnegramIOS3CompatibilityErrorDomain";
+
+enum
+{
+    OnegramIOS3CompatibilityErrorUnsupported = 1
+};
+
+static pthread_once_t OnegramIOS3VideoAlbumFunctionsOnce = PTHREAD_ONCE_INIT;
+static OnegramIOS3VideoCompatibilityFunction OnegramIOS3NativeVideoAtPathIsCompatible = NULL;
+static OnegramIOS3SaveVideoFunction OnegramIOS3NativeSaveVideoAtPath = NULL;
+
+static void OnegramIOS3InitializeVideoAlbumFunctions(void)
+{
+    OnegramIOS3NativeVideoAtPathIsCompatible = (OnegramIOS3VideoCompatibilityFunction)dlsym(RTLD_NEXT, "UIVideoAtPathIsCompatibleWithSavedPhotosAlbum");
+    OnegramIOS3NativeSaveVideoAtPath = (OnegramIOS3SaveVideoFunction)dlsym(RTLD_NEXT, "UISaveVideoAtPathToSavedPhotosAlbum");
+}
+
+BOOL UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(NSString *videoPath)
+{
+    pthread_once(&OnegramIOS3VideoAlbumFunctionsOnce, OnegramIOS3InitializeVideoAlbumFunctions);
+    return OnegramIOS3NativeVideoAtPathIsCompatible != NULL && OnegramIOS3NativeVideoAtPathIsCompatible(videoPath);
+}
+
+void UISaveVideoAtPathToSavedPhotosAlbum(NSString *videoPath, id completionTarget, SEL completionSelector, void *contextInfo)
+{
+    pthread_once(&OnegramIOS3VideoAlbumFunctionsOnce, OnegramIOS3InitializeVideoAlbumFunctions);
+    if (OnegramIOS3NativeSaveVideoAtPath != NULL)
+    {
+        OnegramIOS3NativeSaveVideoAtPath(videoPath, completionTarget, completionSelector, contextInfo);
+        return;
+    }
+    NSMethodSignature *signature = completionTarget == nil || completionSelector == NULL ? nil : [completionTarget methodSignatureForSelector:completionSelector];
+    if (signature == nil)
+        return;
+    NSDictionary *userInfo = [NSDictionary dictionaryWithObject:@"Saving videos to the Camera Roll requires iPhone OS 3.1" forKey:NSLocalizedDescriptionKey];
+    NSError *error = [NSError errorWithDomain:OnegramIOS3CompatibilityErrorDomain code:OnegramIOS3CompatibilityErrorUnsupported userInfo:userInfo];
+    NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+    invocation.target = completionTarget;
+    invocation.selector = completionSelector;
+    [invocation setArgument:&videoPath atIndex:2];
+    [invocation setArgument:&error atIndex:3];
+    [invocation setArgument:&contextInfo atIndex:4];
+    [invocation retainArguments];
+    [invocation performSelectorOnMainThread:@selector(invoke) withObject:nil waitUntilDone:NO];
+}
+
+static char OnegramIOS3ImagePickerCameraOverlayViewKey;
+
+@implementation UIImagePickerController (OnegramIOS3CameraCompatibilityFallback)
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+- (BOOL)onegramIOS3Fallback_allowsEditing
+{
+    return self.allowsImageEditing;
+}
+
+- (void)onegramIOS3Fallback_setAllowsEditing:(BOOL)allowsEditing
+{
+    self.allowsImageEditing = allowsEditing;
+}
+
+#pragma clang diagnostic pop
+
+- (UIView *)onegramIOS3Fallback_cameraOverlayView
+{
+    return objc_getAssociatedObject(self, &OnegramIOS3ImagePickerCameraOverlayViewKey);
+}
+
+- (void)onegramIOS3Fallback_setCameraOverlayView:(UIView *)cameraOverlayView
+{
+    UIView *currentOverlayView = objc_getAssociatedObject(self, &OnegramIOS3ImagePickerCameraOverlayViewKey);
+    if (currentOverlayView == cameraOverlayView)
+        return;
+    [currentOverlayView removeFromSuperview];
+    objc_setAssociatedObject(self, &OnegramIOS3ImagePickerCameraOverlayViewKey, cameraOverlayView, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (cameraOverlayView != nil)
+        [self.view addSubview:cameraOverlayView];
+}
+
+@end
+
 @interface OnegramIOS3FallbackMethodInstaller : NSObject
 @end
 
@@ -5192,7 +5738,8 @@ static char OnegramIOS3ButtonAttributedTitlesKey;
         [UILabel class],
         [UIImage class],
         [UIScreen class],
-        [UIButton class]
+        [UIButton class],
+        [UIImagePickerController class]
     };
     for (NSUInteger index = 0; index < sizeof(classes) / sizeof(classes[0]); index++)
         OnegramIOS3InstallFallbackMethods(classes[index]);

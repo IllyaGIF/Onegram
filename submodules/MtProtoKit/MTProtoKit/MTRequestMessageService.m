@@ -16,6 +16,7 @@
 #import "MTOutgoingMessage.h"
 #import "MTPreparedMessage.h"
 #import "MTRequest.h"
+#import "MTRequestInterceptor.h"
 #import "MTRequestContext.h"
 #import "MTRequestErrorContext.h"
 #import "MTDropResponseContext.h"
@@ -137,6 +138,16 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
         
         if (![_requests containsObject:request])
         {
+            if (!request.intercepted)
+            {
+                id<MTRequestInterceptor> interceptor = _context.requestInterceptor;
+                if (interceptor != nil)
+                {
+                    request.intercepted = true;
+                    if (![interceptor requestInterceptorShouldSendRequest:request])
+                        return;
+                }
+            }
             [_requests addObject:request];
             if ([self _floodWaitUntilForRequest:request currentTime:MTAbsoluteSystemTime()] > 0.0)
                 [self updateRequestsTimer];
@@ -433,9 +444,7 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
                 {
                     if (anotherRequest.requestContext != nil)
                     {
-#if defined(ONEGRAM_DIAGNOSTICS)
                         OGPlatformDiagnosticLog(@"SENDSTATE dependency rpc=%@ after=%@ afterMsg=%lld afterDelivered=%d afterSent=%d", MTRequestFloodWaitKey(request), MTRequestFloodWaitKey(anotherRequest), anotherRequest.requestContext.messageId, anotherRequest.requestContext.delivered ? 1 : 0, anotherRequest.requestContext.transactionId != nil ? 1 : 0);
-#endif
                         MTBuffer *buffer = [[MTBuffer alloc] init];
                         
                         [buffer appendInt32:(int32_t)0xcb9f372d];
@@ -581,10 +590,8 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
                     MTPreparedMessage *preparedMessage = messageInternalIdToPreparedMessage[messageInternalId];
                     if (preparedMessage != nil && messageInternalIdToTransactionId[messageInternalId] != nil)
                     {
-#if defined(ONEGRAM_DIAGNOSTICS)
                         if (request.shouldDependOnRequest != nil)
                             OGPlatformDiagnosticLog(@"SENDSTATE transmitted rpc=%@ msg=%lld pending=%d", MTRequestFloodWaitKey(request), preparedMessage.messageId, (int)_requests.count);
-#endif
                         MTRequestContext *requestContext = [[MTRequestContext alloc] initWithMessageId:preparedMessage.messageId messageSeqNo:preparedMessage.seqNo transactionId:messageInternalIdToTransactionId[messageInternalId] quickAckId:(int32_t)[messageInternalIdToQuickAckId[messageInternalId] intValue]];
                         requestContext.willInitializeApi = requestsWillInitializeApi;
                         request.requestContext = requestContext;
@@ -640,15 +647,14 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
                 if (request.requestContext != nil && request.requestContext.messageId == rpcResultMessage.requestMessageId)
                 {
                     requestFound = true;
-#if defined(ONEGRAM_DIAGNOSTICS)
                     if (request.shouldDependOnRequest != nil)
                         OGPlatformDiagnosticLog(@"SENDSTATE result rpc=%@ msg=%lld", MTRequestFloodWaitKey(request), rpcResultMessage.requestMessageId);
-#endif
                     
                     bool restartRequest = false;
                     
                     id rpcResult = nil;
                     MTRpcError *rpcError = nil;
+                    NSData *responseData = nil;
                     bool responseParsingFailed = false;
                     
                     if ([maybeInternalMessage isKindOfClass:[MTRpcError class]])
@@ -656,6 +662,7 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
                     else
                     {
                         NSData *unwrappedData = [MTInternalMessageParser unwrapMessage:rpcResultMessage.data];
+                        responseData = unwrappedData;
                         if (unwrappedData.length > 32768 && (OGPlatformUsesConstrainedBackgroundExecution() || OGRuntimeSingleCoreDevice()) && ![NSThread isMainThread])
                             OGRuntimeCooperateWithInteraction();
                         rpcResult = request.responseParser(unwrappedData);
@@ -791,10 +798,29 @@ static NSString *MTRequestFloodWaitKey(MTRequest *request)
                     
                     if (!restartRequest)
                     {
+                        bool shouldComplete = true;
+                        id<MTRequestInterceptor> interceptor = request.intercepted ? _context.requestInterceptor : nil;
+                        if (interceptor != nil)
+                        {
+                            NSData *replacementData = nil;
+                            MTRpcError *replacementError = nil;
+                            shouldComplete = [interceptor requestInterceptor:request completedWithData:rpcError == nil ? responseData : nil error:rpcError replacementData:&replacementData replacementError:&replacementError];
+                            if (replacementData != nil)
+                            {
+                                rpcResult = request.responseParser(replacementData);
+                                rpcError = rpcResult == nil ? [[MTRpcError alloc] initWithErrorCode:500 errorDescription:@"TL_PARSING_ERROR"] : nil;
+                            }
+                            else if (replacementError != nil)
+                            {
+                                rpcResult = nil;
+                                rpcError = replacementError;
+                            }
+                        }
+                        
                         void (^completed)(id result, NSTimeInterval completionTimestamp, id error) = [request.completed copy];
                         [_requests removeObjectAtIndex:(NSUInteger)index];
                         
-                        if (completed)
+                        if (completed && shouldComplete)
                             completed(rpcResult, message.timestamp, rpcError);
                     }
                     

@@ -92,12 +92,6 @@ static dispatch_block_t recursiveBlock(void (^block)(dispatch_block_t recurse)) 
     };
 }
 
-static inline bool TGIOS6StatePeerIdIsModernRawChannel(int64_t peerId, int64_t accessHash)
-{
-    int64_t channelId = -peerId - 4294967296LL;
-    return accessHash != 0 && channelId > 0 && channelId <= UINT32_MAX;
-}
-
 static NSMutableDictionary *TGIOS6InvalidChannelDifferenceUntil()
 {
     static NSMutableDictionary *dict = nil;
@@ -112,25 +106,6 @@ static NSMutableDictionary *TGIOS6InvalidChannelDifferenceUntil()
 static NSString *TGIOS6InvalidChannelDifferenceKey(int64_t peerId, int64_t channelId, int64_t accessHash)
 {
     return [[NSString alloc] initWithFormat:@"%lld:%lld:%lld", peerId, channelId, accessHash];
-}
-
-static inline int64_t TGIOS6StateChannelIdFromPeerId(int64_t peerId, int64_t accessHash)
-{
-    NSData *apiIdData = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"ios6ApiChannelId")];
-    int64_t apiChannelId = 0;
-    if (apiIdData.length == sizeof(int64_t))
-        [apiIdData getBytes:&apiChannelId length:sizeof(apiChannelId)];
-    if (apiChannelId > 0)
-        return apiChannelId;
-
-    if (TGIOS6StatePeerIdIsModernRawChannel(peerId, accessHash))
-        return -peerId - 4294967296LL;
-
-    int32_t channelId = TGChannelIdFromPeerId(peerId);
-    if (channelId != 0)
-        return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
-
-    return 0;
 }
 
 static int64_t TGIOS6RememberedMinChannelAccessHash(int64_t peerId)
@@ -187,6 +162,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     bool _recoveryPending;
     bool _pollActive;
     bool _pollAgain;
+    OGRuntimeSyncActivity *_pollActivity;
     id<SDisposable> _inviterId;
     TGManagedChannelStateReference *_ios4LifetimeReference;
 }
@@ -325,10 +301,10 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
 
 + (SSignal *)_channelDifference:(int64_t)peerId accessHash:(int64_t)accessHash pts:(int32_t)pts limit:(int32_t)limit {
 
-    int64_t channelId = TGIOS6StateChannelIdFromPeerId(peerId, accessHash);
+    int64_t channelId = TGChannelIdFromPeerId(peerId);
     if (channelId == 0)
     {
-        TGLog(@"AUTH skip state getChannelDifference peer=%lld channel=%lld accessHash=%lld pts=%d", peerId, channelId == 0 ? 0LL : (int64_t)(uint32_t)channelId, accessHash, pts);
+        TGLog(@"AUTH skip state getChannelDifference peer=%lld channel=%lld accessHash=%lld pts=%d", peerId, channelId, accessHash, pts);
         if (channelId != 0 && accessHash != 0 && peerId == TGIOS6DebugAutoSeedChannelPeerId)
         {
             NSNumber *key = @(peerId);
@@ -341,7 +317,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             if (shouldSeedTail)
             {
                 [[[TGChannelManagementSignals preloadedHistoryTailForPeerId:peerId accessHash:accessHash] catch:^SSignal *(id error) {
-                    TGLog(@"TRACE seed modern channel tail error peer=%lld channel=%lld hash=%lld error=%@", peerId, (int64_t)(uint32_t)channelId, accessHash, error);
+                    TGLog(@"TRACE seed modern channel tail error peer=%lld channel=%lld hash=%lld error=%@", peerId, channelId, accessHash, error);
                     return [SSignal complete];
                 }] startWithNext:^(NSDictionary *dict) {
                     [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
@@ -393,18 +369,21 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     
     
     SSignal *request = [[TGTelegramNetworking instance] requestSignal:getChannelDifference];
-#if defined(ONEGRAM_DIAGNOSTICS)
-    CFAbsoluteTime requestStart = CFAbsoluteTimeGetCurrent();
-    request = [request onNext:^(id result) {
-        NSUInteger messageCount = 0;
-        NSUInteger updateCount = 0;
-        if ([result isKindOfClass:[TLUpdates_ChannelDifference$channelDifference class]]) {
-            messageCount = ((TLUpdates_ChannelDifference$channelDifference *)result).n_new_messages.count;
-            updateCount = ((TLUpdates_ChannelDifference$channelDifference *)result).other_updates.count;
-        }
-        OGPlatformDiagnosticLog(@"SYNC channel peer=%lld limit=%d pts=%d class=%@ ms=%.0f messages=%u updates=%u", peerId, (int)limit, (int)pts, NSStringFromClass([result class]), (CFAbsoluteTimeGetCurrent() - requestStart) * 1000.0, (unsigned int)messageCount, (unsigned int)updateCount);
-    }];
-#endif
+    if (OGDiagnosticsEnabled())
+    {
+        CFAbsoluteTime requestStart = CFAbsoluteTimeGetCurrent();
+        request = [request onNext:^(id result) {
+            NSUInteger messageCount = 0;
+            NSUInteger updateCount = 0;
+            if ([result isKindOfClass:[TLUpdates_ChannelDifference$channelDifference class]]) {
+                messageCount = ((TLUpdates_ChannelDifference$channelDifference *)result).n_new_messages.count;
+                updateCount = ((TLUpdates_ChannelDifference$channelDifference *)result).other_updates.count;
+            } else if ([result isKindOfClass:[TLchannelDifferenceTooLong class]]) {
+                messageCount = ((TLchannelDifferenceTooLong *)result).messages.count;
+            }
+            OGPlatformDiagnosticLog(@"SYNC channel peer=%lld limit=%d pts=%d class=%@ ms=%.0f messages=%u updates=%u", peerId, (int)limit, (int)pts, NSStringFromClass([result class]), (CFAbsoluteTimeGetCurrent() - requestStart) * 1000.0, (unsigned int)messageCount, (unsigned int)updateCount);
+        }];
+    }
     return [request catch:^SSignal *(id error) {
         TGLog(@"TRACE state getChannelDifference error peer=%lld channel=%lld hash=%lld error=%@", peerId, inputChannel.channel_id, inputChannel.access_hash, error);
         NSString *errorDescription = [[error description] uppercaseString];
@@ -840,6 +819,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
             _pollAgain = true;
         } else {
             _pollActive = true;
+            _pollActivity = [[OGRuntimeSyncActivity alloc] init];
             start = true;
         }
     }
@@ -852,6 +832,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
     @synchronized(self) {
         if (!_pollActive) {
             _pollActive = true;
+            _pollActivity = [[OGRuntimeSyncActivity alloc] init];
             start = true;
         }
     }
@@ -861,14 +842,18 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
 
 - (void)pollCycleCompleted {
     bool restart = false;
+    OGRuntimeSyncActivity *completedActivity = nil;
     @synchronized(self) {
         if (_pollAgain) {
             _pollAgain = false;
             restart = true;
         } else {
             _pollActive = false;
+            completedActivity = _pollActivity;
+            _pollActivity = nil;
         }
     }
+    [completedActivity end];
     if (restart)
         _pollsPipe.sink(@true);
 }
@@ -974,7 +959,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
         NSData *stored = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"inviterStored")];
         if (stored.length == 0) {
             TGConversation *conversation = [TGDatabaseInstance() loadChannels:@[@(peerId)]][@(peerId)];
-            int64_t apiChannelId = TGIOS6StateChannelIdFromPeerId(peerId, accessHash);
+            int64_t apiChannelId = TGChannelIdFromPeerId(peerId);
             bool modernLargeChannel = apiChannelId > INT32_MAX;
             if (accessHash == 0 || modernLargeChannel || (conversation != nil && !conversation.isChannelGroup)) {
                 uint8_t one = 1;
@@ -993,7 +978,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                 [TGDatabaseInstance() dispatchOnDatabaseThread:^{
                     NSData *stored = [TGDatabaseInstance() conversationCustomPropertySync:peerId name:murMurHash32(@"inviterStored")];
                     if (stored.length == 0) {
-                        if ([dict[@"userId"] intValue] != 0) {
+                        if ([dict[@"userId"] longLongValue] != 0) {
                             TGMessage *message = [[TGMessage alloc] init];
                             message.mid = [[TGDatabaseInstance() generateLocalMids:1].firstObject intValue];
                             message.date = [dict[@"timestamp"] intValue];
@@ -1021,7 +1006,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
 
 + (SSignal *)validateMessageRanges:(int64_t)peerId pts:(int32_t)pts validPts:(int32_t)validPts messageRanges:(NSArray *)messageRanges {
     return [[[TGDatabaseInstance() existingChannel:peerId] take:1] mapToSignal:^SSignal *(TGConversation *conversation) {
-        int64_t channelId = TGIOS6StateChannelIdFromPeerId(peerId, conversation.accessHash);
+        int64_t channelId = TGChannelIdFromPeerId(peerId);
         if (channelId == 0 || conversation.accessHash != 0)
         {
             return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
@@ -1108,6 +1093,26 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
 }
 
 + (SSignal *)pollOnce:(int64_t)peerId limit:(int32_t)limit {
+    SSignal *poll = [self _pollOnce:peerId limit:limit];
+    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
+        OGRuntimeSyncActivity *activity = [[OGRuntimeSyncActivity alloc] init];
+        id<SDisposable> disposable = [poll startWithNext:^(id next) {
+            [subscriber putNext:next];
+        } error:^(id error) {
+            [activity end];
+            [subscriber putError:error];
+        } completed:^{
+            [activity end];
+            [subscriber putCompletion];
+        }];
+        return [[SBlockDisposable alloc] initWithBlock:^{
+            [activity end];
+            [disposable dispose];
+        }];
+    }];
+}
+
++ (SSignal *)_pollOnce:(int64_t)peerId limit:(int32_t)limit {
     return [[[TGDatabaseInstance() existingChannel:peerId] take:1] mapToSignal:^SSignal *(TGConversation *conversation) {
         return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
             SMetaDisposable *disposable = [[SMetaDisposable alloc] init];
@@ -1131,9 +1136,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                     [disposable setDisposable:[[TGManagedChannelState _channelDifference:peerId accessHash:accessHash pts:pts limit:limit] startWithNext:^(TLupdates_ChannelDifference *result) {
                         OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
                         {
-#if defined(ONEGRAM_DIAGNOSTICS)
                             CFAbsoluteTime processStart = CFAbsoluteTimeGetCurrent();
-#endif
                             NSMutableArray *messages = [[NSMutableArray alloc] init];
                             NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
                             NSMutableArray *deletedMessageIds = [[NSMutableArray alloc] init];
@@ -1169,6 +1172,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                 if (concreteDifference.flags & (1 << 1))
                                     nextTimeout = concreteDifference.timeout;
                                 
+                                id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:concreteDifference.messages];
                                 for (id messageDesc in concreteDifference.messages) {
                                     TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
                                     message.pts = concreteDifference.pts;
@@ -1176,6 +1180,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                         [messages addObject:message];
                                     }
                                 }
+                                [TGMessage endReplyPreload:replyPreload];
                                 
                                 for (id chatDesc in concreteDifference.chats) {
                                     TGConversation *updatedConversation = [[TGConversation alloc] initWithTelegraphChatDesc:chatDesc];
@@ -1272,6 +1277,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                 
                                 bool hasMessageIdUpdates = false;
                                 
+                                id replyPreload = [TGMessage beginReplyPreloadForTelegraphMessageDescs:concreteDifference.n_new_messages];
                                 for (id messageDesc in concreteDifference.n_new_messages) {
                                     TGMessage *message = [[TGMessage alloc] initWithTelegraphMessageDesc:messageDesc];
                                     message.pts = concreteDifference.pts;
@@ -1279,6 +1285,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                         [messages addObject:message];
                                     }
                                 }
+                                [TGMessage endReplyPreload:replyPreload];
                                 
                                 for (id update in concreteDifference.other_updates) {
                                     if ([update isKindOfClass:[TLUpdate$updateDeleteChannelMessages class]]) {
@@ -1446,9 +1453,7 @@ static TGManagedChannelState *TGIOS4ResolveManagedChannelState(TGManagedChannelS
                                     }
                                     
                                     dispatch_block_t finish = ^{
-#if defined(ONEGRAM_DIAGNOSTICS)
                                         OGPlatformDiagnosticLog(@"SYNC channel.apply peer=%lld ms=%.0f messages=%u restart=%d", peerId, (CFAbsoluteTimeGetCurrent() - processStart) * 1000.0, (unsigned int)messages.count, restart ? 1 : 0);
-#endif
                                         if (pinnedMessagesChangedInDifference)
                                             [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", peerId] resource:@true];
 

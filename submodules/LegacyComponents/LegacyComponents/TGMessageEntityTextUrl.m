@@ -43,4 +43,9 @@
     [aCoder encodeObject:_url forKey:@"url"];
 }
 
+- (BOOL)isEqual:(id)object
+{
+    return [super isEqual:object] && (((TGMessageEntityTextUrl *)object)->_url == _url || [((TGMessageEntityTextUrl *)object)->_url isEqualToString:_url]);
+}
+
 @end

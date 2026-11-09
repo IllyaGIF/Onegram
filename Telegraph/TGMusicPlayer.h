@@ -10,6 +10,7 @@ typedef struct {
     bool downloaded;
     bool downloading;
     CGFloat progress;
+    bool playable;
 } TGMusicPlayerDownloadingStatus;
 
 typedef struct {
@@ -57,6 +58,9 @@ typedef enum {
 
 @interface TGMusicPlayer : NSObject
 
++ (double)mediaBitrateForItem:(TGMusicPlayerItem *)item;
+- (double)currentStreamDownloadRate;
+
 @property (nonatomic, strong, readonly) id playlistMetadata;
 
 - (SSignal *)playingStatus;
@@ -81,5 +85,8 @@ typedef enum {
 - (void)controlRepeat;
 
 + (bool)isHeadsetPluggedIn;
++ (BOOL)pluginControlForTrack:(NSString *)track action:(NSString *)action position:(double)position;
 
 @end
+
+FOUNDATION_EXPORT NSString *TGMusicPlayerCurrentLocalAudioPath(TGMusicPlayerStatus *status);

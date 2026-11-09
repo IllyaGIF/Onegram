@@ -22,7 +22,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
 
 @interface TGAccountRecord ()
 
-- (instancetype)initWithAccountId:(NSString *)accountId userId:(int32_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber;
+- (instancetype)initWithAccountId:(NSString *)accountId userId:(int64_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber;
 - (instancetype)initWithDictionary:(NSDictionary *)dictionary;
 - (NSDictionary *)dictionaryRepresentation;
 
@@ -30,7 +30,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
 
 @implementation TGAccountRecord
 
-- (instancetype)initWithAccountId:(NSString *)accountId userId:(int32_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber
+- (instancetype)initWithAccountId:(NSString *)accountId userId:(int64_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber
 {
     self = [super init];
     if (self != nil)
@@ -54,7 +54,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
     NSString *firstName = dictionary[TGAccountRecordFirstNameKey];
     NSString *lastName = dictionary[TGAccountRecordLastNameKey];
     NSString *phoneNumber = dictionary[TGAccountRecordPhoneKey];
-    return [self initWithAccountId:accountId userId:[userId isKindOfClass:[NSNumber class]] ? [userId intValue] : 0 firstName:[firstName isKindOfClass:[NSString class]] ? firstName : nil lastName:[lastName isKindOfClass:[NSString class]] ? lastName : nil phoneNumber:[phoneNumber isKindOfClass:[NSString class]] ? phoneNumber : nil];
+    return [self initWithAccountId:accountId userId:[userId isKindOfClass:[NSNumber class]] ? [userId longLongValue] : 0 firstName:[firstName isKindOfClass:[NSString class]] ? firstName : nil lastName:[lastName isKindOfClass:[NSString class]] ? lastName : nil phoneNumber:[phoneNumber isKindOfClass:[NSString class]] ? phoneNumber : nil];
 }
 
 - (NSDictionary *)dictionaryRepresentation
@@ -159,6 +159,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
             @"ios6_last_crash.txt",
             @"ios6_last_system_crash.txt",
             @"ios6_diagnostic_breadcrumbs.log",
+            @"ios6_diagnostic_breadcrumbs-previous.log",
             @"localization",
             @"localizations.data",
             @"CustomLocalization.bundle",
@@ -549,7 +550,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
     return record;
 }
 
-- (TGAccountRecord *)accountWithUserId:(int32_t)userId
+- (TGAccountRecord *)accountWithUserId:(int64_t)userId
 {
     if (userId == 0)
         return nil;
@@ -567,7 +568,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
     return result;
 }
 
-- (bool)updateActiveAccountWithUserId:(int32_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber
+- (bool)updateActiveAccountWithUserId:(int64_t)userId firstName:(NSString *)firstName lastName:(NSString *)lastName phoneNumber:(NSString *)phoneNumber
 {
     bool changed = false;
     [_lock lock];
@@ -691,7 +692,7 @@ static NSString *const TGAccountErrorDomain = @"TGAccountManager";
         [_accounts removeObject:record];
         [self saveRegistry];
         [self deleteStorageForAccountId:record.accountId];
-        TGLog(@"ACCOUNTS remove id=%@ userId=%d", record.accountId, record.userId);
+        TGLog(@"ACCOUNTS remove id=%@ userId=%lld", record.accountId, record.userId);
     }
     [_lock unlock];
 }

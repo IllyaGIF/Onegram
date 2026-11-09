@@ -7,6 +7,7 @@ typedef enum {
     TGAutoDownloadSettingsModeVoiceMessages,
     TGAutoDownloadSettingsModeVideoMessages,
     TGAutoDownloadSettingsModeSaveIncomingPhotos,
+    TGAutoDownloadSettingsModeGifs,
 } TGAutoDownloadSettingsMode;
 
 @interface TGAutoDownloadSettingsController : TGCollectionMenuController

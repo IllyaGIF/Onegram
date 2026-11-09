@@ -47,9 +47,9 @@
 {
     TLMessageFwdHeader$messageFwdHeaderMeta *object = [[TLMessageFwdHeader$messageFwdHeaderMeta alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
-    object.from_id = metaObject->getInt32((int32_t)0xf39a7861);
+    object.from_id = metaObject->getInt64((int32_t)0xf39a7861);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.channel_post = metaObject->getInt32((int32_t)0x2c34eb97);
     object.post_author = metaObject->getString((int32_t)0x6d88316);
     object.saved_from_peer = metaObject->getObject((int32_t)0xf8e00e47);
@@ -67,8 +67,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.from_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.from_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xf39a7861, value));
     }
     {
@@ -79,8 +79,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {

@@ -1,7 +1,30 @@
 #import "OGPlatformVersion.h"
 #include <pthread.h>
 #import <mach/mach_time.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
 #import <dlfcn.h>
+
+static const uint32_t OGPlatformLoadCommandVersionMinIPhoneOS = 0x25;
+static const uint32_t OGPlatformLoadCommandBuildVersion = 0x32;
+
+typedef struct
+{
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t version;
+    uint32_t sdk;
+} OGPlatformVersionMinCommand;
+
+typedef struct
+{
+    uint32_t cmd;
+    uint32_t cmdsize;
+    uint32_t platform;
+    uint32_t minos;
+    uint32_t sdk;
+    uint32_t ntools;
+} OGPlatformBuildVersionCommand;
 
 NSInteger OGPlatformMajorVersion(void)
 {
@@ -45,6 +68,49 @@ BOOL OGPlatformSystemVersionAtLeast(CGFloat version)
         value = [[[UIDevice currentDevice] systemVersion] doubleValue];
     });
     return value + 0.0001 >= version;
+}
+
+static NSInteger OGPlatformLinkedSDKMajorVersion(void)
+{
+    static NSInteger value = -1;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        value = 0;
+        const struct mach_header *header = _dyld_get_image_header(0);
+        if (header == NULL)
+            return;
+
+        const uint8_t *cursor = NULL;
+        if (header->magic == MH_MAGIC_64)
+            cursor = (const uint8_t *)header + sizeof(struct mach_header_64);
+        else if (header->magic == MH_MAGIC)
+            cursor = (const uint8_t *)header + sizeof(struct mach_header);
+        else
+            return;
+
+        for (uint32_t index = 0; index < header->ncmds; index++)
+        {
+            const struct load_command *command = (const struct load_command *)cursor;
+            if (command->cmd == OGPlatformLoadCommandVersionMinIPhoneOS)
+            {
+                value = ((const OGPlatformVersionMinCommand *)cursor)->sdk >> 16;
+                return;
+            }
+            if (command->cmd == OGPlatformLoadCommandBuildVersion)
+            {
+                value = ((const OGPlatformBuildVersionCommand *)cursor)->sdk >> 16;
+                return;
+            }
+            cursor += command->cmdsize;
+        }
+    });
+    return value;
+}
+
+BOOL OGPlatformSupportsAdaptivePresentation(void)
+{
+    return OGPlatformMajorVersion() >= 8 && OGPlatformLinkedSDKMajorVersion() >= 8;
 }
 
 NSTimeInterval OGPlatformSystemUptime(void)
@@ -151,6 +217,13 @@ BOOL OGPlatformSupportsRegionalIndicatorEmoji(void)
 static pthread_mutex_t OGPlatformDefaultsCacheLock = PTHREAD_MUTEX_INITIALIZER;
 static NSMutableDictionary *OGPlatformDefaultsCache = nil;
 
+void OGPlatformInvalidateCachedDefaults(void)
+{
+    pthread_mutex_lock(&OGPlatformDefaultsCacheLock);
+    [OGPlatformDefaultsCache removeAllObjects];
+    pthread_mutex_unlock(&OGPlatformDefaultsCacheLock);
+}
+
 static NSNumber *OGPlatformCachedDefault(NSString *key)
 {
     if (key == nil)
@@ -161,9 +234,7 @@ static NSNumber *OGPlatformCachedDefault(NSString *key)
         OGPlatformDefaultsCache = [[NSMutableDictionary alloc] init];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSUserDefaultsDidChangeNotification object:nil queue:nil usingBlock:^(__unused NSNotification *notification)
         {
-            pthread_mutex_lock(&OGPlatformDefaultsCacheLock);
-            [OGPlatformDefaultsCache removeAllObjects];
-            pthread_mutex_unlock(&OGPlatformDefaultsCacheLock);
+            OGPlatformInvalidateCachedDefaults();
         }];
     }
     id value = OGPlatformDefaultsCache[key];

@@ -4,6 +4,7 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
 #import "../submodules/LegacyComponents/LegacyComponents/UIImage+TG.h"
+#import "TGAnimatedStickerView.h"
 
 @interface TGNotificationStickerImageView : TGImageView
 
@@ -84,7 +85,7 @@
         [imageUri appendFormat:@"&mime-type=%@", [TGStringUtils stringByEscapingForURL:attachment.mimeType]];
         
         _displaySize = displaySize;
-        _imageUri = imageUri;
+        _imageUri = [TGAnimatedStickerView isAnimatedStickerDocument:attachment] ? [TGAnimatedStickerView placeholderUriForDocument:attachment size:displaySize] : imageUri;
     }
     return self;
 }

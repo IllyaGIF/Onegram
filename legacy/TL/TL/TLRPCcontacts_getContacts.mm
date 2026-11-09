@@ -61,7 +61,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCcontacts_getContacts$contacts_getContacts *object = [[TLRPCcontacts_getContacts$contacts_getContacts alloc] init];
-    object.n_hash = metaObject->getInt32((int32_t)0xc152e470);
+    object.n_hash = metaObject->getInt64((int32_t)0xc152e470);
     return object;
 }
 
@@ -69,8 +69,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.n_hash;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.n_hash;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xc152e470, value));
     }
 }

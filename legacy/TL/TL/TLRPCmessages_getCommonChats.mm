@@ -63,7 +63,7 @@
 {
     TLRPCmessages_getCommonChats$messages_getCommonChats *object = [[TLRPCmessages_getCommonChats$messages_getCommonChats alloc] init];
     object.user_id = metaObject->getObject((int32_t)0xafdf4073);
-    object.max_id = metaObject->getInt32((int32_t)0xe2c00ace);
+    object.max_id = metaObject->getInt64((int32_t)0xe2c00ace);
     object.limit = metaObject->getInt32((int32_t)0xb8433fca);
     return object;
 }
@@ -78,8 +78,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.max_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.max_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xe2c00ace, value));
     }
     {

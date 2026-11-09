@@ -37,7 +37,7 @@
 
 @interface TGEditProfileController () <ASWatcher>
 {
-    int32_t _uid;
+    int64_t _uid;
     NSString *_initialAbout;
     
     UIBarButtonItem *_doneItem;
@@ -179,14 +179,25 @@
     }];
 }
 
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+
+    if (_presentsPhotoPickerOnAppear)
+    {
+        _presentsPhotoPickerOnAppear = false;
+        [self setProfilePhotoPressed];
+    }
+}
+
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
     
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        NSArray *uploadActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/uploadPhoto/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")/uploadPhoto/", _uid] watcher:self];
-        NSArray *deleteActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/deleteAvatar/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")/deleteAvatar/", _uid] watcher:self];
+        NSArray *uploadActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/uploadPhoto/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")/uploadPhoto/", _uid] watcher:self];
+        NSArray *deleteActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/deleteAvatar/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")/deleteAvatar/", _uid] watcher:self];
         if (uploadActions.count != 0)
         {
             TGTimelineUploadPhotoRequestBuilder *actor = (TGTimelineUploadPhotoRequestBuilder *)[ActionStageInstance() executingActorWithPath:uploadActions.lastObject];
@@ -537,7 +548,7 @@
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")/uploadPhoto", _uid]] || [path hasPrefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")/deleteAvatar/", _uid]])
+    if ([path hasPrefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")/uploadPhoto", _uid]] || [path hasPrefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")/deleteAvatar/", _uid]])
     {
         TGImageInfo *imageInfo = ((TGTimelineItem *)((SGraphObjectNode *)result).object).imageInfo;
         
@@ -607,7 +618,7 @@
     
     [ActionStageInstance() dispatchOnStageQueue:^
      {
-         NSString *action = [[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")/uploadPhoto/(%@)", _uid, filePath];
+         NSString *action = [[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")/uploadPhoto/(%@)", _uid, filePath];
          [ActionStageInstance() requestActor:action options:options watcher:self];
          [ActionStageInstance() requestActor:action options:options watcher:TGTelegraphInstance];
      }];
@@ -619,8 +630,8 @@
     
     [ActionStageInstance() dispatchOnStageQueue:^
      {
-         NSArray *deleteActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/deleteAvatar/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")", _uid] watcher:self];
-         NSArray *uploadActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/uploadPhoto/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")", _uid] watcher:self];
+         NSArray *deleteActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/deleteAvatar/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")", _uid] watcher:self];
+         NSArray *uploadActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/timeline/@/uploadPhoto/@" prefix:[[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")", _uid] watcher:self];
          
          for (NSString *action in deleteActions)
          {
@@ -640,8 +651,8 @@
     
     static int actionId = 0;
     
-    NSDictionary *options = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:_uid], @"uid", nil];
-    NSString *action = [[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId32 ")/deleteAvatar/(%d)", _uid, actionId++];
+    NSDictionary *options = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_uid], @"uid", nil];
+    NSString *action = [[NSString alloc] initWithFormat:@"/tg/timeline/(%" PRId64 ")/deleteAvatar/(%d)", _uid, actionId++];
     [ActionStageInstance() requestActor:action options:options watcher:self];
     [ActionStageInstance() requestActor:action options:options watcher:TGTelegraphInstance];
 }

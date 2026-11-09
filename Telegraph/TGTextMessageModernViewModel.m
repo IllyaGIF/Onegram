@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGTextMessageModernViewModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -27,6 +28,8 @@
 #import "TGPresentation.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 
+static NSString *const TGTextMessageModernViewModelSpoilersKey = @"spoilers";
+
 @interface TGTextMessageModernViewModel () <UIGestureRecognizerDelegate, TGDoubleTapGestureRecognizerDelegate>
 {
     TGModernTextViewModel *_textModel;
@@ -41,6 +44,8 @@
     bool _centerText;
     bool _isGame;
     bool _isInvoice;
+    int64_t _peerId;
+    bool _spoilersRevealed;
 }
 
 @end
@@ -81,6 +86,8 @@ static CTFontRef textFontForSize(CGFloat size)
     if (self != nil)
     {
         _authorPeerId = message.fromUid;
+        _peerId = message.cid;
+        _spoilersRevealed = [self storedSpoilersRevealed];
         _isGame = hasGame;
         _isInvoice = hasInvoice;
         NSArray *textCheckingResults = nil;
@@ -89,7 +96,7 @@ static CTFontRef textFontForSize(CGFloat size)
             textCheckingResults = nil;
         } else {
             textCheckingResults = message.textCheckingResults;
-            _text = message.text;
+            _text = TGOnegramDisplayText(message.text);
         }
         
         CTFontRef font = textFontForSize(TGGetMessageViewModelLayoutConstants()->textFontSize);
@@ -115,6 +122,19 @@ static CTFontRef textFontForSize(CGFloat size)
         }
     }
     return self;
+}
+
+- (bool)storedSpoilersRevealed
+{
+    return [[_context richMessageExpandedKeysForMessageId:_mid peerId:_peerId] containsObject:TGTextMessageModernViewModelSpoilersKey];
+}
+
+- (void)revealSpoilers
+{
+    NSMutableSet *keys = [[NSMutableSet alloc] initWithSet:[_context richMessageExpandedKeysForMessageId:_mid peerId:_peerId]];
+    [keys addObject:TGTextMessageModernViewModelSpoilersKey];
+    [_context setRichMessageExpandedKeys:keys forMessageId:_mid peerId:_peerId];
+    [_context.companionHandle requestAction:@"richMessageStateChanged" options:@{@"mid": @(_mid), @"peerId": @(_peerId)}];
 }
 
 - (void)refreshMetrics
@@ -173,6 +193,15 @@ static CTFontRef textFontForSize(CGFloat size)
             bool hiddenLink = false;
             NSString *linkCandidateText = nil;
             NSString *linkCandidate = [_textModel linkAtPoint:CGPointMake(point.x - _textModel.frame.origin.x, point.y - _textModel.frame.origin.y) regionData:NULL hiddenLink:&hiddenLink linkText:&linkCandidateText];
+            if ([linkCandidate isEqualToString:TGReusableLabelSpoilerLink])
+            {
+                if (!recognizer.longTapped && !recognizer.doubleTapped)
+                {
+                    [self revealSpoilers];
+                    return;
+                }
+                linkCandidate = nil;
+            }
             if ([linkCandidate hasPrefix:@"http://telegra.ph/"] || [linkCandidate hasPrefix:@"https://telegra.ph/"]) {
                 hiddenLink = false;
             }
@@ -295,7 +324,7 @@ static CTFontRef textFontForSize(CGFloat size)
                     [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             }
             else if (recognizer.doubleTapped) {
-                [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+                [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             } else if (activateRoundMessage) {
                 [_webPageFooterModel activateMediaPlayback];
             } else if (activateVideo) {
@@ -328,17 +357,17 @@ static CTFontRef textFontForSize(CGFloat size)
                 [_context.companionHandle requestAction:@"openLinkRequested" options:@{@"url": linkCandidate, @"mid": @(_mid), @"hidden": @(hiddenLink)}];
             else if (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)) {
                 if (_viaUser != nil && [_forwardedHeaderModel linkAtPoint:CGPointMake(point.x - _forwardedHeaderModel.frame.origin.x, point.y - _forwardedHeaderModel.frame.origin.y) regionData:NULL]) {
-                    [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+                    [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
                 } else {
                     if (TGPeerIdIsChannel(_forwardedPeerId)) {
                         [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
                     } else {
-                        [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
+                        [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @(_forwardedPeerId)}];
                     }
                 }
             }
             else if (_viaUserModel != nil && CGRectContainsPoint(_viaUserModel.frame, point)) {
-                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
             }
             else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
                 [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
@@ -678,12 +707,7 @@ static CTFontRef textFontForSize(CGFloat size)
                 }
             }
             
-            static UIImage *highlightImage = nil;
-            static dispatch_once_t onceToken;
-            dispatch_once(&onceToken, ^
-            {
-                highlightImage = [[TGTelegraphConversationMessageAssetsSource instance] messageLinkFull];
-            });
+            UIImage *highlightImage = [[TGTelegraphConversationMessageAssetsSource instance] messageLinkFull];
             
             NSMutableArray *currentSearchHighlightViews = [[NSMutableArray alloc] init];
             
@@ -875,6 +899,8 @@ static CTFontRef textFontForSize(CGFloat size)
     
     if (_context.commandsEnabled || _isBot)
         layoutFlags |= TGReusableLabelLayoutHighlightCommands;
+    if (!_spoilersRevealed)
+        layoutFlags |= TGReusableLabelLayoutCoverSpoilers;
     
     CGFloat effectiveInfoWidth = [TGPresentation brandedIOS6Style] ? 0.0f : infoWidth;
     if (_emojiOnly) {
@@ -917,7 +943,7 @@ static CTFontRef textFontForSize(CGFloat size)
     bool hasGame = false;
     bool hasInvoice = false;
     NSArray *updatedTextCheckingResults = message.textCheckingResults;
-    NSString *updatedText = message.text;
+    NSString *updatedText = TGOnegramDisplayText(message.text);
 
     for (id attachment in message.mediaAttachments) {
         if ([attachment isKindOfClass:[TGGameMediaAttachment class]]) {
@@ -928,6 +954,13 @@ static CTFontRef textFontForSize(CGFloat size)
         } else if ([attachment isKindOfClass:[TGInvoiceMediaAttachment class]]) {
             hasInvoice = true;
         }
+    }
+    
+    bool spoilersRevealed = [self storedSpoilersRevealed];
+    if (spoilersRevealed != _spoilersRevealed) {
+        _spoilersRevealed = spoilersRevealed;
+        [_contentModel setNeedsSubmodelContentsUpdate];
+        *sizeUpdated = true;
     }
     
     bool forceUpdateText = false;

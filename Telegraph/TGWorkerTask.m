@@ -24,6 +24,7 @@
     self = [super init];
     if (self != nil)
     {
+        _queuePriority = NSOperationQueuePriorityNormal;
         self.block = block;
     }
     return self;

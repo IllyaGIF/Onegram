@@ -52,6 +52,7 @@
 @property (nonatomic) int32_t webfile_dc_id;
 @property (nonatomic, retain) NSString *suggested_lang_code;
 @property (nonatomic) int32_t lang_pack_version;
+@property (nonatomic, retain) NSString *reactions_default;
 
 @end
 

@@ -59,6 +59,7 @@ static CGFloat TGEmojiRunGetWidth(void *refCon)
 }
 
 NSString *const TGReusableLabelRunDecorationAttributeName = @"TGReusableLabelRunDecoration";
+NSString *const TGReusableLabelSpoilerLink = @"tg-spoiler:";
 
 @implementation TGReusableLabelRunDecoration
 
@@ -202,6 +203,91 @@ static bool TGReusableLabelRangeIsCovered(NSAttributedString *string, NSRange ra
         return false;
     id value = [string attribute:TGReusableLabelRunDecorationAttributeName atIndex:range.location effectiveRange:NULL];
     return [value isKindOfClass:[TGReusableLabelRunDecoration class]] && ((TGReusableLabelRunDecoration *)value).coverColor != nil;
+}
+
+typedef enum {
+    TGReusableLabelDecorationUnderline,
+    TGReusableLabelDecorationStrikethrough,
+    TGReusableLabelDecorationCover
+} TGReusableLabelDecorationKind;
+
+static void TGReusableLabelApplyDecoration(NSMutableAttributedString *string, NSRange range, TGReusableLabelDecorationKind kind, UIColor *coverColor)
+{
+    if (range.length == 0 || NSMaxRange(range) > string.length)
+        return;
+
+    NSMutableArray *sources = [[NSMutableArray alloc] init];
+    NSMutableArray *colors = [[NSMutableArray alloc] init];
+    NSMutableArray *decorations = [[NSMutableArray alloc] init];
+    NSUInteger end = NSMaxRange(range);
+    NSUInteger index = range.location;
+    while (index < end)
+    {
+        NSRange decorationRange = NSMakeRange(index, 1);
+        id source = [string attribute:TGReusableLabelRunDecorationAttributeName atIndex:index effectiveRange:&decorationRange];
+        if (![source isKindOfClass:[TGReusableLabelRunDecoration class]])
+            source = [NSNull null];
+        NSUInteger runEnd = MIN(end, NSMaxRange(decorationRange));
+
+        UIColor *color = coverColor;
+        if (kind != TGReusableLabelDecorationCover)
+        {
+            NSRange colorRange = NSMakeRange(index, 1);
+            CGColorRef foregroundColor = (__bridge CGColorRef)[string attribute:(__bridge NSString *)kCTForegroundColorAttributeName atIndex:index effectiveRange:&colorRange];
+            runEnd = MIN(runEnd, NSMaxRange(colorRange));
+            color = foregroundColor != NULL ? [UIColor colorWithCGColor:foregroundColor] : nil;
+        }
+
+        if (color != nil)
+        {
+            TGReusableLabelRunDecoration *decoration = nil;
+            for (NSUInteger i = 0; i < sources.count; i++)
+            {
+                if ([sources objectAtIndex:i] == source && CGColorEqualToColor(((UIColor *)[colors objectAtIndex:i]).CGColor, color.CGColor))
+                {
+                    decoration = [decorations objectAtIndex:i];
+                    break;
+                }
+            }
+
+            if (decoration == nil)
+            {
+                TGReusableLabelRunDecoration *existing = [source isKindOfClass:[TGReusableLabelRunDecoration class]] ? source : nil;
+                decoration = [[TGReusableLabelRunDecoration alloc] init];
+                decoration.backgroundColor = existing.backgroundColor;
+                decoration.backgroundBorderColor = existing.backgroundBorderColor;
+                decoration.backgroundCornerRadius = existing.backgroundCornerRadius;
+                decoration.backgroundHorizontalOutset = existing.backgroundHorizontalOutset;
+                decoration.strikethroughColor = existing.strikethroughColor;
+                decoration.underlineColor = existing.underlineColor;
+                decoration.coverColor = existing.coverColor;
+                decoration.drawContent = existing.drawContent;
+                switch (kind)
+                {
+                    case TGReusableLabelDecorationUnderline:
+                        if (decoration.coverColor == nil)
+                            decoration.underlineColor = color;
+                        break;
+                    case TGReusableLabelDecorationStrikethrough:
+                        if (decoration.coverColor == nil)
+                            decoration.strikethroughColor = color;
+                        break;
+                    case TGReusableLabelDecorationCover:
+                        decoration.coverColor = color;
+                        decoration.underlineColor = nil;
+                        decoration.strikethroughColor = nil;
+                        break;
+                }
+                [sources addObject:source];
+                [colors addObject:color];
+                [decorations addObject:decoration];
+            }
+
+            CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(index, runEnd - index), (__bridge CFStringRef)TGReusableLabelRunDecorationAttributeName, (__bridge CFTypeRef)decoration);
+        }
+
+        index = runEnd;
+    }
 }
 
 static void TGReusableLabelDrawLineDecorations(CGContextRef context, CFArrayRef glyphRuns, CGPoint lineOrigin, bool background, NSDictionary *snapshots, CFIndex lineIndex)
@@ -843,6 +929,32 @@ static void TGReusableLabelAssignFallbackFonts(NSMutableAttributedString *string
 
 NSString *const TGReusableLabelEmojiImagesLoadedNotification = @"TGReusableLabelEmojiImagesLoadedNotification";
 
+typedef struct
+{
+    CGFloat baselineShift;
+    CGFloat lineHeight;
+} TGReusableLabelPlainTextMetrics;
+
+static TGReusableLabelLayoutData *TGReusableLabelPlainTextLayout(NSString *text, UIFont *font, UIColor *textColor, CGFloat maxWidth, int numberOfLines, NSTextAlignment textAlignment, TGReusableLabelPlainTextMetrics *outMetrics)
+{
+    CTFontRef coreTextFont = TGCoreTextFontForUIFont(font);
+    if (coreTextFont == NULL)
+        return nil;
+
+    CGFloat engineBaselineOffset = TGReusableLabelFirstBaselineOffset(coreTextFont);
+    CGFloat lineHeight = CGCeil(OGPlatformFontLineHeight(font));
+    CGFloat additionalLineSpacing = lineHeight - engineBaselineOffset * 1.12f;
+    TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:textColor linkColor:nil frame:CGRectZero orMaxWidth:maxWidth flags:TGReusableLabelLayoutMultiline textAlignment:textAlignment outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:numberOfLines <= 0 ? 0 : (NSUInteger)numberOfLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:additionalLineSpacing ellipsisString:nil underlineAllLinks:false];
+
+    if (outMetrics != NULL)
+    {
+        outMetrics->baselineShift = engineBaselineOffset - CTFontGetAscent(coreTextFont);
+        outMetrics->lineHeight = lineHeight;
+    }
+    CFRelease(coreTextFont);
+    return layout;
+}
+
 static bool TGReusableLabelMissedEmojiFlag = false;
 
 void TGReusableLabelResetMissedEmoji(void)
@@ -1123,14 +1235,10 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
 
     if (iosMajorVersion() < 7)
     {
-        CTFontRef coreTextFont = TGCoreTextFontForUIFont(_font);
-        if (coreTextFont != NULL)
-        {
-            TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:_text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:_textColor ?: [UIColor blackColor] linkColor:nil frame:CGRectZero orMaxWidth:size.width flags:TGReusableLabelLayoutMultiline textAlignment:_textAlignment outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:_numberOfLines <= 0 ? 0 : (NSUInteger)_numberOfLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
-            CFRelease(coreTextFont);
-            if (layout != nil)
-                return CGSizeMake(MIN(size.width, CGCeil(layout.drawingSize.width)), MIN(size.height, CGCeil(layout.size.height)));
-        }
+        TGReusableLabelPlainTextMetrics metrics;
+        TGReusableLabelLayoutData *layout = TGReusableLabelPlainTextLayout(_text, _font, _textColor ?: [UIColor blackColor], size.width, _numberOfLines, _textAlignment, &metrics);
+        if (layout != nil)
+            return CGSizeMake(MIN(size.width, CGCeil(layout.drawingSize.width)), MIN(size.height, CGCeil(metrics.lineHeight * MAX((NSUInteger)1, layout.textLines.count))));
     }
 
     CGSize constrainedSize = size;
@@ -1161,12 +1269,10 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
     
     static bool needToOffsetEmoji = false;
     static bool needToOffsetEmojiInitialized = false;
-    static bool enableUnderline = true;
     if (!needToOffsetEmojiInitialized)
     {
         needToOffsetEmojiInitialized = true;
         needToOffsetEmoji = iosMajorVersion() < 6;
-        enableUnderline = !(iosMajorVersion() == 7 && (iosMinorVersion() == 0 || iosMinorVersion() == 1));
     }
     
     TGReusableLabelLayoutData *layout = [[TGReusableLabelLayoutData alloc] init];
@@ -1217,7 +1323,9 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
     
     if (textCheckingResults != nil && textCheckingResults.count != 0)
     {
-        NSNumber *underlineStyle = [[NSNumber alloc] initWithInt:kCTUnderlineStyleSingle];
+        std::vector<NSRange> underlineRanges;
+        std::vector<NSRange> strikethroughRanges;
+        std::vector<NSRange> spoilerRanges;
         
         int index = -1;
         for (id match in textCheckingResults)
@@ -1247,10 +1355,7 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
                 if (flags & TGReusableLabelLayoutHighlightLinks && linkColor != NULL && !TGReusableLabelRangeIsCovered(string, linkRange))
                 {
                     CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, linkColor.CGColor);
-                    
-                    if (enableUnderline) {
-                        CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTUnderlineStyleAttributeName, (__bridge CFNumberRef)underlineStyle);
-                    }
+                    underlineRanges.push_back(linkRange);
                 }
                 
                 useRange = true;
@@ -1349,6 +1454,22 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
                         
                         break;
                     }
+                    case TGTextCheckingResultTypeUnderline:
+                    {
+                        underlineRanges.push_back(linkRange);
+                        break;
+                    }
+                    case TGTextCheckingResultTypeStrikethrough:
+                    {
+                        strikethroughRanges.push_back(linkRange);
+                        break;
+                    }
+                    case TGTextCheckingResultTypeSpoiler:
+                    {
+                        if ((flags & TGReusableLabelLayoutCoverSpoilers) && textColor != nil)
+                            spoilerRanges.push_back(linkRange);
+                        break;
+                    }
                 }
                 
                 if (useRange)
@@ -1366,9 +1487,8 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
                     {
                         CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTForegroundColorAttributeName, linkColor.CGColor);
                         
-                        if (enableUnderline && useRangeUnderline) {
-                            CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(linkRange.location, linkRange.length), kCTUnderlineStyleAttributeName, (__bridge CFNumberRef)underlineStyle);
-                        }
+                        if (useRangeUnderline)
+                            underlineRanges.push_back(linkRange);
                     }
                 }
             }
@@ -1383,6 +1503,22 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
                 pLinkRanges[++index] = linkRange;
                 linkRangeActualCount++;
             }
+        }
+        
+        for (std::vector<NSRange>::const_iterator it = underlineRanges.begin(); it != underlineRanges.end(); ++it)
+            TGReusableLabelApplyDecoration(string, *it, TGReusableLabelDecorationUnderline, nil);
+        for (std::vector<NSRange>::const_iterator it = strikethroughRanges.begin(); it != strikethroughRanges.end(); ++it)
+            TGReusableLabelApplyDecoration(string, *it, TGReusableLabelDecorationStrikethrough, nil);
+        if (!spoilerRanges.empty())
+        {
+            std::vector<TGLinkData> spoilerLinks;
+            for (std::vector<NSRange>::const_iterator it = spoilerRanges.begin(); it != spoilerRanges.end(); ++it)
+            {
+                CFAttributedStringSetAttribute((__bridge CFMutableAttributedStringRef)string, CFRangeMake(it->location, it->length), kCTForegroundColorAttributeName, [UIColor clearColor].CGColor);
+                TGReusableLabelApplyDecoration(string, *it, TGReusableLabelDecorationCover, textColor);
+                spoilerLinks.push_back(TGLinkData(*it, TGReusableLabelSpoilerLink, nil, false));
+            }
+            layout.links->insert(layout.links->begin(), spoilerLinks.begin(), spoilerLinks.end());
         }
     }
     
@@ -1431,13 +1567,9 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
         CGFloat lastLineWidth = 0.0f;
         
         TGReusableLabelAssignFallbackFonts(string);
-#if defined(ONEGRAM_DIAGNOSTICS)
         CFAbsoluteTime typesetterStart = CFAbsoluteTimeGetCurrent();
-#endif
         CTTypesetterRef typesetter = CTTypesetterCreateWithAttributedString((__bridge CFAttributedStringRef)string);
-#if defined(ONEGRAM_DIAGNOSTICS)
         OGPlatformTextLogSlowLayout("label", (__bridge CFAttributedStringRef)string, CFAbsoluteTimeGetCurrent() - typesetterStart);
-#endif
         
         CFIndex lastIndex = 0;
         float currentLineOffset = 0;
@@ -1487,7 +1619,9 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
 
                     CFIndex truncationLimit = lineCharacterCount;
                     bool textContinues = boundedTailTruncation;
-                    if (!boundedTailTruncation)
+                    if (boundedTailTruncation)
+                        truncationLimit = MIN(remainingCharacterCount, MAX(lineCharacterCount, CTTypesetterSuggestClusterBreak(typesetter, lastIndex, currentMaxWidth)));
+                    else
                     {
                         NSRange paragraphBreak = [plainString rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet] options:0 range:NSMakeRange((NSUInteger)lastIndex, (NSUInteger)remainingCharacterCount)];
                         if (paragraphBreak.location == NSNotFound)
@@ -1844,16 +1978,12 @@ static UIImage *TGReusableLabelEmojiImage(NSString *emoji, CGFloat size)
 
         if (iosMajorVersion() < 7)
         {
-            CTFontRef coreTextFont = TGCoreTextFontForUIFont(font);
-            if (coreTextFont != NULL)
+            TGReusableLabelPlainTextMetrics metrics;
+            TGReusableLabelLayoutData *layout = TGReusableLabelPlainTextLayout(text, font, effectiveColor, rect.size.width, numberOfLines, NSTextAlignmentLeft, &metrics);
+            if (layout != nil)
             {
-                TGReusableLabelLayoutData *layout = [TGReusableLabel calculateLayout:text additionalAttributes:nil textCheckingResults:nil font:coreTextFont textColor:effectiveColor linkColor:nil frame:CGRectZero orMaxWidth:rect.size.width flags:TGReusableLabelLayoutMultiline textAlignment:NSTextAlignmentLeft outIsRTL:NULL additionalTrailingWidth:0.0f maxNumberOfLines:numberOfLines <= 0 ? 0 : (NSUInteger)numberOfLines numberOfLinesToInset:0 linesInset:0.0f containsEmptyNewline:NULL additionalLineSpacing:0.0f ellipsisString:nil underlineAllLinks:false];
-                CFRelease(coreTextFont);
-                if (layout != nil)
-                {
-                    [TGReusableLabel drawRichTextInRect:rect precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:shadow shadowOffset:shadowOffset];
-                    return;
-                }
+                [TGReusableLabel drawRichTextInRect:CGRectOffset(rect, 0.0f, -metrics.baselineShift) precalculatedLayout:layout linesRange:NSMakeRange(0, 0) shadowColor:shadow shadowOffset:shadowOffset];
+                return;
             }
         }
 

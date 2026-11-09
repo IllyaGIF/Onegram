@@ -9,6 +9,19 @@ typedef enum {
     OGRuntimePriorityMaintenance = 4
 } OGRuntimePriority;
 
+enum
+{
+    OGRuntimeMainThreadPriority = 31,
+    OGRuntimeBackgroundWorkPriority = 18,
+    OGRuntimeBackgroundWaiterPriority = 19
+};
+
+@interface OGRuntimeSyncActivity : NSObject
+
+- (void)end;
+
+@end
+
 typedef enum {
     OGRuntimeLatencyLaneLayout = 0,
     OGRuntimeLatencyLaneStorage = 1
@@ -41,6 +54,10 @@ void OGRuntimeDispatchAfterStartupPhase(OGRuntimePriority priority, dispatch_blo
 void OGRuntimeCompleteStartupPhase(NSString *reason);
 void OGRuntimeExtendStartupPhase(void);
 BOOL OGRuntimeStartupPhaseCompleted(void);
+void OGRuntimeCompleteStartupSync(void);
+void OGRuntimeDispatchAfterFirstFrame(OGRuntimePriority priority, dispatch_block_t block);
+void OGRuntimeCompleteFirstFrame(void);
+BOOL OGRuntimeFirstFrameCompleted(void);
 
 #ifdef __cplusplus
 }

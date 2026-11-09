@@ -8,10 +8,24 @@
 #include "../thirdparty/TgVoipWebrtcIOS6/include/tgcalls/TGIOS6CxxCompat.h"
 #include "../thirdparty/TgVoipWebrtcIOS6/src/tgcalls/Instance.h"
 #include "../thirdparty/TgVoipWebrtcIOS6/src/tgcalls/InstanceImpl.h"
+#include "../thirdparty/TgVoipWebrtcIOS6/src/tgcalls/Ios6VideoCapabilities.h"
+#include "../thirdparty/TgVoipWebrtcIOS6/src/tgcalls/VideoState.h"
+#include "../thirdparty/TgVoipWebrtcIOS6/src/tgcalls/media/VideoFrame.h"
+#include "../thirdparty/TgVoipWebrtcIOS6/src/tgcalls/media/VideoSource.h"
+
+#import "TGCallVideoNative.h"
 
 #include <array>
 #include <memory>
 #include <vector>
+
+static void TGIOS6RegisterCallImplementations()
+{
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        tgcalls::Register<tgcalls::InstanceImpl>();
+    });
+}
 
 extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
 {
@@ -27,6 +41,7 @@ extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
 
 - (void)emitSignalBars:(int32_t)bars;
 - (void)emitState:(int32_t)state;
+- (void)emitRemoteVideoState:(int32_t)videoState audioState:(int32_t)audioState batteryLow:(bool)batteryLow;
 
 @end
 
@@ -35,6 +50,28 @@ extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
     int32_t _lastState;
     bool _hasSignalBars;
     int32_t _lastSignalBars;
+    int32_t _remoteVideoState;
+    int32_t _remoteAudioState;
+    int32_t _remoteBatteryLow;
+}
+
+- (void)notifyState
+{
+    if (_stateChanged != nil)
+        _stateChanged(_lastState, 0, _remoteVideoState, _remoteAudioState, _remoteBatteryLow, 0.0f);
+}
+
+- (void)emitRemoteVideoState:(int32_t)videoState audioState:(int32_t)audioState batteryLow:(bool)batteryLow
+{
+    void (^update)(void) = ^{
+        _remoteVideoState = videoState;
+        _remoteAudioState = audioState;
+        _remoteBatteryLow = batteryLow ? 1 : 0;
+        if (_hasState)
+            [self notifyState];
+    };
+    if ([NSThread isMainThread]) update();
+    else dispatch_async(dispatch_get_main_queue(), update);
 }
 
 - (void)setStateChanged:(void (^)(int32_t, int32_t, int32_t, int32_t, int32_t, float))stateChanged
@@ -42,8 +79,8 @@ extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
     void (^callback)(int32_t, int32_t, int32_t, int32_t, int32_t, float) = [stateChanged copy];
     void (^update)(void) = ^{
         _stateChanged = callback;
-        if (_hasState && _stateChanged != nil)
-            _stateChanged(_lastState, 0, 0, 0, 0, 0.0f);
+        if (_hasState)
+            [self notifyState];
     };
     if ([NSThread isMainThread]) update();
     else dispatch_async(dispatch_get_main_queue(), update);
@@ -78,8 +115,7 @@ extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
     void (^update)(void) = ^{
         _hasState = true;
         _lastState = state;
-        if (_stateChanged != nil)
-            _stateChanged(state, 0, 0, 0, 0, 0.0f);
+        [self notifyState];
     };
     if ([NSThread isMainThread]) update();
     else dispatch_async(dispatch_get_main_queue(), update);
@@ -89,15 +125,30 @@ extern "C" void TGIOS6RunThreadTask(void (*task)(void *), void *context)
 
 namespace {
 
+tgcalls::NetworkType TGIOS6WebrtcNetworkType(int32_t networkType) {
+    switch (networkType) {
+        case 0:
+            return tgcalls::NetworkType::WiFi;
+        case 1:
+            return tgcalls::NetworkType::Gprs;
+        case 2:
+            return tgcalls::NetworkType::Edge;
+        case 3:
+            return tgcalls::NetworkType::ThirdGeneration;
+        case 4:
+            return tgcalls::NetworkType::Lte;
+        default:
+            return tgcalls::NetworkType::Unknown;
+    }
+}
+
 class TGIOS6WebrtcCppBridge {
 public:
     TGIOS6WebrtcCppBridge(TGIOS6WebrtcCallbackProxy *callbackProxy) :
-    _callbackProxy(callbackProxy) {
-        static bool registered = false;
-        if (!registered) {
-            tgcalls::Register<tgcalls::InstanceImpl>();
-            registered = true;
-        }
+    _callbackProxy(callbackProxy),
+    _outgoingVideoSource(new tgcalls::VideoSourceHub()),
+    _incomingVideoSink(new tgcalls::VideoSinkHub()) {
+        TGIOS6RegisterCallImplementations();
     }
 
     bool start(
@@ -109,21 +160,26 @@ public:
         int32_t maxLayer,
         bool allowP2P,
         bool allowTCP,
+        tgcalls::NetworkType networkType,
         void (^sendSignalingData)(NSData *),
         TGIOS6WebrtcCallbackProxy *callbackProxy) {
         if (key.length != tgcalls::EncryptionKey::kSize) {
-            TGLog(@"WEBRTC cpp.start.fail badKeyLen=%d", (int)key.length);
+            TGDiagnosticLog(@"WEBRTC cpp.start.fail badKeyLen=%d", (int)key.length);
+            return false;
+        }
+        if (version.length == 0) {
+            TGDiagnosticLog(@"CALL webrtc.start.fail missingVersion");
             return false;
         }
 
         tgcalls::Descriptor descriptor;
-        descriptor.version = version.length == 0 ? "5.0.0" : std::string(version.UTF8String);
+        descriptor.version = std::string(version.UTF8String);
         descriptor.config.customParameters = customParameters.length == 0 ? "{}" : std::string(customParameters.UTF8String);
         descriptor.config.maxApiLayer = maxLayer;
         descriptor.config.enableP2P = allowP2P;
         descriptor.config.allowTCP = allowTCP;
         descriptor.config.protocolVersion = descriptor.version == "5.0.0" ? tgcalls::ProtocolVersion::V1 : tgcalls::ProtocolVersion::V0;
-        descriptor.initialNetworkType = tgcalls::NetworkType::WiFi;
+        descriptor.initialNetworkType = networkType;
 
         std::shared_ptr<std::array<uint8_t, tgcalls::EncryptionKey::kSize>> keyValue(new std::array<uint8_t, tgcalls::EncryptionKey::kSize>());
         memcpy(keyValue->data(), key.bytes, tgcalls::EncryptionKey::kSize);
@@ -191,10 +247,20 @@ public:
                 mapped = 3;
             [callbackProxy emitState:mapped];
         };
-        descriptor.remoteMediaStateUpdated = [](tgcalls::AudioState, tgcalls::VideoState) {
+        std::shared_ptr<bool> remoteBatteryLow(new bool(false));
+        descriptor.remoteMediaStateUpdated = [callbackProxy, remoteBatteryLow](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
+            int32_t mappedVideo = 0;
+            if (videoState == tgcalls::VideoState::Active)
+                mappedVideo = 1;
+            else if (videoState == tgcalls::VideoState::Paused)
+                mappedVideo = 2;
+            [callbackProxy emitRemoteVideoState:mappedVideo audioState:audioState == tgcalls::AudioState::Muted ? 0 : 1 batteryLow:*remoteBatteryLow];
         };
-        descriptor.remoteBatteryLevelIsLowUpdated = [](bool) {
+        descriptor.remoteBatteryLevelIsLowUpdated = [remoteBatteryLow](bool batteryLow) {
+            *remoteBatteryLow = batteryLow;
         };
+        descriptor.outgoingVideoSource = _outgoingVideoSource;
+        descriptor.incomingVideoSink = _incomingVideoSink;
         descriptor.remotePrefferedAspectRatioUpdated = [](float) {
         };
         descriptor.audioLevelUpdated = [](float) {
@@ -203,16 +269,51 @@ public:
         @try {
             _instance = tgcalls::Meta::Create(descriptor.version, std::move(descriptor));
         } @catch (NSException *exception) {
-            TGLog(@"WEBRTC cpp.create.exception name=%@ reason=%@", exception.name, exception.reason);
+            TGDiagnosticLog(@"WEBRTC cpp.create.exception name=%@ reason=%@", exception.name, exception.reason);
             return false;
         }
         if (!_instance) {
-            TGLog(@"WEBRTC cpp.start.fail noInstance version=%@ servers=%d", version, (int)connections.count);
+            TGDiagnosticLog(@"WEBRTC cpp.start.fail noInstance version=%@ servers=%d", version, (int)connections.count);
             return false;
         }
 
-        _instance->setNetworkType(tgcalls::NetworkType::WiFi);
         return true;
+    }
+
+    void setMuted(bool muted) {
+        if (_instance)
+            _instance->setMuteMicrophone(muted);
+    }
+
+    void setOutgoingVideoEnabled(bool enabled) {
+        if (_instance)
+            _instance->setOutgoingVideoEnabled(enabled);
+    }
+
+    void setVideoCapturer(TGCallVideoCapturer *capturer) {
+        if (_capturer != nil && _capturer != capturer)
+            [_capturer setFrameSink:std::shared_ptr<tgcalls::VideoFrameSink>()];
+        _capturer = capturer;
+        if (capturer != nil) {
+            [capturer setFrameSink:_outgoingVideoSource];
+            _outgoingVideoSource->setController([capturer captureController]);
+        } else {
+            _outgoingVideoSource->setController(std::shared_ptr<tgcalls::VideoCaptureController>());
+        }
+    }
+
+    void setIncomingVideoView(TGCallVideoView *view) {
+        _incomingVideoSink->setSink(view != nil ? [view frameSink] : std::shared_ptr<tgcalls::VideoFrameSink>());
+    }
+
+    void detachVideo() {
+        setVideoCapturer(nil);
+        setIncomingVideoView(nil);
+    }
+
+    void setNetworkType(tgcalls::NetworkType networkType) {
+        if (_instance)
+            _instance->setNetworkType(networkType);
     }
 
     void receiveSignalingData(NSData *data) {
@@ -224,6 +325,7 @@ public:
     }
 
     void stop(void (^completion)(NSString *, int64_t, int64_t, int64_t, int64_t)) {
+        detachVideo();
         if (!_instance) {
             if (completion != nil)
                 completion(@"", 0, 0, 0, 0);
@@ -249,6 +351,9 @@ public:
 private:
     std::unique_ptr<tgcalls::Instance> _instance;
     TGIOS6WebrtcCallbackProxy *_callbackProxy;
+    std::shared_ptr<tgcalls::VideoSourceHub> _outgoingVideoSource;
+    std::shared_ptr<tgcalls::VideoSinkHub> _incomingVideoSink;
+    TGCallVideoCapturer *_capturer;
 };
 
 }
@@ -301,6 +406,13 @@ private:
 
 - (instancetype)initWithVersion:(NSString *)version customParameters:(NSString *)customParameters queue:(id)queue proxy:(id)proxy networkType:(int32_t)networkType dataSaving:(int32_t)dataSaving derivedState:(NSData *)derivedState key:(NSData *)key isOutgoing:(bool)isOutgoing connections:(NSArray *)connections maxLayer:(int32_t)maxLayer allowP2P:(bool)allowP2P allowTCP:(bool)allowTCP enableStunMarking:(bool)enableStunMarking logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath sendSignalingData:(void (^)(NSData *))sendSignalingData videoCapturer:(id)videoCapturer preferredVideoCodec:(NSString *)preferredVideoCodec audioInputDeviceId:(NSString *)audioInputDeviceId audioDevice:(id)audioDevice directConnection:(id)directConnection;
 - (void)addSignalingData:(NSData *)data;
+- (void)setIsMuted:(bool)isMuted;
++ (bool)supportsVideoSending;
++ (bool)supportsVideoReceiving;
+- (void)setOutgoingVideoEnabled:(bool)enabled;
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
+- (void)setIncomingVideoView:(TGCallVideoView *)view;
+- (void)setNetworkType:(int32_t)networkType;
 - (void)stop:(void (^)(NSString *debugLog, int64_t bytesSentWifi, int64_t bytesReceivedWifi, int64_t bytesSentMobile, int64_t bytesReceivedMobile))completion;
 
 @end
@@ -318,7 +430,43 @@ private:
 
 + (NSArray *)versionsWithIncludeReference:(bool)includeReference
 {
-    return @[ @"8.0.0" ];
+    TGIOS6RegisterCallImplementations();
+    NSMutableArray *versions = [[NSMutableArray alloc] init];
+    const std::vector<std::string> registeredVersions = tgcalls::Meta::Versions();
+    for (auto it = registeredVersions.rbegin(); it != registeredVersions.rend(); ++it) {
+        NSString *version = [NSString stringWithUTF8String:it->c_str()];
+        if (version.length != 0)
+            [versions addObject:version];
+    }
+    return versions;
+}
+
++ (bool)supportsVideoSending
+{
+    return tgcalls::Ios6CanSendVideo() && [TGCallVideoCapturer isAvailable];
+}
+
++ (bool)supportsVideoReceiving
+{
+    return tgcalls::Ios6CanReceiveVideo();
+}
+
+- (void)setOutgoingVideoEnabled:(bool)enabled
+{
+    if (_cppBridge != NULL)
+        _cppBridge->setOutgoingVideoEnabled(enabled);
+}
+
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer
+{
+    if (_cppBridge != NULL)
+        _cppBridge->setVideoCapturer(capturer);
+}
+
+- (void)setIncomingVideoView:(TGCallVideoView *)view
+{
+    if (_cppBridge != NULL)
+        _cppBridge->setIncomingVideoView(view);
 }
 
 - (instancetype)initWithVersion:(NSString *)version customParameters:(NSString *)customParameters queue:(id)queue proxy:(id)proxy networkType:(int32_t)networkType dataSaving:(int32_t)dataSaving derivedState:(NSData *)derivedState key:(NSData *)key isOutgoing:(bool)isOutgoing connections:(NSArray *)connections maxLayer:(int32_t)maxLayer allowP2P:(bool)allowP2P allowTCP:(bool)allowTCP enableStunMarking:(bool)enableStunMarking logPath:(NSString *)logPath statsLogPath:(NSString *)statsLogPath sendSignalingData:(void (^)(NSData *))sendSignalingData videoCapturer:(id)videoCapturer preferredVideoCodec:(NSString *)preferredVideoCodec audioInputDeviceId:(NSString *)audioInputDeviceId audioDevice:(id)audioDevice directConnection:(id)directConnection
@@ -334,7 +482,7 @@ private:
         _callbackProxy = [[TGIOS6WebrtcCallbackProxy alloc] init];
         
         _cppBridge = new TGIOS6WebrtcCppBridge(_callbackProxy);
-        bool started = _cppBridge->start(_version, _customParameters, _key, _isOutgoing, _connections, maxLayer, allowP2P, allowTCP, _sendSignalingData, _callbackProxy);
+        bool started = _cppBridge->start(_version, _customParameters, _key, _isOutgoing, _connections, maxLayer, allowP2P, allowTCP, TGIOS6WebrtcNetworkType(networkType), _sendSignalingData, _callbackProxy);
         if (!started) {
             delete _cppBridge;
             _cppBridge = NULL;
@@ -346,6 +494,8 @@ private:
 
 - (void)dealloc
 {
+    if (_cppBridge != NULL)
+        _cppBridge->detachVideo();
     delete _cppBridge;
     _cppBridge = NULL;
 }
@@ -366,6 +516,18 @@ private:
 {
     if (_cppBridge != NULL)
         _cppBridge->receiveSignalingData(data);
+}
+
+- (void)setIsMuted:(bool)isMuted
+{
+    if (_cppBridge != NULL)
+        _cppBridge->setMuted(isMuted);
+}
+
+- (void)setNetworkType:(int32_t)networkType
+{
+    if (_cppBridge != NULL)
+        _cppBridge->setNetworkType(TGIOS6WebrtcNetworkType(networkType));
 }
 
 - (void)stop:(void (^)(NSString *, int64_t, int64_t, int64_t, int64_t))completion

@@ -45,6 +45,14 @@
 
 @end
 
+@interface TGMessageSavedPeerContentProperty : NSObject <PSCoding>
+
+@property (nonatomic, readonly) int64_t peerId;
+
+- (instancetype)initWithPeerId:(int64_t)peerId;
+
+@end
+
 
 @interface TGMessageDiscussionContentProperty : NSObject <PSCoding>
 

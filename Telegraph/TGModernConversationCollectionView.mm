@@ -602,6 +602,14 @@
 
 - (void)layoutSubviews
 {
+    if (![NSThread isMainThread])
+    {
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            [self setNeedsLayout];
+        });
+        return;
+    }
     if (_layoutInProgress)
         return;
     

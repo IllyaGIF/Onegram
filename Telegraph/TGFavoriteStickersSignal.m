@@ -40,14 +40,14 @@ typedef enum {
 
 @end
 
-static bool TGIOS6FavoriteStickerDocumentIsAnimated(TGDocumentMediaAttachment *document)
+static bool TGIOS6FavoriteStickerDocumentIsUnsupported(TGDocumentMediaAttachment *document)
 {
     if (![document isKindOfClass:[TGDocumentMediaAttachment class]])
         return false;
     
     NSString *mimeType = [document.mimeType lowercaseString];
     NSString *extension = [[document.fileName pathExtension] lowercaseString];
-    return [mimeType isEqualToString:@"application/x-tgsticker"] || [mimeType isEqualToString:@"video/webm"] || [extension isEqualToString:@"tgs"] || [extension isEqualToString:@"webm"];
+    return [mimeType isEqualToString:@"video/webm"] || [extension isEqualToString:@"webm"];
 }
 
 static NSArray *TGIOS6FavoriteStaticStickerDocuments(NSArray *documents)
@@ -58,7 +58,7 @@ static NSArray *TGIOS6FavoriteStaticStickerDocuments(NSArray *documents)
     NSMutableArray *result = [[NSMutableArray alloc] init];
     for (TGDocumentMediaAttachment *document in documents)
     {
-        if (!TGIOS6FavoriteStickerDocumentIsAnimated(document))
+        if (!TGIOS6FavoriteStickerDocumentIsUnsupported(document))
             [result addObject:document];
     }
     return result;
@@ -226,7 +226,7 @@ static OSSpinLock idsLock = OS_SPINLOCK_INIT;
             NSMutableArray *array = [[NSMutableArray alloc] init];
             for (id desc in [favedStickers.stickers reverseObjectEnumerator]) {
                 TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:desc];
-                if (document.documentId != 0 && !TGIOS6FavoriteStickerDocumentIsAnimated(document)) {
+                if (document.documentId != 0 && !TGIOS6FavoriteStickerDocumentIsUnsupported(document)) {
                     document.originInfo = [TGMediaOriginInfo mediaOriginInfoForDocumentFavoriteSticker:desc];
                     [array addObject:document];
                 }
@@ -351,7 +351,7 @@ static OSSpinLock idsLock = OS_SPINLOCK_INIT;
 
 + (void)setSticker:(TGDocumentMediaAttachment *)document faved:(bool)faved
 {
-    if (document.documentId == 0 || (faved && TGIOS6FavoriteStickerDocumentIsAnimated(document))) {
+    if (document.documentId == 0 || (faved && TGIOS6FavoriteStickerDocumentIsUnsupported(document))) {
         return;
     }
     

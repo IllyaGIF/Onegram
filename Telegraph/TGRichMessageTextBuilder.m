@@ -525,7 +525,7 @@ static NSString *const TGRichMessageSpoilerLink = @"tg-rich-spoiler:";
             [self appendChildrenOf:text style:childStyle];
             break;
         case TGRichMessageTextKindMentionName:
-            childStyle.link = [[NSString alloc] initWithFormat:@"tg-user://%d", (int)TGModernLegacyIdForModernId(text.identifier)];
+            childStyle.link = [[NSString alloc] initWithFormat:@"tg-user://%lld", text.identifier];
             [self appendChildrenOf:text style:childStyle];
             break;
         case TGRichMessageTextKindDate:

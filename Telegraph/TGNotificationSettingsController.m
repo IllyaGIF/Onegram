@@ -202,14 +202,14 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
         [ActionStageInstance() dispatchOnStageQueue:^
         {
             [ActionStageInstance() watchForPaths:@[
-                [NSString stringWithFormat:@"/tg/peerSettings/(%d)", INT_MAX - 1],
-                [NSString stringWithFormat:@"/tg/peerSettings/(%d)", INT_MAX - 2],
-                [NSString stringWithFormat:@"/tg/peerSettings/(%d)", INT_MAX - 4]
+                [NSString stringWithFormat:@"/tg/peerSettings/(%lld)", TGPeerIdNotificationDefaultsPrivate],
+                [NSString stringWithFormat:@"/tg/peerSettings/(%lld)", TGPeerIdNotificationDefaultsGroup],
+                [NSString stringWithFormat:@"/tg/peerSettings/(%lld)", TGPeerIdNotificationDefaultsChannel]
             ] watcher:self];
             
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cached)", INT_MAX - 1] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 1] forKey:@"peerId"] watcher:self];
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cached)", INT_MAX - 2] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 2] forKey:@"peerId"] watcher:self];
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cached)", INT_MAX - 4] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 4] forKey:@"peerId"] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cached)", TGPeerIdNotificationDefaultsPrivate] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsPrivate] forKey:@"peerId"] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cached)", TGPeerIdNotificationDefaultsGroup] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsGroup] forKey:@"peerId"] watcher:self];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cached)", TGPeerIdNotificationDefaultsChannel] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsChannel] forKey:@"peerId"] watcher:self];
         }];
         
         __weak TGNotificationSettingsController *weakSelf = self;
@@ -269,7 +269,7 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
         {
             if (exception.peerId == 0)
                 continue;
-            [peerSignals addObject:[[[TGUserSignal userWithUserId:(int32_t)exception.peerId] catch:^SSignal *(__unused id error) {
+            [peerSignals addObject:[[[TGUserSignal userWithUserId:exception.peerId] catch:^SSignal *(__unused id error) {
                 return [SSignal single:[NSNull null]];
             }] take:1]];
         }
@@ -442,12 +442,12 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             
             if (_selectingPrivateSound)
             {
-                peerId = INT_MAX - 1;
+                peerId = TGPeerIdNotificationDefaultsPrivate;
                 _privateNotificationSettings[@"soundId"] = @(soundId);
             }
             else
             {
-                peerId = INT_MAX - 2;
+                peerId = TGPeerIdNotificationDefaultsGroup;
                 _groupNotificationSettings[@"soundId"] = @(soundId);
             }
             
@@ -546,8 +546,8 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             _privateNotificationSettings[@"muteUntil"] = @(muteUntil);
             
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%d)/(pc%d)", INT_MAX - 1, actionId++] options:@{
-                @"peerId": @(INT_MAX - 1),
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%lld)/(pc%d)", TGPeerIdNotificationDefaultsPrivate, actionId++] options:@{
+                @"peerId": @(TGPeerIdNotificationDefaultsPrivate),
                 @"muteUntil": @(muteUntil)
             } watcher:TGTelegraphInstance];
         }
@@ -557,8 +557,8 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             _privateNotificationSettings[@"previewText"] = @(previewText);
             
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%d)/(pc%d)", INT_MAX - 1, actionId++] options:@{
-                @"peerId": @(INT_MAX - 1),
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%lld)/(pc%d)", TGPeerIdNotificationDefaultsPrivate, actionId++] options:@{
+                @"peerId": @(TGPeerIdNotificationDefaultsPrivate),
                 @"previewText": @(previewText)
             } watcher:TGTelegraphInstance];
         }
@@ -568,8 +568,8 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             _groupNotificationSettings[@"muteUntil"] = @(muteUntil);
 
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%d)/(pc%d)", INT_MAX - 2, actionId++] options:@{
-                @"peerId": @(INT_MAX - 2),
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%lld)/(pc%d)", TGPeerIdNotificationDefaultsGroup, actionId++] options:@{
+                @"peerId": @(TGPeerIdNotificationDefaultsGroup),
                 @"muteUntil": @(muteUntil)
             } watcher:TGTelegraphInstance];
         }
@@ -579,8 +579,8 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             _groupNotificationSettings[@"previewText"] = @(previewText);
 
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%d)/(pc%d)", INT_MAX - 2, actionId++] options:@{
-                @"peerId": @(INT_MAX - 2),
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%lld)/(pc%d)", TGPeerIdNotificationDefaultsGroup, actionId++] options:@{
+                @"peerId": @(TGPeerIdNotificationDefaultsGroup),
                 @"previewText": @(previewText)
             } watcher:TGTelegraphInstance];
         }
@@ -591,8 +591,8 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
 
 
             static int actionId = 0;
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%d)/(pc%d)", INT_MAX - 4, actionId++] options:@{
-                @"peerId": @(INT_MAX - 4),
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/changePeerSettings/(%lld)/(pc%d)", TGPeerIdNotificationDefaultsChannel, actionId++] options:@{
+                @"peerId": @(TGPeerIdNotificationDefaultsChannel),
                 @"muteUntil": @(muteUntil)
             } watcher:TGTelegraphInstance];
         }
@@ -632,17 +632,17 @@ static NSString *TGIOS6ChannelNotificationLocalized(NSString *key, NSString *fal
             
             TGDispatchOnMainThread(^
             {
-                if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%d", INT_MAX - 1]])
+                if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%lld", TGPeerIdNotificationDefaultsPrivate]])
                 {
                     _privateNotificationSettings = [notificationSettings mutableCopy];
                     [self _updateItems:false];
                 }
-                else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%d", INT_MAX - 2]])
+                else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%lld", TGPeerIdNotificationDefaultsGroup]])
                 {
                     _groupNotificationSettings = [notificationSettings mutableCopy];
                     [self _updateItems:false];
                 }
-                else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%d", INT_MAX - 4]])
+                else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%lld", TGPeerIdNotificationDefaultsChannel]])
                 {
                     _channelNotificationSettings = [notificationSettings mutableCopy];
                     [self _updateItems:false];

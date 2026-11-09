@@ -257,12 +257,8 @@ const CGFloat TGStickersCollectionErrorLabelMargin = 23.0f;
     NSArray *textResults = [TGMessage textCheckingResultsForText:stickerPack.title highlightMentionsAndTags:true highlightCommands:false entities:nil];
     NSMutableAttributedString *string = [[NSMutableAttributedString alloc] initWithString:stickerPack.title attributes:@{NSFontAttributeName: _titleLabel.font, NSForegroundColorAttributeName: _pallete.textColor}];
     
-    static UIImage *buttonImage = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        UIImage *rawImage = TGImageNamed(@"LinkFull.png");
-        buttonImage = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
-    });
+    UIImage *rawImage = TGImageNamed(@"LinkFull.png");
+    UIImage *buttonImage = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
     
     for (id result in textResults) {
         if ([result isKindOfClass:[TGTextCheckingResult class]]) {

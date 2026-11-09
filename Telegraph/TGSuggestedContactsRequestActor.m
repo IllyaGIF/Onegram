@@ -48,14 +48,14 @@ static NSDictionary *cachedSuggestions = nil;
     {
         TGUser *user = [[TGUser alloc] initWithTelegraphUserDesc:userDesc];
         if (user.uid != 0)
-            [parsedUsers setObject:user forKey:[[NSNumber alloc] initWithInt:user.uid]];
+            [parsedUsers setObject:user forKey:[[NSNumber alloc] initWithLongLong:user.uid]];
     }
     
     NSMutableArray *suggestedList = [[NSMutableArray alloc] init];
     
     for (TLContactSuggested *contactDesc in suggestedContacts.results)
     {
-        TGUser *user = [parsedUsers objectForKey:[[NSNumber alloc] initWithInt:contactDesc.user_id]];
+        TGUser *user = [parsedUsers objectForKey:[[NSNumber alloc] initWithLongLong:contactDesc.user_id]];
         if (user != nil)
         {
             user.customProperties = [[NSDictionary alloc] initWithObjectsAndKeys:[NSNumber numberWithInt:contactDesc.mutual_contacts], @"mutualContactsCount", nil];

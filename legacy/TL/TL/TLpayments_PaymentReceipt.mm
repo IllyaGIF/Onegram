@@ -50,9 +50,9 @@
     TLpayments_PaymentReceipt$payments_paymentReceiptMeta *object = [[TLpayments_PaymentReceipt$payments_paymentReceiptMeta alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
-    object.bot_id = metaObject->getInt32((int32_t)0x214f3dba);
+    object.bot_id = metaObject->getInt64((int32_t)0x214f3dba);
     object.invoice = metaObject->getObject((int32_t)0xdb2f8b58);
-    object.provider_id = metaObject->getInt32((int32_t)0x50f236f6);
+    object.provider_id = metaObject->getInt64((int32_t)0x50f236f6);
     object.info = metaObject->getObject((int32_t)0x3928e0e2);
     object.shipping = metaObject->getObject((int32_t)0x8c77294e);
     object.currency = metaObject->getString((int32_t)0xd2a84177);
@@ -78,8 +78,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.bot_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.bot_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x214f3dba, value));
     }
     {
@@ -90,8 +90,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.provider_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.provider_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x50f236f6, value));
     }
     {

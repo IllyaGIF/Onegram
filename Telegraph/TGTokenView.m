@@ -6,24 +6,14 @@
 
 static UIImage *tokenBackgroundImage()
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        UIImage *rawImage = [UIImage imageNamed:@"TokenBackground.png"];
-        image = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:0];
-    }
-    return image;
+    UIImage *rawImage = [UIImage imageNamed:@"TokenBackground.png"];
+    return [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:0];
 }
 
 static UIImage *tokenBackgroundHighlightedImage()
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        UIImage *rawImage = [UIImage imageNamed:@"TokenBackground_Highlighted.png"];
-        image = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:0];
-    }
-    return image;
+    UIImage *rawImage = [UIImage imageNamed:@"TokenBackground_Highlighted.png"];
+    return [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:0];
 }
 
 @implementation TGTokenView

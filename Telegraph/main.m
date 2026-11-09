@@ -8,21 +8,24 @@
 #import "TGDatabase.h"
 #import "TGAccountManager.h"
 #import "../OnegramRuntime/OGRuntime.h"
+#import "../OnegramRuntime/OGDiagnostics.h"
 
 int main(int argc, char *argv[])
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     uint64_t startupTicks = mach_absolute_time();
     NSTimeInterval startupUnixTime = CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970;
-#endif
+    @autoreleasepool
+    {
+        OGDiagnosticsActivate(OGDiagnosticsComponentOnegram, [[[NSBundle mainBundle] objectForInfoDictionaryKey:@"OGOnegramBuildDiagnostics"] boolValue]);
+        OGDiagnosticsTimingBegin("cold_start");
+    }
     OGRuntimeConfigureMainThread();
     mainLaunchTimestamp = CFAbsoluteTimeGetCurrent();
     applicationStartupTimestamp = mainLaunchTimestamp;
     @autoreleasepool
     {
-#if defined(ONEGRAM_DIAGNOSTICS)
-        OGStartupDiagnosticsInitialize(startupTicks, startupUnixTime);
-#endif
+        if (OGDiagnosticsEnabled())
+            OGStartupDiagnosticsInitialize(startupTicks, startupUnixTime);
         [TGAccountManager performLaunchRecovery];
         [TGDatabase setDatabaseName:@"tgdata"];
         

@@ -571,7 +571,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
     TGSelectContactController *selectController = [[TGSelectContactController alloc] initWithCreateGroup:false createEncrypted:false createBroadcast:false createChannel:false inviteToChannel:false showLink:false call:true];
     selectController.onCall = ^(TGUser *user)
     {
-        [[TGInterfaceManager instance] callPeerWithId:user.uid completion:^
+        [[TGInterfaceManager instance] requestCallToPeerId:user.uid video:false completion:^
         {
             [TGAppDelegateInstance.rootController clearContentControllers];
         }];
@@ -681,7 +681,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
     [tableView deselectRowAtIndexPath:indexPath animated:true];
     
     TGCallGroup *group = [self listModel][indexPath.row];
-    [[TGInterfaceManager instance] callPeerWithId:group.peer.uid];
+    [[TGInterfaceManager instance] requestCallToPeerId:group.peer.uid video:false completion:nil];
 }
 
 - (void)tableView:(UITableView *)__unused tableView commitEditingStyle:(UITableViewCellEditingStyle)__unused editingStyle forRowAtIndexPath:(NSIndexPath *)indexPath
@@ -827,16 +827,17 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
 
 + (SSignal *)_mapMessages:(NSArray *)messages
 {
-    NSMutableIndexSet *userIds = [[NSMutableIndexSet alloc] init];
+    NSMutableSet *userIds = [[NSMutableSet alloc] init];
     for (TGMessage *message in messages)
-        [userIds addIndex:(int32_t)(message.outgoing ? message.toUid : message.fromUid)];
+        [userIds addObject:@(message.outgoing ? message.toUid : message.fromUid)];
     
     NSMutableArray *userSignals = [[NSMutableArray alloc] init];
-    [userIds enumerateIndexesUsingBlock:^(NSUInteger uid, __unused BOOL *stop)
+    for (NSNumber *nUid in userIds)
     {
+        int64_t uid = [nUid longLongValue];
         if (uid != 0)
-            [userSignals addObject:[[TGUserSignal userWithUserId:(int32_t)uid] take:1]];
-    }];
+            [userSignals addObject:[[TGUserSignal userWithUserId:uid] take:1]];
+    }
     
     return [[SSignal combineSignals:userSignals] map:^id(NSArray *users)
     {
@@ -885,7 +886,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
         
         struct tm timeinfo;
         time_t t = (int)message.date;
-        localtime_r(&t, &timeinfo);
+        TGDateUtilsLocalTime(t, &timeinfo);
         
         if (currentPeer != nil)
         {
@@ -999,9 +1000,9 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
             
             NSArray *listModel = [_listModel copy];
             
-            NSMutableIndexSet *userIds = [[NSMutableIndexSet alloc] init];
+            NSMutableSet *userIds = [[NSMutableSet alloc] init];
             for (TGMessage *message in messages)
-                [userIds addIndex:(int32_t)(message.outgoing ? message.toUid : message.fromUid)];
+                [userIds addObject:@(message.outgoing ? message.toUid : message.fromUid)];
             
             NSMutableIndexSet *indexesToDelete = [[NSMutableIndexSet alloc] init];
             [messages enumerateObjectsUsingBlock:^(TGMessage *message, NSUInteger index, __unused BOOL *stop)
@@ -1015,11 +1016,12 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
             [messages removeObjectsAtIndexes:indexesToDelete];
             
             NSMutableArray *userSignals = [[NSMutableArray alloc] init];
-            [userIds enumerateIndexesUsingBlock:^(NSUInteger uid, __unused BOOL *stop)
+            for (NSNumber *nUid in userIds)
             {
+                int64_t uid = [nUid longLongValue];
                 if (uid != 0)
-                    [userSignals addObject:[[TGUserSignal userWithUserId:(int32_t)uid] take:1]];
-            }];
+                    [userSignals addObject:[[TGUserSignal userWithUserId:uid] take:1]];
+            }
             
             [[[SSignal combineSignals:userSignals] deliverOn:_queue] startWithNext:^(NSArray *users)
             {
@@ -1360,7 +1362,7 @@ static void TGConfigureRecentCallsSegmentedControl(UISegmentedControl *segmented
         [mids addObject:@(message.mid)];
     
     static int uniqueId = 100000;
-    [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/conversation/(%d)/deleteMessages/(%s%d)", callGroup.peer.uid, __PRETTY_FUNCTION__, uniqueId++] options:@{@"mids": mids, @"forEveryone": @false} watcher:TGTelegraphInstance];
+    [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/deleteMessages/(%s%d)", callGroup.peer.uid, __PRETTY_FUNCTION__, uniqueId++] options:@{@"mids": mids, @"forEveryone": @false} watcher:TGTelegraphInstance];
 }
 
 - (void)dismissEditingControls:(CGPoint)point force:(bool)force

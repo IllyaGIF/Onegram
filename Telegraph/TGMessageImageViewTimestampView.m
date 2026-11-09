@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGMessageImageViewTimestampView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -467,7 +468,7 @@ static const float luminanceThreshold = 0.8f;
         _signatureStringSize = [_signatureString sizeWithFont:[self timestampFont]];
         _signatureStringSize.width = MIN(_maxWidth - 8.0f - _timestampStringSize.width - (_displayCheckmarks ? 20.0f : 0.0f) - (_viewsString.length == 0 ? 0 : 40.0f), _signatureStringSize.width);
         if (_signatureString != nil) {
-            if ([_signatureString isEqualToString:TGLocalized(@"Conversation.MessageEditedLabel")]) {
+            if ([_signatureString isEqualToString:TGOnegramEditedLabel()]) {
                 _signatureStringSize.width += 5.0f;
             } else {
                 _signatureStringSize.width += 8.0f;
@@ -567,7 +568,7 @@ static const float luminanceThreshold = 0.8f;
     }
     
     if (_signatureString != nil) {
-        CGFloat origin = ([_signatureString isEqualToString:TGLocalized(@"Conversation.MessageEditedLabel")]) ? 9.0f : 6.0f;
+        CGFloat origin = ([_signatureString isEqualToString:TGOnegramEditedLabel()]) ? 9.0f : 6.0f;
         [_signatureString drawInRect:CGRectMake(backgroundRect.origin.x + viewsWidth + 6.0f - TGScreenPixel, backgroundRect.origin.y + 2.0f, _signatureStringSize.width, _signatureStringSize.height) withFont:[self timestampFont] lineBreakMode:NSLineBreakByTruncatingTail];
     }
     

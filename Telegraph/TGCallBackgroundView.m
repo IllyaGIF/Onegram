@@ -72,7 +72,7 @@
 
     TGUser *displayPeer = state.peer;
     if ((displayPeer == nil || displayPeer.uid == 0) && state.stateData.peerId != 0)
-        displayPeer = [TGDatabaseInstance() loadUser:(int32_t)state.stateData.peerId];
+        displayPeer = [TGDatabaseInstance() loadUser:state.stateData.peerId];
 
     if (displayPeer == nil)
         return;

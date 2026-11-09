@@ -28,12 +28,13 @@
 #import "TGPreparedLocalImageMessage.h"
 #import "TGPreparedAssetVideoMessage.h"
 #import "TGPreparedLocalDocumentMessage.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @implementation TGCameraShareSignals
 
 + (NSArray *)_setupMessages:(TGPreparedMessage *)preparedMessage peerIds:(NSArray *)peerIds
 {
-    preparedMessage.date = (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+    preparedMessage.date = (int)OGRemoteClockTime();
     
     NSMutableArray *messages = [[NSMutableArray alloc] init];
     for (NSNumber *peerId in peerIds)

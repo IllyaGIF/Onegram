@@ -32,46 +32,6 @@ static void OnegramCacheStrippedConversationAvatar(id photo, NSString *url)
         [TGRemoteImageView cacheStrippedPlaceholderImage:image forUrl:url];
 }
 
-static SEL TGIOS6ApiChannelIdSelector(void)
-{
-    return NSSelectorFromString(@"tg_ios6_apiChannelId");
-}
-
-static SEL TGIOS6ApiChatIdSelector(void)
-{
-    return NSSelectorFromString(@"tg_ios6_apiChatId");
-}
-
-static int64_t modernChannelIdForApi(TLChat *chat)
-{
-    NSNumber *apiChannelId = objc_getAssociatedObject(chat, TGIOS6ApiChannelIdSelector());
-    if (apiChannelId.longLongValue > 0)
-        return apiChannelId.longLongValue;
-
-    return (int64_t)(uint32_t)chat.n_id;
-}
-
-int64_t TGIOS6ApiChannelIdForConversation(TGConversation *conversation)
-{
-    NSNumber *apiChannelId = objc_getAssociatedObject(conversation, TGIOS6ApiChannelIdSelector());
-    return apiChannelId.longLongValue;
-}
-
-static int64_t modernChatIdForApi(TLChat *chat)
-{
-    NSNumber *apiChatId = objc_getAssociatedObject(chat, TGIOS6ApiChatIdSelector());
-    if (apiChatId.longLongValue > 0)
-        return apiChatId.longLongValue;
-
-    return (int64_t)(uint32_t)chat.n_id;
-}
-
-int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
-{
-    NSNumber *apiChatId = objc_getAssociatedObject(conversation, TGIOS6ApiChatIdSelector());
-    return apiChatId.longLongValue;
-}
-
 @implementation TGConversationParticipantsData (Telegraph)
 
 - (id)initWithTelegraphParticipantsDesc:(TLChatParticipants *)participantsDesc
@@ -99,17 +59,17 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
                     TLChatParticipant$chatParticipant *concreteParticipant = (TLChatParticipant$chatParticipant *)chatParticipant;
 
                     int64_t inviterUid = concreteParticipant.inviter_id;
-                    [invitedBy setObject:[NSNumber numberWithInt:(int)inviterUid] forKey:[NSNumber numberWithInt:(int)uid]];
-                    [invitedDates setObject:[NSNumber numberWithInt:concreteParticipant.date] forKey:[NSNumber numberWithInt:(int)uid]];
+                    [invitedBy setObject:[NSNumber numberWithLongLong:inviterUid] forKey:[NSNumber numberWithLongLong:uid]];
+                    [invitedDates setObject:[NSNumber numberWithInt:concreteParticipant.date] forKey:[NSNumber numberWithLongLong:uid]];
                 } else if ([chatParticipant isKindOfClass:[TLChatParticipant$chatParticipantAdmin class]]) {
                     TLChatParticipant$chatParticipantAdmin *concreteParticipant = (TLChatParticipant$chatParticipantAdmin *)chatParticipant;
                     
                     int64_t inviterUid = concreteParticipant.inviter_id;
-                    [invitedBy setObject:[NSNumber numberWithInt:(int)inviterUid] forKey:[NSNumber numberWithInt:(int)uid]];
-                    [invitedDates setObject:[NSNumber numberWithInt:concreteParticipant.date] forKey:[NSNumber numberWithInt:(int)uid]];
+                    [invitedBy setObject:[NSNumber numberWithLongLong:inviterUid] forKey:[NSNumber numberWithLongLong:uid]];
+                    [invitedDates setObject:[NSNumber numberWithInt:concreteParticipant.date] forKey:[NSNumber numberWithLongLong:uid]];
                     [chatAdminUids addObject:@(uid)];
                 } else if ([chatParticipant isKindOfClass:[TLChatParticipant$chatParticipantCreator class]]) {
-                    self.chatAdminId = (int32_t)uid;
+                    self.chatAdminId = uid;
                 }
             }
             
@@ -134,16 +94,14 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
     if (self != nil)
     {
         self.nameColorId = -1;
-        self.conversationId = -chatDesc.n_id;
+        self.conversationId = TGPeerIdFromGroupId(chatDesc.n_id);
         
         self.isChat = true;
         
         if ([chatDesc isKindOfClass:[TLChat$chat class]])
         {
             TLChat$chat *concreteChat = (TLChat$chat *)chatDesc;
-            int64_t apiChatId = modernChatIdForApi(chatDesc);
-            if (apiChatId > 0)
-                objc_setAssociatedObject(self, TGIOS6ApiChatIdSelector(), [NSNumber numberWithLongLong:apiChatId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            int64_t apiChatId = concreteChat.n_id;
             
             self.chatTitle = concreteChat.title;
             self.leftChat = concreteChat.flags & (1 << 2);
@@ -193,9 +151,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
         else if ([chatDesc isKindOfClass:[TLChat$channel class]])
         {
             self.conversationId = TGPeerIdFromChannelId(chatDesc.n_id);
-            int64_t apiChannelId = modernChannelIdForApi(chatDesc);
-            if (apiChannelId > 0)
-                objc_setAssociatedObject(self, TGIOS6ApiChannelIdSelector(), [NSNumber numberWithLongLong:apiChannelId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            int64_t apiChannelId = chatDesc.n_id;
             
             TLChat$channel *channel = (TLChat$channel *)chatDesc;
             
@@ -204,6 +160,10 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.chatTitle = channel.title;
             self.nameColorId = channel.name_color_id;
             self.linkedCommunityId = channel.linked_community_id;
+            self.linkedMonoforumId = channel.linked_monoforum_id;
+            self.sendPaidMessagesStars = channel.send_paid_messages_stars;
+            self.isMonoforum = channel.monoforum;
+            self.directMessagesEnabled = channel.broadcast_messages_allowed;
             if ([channel.photo isKindOfClass:[TLChatPhoto$chatPhoto class]])
             {
                 TLChatPhoto$chatPhoto *concretePhoto = (TLChatPhoto$chatPhoto *)channel.photo;
@@ -249,7 +209,9 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.kickedFromChat = channel.flags & (1 << 1);
             
             self.isVerified = channel.flags & (1 << 7);
-            self.isChannelGroup = channel.flags & (1 << 8);
+            self.isChannelGroup = (channel.flags & (1 << 8)) || channel.monoforum;
+            if (channel.monoforum)
+                self.leftChat = false;
 
             self.flags |= TGConversationFlagForumKnown;
             if (channel.flags & (1 << 30))
@@ -269,7 +231,7 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
             self.hasExplicitContent = false;
             self.restrictionReason = nil;
             
-            self.kind = (self.isMin || self.leftChat || self.kickedFromChat) ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
+            self.kind = (self.isMin || self.leftChat || self.kickedFromChat || self.isMonoforum) ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
             
             if (channel.banned_rights != nil) {
                 self.channelBannedRights = [[TGChannelBannedRights alloc] initWithTL:channel.banned_rights];
@@ -279,9 +241,6 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
         {
             TLChat$channelForbidden *channelForbidden = (TLChat$channelForbidden *)chatDesc;
             self.conversationId = TGPeerIdFromChannelId(channelForbidden.n_id);
-            int64_t apiChannelId = modernChannelIdForApi(chatDesc);
-            if (apiChannelId > 0)
-                objc_setAssociatedObject(self, TGIOS6ApiChannelIdSelector(), [NSNumber numberWithLongLong:apiChannelId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             self.accessHash = channelForbidden.access_hash;
             self.leftChat = false;
             self.kickedFromChat = true;
@@ -292,9 +251,6 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
         else if ([chatDesc isKindOfClass:[TLChat$chatForbidden class]])
         {
             TLChat$chatForbidden *concreteChat = (TLChat$chatForbidden *)chatDesc;
-            int64_t apiChatId = modernChatIdForApi(chatDesc);
-            if (apiChatId > 0)
-                objc_setAssociatedObject(self, TGIOS6ApiChatIdSelector(), [NSNumber numberWithLongLong:apiChatId], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             self.chatTitle = concreteChat.title;
             
             self.kickedFromChat = true;
@@ -312,8 +268,8 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
         
         self.isChat = true;
         
-        int participantUid = 0;
-        int adminUid = 0;
+        int64_t participantUid = 0;
+        int64_t adminUid = 0;
         
         int64_t accessHash = 0;
         int64_t keyFingerprint = 0;
@@ -346,15 +302,15 @@ int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation)
         
         if (participantUid != 0)
         {
-            int selfUid = TGTelegraphInstance.clientUserId;
+            int64_t selfUid = TGTelegraphInstance.clientUserId;
             if (selfUid == participantUid)
                 participantUid = adminUid;
             
             TGConversationParticipantsData *participantsData = [[TGConversationParticipantsData alloc] init];
-            participantsData.chatParticipantUids = [[NSArray alloc] initWithObjects:[[NSNumber alloc] initWithInt:participantUid], nil];
+            participantsData.chatParticipantUids = [[NSArray alloc] initWithObjects:[[NSNumber alloc] initWithLongLong:participantUid], nil];
             participantsData.chatAdminId = adminUid;
-            participantsData.chatInvitedDates = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:0], [[NSNumber alloc] initWithInt:participantUid], nil];
-            participantsData.chatInvitedBy = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:adminUid], [[NSNumber alloc] initWithInt:participantUid], nil];
+            participantsData.chatInvitedDates = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:0], [[NSNumber alloc] initWithLongLong:participantUid], nil];
+            participantsData.chatInvitedBy = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:adminUid], [[NSNumber alloc] initWithLongLong:participantUid], nil];
             self.chatParticipants = participantsData;
         }
         

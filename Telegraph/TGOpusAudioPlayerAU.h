@@ -8,10 +8,13 @@
 
 #import "TGAudioPlayer.h"
 
+@class OGMediaStreamReader;
+
 @interface TGOpusAudioPlayerAU : TGAudioPlayer
 
 + (bool)canPlayFile:(NSString *)path;
 
 - (instancetype)initWithPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession;
+- (instancetype)initWithReader:(OGMediaStreamReader *)reader music:(bool)music controlAudioSession:(bool)controlAudioSession;
 
 @end

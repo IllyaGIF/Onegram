@@ -471,6 +471,8 @@ static CGRect validatedRect(CGRect value) {
                 _scrollerPanGestureRecognizer.delegate = self;
                 _scrollerPanGestureRecognizer.cancelsTouchesInView = false;
             }
+            else
+                [_scrollerPanGestureRecognizer addTarget:self action:@selector(scrollerPanStateChanged:)];
             [self addGestureRecognizer:_scrollerPanGestureRecognizer];
         }
         
@@ -494,12 +496,20 @@ static CGRect validatedRect(CGRect value) {
 }
 
 - (void)setExpanded:(bool)expanded animated:(bool)animated {
-    if (expanded && _buttonsDirty)
-        [self configureButtons];
+    [self setExpanded:expanded toLeft:false animated:animated];
+}
+
+- (void)setExpanded:(bool)expanded toLeft:(bool)toLeft animated:(bool)animated {
     CGPoint offset = CGPointZero;
     if (expanded) {
-        offset = CGPointMake(TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, self.bounds.size.width), 0.0f);
+        if (toLeft)
+            offset = CGPointMake(-TGDialogListEditingLeftButtonWidth() * _leftButtonTypes.count, 0.0f);
+        else if (_swipeGesturesEnabled)
+            offset = CGPointMake(TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, self.bounds.size.width), 0.0f);
+        expanded = ABS(offset.x) > FLT_EPSILON;
     }
+    if (expanded && _buttonsDirty)
+        [self configureButtons];
     if (animated) {
         if ([_scroller isDragging]) {
             [_scroller removeFromSuperview];
@@ -537,7 +547,7 @@ static CGRect validatedRect(CGRect value) {
         }];
     } else {
         if (expanded) {
-            for (TGDialogListCellEditingButton *button in _rightButtons.reverseObjectEnumerator) {
+            for (TGDialogListCellEditingButton *button in toLeft ? _leftButtons : _rightButtons) {
                 if (button.hidden)
                     continue;
                 
@@ -579,6 +589,10 @@ static CGRect validatedRect(CGRect value) {
 
 - (bool)isExpanded {
     return _scroller.contentOffset.x > FLT_EPSILON || _scroller.contentOffset.x < -FLT_EPSILON;
+}
+
+- (bool)isExpandedToLeft {
+    return _scroller.contentOffset.x < -FLT_EPSILON;
 }
 
 - (bool)isTracking {
@@ -716,7 +730,7 @@ static CGRect validatedRect(CGRect value) {
     [self updateButtonFrames:true];
 }
 
-- (void)scrollViewDidEndDragging:(UIScrollView *)__unused scrollView willDecelerate:(BOOL)__unused decelerate {
+- (void)scrollViewDidEndDragging:(UIScrollView *)__unused scrollView willDecelerate:(BOOL)decelerate {
     if (_leftButtonTypes.count > 0) {
         CGFloat offset = _scroller.bounds.origin.x;
         
@@ -797,6 +811,9 @@ static CGRect validatedRect(CGRect value) {
             _scroller.contentInset = UIEdgeInsetsMake(0.0f, leftContentWidth, 0.0f, 0.0f);
         }
     }
+
+    if (!decelerate)
+        [self scheduleScrollerSettle];
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)__unused scrollView {
@@ -809,6 +826,45 @@ static CGRect validatedRect(CGRect value) {
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)__unused scrollView {
     [self updateButtonFrames:true];
+    [self scheduleScrollerSettle];
+}
+
+- (void)scrollerPanStateChanged:(UIPanGestureRecognizer *)recognizer {
+    UIGestureRecognizerState state = recognizer.state;
+    if (state == UIGestureRecognizerStateEnded || state == UIGestureRecognizerStateCancelled || state == UIGestureRecognizerStateFailed)
+        [self scheduleScrollerSettle];
+}
+
+- (void)scheduleScrollerSettle {
+    __weak TGDialogListCellEditingControls *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [weakSelf settleScrollerOffset];
+    });
+}
+
+- (CGFloat)restingScrollerOffsetForOffset:(CGFloat)offset {
+    CGFloat leftContentWidth = _leftButtonTypes.count * TGDialogListEditingLeftButtonWidth();
+    CGFloat rightContentWidth = _swipeGesturesEnabled ? TGDialogListEditingRightRevealWidth(_rightButtonTypes.count, self.bounds.size.width) : 0.0f;
+    if (offset < 0.0f && leftContentWidth > FLT_EPSILON && -offset >= leftContentWidth * 0.5f)
+        return -leftContentWidth;
+    if (offset > 0.0f && rightContentWidth > FLT_EPSILON && offset >= rightContentWidth * 0.5f)
+        return rightContentWidth;
+    return 0.0f;
+}
+
+- (void)settleScrollerOffset {
+    if (_animatingCollapse || _ignoringScroll || _scroller.isDragging || _scroller.isDecelerating || [self isTracking])
+        return;
+
+    CGFloat offset = _scroller.contentOffset.x;
+    CGFloat restingOffset = [self restingScrollerOffsetForOffset:offset];
+    if (ABS(restingOffset - offset) < FLT_EPSILON)
+        return;
+
+    if (ABS(restingOffset) < FLT_EPSILON)
+        [self setExpanded:false animated:true];
+    else
+        [self setExpanded:true toLeft:restingOffset < 0.0f animated:true];
 }
 
 - (void)updateButtonFrames {

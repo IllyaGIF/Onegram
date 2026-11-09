@@ -21,6 +21,7 @@
 #import "TGBotSignals.h"
 
 #import "TLPeerNotifySettings$peerNotifySettings.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static NSMutableDictionary *extendedChatDataDictionary()
 {
@@ -100,7 +101,7 @@ static NSMutableDictionary *extendedChatDataDictionary()
             messagesMuted = @(concreteSettings.silent);
         }
         if (concreteSettings.flags & (1 << 2)) {
-            if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+            if (concreteSettings.mute_until > OGRemoteClockTime())
                 peerMuteUntil = @(concreteSettings.mute_until);
             else
                 peerMuteUntil = @0;

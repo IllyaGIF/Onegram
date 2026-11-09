@@ -52,6 +52,7 @@
     TGSwitchCollectionItem *_autoDownloadEnabledItem;
     TGVariantCollectionItem *_autoDownloadPhotosItem;
     TGVariantCollectionItem *_autoDownloadVideosItem;
+    TGVariantCollectionItem *_autoDownloadGifsItem;
     TGVariantCollectionItem *_autoDownloadDocumentsItem;
     TGVariantCollectionItem *_autoDownloadVoiceMessagesItem;
     TGVariantCollectionItem *_autoDownloadVideoMessagesItem;
@@ -113,6 +114,8 @@
         
         _autoDownloadPhotosItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.AutoDownloadPhotos") action:@selector(autoDownloadPhotosPressed)];
         _autoDownloadPhotosItem.enabled = _autoDownloadEnabledItem.isOn;
+        _autoDownloadGifsItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.AutoDownloadGifs") action:@selector(autoDownloadGifsPressed)];
+        _autoDownloadGifsItem.enabled = _autoDownloadEnabledItem.isOn;
         _autoDownloadVideosItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.AutoDownloadVideos") action:@selector(autoDownloadVideosPressed)];
         _autoDownloadVideosItem.enabled = _autoDownloadEnabledItem.isOn;
         _autoDownloadDocumentsItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.AutoDownloadDocuments") action:@selector(autoDownloadDocumentsPressed)];
@@ -129,6 +132,7 @@
             [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.AutoDownloadTitle")],
             _autoDownloadEnabledItem,
             _autoDownloadPhotosItem,
+            _autoDownloadGifsItem,
             _autoDownloadVideosItem,
             _autoDownloadDocumentsItem,
             _autoDownloadVoiceMessagesItem,
@@ -227,6 +231,7 @@
             TGAppDelegateInstance.autoDownloadPreferences = [TGAppDelegateInstance.autoDownloadPreferences updateDisabled:!_autoDownloadEnabledItem.isOn];
             _autoDownloadPhotosItem.enabled = _autoDownloadEnabledItem.isOn;
             _autoDownloadVideosItem.enabled = _autoDownloadEnabledItem.isOn;
+            _autoDownloadGifsItem.enabled = _autoDownloadEnabledItem.isOn;
             _autoDownloadDocumentsItem.enabled = _autoDownloadEnabledItem.isOn;
             _autoDownloadVoiceMessagesItem.enabled = _autoDownloadEnabledItem.isOn;
             _autoDownloadVideoMessagesItem.enabled = _autoDownloadEnabledItem.isOn;
@@ -295,6 +300,17 @@
     [self.navigationController pushViewController:controller animated:true];
 }
 
+- (void)autoDownloadGifsPressed {
+    TGAutoDownloadSettingsController *controller = [[TGAutoDownloadSettingsController alloc] initWithMode:TGAutoDownloadSettingsModeGifs];
+    __weak TGChatSettingsController *weakSelf = self;
+    controller.settingsUpdated = ^{
+        __strong TGChatSettingsController *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf updateAutoDownloadReset];
+    };
+    [self.navigationController pushViewController:controller animated:true];
+}
+
 - (void)autoDownloadVideosPressed {
     TGAutoDownloadSettingsController *controller = [[TGAutoDownloadSettingsController alloc] initWithMode:TGAutoDownloadSettingsModeVideos];
     __weak TGChatSettingsController *weakSelf = self;
@@ -353,6 +369,7 @@
             strongSelf->_autoDownloadEnabledItem.isOn = true;
             strongSelf->_autoDownloadPhotosItem.enabled = true;
             strongSelf->_autoDownloadVideosItem.enabled = true;
+            strongSelf->_autoDownloadGifsItem.enabled = true;
             strongSelf->_autoDownloadDocumentsItem.enabled = true;
             strongSelf->_autoDownloadVoiceMessagesItem.enabled = true;
             strongSelf->_autoDownloadVideoMessagesItem.enabled = true;

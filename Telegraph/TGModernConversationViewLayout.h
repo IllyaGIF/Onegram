@@ -16,6 +16,7 @@
 
 @class TGMessageModernConversationItem;
 @class TGModernViewStorage;
+@class TGModernConversationPreparedLayout;
 
 typedef struct {
     int index;
@@ -45,10 +46,14 @@ struct TGDecorationViewAttrubutesComparator
 - (NSArray *)layoutAttributesForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth maxHeight:(CGFloat)maxHeight decorationViewAttributes:(std::vector<TGDecorationViewAttrubutes> *)decorationViewAttributes contentHeight:(CGFloat *)contentHeight viewStorage:(TGModernViewStorage *)viewStorage;
 + (NSArray *)layoutAttributesForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth maxHeight:(CGFloat)maxHeight dateOffset:(int)dateOffset decorationViewAttributes:(std::vector<TGDecorationViewAttrubutes> *)decorationViewAttributes contentHeight:(CGFloat *)contentHeight unreadMessageRange:(TGMessageRange)unreadMessageRange viewStorage:(TGModernViewStorage *)viewStorage cachedGroupedLayouts:(NSMutableDictionary *)cachedGroupedLayouts;
 + (void)prepareItems:(NSArray *)items containerWidth:(CGFloat)containerWidth dateOffset:(int)dateOffset unreadMessageRange:(TGMessageRange)unreadMessageRange;
++ (TGModernConversationPreparedLayout *)preparedLayoutForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth dateOffset:(int)dateOffset unreadMessageRange:(TGMessageRange)unreadMessageRange;
 #endif
+
+- (void)installPreparedLayout:(TGModernConversationPreparedLayout *)preparedLayout;
 
 - (bool)hasLayoutAttributes;
 - (bool)frameForItemAtIndex:(NSUInteger)index frame:(CGRect *)frame;
+- (void)enumerateItemsInVerticalRangeOfRect:(CGRect)rect usingBlock:(void (^)(NSUInteger itemIndex, CGRect frame))block;
 
 @end
 

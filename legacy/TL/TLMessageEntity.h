@@ -74,7 +74,7 @@
 
 @interface TLMessageEntity$messageEntityMentionName : TLMessageEntity
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 
 @end
 
@@ -90,6 +90,21 @@
 @end
 
 @interface TLMessageEntity$messageEntityCashtag : TLMessageEntity
+
+
+@end
+
+@interface TLMessageEntity$messageEntityUnderline : TLMessageEntity
+
+
+@end
+
+@interface TLMessageEntity$messageEntityStrike : TLMessageEntity
+
+
+@end
+
+@interface TLMessageEntity$messageEntitySpoiler : TLMessageEntity
 
 
 @end

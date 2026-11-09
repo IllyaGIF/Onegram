@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGImageInfo+Telegraph.h"
 #import "TGRoundMessageViewModel.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
@@ -21,6 +22,7 @@
 #import "TGModernImageViewModel.h"
 #import "TGModernTextViewModel.h"
 #import "TGModernButtonViewModel.h"
+#import "OGMediaFetchDescriptor+Telegraph.h"
 #import "TGRoundMessageRingViewModel.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGDoubleTapGestureRecognizer.h"
@@ -826,7 +828,12 @@
 
 - (void)updateImageOverlay:(bool)animated
 {
-    if (_progressVisible)
+    if (!_mediaIsAvailable && [self isStreamable])
+    {
+        [_imageModel setOverlayType:_playing ? TGMessageImageViewOverlayNone : TGMessageImageViewOverlayPlay animated:animated];
+        [_imageModel setProgress:0.0f animated:false];
+    }
+    else if (_progressVisible)
     {
         [_imageModel setOverlayType:TGMessageImageViewOverlayProgress animated:false];
         [_imageModel setProgress:_progress animated:animated];
@@ -1018,11 +1025,14 @@
     _tapGestureRecognizer.delegate = self;
     
     _boundDoubleTapRecognizer = [[TGDoubleTapGestureRecognizer alloc] initWithTarget:self action:@selector(messageDoubleTapGesture:)];
+    _boundDoubleTapRecognizer.longPressDuration = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0.5 : 1.5;
     _boundDoubleTapRecognizer.consumeSingleTap = false;
     _boundDoubleTapRecognizer.delegate = self;
     
     [_imageModel.boundView addGestureRecognizer:_tapGestureRecognizer];
     [_imageModel.boundView addGestureRecognizer:_boundDoubleTapRecognizer];
+    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
+        [_tapGestureRecognizer requireGestureRecognizerToFail:_boundDoubleTapRecognizer];
     
     if (_contentModel != nil)
     {
@@ -1254,12 +1264,17 @@
     }
 }
 
+- (bool)isStreamable
+{
+    return !self.isSecretMedia && _video != nil && [OGMediaFetchDescriptor isStreamableVideoAttachment:_video];
+}
+
 - (void)playPressed
 {
-    if (_mediaIsAvailable)
+    if (_mediaIsAvailable || [self isStreamable])
     {
         NSString *videoPath = [TGVideoDownloadActor localPathForVideoUrl:[_video.videoInfo urlWithQuality:0 actualQuality:NULL actualSize:NULL]];
-        if (videoPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:videoPath])
+        if (![self isStreamable] && (videoPath.length == 0 || ![[NSFileManager defaultManager] fileExistsAtPath:videoPath]))
         {
             [_context.companionHandle requestAction:@"mediaDownloadRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             return;
@@ -1317,7 +1332,7 @@
             if (TGPeerIdIsChannel(_forwardedPeerId)) {
                 [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
             } else {
-                [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
+                [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @(_forwardedPeerId)}];
             }
         }
     }
@@ -1343,6 +1358,8 @@
     {
         if (recognizer.longTapped)
             [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+        else if (recognizer.doubleTapped)
+            [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
     }
 }
 
@@ -1387,7 +1404,7 @@
 
 - (void)actionButtonPressed
 {
-    if (_mediaIsAvailable)
+    if (_mediaIsAvailable || [self isStreamable])
         [self playPressed];
     else
         [_context.companionHandle requestAction:@"mediaDownloadRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];

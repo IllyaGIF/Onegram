@@ -23,6 +23,8 @@
 
 @end
 
+NSString *const TGWallpaperManagerCurrentWallpaperDidChangeNotification = @"TGWallpaperManagerCurrentWallpaperDidChangeNotification";
+
 @implementation TGWallpaperManager
 
 + (instancetype)instance
@@ -213,6 +215,7 @@
             [self _storeInfo];
         }
         
+        [[NSNotificationCenter defaultCenter] postNotificationName:TGWallpaperManagerCurrentWallpaperDidChangeNotification object:self];
         [ActionStageInstance() dispatchResource:@"/tg/assets/currentWallpaperInfo" resource:wallpaperInfo];
     }
 }

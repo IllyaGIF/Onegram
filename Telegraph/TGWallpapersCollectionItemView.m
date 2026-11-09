@@ -205,9 +205,22 @@
             UIGraphicsEndImageContext();
         });
         
-        NSString *url = [(TGWallpaperInfo *)_wallpaperInfos[i] thumbnailUrl];
-        if (!TGStringCompare([imageView currentUrl], url))
-            [imageView loadImage:url filter:nil placeholder:placeholderImage];
+        TGWallpaperInfo *wallpaperInfo = _wallpaperInfos[i];
+        UIImage *thumbnailImage = [wallpaperInfo thumbnailImage];
+        if (thumbnailImage != nil)
+        {
+            if ([imageView currentImage] != thumbnailImage)
+            {
+                [imageView loadImage:thumbnailImage];
+                imageView.currentUrl = nil;
+            }
+        }
+        else
+        {
+            NSString *url = [wallpaperInfo thumbnailUrl];
+            if (!TGStringCompare([imageView currentUrl], url))
+                [imageView loadImage:url filter:nil placeholder:placeholderImage];
+        }
         
         [imageView viewWithTag:100].hidden = ![_wallpaperInfos[i] isEqual:_selectedWallpaperInfo];
     }

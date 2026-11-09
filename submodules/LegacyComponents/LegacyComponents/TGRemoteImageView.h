@@ -56,12 +56,14 @@ typedef void (^TGImageProgressHandler)(TGRemoteImageView *imageView, float progr
 
 - (UIImage *)currentImage;
 - (UIImage *)currentPlaceholderImage;
+- (void (^)(UIImage *image))displayImagePrewarm;
 
 - (void)tryFillCache:(NSMutableDictionary *)dict;
 
 - (void)loadImage:(UIImage *)image;
 - (void)loadImage:(NSString *)url filter:(NSString *)filter placeholder:(UIImage *)placeholder;
 - (void)loadImage:(NSString *)url filter:(NSString *)filter placeholder:(UIImage *)placeholder forceFade:(bool)forceFade;
+- (void)loadCachedImage:(NSString *)url filter:(NSString *)filter placeholder:(UIImage *)placeholder;
 - (void)loadPlaceholder:(UIImage *)placeholder;
 - (void)cancelLoading;
 

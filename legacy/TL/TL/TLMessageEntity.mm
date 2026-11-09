@@ -502,7 +502,7 @@
     TLMessageEntity$messageEntityMentionName *object = [[TLMessageEntity$messageEntityMentionName alloc] init];
     object.offset = metaObject->getInt32((int32_t)0xfc56269);
     object.length = metaObject->getInt32((int32_t)0x18492126);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     return object;
 }
 
@@ -522,8 +522,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
 }
@@ -634,6 +634,126 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLMessageEntity$messageEntityCashtag *object = [[TLMessageEntity$messageEntityCashtag alloc] init];
+    object.offset = metaObject->getInt32((int32_t)0xfc56269);
+    object.length = metaObject->getInt32((int32_t)0x18492126);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.offset;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xfc56269, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.length;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x18492126, value));
+    }
+}
+
+
+@end
+
+@implementation TLMessageEntity$messageEntityUnderline : TLMessageEntity
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0x9c4e7e8b;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0x7d0294e3;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLMessageEntity$messageEntityUnderline *object = [[TLMessageEntity$messageEntityUnderline alloc] init];
+    object.offset = metaObject->getInt32((int32_t)0xfc56269);
+    object.length = metaObject->getInt32((int32_t)0x18492126);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.offset;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xfc56269, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.length;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x18492126, value));
+    }
+}
+
+
+@end
+
+@implementation TLMessageEntity$messageEntityStrike : TLMessageEntity
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0xbf0693d4;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0x51f33b58;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLMessageEntity$messageEntityStrike *object = [[TLMessageEntity$messageEntityStrike alloc] init];
+    object.offset = metaObject->getInt32((int32_t)0xfc56269);
+    object.length = metaObject->getInt32((int32_t)0x18492126);
+    return object;
+}
+
+- (void)TLfillFieldsWithValues:(std::map<int32_t, TLConstructedValue> *)values
+{
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.offset;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xfc56269, value));
+    }
+    {
+        TLConstructedValue value;
+        value.type = TLConstructedValueTypePrimitiveInt32;
+        value.primitive.int32Value = self.length;
+        values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x18492126, value));
+    }
+}
+
+
+@end
+
+@implementation TLMessageEntity$messageEntitySpoiler : TLMessageEntity
+
+
+- (int32_t)TLconstructorSignature
+{
+    return (int32_t)0x32ca960f;
+}
+
+- (int32_t)TLconstructorName
+{
+    return (int32_t)0xe84710f3;
+}
+
+- (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
+{
+    TLMessageEntity$messageEntitySpoiler *object = [[TLMessageEntity$messageEntitySpoiler alloc] init];
     object.offset = metaObject->getInt32((int32_t)0xfc56269);
     object.length = metaObject->getInt32((int32_t)0x18492126);
     return object;

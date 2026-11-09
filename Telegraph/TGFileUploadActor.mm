@@ -19,11 +19,11 @@
 
 #import "../submodules/MtProtoKit/MTProtoKit/MTEncryption.h"
 #import "../OnegramRuntime/OGRuntime.h"
+#import "TGNetworkTypeManager.h"
+#import <QuartzCore/QuartzCore.h>
 
 #import <vector>
 
-#define PHOTO_PART_SIZE 32 * 1024
-#define VIDEO_PART_SIZE 64 * 1024
 
 struct FilePart
 {
@@ -59,6 +59,7 @@ struct FilePart
     
     bool _uploadInband;
     bool _useBigFileParts;
+    int _uploadPartSize;
     
     CC_MD5_CTX _md5;
     
@@ -125,6 +126,15 @@ struct FilePart
     }
 }
 
+- (int)preferredUploadPartSize
+{
+    int partSize = [TGNetworkTypeManager transferParametersForUpload:true].partSize;
+    while (partSize < 512 * 1024 && ((int64_t)_fileSize + partSize - 1) / partSize > 3000)
+        partSize *= 2;
+    _uploadPartSize = partSize;
+    return partSize;
+}
+
 - (void)prepare:(NSDictionary *)options
 {
     if (options[@"explicitQueueName"] != nil)
@@ -182,7 +192,7 @@ struct FilePart
     else if ([options objectForKey:@"data"] != nil)
     {
         NSData *data = [options objectForKey:@"data"];
-        if (data == nil || data.length == 0)
+        if (data == nil || data.length == 0 || data.length > 512ULL * 1024 * 3000)
         {
             [ActionStageInstance() nodeRetrieveFailed:self.path];
         }
@@ -190,20 +200,9 @@ struct FilePart
         {
             _fileSize = (int)data.length;
             
-            int partSize = PHOTO_PART_SIZE;
-            
-            if (_fileSize >= 10 * 1024 * 1024)
-            {
-                _useBigFileParts = true;
-                partSize = _fileSize / 3000;
-                while ((1024 * 1024) % partSize != 0)
-                {
-                    partSize++;
-                }
-                
-                partSize = MAX(partSize, VIDEO_PART_SIZE);
-            }
-            
+            _useBigFileParts = _fileSize >= 10 * 1024 * 1024;
+            int partSize = [self preferredUploadPartSize];
+
             int length = (int)data.length;
             int index = -1;
             for (int i = 0; i < length; i += partSize)
@@ -249,20 +248,9 @@ struct FilePart
         }
         else
         {
-            int partSize = VIDEO_PART_SIZE;
+            _useBigFileParts = _fileSize >= 10 * 1024 * 1024;
+            int partSize = [self preferredUploadPartSize];
 
-            if (_fileSize >= 10 * 1024 * 1024)
-            {
-                _useBigFileParts = true;
-                partSize = _fileSize / 3000;
-                while ((1024 * 1024) % partSize != 0)
-                {
-                    partSize++;
-                }
-                
-                partSize = MAX(partSize, VIDEO_PART_SIZE);
-            }
-            
             int length = fileSize;
             int index = -1;
             for (int i = 0; i < length; )
@@ -472,18 +460,15 @@ struct FilePart
         
         [ActionStageInstance() nodeRetrieveProgress:self.path progress:progress];
         
-        int concurrentUploads = 16;
-        
-        for (std::vector<FilePart>::iterator it = _partsToUpload.begin(); it != _partsToUpload.end(); it++)
+        OGTransferParameters parameters = [TGNetworkTypeManager transferParametersForUpload:true];
+        int maximumUploads = MAX(1, MIN(parameters.maximumRequests, (int)(parameters.maximumInFlightBytes / _uploadPartSize)));
+        int concurrentUploads = maximumUploads;
+        for (const FilePart &part : _partsToUpload)
         {
-            if (it->uploading)
-            {
+            if (part.uploading)
                 concurrentUploads--;
-                if (concurrentUploads == 0)
-                    break;
-            }
         }
-        
+
         for (int i = 0; i < concurrentUploads; i++)
         {
             for (std::vector<FilePart>::iterator it = _partsToUpload.begin(); it != _partsToUpload.end(); it++)
@@ -491,7 +476,12 @@ struct FilePart
                 if (!it->uploading)
                 {
                     NSData *partData = [_is readData:it->length];
-                    
+                    if (partData.length != (NSUInteger)it->length)
+                    {
+                        [self filePartUploadFailed:it->index];
+                        return;
+                    }
+
                     if (_isEncrypted)
                     {
                         NSMutableData *tmpData = [[NSMutableData alloc] initWithData:partData];
@@ -536,7 +526,11 @@ struct FilePart
                     }
                     
                     int partId = it->index;
-                    
+                    int64_t transferredBytes = partData.length;
+                    NSTimeInterval started = CACurrentMediaTime();
+                    uint32_t transferGeneration = parameters.generation;
+                    id completedToken = request.internalId;
+
                     __weak TGFileUploadActor *weakSelf = self;
                     dispatch_queue_t transferQueue = _transferQueue;
                     [request setCompleted:^(__unused id result, __unused NSTimeInterval, id error)
@@ -544,10 +538,21 @@ struct FilePart
                         dispatch_async(transferQueue, ^
                         {
                             __strong TGFileUploadActor *strongSelf = weakSelf;
+                            if (strongSelf == nil || strongSelf->_transferCancelled || strongSelf->_transferFinished)
+                                return;
+                            [strongSelf->_cancelTokenList removeObject:completedToken];
                             if (error == nil)
+                            {
+                                [TGNetworkTypeManager recordTransferBytes:transferredBytes started:started upload:true generation:transferGeneration];
                                 [strongSelf filePartUploadSuccess:partId];
+                            }
                             else
+                            {
+                                int32_t errorCode = [[TGTelegramNetworking instance] extractNetworkErrorCode:error];
+                                if (errorCode <= 0 || errorCode >= 420)
+                                    [TGNetworkTypeManager recordTransferFailureForUpload:true generation:transferGeneration];
                                 [strongSelf filePartUploadFailed:partId];
+                            }
                         });
                     }];
                     

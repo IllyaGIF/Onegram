@@ -105,6 +105,8 @@ bool TGMessageViewModelShouldDisplayConversationAvatar(TGConversation *author, T
 - (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y;
 - (CGFloat)groupedMediaOffsetX;
 - (CGFloat)groupedMediaOffsetY;
+- (bool)groupedHeaderVisible;
+- (bool)groupedTopCornersHidden;
 
 @property (nonatomic, readonly) CGRect editingCheckButtonFrame;
 @property (nonatomic, readonly) CGRect editingCheckAreaFrame;

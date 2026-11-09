@@ -10,7 +10,10 @@ typedef enum {
     TGTextCheckingResultTypeItalic,
     TGTextCheckingResultTypeCode,
     TGTextCheckingResultTypeLink,
-    TGTextCheckingResultTypeColor
+    TGTextCheckingResultTypeColor,
+    TGTextCheckingResultTypeUnderline,
+    TGTextCheckingResultTypeStrikethrough,
+    TGTextCheckingResultTypeSpoiler
 } TGTextCheckingResultType;
 
 @interface TGTextCheckingResult : NSObject

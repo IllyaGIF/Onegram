@@ -179,7 +179,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateUserStatus *object = [[TLUpdate$updateUserStatus alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.status = metaObject->getObject((int32_t)0xab757700);
     return object;
 }
@@ -188,8 +188,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -219,7 +219,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateContactRegistered *object = [[TLUpdate$updateContactRegistered alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     return object;
 }
@@ -228,8 +228,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -292,7 +292,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateActivation *object = [[TLUpdate$updateActivation alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     return object;
 }
 
@@ -300,8 +300,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
 }
@@ -438,7 +438,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateUserPhoto *object = [[TLUpdate$updateUserPhoto alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.photo = metaObject->getObject((int32_t)0xe6c52372);
     object.previous = metaObject->getBool((int32_t)0x34505af2);
@@ -449,8 +449,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -652,8 +652,8 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChatParticipantDelete *object = [[TLUpdate$updateChatParticipantDelete alloc] init];
-    object.chat_id = metaObject->getInt32((int32_t)0x7234457c);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.chat_id = metaObject->getInt64((int32_t)0x7234457c);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.version = metaObject->getInt32((int32_t)0x4ea810e9);
     return object;
 }
@@ -662,14 +662,14 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.chat_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.chat_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7234457c, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -732,7 +732,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateUserBlocked *object = [[TLUpdate$updateUserBlocked alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.blocked = metaObject->getBool((int32_t)0xb651736f);
     return object;
 }
@@ -741,8 +741,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -812,7 +812,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateUserTyping *object = [[TLUpdate$updateUserTyping alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.action = metaObject->getObject((int32_t)0xc2d4a0f7);
     return object;
 }
@@ -821,8 +821,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -852,8 +852,8 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChatUserTyping *object = [[TLUpdate$updateChatUserTyping alloc] init];
-    object.chat_id = metaObject->getInt32((int32_t)0x7234457c);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.chat_id = metaObject->getInt64((int32_t)0x7234457c);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.action = metaObject->getObject((int32_t)0xc2d4a0f7);
     return object;
 }
@@ -862,14 +862,14 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.chat_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.chat_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7234457c, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -899,7 +899,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateUserName *object = [[TLUpdate$updateUserName alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.first_name = metaObject->getString((int32_t)0xa604f05d);
     object.last_name = metaObject->getString((int32_t)0x10662e0e);
     object.username = metaObject->getString((int32_t)0x626830ca);
@@ -910,8 +910,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -993,7 +993,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateUserPhone *object = [[TLUpdate$updateUserPhone alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.phone = metaObject->getString((int32_t)0x9e6a8d86);
     return object;
 }
@@ -1002,8 +1002,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -1241,7 +1241,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateContactLink *object = [[TLUpdate$updateContactLink alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.my_link = metaObject->getObject((int32_t)0xc9f9705a);
     object.foreign_link = metaObject->getObject((int32_t)0x1c49ffaf);
     return object;
@@ -1251,8 +1251,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -1335,9 +1335,9 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChatParticipantAdd *object = [[TLUpdate$updateChatParticipantAdd alloc] init];
-    object.chat_id = metaObject->getInt32((int32_t)0x7234457c);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
-    object.inviter_id = metaObject->getInt32((int32_t)0x9ddfbd93);
+    object.chat_id = metaObject->getInt64((int32_t)0x7234457c);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
+    object.inviter_id = metaObject->getInt64((int32_t)0x9ddfbd93);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.version = metaObject->getInt32((int32_t)0x4ea810e9);
     return object;
@@ -1347,20 +1347,20 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.chat_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.chat_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7234457c, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.inviter_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.inviter_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x9ddfbd93, value));
     }
     {
@@ -1443,7 +1443,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannel *object = [[TLUpdate$updateChannel alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     return object;
 }
 
@@ -1451,8 +1451,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
 }
@@ -1476,7 +1476,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannelGroup *object = [[TLUpdate$updateChannelGroup alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.group = metaObject->getObject((int32_t)0x5a6e0b4);
     return object;
 }
@@ -1485,8 +1485,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -1563,7 +1563,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateReadChannelInbox *object = [[TLUpdate$updateReadChannelInbox alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.max_id = metaObject->getInt32((int32_t)0xe2c00ace);
     return object;
 }
@@ -1572,8 +1572,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -1603,7 +1603,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateDeleteChannelMessages *object = [[TLUpdate$updateDeleteChannelMessages alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.messages = metaObject->getArray((int32_t)0x8c97b94f);
     object.pts = metaObject->getInt32((int32_t)0x4fc5f572);
     object.pts_count = metaObject->getInt32((int32_t)0x4ad9fe06);
@@ -1614,8 +1614,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -1657,7 +1657,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannelMessageViews *object = [[TLUpdate$updateChannelMessageViews alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
     object.views = metaObject->getInt32((int32_t)0xe59deddf);
     return object;
@@ -1667,8 +1667,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -1704,7 +1704,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChatAdmins *object = [[TLUpdate$updateChatAdmins alloc] init];
-    object.chat_id = metaObject->getInt32((int32_t)0x7234457c);
+    object.chat_id = metaObject->getInt64((int32_t)0x7234457c);
     object.enabled = metaObject->getBool((int32_t)0x335ec0ee);
     object.version = metaObject->getInt32((int32_t)0x4ea810e9);
     return object;
@@ -1714,8 +1714,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.chat_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.chat_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7234457c, value));
     }
     {
@@ -1751,8 +1751,8 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChatParticipantAdmin *object = [[TLUpdate$updateChatParticipantAdmin alloc] init];
-    object.chat_id = metaObject->getInt32((int32_t)0x7234457c);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.chat_id = metaObject->getInt64((int32_t)0x7234457c);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.is_admin = metaObject->getBool((int32_t)0x41fdf05a);
     object.version = metaObject->getInt32((int32_t)0x4ea810e9);
     return object;
@@ -1762,14 +1762,14 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.chat_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.chat_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7234457c, value));
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {
@@ -1937,7 +1937,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannelPinnedMessage *object = [[TLUpdate$updateChannelPinnedMessage alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
     return object;
 }
@@ -1946,8 +1946,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -2050,7 +2050,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateReadChannelOutbox *object = [[TLUpdate$updateReadChannelOutbox alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.max_id = metaObject->getInt32((int32_t)0xe2c00ace);
     return object;
 }
@@ -2059,8 +2059,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -2274,7 +2274,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannelWebPage *object = [[TLUpdate$updateChannelWebPage alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.webpage = metaObject->getObject((int32_t)0x9ae475f8);
     object.pts = metaObject->getInt32((int32_t)0x4fc5f572);
     object.pts_count = metaObject->getInt32((int32_t)0x4ad9fe06);
@@ -2285,8 +2285,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -2667,7 +2667,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannelReadMessagesContents *object = [[TLUpdate$updateChannelReadMessagesContents alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.messages = metaObject->getArray((int32_t)0x8c97b94f);
     return object;
 }
@@ -2676,8 +2676,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {
@@ -2733,7 +2733,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLUpdate$updateChannelAvailableMessages *object = [[TLUpdate$updateChannelAvailableMessages alloc] init];
-    object.channel_id = metaObject->getInt32((int32_t)0x1cfcdb86);
+    object.channel_id = metaObject->getInt64((int32_t)0x1cfcdb86);
     object.available_min_id = metaObject->getInt32((int32_t)0x9e2c6fd0);
     return object;
 }
@@ -2742,8 +2742,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.channel_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.channel_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x1cfcdb86, value));
     }
     {

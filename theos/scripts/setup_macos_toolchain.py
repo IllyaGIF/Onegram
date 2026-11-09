@@ -32,7 +32,7 @@ def ensure_native_packages():
     tools = root / 'tools'
     marker = tools / '.onegram-packages.sha256'
     digest = hashlib.sha256(RECIPE.read_bytes()).hexdigest()
-    required = ('python3', 'clang', 'clang++', 'llvm-config', 'make', 'ccache', 'ldid', 'git', 'perl', 'awk', 'autoconf', 'automake', 'libtoolize')
+    required = ('python3', 'clang', 'clang++', 'llvm-config', 'make', 'ccache', 'git', 'perl', 'awk', 'autoconf', 'automake', 'libtoolize')
     if marker.is_file() and marker.read_text().strip() == digest and all((tools / 'bin' / name).is_file() for name in required):
         return tools
     conda = root / 'bootstrap/bin/conda'
@@ -53,6 +53,26 @@ def ensure_native_packages():
             raise RuntimeError('Native package installation lacks ' + name)
     marker.write_text(digest + '\n')
     return tools
+
+
+def ensure_ldid(root, recipe):
+    from bootstrap_build import download, validate_sha256
+    source = recipe['ldid'][platform.machine()]
+    target = root / 'signing/ldid'
+    if target.is_file():
+        try:
+            validate_sha256(target, source['sha256'])
+            return target
+        except RuntimeError:
+            target.unlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='onegram-ldid-', dir=str(target.parent)) as temporary:
+        download_path = Path(temporary) / 'ldid'
+        download(source['url'], download_path)
+        validate_sha256(download_path, source['sha256'])
+        download_path.chmod(0o755)
+        download_path.replace(target)
+    return target
 
 
 def link_tool(path, target):
@@ -84,8 +104,9 @@ def ensure_macos_toolchain(theos, versions):
     binary_dir.mkdir(parents=True, exist_ok=True)
     for name in ('ar', 'ranlib', 'libtool', 'lipo', 'nm', 'otool', 'size', 'strip', 'codesign_allocate'):
         link_tool(binary_dir / name, native_tool(tools, name))
-    for name in ('ldid', 'llvm-ar', 'llvm-config', 'dsymutil'):
+    for name in ('llvm-ar', 'llvm-config', 'dsymutil'):
         link_tool(binary_dir / name, tools / 'bin' / name)
+    link_tool(binary_dir / 'ldid', ensure_ldid(root, recipe))
     marker = toolchain / '.onegram-linker/installed.json'
     if not marker.is_file() or not (binary_dir / 'ld').is_file():
         link_tool(binary_dir / 'ld', native_tool(tools, 'ld'))
@@ -101,14 +122,14 @@ def ensure_macos_toolchain(theos, versions):
     link_tool(arc / 'libarclite_iphoneos.a', project / 'theos/lib/libarclite_iphoneos.a')
     for name in ('clang', 'clang++'):
         wrapper = binary_dir / name
-        contents = '#!/bin/sh\nexec ' + shlex.join([str(tools / 'bin' / name), '-B' + str(binary_dir), '-resource-dir', str(resource)]) + ' "$@"\n'
+        contents = '#!/bin/sh\nexec ' + shlex.join([str(tools / 'bin' / name), '-B' + str(binary_dir), '-resource-dir', str(resource), '-Wno-undef-prefix']) + ' "$@"\n'
         if not wrapper.is_file() or wrapper.read_text() != contents:
             wrapper.write_text(contents)
             wrapper.chmod(0o755)
     ensure_linker(toolchain, jobs=min(4, os.cpu_count() or 2), host_sdk=sdk, build_tools=tools)
     from build_macos_runtime import ensure_ios_runtime
     ensure_ios_runtime(toolchain, theos, versions, recipe['runtime'])
-    architectures = {'3.1.3': ('armv6', '3.1.3'), '6.1': ('armv7', '4.3'), '11.2': ('arm64', '7.0')}
+    architectures = {'3.1.3': ('armv6', '3.0'), '6.1': ('armv7', '4.3'), '11.2': ('arm64', '7.0')}
     for version in versions:
         architecture, deployment = architectures[version]
         target_sdk = theos / ('sdks/iPhoneOS' + version + '.sdk')

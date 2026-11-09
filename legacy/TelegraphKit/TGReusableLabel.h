@@ -98,7 +98,8 @@ typedef enum {
     TGReusableLabelLayoutHighlightCommands = 32,
     TGReusableLabelLayoutOffsetLastLine = 64,
     TGReusableLabelLayoutForegroundFromContext = 128,
-    TGReusableLabelLayoutBoundedTail = 256
+    TGReusableLabelLayoutBoundedTail = 256,
+    TGReusableLabelLayoutCoverSpoilers = 512
 } TGReusableLabelLayout;
 
 extern NSString *const TGReusableLabelEmojiImagesLoadedNotification;
@@ -112,6 +113,7 @@ bool TGReusableLabelMissedEmoji(void);
 #endif
 
 extern NSString *const TGReusableLabelRunDecorationAttributeName;
+extern NSString *const TGReusableLabelSpoilerLink;
 
 @interface TGReusableLabelRunDecoration : NSObject
 

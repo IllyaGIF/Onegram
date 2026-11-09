@@ -1,15 +1,16 @@
 #import "TGWorkerPool.h"
 
-#import "TGWorker.h"
 #import "TGWorkerTask.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 @interface TGWorkerPool ()
 {
-    NSMutableArray *_taskList;
-    TG_SYNCHRONIZED_DEFINE(_taskList);
+    NSMutableDictionary *_queuedOperations;
+    TG_SYNCHRONIZED_DEFINE(_queuedOperations);
 }
+
+- (void)executeTask:(TGWorkerTask *)task;
 
 @end
 
@@ -20,55 +21,74 @@
     self = [super init];
     if (self != nil)
     {
-        _taskList = [[NSMutableArray alloc] init];
-        TG_SYNCHRONIZED_INIT(_taskList);
+        _queuedOperations = [[NSMutableDictionary alloc] init];
+        TG_SYNCHRONIZED_INIT(_queuedOperations);
     }
     return self;
 }
 
-+ (ASQueue *)processingQueue
++ (NSOperationQueue *)processingQueue
 {
-    static ASQueue *queue = nil;
+    static NSOperationQueue *queue = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        queue = [[ASQueue alloc] initWithName:"org.telegram.workerPoolQueue"];
+        queue = [[NSOperationQueue alloc] init];
+        [queue setMaxConcurrentOperationCount:2];
     });
     return queue;
 }
 
 - (void)addTask:(TGWorkerTask *)task
 {
-    TG_SYNCHRONIZED_BEGIN(_taskList);
-    if (![_taskList containsObject:task])
-        [_taskList addObject:task];
-    TG_SYNCHRONIZED_END(_taskList);
-    
-    TGWorkerTask *queuedTask = task;
-    
-    [[TGWorkerPool processingQueue] dispatchOnQueue:^
+    if (task == nil)
+        return;
+
+    NSValue *key = [NSValue valueWithNonretainedObject:task];
+    NSInvocationOperation *operation = [[NSInvocationOperation alloc] initWithTarget:self selector:@selector(executeTask:) object:task];
+    [operation setQueuePriority:task.queuePriority];
+    bool shouldSchedule = false;
+    TG_SYNCHRONIZED_BEGIN(_queuedOperations);
+    if ([_queuedOperations objectForKey:key] == nil)
     {
-        bool executeTask = false;
-        TG_SYNCHRONIZED_BEGIN(_taskList);
-        if ([_taskList containsObject:queuedTask])
-        {
-            executeTask = true;
-            [_taskList removeObject:queuedTask];
-        }
-        TG_SYNCHRONIZED_END(_taskList);
-        
-        if (executeTask)
-        {
-            [queuedTask execute];
-        }
-    }];
+        [_queuedOperations setObject:operation forKey:key];
+        shouldSchedule = true;
+    }
+    TG_SYNCHRONIZED_END(_queuedOperations);
+
+    if (shouldSchedule)
+        [[TGWorkerPool processingQueue] addOperation:operation];
+}
+
+- (void)executeTask:(TGWorkerTask *)task
+{
+    NSValue *key = [NSValue valueWithNonretainedObject:task];
+    bool shouldExecute = false;
+    TG_SYNCHRONIZED_BEGIN(_queuedOperations);
+    NSOperation *operation = [_queuedOperations objectForKey:key];
+    if (operation != nil)
+    {
+        shouldExecute = ![operation isCancelled];
+        [_queuedOperations removeObjectForKey:key];
+    }
+    TG_SYNCHRONIZED_END(_queuedOperations);
+
+    if (shouldExecute)
+        [task execute];
 }
 
 - (void)removeTask:(TGWorkerTask *)task
 {
-    TG_SYNCHRONIZED_BEGIN(_taskList);
-    [_taskList removeObject:task];
-    TG_SYNCHRONIZED_END(_taskList);
+    if (task == nil)
+        return;
+
+    NSValue *key = [NSValue valueWithNonretainedObject:task];
+    TG_SYNCHRONIZED_BEGIN(_queuedOperations);
+    NSOperation *operation = [_queuedOperations objectForKey:key];
+    [_queuedOperations removeObjectForKey:key];
+    TG_SYNCHRONIZED_END(_queuedOperations);
+
+    [operation cancel];
 }
 
 @end

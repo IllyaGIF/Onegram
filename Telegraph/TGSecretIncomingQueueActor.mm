@@ -25,7 +25,7 @@
     int64_t _peerId;
     int64_t _encryptedChatId;
     int64_t _accessHash;
-    int32_t _userId;
+    int64_t _userId;
 }
 
 @end
@@ -73,7 +73,7 @@
             int32_t nextExpectedSeqOut = blockNextExpectedSeqOut;
             
             std::map<int64_t, int64_t> cachedPeerIds;
-            std::map<int64_t, int> cachedParticipantIds;
+            std::map<int64_t, int64_t> cachedParticipantIds;
             
             NSMutableArray *addedDecryptedActions = [[NSMutableArray alloc] init];
             
@@ -858,7 +858,7 @@
     }
 }
 
-+ (TGMessage *)parseDecryptedMessage:(id)decryptedMessage date:(int32_t)date fileInfo:(TGStoredIncomingMessageFileInfo *)fileInfo conversationId:(int64_t)conversationId fromUid:(int32_t)fromUid seqIn:(int32_t)seqIn seqOut:(int32_t)seqOut
++ (TGMessage *)parseDecryptedMessage:(id)decryptedMessage date:(int32_t)date fileInfo:(TGStoredIncomingMessageFileInfo *)fileInfo conversationId:(int64_t)conversationId fromUid:(int64_t)fromUid seqIn:(int32_t)seqIn seqOut:(int32_t)seqOut
 {
     TGMessage *message = nil;
     

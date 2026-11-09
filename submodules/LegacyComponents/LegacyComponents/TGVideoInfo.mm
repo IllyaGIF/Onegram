@@ -2,21 +2,27 @@
 
 #include <vector>
 
+static const int32_t TGVideoInfoModernTag = (int32_t)0xe7d1c0de;
+static const uint8_t TGVideoInfoModernVersion = 1;
+
 struct TGVideoQualityRecord
 {
     int quality;
     int size;
     NSString *url;
+    NSString *codec;
     
-    TGVideoQualityRecord(int quality_, NSString *url_, int size_) :
+    TGVideoQualityRecord(int quality_, NSString *url_, int size_, NSString *codec_) :
         quality(quality_), size(size_)
     {
         url = url_;
+        codec = codec_;
     }
     
     TGVideoQualityRecord(const TGVideoQualityRecord &other)
     {
         url = other.url;
+        codec = other.codec;
         quality = other.quality;
         size = other.size;
     }
@@ -26,6 +32,7 @@ struct TGVideoQualityRecord
         if (this != &other)
         {
             url = other.url;
+            codec = other.codec;
             quality = other.quality;
             size = other.size;
         }
@@ -36,8 +43,29 @@ struct TGVideoQualityRecord
     ~TGVideoQualityRecord()
     {
         url = nil;
+        codec = nil;
     }
 };
+
+static void TGVideoInfoWriteString(NSMutableData *data, NSString *string)
+{
+    NSData *stringData = [string dataUsingEncoding:NSUTF8StringEncoding];
+    int32_t length = (int32_t)stringData.length;
+    [data appendBytes:&length length:4];
+    if (length != 0)
+        [data appendData:stringData];
+}
+
+static NSString *TGVideoInfoReadString(NSInputStream *is)
+{
+    int32_t length = 0;
+    [is read:(uint8_t *)&length maxLength:4];
+    if (length <= 0)
+        return @"";
+    uint8_t *bytes = (uint8_t *)malloc(length);
+    [is read:bytes maxLength:length];
+    return [[NSString alloc] initWithBytesNoCopy:bytes length:length encoding:NSUTF8StringEncoding freeWhenDone:true];
+}
 
 @interface TGVideoInfo ()
 {
@@ -51,7 +79,7 @@ struct TGVideoQualityRecord
 - (instancetype)initWithCoder:(NSCoder *)aDecoder {
     self = [super init];
     if (self != nil) {
-        _qualitySet.push_back(TGVideoQualityRecord(0, [aDecoder decodeObjectForKey:@"url"], [aDecoder decodeInt32ForKey:@"size"]));
+        _qualitySet.push_back(TGVideoQualityRecord(0, [aDecoder decodeObjectForKey:@"url"], [aDecoder decodeInt32ForKey:@"size"], [aDecoder decodeObjectForKey:@"codec"]));
     }
     return self;
 }
@@ -61,6 +89,8 @@ struct TGVideoQualityRecord
         auto q = _qualitySet[0];
         [aCoder encodeInt32:q.size forKey:@"size"];
         [aCoder encodeObject:q.url forKey:@"url"];
+        if (q.codec != nil)
+            [aCoder encodeObject:q.codec forKey:@"codec"];
     }
 }
 
@@ -84,6 +114,9 @@ struct TGVideoQualityRecord
         
         if (![_qualitySet[i].url isEqualToString:other->_qualitySet[i].url])
             return false;
+        
+        if (_qualitySet[i].codec != other->_qualitySet[i].codec && ![_qualitySet[i].codec isEqualToString:other->_qualitySet[i].codec])
+            return false;
     }
     
     return true;
@@ -91,7 +124,20 @@ struct TGVideoQualityRecord
 
 - (void)addVideoWithQuality:(int)quality url:(NSString *)url size:(int)size
 {
-    _qualitySet.push_back(TGVideoQualityRecord(quality, url, size));
+    [self addVideoWithQuality:quality url:url size:size codec:nil];
+}
+
+- (void)addVideoWithQuality:(int)quality url:(NSString *)url size:(int)size codec:(NSString *)codec
+{
+    _qualitySet.push_back(TGVideoQualityRecord(quality, url, size, codec.length == 0 ? nil : codec));
+}
+
+- (void)enumerateVideos:(void (^)(int quality, NSString *url, int size, NSString *codec))block
+{
+    if (block == nil)
+        return;
+    for (std::vector<TGVideoQualityRecord>::iterator it = _qualitySet.begin(); it != _qualitySet.end(); it++)
+        block(it->quality, it->url, it->size, it->codec);
 }
 
 - (NSString *)urlWithQuality:(int)quality actualQuality:(int *)actualQuality actualSize:(int *)actualSize
@@ -131,18 +177,20 @@ struct TGVideoQualityRecord
 
 - (void)serialize:(NSMutableData *)data
 {
-    size_t count = _qualitySet.size();
+    int32_t tag = TGVideoInfoModernTag;
+    [data appendBytes:&tag length:4];
+    uint8_t version = TGVideoInfoModernVersion;
+    [data appendBytes:&version length:1];
+    
+    int32_t count = (int32_t)_qualitySet.size();
     [data appendBytes:&count length:4];
     
     for (std::vector<TGVideoQualityRecord>::iterator it = _qualitySet.begin(); it != _qualitySet.end(); it++)
     {
-        NSData *urlData = [it->url dataUsingEncoding:NSUTF8StringEncoding];
-        int32_t length = (int32_t)urlData.length;
-        [data appendBytes:&length length:4];
-        [data appendData:urlData];
-        
+        TGVideoInfoWriteString(data, it->url);
         [data appendBytes:&it->quality length:4];
         [data appendBytes:&it->size length:4];
+        TGVideoInfoWriteString(data, it->codec);
     }
 }
 
@@ -150,16 +198,21 @@ struct TGVideoQualityRecord
 {
     TGVideoInfo *videoInfo = [[TGVideoInfo alloc] init];
     
-    int count = 0;
+    int32_t count = 0;
     [is read:(uint8_t *)&count maxLength:4];
     
-    for (int i = 0; i < count; i++)
+    bool hasCodecs = false;
+    if (count == TGVideoInfoModernTag)
     {
-        int length = 0;
-        [is read:(uint8_t *)&length maxLength:4];
-        uint8_t *urlBytes = (uint8_t *)malloc(length);
-        [is read:urlBytes maxLength:length];
-        NSString *url = [[NSString alloc] initWithBytesNoCopy:urlBytes length:length encoding:NSUTF8StringEncoding freeWhenDone:true];
+        uint8_t version = 0;
+        [is read:&version maxLength:1];
+        hasCodecs = version >= 1;
+        [is read:(uint8_t *)&count maxLength:4];
+    }
+    
+    for (int32_t i = 0; i < count; i++)
+    {
+        NSString *url = TGVideoInfoReadString(is);
         
         int quality = 0;
         [is read:(uint8_t *)&quality maxLength:4];
@@ -167,7 +220,9 @@ struct TGVideoQualityRecord
         int size = 0;
         [is read:(uint8_t *)&size maxLength:4];
         
-        [videoInfo addVideoWithQuality:quality url:url size:size];
+        NSString *codec = hasCodecs ? TGVideoInfoReadString(is) : nil;
+        
+        [videoInfo addVideoWithQuality:quality url:url size:size codec:codec];
     }
     
     return videoInfo;

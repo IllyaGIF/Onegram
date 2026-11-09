@@ -15,7 +15,7 @@
 
 @interface TGDeleteUserAvatarActor ()
 {
-    int _uid;
+    int64_t _uid;
 }
 
 @end
@@ -29,8 +29,8 @@
 
 - (void)prepare:(NSDictionary *)options
 {
-    _uid = [[options objectForKey:@"uid"] intValue];
-    self.requestQueueName = [[NSString alloc] initWithFormat:@"timeline/%d", _uid];
+    _uid = [[options objectForKey:@"uid"] longLongValue];
+    self.requestQueueName = [[NSString alloc] initWithFormat:@"timeline/%lld", _uid];
     
     [super prepare:options];
 }

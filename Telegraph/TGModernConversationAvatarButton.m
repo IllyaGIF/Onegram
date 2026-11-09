@@ -8,6 +8,7 @@
 #import "TGAppDelegate.h"
 
 #import "TGPresentation.h"
+#import "TGOnegramSettings.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 
 static const CGFloat TGModernConversationAvatarDefaultSize = 37.0f;
@@ -72,8 +73,30 @@ static const CGFloat TGModernConversationAvatarDefaultTopInset = 4.0f;
             _brandedOverlayView.userInteractionEnabled = false;
             [self addSubview:_brandedOverlayView];
         }
+        else
+            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramSettingsChanged:) name:TGOnegramSettingsDidChangeNotification object:nil];
     }
     return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGOnegramSettingsDidChangeNotification object:nil];
+}
+
+- (void)onegramSettingsChanged:(NSNotification *)notification
+{
+    if ([notification.userInfo[TGOnegramSettingsChangedKey] isEqual:TGOnegramSettingAppearanceRoundChatAvatar])
+        [self updateAvatarShape];
+}
+
+- (void)updateAvatarShape
+{
+    if (_avatarView == nil || [TGPresentation brandedIOS6Style])
+        return;
+    bool round = [TGOnegramSettings boolForKey:TGOnegramSettingAppearanceRoundChatAvatar];
+    _avatarView.layer.cornerRadius = round ? _avatarView.bounds.size.width / 2.0f : 0.0f;
+    _avatarView.clipsToBounds = round;
 }
 
 - (UIEdgeInsets)alignmentRectInsets
@@ -200,7 +223,7 @@ static const CGFloat TGModernConversationAvatarDefaultTopInset = 4.0f;
         }
         else
         {
-            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(side, side) uid:(int32_t)_avatarConversationId firstName:_avatarFirstName lastName:_avatarLastName placeholder:placeholder];
+            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(side, side) uid:_avatarConversationId firstName:_avatarFirstName lastName:_avatarLastName placeholder:placeholder];
         }
     }
     else
@@ -328,6 +351,7 @@ static const CGFloat TGModernConversationAvatarDefaultTopInset = 4.0f;
         origin = CGPointMake(rtlOffset + _horizontalOffset, -12 + _verticalOffset + verticalOffset);
         _avatarView.frame = CGRectMake(origin.x, origin.y, 26, 26);
     }
+    [self updateAvatarShape];
     
     NSInteger i = 0;
     if (_avatarViews.count > 0)

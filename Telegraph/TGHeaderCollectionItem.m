@@ -13,6 +13,7 @@
 @interface TGHeaderCollectionItem ()
 {
     NSString *_title;
+    NSString *_badgeText;
 }
 
 @end
@@ -48,6 +49,7 @@
     [super bindView:view];
     
     [view setTitle:_title];
+    [view setBadgeText:_badgeText];
 }
 
 - (void)setTitle:(NSString *)title
@@ -57,6 +59,16 @@
         _title = title;
         
         [((TGHeaderCollectionItemView *)[self boundView]) setTitle:_title];
+    }
+}
+
+- (void)setBadgeText:(NSString *)badgeText
+{
+    if (!TGStringCompare(_badgeText, badgeText))
+    {
+        _badgeText = badgeText;
+
+        [((TGHeaderCollectionItemView *)[self boundView]) setBadgeText:_badgeText];
     }
 }
 

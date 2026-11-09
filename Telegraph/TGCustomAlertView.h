@@ -15,6 +15,8 @@
 
 + (instancetype)presentSecureTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *text))completionBlock;
 
++ (instancetype)presentTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text keyboardType:(UIKeyboardType)keyboardType cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *text))completionBlock;
+
 + (void)dismissAllAlertViews;
 
 @end

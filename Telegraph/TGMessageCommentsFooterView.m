@@ -115,7 +115,7 @@
                 [avatarView loadImage:replier.avatarUrl filter:filter placeholder:placeholder];
         }
         else if (replier.isUser)
-            [avatarView loadUserPlaceholderWithSize:CGSizeMake(avatarSize, avatarSize) uid:(int)replier.peerId firstName:replier.firstName lastName:replier.lastName placeholder:placeholder];
+            [avatarView loadUserPlaceholderWithSize:CGSizeMake(avatarSize, avatarSize) uid:replier.peerId firstName:replier.firstName lastName:replier.lastName placeholder:placeholder];
         else
             [avatarView loadGroupPlaceholderWithSize:CGSizeMake(avatarSize, avatarSize) conversationId:replier.peerId title:replier.firstName placeholder:placeholder];
     }

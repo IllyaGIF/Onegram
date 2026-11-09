@@ -61,7 +61,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLRPCmessages_editChatTitle$messages_editChatTitle *object = [[TLRPCmessages_editChatTitle$messages_editChatTitle alloc] init];
-    object.chat_id = metaObject->getInt32((int32_t)0x7234457c);
+    object.chat_id = metaObject->getInt64((int32_t)0x7234457c);
     object.title = metaObject->getString((int32_t)0xcdebf414);
     return object;
 }
@@ -70,8 +70,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.chat_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.chat_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x7234457c, value));
     }
     {

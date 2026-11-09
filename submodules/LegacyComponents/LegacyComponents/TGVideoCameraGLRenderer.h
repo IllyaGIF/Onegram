@@ -15,6 +15,7 @@
 @property (nonatomic, readonly) bool hasPreviousPixelbuffer;
 
 - (void)prepareForInputWithFormatDescription:(CMFormatDescriptionRef)inputFormatDescription outputRetainedBufferCountHint:(size_t)outputRetainedBufferCountHint maximumOutputSide:(CGFloat)maximumOutputSide;
+- (void)updateInputFormatDescription:(CMFormatDescriptionRef)inputFormatDescription;
 - (void)reset;
 
 - (CVPixelBufferRef)copyRenderedPixelBuffer:(CVPixelBufferRef)pixelBuffer;

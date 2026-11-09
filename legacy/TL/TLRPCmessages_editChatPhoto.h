@@ -11,7 +11,7 @@
 
 @interface TLRPCmessages_editChatPhoto : TLMetaRpc
 
-@property (nonatomic) int32_t chat_id;
+@property (nonatomic) int64_t chat_id;
 @property (nonatomic, retain) TLInputChatPhoto *photo;
 
 - (Class)responseClass;

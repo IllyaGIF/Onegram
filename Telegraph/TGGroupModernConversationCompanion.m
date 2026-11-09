@@ -46,6 +46,7 @@
 #import "TGUserDataRequestBuilder.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGIOS6PinnedMessagesFilter : TLMessagesFilter
 @end
@@ -687,7 +688,7 @@ typedef enum {
         
         for (NSNumber *nUid in activities)
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+            TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
             if (user != nil)
             {
                 if (typingString.length != 0)
@@ -858,7 +859,7 @@ typedef enum {
         [actions addObject:@{@"title": TGLocalized(@"Conversation.Mute"), @"icon": presentation.images.chatTitleMuteIcon, @"action": @"mute"}];
     [actions addObject:@{@"title": TGLocalized(@"Conversation.Info"), @"icon": presentation.images.chatTitleInfoIcon, @"action": @"info"}];
     [groupTitlePanel setPresentation:presentation];
-    [groupTitlePanel setButtonsWithTitlesAndActions:actions];
+    [groupTitlePanel setButtonsWithTitlesAndActions:[self _titlePanelActionsWithPluginActions:actions]];
     
     [controller setPrimaryTitlePanel:groupTitlePanel];
 }
@@ -887,7 +888,7 @@ typedef enum {
 
 - (NSDictionary *)userActivityData
 {
-    return @{@"user_id": @(TGTelegraphInstance.clientUserId), @"peer": @{@"type": @"group", @"id": @(-(int32_t)_conversationId)}};
+    return @{@"user_id": @(TGTelegraphInstance.clientUserId), @"peer": @{@"type": @"group", @"id": @(-_conversationId)}};
 }
 
 - (TGApplicationFeaturePeerType)applicationFeaturePeerType
@@ -912,7 +913,8 @@ typedef enum {
 
 - (bool)shouldAutomaticallyDownloadAnimations
 {
-    return TGAppDelegateInstance.autoPlayAnimations;
+    TGAutoDownloadChat chat = TGAutoDownloadChatGroup;
+    return [TGAppDelegateInstance.autoDownloadPreferences shouldDownloadGifInChat:chat networkType:TGTelegraphInstance.networkTypeManager.networkType];
 }
 
 - (bool)shouldAutomaticallyDownloadAudios
@@ -955,13 +957,13 @@ typedef enum {
     [ActionStageInstance() watchForPaths:@[
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/typing", _conversationId],
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/conversation", _conversationId],
-        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2],
+        [[NSString alloc] initWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsGroup],
         [[NSString alloc] initWithFormat:@"/tg/conversation/(%lld)/pinnedMessagesChanged", _conversationId]
     ] watcher:self];
     
     [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _conversationId] watcher:self];
     [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _conversationId] options:@{@"peerId": @(_conversationId)} watcher:self];
-    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 2] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 2] forKey:@"peerId"] watcher:self];
+    [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsGroup] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsGroup] forKey:@"peerId"] watcher:self];
     
     [super subscribeToUpdates];
 }
@@ -1057,7 +1059,7 @@ typedef enum {
             
             for (NSNumber *nUid in _conversation.chatParticipants.chatParticipantUids)
             {
-                TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+                TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
                 if (TGStringCompare(domain, user.userName))
                 {
                     [[TGInterfaceManager instance] navigateToProfileOfUser:user.uid shareVCard:nil];
@@ -1092,7 +1094,7 @@ typedef enum {
         bool needsUpdate = false;
         for (NSNumber *nUid in _conversation.chatParticipants.chatParticipantUids)
         {
-            int uid = [nUid intValue];
+            int64_t uid = [nUid longLongValue];
             for (TGUser *user in users)
             {
                 if (user.uid == uid)
@@ -1195,7 +1197,7 @@ typedef enum {
     int count = 0;
     for (NSNumber *nUid in conversation.chatParticipants.chatParticipantUids)
     {
-        TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+        TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
         if (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot)
         {
             count++;
@@ -1209,7 +1211,7 @@ typedef enum {
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 2]])
+    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsGroup]])
     {
         TGDispatchOnMainThread(^
         {
@@ -1236,7 +1238,7 @@ typedef enum {
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
     bool isMuted = true;
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
         isMuted = false;
     
     [self _updateGroupMute:isMuted];
@@ -1272,7 +1274,7 @@ typedef enum {
         NSMutableArray *initialStates = [[NSMutableArray alloc] init];
         for (NSNumber *nUid in _conversation.chatParticipants.chatParticipantUids)
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+            TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
             if (user.kind == TGUserKindBot || user.kind == TGUserKindSmartBot)
             {
                 [botUsers addObject:user];

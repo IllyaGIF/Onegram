@@ -8,6 +8,7 @@ FOUNDATION_EXPORT NSString *const TGAccountSwitcherAccountsDidChangeNotification
 @interface TGAccountSwitcher : NSObject
 
 + (TGAccountSwitcher *)instance;
++ (int64_t)receiverUserIdFromPayload:(NSDictionary *)payload;
 
 - (bool)isSwitching;
 - (bool)canCancelAddingAccount;
@@ -19,7 +20,7 @@ FOUNDATION_EXPORT NSString *const TGAccountSwitcherAccountsDidChangeNotification
 
 - (void)refreshActiveAccount;
 - (void)updateActiveAccountWithUser:(TGUser *)user;
-- (bool)consumeAuthorizationWithUserId:(int32_t)userId;
+- (bool)consumeAuthorizationWithUserId:(int64_t)userId;
 - (bool)switchToRemainingAccountAfterLogout;
 - (NSArray *)otherAuthorizedUserIds;
 

@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGStickerMessageViewModel.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
@@ -6,6 +7,8 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGMessageImageViewModel.h"
+#import "TGAnimatedStickerViewModel.h"
+#import "TGAnimatedStickerView.h"
 
 #import "TGModernConversationItem.h"
 
@@ -71,6 +74,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     
     TGDocumentMediaAttachment *_document;
     TGMessageImageViewModel *_imageModel;
+    TGAnimatedStickerViewModel *_animatedStickerModel;
     NSString *_emojiFallbackText;
     UILabel *_emojiFallbackLabel;
     bool _emojiFallbackUntilImageLoaded;
@@ -122,7 +126,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     return nil;
 }
 
-- (bool)needsEmojiFallbackForDocument:(TGDocumentMediaAttachment *)document
+- (bool)needsPreviewUriForDocument:(TGDocumentMediaAttachment *)document
 {
     NSString *mimeType = [document.mimeType lowercaseString];
     NSString *extension = [[document.fileName pathExtension] lowercaseString];
@@ -136,7 +140,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
 
 - (NSString *)stickerImageUriForDocument:(TGDocumentMediaAttachment *)document displaySize:(CGSize)displaySize
 {
-    bool useStaticPreview = [self needsEmojiFallbackForDocument:document];
+    bool useStaticPreview = [self needsPreviewUriForDocument:document];
     NSMutableString *uri = [[NSMutableString alloc] initWithString:(useStaticPreview ? @"sticker-preview://?" : @"sticker://?")];
     if (document.documentId != 0)
     {
@@ -214,6 +218,38 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     return false;
 }
 
+- (void)updateEmojiFallbackState
+{
+    NSString *alt = [self stickerAltText:_document];
+    bool showFallback = false;
+    bool untilLoaded = false;
+    if (alt.length != 0)
+    {
+        if (_animatedStickerModel != nil)
+        {
+            showFallback = OGPlatformMediaDownloadsRequireUserAction() && ![[NSFileManager defaultManager] fileExistsAtPath:[TGAnimatedStickerView filePathForDocument:_document]];
+            untilLoaded = true;
+        }
+        else
+        {
+            bool keepFallback = [self shouldKeepEmojiFallbackForDocument:_document];
+            showFallback = keepFallback || ![self stickerImageIsLocallyAvailable:_document];
+            untilLoaded = !keepFallback;
+        }
+    }
+    if (showFallback)
+    {
+        _emojiFallbackText = alt;
+        _emojiFallbackUntilImageLoaded = untilLoaded;
+    }
+    else
+    {
+        _emojiFallbackText = nil;
+        _emojiFallbackUntilImageLoaded = false;
+    }
+    [self updateEmojiFallbackLabel];
+}
+
 - (void)updateEmojiFallbackLabel
 {
     UIView *containerView = [_imageModel boundView];
@@ -260,8 +296,9 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
 
 - (CGSize)displaySizeForSize:(CGSize)size
 {
-    CGSize maxSize = CGSizeMake(160, 170);
-    return TGFitSize(CGSizeMake(size.width / 2.0f, size.height / 2.0f), maxSize);
+    CGFloat scale = _context.stickerScale > FLT_EPSILON ? _context.stickerScale : (CGFloat)[TGOnegramSettings integerForKey:TGOnegramSettingMessagesStickerScale] / 100.0f;
+    CGSize maxSize = CGSizeMake(CGFloor(160.0f * scale), CGFloor(170.0f * scale));
+    return TGFitSize(CGSizeMake(size.width / 2.0f * scale, size.height / 2.0f * scale), maxSize);
 }
 
 - (instancetype)initWithMessage:(TGMessage *)message document:(TGDocumentMediaAttachment *)document size:(CGSize)size authorPeer:(id)authorPeer context:(TGModernViewContext *)context replyHeader:(TGMessage *)replyHeader replyPeer:(id)replyPeer viaUser:(TGUser *)viaUser
@@ -319,8 +356,32 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
         CGSize displaySize = [self displaySizeForSize:_size];
         
         NSString *imageUri = [self stickerImageUriForDocument:_document displaySize:displaySize];
+        bool animatedSticker = [TGAnimatedStickerView isAnimatedStickerDocument:_document];
         
-        [_imageModel setUri:imageUri];
+        if (animatedSticker)
+        {
+            _animatedStickerModel = [[TGAnimatedStickerViewModel alloc] initWithDocument:_document placeholderUri:imageUri];
+            _animatedStickerModel.frame = CGRectMake(0.0f, 0.0f, displaySize.width, displaySize.height);
+            [self addSubmodel:_animatedStickerModel];
+            [self updateAnimationPlayback];
+            TGMessageViewModelReference *animationLifetimeReference = [self lifetimeReference];
+            _animatedStickerModel.readyBlock = ^
+            {
+                [animationLifetimeReference withValue:^(void *value)
+                {
+                    __strong TGStickerMessageViewModel *strongSelf = (__bridge TGStickerMessageViewModel *)value;
+                    if (strongSelf != nil && strongSelf->_emojiFallbackText != nil)
+                    {
+                        strongSelf->_emojiFallbackUntilImageLoaded = false;
+                        strongSelf->_emojiFallbackText = nil;
+                        [strongSelf updateEmojiFallbackLabel];
+                    }
+                }];
+            };
+        }
+        else
+            [_imageModel setUri:imageUri];
+        [self updateEmojiFallbackState];
         
         _imageModel.frame = CGRectMake(0.0f, 0.0f, displaySize.width, displaySize.height);
         _imageModel.skipDrawInContext = true;
@@ -335,19 +396,8 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
             [self addSubmodel:_brandedDeliveryPlateModel];
         }
         
-        NSString *alt = [self stickerAltText:_document];
-        if (alt.length != 0)
-        {
-            bool keepFallback = [self shouldKeepEmojiFallbackForDocument:_document];
-            if (keepFallback || ![self stickerImageIsLocallyAvailable:_document])
-            {
-                _emojiFallbackText = alt;
-                _emojiFallbackUntilImageLoaded = !keepFallback;
-            }
-        }
-        
         _imageModel.flexibleTimestamp = true;
-        _imageModel.timestampHidden = [TGPresentation brandedIOS6Style];
+        _imageModel.timestampHidden = [TGPresentation brandedIOS6Style] || [TGOnegramSettings boolForKey:TGOnegramSettingMessagesHideStickerTime];
         [_imageModel setTimestampString:([TGPresentation brandedIOS6Style] ? nil : [TGDateUtils stringForShortTime:(int)message.date]) signatureString:nil displayCheckmarks:![TGPresentation brandedIOS6Style] && !_incoming && !(_incomingAppearance && _context.isSavedMessages) && _deliveryState != TGMessageDeliveryStateFailed checkmarkValue:(_incoming ? 0 : ((_deliveryState == TGMessageDeliveryStateDelivered ? 1 : 0) + (_read ? 1 : 0))) displayViews:![TGPresentation brandedIOS6Style] && _messageViews != nil viewsValue:_messageViews.viewCount animated:false];
         [_imageModel setDisplayTimestampProgress:![TGPresentation brandedIOS6Style] && _deliveryState == TGMessageDeliveryStatePending];
         [_imageModel setIsBroadcast:message.isBroadcast];
@@ -693,31 +743,11 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     
     NSString *imageUri = [self stickerImageUriForDocument:_document displaySize:displaySize];
     
-    [_imageModel setUri:imageUri];
-    
-    NSString *alt = [self stickerAltText:_document];
-    if (alt.length != 0)
-    {
-        bool keepFallback = [self shouldKeepEmojiFallbackForDocument:_document];
-        if (keepFallback || ![self stickerImageIsLocallyAvailable:_document])
-        {
-            _emojiFallbackText = alt;
-            _emojiFallbackUntilImageLoaded = !keepFallback;
-            [self updateEmojiFallbackLabel];
-        }
-        else if (_emojiFallbackText.length != 0 || _emojiFallbackLabel != nil)
-        {
-            _emojiFallbackText = nil;
-            _emojiFallbackUntilImageLoaded = false;
-            [self updateEmojiFallbackLabel];
-        }
-    }
-    else if (_emojiFallbackText.length != 0 || _emojiFallbackLabel != nil)
-    {
-        _emojiFallbackText = nil;
-        _emojiFallbackUntilImageLoaded = false;
-        [self updateEmojiFallbackLabel];
-    }
+    if (_animatedStickerModel != nil)
+        [_animatedStickerModel setDocument:_document placeholderUri:imageUri];
+    else
+        [_imageModel setUri:imageUri];
+    [self updateEmojiFallbackState];
     
     TGBotReplyMarkup *replyMarkup = message.replyMarkup != nil && message.replyMarkup.isInline ? message.replyMarkup : nil;
     if (!TGObjectCompare(_replyMarkup, replyMarkup)) {
@@ -765,6 +795,11 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
 {
     [super bindSpecialViewsToContainer:container viewStorage:viewStorage atItemPosition:itemPosition];
     
+    if (_animatedStickerModel != nil)
+    {
+        [_animatedStickerModel bindViewToContainer:container viewStorage:viewStorage];
+        [_animatedStickerModel boundView].frame = CGRectOffset([_animatedStickerModel boundView].frame, itemPosition.x, itemPosition.y);
+    }
     [_imageModel bindViewToContainer:container viewStorage:viewStorage];
     [_imageModel boundView].frame = CGRectOffset([_imageModel boundView].frame, itemPosition.x, itemPosition.y);
     
@@ -825,6 +860,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     _tapGestureRecognizer.delegate = self;
     
     _boundDoubleTapRecognizer = [[TGDoubleTapGestureRecognizer alloc] initWithTarget:self action:@selector(messageDoubleTapGesture:)];
+    _boundDoubleTapRecognizer.longPressDuration = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0.5 : 1.5;
     _boundDoubleTapRecognizer.consumeSingleTap = false;
     _boundDoubleTapRecognizer.delegate = self;
     
@@ -847,6 +883,8 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     UIView *backgroundView = [_imageModel boundView];
     [backgroundView addGestureRecognizer:_tapGestureRecognizer];
     [backgroundView addGestureRecognizer:_boundDoubleTapRecognizer];
+    if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats])
+        [_tapGestureRecognizer requireGestureRecognizerToFail:_boundDoubleTapRecognizer];
     
     [self updateEmojiFallbackLabel];
     
@@ -926,7 +964,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     {
         CGPoint location = [recognizer locationInView:_contentModel.boundView];
         if (_replyHeaderViaUserModel != nil && (CGRectContainsPoint(_replyHeaderViaUserModel.frame, location) || _replyHeaderModel == nil)) {
-            [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+            [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
         } else if (_replyHeaderModel != nil) {
             [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
         }
@@ -958,10 +996,28 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
         [_context.companionHandle requestAction:@"mediaDownloadRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
 }
 
+- (void)setAnimatedEmoji:(bool)animatedEmoji
+{
+    _animatedEmoji = animatedEmoji;
+    [self updateAnimationPlayback];
+}
+
+- (void)updateAnimationPlayback
+{
+    bool autoplay = _animatedEmoji || [TGOnegramSettings boolForKey:TGOnegramSettingMessagesAnimatedStickers];
+    _animatedStickerModel.autoplay = autoplay;
+    _animatedStickerModel.loops = autoplay && !_animatedEmoji;
+}
+
 - (void)messageTapGesture:(UITapGestureRecognizer *)recognizer
 {
     if (recognizer.state == UIGestureRecognizerStateRecognized)
     {
+        if (_animatedEmoji || (_animatedStickerModel != nil && !_animatedStickerModel.autoplay && !_animatedStickerModel.playing))
+        {
+            [_animatedStickerModel restart];
+            return;
+        }
         if (OGPlatformMediaDownloadsRequireUserAction() && !_mediaIsAvailable)
         {
             if (!_progressVisible)
@@ -978,6 +1034,8 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
     {
         if (recognizer.longTapped)
             [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+        else if (recognizer.doubleTapped)
+            [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
     }
 }
 
@@ -1076,6 +1134,7 @@ static void TGBrandedIOS6UpdateStickerDeliveryPlate(TGModernImageViewModel *mode
         imageFrame.origin.x += _replyPanOffset;
     
     _imageModel.frame = imageFrame;
+    _animatedStickerModel.frame = imageFrame;
 
     if (_brandedDeliveryPlateModel != nil)
     {

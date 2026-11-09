@@ -72,6 +72,14 @@ SELECTED_BUILD_ARCH=""
 LAST_BUILT_IPA=""
 SETTINGS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/onegram/build-mode"
 DEVICE_HOST_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/onegram/device-host"
+STATE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/onegram/state"
+MENU_TIMEOUT_SECONDS=5
+MENU_BACK=10
+if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+    MENU_ESCAPE_TIMEOUT=0.1
+else
+    MENU_ESCAPE_TIMEOUT=1
+fi
 PUSH_TRANSPORT=""
 DEVICE_HOST=""
 DEVICE_PORT=22
@@ -81,6 +89,7 @@ DEVICE_PASSWORD=""
 PUSH_WORK_DIR=""
 IPROXY_PID=""
 MENU_SELECTION=0
+PLUGINS_MODE=auto
 
 load_settings() {
     local saved_mode=""
@@ -88,34 +97,180 @@ load_settings() {
     if [ -f "$SETTINGS_FILE" ]; then
         IFS= read -r saved_mode < "$SETTINGS_FILE" || true
     fi
+    if [ "$saved_mode" = 2 ]; then
+        saved_mode=1
+    fi
 
-    case "${ONEGRAM_DIAGNOSTICS:-$saved_mode}" in
-        1) ONEGRAM_DIAGNOSTICS=1 ;;
-        *) ONEGRAM_DIAGNOSTICS=0 ;;
+    if [ -n "${ONEGRAM_DIAGNOSTICS:-}" ]; then
+        saved_mode="$ONEGRAM_DIAGNOSTICS"
+        if [ "${ONEGRAM_LAUNCH_PROFILE:-0}" = 1 ]; then
+            saved_mode=2
+        fi
+    fi
+
+    apply_build_mode "$saved_mode"
+
+    local saved_plugins
+    saved_plugins="$(state_value plugins)"
+    case "${ONEGRAM_PLUGINS:-}" in
+        1) saved_plugins=on ;;
+        0) saved_plugins=off ;;
+    esac
+    apply_plugins_mode "$saved_plugins"
+}
+
+plugins_available() {
+    [ -f "$ROOT/OnegramPlugins/OGPlugins.h" ]
+}
+
+apply_plugins_mode() {
+    case "$1" in
+        on)
+            PLUGINS_MODE=on
+            ONEGRAM_PLUGINS=1
+            ;;
+        off)
+            PLUGINS_MODE=off
+            ONEGRAM_PLUGINS=0
+            ;;
+        *)
+            PLUGINS_MODE=auto
+            if plugins_available; then
+                ONEGRAM_PLUGINS=1
+            else
+                ONEGRAM_PLUGINS=0
+            fi
+            ;;
+    esac
+    export ONEGRAM_PLUGINS
+}
+
+plugins_mode_index() {
+    case "$PLUGINS_MODE" in
+        on) echo 1 ;;
+        off) echo 2 ;;
+        *) echo 0 ;;
     esac
 }
 
-build_mode_label() {
-    if [ "$ONEGRAM_DIAGNOSTICS" -eq 1 ]; then
-        echo "Diagnostics"
+plugins_mode_label() {
+    case "$PLUGINS_MODE" in
+        on) echo "On" ;;
+        off) echo "Off" ;;
+        *)
+            if plugins_available; then
+                echo "Auto (on)"
+            else
+                echo "Auto (off, no OnegramPlugins)"
+            fi
+            ;;
+    esac
+}
+
+plugins_menu() {
+    menu_select "Plugins" "$(plugins_mode_index)" \
+        "Auto: on when OnegramPlugins exists" "On" "Off" || return 0
+    case "$MENU_SELECTION" in
+        1)
+            if ! plugins_available; then
+                echo
+                echo "Cannot enable plugins: $ROOT/OnegramPlugins not found."
+                return 0
+            fi
+            apply_plugins_mode on
+            ;;
+        2) apply_plugins_mode off ;;
+        *) apply_plugins_mode auto ;;
+    esac
+    store_state plugins "$PLUGINS_MODE"
+    echo
+    echo "Plugins: $(plugins_mode_label)"
+}
+
+apply_build_mode() {
+    case "$1" in
+        2)
+            ONEGRAM_DIAGNOSTICS=1
+            ONEGRAM_LAUNCH_PROFILE=1
+            ;;
+        1)
+            ONEGRAM_DIAGNOSTICS=1
+            ONEGRAM_LAUNCH_PROFILE=0
+            ;;
+        *)
+            ONEGRAM_DIAGNOSTICS=0
+            ONEGRAM_LAUNCH_PROFILE=0
+            ;;
+    esac
+}
+
+build_mode_index() {
+    if [ "$ONEGRAM_LAUNCH_PROFILE" -eq 1 ]; then
+        echo 2
+    elif [ "$ONEGRAM_DIAGNOSTICS" -eq 1 ]; then
+        echo 1
     else
-        echo "Release"
+        echo 0
     fi
 }
 
+build_mode_label() {
+    local label
+    case "$(build_mode_index)" in
+        2) label="Launch profile" ;;
+        1) label="Diagnostics" ;;
+        *) label="Release" ;;
+    esac
+    if [ "${ONEGRAM_PLUGINS:-1}" = 0 ]; then
+        label="$label, plugins off"
+    fi
+    echo "$label"
+}
+
+state_value() {
+    [ -f "$STATE_FILE" ] || return 0
+    sed -n "s/^$1=//p" "$STATE_FILE" | tail -n 1
+}
+
+store_state() {
+    local key="$1"
+    local value="$2"
+    local updated="$STATE_FILE.$$"
+
+    mkdir -p "$(dirname "$STATE_FILE")" || return 1
+    {
+        if [ -f "$STATE_FILE" ]; then
+            grep -v "^$key=" "$STATE_FILE" || true
+        fi
+        printf '%s=%s\n' "$key" "$value"
+    } > "$updated" && mv "$updated" "$STATE_FILE"
+}
+
 menu_select() {
-    local title="$1"
-    local selected="$2"
-    shift 2
+    menu_select_timed 0 "$@"
+}
+
+menu_select_timed() {
+    local timeout="$1"
+    local title="$2"
+    local selected="$3"
+    shift 3
     local options=("$@")
     local count="${#options[@]}"
+    local read_timeout=()
     local index
     local key
     local prefix
     local choice
+    local status
 
     echo
-    echo "$title"
+    if [ "$timeout" -gt 0 ]; then
+        read_timeout=(-t "$timeout")
+        echo "$title (${options[selected]} in ${timeout}s)"
+    else
+        echo "$title"
+    fi
 
     if [ ! -t 0 ] || [ ! -t 1 ] || [ "${TERM:-dumb}" = dumb ]; then
         for ((index = 0; index < count; index++)); do
@@ -123,9 +278,18 @@ menu_select() {
         done
         while true; do
             printf 'Select [1-%d, 0 to go back]: ' "$count"
-            IFS= read -r choice || return 1
+            if IFS= read -r "${read_timeout[@]}" choice; then
+                read_timeout=()
+            else
+                status=$?
+                [ "$status" -gt 128 ] || return 1
+                echo
+                echo "Selected: ${options[selected]}"
+                MENU_SELECTION="$selected"
+                return 0
+            fi
             case "$choice" in
-                0) return 1 ;;
+                0) return "$MENU_BACK" ;;
                 ''|*[!0-9]*) continue ;;
             esac
             for ((index = 0; index < count; index++)); do
@@ -146,20 +310,33 @@ menu_select() {
             fi
         done
 
-        IFS= read -r -s -n 1 key || return 1
+        if IFS= read -r -s -n 1 "${read_timeout[@]}" key; then
+            read_timeout=()
+        else
+            status=$?
+            [ "$status" -gt 128 ] || return 1
+            echo "Selected: ${options[selected]}"
+            MENU_SELECTION="$selected"
+            return 0
+        fi
         case "$key" in
             ''|$'\r')
                 MENU_SELECTION="$selected"
                 return 0
                 ;;
             $'\033')
-                IFS= read -r -s -n 1 -t 1 prefix || return 1
-                if [ "$prefix" = '[' ] || [ "$prefix" = O ]; then
-                    IFS= read -r -s -n 1 -t 1 key || return 1
-                    case "$key" in
-                        A) selected=$(((selected + count - 1) % count)) ;;
-                        B) selected=$(((selected + 1) % count)) ;;
-                    esac
+                if IFS= read -r -s -n 1 -t "$MENU_ESCAPE_TIMEOUT" prefix; then
+                    if [ "$prefix" = '[' ] || [ "$prefix" = O ]; then
+                        IFS= read -r -s -n 1 -t 1 key || return 1
+                        case "$key" in
+                            A) selected=$(((selected + count - 1) % count)) ;;
+                            B) selected=$(((selected + 1) % count)) ;;
+                        esac
+                    fi
+                else
+                    status=$?
+                    [ "$status" -gt 128 ] || return 1
+                    return "$MENU_BACK"
                 fi
                 ;;
         esac
@@ -174,6 +351,7 @@ settings_menu() {
         menu_select "Settings" "$selected" \
             "Change version ($CURRENT_VERSION, build $CURRENT_BUILD)" \
             "Build mode: $(build_mode_label)" \
+            "Plugins: $(plugins_mode_label)" \
             "Back" || return 0
         selected="$MENU_SELECTION"
 
@@ -182,15 +360,23 @@ settings_menu() {
                 change_version
                 ;;
             1)
-                menu_select "Build mode" "$ONEGRAM_DIAGNOSTICS" \
-                    "Release" "Diagnostics" || continue
-                mkdir -p "$(dirname "$SETTINGS_FILE")"
-                printf '%s\n' "$MENU_SELECTION" > "$SETTINGS_FILE"
-                ONEGRAM_DIAGNOSTICS="$MENU_SELECTION"
+                menu_select "Build mode" "$(build_mode_index)" \
+                    "Release" "Diagnostics" "Launch profile" || continue
+                apply_build_mode "$MENU_SELECTION"
+                if [ "$MENU_SELECTION" -ne 2 ]; then
+                    mkdir -p "$(dirname "$SETTINGS_FILE")"
+                    printf '%s\n' "$MENU_SELECTION" > "$SETTINGS_FILE"
+                fi
                 echo
                 echo "Build mode: $(build_mode_label)"
+                if [ "$ONEGRAM_LAUNCH_PROFILE" -eq 1 ]; then
+                    echo "Launch profile applies to the next build only."
+                fi
                 ;;
             2)
+                plugins_menu
+                ;;
+            3)
                 return 0
                 ;;
         esac
@@ -402,6 +588,9 @@ architecture_matches() {
         armv7)
             [ "$architecture" = "armv7" ]
             ;;
+        arm64)
+            [ "$architecture" = "arm64" ]
+            ;;
         universal)
             [ "$architecture" = "universal" ]
             ;;
@@ -426,6 +615,14 @@ architecture_matches() {
             [ "$architecture" = "universal" ] ||
             [ "$architecture" = "universal3" ]
             ;;
+        armv7-arm64-compatible)
+            [ "$architecture" = "armv7" ] ||
+            [ "$architecture" = "arm64" ] ||
+            [ "$architecture" = "armv6-armv7" ] ||
+            [ "$architecture" = "armv6-arm64" ] ||
+            [ "$architecture" = "universal" ] ||
+            [ "$architecture" = "universal3" ]
+            ;;
         *)
             return 1
             ;;
@@ -435,10 +632,12 @@ architecture_matches() {
 find_newest_ipa() {
     local required="$1"
     local newest=""
-    local newest_time=0
+    local newest_time=-1
+    local newest_priority=-1
     local ipa
     local architecture
     local mtime
+    local priority
 
     if [ ! -d "$BUILD_DIR" ]; then
         return
@@ -453,8 +652,18 @@ find_newest_ipa() {
 
         mtime="$(file_mtime "$ipa" 2>/dev/null || echo 0)"
 
-        if [ "$mtime" -gt "$newest_time" ]; then
+        case "$architecture" in
+            universal3) priority=4 ;;
+            universal|arm64|armv6-arm64) priority=3 ;;
+            armv7|armv6-armv7) priority=2 ;;
+            armv6) priority=1 ;;
+            *) priority=0 ;;
+        esac
+
+        if [ "$mtime" -gt "$newest_time" ] ||
+           { [ "$mtime" -eq "$newest_time" ] && [ "$priority" -gt "$newest_priority" ]; }; then
             newest_time="$mtime"
+            newest_priority="$priority"
             newest="$ipa"
         fi
     done < <(
@@ -511,20 +720,23 @@ PY
 }
 
 select_build_architecture() {
-    menu_select "Select architecture" 0 \
-        "armv6" "armv7" "armv7 + arm64 + armv6" || return 1
+    local architectures=(armv6 armv7 arm64 universal3)
+    local last_architecture
+    local selected=0
+    local index
 
-    case "$MENU_SELECTION" in
-        0)
-            SELECTED_BUILD_ARCH="armv6"
-            ;;
-        1)
-            SELECTED_BUILD_ARCH="armv7"
-            ;;
-        2)
-            SELECTED_BUILD_ARCH="universal3"
-            ;;
-    esac
+    last_architecture="$(state_value architecture)"
+    for ((index = 0; index < ${#architectures[@]}; index++)); do
+        if [ "${architectures[index]}" = "$last_architecture" ]; then
+            selected="$index"
+        fi
+    done
+
+    menu_select_timed "$MENU_TIMEOUT_SECONDS" "Select architecture" "$selected" \
+        "armv6" "armv7" "arm64" "armv7 + arm64 + armv6" || return 1
+
+    SELECTED_BUILD_ARCH="${architectures[MENU_SELECTION]}"
+    store_state architecture "$SELECTED_BUILD_ARCH"
 }
 
 stream_build() {
@@ -729,17 +941,22 @@ run_build() {
         armv6)
             echo "Architectures: armv6"
             echo "armv6 SDK:     iOS 3.1.3"
-            echo "armv6 target:  iOS 3.1.3"
+            echo "armv6 target:  iOS 3.0"
             ;;
         armv7)
             echo "Architectures: armv7"
             echo "armv7 SDK:     iOS 6.1"
             echo "armv7 target:  iOS 4.3"
             ;;
+        arm64)
+            echo "Architectures: arm64"
+            echo "arm64 SDK:     iOS 11.2"
+            echo "arm64 target:  iOS 7.0"
+            ;;
         universal3)
             echo "Architectures: armv7 + arm64 + armv6"
             echo "armv6 SDK:     iOS 3.1.3"
-            echo "armv6 target:  iOS 3.1.3"
+            echo "armv6 target:  iOS 3.0"
             echo "armv7 SDK:     iOS 6.1"
             echo "armv7 target:  iOS 4.3"
             echo "arm64 SDK:     iOS 11.2"
@@ -772,6 +989,8 @@ run_build() {
                 -j"$JOBS" \
                 CORE_JOBS="$CORE_JOBS" \
                 ONEGRAM_DIAGNOSTICS="$ONEGRAM_DIAGNOSTICS" \
+                ONEGRAM_LAUNCH_PROFILE="$ONEGRAM_LAUNCH_PROFILE" \
+                ONEGRAM_PLUGINS="$ONEGRAM_PLUGINS" \
                 ARMV6_JOBS="$JOBS" \
                 ONEGRAM_ARCH=armv6 \
                 --output-sync=line \
@@ -786,8 +1005,25 @@ run_build() {
                 -j"$JOBS" \
                 CORE_JOBS="$CORE_JOBS" \
                 ONEGRAM_DIAGNOSTICS="$ONEGRAM_DIAGNOSTICS" \
+                ONEGRAM_LAUNCH_PROFILE="$ONEGRAM_LAUNCH_PROFILE" \
+                ONEGRAM_PLUGINS="$ONEGRAM_PLUGINS" \
                 ONEGRAM_ARCH=armv7 \
                 --output-sync=line
+
+            result=$?
+            ;;
+        arm64)
+            stream_build \
+                "$BUILD_LOG" \
+                "$MAKE" \
+                -j"$JOBS" \
+                CORE_JOBS="$CORE_JOBS" \
+                ONEGRAM_DIAGNOSTICS="$ONEGRAM_DIAGNOSTICS" \
+                ONEGRAM_LAUNCH_PROFILE="$ONEGRAM_LAUNCH_PROFILE" \
+                ONEGRAM_PLUGINS="$ONEGRAM_PLUGINS" \
+                ONEGRAM_ARCH=arm64 \
+                --output-sync=line \
+                all
 
             result=$?
             ;;
@@ -798,6 +1034,8 @@ run_build() {
                 -j"$JOBS" \
                 CORE_JOBS="$CORE_JOBS" \
                 ONEGRAM_DIAGNOSTICS="$ONEGRAM_DIAGNOSTICS" \
+                ONEGRAM_LAUNCH_PROFILE="$ONEGRAM_LAUNCH_PROFILE" \
+                ONEGRAM_PLUGINS="$ONEGRAM_PLUGINS" \
                 ARMV6_JOBS="$JOBS" \
                 --output-sync=line \
                 universal3
@@ -835,6 +1073,9 @@ run_build() {
         armv7)
             LAST_BUILT_IPA="$BUILD_DIR/Onegram.ipa"
             ;;
+        arm64)
+            LAST_BUILT_IPA="$BUILD_DIR/arm64/Onegram.ipa"
+            ;;
         universal3)
             LAST_BUILT_IPA="$BUILD_DIR/universal3/Onegram-armv6-armv7-arm64.ipa"
             ;;
@@ -860,6 +1101,12 @@ run_build() {
     echo "Build complete"
     printf "Build time: %dm %02ds\n" "$minutes" "$seconds"
     echo "Architectures: $(architecture_label "$architecture")"
+
+    if [ "$ONEGRAM_LAUNCH_PROFILE" -eq 1 ]; then
+        apply_build_mode 1
+        echo "Launch profile build is instrumented and slow; build mode is back to Diagnostics."
+        echo "Profile session: launch, open a channel, a group and a private chat, scroll each, then wait for LAUNCHORDER end (240 s)."
+    fi
 
     show_ccache_stats
 
@@ -1029,58 +1276,111 @@ PY
     CURRENT_BUILD="$NEW_BUILD"
 }
 
-select_device() {
-    local device_ids=()
-    local device_options=()
+version_sort_key() {
+    local major
+    local minor
+    local patch
 
-    DEVICES="$(idevice_id -l 2>/dev/null)"
+    case "$1" in
+        ''|*[!0-9.]*)
+            printf '99999.99999.99999'
+            return
+            ;;
+    esac
 
-    if [ -z "$DEVICES" ]; then
-        echo "No iOS devices found."
-        exit 1
-    fi
+    IFS=. read -r major minor patch _ <<< "$1"
+    printf '%05d.%05d.%05d' "$((10#${major:-0}))" "$((10#${minor:-0}))" "$((10#${patch:-0}))"
+}
 
-    DEVICE_COUNT="$(printf '%s\n' "$DEVICES" | grep -c .)"
-
-    if [ "$DEVICE_COUNT" -eq 1 ]; then
-        UDID="$(printf '%s\n' "$DEVICES" | head -n 1)"
-        return
-    fi
-
-    while IFS= read -r DEVICE_UDID; do
-        [ -z "$DEVICE_UDID" ] && continue
-
-        PRODUCT_TYPE="$(
-            ideviceinfo \
-                -u "$DEVICE_UDID" \
-                -k ProductType \
-                2>/dev/null ||
-                true
-        )"
-
-        IOS_VERSION="$(
-            ideviceinfo \
-                -u "$DEVICE_UDID" \
-                -k ProductVersion \
-                2>/dev/null ||
-                true
-        )"
-
-        if [ -z "$PRODUCT_TYPE" ]; then
-            DEVICE_NAME="Unknown device"
-            PRODUCT_TYPE="?"
+device_required_architecture() {
+    if device_requires_armv6 "$1"; then
+        echo "armv6-compatible"
+    elif device_requires_arm64 "$1"; then
+        local major="${2%%.*}"
+        if [[ "$major" =~ ^[0-9]+$ ]] && [ "$major" -lt 11 ]; then
+            echo "armv7-arm64-compatible"
         else
-            DEVICE_NAME="$(friendly_device_name "$PRODUCT_TYPE")"
+            echo "arm64-compatible"
+        fi
+    else
+        echo "armv7-compatible"
+    fi
+}
+
+select_device() {
+    local ipa_architecture="${1:-}"
+    local listing=""
+    local device_ids=()
+    local device_types=()
+    local device_versions=()
+    local device_options=()
+    local udid
+    local product_type
+    local ios_version
+    local sort_key
+    local last_device
+    local selected=0
+    local index
+
+    while IFS= read -r udid; do
+        [ -n "$udid" ] || continue
+
+        product_type="$(ideviceinfo -u "$udid" -k ProductType 2>/dev/null || true)"
+        ios_version="$(ideviceinfo -u "$udid" -k ProductVersion 2>/dev/null || true)"
+        [ -n "$product_type" ] || product_type="?"
+        [ -n "$ios_version" ] || ios_version="?"
+
+        if [ -n "$ipa_architecture" ] &&
+           ! architecture_matches "$ipa_architecture" "$(device_required_architecture "$product_type" "$ios_version")"; then
+            continue
         fi
 
-        [ -z "$IOS_VERSION" ] && IOS_VERSION="?"
+        sort_key="$(version_sort_key "$ios_version")"
+        listing+="$sort_key"$'\t'"$udid"$'\t'"$product_type"$'\t'"$ios_version"$'\n'
+    done < <(idevice_id -l 2>/dev/null || true)
 
-        device_ids+=("$DEVICE_UDID")
-        device_options+=("$DEVICE_NAME ($PRODUCT_TYPE) - iOS $IOS_VERSION")
-    done <<< "$DEVICES"
+    while IFS=$'\t' read -r sort_key udid product_type ios_version; do
+        [ -n "$udid" ] || continue
+        device_ids+=("$udid")
+        device_types+=("$product_type")
+        device_versions+=("$ios_version")
+        if [ "$product_type" = "?" ]; then
+            device_options+=("Unknown device - iOS $ios_version")
+        else
+            device_options+=("$(friendly_device_name "$product_type") ($product_type) - iOS $ios_version")
+        fi
+    done < <(printf '%s' "$listing" | LC_ALL=C sort)
 
-    menu_select "Connected devices" 0 "${device_options[@]}" || return 1
-    UDID="${device_ids[MENU_SELECTION]}"
+    if [ "${#device_ids[@]}" -eq 0 ]; then
+        echo
+        if [ -n "$ipa_architecture" ]; then
+            echo "No connected device can run the $(architecture_label "$ipa_architecture") IPA; installation skipped."
+        else
+            echo "No iOS devices found."
+        fi
+        return 1
+    fi
+
+    if [ "${#device_ids[@]}" -gt 1 ]; then
+        last_device="$(state_value device)"
+        for ((index = 0; index < ${#device_ids[@]}; index++)); do
+            if [ "${device_ids[index]}" = "$last_device" ]; then
+                selected="$index"
+            fi
+        done
+
+        menu_select_timed "$MENU_TIMEOUT_SECONDS" "Connected devices" "$selected" "${device_options[@]}" || return $?
+        selected="$MENU_SELECTION"
+    fi
+
+    UDID="${device_ids[selected]}"
+    PRODUCT_TYPE="${device_types[selected]}"
+    IOS_VERSION="${device_versions[selected]}"
+    if [ "$PRODUCT_TYPE" = "?" ]; then
+        DEVICE_NAME="Unknown device"
+    else
+        DEVICE_NAME="$(friendly_device_name "$PRODUCT_TYPE")"
+    fi
 }
 
 device_requires_armv6() {
@@ -1133,10 +1433,15 @@ post_build_install() {
         return 0
     fi
 
-    install_onegram
+    install_onegram || {
+        local status=$?
+        [ "$status" -eq "$MENU_BACK" ] || return "$status"
+    }
 }
 
 install_onegram() {
+    local requested_ipa="${1:-}"
+    local device_filter=""
     local result
     local required_arch
     local ipa_architecture
@@ -1165,47 +1470,22 @@ install_onegram() {
         exit 1
     fi
 
-    select_device || return 0
-
-    PRODUCT_TYPE="$(
-        ideviceinfo \
-            -u "$UDID" \
-            -k ProductType \
-            2>/dev/null ||
-            true
-    )"
-
-    IOS_VERSION="$(
-        ideviceinfo \
-            -u "$UDID" \
-            -k ProductVersion \
-            2>/dev/null ||
-            true
-    )"
-
-    if [ -z "$PRODUCT_TYPE" ]; then
-        DEVICE_NAME="Unknown device"
-        PRODUCT_TYPE="?"
-    else
-        DEVICE_NAME="$(friendly_device_name "$PRODUCT_TYPE")"
+    if [ -n "$requested_ipa" ]; then
+        device_filter="$(get_ipa_architecture "$requested_ipa")"
     fi
 
-    [ -z "$IOS_VERSION" ] && IOS_VERSION="?"
+    select_device "$device_filter" || {
+        result=$?
+        [ "$result" -eq "$MENU_BACK" ] && return "$MENU_BACK"
+        return 0
+    }
 
-    if device_requires_armv6 "$PRODUCT_TYPE"; then
-        required_arch="armv6-compatible"
-        IPA="$(find_newest_ipa armv6-compatible)"
-    elif device_requires_arm64 "$PRODUCT_TYPE"; then
-        required_arch="arm64-compatible"
-        IPA="$(find_newest_ipa arm64-compatible)"
+    required_arch="$(device_required_architecture "$PRODUCT_TYPE" "$IOS_VERSION")"
+
+    if [ -n "$requested_ipa" ]; then
+        IPA="$requested_ipa"
     else
-        required_arch="armv7-compatible"
-        IPA="$(find_newest_ipa armv7-compatible)"
-    fi
-
-    if [ -n "$LAST_BUILT_IPA" ] && [ -f "$LAST_BUILT_IPA" ] &&
-       architecture_matches "$(get_ipa_architecture "$LAST_BUILT_IPA")" "$required_arch"; then
-        IPA="$LAST_BUILT_IPA"
+        IPA="$(find_newest_ipa "$required_arch")"
     fi
 
     if [ -z "$IPA" ] || [ ! -f "$IPA" ]; then
@@ -1221,6 +1501,9 @@ install_onegram() {
                 ;;
             arm64-compatible)
                 echo "Required: arm64 compatible IPA"
+                ;;
+            armv7-arm64-compatible)
+                echo "Required: armv7 or arm64 compatible IPA"
                 ;;
             armv7-compatible)
                 echo "Required: armv7 compatible IPA"
@@ -1272,6 +1555,7 @@ install_onegram() {
     set -e
 
     if [ "$result" -eq 0 ]; then
+        store_state device "$UDID"
         echo
         echo "Onegram installed successfully"
         echo "Device: $DEVICE_NAME"
@@ -1302,30 +1586,34 @@ if [ "$OS_NAME" = Darwin ]; then
     source "$PROJECT/scripts/macos_build.sh"
 fi
 
-make_push_deb() {
+make_helper_deb() {
     local binpath="$1"
-    local debarch="$2"
-    local out="$3"
-    local prefix="$4"
-    local firmware="$5"
-    local stage="$BUILD_DIR/push/stage"
+    local settingspath="$2"
+    local debarch="$3"
+    local out="$4"
+    local prefix="$5"
+    local firmware="$6"
+    local stage="$BUILD_DIR/helper/stage"
     local data="$stage/data"
     local daemon_path="$prefix/usr/local/bin/onegramd"
     local plist_path="$prefix/Library/LaunchDaemons/dev.IllyaGIF.onegramd.plist"
+    local settings_bundle="$data$prefix/Library/PreferenceBundles/OnegramHelper.bundle"
+    local settings_entry="$data$prefix/Library/PreferenceLoader/Preferences/OnegramHelper.plist"
+    local language
 
     rm -rf "$stage"
-    mkdir -p "$stage/DEBIAN" "$data$prefix/usr/local/bin" "$data$prefix/Library/LaunchDaemons"
+    mkdir -p "$stage/DEBIAN" "$data$prefix/usr/local/bin" "$data$prefix/Library/LaunchDaemons" "$settings_bundle" "$(dirname "$settings_entry")"
 
     cat > "$stage/DEBIAN/control" <<CTL
 Package: dev.illyagif.onegramd
-Name: Onegram Push Helper
+Name: Onegram Helper
 Version: $CURRENT_VERSION
 Architecture: $debarch
-Description: Instant push helper daemon for Onegram
+Description: Onegram Helper: instant notifications, diagnostics and log access from Settings
 Maintainer: IllyaGIF
 Author: IllyaGIF
 Section: Tweaks
-Depends: firmware (>= $firmware)
+Depends: firmware (>= $firmware), preferenceloader
 CTL
 
     cat > "$stage/DEBIAN/postinst" <<PI
@@ -1338,6 +1626,7 @@ for log in /var/mobile/Library/Logs/onegramd.log /var/mobile/Library/Logs/onegra
     [ -e "\$log" ] && chown mobile:mobile "\$log"
 done
 launchctl load $plist_path 2>/dev/null
+killall Preferences 2>/dev/null
 exit 0
 PI
 
@@ -1350,7 +1639,19 @@ PR
     chmod 755 "$stage/DEBIAN/postinst" "$stage/DEBIAN/prerm"
     cp "$binpath" "$data$daemon_path"
     chmod 755 "$data$daemon_path"
-    python3 - "$ROOT/OnegramPushHelper/dev.IllyaGIF.onegramd.plist" "$data$plist_path" "$daemon_path" <<'PY' || return 1
+
+    cp "$settingspath" "$settings_bundle/OnegramHelper"
+    chmod 755 "$settings_bundle/OnegramHelper"
+    cp "$ROOT/OnegramHelper/Settings/Info.plist" "$settings_bundle/Info.plist"
+    cp "$ROOT/Telegraph/Icons.xcassets/AppIcon.appiconset/Icon-29@1x.png" "$settings_bundle/icon.png"
+    cp "$ROOT/Telegraph/Icons.xcassets/AppIcon.appiconset/Icon-Small@2x.png" "$settings_bundle/icon@2x.png"
+    cp "$ROOT/Telegraph/Icons.xcassets/AppIcon.appiconset/Icon-87.png" "$settings_bundle/icon@3x.png"
+    for language in "$ROOT"/OnegramHelper/Settings/Resources/*.lproj; do
+        cp -R "$language" "$settings_bundle/"
+    done
+    cp "$ROOT/OnegramHelper/Settings/OnegramHelper.plist" "$settings_entry"
+    find "$settings_bundle" "$settings_entry" -type f ! -name OnegramHelper -exec chmod 644 {} +
+    python3 - "$ROOT/OnegramHelper/dev.IllyaGIF.onegramd.plist" "$data$plist_path" "$daemon_path" <<'PY' || return 1
 import plistlib
 import sys
 
@@ -1415,9 +1716,9 @@ build_app_launcher() {
             armv6)
                 cc="$legacy"
                 sdk="$THEOS/sdks/iPhoneOS3.1.3.sdk"
-                ctriple="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
-                ltriple="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
-                startfiles="-nostartfiles $ROOT/theos/generated/armv6/products/crt1.3.1-armv6.o"
+                ctriple="-target armv6-apple-ios3.0 -miphoneos-version-min=3.0"
+                ltriple="-target armv6-apple-ios3.0 -miphoneos-version-min=3.0"
+                startfiles="-nostartfiles $ROOT/theos/generated/armv6/products/crt1-armv6.o"
                 ;;
             armv7)
                 cc="$legacy"
@@ -1641,16 +1942,14 @@ build_app_tweak() {
     package_app_tweak "$LAST_BUILT_IPA"
 }
 
-push_build_one() {
+helper_select_toolchain() {
     local arch="$1"
-    local out="$2"
-    local tcbin="$THEOS/toolchain/linux/iphone"
+    local legacy="$ROOT/theos/generated/toolchains/clang+llvm-3.2-x86_64-linux-ubuntu-12.04/bin/clang"
+    tcbin="$THEOS/toolchain/linux/iphone"
     [ "$OS_NAME" = Darwin ] && tcbin="$THEOS/toolchain/macos/iphone"
     export LD_LIBRARY_PATH="$tcbin/lib:$LD_LIBRARY_PATH"
-    local LD="$tcbin/bin/clang++"
-    local LDID="$tcbin/bin/ldid"
-    local legacy="$ROOT/theos/generated/toolchains/clang+llvm-3.2-x86_64-linux-ubuntu-12.04/bin/clang"
-    local CC SDK CTRIPLE LTRIPLE PROD SSL ELD FW ARCLITE CRT UNDEF
+    LD="$tcbin/bin/clang++"
+    LDID="$tcbin/bin/ldid"
 
     case "$arch" in
         arm64)
@@ -1682,18 +1981,18 @@ push_build_one() {
         armv6)
             CC="$legacy"
             SDK="$THEOS/sdks/iPhoneOS3.1.3.sdk"
-            CTRIPLE="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
-            LTRIPLE="-target armv6-apple-ios3.1.3 -miphoneos-version-min=3.1.3"
+            CTRIPLE="-target armv6-apple-ios3.0 -miphoneos-version-min=3.0"
+            LTRIPLE="-target armv6-apple-ios3.0 -miphoneos-version-min=3.0"
             PROD="$ROOT/theos/generated/armv6/products"
             SSL="$PROD/libssl.a $PROD/libcrypto.a"
             ARCLITE="$PROD/libarclite_iphoneos.a"
             CRT="$PROD/libclang_rt.ios.a"
             UNDEF="-Wl,-U,_objc_storeWeak -Wl,-U,_objc_loadWeak -Wl,-U,_objc_loadWeakRetained -Wl,-U,_objc_initWeak -Wl,-U,_objc_copyWeak -Wl,-U,_objc_destroyWeak"
-            ELD="-nostartfiles $PROD/crt1.3.1-armv6.o $PROD/libdispatch.a -L$PROD -Wl,-alias_list,$ROOT/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt -Wl,-unexported_symbols_list,$ROOT/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt"
+            ELD="-nostartfiles $PROD/crt1-armv6.o $PROD/libdispatch.a -L$PROD -Wl,-alias_list,$ROOT/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt -Wl,-unexported_symbols_list,$ROOT/theos/compat/ios3/OnegramRuntimePrivateSymbols.txt"
             FW=""
             ;;
         *)
-            echo "ERROR: unsupported push arch $arch"
+            echo "ERROR: unsupported helper arch $arch"
             return 1
             ;;
     esac
@@ -1705,6 +2004,54 @@ push_build_one() {
             return 1
         fi
     done
+}
+
+helper_diagnostics_default() {
+    if [ "$ONEGRAM_DIAGNOSTICS" -eq 1 ]; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
+helper_settings_build_one() {
+    local arch="$1"
+    local out="$2"
+    local tcbin LD LDID CC SDK CTRIPLE LTRIPLE PROD SSL ELD FW ARCLITE CRT UNDEF
+    helper_select_toolchain "$arch" || return 1
+
+    local od="$BUILD_DIR/helper/settings-obj/$arch"
+    mkdir -p "$od"
+    local launcher=""
+    command -v ccache >/dev/null 2>&1 && launcher="ccache"
+    local CF="-fobjc-arc -std=gnu99 -Os $CTRIPLE -isysroot $SDK -DONEGRAM_DIAGNOSTICS_DEFAULT=$(helper_diagnostics_default)"
+    local srcs=("$ROOT/OnegramHelper/Settings/OGHelperSettingsController.m" "$ROOT/OnegramHelper/Settings/OGHelperLogPanel.m" "$ROOT/OnegramHelper/Settings/OGHelperTimerTarget.m" "$ROOT/OnegramRuntime/OGDiagnostics.m" "$ROOT/OnegramRuntime/OGLogCatalog.m")
+    local objs=()
+    local f o
+    for f in "${srcs[@]}"; do
+        o="$od/$(basename "${f%.m}").o"
+        echo "cc [$arch] $(basename "$f")"
+        $launcher $CC $CF -MD -MF "$o.d" -c "$f" -o "$o" || return 1
+        objs+=("$o")
+    done
+
+    local runtime_support="$CRT"
+    [ "$arch" = arm64 ] || runtime_support="$ARCLITE $runtime_support"
+    [ "$arch" = armv6 ] && runtime_support="$runtime_support -Wl,-alias_list,$ROOT/theos/compat/ios3/OnegramBlocksRuntimeAliases.txt"
+    echo "ld [$arch] OnegramHelper.bundle"
+    "$tcbin/bin/clang" $LTRIPLE -isysroot "$SDK" -bundle \
+        "${objs[@]}" \
+        $runtime_support \
+        -F"$SDK/System/Library/PrivateFrameworks" -framework Preferences \
+        -framework UIKit -framework Foundation -framework CoreFoundation -framework CoreGraphics \
+        -o "$out" || return 1
+}
+
+helper_build_one() {
+    local arch="$1"
+    local out="$2"
+    local tcbin LD LDID CC SDK CTRIPLE LTRIPLE PROD SSL ELD FW ARCLITE CRT UNDEF
+    helper_select_toolchain "$arch" || return 1
 
     local gendir="$ROOT/theos/generated"
     [ "$arch" = armv7 ] || gendir="$ROOT/theos/generated/$arch"
@@ -1715,7 +2062,7 @@ push_build_one() {
         return 1
     fi
 
-    local od="$BUILD_DIR/push/obj/$arch"
+    local od="$BUILD_DIR/helper/obj/$arch"
     mkdir -p "$od"
 
     local tcbin2="$THEOS/toolchain/linux/iphone"
@@ -1741,7 +2088,7 @@ _EVP_MD_CTX_cleanup
             fi
         fi
     fi
-    local CF="-fobjc-arc -std=gnu99 -Os $CTRIPLE -isysroot $SDK -DTARGET_OS_IPHONE=1 -I$ROOT -I$ROOT/submodules/MtProtoKit $libflags"
+    local CF="-fobjc-arc -std=gnu99 -Os $CTRIPLE -isysroot $SDK -DTARGET_OS_IPHONE=1 -DONEGRAM_DIAGNOSTICS_DEFAULT=$(helper_diagnostics_default) -include $ROOT/OnegramRuntime/OGDiagnosticsLogging.h -I$ROOT -I$ROOT/submodules/MtProtoKit $libflags"
 
     local launcher=""
     if command -v ccache >/dev/null 2>&1; then
@@ -1758,7 +2105,7 @@ _EVP_MD_CTX_cleanup
         export CCACHE_EXTRAFILES="$headermaps"
     fi
 
-    local srcs=("$ROOT/OnegramPushHelper/main.m" "$ROOT/OnegramPushHelper/OGPushDaemon.m" "$ROOT/OnegramPushHelper/OGPushDispatchCompat.m" "$ROOT/OnegramPushHelper/OGPushSerialization.m")
+    local srcs=("$ROOT/OnegramHelper/main.m" "$ROOT/OnegramHelper/OGHelperDaemon.m" "$ROOT/OnegramHelper/OGHelperDispatchCompat.m" "$ROOT/OnegramHelper/OGHelperSerialization.m")
     local objs=()
     local pids=()
     local f o pid failed=0
@@ -1787,11 +2134,11 @@ _EVP_MD_CTX_cleanup
         -lz -lresolv -lstdc++ -lsqlite3 -Wl,-multiply_defined,suppress $UNDEF $ELD \
         -o "$out" || return 1
 
-    "$LDID" -S"$ROOT/OnegramPushHelper/onegramd.entitlements" "$out"
+    "$LDID" -S"$ROOT/OnegramHelper/onegramd.entitlements" "$out"
 }
 
-build_push_tweak() {
-    local pdir="$BUILD_DIR/push"
+build_helper_tweak() {
+    local pdir="$BUILD_DIR/helper"
     local tcbin="$THEOS/toolchain/linux/iphone"
     [ "$OS_NAME" = Darwin ] && tcbin="$THEOS/toolchain/macos/iphone"
     local slices
@@ -1802,7 +2149,7 @@ build_push_tweak() {
     mkdir -p "$pdir"
 
     echo
-    echo "Building Onegram push helper ($(architecture_label universal3))"
+    echo "Building Onegram Helper ($(architecture_label universal3))"
     if command -v ccache >/dev/null 2>&1; then
         echo "ccache:        ENABLED"
     else
@@ -1810,28 +2157,38 @@ build_push_tweak() {
     fi
     prepare_ccache_stats || return 1
 
-    push_build_one armv6 "$pdir/onegramd.armv6" || return 1
-    push_build_one armv7 "$pdir/onegramd.armv7" || return 1
-    push_build_one arm64 "$pdir/onegramd.arm64" || return 1
+    local arch
+    for arch in armv6 armv7 arm64; do
+        helper_build_one "$arch" "$pdir/onegramd.$arch" || return 1
+        helper_settings_build_one "$arch" "$pdir/OnegramHelper.$arch" || return 1
+    done
     "$LIPO" -create "$pdir/onegramd.armv6" "$pdir/onegramd.armv7" "$pdir/onegramd.arm64" -output "$pdir/onegramd" || return 1
-    "$tcbin/bin/ldid" -S"$ROOT/OnegramPushHelper/onegramd.entitlements" "$pdir/onegramd"
+    "$tcbin/bin/ldid" -S"$ROOT/OnegramHelper/onegramd.entitlements" "$pdir/onegramd"
+    "$LIPO" -create "$pdir/OnegramHelper.armv6" "$pdir/OnegramHelper.armv7" "$pdir/OnegramHelper.arm64" -output "$pdir/OnegramHelper" || return 1
+    "$tcbin/bin/ldid" -S "$pdir/OnegramHelper"
+    "$tcbin/bin/ldid" -S "$pdir/OnegramHelper.arm64"
 
-    slices="$("$LIPO" -info "$pdir/onegramd" 2>/dev/null || true)"
-    for slice in armv6 armv7 arm64; do
-        if ! printf '%s\n' "$slices" | grep -qw "$slice"; then
-            echo "ERROR: Push helper binary is missing the $slice slice: $slices"
-            return 1
-        fi
+    local binary
+    for binary in onegramd OnegramHelper; do
+        slices="$("$LIPO" -info "$pdir/$binary" 2>/dev/null || true)"
+        for slice in armv6 armv7 arm64; do
+            if ! printf '%s\n' "$slices" | grep -qw "$slice"; then
+                echo "ERROR: $binary is missing the $slice slice: $slices"
+                return 1
+            fi
+        done
     done
 
     local package="$pdir/onegramd_${CURRENT_VERSION}_iphoneos-arm.deb"
     local rootless_package="$pdir/onegramd_${CURRENT_VERSION}_iphoneos-arm64.deb"
-    make_push_deb "$pdir/onegramd" iphoneos-arm "$package" "" 3.0 || return 1
-    make_push_deb "$pdir/onegramd.arm64" iphoneos-arm64 "$rootless_package" /var/jb 15.0 || return 1
+    make_helper_deb "$pdir/onegramd" "$pdir/OnegramHelper" iphoneos-arm "$package" "" 3.0 || return 1
+    make_helper_deb "$pdir/onegramd.arm64" "$pdir/OnegramHelper.arm64" iphoneos-arm64 "$rootless_package" /var/jb 15.0 || return 1
 
     echo
-    echo "Push helper built"
+    echo "Onegram Helper built"
+    echo "Debug mode:   $([ "$(helper_diagnostics_default)" -eq 1 ] && echo on || echo off) by default"
     echo "Binary:       $pdir/onegramd"
+    echo "Settings:     $pdir/OnegramHelper"
     echo "DEB rootful:  $package"
     echo "DEB rootless: $rootless_package"
 
@@ -1929,21 +2286,21 @@ deb_requires_respring() {
 
 package_name() {
     case "$1" in
-        push) echo "onegramd" ;;
+        helper) echo "onegramd" ;;
         app) echo "onegram" ;;
     esac
 }
 
 package_label() {
     case "$1" in
-        push) echo "push helper" ;;
+        helper) echo "Onegram Helper" ;;
         app) echo "Onegram" ;;
     esac
 }
 
 package_directory() {
     case "$1" in
-        push) echo "$BUILD_DIR/push" ;;
+        helper) echo "$BUILD_DIR/helper" ;;
         app) echo "$BUILD_DIR/app-deb" ;;
     esac
 }
@@ -2041,11 +2398,11 @@ ASKPASS
         device_run 'sbreload >/dev/null 2>&1 || killall -9 SpringBoard' || true
     fi
 
-    if [ "$kind" = push ]; then
+    if [ "$kind" = helper ]; then
         sleep 2
         if device_run 'launchctl list | grep -q dev.IllyaGIF.onegramd'; then
             echo
-            echo "Push helper installed and loaded on $DEVICE_LABEL"
+            echo "Onegram Helper installed and loaded on $DEVICE_LABEL"
             device_run 'tail -n 3 /var/mobile/Library/Logs/onegramd.log 2>/dev/null' || true
         else
             echo
@@ -2115,7 +2472,7 @@ start_usb_ssh_forward() {
         return 1
     fi
 
-    select_device || return 1
+    select_device || return $?
 
     if ! port="$(find_free_usb_port)"; then
         echo "ERROR: No free local port for the USB SSH forward."
@@ -2170,9 +2527,14 @@ deploy_package_usb() {
     local status=0
 
     reset_device_target
-    start_usb_ssh_forward || return 1
+    start_usb_ssh_forward || return $?
 
-    deploy_package "$kind" || status=$?
+    if deploy_package "$kind"; then
+        store_state device "$UDID"
+    else
+        status=$?
+        [ "$status" -ne "$MENU_BACK" ] || status=1
+    fi
 
     stop_usb_ssh_forward
     reset_device_target
@@ -2180,7 +2542,7 @@ deploy_package_usb() {
 }
 
 select_push_transport() {
-    menu_select "Connection" 0 "USB" "Wi-Fi" || return 1
+    menu_select "Connection" 0 "USB" "Wi-Fi" || return $?
 
     case "$MENU_SELECTION" in
         0) PUSH_TRANSPORT=usb ;;
@@ -2197,13 +2559,32 @@ deploy_package_over() {
 
 offer_package_deploy() {
     local kind="$1"
-
-    menu_select "Install $(package_label "$kind")" 0 "Install over USB" "Install over Wi-Fi" "Skip" || return 0
-
-    case "$MENU_SELECTION" in
-        0) deploy_package_usb "$kind" || true ;;
-        1) deploy_package_wifi "$kind" || true ;;
+    local status
+    local selected=2
+    local timeout="$MENU_TIMEOUT_SECONDS"
+    case "$(state_value tweak_install)" in
+        usb) selected=0 ;;
+        wifi) selected=1 ;;
     esac
+
+    while true; do
+        menu_select_timed "$timeout" "Install $(package_label "$kind")" "$selected" "Install over USB" "Install over Wi-Fi" "Skip" || return 0
+        selected="$MENU_SELECTION"
+        timeout=0
+        case "$selected" in
+            0) store_state tweak_install usb ;;
+            1) store_state tweak_install wifi ;;
+            2) store_state tweak_install skip ;;
+        esac
+
+        status=0
+        case "$MENU_SELECTION" in
+            0) deploy_package_usb "$kind" || status=$? ;;
+            1) deploy_package_wifi "$kind" || status=$? ;;
+            2) return 0 ;;
+        esac
+        [ "$status" -eq "$MENU_BACK" ] || return 0
+    done
 }
 
 find_newest_deb() {
@@ -2245,24 +2626,46 @@ install_package() {
         return 1
     fi
 
-    select_push_transport || return 0
-    deploy_package_over "$PUSH_TRANSPORT" "$kind"
+    local status
+
+    while true; do
+        select_push_transport || return $?
+        status=0
+        deploy_package_over "$PUSH_TRANSPORT" "$kind" || status=$?
+        [ "$status" -eq "$MENU_BACK" ] || return "$status"
+    done
 }
 
 install_menu() {
-    menu_select "Install" 0 "IPA" "DEB (Onegram)" "DEB (push helper)" || return 0
+    local kinds=(ipa app helper)
+    local last_kind
+    local selected=0
+    local index
 
-    case "$MENU_SELECTION" in
-        0)
-            install_onegram
-            ;;
-        1)
-            install_package app || true
-            ;;
-        2)
-            install_package push || true
-            ;;
-    esac
+    last_kind="$(state_value install)"
+    for ((index = 0; index < ${#kinds[@]}; index++)); do
+        if [ "${kinds[index]}" = "$last_kind" ]; then
+            selected="$index"
+        fi
+    done
+
+    local timeout="$MENU_TIMEOUT_SECONDS"
+    local status
+
+    while true; do
+        menu_select_timed "$timeout" "Install" "$selected" "IPA" "DEB (Onegram)" "DEB (Onegram Helper)" || return 0
+        timeout=0
+        selected="$MENU_SELECTION"
+        store_state install "${kinds[MENU_SELECTION]}"
+
+        status=0
+        case "$MENU_SELECTION" in
+            0) install_onegram || status=$? ;;
+            1) install_package app || status=$? ;;
+            2) install_package helper || status=$? ;;
+        esac
+        [ "$status" -eq "$MENU_BACK" ] || return 0
+    done
 }
 
 cd "$PROJECT"
@@ -2277,11 +2680,11 @@ if [ "$#" -gt 0 ]; then
     case "$1" in
         --build|--prepare|--clean)
             if [ "$#" -ne 2 ]; then
-                echo "Usage: ./build.sh $1 armv6|armv7|universal3"
+                echo "Usage: ./build.sh $1 armv6|armv7|arm64|universal3"
                 exit 2
             fi
             case "$2" in
-                armv6|armv7|universal3) ;;
+                armv6|armv7|arm64|universal3) ;;
                 *) echo "ERROR: Unsupported architecture $2"; exit 2 ;;
             esac
             if [ "$1" = --clean ]; then
@@ -2299,21 +2702,21 @@ if [ "$#" -gt 0 ]; then
                 echo "Usage: ./build.sh --tweak [DEVICE_IP|usb]"
                 exit 2
             fi
-            build_push_tweak
+            build_helper_tweak
             if [ "$#" -eq 2 ] && [ "$2" = usb ]; then
-                deploy_package_usb push
+                deploy_package_usb helper
             elif [ "$#" -eq 2 ]; then
-                ONEGRAM_DEVICE_HOST="$2" deploy_package_wifi push
+                ONEGRAM_DEVICE_HOST="$2" deploy_package_wifi helper
             fi
             exit 0
             ;;
         --app-tweak)
             if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-                echo "Usage: ./build.sh --app-tweak armv6|armv7|universal3 [DEVICE_IP|usb]"
+                echo "Usage: ./build.sh --app-tweak armv6|armv7|arm64|universal3 [DEVICE_IP|usb]"
                 exit 2
             fi
             case "$2" in
-                armv6|armv7|universal3) ;;
+                armv6|armv7|arm64|universal3) ;;
                 *) echo "ERROR: Unsupported architecture $2"; exit 2 ;;
             esac
             build_app_tweak "$2"
@@ -2325,8 +2728,8 @@ if [ "$#" -gt 0 ]; then
             exit 0
             ;;
         *)
-            echo "Usage: ./build.sh --prepare|--build|--clean armv6|armv7|universal3"
-            echo "       ./build.sh --app-tweak armv6|armv7|universal3 [DEVICE_IP|usb]"
+            echo "Usage: ./build.sh --prepare|--build|--clean armv6|armv7|arm64|universal3"
+            echo "       ./build.sh --app-tweak armv6|armv7|arm64|universal3 [DEVICE_IP|usb]"
             echo "       ./build.sh --tweak [DEVICE_IP|usb]"
             exit 2
             ;;
@@ -2335,7 +2738,11 @@ fi
 
 while true; do
     menu_select "Onegram | Version $CURRENT_VERSION ($CURRENT_BUILD) | $(build_mode_label)" 0 \
-        "Build" "Clean Build" "Clean" "Settings" "Install" "Build App Tweak" "Build Push Tweak" "Exit" || break
+        "Build" "Clean Build" "Clean" "Settings" "Install" "Build App Tweak" "Build Helper Tweak" "Exit" || {
+        menu_status=$?
+        [ "$menu_status" -eq "$MENU_BACK" ] && continue
+        break
+    }
 
     case "$MENU_SELECTION" in
         0)
@@ -2364,7 +2771,7 @@ while true; do
             build_app_tweak "$SELECTED_BUILD_ARCH" && offer_package_deploy app
             ;;
         6)
-            build_push_tweak && offer_package_deploy push
+            build_helper_tweak && offer_package_deploy helper
             ;;
         7)
             break

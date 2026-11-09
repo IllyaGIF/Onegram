@@ -5,6 +5,8 @@
 #define IOS6_FEATURE_PROBE_ENABLED 0
 #endif
 
+static inline void IOS6FeatureProbe(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+
 static inline void IOS6FeatureProbe(NSString *format, ...)
 {
 #if IOS6_FEATURE_PROBE_ENABLED

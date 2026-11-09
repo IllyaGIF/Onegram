@@ -6,6 +6,7 @@
 @property (nonatomic) bool doubleTapped;
 @property (nonatomic) bool longTapped;
 @property (nonatomic) bool avoidControls;
+@property (nonatomic) NSTimeInterval longPressDuration;
 
 - (bool)canScrollViewStealTouches;
 

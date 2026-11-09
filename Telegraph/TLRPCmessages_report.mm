@@ -37,7 +37,7 @@
     
     int32_t vectorSignature = TL_UNIVERSAL_VECTOR_CONSTRUCTOR;
     [os writeInt32:vectorSignature];
-    [os writeInt32:(int32_t)self.n_id.count];
+    [os writeInt32:self.n_id.count];
     for (NSNumber *mid in self.n_id) {
         [os writeInt32:mid.intValue];
     }

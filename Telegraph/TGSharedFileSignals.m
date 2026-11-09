@@ -308,6 +308,36 @@
     }];
 }
 
++ (SSignal *)fileThumbnail:(TGDocumentMediaAttachment *)documentAttachment
+{
+    return [[self localImageForLowQualityFileThumbnail:documentAttachment] catch:^SSignal *(__unused id error)
+    {
+        if (OGPlatformMediaDownloadsRequireUserAction())
+            return [SSignal fail:nil];
+        NSString *thumbnailUrl = [documentAttachment.thumbnailInfo imageUrlForLargestSize:NULL];
+        NSInteger datacenterId = 0;
+        TLInputFileLocation *location = [TGSharedMediaSignals inputFileLocationForImageUrl:thumbnailUrl datacenterId:&datacenterId originInfo:documentAttachment.originInfo];
+        if (location == nil)
+            return [SSignal fail:nil];
+        else
+        {
+            return [[TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:documentAttachment.originInfo identifier:documentAttachment.documentId reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(NSData *data)
+            {
+                NSString *photoDirectoryPath = [self pathForFileDirectory:documentAttachment];
+                NSString *genericThumbnailPath = [photoDirectoryPath stringByAppendingPathComponent:@"thumbnail"];
+                [[NSFileManager defaultManager] createDirectoryAtPath:photoDirectoryPath withIntermediateDirectories:true attributes:nil error:nil];
+                [data writeToFile:genericThumbnailPath atomically:true];
+
+                UIImage *image = [[UIImage alloc] initWithData:data];
+                if (image != nil)
+                    return [SSignal single:image];
+                else
+                    return [SSignal fail:nil];
+            }];
+        }
+    }];
+}
+
 + (SSignal *)squareFileThumbnail:(TGDocumentMediaAttachment *)documentAttachment ofSize:(CGSize)size threadPool:(SThreadPool *)threadPool memoryCache:(TGMemoryImageCache *)memoryCache pixelProcessingBlock:(void (^)(void *, int, int, int))pixelProcessingBlock
 {
     return [self squareFileThumbnail:documentAttachment ofSize:size threadPool:threadPool memoryCache:memoryCache inhibitBlur:false pixelProcessingBlock:pixelProcessingBlock];
@@ -316,7 +346,7 @@
 + (SSignal *)squareFileThumbnail:(TGDocumentMediaAttachment *)documentAttachment ofSize:(CGSize)size threadPool:(SThreadPool *)threadPool memoryCache:(TGMemoryImageCache *)memoryCache inhibitBlur:(bool)inhibitBlur pixelProcessingBlock:(void (^)(void *, int, int, int))pixelProcessingBlock
 {
     CGSize imageSize = CGSizeZero;
-    NSString *thumbnailUrl = [documentAttachment.thumbnailInfo imageUrlForLargestSize:&imageSize];
+    [documentAttachment.thumbnailInfo imageUrlForLargestSize:&imageSize];
     
     for (id attribute in documentAttachment.attributes)
     {
@@ -381,7 +411,7 @@
     uint32_t averageColor = 0;
     averageColorCalculated = [memoryCache averageColorForKey:cachedSizePath color:&averageColor];
     
-    SSignal *signal = [[[[[[[[self localCachedImageForFileThumbnail:documentAttachment ofSize:size renderSize:renderSize lowQuality:false] catch:^SSignal *(__unused id error)
+    SSignal *signal = [[[[[[[self localCachedImageForFileThumbnail:documentAttachment ofSize:size renderSize:renderSize lowQuality:false] catch:^SSignal *(__unused id error)
     {
         cacheResult = true;
         return [self localImageForFullSizeFile:documentAttachment];
@@ -397,31 +427,7 @@
         }];
     }] catch:^SSignal *(__unused id error)
     {
-        return [self localImageForLowQualityFileThumbnail:documentAttachment];
-    }] catch:^SSignal *(__unused id error)
-    {
-        if (OGPlatformMediaDownloadsRequireUserAction())
-            return [SSignal fail:nil];
-        NSInteger datacenterId = 0;
-        TLInputFileLocation *location = [TGSharedMediaSignals inputFileLocationForImageUrl:thumbnailUrl datacenterId:&datacenterId originInfo:documentAttachment.originInfo];
-        if (location == nil)
-            return [SSignal fail:nil];
-        else
-        {
-            return [[TGSharedMediaSignals memoizedDataSignalForRemoteLocation:location datacenterId:datacenterId originInfo:documentAttachment.originInfo identifier:documentAttachment.documentId reportProgress:false mediaTypeTag:TGNetworkMediaTypeTagImage] mapToSignal:^SSignal *(NSData *data)
-            {
-                NSString *photoDirectoryPath = [self pathForFileDirectory:documentAttachment];
-                NSString *genericThumbnailPath = [photoDirectoryPath stringByAppendingPathComponent:@"thumbnail"];
-                [[NSFileManager defaultManager] createDirectoryAtPath:photoDirectoryPath withIntermediateDirectories:true attributes:nil error:nil];
-                [data writeToFile:genericThumbnailPath atomically:true];
-
-                UIImage *image = [[UIImage alloc] initWithData:data];
-                if (image != nil)
-                    return [SSignal single:image];
-                else
-                    return [SSignal fail:nil];
-            }];
-        }
+        return [self fileThumbnail:documentAttachment];
     }] mapToSignal:^SSignal *(UIImage *image)
     {
         CGSize optimizedSize = size;

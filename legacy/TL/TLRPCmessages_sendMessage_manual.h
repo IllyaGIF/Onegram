@@ -1,17 +1,18 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
+@class TLInputPeer;
+@class TLCodexPollValue;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-int32_t TGMessageSendFlags(int32_t flags, int32_t replyMessageId, int32_t topicId);
-void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t replyMessageId, int32_t topicId);
+bool TGMessageSendUsesReplyTo(int32_t topicId, TLInputPeer *monoforumPeer);
+int32_t TGMessageSendFlags(int32_t flags, int32_t replyMessageId, int32_t topicId, TLInputPeer *monoforumPeer, bool modernReply);
+void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t replyMessageId, int32_t topicId, TLInputPeer *monoforumPeer, bool modernReply);
 #ifdef __cplusplus
 }
 #endif
-
-@class TLInputPeer;
-@class TLCodexPollValue;
 
 @interface TLRPCmessages_sendMessage_manual : TLMetaRpc
 
@@ -19,6 +20,8 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 @property (nonatomic, strong) TLInputPeer *peer;
 @property (nonatomic) int32_t reply_to_msg_id;
 @property (nonatomic) int32_t forumTopicId;
+@property (nonatomic, strong) TLInputPeer *monoforumPeer;
+@property (nonatomic, strong) TLInputPeer *sendAs;
 @property (nonatomic, strong) NSString *message;
 @property (nonatomic) int64_t random_id;
 @property (nonatomic, strong) NSArray *entities;
@@ -53,6 +56,12 @@ void TGSerializeMessageReply(NSOutputStream *stream, int32_t flags, int32_t repl
 @interface TLRPCmessages_getAvailableReactions_manual : TLMetaRpc
 
 @property (nonatomic) int32_t hashValue;
+
+@end
+
+@interface TLRPCmessages_setDefaultReaction_manual : TLMetaRpc
+
+@property (nonatomic, strong) NSString *reaction;
 
 @end
 

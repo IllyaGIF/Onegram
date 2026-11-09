@@ -127,6 +127,4 @@ FOUNDATION_EXPORT void OGPlatformTextWarmFallbackFonts(void);
 FOUNDATION_EXPORT CTLineRef OGPlatformTextCreateLine(CFAttributedStringRef string);
 FOUNDATION_EXPORT CTTypesetterRef OGPlatformTextCreateTypesetter(CFAttributedStringRef string);
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 FOUNDATION_EXPORT void OGPlatformTextLogSlowLayout(const char *site, CFAttributedStringRef string, CFTimeInterval duration);
-#endif

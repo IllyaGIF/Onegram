@@ -41,14 +41,14 @@ typedef enum {
 
 @end
 
-static bool TGIOS6RecentStickerDocumentIsAnimated(TGDocumentMediaAttachment *document)
+static bool TGIOS6RecentStickerDocumentIsUnsupported(TGDocumentMediaAttachment *document)
 {
     if (![document isKindOfClass:[TGDocumentMediaAttachment class]])
         return false;
     
     NSString *mimeType = [document.mimeType lowercaseString];
     NSString *extension = [[document.fileName pathExtension] lowercaseString];
-    return [mimeType isEqualToString:@"application/x-tgsticker"] || [mimeType isEqualToString:@"video/webm"] || [extension isEqualToString:@"tgs"] || [extension isEqualToString:@"webm"];
+    return [mimeType isEqualToString:@"video/webm"] || [extension isEqualToString:@"webm"];
 }
 
 static NSArray *TGIOS6RecentStaticStickerDocuments(NSArray *documents)
@@ -59,7 +59,7 @@ static NSArray *TGIOS6RecentStaticStickerDocuments(NSArray *documents)
     NSMutableArray *result = [[NSMutableArray alloc] init];
     for (TGDocumentMediaAttachment *document in documents)
     {
-        if (!TGIOS6RecentStickerDocumentIsAnimated(document))
+        if (!TGIOS6RecentStickerDocumentIsUnsupported(document))
             [result addObject:document];
     }
     return result;
@@ -232,7 +232,7 @@ static bool _syncedStickers = false;
             [recentStickers.stickers enumerateObjectsWithOptions:NSEnumerationReverse usingBlock:^(id desc, NSUInteger index, __unused BOOL *stop) {
                 int32_t date = index < recentStickers.dates.count ? [recentStickers.dates[index] intValue] : 0;
                 TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:desc];
-                if (document.documentId != 0 && !TGIOS6RecentStickerDocumentIsAnimated(document)) {
+                if (document.documentId != 0 && !TGIOS6RecentStickerDocumentIsUnsupported(document)) {
                     document.originInfo = [TGMediaOriginInfo mediaOriginInfoForDocumentRecentSticker:desc];
                     
                     [array addObject:document];
@@ -340,7 +340,7 @@ static bool _syncedStickers = false;
 }
 
 + (void)addRecentStickerFromDocument:(TGDocumentMediaAttachment *)document {
-    if (document.documentId == 0 || TGIOS6RecentStickerDocumentIsAnimated(document)) {
+    if (document.documentId == 0 || TGIOS6RecentStickerDocumentIsUnsupported(document)) {
         return;
     }
     
@@ -391,7 +391,7 @@ static bool _syncedStickers = false;
         
         int32_t currentTime = (int32_t)[[NSDate date] timeIntervalSince1970];
         for (TGDocumentMediaAttachment *document in addedDocuments) {
-            if (TGIOS6RecentStickerDocumentIsAnimated(document))
+            if (TGIOS6RecentStickerDocumentIsUnsupported(document))
                 continue;
             
             TGDocumentMediaAttachment *addedDocument = [document copy];
@@ -426,7 +426,7 @@ static bool _syncedStickers = false;
     
     if (sync) {
         for (TGDocumentMediaAttachment *addedDocument in addedDocuments) {
-            if (TGIOS6RecentStickerDocumentIsAnimated(addedDocument))
+            if (TGIOS6RecentStickerDocumentIsUnsupported(addedDocument))
                 continue;
             [self _enqueueStickerAction:[[TGStickerSyncAction alloc] initWithDocument:addedDocument  action:TGStickerSyncActionAdd]];
         }

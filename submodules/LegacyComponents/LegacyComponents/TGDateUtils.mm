@@ -8,6 +8,7 @@
 #import "TGUser.h"
 #import "TGLocalization.h"
 #import "../../../OnegramPlatform/OGPlatformText.h"
+#import "../../../OnegramRuntime/OGRemoteClock.h"
 
 static bool value_dateHas12hFormat = false;
 static __strong NSString *value_monthNamesGenShort[] = {
@@ -33,6 +34,33 @@ static bool isKorean = false;
 
 static pthread_mutex_t TGDateUtilsMutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile int32_t TGDateUtilsInitialized = 0;
+
+static volatile bool TGDateUtilsShowsSeconds = false;
+static volatile bool TGDateUtilsExactLastSeen = false;
+static volatile bool TGDateUtilsTimeZoneOverridden = false;
+static volatile long TGDateUtilsTimeZoneOffsetSeconds = 0;
+
+static const NSTimeInterval TGDateUtilsClockSkewThreshold = 60.0;
+
+static time_t TGDateUtilsNow()
+{
+    return (time_t)OGRemoteClockTime();
+}
+
+void TGDateUtilsLocalTime(time_t time, struct tm *result)
+{
+    if (TGDateUtilsTimeZoneOverridden)
+    {
+        time_t shifted = time + (time_t)TGDateUtilsTimeZoneOffsetSeconds;
+        gmtime_r(&shifted, result);
+        result->tm_gmtoff = TGDateUtilsTimeZoneOffsetSeconds;
+        return;
+    }
+    NSTimeInterval skew = OGRemoteClockDifference();
+    if (skew >= TGDateUtilsClockSkewThreshold || skew <= -TGDateUtilsClockSkewThreshold)
+        time -= (time_t)skew;
+    localtime_r(&time, result);
+}
 
 static void initializeTGDateUtils()
 {
@@ -250,12 +278,49 @@ static inline NSString *dialogTimeFormat()
     TGDateUtilsEnsureInitialized();
 }
 
++ (void)setShowsSeconds:(bool)showsSeconds
+{
+    TGDateUtilsShowsSeconds = showsSeconds;
+}
+
++ (void)setPrefersExactLastSeen:(bool)prefersExactLastSeen
+{
+    TGDateUtilsExactLastSeen = prefersExactLastSeen;
+}
+
++ (void)setTimeZoneOffsetOverride:(bool)enabled minutes:(NSInteger)minutes
+{
+    TGDateUtilsTimeZoneOffsetSeconds = (long)minutes * 60;
+    TGDateUtilsTimeZoneOverridden = enabled;
+    [NSTimeZone setDefaultTimeZone:enabled ? [NSTimeZone timeZoneForSecondsFromGMT:minutes * 60] : [NSTimeZone systemTimeZone]];
+}
+
 + (NSString *)stringForShortTime:(int)time
 {
     time_t t = time;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
+    NSString *string = [self stringForShortTimeWithHours:timeinfo.tm_hour minutes:timeinfo.tm_min];
+    if (!TGDateUtilsShowsSeconds)
+        return string;
+    NSString *seconds = [[NSString alloc] initWithFormat:@":%02d", timeinfo.tm_sec];
+    if (isArabic)
+        seconds = [TGStringUtils stringWithLocalizedNumberCharacters:seconds];
+    NSString *minutes = [[NSString alloc] initWithFormat:@":%02d", timeinfo.tm_min];
+    if (isArabic)
+        minutes = [TGStringUtils stringWithLocalizedNumberCharacters:minutes];
+    NSRange range = [string rangeOfString:minutes];
+    if (range.location == NSNotFound)
+        return string;
+    return [string stringByReplacingCharactersInRange:NSMakeRange(range.location + range.length, 0) withString:seconds];
+}
+
++ (NSString *)stringForListTime:(int)time
+{
+    time_t t = time;
+    struct tm timeinfo;
+    TGDateUtilsLocalTime(t, &timeinfo);
     return [self stringForShortTimeWithHours:timeinfo.tm_hour minutes:timeinfo.tm_min];
 }
 
@@ -316,7 +381,7 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     return weekdayNameFull(timeinfo.tm_wday);
 }
@@ -325,7 +390,7 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     NSString *format = TGLocalized([[NSString alloc] initWithFormat:@"Time.MonthOfYear_m%d", (int)timeinfo.tm_mon + 1]);
     
@@ -360,7 +425,7 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     NSString *format = TGLocalized([[NSString alloc] initWithFormat:@"Time.PreciseDate_m%d", (int)timeinfo.tm_mon + 1]);
     return [[NSString alloc] initWithFormat:format, [[NSString alloc] initWithFormat:@"%d", timeinfo.tm_mday], [[NSString alloc] initWithFormat:@"%d", (int)(2000 + timeinfo.tm_year - 100)], [self stringForShortTimeWithHours:timeinfo.tm_hour minutes:timeinfo.tm_min]];
@@ -369,7 +434,7 @@ static inline NSString *dialogTimeFormat()
 + (NSString *)stringForFullDate:(int)date {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     return [self stringForFullDateWithDay:timeinfo.tm_mday month:timeinfo.tm_mon + 1 year:timeinfo.tm_year];
 }
@@ -377,7 +442,7 @@ static inline NSString *dialogTimeFormat()
 + (NSString *)stringForMessageListDate:(int)date
 {
     time_t currentTime;
-    time(&currentTime);
+    currentTime = TGDateUtilsNow();
     return [self stringForMessageListDate:date relativeToDate:(int)currentTime];
 }
 
@@ -385,11 +450,11 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
 
     time_t t_now = currentDate;
     struct tm timeinfo_now;
-    localtime_r(&t_now, &timeinfo_now);
+    TGDateUtilsLocalTime(t_now, &timeinfo_now);
 
     if (timeinfo.tm_year != timeinfo_now.tm_year)
     {
@@ -400,7 +465,7 @@ static inline NSString *dialogTimeFormat()
         int dayDiff = timeinfo.tm_yday - timeinfo_now.tm_yday;
 
         if(dayDiff == 0)
-            return [self stringForShortTime:date];
+            return [self stringForListTime:date];
         else if(dayDiff == -1)
             return weekdayNameShort(timeinfo.tm_wday);
         else if(dayDiff == -2)
@@ -418,12 +483,12 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     time_t t_now;
-    time(&t_now);
+    t_now = TGDateUtilsNow();
     struct tm timeinfo_now;
-    localtime_r(&t_now, &timeinfo_now);
+    TGDateUtilsLocalTime(t_now, &timeinfo_now);
     
     if (timeinfo.tm_year != timeinfo_now.tm_year)
     {
@@ -450,12 +515,12 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     time_t t_now;
-    time(&t_now);
+    t_now = TGDateUtilsNow();
     struct tm timeinfo_now;
-    localtime_r(&t_now, &timeinfo_now);
+    TGDateUtilsLocalTime(t_now, &timeinfo_now);
     
     if (timeinfo.tm_year != timeinfo_now.tm_year)
         return [self stringForFullDateWithDay:timeinfo.tm_mday month:timeinfo.tm_mon + 1 year:timeinfo.tm_year];
@@ -503,12 +568,12 @@ static inline NSString *dialogTimeFormat()
     
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     time_t t_now;
-    time(&t_now);
+    t_now = TGDateUtilsNow();
     struct tm timeinfo_now;
-    localtime_r(&t_now, &timeinfo_now);
+    TGDateUtilsLocalTime(t_now, &timeinfo_now);
     
     if (timeinfo.tm_year != timeinfo_now.tm_year)
         return [[NSString alloc] initWithFormat:TGLocalized(@"LastSeen.AtDate"), [self stringForFullDateWithDay:timeinfo.tm_mday month:timeinfo.tm_mon + 1 year:timeinfo.tm_year]];
@@ -519,6 +584,8 @@ static inline NSString *dialogTimeFormat()
         int minutesDiff = (int)((t_now - date) / 60);
         int hoursDiff = (int)((t_now - date) / (60 * 60));
         
+        if (dayDiff == 0 && hoursDiff <= 23 && TGDateUtilsExactLastSeen)
+            return [[NSString alloc] initWithFormat:TGLocalized(@"LastSeen.TodayAt"), [self stringForShortTimeWithHours:timeinfo.tm_hour minutes:timeinfo.tm_min]];
         if (dayDiff == 0 && hoursDiff <= 23)
         {
             if (minutesDiff < 1)
@@ -545,12 +612,12 @@ static inline NSString *dialogTimeFormat()
 {
     time_t t = date;
     struct tm timeinfo;
-    localtime_r(&t, &timeinfo);
+    TGDateUtilsLocalTime(t, &timeinfo);
     
     time_t t_now;
-    time(&t_now);
+    t_now = TGDateUtilsNow();
     struct tm timeinfo_now;
-    localtime_r(&t_now, &timeinfo_now);
+    TGDateUtilsLocalTime(t_now, &timeinfo_now);
     
     if (timeinfo.tm_year != timeinfo_now.tm_year)
         return [self stringForPreciseDate:date];

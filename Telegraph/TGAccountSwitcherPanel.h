@@ -8,3 +8,5 @@
 - (void)dismissAnimated:(bool)animated completion:(void (^)(void))completion;
 
 @end
+
+FOUNDATION_EXPORT UIImage *TGAccountAvatarCircularImage(NSString *path, CGFloat diameter);

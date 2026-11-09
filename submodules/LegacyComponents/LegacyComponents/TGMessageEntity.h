@@ -9,3 +9,15 @@
 - (instancetype)initWithRange:(NSRange)range;
 
 @end
+
+@interface TGMessageEntityUnderline : TGMessageEntity
+
+@end
+
+@interface TGMessageEntityStrikethrough : TGMessageEntity
+
+@end
+
+@interface TGMessageEntitySpoiler : TGMessageEntity
+
+@end

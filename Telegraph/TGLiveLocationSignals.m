@@ -13,6 +13,7 @@
 
 #import "TGUserDataRequestBuilder.h"
 #import "TGUpdateStateRequestBuilder.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGMessagesWatcherAdapter : NSObject <ASWatcher>
 {
@@ -119,7 +120,7 @@
 
 + (NSArray *)filterLiveLocationMessages:(NSArray *)messages includeExpired:(bool)includeExpired
 {
-    int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+    int32_t currentTime = (int32_t)OGRemoteClockTime();
     NSMutableDictionary *locationMessages = [[NSMutableDictionary alloc] init];
     for (TGMessage *message in messages)
     {
@@ -137,7 +138,7 @@
 
 + (SSignal *)liveLocationsForPeerId:(int64_t)peerId includeExpired:(bool)includeExpired onlyLocal:(bool)onlyLocal
 {
-    int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+    int32_t currentTime = (int32_t)OGRemoteClockTime();
     int32_t maxDate = currentTime - 60 * 60 * 8;
     
     SSignal *localMessages = [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
@@ -218,7 +219,7 @@
         
         SSignal *remainingTime = [SSignal defer:^SSignal *
         {
-            int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+            int32_t currentTime = (int32_t)OGRemoteClockTime();
             int32_t remainingTime = MAX(0, (int32_t)message.date + location.period - currentTime);
             SSignal *signal = [SSignal single:@(remainingTime)];
             if (remainingTime == 0)
@@ -280,7 +281,7 @@
 
 - (void)cleanupExpiredMessages
 {
-    int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+    int32_t currentTime = (int32_t)OGRemoteClockTime();
     
     NSMutableArray *updatedMessages = [[NSMutableArray alloc] init];
     NSMutableArray *expiredMids = [[NSMutableArray alloc] init];
@@ -315,7 +316,7 @@
 
 - (void)actionStageResourceDispatched:(NSString *)path resource:(id)resource arguments:(id)__unused arguments
 {
-    int32_t currentTime = (int32_t)[[TGTelegramNetworking instance] globalTime];
+    int32_t currentTime = (int32_t)OGRemoteClockTime();
     
     NSString *conversationId = [self _conversationIdPathComponent];
     

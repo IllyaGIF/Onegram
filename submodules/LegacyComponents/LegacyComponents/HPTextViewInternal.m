@@ -24,6 +24,7 @@ static CGPoint HPTextViewClampedContentOffset(CGPoint offset, CGSize contentSize
 @interface HPTextViewInternal () {
     __weak TGKeyCommandController *_keyCommandController;
     bool _ensuringSelectionVisible;
+    bool _selectionVisibilityInvalidated;
 }
 
 @end
@@ -103,13 +104,21 @@ static CGPoint HPTextViewClampedContentOffset(CGPoint offset, CGSize contentSize
 
 - (void)textViewEnsureSelectionVisible
 {
-    if (![self isFirstResponder] || _freezeContentOffset || _ensuringSelectionVisible || self.tracking || self.dragging || self.decelerating || self.bounds.size.width <= 0.0f || self.bounds.size.height <= 0.0f)
+    if (![self isFirstResponder])
+        return;
+
+    _selectionVisibilityInvalidated = true;
+    [self setNeedsLayout];
+}
+
+- (void)scrollSelectionToVisible
+{
+    if (![self isFirstResponder] || _ensuringSelectionVisible || self.tracking || self.dragging || self.decelerating || self.bounds.size.width <= 0.0f || self.bounds.size.height <= 0.0f)
         return;
 
     _ensuringSelectionVisible = true;
     bool disableContentOffsetAnimation = _disableContentOffsetAnimation;
     _disableContentOffsetAnimation = true;
-    [self layoutIfNeeded];
     if (self.text.length == 0) {
         [super setContentOffset:CGPointMake(-self.contentInset.left, -self.contentInset.top) animated:false];
     } else if (iosMajorVersion() >= 7) {
@@ -131,6 +140,17 @@ static CGPoint HPTextViewClampedContentOffset(CGPoint offset, CGSize contentSize
     [self setContentOffset:self.contentOffset animated:false];
     _disableContentOffsetAnimation = disableContentOffsetAnimation;
     _ensuringSelectionVisible = false;
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+
+    if (_selectionVisibilityInvalidated && !_freezeContentOffset)
+    {
+        _selectionVisibilityInvalidated = false;
+        [self scrollSelectionToVisible];
+    }
 }
 
 - (BOOL)canBecomeFirstResponder

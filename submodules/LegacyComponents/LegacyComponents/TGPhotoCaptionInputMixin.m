@@ -30,7 +30,7 @@
     if (self != nil)
     {
         _keyCommandController = keyCommandController;
-        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithKeyboardFrameTarget:self targetSelector:@selector(keyboardWillChangeFrame:)];
     }
     return self;
 }

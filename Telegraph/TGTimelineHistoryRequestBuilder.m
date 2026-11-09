@@ -18,13 +18,13 @@
 
 - (void)prepare:(NSDictionary *)options
 {
-    int timelineId = [[options objectForKey:@"timelineId"] intValue];
-    self.requestQueueName = [NSString stringWithFormat:@"timeline/%d", timelineId];
+    int64_t timelineId = [[options objectForKey:@"timelineId"] longLongValue];
+    self.requestQueueName = [NSString stringWithFormat:@"timeline/%lld", timelineId];
 }
 
 - (void)execute:(NSDictionary *)options
 {
-    int timelineId = [[options objectForKey:@"timelineId"] intValue];
+    int64_t timelineId = [[options objectForKey:@"timelineId"] longLongValue];
     int64_t maxItemId = [[options objectForKey:@"minItemId"] longLongValue];
     
     self.cancelToken = [TGTelegraphInstance doRequestTimeline:timelineId maxItemId:maxItemId limit:20 actor:self];

@@ -41,7 +41,7 @@ static std::map<int64_t, int> &gidToColor = *new std::map<int64_t, int>();
     TG_SYNCHRONIZED_END(gidToColor);
 }
 
-- (UIColor *)userColor:(int)uid
+- (UIColor *)userColor:(int64_t)uid
 {
     return [self userColorForIndex:[self userColorIndex:uid]];
 }
@@ -78,7 +78,7 @@ static std::map<int64_t, int> &gidToColor = *new std::map<int64_t, int>();
     return dark ? darkColors[index] : lightColors[index];
 }
 
-- (int)userColorIndex:(int)uid
+- (int)userColorIndex:(int64_t)uid
 {
     return [self userColorIndexForId:uid];
 }
@@ -96,7 +96,7 @@ static std::map<int64_t, int> &gidToColor = *new std::map<int64_t, int>();
         peerId = TGChannelIdFromPeerId(peerId);
     else if (TGPeerIdIsGroup(peerId))
         peerId = TGGroupIdFromPeerId(peerId);
-    return labs(peerId) % 7;
+    return (int)(llabs(peerId) % 7);
 }
 
 - (UIColor *)groupColor:(int64_t)groupId

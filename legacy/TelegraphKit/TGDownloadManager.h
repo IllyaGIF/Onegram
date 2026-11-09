@@ -26,6 +26,7 @@ typedef enum {
 @property (nonatomic, strong) NSString *path;
 @property (nonatomic) NSTimeInterval requestDate;
 @property (nonatomic) float progress;
+@property (nonatomic) bool automatic;
 
 @end
 
@@ -41,6 +42,11 @@ typedef enum {
 - (void)cancelItemsWithMessageIdsInArray:(NSArray *)messageIds groupId:(int64_t)groupId;
 - (void)cancelItemsWithGroupId:(int64_t)groupId;
 
+- (int32_t)automaticDownloadGeneration;
+- (void)configureAutomaticDownloadsEnabled:(bool)enabled maximumCount:(NSUInteger)maximumCount concurrencyLimit:(NSUInteger (^)(void))concurrencyLimit byteBudget:(int64_t)byteBudget;
+- (void)requestAutomaticItem:(NSString *)path options:(NSDictionary *)options highPriority:(bool)highPriority messageId:(int32_t)messageId itemId:(id)itemId groupId:(int64_t)groupId itemClass:(TGDownloadItemClass)itemClass estimatedSize:(int64_t)estimatedSize generation:(int32_t)generation;
+- (void)retainAutomaticItemsWithMessageIds:(NSArray *)messageIds groupId:(int64_t)groupId;
+- (void)cancelAutomaticItemsWithGroupId:(int64_t)groupId;
 - (void)requestState:(ASHandle *)watcherHandle;
 
 @end

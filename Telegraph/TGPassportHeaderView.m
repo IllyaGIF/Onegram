@@ -17,7 +17,7 @@
     TGLetteredAvatarView *_avatarView;
     UILabel *_topLabel;
     
-    int32_t _userId;
+    int64_t _userId;
 }
 @end
 

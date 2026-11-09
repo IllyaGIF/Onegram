@@ -1,5 +1,6 @@
 #import "ActionStage.h"
 #import "../../../OnegramPlatform/OGPlatformDispatch.h"
+#import "../../../OnegramRuntime/OGCPUProfiler.h"
 
 #import "SSignalKitCompat/SSignalKit.h"
 
@@ -115,21 +116,22 @@ ActionStage *ActionStageInstance()
 {
     if (dispatch_get_specific(graphQueueSpecific) != NULL)
     {
-        
         block();
-        
     }
     else
     {
-        
         dispatch_async([self globalStageDispatchQueue], ^
                        {
+                           bool diagnostics = OGDiagnosticsEnabled();
+                           OGMemoryGrowthSample memorySample = {0};
+                           if (diagnostics)
+                               memorySample = OGMemoryGrowthBegin();
                            @autoreleasepool
                            {
-                               
                                block();
-                               
                            }
+                           if (diagnostics)
+                               OGMemoryGrowthEnd(memorySample, "stage", function, line);
                        });
     }
 }

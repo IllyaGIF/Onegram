@@ -174,7 +174,7 @@ const CGFloat TGPhotoPaintStickerKeyboardSize = 260.0f;
         _painting = [[TGPainting alloc] initWithSize:size undoManager:_undoManager imageData:[_photoEditor.paintingData data]];
         _undoManager.painting = _painting;
         
-        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(keyboardWillChangeFrame:) name:UIKeyboardWillChangeFrameNotification];
+        _keyboardWillChangeFrameProxy = [[TGObserverProxy alloc] initWithKeyboardFrameTarget:self targetSelector:@selector(keyboardWillChangeFrame:)];
     }
     return self;
 }

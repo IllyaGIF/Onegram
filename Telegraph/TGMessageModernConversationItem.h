@@ -12,7 +12,7 @@
 extern "C" {
 #endif
     
-extern int32_t TGMessageModernConversationItemLocalUserId;
+extern int64_t TGMessageModernConversationItemLocalUserId;
 
 #ifdef __cplusplus
 }
@@ -68,6 +68,8 @@ extern int32_t TGMessageModernConversationItemLocalUserId;
 - (void)setGroupedMediaOffsetX:(CGFloat)x y:(CGFloat)y;
 - (CGFloat)groupedMediaOffsetX;
 - (CGFloat)groupedMediaOffsetY;
+- (bool)groupedHeaderVisible;
+- (bool)groupedTopCornersHidden;
 - (UIView *)referenceViewForImageTransition;
 
 - (void)collectBoundModelViewFramesRecursively:(NSMutableDictionary *)dict;

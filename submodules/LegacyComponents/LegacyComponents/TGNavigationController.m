@@ -875,14 +875,17 @@ static void TGNavigationControllerInstallLegacyBackItem(TGNavigationController *
     
     if (iosMajorVersion() >= 8 && !TGIsRTL())
     {
-        _originalInteractivePopGestureRecognizerClass = object_getClass(self.interactivePopGestureRecognizer);
-        _fullScreenInteractivePopGestureRecognizerClass = objc_getAssociatedObject(_originalInteractivePopGestureRecognizerClass, &TGNavigationFullScreenPanClassKey);
-        if (_fullScreenInteractivePopGestureRecognizerClass == Nil)
+        if (iosMajorVersion() >= 11)
         {
-            _fullScreenInteractivePopGestureRecognizerClass = freedomMakeClass(_originalInteractivePopGestureRecognizerClass, [TGNavigationFullScreenPanMethods class]);
-            objc_setAssociatedObject(_originalInteractivePopGestureRecognizerClass, &TGNavigationFullScreenPanClassKey, _fullScreenInteractivePopGestureRecognizerClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            _originalInteractivePopGestureRecognizerClass = object_getClass(self.interactivePopGestureRecognizer);
+            _fullScreenInteractivePopGestureRecognizerClass = objc_getAssociatedObject(_originalInteractivePopGestureRecognizerClass, &TGNavigationFullScreenPanClassKey);
+            if (_fullScreenInteractivePopGestureRecognizerClass == Nil)
+            {
+                _fullScreenInteractivePopGestureRecognizerClass = freedomMakeClass(_originalInteractivePopGestureRecognizerClass, [TGNavigationFullScreenPanMethods class]);
+                objc_setAssociatedObject(_originalInteractivePopGestureRecognizerClass, &TGNavigationFullScreenPanClassKey, _fullScreenInteractivePopGestureRecognizerClass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            [self configureInteractivePopGestureForControllers:self.viewControllers];
         }
-        [self configureInteractivePopGestureForControllers:self.viewControllers];
         self.interactivePopGestureRecognizer.delaysTouchesBegan = false;
         self.interactivePopGestureRecognizer.delaysTouchesEnded = true;
         self.interactivePopGestureRecognizer.cancelsTouchesInView = true;

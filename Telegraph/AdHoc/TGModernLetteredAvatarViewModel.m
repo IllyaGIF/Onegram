@@ -25,7 +25,7 @@
     NSString *_firstName;
     NSString *_lastName;
     NSString *_title;
-    int32_t _uid;
+    int64_t _uid;
     int64_t _groupId;
 }
 
@@ -79,7 +79,7 @@
     }
     else
     {
-        self.viewStateIdentifier = [[NSString alloc] initWithFormat:@"TGModernRemoteImageView/%@/%@/%@/%@/%" PRId32 "", nil, nil, _firstName, _lastName, _uid];
+        self.viewStateIdentifier = [[NSString alloc] initWithFormat:@"TGModernRemoteImageView/%@/%@/%@/%@/%" PRId64 "", nil, nil, _firstName, _lastName, _uid];
     }
 }
 
@@ -134,7 +134,7 @@
     }
 }
 
-- (void)setAvatarFirstName:(NSString *)firstName lastName:(NSString *)lastName uid:(int32_t)uid
+- (void)setAvatarFirstName:(NSString *)firstName lastName:(NSString *)lastName uid:(int64_t)uid
 {
     _avatarUri = nil;
     _firstName = firstName;

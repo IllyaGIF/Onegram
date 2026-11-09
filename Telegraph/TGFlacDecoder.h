@@ -451,23 +451,21 @@ static int16_t tgflac_to_s16(int32_t value, uint32_t bps)
     return (int16_t)v;
 }
 
-static TGFLACDecoder *tgflac_open(const char *path)
+static TGFLACDecoder *tgflac_open_file(FILE *file)
 {
     TGFLACDecoder *d;
     uint8_t magic[4];
     int last = 0;
     uint32_t maxBlock = 0;
-    if (path == NULL)
+    if (file == NULL)
         return NULL;
     d = (TGFLACDecoder *)calloc(1, sizeof(TGFLACDecoder));
     if (d == NULL)
-        return NULL;
-    d->file = fopen(path, "rb");
-    if (d->file == NULL)
     {
-        free(d);
+        fclose(file);
         return NULL;
     }
+    d->file = file;
     if (fread(magic, 1, 4, d->file) != 4 || memcmp(magic, "fLaC", 4) != 0)
         goto fail;
 
@@ -520,6 +518,13 @@ fail:
     free(d->sampleStorage);
     free(d);
     return NULL;
+}
+
+static TGFLACDecoder *tgflac_open(const char *path)
+{
+    if (path == NULL)
+        return NULL;
+    return tgflac_open_file(fopen(path, "rb"));
 }
 
 static void tgflac_close(TGFLACDecoder *d)

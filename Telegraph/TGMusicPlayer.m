@@ -1,5 +1,6 @@
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGMusicPlayer.h"
+#import "TGTelegraph.h"
 #import "IOS6FeatureProbe.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
 
@@ -20,13 +21,44 @@
 #import "TGMusicPlayerItemSignals.h"
 
 #import "TGModernConversationAudioPlayer.h"
+#import "TGNativeAudioPlayer.h"
+#import "OGMediaStreamServer.h"
+#import "OGMediaFetchDescriptor+Telegraph.h"
 
 #import "TGAppDelegate.h"
+
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginMusicAudioTap.h"
+#endif
+
+NSString *TGMusicPlayerCurrentLocalAudioPath(TGMusicPlayerStatus *status)
+{
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    if (![status.player isKindOfClass:[TGNativeAudioPlayer class]])
+        return nil;
+    AVPlayerItem *item = ((TGNativeAudioPlayer *)status.player).player.currentItem;
+    if (![item.asset isKindOfClass:[AVURLAsset class]])
+        return nil;
+    NSURL *url = ((AVURLAsset *)item.asset).URL;
+    if (![url isFileURL])
+        return nil;
+    NSString *path = [url path];
+    return [[NSFileManager defaultManager] fileExistsAtPath:path] ? path : nil;
+#else
+    return nil;
+#endif
+}
 
 
 static TGMusicPlayerDownloadingStatus TGMusicPlayerDownloadingStatusMake(bool downloaded, bool downloading, CGFloat progress)
 {
-    return (TGMusicPlayerDownloadingStatus){.downloaded = downloaded, .downloading = downloading, .progress = progress};
+    return (TGMusicPlayerDownloadingStatus){.downloaded = downloaded, .downloading = downloading, .progress = progress, .playable = downloaded};
+}
+
+static TGMusicPlayerDownloadingStatus TGMusicPlayerDownloadingStatusMakeStreaming(CGFloat progress)
+{
+    return (TGMusicPlayerDownloadingStatus){.downloaded = false, .downloading = true, .progress = progress, .playable = true};
 }
 
 static bool TGIOS4CanUseNowPlayingInfoCenter(void)
@@ -125,9 +157,42 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     TGMusicPlayerReference *_ios4LifetimeReference;
 }
 
+@property (atomic, strong) OGMediaStream *activeStream;
+
 @end
 
 @implementation TGMusicPlayer
+
++ (BOOL)pluginControlForTrack:(NSString *)track action:(NSString *)action position:(double)position
+{
+    TGMusicPlayer *player = [TGTelegraphInstance musicPlayer];
+    if (player == nil || track.length == 0 || action.length == 0)
+        return NO;
+    if (![action isEqualToString:@"toggle"] && ![action isEqualToString:@"play"] &&
+        ![action isEqualToString:@"pause"] && ![action isEqualToString:@"previous"] &&
+        ![action isEqualToString:@"next"] && ![action isEqualToString:@"seek"])
+        return NO;
+    if ([action isEqualToString:@"seek"] && (!isfinite(position) || position < 0 || position > 1))
+        return NO;
+    [player->_queue dispatch:^{
+        TGMusicPlayerStatus *status = player->_currentStatus;
+        if (status.item == nil || ![[status.item.key description] isEqualToString:track] || status.isVoice)
+            return;
+        if ([action isEqualToString:@"toggle"])
+            [player controlPlayPause];
+        else if ([action isEqualToString:@"play"])
+            [player controlPlay];
+        else if ([action isEqualToString:@"pause"])
+            [player controlPause];
+        else if ([action isEqualToString:@"previous"])
+            [player controlPrevious];
+        else if ([action isEqualToString:@"next"])
+            [player controlNext];
+        else if ([action isEqualToString:@"seek"])
+            [player controlSeekToPosition:(CGFloat)position];
+    }];
+    return YES;
+}
 
 @synthesize playlistMetadata = _playlistMetadata;
 
@@ -210,6 +275,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     {
         task = OGPlatformBeginBackgroundTask([UIApplication sharedApplication], ^
         {
+            OGPlatformEndBackgroundTask([UIApplication sharedApplication], task);
             TGMusicPlayer *strongSelf = TGIOS4ResolveMusicPlayer(ios4Reference);
             if (strongSelf != nil)
             {
@@ -457,7 +523,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     {
         if (_currentStatus != nil && [_currentStatus.item.key isEqual:item.key] && !force)
         {
-            if (_currentStatus.downloadedStatus.downloaded)
+            if (_currentStatus.downloadedStatus.playable)
             {
                 if (_currentStatus.paused)
                 {
@@ -555,29 +621,32 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
                 
                 if (_currentItemDisposable == nil)
                     _currentItemDisposable = [[SMetaDisposable alloc] init];
-                [_currentItemDisposable setDisposable:[[[TGMusicPlayerItemSignals itemAvailability:item priority:true] deliverOn:_queue] startWithNext:^(id next)
+                __block bool streaming = false;
+                if (![[NSFileManager defaultManager] fileExistsAtPath:[TGMusicPlayerItemSignals pathForItem:item]] && (_player == nil || [_player isFinished]))
+                    streaming = [self playItemStreaming:item];
+                bool allowDownload = !(streaming && [(NSNumber *)item.key intValue] == 0);
+                [_currentItemDisposable setDisposable:[[[TGMusicPlayerItemSignals itemAvailability:item priority:true allowDownload:allowDownload] deliverOn:_queue] startWithNext:^(id next)
                 {
                     TGMusicPlayerItemAvailability availability = TGMusicPlayerItemAvailabilityUnpack([next longLongValue]);
                     TGMusicPlayer *strongSelf = TGIOS4ResolveMusicPlayer(ios4Reference);
                     if (strongSelf != nil)
                     {
-                        NSString *progressivePath = [TGMusicPlayerItemSignals pathForItem:item];
-                        unsigned long long progressiveBytes = [[[NSFileManager defaultManager] attributesOfItemAtPath:progressivePath error:nil] fileSize];
-                        bool progressiveReady = iosMajorVersion() >= 5 && availability.downloading && availability.progress >= 0.025f && progressiveBytes >= 96 * 1024;
-                        if (availability.downloaded || progressiveReady)
+                        if (!availability.downloaded && !streaming && (strongSelf->_player == nil || [strongSelf->_player isFinished]))
+                            streaming = [strongSelf playItemStreaming:item];
+                        if (availability.downloaded || streaming)
                         {
-                            if (strongSelf->_player == nil || [strongSelf->_player isFinished])
+                            if (!streaming && (strongSelf->_player == nil || [strongSelf->_player isFinished]))
                             {
                                 [strongSelf playItem:item];
                             }
-                            if (!availability.downloaded && strongSelf->_currentStatus != nil)
+                            if (streaming && strongSelf->_currentStatus != nil)
                             {
-                                [strongSelf setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:item player:strongSelf->_player.audioPlayer position:itemPosition paused:false offset:strongSelf->_currentStatus.offset duration:duration rate:strongSelf->_currentStatus.rate albumArt:strongSelf->_currentStatus.albumArt albumArtSync:strongSelf->_currentStatus.albumArtSync downloadedStatus:TGMusicPlayerDownloadingStatusMake(false, true, availability.progress) isVoice:item.isVoice orderType:strongSelf->_currentStatus.orderType repeatType:strongSelf->_currentStatus.repeatType]];
+                                [strongSelf setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:item player:strongSelf->_player.audioPlayer position:itemPosition paused:strongSelf->_currentStatus.paused offset:strongSelf->_currentStatus.offset duration:duration rate:strongSelf->_currentStatus.rate albumArt:strongSelf->_currentStatus.albumArt albumArtSync:strongSelf->_currentStatus.albumArtSync downloadedStatus:availability.downloaded ? TGMusicPlayerDownloadingStatusMake(true, false, 1.0f) : TGMusicPlayerDownloadingStatusMakeStreaming(availability.progress) isVoice:item.isVoice orderType:strongSelf->_currentStatus.orderType repeatType:strongSelf->_currentStatus.repeatType]];
                             }
                         }
                         else
                         {
-                            [strongSelf setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:item player:strongSelf->_player.audioPlayer position:itemPosition paused:true offset:0.0f duration:duration rate:strongSelf->_currentStatus.rate albumArt:nil albumArtSync:nil downloadedStatus:TGMusicPlayerDownloadingStatusMake(false, availability.downloading, availability.progress) isVoice:item.isVoice orderType:strongSelf->_currentStatus.orderType repeatType:strongSelf->_currentStatus.repeatType]];
+                            [strongSelf setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:item player:strongSelf->_player.audioPlayer position:itemPosition paused:true offset:0.0f duration:duration rate:strongSelf->_currentStatus.rate albumArt:nil albumArtSync:nil downloadedStatus:TGMusicPlayerDownloadingStatusMake(false, availability.downloading, availability.progress) isVoice:item.isVoice orderType:!item.isVoice ? [strongSelf storedOrderTypeValue] : TGMusicPlayerOrderTypeOldestFirst repeatType:!item.isVoice ? [strongSelf storedRepeatTypeValue] : TGMusicPlayerRepeatTypeNone]];
                         }
                     }
                 }]];
@@ -590,20 +659,17 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 
 - (TGMusicPlayerOrderType)storedOrderTypeValue
 {
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:@"musicPlayerShuffle_v1"])
-    {
-        TGMusicPlayerOrderType orderType = TGMusicPlayerOrderTypeNewestFirst;
-        if ([[[NSUserDefaults standardUserDefaults] objectForKey:@"musicPlayerShuffle_v1"] boolValue])
-        {
-            [[NSUserDefaults standardUserDefaults] setObject:@(TGMusicPlayerOrderTypeShuffle) forKey:@"musicPlayerOrderType_v1"];
-            orderType = TGMusicPlayerOrderTypeShuffle;
-        }
-        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"musicPlayerShuffle_v1"];
-        
-        return orderType;
-    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSNumber *storedOrderType = [defaults objectForKey:@"musicPlayerOrderType_v2"];
+    if (storedOrderType != nil)
+        return (TGMusicPlayerOrderType)[storedOrderType integerValue];
     
-    return (TGMusicPlayerOrderType)[[[NSUserDefaults standardUserDefaults] objectForKey:@"musicPlayerOrderType_v1"] integerValue];
+    bool shuffle = [[defaults objectForKey:@"musicPlayerShuffle_v1"] boolValue] || [[defaults objectForKey:@"musicPlayerOrderType_v1"] integerValue] == TGMusicPlayerOrderTypeShuffle;
+    TGMusicPlayerOrderType orderType = shuffle ? TGMusicPlayerOrderTypeShuffle : TGMusicPlayerOrderTypeOldestFirst;
+    [defaults removeObjectForKey:@"musicPlayerShuffle_v1"];
+    [defaults removeObjectForKey:@"musicPlayerOrderType_v1"];
+    [defaults setObject:@(orderType) forKey:@"musicPlayerOrderType_v2"];
+    return orderType;
 }
 
 - (TGMusicPlayerRepeatType)storedRepeatTypeValue
@@ -611,14 +677,57 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     return (TGMusicPlayerRepeatType)[[[NSUserDefaults standardUserDefaults] objectForKey:@"musicPlayerRepeatType_v1"] integerValue];
 }
 
+- (bool)playItemStreaming:(TGMusicPlayerItem *)item
+{
+    NSString *publishPath = nil;
+    NSString *pathExtension = nil;
+    NSString *mimeType = nil;
+    OGMediaFetchDescriptor *descriptor = nil;
+    if ([item.media isKindOfClass:[TGVideoMediaAttachment class]])
+    {
+        if (![OGMediaFetchDescriptor isStreamableVideoAttachment:item.media])
+            return false;
+        descriptor = [OGMediaFetchDescriptor descriptorForVideoAttachment:item.media publishPath:&publishPath];
+        mimeType = @"video/mp4";
+        pathExtension = @"mp4";
+    }
+    else if ([item.media isKindOfClass:[TGDocumentMediaAttachment class]])
+    {
+        TGDocumentMediaAttachment *document = item.media;
+        if (![OGMediaFetchDescriptor isStreamableDocument:document])
+            return false;
+        descriptor = [OGMediaFetchDescriptor descriptorForDocument:document publishPath:&publishPath];
+        mimeType = [OGMediaFetchDescriptor streamMimeTypeForDocument:document pathExtension:&pathExtension];
+    }
+    if (descriptor == nil || mimeType == nil)
+        return false;
+    if ([(NSNumber *)item.key intValue] == 0)
+    {
+        publishPath = [TGMusicPlayerItemSignals pathForItem:item];
+        if (publishPath.length == 0)
+            return false;
+        descriptor.storePath = [publishPath stringByAppendingString:@".parts"];
+    }
+    OGMediaStream *stream = [[OGMediaStreamServer sharedServer] streamWithDescriptor:descriptor publishPath:publishPath mimeType:mimeType pathExtension:pathExtension];
+    if (stream == nil)
+        return false;
+    NSTimeInterval duration = [[TGMusicPlayer attributesForItem:item][@"duration"] doubleValue];
+    TGModernConversationAudioPlayer *player = [[TGModernConversationAudioPlayer alloc] initWithStream:stream pathExtension:pathExtension duration:duration music:!_currentPlaylist.voice controlAudioSession:false];
+    if (player.audioPlayer == nil)
+    {
+        [stream invalidate];
+        return false;
+    }
+    [_player stop];
+    _player = player;
+    self.activeStream = stream;
+    [self startPlayer:item path:publishPath];
+    return true;
+}
+
 - (void)playItem:(TGMusicPlayerItem *)item
 {
-    if (_currentPlaylist.markItemAsViewed) {
-        _currentPlaylist.markItemAsViewed(item);
-    }
-    
     NSString *path = [TGMusicPlayerItemSignals pathForItem:item];
-    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
     if ([path pathExtension].length == 0 && item.isVideo)
     {
         [[NSFileManager defaultManager] createSymbolicLinkAtPath:[path stringByAppendingString:@".mov"] withDestinationPath:[path lastPathComponent] error:nil];
@@ -630,6 +739,16 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         [_player stop];
         _player = [[TGModernConversationAudioPlayer alloc] initWithFilePath:path music:!_currentPlaylist.voice controlAudioSession:false];
     }
+    self.activeStream = nil;
+    [self startPlayer:item path:path];
+}
+
+- (void)startPlayer:(TGMusicPlayerItem *)item path:(NSString *)path
+{
+    if (_currentPlaylist.markItemAsViewed) {
+        _currentPlaylist.markItemAsViewed(item);
+    }
+    
     [_player setRate:_rate];
     _player.delegate = self;
 
@@ -664,7 +783,7 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
     
     NSURL *itemUrl = [NSURL fileURLWithPath:path];
     TGMusicPlayerItemPosition itemPosition = [TGMusicPlayer itemPosition:item inArray:_currentPlaylist.items];
-    [self setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:item player:_player.audioPlayer position:itemPosition paused:false offset:offset duration:duration rate:_rate albumArt:[TGMusicPlayerItemSignals _albumArtForUrl:itemUrl multicastManager:_albumArtMulticastManager] albumArtSync:[TGMusicPlayerItemSignals _albumArtSyncForUrl:itemUrl] downloadedStatus:TGMusicPlayerDownloadingStatusMake(true, false, 1.0f) isVoice:item.isVoice orderType:!item.isVoice ? orderType : TGMusicPlayerOrderTypeOldestFirst repeatType:!item.isVoice ? repeatType : TGMusicPlayerRepeatTypeNone]];
+    [self setCurrentStatus:[[TGMusicPlayerStatus alloc] initWithItem:item player:_player.audioPlayer position:itemPosition paused:false offset:offset duration:duration rate:_rate albumArt:[TGMusicPlayerItemSignals _albumArtForUrl:itemUrl multicastManager:_albumArtMulticastManager] albumArtSync:[TGMusicPlayerItemSignals _albumArtSyncForUrl:itemUrl] downloadedStatus:[_player isStreaming] ? TGMusicPlayerDownloadingStatusMakeStreaming(0.0f) : TGMusicPlayerDownloadingStatusMake(true, false, 1.0f) isVoice:item.isVoice orderType:!item.isVoice ? orderType : TGMusicPlayerOrderTypeOldestFirst repeatType:!item.isVoice ? repeatType : TGMusicPlayerRepeatTypeNone]];
     
     [self requestControlsWithPlay:false];
     [_player play];
@@ -1085,20 +1204,20 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
         TGMusicPlayerOrderType orderType = _currentStatus.orderType;
         
         switch (orderType) {
-            case TGMusicPlayerOrderTypeNewestFirst:
-                orderType = TGMusicPlayerOrderTypeOldestFirst;
+            case TGMusicPlayerOrderTypeOldestFirst:
+                orderType = TGMusicPlayerOrderTypeNewestFirst;
                 break;
                 
-            case TGMusicPlayerOrderTypeOldestFirst:
+            case TGMusicPlayerOrderTypeNewestFirst:
                 orderType = TGMusicPlayerOrderTypeShuffle;
                 break;
                 
             default:
-                orderType = TGMusicPlayerOrderTypeNewestFirst;
+                orderType = TGMusicPlayerOrderTypeOldestFirst;
                 break;
         }
         
-        [[NSUserDefaults standardUserDefaults] setObject:@(orderType) forKey:@"musicPlayerOrderType_v1"];
+        [[NSUserDefaults standardUserDefaults] setObject:@(orderType) forKey:@"musicPlayerOrderType_v2"];
         
         if (orderType == TGMusicPlayerOrderTypeShuffle && ![_currentPlaylist hasShuffle])
             [self _setPlaylist:[_currentPlaylist playlistWithShuffledItems] initialItemKey:nil forceRestart:false];
@@ -1134,6 +1253,10 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
 {
     TGMusicPlayerStatus *previousStatus = _currentStatus;
     _currentStatus = currentStatus;
+#if OG_PLUGINS_AVAILABLE && __IPHONE_OS_VERSION_MAX_ALLOWED >= 60000
+    if (!currentStatus.paused && [currentStatus.player isKindOfClass:[TGNativeAudioPlayer class]])
+        OGPluginMusicAudioTapAttach(((TGNativeAudioPlayer *)currentStatus.player).player.currentItem);
+#endif
     _playingStatusPipe.sink(currentStatus);
     
     if (!TGObjectCompare(currentStatus.item.key, previousStatus.item.key))
@@ -1368,6 +1491,22 @@ static TGMusicPlayer *TGIOS4ResolveMusicPlayer(TGMusicPlayerReference *reference
             }
         }
     }];
+}
+
++ (double)mediaBitrateForItem:(TGMusicPlayerItem *)item
+{
+    double duration = [[self attributesForItem:item][@"duration"] doubleValue];
+    if (![item.media isKindOfClass:[TGDocumentMediaAttachment class]] || duration <= 0.0)
+        return 0.0;
+    return (double)((TGDocumentMediaAttachment *)item.media).size * 8.0 / duration;
+}
+
+- (double)currentStreamDownloadRate
+{
+    OGMediaStream *stream = self.activeStream;
+    if (stream == nil || [stream isComplete])
+        return -1.0;
+    return [stream downloadRate];
 }
 
 + (NSDictionary *)attributesForItem:(TGMusicPlayerItem *)item

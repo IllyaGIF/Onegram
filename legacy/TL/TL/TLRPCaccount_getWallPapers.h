@@ -6,10 +6,11 @@
 #import "TLObject.h"
 #import "TLMetaRpc.h"
 
-@class NSArray_WallPaper;
+@class TLaccount_WallPapers;
 
 @interface TLRPCaccount_getWallPapers : TLMetaRpc
 
+@property (nonatomic) int64_t n_hash;
 
 - (Class)responseClass;
 

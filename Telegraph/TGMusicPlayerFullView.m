@@ -8,21 +8,78 @@
 
 #import "TGMusicPlayerItemSignals.h"
 #import "TGMusicPlayer.h"
+#import "OGMediaBitrateIndicatorView.h"
 #import "TGTelegraph.h"
+#import <objc/message.h>
+#import <QuartzCore/QuartzCore.h>
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#endif
 
-@interface TGMusicPlayerCollectionView : PSUICollectionView
+UIColor *TGPlayerPluginColor(id value)
 {
-    UIView *_whiteTailView;
+    if (![value isKindOfClass:[NSString class]] || [value length] != 7 || ![value hasPrefix:@"#"])
+        return nil;
+    unsigned int rgb = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:[value substringFromIndex:1]];
+    if (![scanner scanHexInt:&rgb] || !scanner.isAtEnd)
+        return nil;
+    return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0f green:((rgb >> 8) & 255) / 255.0f blue:(rgb & 255) / 255.0f alpha:1];
 }
 
-@property (nonatomic, strong) UIColor *tailColor;
+NSArray *TGPlayerPluginArtworkColors(UIImage *image)
+{
+    if (image.CGImage == NULL)
+        return nil;
+    unsigned char pixels[16 * 16 * 4] = {0};
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(pixels, 16, 16, 8, 16 * 4, space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    if (context == NULL)
+        return nil;
+    CGContextDrawImage(context, CGRectMake(0, 0, 16, 16), image.CGImage);
+    CGContextRelease(context);
+    NSMutableArray *colors = [[NSMutableArray alloc] init];
+    for (int part = 0; part < 2; part++)
+    {
+        NSUInteger totals[3] = {0, 0, 0};
+        NSUInteger count = 0;
+        for (int y = part * 8; y < part * 8 + 8; y++)
+            for (int x = 0; x < 16; x++)
+            {
+                unsigned char *pixel = pixels + (y * 16 + x) * 4;
+                if (pixel[3] < 32)
+                    continue;
+                for (int channel = 0; channel < 3; channel++)
+                    totals[channel] += pixel[channel];
+                count++;
+            }
+        if (count == 0)
+            return nil;
+        CGFloat red = MIN(0.65f, (CGFloat)totals[0] / (255.0f * count) * 0.7f);
+        CGFloat green = MIN(0.65f, (CGFloat)totals[1] / (255.0f * count) * 0.7f);
+        CGFloat blue = MIN(0.65f, (CGFloat)totals[2] / (255.0f * count) * 0.7f);
+        [colors addObject:[UIColor colorWithRed:red green:green blue:blue alpha:1]];
+    }
+    return colors;
+}
 
-@end
+NSCache *TGPlayerPluginPaletteCache(void)
+{
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^
+    {
+        cache = [[NSCache alloc] init];
+        cache.countLimit = 64;
+    });
+    return cache;
+}
 
-
-@interface TGMusicPlayerWrapperView : UIView
+@interface TGMusicPlayerCollectionView : PSUICollectionView
 
 @end
 
@@ -57,6 +114,7 @@
     int _positionLabelValue;
     UILabel *_durationLabel;
     int _durationLabelValue;
+    OGMediaBitrateIndicatorView *_bitrateView;
     
     bool _shouldBeginScrubbing;
     bool _scrubbing;
@@ -80,7 +138,6 @@
     
     CGFloat _coverExpandProgress;
     
-    UIImageView *_edgeView;
     TGMusicPlayerCollectionView *_collectionView;
     UIView *_separator;
     TGScrollIndicatorView *_scrollIndicator;
@@ -89,12 +146,18 @@
     
     bool _presented;
     
-    bool _scrollingPanel;
     CGFloat _panelScrollingReferencePoint;
-    CGFloat _panelScrollingOffset;
     NSNumber *_previousContentOffset;
     
     id<LegacyComponentsContext> _context;
+    CAGradientLayer *_pluginBackgroundLayer;
+    UIView *_pluginLyricsContainer;
+    UILabel *_pluginLyricsLabel;
+    UIView *_pluginLyricsScene;
+    NSArray *_pluginLyricsLines;
+    id<SDisposable> _pluginArtworkDisposable;
+    NSString *_pluginTrackKey;
+    NSUInteger _pluginThemeGeneration;
 }
 @end
 
@@ -113,7 +176,8 @@
         _dimView.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.4f];
         [self addSubview:_dimView];
         
-        _containerView = [[TGMusicPlayerWrapperView alloc] init];
+        _containerView = [[UIView alloc] init];
+        _containerView.backgroundColor = presentation.pallete.menuBackgroundColor;
         _containerView.hidden = true;
         [self addSubview:_containerView];
         
@@ -124,8 +188,7 @@
         _collectionView = [[TGMusicPlayerCollectionView alloc] initWithFrame:self.bounds collectionViewLayout:collectionLayout];
         if (iosMajorVersion() >= 11)
             _collectionView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-        _collectionView.backgroundColor = [UIColor clearColor];
-        _collectionView.tailColor = presentation.pallete.menuBackgroundColor;
+        _collectionView.backgroundColor = presentation.pallete.menuBackgroundColor;
         _collectionView.delegate = self;
         _collectionView.dataSource = self;
         _collectionView.scrollsToTop = false;
@@ -136,21 +199,8 @@
         [_containerView addSubview:_collectionView];
         
         _panelView = [[UIView alloc] init];
-        [_collectionView addSubview:_panelView];
-        
-        UIImage *edgeImage = TGComponentsImageNamed(@"LocationPanelEdge");
-        UIImage *edgeHighlightImage = TGComponentsImageNamed(@"LocationPanelEdge_Highlighted");
-        
-        UIGraphicsBeginImageContextWithOptions(edgeImage.size, false, 0.0f);
-        [edgeImage drawAtPoint:CGPointZero];
-        [TGTintedImage(edgeHighlightImage, presentation.pallete.menuBackgroundColor) drawAtPoint:CGPointZero];
-        
-        edgeImage = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
-        
-        _edgeView = [[UIImageView alloc] initWithImage:[edgeImage resizableImageWithCapInsets:UIEdgeInsetsMake(0.0f, 10.0f, 0.0f, 10.0f)]];
-        _edgeView.frame = CGRectMake(0.0f, 0.0f, self.frame.size.width, _edgeView.frame.size.height);
-        [_panelView addSubview:_edgeView];
+        _panelView.backgroundColor = presentation.pallete.menuBackgroundColor;
+        [_containerView addSubview:_panelView];
         
         _separator = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 0, TGScreenPixel)];
         _separator.alpha = 0.0f;
@@ -249,6 +299,14 @@
         _durationLabel.textColor = presentation.pallete.menuSecondaryTextColor;
         _durationLabel.font = TGSystemFontOfSize(13.0f);
         [_controlsView addSubview:_durationLabel];
+        
+        _bitrateView = [[OGMediaBitrateIndicatorView alloc] init];
+        _bitrateView.font = TGSystemFontOfSize(13.0f);
+        _bitrateView.rateProvider = ^double
+        {
+            return [TGTelegraphInstance.musicPlayer currentStreamDownloadRate];
+        };
+        [_controlsView addSubview:_bitrateView];
         _durationLabelValue = INT_MIN;
         
         _titleLabel = [[UILabel alloc] init];
@@ -275,13 +333,11 @@
         
         [_coverView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(coverTapped)]];
         
-        UITapGestureRecognizer *dimTapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dimTapped:)];
-        dimTapGestureRecognizer.delegate = self;
-        [_collectionView addGestureRecognizer:dimTapGestureRecognizer];
+        [_dimView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dimTapped:)]];
         
         UIPanGestureRecognizer *swipeGestureRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         swipeGestureRecognizer.delegate = self;
-        [_collectionView addGestureRecognizer:swipeGestureRecognizer];
+        [_panelView addGestureRecognizer:swipeGestureRecognizer];
         
         _controlPlayButton = [[TGModernButton alloc] init];
         _controlPlayButton.adjustsImageWhenHighlighted = false;
@@ -336,6 +392,7 @@
             if (strongSelf != nil)
                 [strongSelf setStatus:status];
         }];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(pluginThemeDidChange:) name:@"OGSDKPlayerThemeChanged" object:nil];
         
         _playlistDisposable = [[TGTelegraphInstance.musicPlayer playlist] startWithNext:^(TGMusicPlayerPlaylist *playlist)
         {
@@ -355,6 +412,8 @@
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [_pluginArtworkDisposable dispose];
     [_playerStatusDisposable dispose];
 }
 
@@ -373,6 +432,187 @@
     }
 }
 
+- (void)applyPluginPalette:(NSArray *)colors
+{
+    if (colors.count == 0)
+        return;
+    if (_pluginBackgroundLayer == nil)
+    {
+        _pluginBackgroundLayer = [CAGradientLayer layer];
+        [_containerView.layer insertSublayer:_pluginBackgroundLayer atIndex:0];
+    }
+    NSMutableArray *layers = [[NSMutableArray alloc] init];
+    for (UIColor *color in colors)
+        if ([color isKindOfClass:[UIColor class]])
+            [layers addObject:(id)color.CGColor];
+    _pluginBackgroundLayer.colors = layers;
+    _pluginBackgroundLayer.frame = _containerView.bounds;
+    _containerView.backgroundColor = [UIColor clearColor];
+    _panelView.backgroundColor = [UIColor clearColor];
+    _controlsView.backgroundColor = [UIColor clearColor];
+    _collectionView.backgroundColor = [UIColor clearColor];
+    _titleLabel.textColor = [UIColor whiteColor];
+    _performerLabel.textColor = [UIColor colorWithWhite:1.0f alpha:0.8f];
+}
+
+- (void)pluginThemeDidChange:(NSNotification *)__unused notification
+{
+    [self refreshPluginTheme];
+}
+
+- (void)pluginLyricsTapped:(UITapGestureRecognizer *)__unused gesture
+{
+#if OG_PLUGINS_AVAILABLE
+    if (_currentStatus != nil && !_currentStatus.item.isVoice)
+        OGPluginUIPlayerLyricsRequested([_currentStatus.item.key description], _currentStatus.item.title, _currentStatus.item.performer, _currentStatus.item.duration);
+#endif
+}
+
+- (void)updatePluginLyrics
+{
+    if (_pluginLyricsLabel == nil || _currentStatus == nil)
+        return;
+    double elapsed = _currentStatus.paused ? 0 : MAX(0, CACurrentMediaTime() - _currentStatus.timestamp) * MAX(0.1f, _currentStatus.rate);
+    double seconds = MIN(_currentStatus.duration, _currentStatus.offset * _currentStatus.duration + elapsed);
+    NSInteger low = 0;
+    NSInteger high = (NSInteger)_pluginLyricsLines.count;
+    while (low < high)
+    {
+        NSInteger middle = low + (high - low) / 2;
+        if ([_pluginLyricsLines[middle][@"at"] doubleValue] <= seconds)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    NSString *line = low > 0 ? _pluginLyricsLines[(NSUInteger)low - 1][@"text"] : @"";
+    if (![_pluginLyricsLabel.text isEqualToString:line])
+        _pluginLyricsLabel.text = line;
+}
+
+- (void)schedulePluginLyricsTick:(NSUInteger)generation
+{
+    __weak TGMusicPlayerFullView *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        TGMusicPlayerFullView *strongSelf = weakSelf;
+        if (strongSelf == nil || strongSelf->_pluginThemeGeneration != generation || strongSelf->_pluginLyricsLines.count == 0)
+            return;
+        [strongSelf updatePluginLyrics];
+        [strongSelf schedulePluginLyricsTick:generation];
+    });
+}
+
+- (void)refreshPluginTheme
+{
+    _pluginThemeGeneration++;
+    [_pluginArtworkDisposable dispose];
+    _pluginArtworkDisposable = nil;
+    if ([_pluginLyricsScene respondsToSelector:@selector(stop)])
+        ((void (*)(id, SEL))objc_msgSend)(_pluginLyricsScene, @selector(stop));
+    [_pluginLyricsScene removeFromSuperview];
+    _pluginLyricsScene = nil;
+    [_pluginLyricsContainer removeFromSuperview];
+    _pluginLyricsContainer = nil;
+    _pluginLyricsLabel = nil;
+    _pluginLyricsLines = nil;
+    [_pluginBackgroundLayer removeFromSuperlayer];
+    _pluginBackgroundLayer = nil;
+    _containerView.backgroundColor = _presentation.pallete.menuBackgroundColor;
+    _panelView.backgroundColor = _presentation.pallete.menuBackgroundColor;
+    _controlsView.backgroundColor = _presentation.pallete.menuBackgroundColor;
+    _collectionView.backgroundColor = _presentation.pallete.menuBackgroundColor;
+    _titleLabel.textColor = _presentation.pallete.menuTextColor;
+    _performerLabel.textColor = _presentation.pallete.menuSecondaryTextColor;
+    Class cls = NSClassFromString(@"OGPluginSDKDecoration");
+    SEL selector = NSSelectorFromString(@"playerThemeForTrack:");
+    NSString *track = [_currentStatus.item.key description] ?: @"";
+    NSDictionary *theme = [cls respondsToSelector:selector] ? ((id (*)(id, SEL, id))objc_msgSend)(cls, selector, track) : nil;
+    if (![theme isKindOfClass:[NSDictionary class]] || theme.count == 0 || _currentStatus.item.isVoice)
+    {
+        _pluginTrackKey = nil;
+        return;
+    }
+    _pluginTrackKey = [NSString stringWithFormat:@"%lld:%lld:%@", (long long)TGTelegraphInstance.clientUserId, (long long)_currentStatus.item.peerId, track];
+    NSMutableArray *palette = [[NSMutableArray alloc] init];
+    for (NSString *value in theme[@"palette"])
+    {
+        UIColor *color = TGPlayerPluginColor(value);
+        if (color != nil)
+            [palette addObject:color];
+    }
+    if (palette.count != 0)
+        [self applyPluginPalette:palette];
+    else
+    {
+        NSArray *cached = [TGPlayerPluginPaletteCache() objectForKey:_pluginTrackKey];
+        if (cached != nil)
+            [self applyPluginPalette:cached];
+        else
+        {
+            NSUInteger generation = _pluginThemeGeneration;
+            NSString *cacheKey = _pluginTrackKey;
+            __weak TGMusicPlayerFullView *weakSelf = self;
+            SSignal *artwork = _currentStatus.albumArt ?: [TGMusicPlayerItemSignals albumArtForItem:_currentStatus.item thumbnail:true];
+            _pluginArtworkDisposable = [[artwork deliverOn:[SQueue mainQueue]] startWithNext:^(UIImage *image)
+            {
+                if (![image isKindOfClass:[UIImage class]])
+                    return;
+                dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+                {
+                    NSArray *colors = TGPlayerPluginArtworkColors(image);
+                    if (colors != nil)
+                        [TGPlayerPluginPaletteCache() setObject:colors forKey:cacheKey];
+                    dispatch_async(dispatch_get_main_queue(), ^
+                    {
+                        TGMusicPlayerFullView *strongSelf = weakSelf;
+                        if (strongSelf != nil && generation == strongSelf->_pluginThemeGeneration && colors != nil)
+                            [strongSelf applyPluginPalette:colors];
+                    });
+                });
+            }];
+        }
+    }
+    NSDictionary *scene = [theme[@"scene"] isKindOfClass:[NSDictionary class]] ? theme[@"scene"] : nil;
+    NSArray *lines = [theme[@"lines"] isKindOfClass:[NSArray class]] ? theme[@"lines"] : nil;
+    if (scene != nil || lines.count != 0)
+    {
+        _pluginLyricsContainer = [[UIView alloc] init];
+        _pluginLyricsContainer.userInteractionEnabled = true;
+        [_pluginLyricsContainer addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(pluginLyricsTapped:)]];
+        _pluginLyricsContainer.clipsToBounds = true;
+        _pluginLyricsContainer.layer.cornerRadius = 8.0f;
+        _pluginLyricsContainer.backgroundColor = [UIColor colorWithWhite:0.0f alpha:0.42f];
+        [_controlsView addSubview:_pluginLyricsContainer];
+        if (scene != nil)
+        {
+            Class sceneClass = NSClassFromString(@"OGPluginSceneView");
+            SEL sceneSelector = NSSelectorFromString(@"viewWithDescription:");
+            if ([sceneClass respondsToSelector:sceneSelector])
+            {
+                _pluginLyricsScene = ((id (*)(id, SEL, id))objc_msgSend)(sceneClass, sceneSelector, scene);
+                _pluginLyricsScene.userInteractionEnabled = false;
+                _pluginLyricsScene.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                [_pluginLyricsContainer addSubview:_pluginLyricsScene];
+            }
+        }
+        if (lines.count != 0)
+        {
+            _pluginLyricsLines = lines;
+            _pluginLyricsLabel = [[UILabel alloc] init];
+            _pluginLyricsLabel.font = [UIFont boldSystemFontOfSize:13.0f];
+            _pluginLyricsLabel.textColor = [UIColor whiteColor];
+            _pluginLyricsLabel.textAlignment = NSTextAlignmentCenter;
+            _pluginLyricsLabel.numberOfLines = 2;
+            _pluginLyricsLabel.backgroundColor = [UIColor clearColor];
+            _pluginLyricsLabel.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [_pluginLyricsContainer addSubview:_pluginLyricsLabel];
+            [self updatePluginLyrics];
+            [self schedulePluginLyricsTick:_pluginThemeGeneration];
+        }
+        [self setNeedsLayout];
+    }
+}
+
 - (void)setStatus:(TGMusicPlayerStatus *)status
 {
     TGMusicPlayerStatus *previousStatus = _currentStatus;
@@ -387,8 +627,24 @@
     if (previousStatus.paused != status.paused)
         [self updateCells];
     
-    if (!TGObjectCompare(status.item.key, previousStatus.item.key))
+    bool itemChanged = !TGObjectCompare(status.item.key, previousStatus.item.key);
+    if (itemChanged)
     {
+#if OG_PLUGINS_AVAILABLE
+        OGPluginUIPlayerTrackChangedWithAudio([status.item.key description], status.item.title, status.item.performer, status.item.duration, status.item.isVoice, TGMusicPlayerCurrentLocalAudioPath(status));
+#endif
+        [self refreshPluginTheme];
+    }
+    bool itemDownloaded = !itemChanged && status.downloadedStatus.downloaded && !previousStatus.downloadedStatus.downloaded;
+    if (itemDownloaded)
+    {
+#if OG_PLUGINS_AVAILABLE
+        OGPluginUIPlayerTrackChangedWithAudio([status.item.key description], status.item.title, status.item.performer, status.item.duration, status.item.isVoice, TGMusicPlayerCurrentLocalAudioPath(status));
+#endif
+    }
+    if (itemChanged)
+    {
+        _bitrateView.mediaBitrate = [TGMusicPlayer mediaBitrateForItem:status.item];
         NSString *title = status.item.title;
         NSString *performer = status.item.performer;
         
@@ -413,7 +669,10 @@
                 [self setNeedsLayout];
             }
         }
-        
+    }
+    
+    if (itemChanged || itemDownloaded)
+    {
         [_coverView setSignal:[[TGMusicPlayerItemSignals albumArtForItem:status.item thumbnail:false] catch:^(__unused id error)
         {
             CGSize size = CGSizeMake(390.0f, 390.0f);
@@ -432,22 +691,31 @@
         }]];
     }
     
+    if (itemDownloaded)
+    {
+        for (TGMusicPlaylistCell *cell in _collectionView.visibleCells)
+        {
+            if ([cell.item.key isEqual:status.item.key])
+                [cell setItem:cell.item];
+        }
+    }
+    
     _controlPlayButton.hidden = !status.paused;
     _controlPauseButton.hidden = status.paused;
     
     if ([self reversePlaylistForOrderType:status.orderType] != [self reversePlaylistForOrderType:previousStatus.orderType])
         [_collectionView reloadData];
     
-    if (status.orderType != previousStatus.orderType)
+    if (previousStatus == nil || status.orderType != previousStatus.orderType)
     {
         switch (status.orderType)
         {
-            case TGMusicPlayerOrderTypeNewestFirst:
+            case TGMusicPlayerOrderTypeOldestFirst:
                 [_controlShuffleButton setImage:TGTintedImage(TGImageNamed(@"MusicPlayerControlReverse.png"), _presentation.pallete.secondaryTextColor) forState:UIControlStateNormal];
                 _controlShuffleButton.selected = false;
                 break;
                 
-            case TGMusicPlayerOrderTypeOldestFirst:
+            case TGMusicPlayerOrderTypeNewestFirst:
                 [_controlShuffleButton setImage:TGTintedImage(TGImageNamed(@"MusicPlayerControlReverse.png"), _presentation.pallete.secondaryTextColor) forState:UIControlStateNormal];
                 _controlShuffleButton.selected = true;
                 break;
@@ -481,9 +749,9 @@
     
     CGFloat disabledAlpha = 0.6f;
     
-    _scrubbingHandle.hidden = !status.downloadedStatus.downloaded;
+    _scrubbingHandle.hidden = !status.downloadedStatus.playable;
     
-    bool buttonsEnabled = status.downloadedStatus.downloaded;
+    bool buttonsEnabled = status.downloadedStatus.playable;
     if (buttonsEnabled != _controlPlayButton.enabled)
     {
         _controlPlayButton.enabled = buttonsEnabled;
@@ -648,28 +916,12 @@
         {
             [self layoutControls];
             [self setDimViewHidden:false animated:true];
+            [self scrollToCurrentItem];
             
-            NSInteger count = _currentPlaylist.items.count > 1 ? _currentPlaylist.items.count : 0;
-            CGFloat visibleHeight = _panelView.frame.size.height + MIN(4, count) * TGMusicPlaylistCellHeight;
-            NSUInteger index = [self reversePlaylist] ? _currentItemPosition.count - _currentItemPosition.index - 1 : _currentItemPosition.index;
-            
-            [self applyViewOffset:visibleHeight];
+            [self applyViewOffset:self.bounds.size.height];
             _containerView.hidden = false;
             
-            [self animateSheetViewToPosition:0.0f velocity:0.0f present:true completion:^{}];
-
-            if (index > 3)
-            {
-                CGFloat position = _panelView.frame.size.height + TGMusicPlaylistCellHeight * (index + 1) + (_collectionView.frame.size.height - _panelView.frame.size.height - TGMusicPlaylistCellHeight) / 2.0f;
-                CGFloat maxPosition = _collectionView.contentSize.height - _collectionView.frame.size.height;
-                CGFloat finalPosition = MIN(maxPosition, -_collectionView.contentInset.top + 10.0f + MAX(visibleHeight, position));
-                [_collectionView setContentOffset:CGPointMake(0.0f, finalPosition) animated:false];
-            }
-            else
-            {
-                CGFloat offset = _safeAreaInset.bottom > FLT_EPSILON ? 2 * _safeAreaInset.bottom - 10.0f : 10.0f;
-                [_collectionView setContentOffset:CGPointMake(0.0f, -_collectionView.contentInset.top + visibleHeight + offset) animated:false];
-            }
+            [self animateSheetViewToPosition:0.0f velocity:0.0f present:true completion:nil];
             
             TGDispatchAfter(0.3, dispatch_get_main_queue(), ^
             {
@@ -677,6 +929,25 @@
             });
         });
     }
+}
+
+- (void)scrollToCurrentItem
+{
+    NSUInteger count = (NSUInteger)[self collectionView:_collectionView numberOfItemsInSection:0];
+    if (_currentItemPosition.index >= count)
+        return;
+    
+    NSUInteger row = [self reversePlaylist] ? count - _currentItemPosition.index - 1 : _currentItemPosition.index;
+    CGFloat visibleHeight = _collectionView.frame.size.height - _collectionView.contentInset.bottom;
+    CGFloat maxOffset = MAX(0.0f, count * TGMusicPlaylistCellHeight - visibleHeight);
+    CGFloat offset = row * TGMusicPlaylistCellHeight - (visibleHeight - TGMusicPlaylistCellHeight) / 2.0f;
+    [_collectionView setContentOffset:CGPointMake(0.0f, MAX(0.0f, MIN(maxOffset, offset))) animated:false];
+}
+
+- (bool)isGrabAreaPoint:(CGPoint)point
+{
+    CGFloat grabHeight = CGRectGetMinY(_controlsView.frame) + CGRectGetMinY(_coverView.frame);
+    return CGRectContainsPoint(CGRectMake(0.0f, 0.0f, _panelView.bounds.size.width, grabHeight), point);
 }
 
 - (void)controlPlay
@@ -771,7 +1042,7 @@
 
 - (void)applyViewOffset:(CGFloat)position
 {
-    _containerView.frame = CGRectMake(0.0f, position, _containerView.frame.size.width, _containerView.frame.size.height);
+    _containerView.frame = CGRectMake(_containerView.frame.origin.x, position, _containerView.frame.size.width, _containerView.frame.size.height);
 }
 
 - (void)animateSheetViewToPosition:(CGFloat)position velocity:(CGFloat)velocity present:(bool)present completion:(void (^)(void))completion
@@ -816,7 +1087,7 @@
     {
         [self setDimViewHidden:true animated:true];
         
-        [self animateSheetViewToPosition:_collectionView.contentInset.top + _collectionView.contentOffset.y velocity:0.0 present:false completion:^
+        [self animateSheetViewToPosition:self.bounds.size.height velocity:0.0 present:false completion:^
         {
            if (self.dismissed != nil)
                self.dismissed();
@@ -835,72 +1106,34 @@
     }
 }
 
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)__unused gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)__unused otherGestureRecognizer
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)__unused gestureRecognizer shouldReceiveTouch:(UITouch *)touch
 {
-    return true;
+    return [self isGrabAreaPoint:[touch locationInView:_panelView]];
 }
 
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
 {
-    if ([gestureRecognizer isKindOfClass:[UITapGestureRecognizer class]])
-    {
-        CGPoint location = [gestureRecognizer locationInView:gestureRecognizer.view];
-        if ([_panelView pointInside:[_panelView convertPoint:location fromView:gestureRecognizer.view] withEvent:nil])
-            return false;
-        
-        for (PSUICollectionViewCell *cell in _collectionView.visibleCells)
-        {
-            if ([cell pointInside:[cell convertPoint:location fromView:gestureRecognizer.view] withEvent:nil])
-                return false;
-        }
-        
-        return true;
-    }
-    else if ([gestureRecognizer isKindOfClass:[UIPanGestureRecognizer class]])
-    {
-        CGPoint location = [gestureRecognizer locationInView:gestureRecognizer.view];
-        CGFloat screenHeight = [_context fullscreenBounds].size.height;
-        CGFloat panelOffset = MAX(0, _collectionView.contentOffset.y + _collectionView.contentInset.top - screenHeight);
-        if (panelOffset < FLT_EPSILON)
-            return false;
-        
-        if (![_panelView pointInside:[_panelView convertPoint:location fromView:gestureRecognizer.view] withEvent:nil] || [(UIPanGestureRecognizer *)gestureRecognizer velocityInView:gestureRecognizer.view].y < -FLT_EPSILON)
-            return false;
-    }
-    return true;
+    return [(UIPanGestureRecognizer *)gestureRecognizer velocityInView:self].y > -FLT_EPSILON;
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)gestureRecognizer
 {
+    CGFloat location = [gestureRecognizer locationInView:self].y;
     if (gestureRecognizer.state == UIGestureRecognizerStateBegan)
     {
-        _collectionView.scrollEnabled = false;
-        _panelScrollingReferencePoint = [gestureRecognizer locationInView:self].y;
+        _panelScrollingReferencePoint = location;
     }
     else if (gestureRecognizer.state == UIGestureRecognizerStateChanged)
     {
-        CGFloat location = [gestureRecognizer locationInView:self].y;
-        CGFloat delta = location - _panelScrollingReferencePoint;
-        [self applyViewOffset:MAX(0, delta)];
+        [self applyViewOffset:MAX(0.0f, location - _panelScrollingReferencePoint)];
     }
-    else if (gestureRecognizer.state == UIGestureRecognizerStateEnded)
+    else if (gestureRecognizer.state == UIGestureRecognizerStateEnded && (location - _panelScrollingReferencePoint > self.frame.size.height / 3.0f || [gestureRecognizer velocityInView:self].y > 1000.0f))
     {
-        CGFloat location = [gestureRecognizer locationInView:self].y;
-        CGFloat delta = location - _panelScrollingReferencePoint;
-        
-        if (delta > self.frame.size.height / 3.0f || [gestureRecognizer velocityInView:gestureRecognizer.view].y > 1000.0f)
-        {
-            [self dismissAnimated:true completion:nil];
-        }
-        else
-        {
-            _collectionView.scrollEnabled = true;
-            [self animateSheetViewToPosition:0.0f velocity:0.0f present:true completion:nil];
-        }
+        [self dismissAnimated:true completion:nil];
     }
-    else if (gestureRecognizer.state == UIGestureRecognizerStateCancelled)
+    else if (gestureRecognizer.state == UIGestureRecognizerStateEnded || gestureRecognizer.state == UIGestureRecognizerStateCancelled)
     {
-        _collectionView.scrollEnabled = true;
+        [self animateSheetViewToPosition:0.0f velocity:0.0f present:true completion:nil];
     }
 }
 
@@ -994,13 +1227,6 @@
     return cell;
 }
 
-- (void)collectionView:(PSUICollectionView *)__unused collectionView willDisplayCell:(PSUICollectionViewCell *)cell forItemAtIndexPath:(NSIndexPath *)__unused indexPath
-{
-    CGRect panelFrame = [_panelView convertRect:_panelView.bounds toView:self];
-    CGRect frame = [cell convertRect:cell.bounds toView:self];
-    cell.hidden = frame.origin.y < panelFrame.origin.y + 64.0f;
-}
-
 - (NSInteger)collectionView:(PSUICollectionView *)__unused collectionView numberOfItemsInSection:(NSInteger)__unused section
 {
     return _currentPlaylist.items.count > 1 ? _currentPlaylist.items.count : 0;
@@ -1054,25 +1280,12 @@
         previousOffset = _previousContentOffset.doubleValue;
     _previousContentOffset = @(scrollView.contentOffset.y);
     
-    CGRect panelFrame = [_panelView convertRect:_panelView.bounds toView:self];
-    for (PSUICollectionViewCell *cell in _collectionView.visibleCells)
-    {
-        CGRect frame = [cell convertRect:cell.bounds toView:self];
-        cell.hidden = frame.origin.y < panelFrame.origin.y + 64.0f;
-    }
-    
     if (scrollView.isTracking && _coverExpandProgress > 1.0f - FLT_EPSILON && fabs(scrollView.contentOffset.y - previousOffset) > FLT_EPSILON)
         [self setCoverZoomedIn:false animated:true];
-    
-    if (_presented && !scrollView.isTracking && scrollView.contentOffset.y < -scrollView.contentInset.top + _panelView.frame.size.height)
-        [self dismissAnimated:true completion:nil];
 }
 
-- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
+- (void)scrollViewDidEndDragging:(UIScrollView *)__unused scrollView willDecelerate:(BOOL)__unused decelerate
 {
-    if (!decelerate && scrollView.contentOffset.y < -scrollView.contentInset.top + _panelView.frame.size.height)
-        [self dismissAnimated:true completion:nil];
-    
     _previousContentOffset = nil;
 }
 
@@ -1142,6 +1355,10 @@
         [_durationLabel sizeToFit];
     }
     _durationLabel.frame = CGRectMake(padding + side - _durationLabel.frame.size.width, _scrubbingBackground.frame.origin.y + 8.0f, _durationLabel.frame.size.width, _durationLabel.frame.size.height);
+    
+    CGFloat center = padding + side / 2.0f;
+    CGFloat bitrateWidth = MAX(0.0f, 2.0f * MIN(center - CGRectGetMaxX(_positionLabel.frame) - 6.0f, CGRectGetMinX(_durationLabel.frame) - center - 6.0f));
+    _bitrateView.frame = CGRectMake(CGFloor(center - bitrateWidth / 2.0f), _durationLabel.frame.origin.y, bitrateWidth, _durationLabel.frame.size.height);
 }
 
 - (void)layoutControls
@@ -1162,26 +1379,26 @@
     albumArtHeight = 280.0f;
     albumArtImageSize = CGSizeMake(200.0f, 200.0f);
     
-    _edgeView.frame = CGRectMake(0.0f, 0.0f, screenWidth, _edgeView.frame.size.height);
-    
-    CGFloat largeCoverSize = side - 20.0f * 2.0f;
+    CGFloat headerHeight = 20.0f;
+    CGFloat collapsedControlsHeight = 230.0f - headerHeight;
+    CGFloat collapsedPanelHeight = _safeAreaInset.top + headerHeight + collapsedControlsHeight;
+    CGFloat largeCoverSize = MAX(48.0f, MIN(side - 20.0f * 2.0f, self.frame.size.height - _safeAreaInset.bottom - collapsedPanelHeight - 20.0f));
     CGFloat largeCoverSpace = largeCoverSize + 20.0f;
     CGFloat scrubberOffset = 94.0f + largeCoverSpace * _coverExpandProgress;
-    CGFloat controlsHeight = 230.0f - _edgeView.frame.size.height + largeCoverSpace * _coverExpandProgress;
-    _controlsView.frame = CGRectMake(0.0f, _edgeView.frame.size.height, screenWidth, controlsHeight);
+    CGFloat controlsHeight = collapsedControlsHeight + largeCoverSpace * _coverExpandProgress;
+    _controlsView.frame = CGRectMake(0.0f, _safeAreaInset.top + headerHeight, screenWidth, controlsHeight);
     
-    CGFloat screenHeight = [_context fullscreenBounds].size.height;
-    CGFloat panelHeight = _controlsView.frame.size.height + _edgeView.frame.size.height;
+    CGFloat panelHeight = CGRectGetMaxY(_controlsView.frame);
+    _panelView.frame = CGRectMake(0.0f, 0.0f, screenWidth, panelHeight);
+    _arrowView.frame = CGRectMake((screenWidth - _arrowView.frame.size.width) / 2.0f, _safeAreaInset.top + 22.0f, _arrowView.frame.size.width, _arrowView.frame.size.height);
     
-    CGFloat contentInset = panelHeight + screenHeight + (_safeAreaInset.top > FLT_EPSILON ? _safeAreaInset.top - 10.0f : 10.0f);
-    if (fabs(_collectionView.contentInset.top - contentInset) > FLT_EPSILON || fabs(_collectionView.contentInset.bottom - _safeAreaInset.bottom) > FLT_EPSILON)
-        _collectionView.contentInset = UIEdgeInsetsMake(contentInset, 0.0f, _safeAreaInset.bottom, 0.0f);
+    CGRect collectionFrame = CGRectMake(0.0f, panelHeight, screenWidth, MAX(0.0f, self.frame.size.height - panelHeight));
+    if (!CGRectEqualToRect(_collectionView.frame, collectionFrame))
+        _collectionView.frame = collectionFrame;
+    if (fabs(_collectionView.contentInset.bottom - _safeAreaInset.bottom) > FLT_EPSILON)
+        _collectionView.contentInset = UIEdgeInsetsMake(0.0f, 0.0f, _safeAreaInset.bottom, 0.0f);
     
-    CGFloat panelOffset = MAX(0, _collectionView.contentOffset.y + _collectionView.contentInset.top - screenHeight);
-    [self setSeparatorHidden:panelOffset < FLT_EPSILON animated:true];
-        
-    _panelView.frame = CGRectMake(0.0f, -panelHeight + panelOffset, screenWidth, panelHeight);
-    _arrowView.frame = CGRectMake((_panelView.frame.size.width - _arrowView.frame.size.width) / 2.0f, 22.0f, _arrowView.frame.size.width, _arrowView.frame.size.height);
+    [self setSeparatorHidden:_collectionView.contentOffset.y < -_collectionView.contentInset.top + FLT_EPSILON animated:true];
     
     _scrubbingArea.frame = CGRectMake(0.0f, scrubberOffset + progressHeight / 2.0f - scrubbingHeight / 2.0f, _controlsView.bounds.size.width, scrubbingHeight);
     _scrubbingBackground.frame = CGRectMake(20.0f, scrubberOffset, _controlsView.bounds.size.width - 20.0f * 2.0f, progressHeight);
@@ -1206,7 +1423,16 @@
         performerSize.width = MIN(performerSize.width, maxWidth);
     }
     
-    _coverView.frame = CGRectMake(20.0f, 24.0f, 48.0f + (largeCoverSize - 48.0f) * _coverExpandProgress, 48.0f + (largeCoverSize - 48.0f) * _coverExpandProgress);
+    CGFloat coverSize = 48.0f + (largeCoverSize - 48.0f) * _coverExpandProgress;
+    CGFloat coverX = 20.0f + (CGFloor((_controlsView.bounds.size.width - largeCoverSize) / 2.0f) - 20.0f) * _coverExpandProgress;
+    _coverView.frame = CGRectMake(coverX, 24.0f, coverSize, coverSize);
+    if (_pluginLyricsContainer != nil)
+    {
+        _pluginLyricsContainer.hidden = _coverExpandProgress < 0.7f;
+        _pluginLyricsContainer.frame = CGRectMake(coverX + 8.0f, CGRectGetMaxY(_coverView.frame) - 72.0f, MAX(0.0f, coverSize - 16.0f), 64.0f);
+        _pluginLyricsScene.frame = _pluginLyricsContainer.bounds;
+        _pluginLyricsLabel.frame = _pluginLyricsContainer.bounds;
+    }
     
     CGFloat titleX = 85.0f + (CGFloor((_controlsView.bounds.size.width - titleSize.width) / 2.0f) - 85.0f) * _coverExpandProgress;
     CGFloat performerX = 85.0f + (CGFloor((_controlsView.bounds.size.width - performerSize.width) / 2.0f) - 85.0f) * _coverExpandProgress;
@@ -1235,13 +1461,13 @@
         _coverExpandProgress = 0.0f;
     
     _dimView.frame = self.bounds;
-    _containerView.frame = self.bounds;
-    
-    [self layoutControls];
     
     CGFloat screenWidth = TGIsPad() ? 414.0f : (self.frame.size.width - _safeAreaInset.left - _safeAreaInset.right);
+    _containerView.frame = CGRectMake(floor((self.frame.size.width - screenWidth) / 2.0f), _containerView.frame.origin.y, screenWidth, self.frame.size.height);
+    _pluginBackgroundLayer.frame = _containerView.bounds;
+    
     CGFloat collectonViewWidth = _collectionView.frame.size.width;
-    _collectionView.frame = CGRectMake(floor((self.frame.size.width - screenWidth) / 2.0f), 0.0f, screenWidth, self.frame.size.height);
+    [self layoutControls];
     
     if (fabs(collectonViewWidth - _collectionView.frame.size.width) > FLT_EPSILON)
         [_collectionView.collectionViewLayout invalidateLayout];
@@ -1259,39 +1485,6 @@
 
 @implementation TGMusicPlayerCollectionView
 
-- (instancetype)initWithFrame:(CGRect)frame collectionViewLayout:(PSUICollectionViewLayout *)layout
-{
-    self = [super initWithFrame:frame collectionViewLayout:layout];
-    if (self != nil)
-    {
-        _whiteTailView = [[UIView alloc] init];
-        _whiteTailView.backgroundColor = [UIColor whiteColor];
-        [self addSubview:_whiteTailView];
-    }
-    return self;
-}
-
-- (UIColor *)tailColor
-{
-    return _whiteTailView.backgroundColor;
-}
-
-- (void)setTailColor:(UIColor *)tailColor
-{
-    _whiteTailView.backgroundColor = tailColor;
-}
-
-- (void)layoutSubviews
-{
-    [super layoutSubviews];
-    _whiteTailView.frame = CGRectMake(0.0f, self.contentSize.height, self.frame.size.width, 1000.0f);
-}
-
-- (BOOL)pointInside:(CGPoint)__unused point withEvent:(UIEvent *)__unused event
-{
-    return true;
-}
-
 - (void)setContentOffset:(CGPoint)contentOffset animated:(BOOL)animated
 {
     [super setContentOffset:contentOffset animated:animated];
@@ -1300,20 +1493,6 @@
 - (BOOL)touchesShouldCancelInContentView:(UIView *)__unused view
 {
     return true;
-}
-
-@end
-
-
-@implementation TGMusicPlayerWrapperView
-
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event
-{
-    UIView *result = [super hitTest:point withEvent:event];
-    if (result == self)
-        return nil;
-    
-    return result;
 }
 
 @end

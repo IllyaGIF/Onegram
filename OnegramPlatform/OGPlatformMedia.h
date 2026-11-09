@@ -5,6 +5,7 @@ FOUNDATION_EXPORT BOOL OGPlatformMediaDownloadsRequireUserAction(void);
 FOUNDATION_EXPORT BOOL OGPlatformCameraAvailable(void);
 FOUNDATION_EXPORT BOOL OGPlatformVideoPlaybackAvailable(void);
 FOUNDATION_EXPORT BOOL OGPlatformAVPlayerAvailable(void);
+FOUNDATION_EXPORT BOOL OGPlatformHEVCHardwareDecodeAvailable(void);
 FOUNDATION_EXPORT BOOL OGPlatformAVCaptureAvailable(void);
 FOUNDATION_EXPORT BOOL OGPlatformCoreImageAvailable(void);
 FOUNDATION_EXPORT BOOL OGPlatformCaptureConnectionIsVideoMirrored(id connection);

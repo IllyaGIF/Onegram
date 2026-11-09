@@ -27,6 +27,7 @@
 #import "TLRPChelp_acceptTermsOfService.h"
 
 #import "TGTermsOfService.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @implementation TGAccountSignals
 
@@ -75,7 +76,7 @@
             if (TGPeerIdIsSecretChat(peerId)) {
                 return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
                     TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:peerId];
-                    int32_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:peerId];
+                    int64_t uid = [TGDatabaseInstance() encryptedParticipantIdForConversationId:peerId];
                     TGCachedPeerReportSpamState reportSpamState = TGCachedPeerReportSpamShow;
                     if (conversation.chatParticipants.chatAdminId != TGTelegraphInstance.clientUserId) {
                         if ([TGDatabaseInstance() uidIsRemoteContact:uid]) {
@@ -143,7 +144,7 @@
                 result = [SSignal single:[[TGTermsOfService alloc] initWithTL:termsUpdate.terms_of_service]];
         }
         
-        NSTimeInterval timeout = update.expires - [[TGTelegramNetworking instance] approximateRemoteTime];
+        NSTimeInterval timeout = update.expires - OGRemoteClockTime();
         if (timeout < 0)
             timeout = 60.0 * 60.0;
         

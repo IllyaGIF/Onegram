@@ -10,11 +10,10 @@ TGLocalization *legacyEffectiveLocalization();
 NSString *TGLocalized(NSString *s);
 bool TGObjectCompare(id obj1, id obj2);
 bool TGStringCompare(NSString *s1, NSString *s2);
-#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
 #undef TGLegacyLog
-void TGLegacyLog(NSString *format, ...);
-#else
-#define TGLegacyLog(...) ((void)0)
+void TGLegacyLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+#if !defined(ONEGRAM_LOG_IMPLEMENTATION)
+#define TGLegacyLog(...) (OGDiagnosticsEnabled() ? TGLegacyLog(__VA_ARGS__) : (void)0)
 #endif
 int iosMajorVersion();
 int iosMinorVersion();
@@ -27,8 +26,8 @@ void TGDispatchAfter(double delay, dispatch_queue_t queue, dispatch_block_t bloc
 int deviceMemorySize();
 int cpuCoreCount();
     
-#define UIColorRGB(rgb) ([[UIColor alloc] initWithRed:(((rgb >> 16) & 0xff) / 255.0f) green:(((rgb >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:1.0f])
-#define UIColorRGBA(rgb,a) ([[UIColor alloc] initWithRed:(((rgb >> 16) & 0xff) / 255.0f) green:(((rgb >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:a])
+#define UIColorRGB(rgb) ([[UIColor alloc] initWithRed:((((rgb) >> 16) & 0xff) / 255.0f) green:((((rgb) >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:1.0f])
+#define UIColorRGBA(rgb,a) ([[UIColor alloc] initWithRed:((((rgb) >> 16) & 0xff) / 255.0f) green:((((rgb) >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:(a)])
     
 #define TGRestrictedToMainThread {if(![[NSThread currentThread] isMainThread]) TGLegacyLog(@"Warning: main thread-bound operation is running in background!");}
     

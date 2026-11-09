@@ -3,9 +3,9 @@
 
 @interface TGUserSignal : NSObject
 
-+ (SSignal *)userWithUserId:(int32_t)userId;
-+ (SSignal *)updatedUserCachedDataWithUserId:(int32_t)userId;
-+ (SSignal *)profileSavedMusicWithUserId:(int32_t)userId;
-+ (SSignal *)groupsInCommon:(int32_t)userId;
++ (SSignal *)userWithUserId:(int64_t)userId;
++ (SSignal *)updatedUserCachedDataWithUserId:(int64_t)userId;
++ (SSignal *)profileSavedMusicWithUserId:(int64_t)userId;
++ (SSignal *)groupsInCommon:(int64_t)userId;
 
 @end

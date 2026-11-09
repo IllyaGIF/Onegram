@@ -66,7 +66,6 @@ typedef enum {
         _photoFileReferenceSmall = [coder decodeDataCorCKey:"frs"];
         _photoFileReferenceBig = [coder decodeDataCorCKey:"frb"];
         _emojiStatusDocumentId = [coder decodeInt64ForCKey:"esd"];
-        _modernUserId = [coder decodeInt64ForCKey:"mui"];
         _nameColorId = [coder decodeInt32ForCKey:"nci"] - 1;
         _isPremium = [coder decodeInt32ForCKey:"pr"] != 0;
     }
@@ -90,7 +89,6 @@ typedef enum {
     [coder encodeData:_photoFileReferenceSmall forCKey:"frs"];
     [coder encodeData:_photoFileReferenceBig forCKey:"frb"];
     [coder encodeInt64:_emojiStatusDocumentId forCKey:"esd"];
-    [coder encodeInt64:_modernUserId forCKey:"mui"];
     [coder encodeInt32:_nameColorId + 1 forCKey:"nci"];
     [coder encodeInt32:_isPremium ? 1 : 0 forCKey:"pr"];
 }
@@ -116,7 +114,6 @@ typedef enum {
     user.presence = _presence;
     user.customProperties = _customProperties;
     user.emojiStatusDocumentId = _emojiStatusDocumentId;
-    user.modernUserId = _modernUserId;
     user.nameColorId = _nameColorId;
     user.isPremium = _isPremium;
     user.contactId = _contactId;
@@ -290,7 +287,6 @@ typedef enum {
         ((anotherUser.photoUrlBig == nil && _photoUrlBig == nil) || [anotherUser.photoUrlBig isEqualToString:_photoUrlBig]) && TGObjectCompare(anotherUser.photoFileReferenceSmall, _photoFileReferenceSmall) && TGObjectCompare(anotherUser.photoFileReferenceBig, _photoFileReferenceBig) && anotherUser.presence.online == _presence.online && anotherUser.presence.lastSeen == _presence.lastSeen && TGStringCompare(_userName, anotherUser.userName) && anotherUser.kind == _kind && anotherUser.botKind == _botKind &&
         _isPremium == anotherUser.isPremium &&
         _emojiStatusDocumentId == anotherUser.emojiStatusDocumentId &&
-        _modernUserId == anotherUser.modernUserId &&
         _nameColorId == anotherUser.nameColorId &&
         TGStringCompare(_restrictionReason, anotherUser.restrictionReason))
     {
@@ -360,10 +356,6 @@ typedef enum {
     }
 
     if (anotherUser.emojiStatusDocumentId != _emojiStatusDocumentId) {
-        difference |= TGUserFieldOther;
-    }
-
-    if (anotherUser.modernUserId != _modernUserId) {
         difference |= TGUserFieldOther;
     }
 

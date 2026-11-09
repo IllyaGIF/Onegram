@@ -101,21 +101,7 @@
 
 #import "TGPresentation.h"
 #import "TGPreviewPresentationHelper.h"
-
-static inline bool TGIOS6SharedMediaPeerIdLooksLikeModernRawChannel(int64_t peerId)
-{
-    return peerId <= ((int64_t)INT32_MIN) * 3 && peerId > ((int64_t)INT32_MIN) * 4;
-}
-
-static inline bool TGIOS6SharedMediaPeerIdIsModernRawChannel(int64_t peerId)
-{
-    return TGIOS6SharedMediaPeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
-}
-
-static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
-{
-    return TGPeerIdIsChannel(peerId) || TGIOS6SharedMediaPeerIdIsModernRawChannel(peerId);
-}
+#import "TGPluginHost.h"
 
 @interface TGSharedMediaController () <ASWatcher, PSUICollectionViewDataSource, TGSharedMediaCollectionViewDelegate, TGSearchBarDelegate>
 {
@@ -243,7 +229,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
         _peerId = peerId;
         _accessHash = accessHash;
         _important = important;
-        _allowActions = _peerId > INT_MIN || TGIOS6SharedMediaPeerIdIsChannelLike(_peerId);
+        _allowActions = !TGPeerIdIsSecretChat(_peerId);
         
         CGSize screenSize = TGScreenSize();
         _widescreenWidth = MAX(screenSize.width, screenSize.height);
@@ -676,7 +662,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
             __strong TGSharedMediaController *strongSelf = weakSelf;
             if (strongSelf != nil)
             {
-                if (strongSelf->_peerId > INT_MIN && !indexDownloaded)
+                if (!TGPeerIdIsSecretChat(strongSelf->_peerId) && !indexDownloaded)
                 {
                     [compositeDisposable add:[[TGMessageSearchSignals searchPeer:strongSelf->_peerId accessHash:strongSelf->_accessHash query:@"" filter:filter maxMessageId:maxMessageId limit:128] startWithNext:^(NSArray *messages)
                     {
@@ -1612,7 +1598,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
     {
         time_t t = (int)[item date];
         struct tm timeinfo;
-        localtime_r(&t, &timeinfo);
+        TGDateUtilsLocalTime(t, &timeinfo);
         
         if (timeinfo.tm_year != currentGroupYear || timeinfo.tm_mon != currentGroupMonth)
         {
@@ -2096,6 +2082,10 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
             {
                 [TGTelegraphInstance.musicPlayer setPlaylist:[TGGenericPeerPlaylistSignals playlistForPeerId:_peerId important:_important atMessageId:[item messageId] voice:false] initialItemKey:@([item messageId]) metadata:nil];
             }
+#if OG_PLUGINS_AVAILABLE
+            else if ([TGPluginHost openDocumentAtPath:filePath attachment:fileItem.documentMediaAttachment peerId:_peerId messageId:[item messageId] place:@"SharedMediaLayout"])
+                [collectionView deselectItemAtIndexPath:indexPath animated:true];
+#endif
             else
             {
                 TGDocumentController *documentController = [[TGDocumentController alloc] initWithURL:[NSURL fileURLWithPath:filePath] messageId:[item messageId]];
@@ -2445,7 +2435,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
     TGGenericPeerMediaGalleryModel *model = [[TGGenericPeerMediaGalleryModel alloc] initWithPeerId:_peerId allowActions:_allowActions messages:[[self messagesForItemGroups:_filteredItemGroups].reverseObjectEnumerator allObjects] atMessageId:[item messageId]];
     
     bool canDelete = true;
-    if (TGIOS6SharedMediaPeerIdIsChannelLike(_peerId))
+    if (TGPeerIdIsChannel(_peerId))
     {
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:_peerId];
         bool isCreator = conversation.channelRole == TGChannelRoleCreator;
@@ -2573,7 +2563,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
                 }
             }
             
-            if ((!TGIOS6SharedMediaPeerIdIsChannelLike(strongSelf->_peerId) || strongSelf.isChannelGroup) && !isInlineBotMessage)
+            if ((!TGPeerIdIsChannel(strongSelf->_peerId) || strongSelf.isChannelGroup) && !isInlineBotMessage)
             {
                 for (TGMediaAttachment *attachment in message.mediaAttachments)
                 {
@@ -2616,7 +2606,7 @@ static inline bool TGIOS6SharedMediaPeerIdIsChannelLike(int64_t peerId)
             _selectionPanelView = [[TGSharedMediaSelectionPanelView alloc] initWithFrame:CGRectMake(0.0f, self.view.frame.size.height, self.view.frame.size.width, 45.0f + self.controllerSafeAreaInset.bottom)];
             _selectionPanelView.presentation = self.presentation;
             _selectionPanelView.forwardEnabled = _allowActions;
-            _selectionPanelView.deleteEnabled = !TGIOS6SharedMediaPeerIdIsChannelLike(_peerId) || _channelAllowDelete;
+            _selectionPanelView.deleteEnabled = !TGPeerIdIsChannel(_peerId) || _channelAllowDelete;
             _selectionPanelView.shareEnabled = _allowActions;
             _selectionPanelView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin;
             __weak TGSharedMediaController *weakSelf = self;
@@ -3329,7 +3319,7 @@ static id mediaIdForItem(id<TGSharedMediaItem> item)
     __weak TGSharedMediaController *weakSelf = self;
     
     SSignal *remoteSignal = [SSignal complete];
-    if (_peerId > INT_MIN || TGIOS6SharedMediaPeerIdIsChannelLike(_peerId))
+    if (!TGPeerIdIsSecretChat(_peerId))
     {
         remoteSignal = [[[TGMessageSearchSignals searchPeer:_peerId accessHash:_accessHash query:query filter:[self searchFilterForMode:_mode] maxMessageId:0 limit:128] map:^id (NSArray *messages)
         {

@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGImageMessageViewModel.h"
 #import "TGMessageGroupedLayout.h"
@@ -55,15 +56,6 @@
 
 #import "TGAudioWebpageFooterModel.h"
 
-static inline bool TGIOS6ImagePeerIdLooksLikeModernRawChannel(int64_t peerId)
-{
-    return peerId <= ((int64_t)INT32_MIN) * 3 && peerId > ((int64_t)INT32_MIN) * 4;
-}
-
-static inline bool TGIOS6ImagePeerIdIsModernRawChannel(int64_t peerId)
-{
-    return TGIOS6ImagePeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
-}
 #import "TGArticleWebpageFooterModel.h"
 #import "TGStickerWebpageFooterModel.h"
 #import "TGMusicWebpageFooterModel.h"
@@ -72,10 +64,10 @@ static inline bool TGIOS6ImagePeerIdIsModernRawChannel(int64_t peerId)
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGImageBlur.h"
 #import "TGMessageReactionsLayout.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
 
-static const int TGIOS6SquareGroupedMediaInnerCorners = 1 << 8;
 static const CGFloat TGImageMessageMinWidth = 170.0f;
 static const CGFloat TGImageMessageMinHeight = 74.0f;
 static const CGFloat TGImageMessageMaxHeightRatio = 380.0f / 300.0f;
@@ -259,7 +251,7 @@ static bool TGIOS6ImageMessageHasDiscussionFooter(TGMessage *message)
     CGFloat sideInset = 7.0f;
     CGFloat glossHeight = MIN(18.0f, MAX(14.0f, imageContainer.bounds.size.height * 0.07f));
     _ios6SingleImageGlossView.frame = CGRectMake(sideInset, 1.0f, MAX(0.0f, imageContainer.bounds.size.width - sideInset * 2.0f), glossHeight);
-    _ios6SingleImageGlossView.layer.cornerRadius = MIN(9.0f, glossHeight * 0.45f);
+    _ios6SingleImageGlossView.layer.cornerRadius = 0.0f;
     _ios6SingleImageGlossLayer.frame = _ios6SingleImageGlossView.bounds;
     _ios6SingleImageGlossLayer.cornerRadius = _ios6SingleImageGlossView.layer.cornerRadius;
     _ios6SingleImageGlossRimLayer.frame = CGRectMake(5.0f, 0.5f, MAX(0.0f, _ios6SingleImageGlossView.bounds.size.width - 10.0f), 1.5f);
@@ -642,7 +634,7 @@ static CTFontRef textFontForSize(CGFloat size)
     
     int positionFlags = [self visiblePositionFlags];
     if (classicGroupedMedia)
-        positionFlags |= TGIOS6SquareGroupedMediaInnerCorners;
+        positionFlags |= TGAttachmentSquareInnerCorners;
     if (positionFlags != 0)
         imageUri = [imageUri stringByAppendingFormat:@"&position=%d", positionFlags];
     
@@ -693,7 +685,7 @@ static CTFontRef textFontForSize(CGFloat size)
 
 - (NSString *)signatureString
 {
-    return _authorSignature.length > 0 ? _authorSignature : (_isEdited && _positionFlags == TGMessageGroupPositionNone ? TGLocalized(@"Conversation.MessageEditedLabel") : nil);
+    return _authorSignature.length > 0 ? _authorSignature : (_isEdited && _positionFlags == TGMessageGroupPositionNone ? TGOnegramEditedLabel() : nil);
 }
 
 + (void)calculateImageSizesForImageSize:(in CGSize)imageSize thumbnailSize:(out CGSize *)thumbnailSize renderSize:(out CGSize *)renderSize squareAspect:(bool)squareAspect
@@ -811,6 +803,28 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
     return false;
 }
 
+- (bool)_isSecondaryGroupedModel
+{
+    return _groupedLayout != nil && _positionFlags != TGMessageGroupPositionNone && _positionFlags != TGMessageGroupPositionUnknown && ![self hasMainPosition];
+}
+
+- (bool)_ownHeaderHidesTopCorners
+{
+    return (_authorPeer != nil && [self _requiresContentModel]) || _replyHeader != nil || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil;
+}
+
+- (bool)groupedHeaderVisible
+{
+    return [self hasHeader];
+}
+
+- (bool)groupedTopCornersHidden
+{
+    if ([self _isSecondaryGroupedModel])
+        return _groupedLayout.topCornersHidden;
+    return [self _ownHeaderHidesTopCorners];
+}
+
 - (TGMessageGroupPositionFlags)visiblePositionFlags
 {
     bool hasTopCorners = true;
@@ -820,7 +834,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
     if (hasCaption || (_positionFlags == TGMessageGroupPositionNone && [self _ios6RequiresBubbleBackground]))
         hasBottomCorners = false;
     
-    if (((!hasBottomCorners || _context.isFeed) && _authorPeer != nil) || _replyHeader != nil || (_forwardPeer != nil && !_context.isSavedMessages) || _viaUser != nil)
+    if ([self _isSecondaryGroupedModel] ? _groupedLayout.topCornersHidden : [self _ownHeaderHidesTopCorners])
         hasTopCorners = false;
     
     if (_positionFlags != TGMessageGroupPositionNone && _positionFlags != TGMessageGroupPositionUnknown)
@@ -968,7 +982,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
 
 - (void)updateMediaAvailability:(bool)mediaIsAvailable viewStorage:(TGModernViewStorage *)__unused viewStorage delayDisplay:(bool)delayDisplay
 {
-    if (mediaIsAvailable && !_mediaIsAvailable && OGPlatformMediaDownloadsRequireUserAction())
+    if (mediaIsAvailable && !_mediaIsAvailable)
         [_imageModel reloadImage:false];
 
     _mediaIsAvailable = mediaIsAvailable;
@@ -1104,7 +1118,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
                 [_contentModel updateSubmodelContentsIfNeeded];
             } else if (_isEdited != previousEdited) {
                 if (!_ignoreEditing && _isEdited && _dateModel != nil) {
-                    _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGLocalized(@"Conversation.MessageEditedLabel") textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
+                    _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGOnegramEditedLabel() textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
                     [_contentModel addSubmodel:_editedLabelModel];
                 }
             }
@@ -1593,7 +1607,11 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
 {
     _instantPreviewTouchAreaModel.viewUserInteractionDisabled = !_mediaIsAvailable || _progressVisible;
     
-    if (_progressVisible)
+    if ([self isStreamingDownload])
+    {
+        [_imageModel setOverlayType:[self defaultOverlayActionType] animated:animated];
+    }
+    else if (_progressVisible)
     {
         if (_positionFlags != TGMessageGroupPositionNone && [_message local] && _progress >= 1.0f - FLT_EPSILON)
         {
@@ -1607,7 +1625,9 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
     }
     else if (!_mediaIsAvailable)
     {
-        if (_canDownload) {
+        if ([self isStreamable]) {
+            [_imageModel setOverlayType:[self defaultOverlayActionType] animated:false];
+        } else if (_canDownload) {
             [_imageModel setOverlayType:TGMessageImageViewOverlayDownload animated:false];
         } else {
             [_imageModel setOverlayType:TGMessageImageViewOverlayNone animated:false];
@@ -1714,12 +1734,15 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
     [_replyHeaderModel bindSpecialViewsToContainer:_contentModel.boundView viewStorage:viewStorage atItemPosition:CGPointMake(_replyHeaderModel.frame.origin.x, _replyHeaderModel.frame.origin.y)];
     
     _boundDoubleTapRecognizer = [[TGDoubleTapGestureRecognizer alloc] initWithTarget:self action:@selector(messageDoubleTapGesture:)];
+    _boundDoubleTapRecognizer.longPressDuration = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0.5 : 1.5;
     _boundDoubleTapRecognizer.delegate = self;
+    _boundDoubleTapRecognizer.consumeSingleTap = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats];
     [[_imageModel boundView] addGestureRecognizer:_boundDoubleTapRecognizer];
     
     if (_backgroundModel != nil)
     {
         _boundBackgroundDoubleTapRecognizer = [[TGDoubleTapGestureRecognizer alloc] initWithTarget:self action:@selector(backgroundDoubleTapGesture:)];
+        _boundBackgroundDoubleTapRecognizer.longPressDuration = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0.5 : 1.5;
         _boundBackgroundDoubleTapRecognizer.delegate = self;
         [[_backgroundModel boundView] addGestureRecognizer:_boundBackgroundDoubleTapRecognizer];
     }
@@ -1826,9 +1849,17 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
             {
                 [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             }
+            else if (recognizer.doubleTapped)
+            {
+                [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+            }
             else
             {
-                if (_mediaIsAvailable)
+                if ([self isStreamingDownload] && [self isStreamingCancelAreaHit:recognizer])
+                {
+                    [self cancelMediaDownload];
+                }
+                else if (_mediaIsAvailable || [self isStreamable])
                 {
                     [self activateMedia:[self isInstant]];
                 }
@@ -1878,16 +1909,16 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
         else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
             [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];
         else if (_viaUserModel != nil && CGRectContainsPoint(_viaUserModel.frame, point)) {
-            [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+            [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
         }
         else if (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)) {
             if (_viaUser != nil && [_forwardedHeaderModel linkAtPoint:CGPointMake(point.x - _forwardedHeaderModel.frame.origin.x, point.y - _forwardedHeaderModel.frame.origin.y) regionData:NULL]) {
-                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
             } else {
                 if (TGPeerIdIsChannel(_forwardedPeerId)) {
                     [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
                 } else {
-                    [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
+                    [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @(_forwardedPeerId)}];
                 }
             }
         }
@@ -1933,7 +1964,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
 
 - (void)actionButtonPressed
 {
-    if (_mediaIsAvailable)
+    if (_mediaIsAvailable || [self isStreamable])
     {
         if (![self instantPreviewGesture])
         {
@@ -1987,7 +2018,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
 - (int)gestureRecognizer:(TGDoubleTapGestureRecognizer *)recognizer shouldFailTap:(CGPoint)__unused point
 {
     if (recognizer == _boundDoubleTapRecognizer)
-        return 3;
+        return [TGOnegramSettings boolForKey:TGOnegramSettingGeneralNewChats] ? 0 : 3;
     
     if (recognizer == _boundBackgroundDoubleTapRecognizer)
     {
@@ -2148,6 +2179,8 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
 
 - (bool)hasHeader
 {
+    if ([self _isSecondaryGroupedModel])
+        return _groupedLayout.headerVisible;
     return (_positionFlags == TGMessageGroupPositionNone && (_replyHeaderModel != nil || _forwardedHeaderModel)) || (_positionFlags != TGMessageGroupPositionNone && (_replyHeader != nil || (_forwardPeer != nil && !_context.isSavedMessages) || (_authorPeer != nil && _context.isFeed)));
 }
 
@@ -2331,12 +2364,15 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
         if (_incomingAppearance && _editing)
             imageFrame.origin.x += 42.0f;
         
-        if (hasHeader && [self hasMainPosition])
+        if ([self hasMainPosition])
         {
-            if (_incomingAppearance)
-                imageFrame.origin.x += 2.0f;
-            else
-                imageFrame.origin.x -= 2.0f;
+            if (hasHeader)
+            {
+                if (_incomingAppearance)
+                    imageFrame.origin.x += 2.0f;
+                else
+                    imageFrame.origin.x -= 2.0f;
+            }
             
             imageFrame.origin.y += headerSize.height;
         }
@@ -3302,7 +3338,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
             }
             
             if (!_ignoreEditing && _isEdited) {
-                _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGLocalized(@"Conversation.MessageEditedLabel") textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
+                _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGOnegramEditedLabel() textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
                 [_contentModel addSubmodel:_editedLabelModel];
             }
         }
@@ -3447,7 +3483,7 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
             _webPageFooterModel.boundToContainer = _boundToContainer;
             [_contentModel addSubmodel:_webPageFooterModel];
         } else {
-            if (TGPeerIdIsAdminLog(_message.cid) && !TGIOS6ImagePeerIdIsModernRawChannel(_message.cid))
+            if (TGPeerIdIsAdminLog(_message.cid))
                 imageInText = true;
             
             _webPageFooterModel = [[TGArticleWebpageFooterModel alloc] initWithContext:_context incoming:_incomingAppearance webPage:webPage imageInText:imageInText invoice:invoice];
@@ -3484,6 +3520,22 @@ static CGSize TGImageMessageAspectFilled(CGSize size, CGSize boundingSize)
 
 - (void)instantPageButtonPressed {
     
+}
+
+- (bool)isStreamable {
+    return false;
+}
+
+- (bool)isStreamingDownload {
+    return _progressVisible && ![_message local] && [self isStreamable];
+}
+
+- (bool)isStreamingCancelAreaHit:(UIGestureRecognizer *)recognizer {
+    UIView *imageView = [_imageModel boundView];
+    if (imageView == nil)
+        return false;
+    CGPoint point = [recognizer locationInView:imageView];
+    return point.x >= 0.0f && point.y >= 0.0f && point.x < MIN(140.0f, imageView.bounds.size.width / 2.0f) && point.y < 36.0f;
 }
 
 - (bool)isInstant {

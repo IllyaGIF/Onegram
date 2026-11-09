@@ -59,14 +59,14 @@
 
 @interface TLUpdate$updateUserStatus : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic, retain) TLUserStatus *status;
 
 @end
 
 @interface TLUpdate$updateContactRegistered : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic) int32_t date;
 
 @end
@@ -79,7 +79,7 @@
 
 @interface TLUpdate$updateActivation : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 
 @end
 
@@ -105,7 +105,7 @@
 
 @interface TLUpdate$updateUserPhoto : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic) int32_t date;
 @property (nonatomic, retain) TLUserProfilePhoto *photo;
 @property (nonatomic) bool previous;
@@ -142,8 +142,8 @@
 
 @interface TLUpdate$updateChatParticipantDelete : TLUpdate
 
-@property (nonatomic) int32_t chat_id;
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t chat_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic) int32_t version;
 
 @end
@@ -156,7 +156,7 @@
 
 @interface TLUpdate$updateUserBlocked : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic) bool blocked;
 
 @end
@@ -170,22 +170,22 @@
 
 @interface TLUpdate$updateUserTyping : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic, retain) TLSendMessageAction *action;
 
 @end
 
 @interface TLUpdate$updateChatUserTyping : TLUpdate
 
-@property (nonatomic) int32_t chat_id;
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t chat_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic, retain) TLSendMessageAction *action;
 
 @end
 
 @interface TLUpdate$updateUserName : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic, retain) NSString *first_name;
 @property (nonatomic, retain) NSString *last_name;
 @property (nonatomic, retain) NSString *username;
@@ -201,7 +201,7 @@
 
 @interface TLUpdate$updateUserPhone : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic, retain) NSString *phone;
 
 @end
@@ -262,7 +262,7 @@
 
 @interface TLUpdate$updateContactLink : TLUpdate
 
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic, retain) TLContactLink *my_link;
 @property (nonatomic, retain) TLContactLink *foreign_link;
 
@@ -278,9 +278,9 @@
 
 @interface TLUpdate$updateChatParticipantAdd : TLUpdate
 
-@property (nonatomic) int32_t chat_id;
-@property (nonatomic) int32_t user_id;
-@property (nonatomic) int32_t inviter_id;
+@property (nonatomic) int64_t chat_id;
+@property (nonatomic) int64_t user_id;
+@property (nonatomic) int64_t inviter_id;
 @property (nonatomic) int32_t date;
 @property (nonatomic) int32_t version;
 
@@ -296,13 +296,13 @@
 
 @interface TLUpdate$updateChannel : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 
 @end
 
 @interface TLUpdate$updateChannelGroup : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic, retain) TLMessageGroup *group;
 
 @end
@@ -317,14 +317,14 @@
 
 @interface TLUpdate$updateReadChannelInbox : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic) int32_t max_id;
 
 @end
 
 @interface TLUpdate$updateDeleteChannelMessages : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic, retain) NSArray *messages;
 @property (nonatomic) int32_t pts;
 @property (nonatomic) int32_t pts_count;
@@ -333,7 +333,7 @@
 
 @interface TLUpdate$updateChannelMessageViews : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic) int32_t n_id;
 @property (nonatomic) int32_t views;
 
@@ -341,7 +341,7 @@
 
 @interface TLUpdate$updateChatAdmins : TLUpdate
 
-@property (nonatomic) int32_t chat_id;
+@property (nonatomic) int64_t chat_id;
 @property (nonatomic) bool enabled;
 @property (nonatomic) int32_t version;
 
@@ -349,8 +349,8 @@
 
 @interface TLUpdate$updateChatParticipantAdmin : TLUpdate
 
-@property (nonatomic) int32_t chat_id;
-@property (nonatomic) int32_t user_id;
+@property (nonatomic) int64_t chat_id;
+@property (nonatomic) int64_t user_id;
 @property (nonatomic) bool is_admin;
 @property (nonatomic) int32_t version;
 
@@ -382,7 +382,7 @@
 
 @interface TLUpdate$updateChannelPinnedMessage : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic) int32_t n_id;
 
 @end
@@ -402,7 +402,7 @@
 
 @interface TLUpdate$updateReadChannelOutbox : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic) int32_t max_id;
 
 @end
@@ -443,7 +443,7 @@
 
 @interface TLUpdate$updateChannelWebPage : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic, retain) TLWebPage *webpage;
 @property (nonatomic) int32_t pts;
 @property (nonatomic) int32_t pts_count;
@@ -512,7 +512,7 @@
 
 @interface TLUpdate$updateChannelReadMessagesContents : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic, retain) NSArray *messages;
 
 @end
@@ -524,7 +524,7 @@
 
 @interface TLUpdate$updateChannelAvailableMessages : TLUpdate
 
-@property (nonatomic) int32_t channel_id;
+@property (nonatomic) int64_t channel_id;
 @property (nonatomic) int32_t available_min_id;
 
 @end

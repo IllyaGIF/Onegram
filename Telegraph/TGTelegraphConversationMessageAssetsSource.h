@@ -10,16 +10,20 @@
 
 #import "TGConversationMessageAssetsSource.h"
 
+@class TGWallpaperInfo;
+
 extern int TGBaseFontSize;
 
 @interface TGTelegraphConversationMessageAssetsSource : NSObject <TGConversationMessageAssetsSource>
 
-@property (nonatomic) int monochromeColor;
-@property (nonatomic) CGFloat systemAlpha;
-@property (nonatomic) CGFloat buttonsAlpha;
-@property (nonatomic) CGFloat highlighteButtonAlpha;
-@property (nonatomic) CGFloat progressAlpha;
+@property (nonatomic, readonly) int monochromeColor;
+@property (nonatomic, readonly) CGFloat systemAlpha;
+@property (nonatomic, readonly) CGFloat buttonsAlpha;
+@property (nonatomic, readonly) CGFloat highlighteButtonAlpha;
+@property (nonatomic, readonly) CGFloat progressAlpha;
 
 + (TGTelegraphConversationMessageAssetsSource *)instance;
+
+- (void)applyWallpaperInfo:(TGWallpaperInfo *)wallpaperInfo;
 
 @end

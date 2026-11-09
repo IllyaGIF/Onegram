@@ -337,6 +337,21 @@ typedef enum {
     _contentProperties = dict;
 }
 
+- (int64_t)savedPeerId {
+    TGMessageSavedPeerContentProperty *property = _contentProperties[@"savedPeerId"];
+    return property.peerId;
+}
+
+- (void)setSavedPeerId:(int64_t)savedPeerId {
+    NSMutableDictionary *dict = [[NSMutableDictionary alloc] initWithDictionary:_contentProperties];
+    if (savedPeerId != 0) {
+        dict[@"savedPeerId"] = [[TGMessageSavedPeerContentProperty alloc] initWithPeerId:savedPeerId];
+    } else {
+        [dict removeObjectForKey:@"savedPeerId"];
+    }
+    _contentProperties = dict;
+}
+
 - (NSTimeInterval)editDate {
     TGMessageEditDateContentProperty *property = _contentProperties[@"editDate"];
     return property.editDate;
@@ -432,7 +447,7 @@ static bool TGMessageTextMayContainPhone(NSString *text)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        cache = [[OGMemoryCache alloc] initWithCountLimit:768 costLimit:1024 * 1024];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:768 costLimit:OGMemoryCacheBudget(1024 * 1024)];
     });
 
     TGMessageTextCheckingKey *key = [[TGMessageTextCheckingKey alloc] init];
@@ -476,12 +491,18 @@ static bool TGMessageTextMayContainPhone(NSString *text)
                 }
             } else if ([entity isKindOfClass:[TGMessageEntityItalic class]]) {
                 [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeItalic contents:@""]];
+            } else if ([entity isKindOfClass:[TGMessageEntityUnderline class]]) {
+                [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeUnderline contents:@""]];
+            } else if ([entity isKindOfClass:[TGMessageEntityStrikethrough class]]) {
+                [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeStrikethrough contents:@""]];
+            } else if ([entity isKindOfClass:[TGMessageEntitySpoiler class]]) {
+                [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeSpoiler contents:@""]];
             } else if ([entity isKindOfClass:[TGMessageEntityMention class]]) {
                 if (entity.range.length > 1) {
                     [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeMention contents:[text substringWithRange:NSMakeRange(entity.range.location + 1, entity.range.length - 1)]]];
                 }
             } else if ([entity isKindOfClass:[TGMessageEntityMentionName class]]) {
-                [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeLink contents:[NSString stringWithFormat:@"tg-user://%d", ((TGMessageEntityMentionName *)entity).userId]]];
+                [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeLink contents:[NSString stringWithFormat:@"tg-user://%lld", (long long)((TGMessageEntityMentionName *)entity).userId]]];
             } else if ([entity isKindOfClass:[TGMessageEntityPre class]]) {
                 [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeCode contents:@""]];
             } else if ([entity isKindOfClass:[TGMessageEntityTextUrl class]]) {
@@ -944,12 +965,18 @@ static bool TGMessageTextMayContainPhone(NSString *text)
                         }
                     } else if ([entity isKindOfClass:[TGMessageEntityItalic class]]) {
                         [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeItalic contents:@""]];
+                    } else if ([entity isKindOfClass:[TGMessageEntityUnderline class]]) {
+                        [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeUnderline contents:@""]];
+                    } else if ([entity isKindOfClass:[TGMessageEntityStrikethrough class]]) {
+                        [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeStrikethrough contents:@""]];
+                    } else if ([entity isKindOfClass:[TGMessageEntitySpoiler class]]) {
+                        [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeSpoiler contents:@""]];
                     } else if ([entity isKindOfClass:[TGMessageEntityMention class]]) {
                         if (entity.range.length > 1) {
                             [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeMention contents:[_text substringWithRange:NSMakeRange(entity.range.location + 1, entity.range.length - 1)]]];
                         }
                     } else if ([entity isKindOfClass:[TGMessageEntityMentionName class]]) {
-                        [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeLink contents:[NSString stringWithFormat:@"tg-user://%d", ((TGMessageEntityMentionName *)entity).userId]]];
+                        [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeLink contents:[NSString stringWithFormat:@"tg-user://%lld", (long long)((TGMessageEntityMentionName *)entity).userId]]];
                     } else if ([entity isKindOfClass:[TGMessageEntityPre class]]) {
                         [textCheckingResults addObject:[[TGTextCheckingResult alloc] initWithRange:entity.range type:TGTextCheckingResultTypeCode contents:@""]];
                     } else if ([entity isKindOfClass:[TGMessageEntityTextUrl class]]) {

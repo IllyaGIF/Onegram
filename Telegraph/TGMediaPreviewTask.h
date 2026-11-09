@@ -33,5 +33,6 @@
 - (void)executeWithMapSnapshotOptions:(TGMapSnapshotOptions *)snapshotOptions completionWithImage:(void (^)(UIImage *image))completionWithImage workerTask:(TGWorkerTask *)workerTask;
 
 - (void)cancel;
+- (bool)isCancelled;
 
 @end

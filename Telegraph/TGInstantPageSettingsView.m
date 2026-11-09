@@ -9,6 +9,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernButton.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGPhotoEditorSliderView.h"
 #import "TGInstantPageColorView.h"
+#import "TGFlatControls.h"
 
 @interface TGInstantPageSettingsView ()
 {
@@ -36,7 +37,7 @@
     
     UILabel *_autoThemeLabel;
     UIView *_autoThemeWrapperView;
-    UISwitch *_autoThemeSwitch;
+    UIControl<TGSwitchControl> *_autoThemeSwitch;
     bool _autoNight;
     
     TGModernButton *_sansSerifFontButton;
@@ -315,7 +316,7 @@
         [_scrollView addSubview:_autoThemeLabel];
         
         _autoNight = autoNightThemeEnabled;
-        _autoThemeSwitch = [[UISwitch alloc] init];
+        _autoThemeSwitch = TGSwitchControlCreate();
         _autoThemeSwitch.on = autoNightThemeEnabled && presentation.initialTheme != TGInstantPagePresentationThemeBlack;
         [_autoThemeSwitch addTarget:self action:@selector(autoThemeChanged:) forControlEvents:UIControlEventValueChanged];
         
@@ -416,7 +417,7 @@
     }
 }
 
-- (void)autoThemeChanged:(UISwitch *)sender {
+- (void)autoThemeChanged:(UIControl<TGSwitchControl> *)sender {
     _autoNight = sender.isOn;
     
     if (self.autoNightThemeChanged != nil) {

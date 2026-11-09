@@ -24,16 +24,8 @@
 
 #import "TGGenericPeerMediaGalleryVideoItem.h"
 #import "TGModernGalleryPIPHeaderView.h"
-
-static inline bool TGIOS6GalleryPeerIdLooksLikeModernRawChannel(int64_t peerId)
-{
-    return peerId <= ((int64_t)INT32_MIN) * 3 && peerId > ((int64_t)INT32_MIN) * 4;
-}
-
-static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
-{
-    return TGIOS6GalleryPeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
-}
+#import "OGMediaStreamServer.h"
+#import "OGMediaFetchDescriptor+Telegraph.h"
 
 @interface TGModernGalleryNewVideoItemView () <ASWatcher>
 {
@@ -50,6 +42,10 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     
     bool _scrubbing;
     bool _switchingToPIP;
+    
+    bool _streamable;
+    OGMediaStream *_stream;
+    NSString *_videoPath;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -168,6 +164,7 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
 - (void)dealloc
 {
     [self stop];
+    [self _invalidateStream];
     
     [_actionHandle reset];
     [ActionStageInstance() removeWatcher:self];
@@ -186,6 +183,7 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
         [_playerView reset];
     
     _autoplayAfterDownload = false;
+    [self _invalidateStream];
     
     if ([self footerView] == _footerView)
     {
@@ -208,6 +206,7 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     
     [super setItem:item synchronously:synchronously];
     
+    [self _invalidateStream];
     [_playerView reset];
     
     if ([self footerView] == _footerView)
@@ -250,9 +249,13 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     
     _footerView.duration = duration;
     _videoDimensions = dimensions;
+    _duration = duration;
+    _videoPath = videoPath;
+    _streamable = [self allowsStreaming] && [self _streamableMedia:media];
+    [_scrubbingInterfaceView setBitrateProvider:nil mediaBitrate:0.0];
     
     _disablePictureInPicture = false;
-    if ([item isKindOfClass:[TGGenericPeerMediaGalleryVideoItem class]] && TGPeerIdIsAdminLog(((TGGenericPeerMediaGalleryVideoItem *)item).peerId) && !TGIOS6GalleryPeerIdIsModernRawChannel(((TGGenericPeerMediaGalleryVideoItem *)item).peerId)) {
+    if ([item isKindOfClass:[TGGenericPeerMediaGalleryVideoItem class]] && TGPeerIdIsAdminLog(((TGGenericPeerMediaGalleryVideoItem *)item).peerId)) {
         _disablePictureInPicture = true;
     }
     [self _initializePlayerWithPath:videoPath duration:duration synchronously:synchronously];
@@ -452,6 +455,14 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     {
         [self _willPlay];
         
+        if (_stream == nil)
+            [self _updateLocalBitrate];
+        [[self _playerView] playVideo];
+    }
+    else if (_streamable && [self _startStreaming])
+    {
+        [self _willPlay];
+        
         [[self _playerView] playVideo];
     }
     else if (_downloading)
@@ -495,6 +506,91 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
     [self play];
 }
 
+- (bool)allowsStreaming
+{
+    return true;
+}
+
+- (bool)isStreamable
+{
+    return _streamable;
+}
+
+- (bool)_streamableMedia:(id)media
+{
+    if ([media isKindOfClass:[TGVideoMediaAttachment class]])
+        return [OGMediaFetchDescriptor isStreamableVideoAttachment:media];
+    if ([media isKindOfClass:[TGDocumentMediaAttachment class]])
+    {
+        NSString *mimeType = [OGMediaFetchDescriptor streamMimeTypeForDocument:media pathExtension:NULL];
+        return [OGMediaFetchDescriptor isStreamableDocument:media] && [mimeType hasPrefix:@"video/"];
+    }
+    return false;
+}
+
+- (bool)_startStreaming
+{
+    if (_stream != nil)
+        return true;
+    
+    id media = ((TGModernGalleryVideoItem *)self.item).media;
+    NSString *publishPath = nil;
+    NSString *mimeType = @"video/mp4";
+    NSString *pathExtension = @"mp4";
+    OGMediaFetchDescriptor *descriptor = nil;
+    if ([media isKindOfClass:[TGVideoMediaAttachment class]])
+        descriptor = [OGMediaFetchDescriptor descriptorForStreamingVideoAttachment:media publishPath:&publishPath];
+    else if ([media isKindOfClass:[TGDocumentMediaAttachment class]])
+    {
+        descriptor = [OGMediaFetchDescriptor descriptorForDocument:media publishPath:&publishPath];
+        mimeType = [OGMediaFetchDescriptor streamMimeTypeForDocument:media pathExtension:&pathExtension];
+    }
+    if (descriptor == nil)
+        return false;
+    
+    if (publishPath.length != 0 && [[NSFileManager defaultManager] fileExistsAtPath:publishPath])
+    {
+        [_playerView setVideoURL:[NSURL fileURLWithPath:publishPath] duration:_duration];
+        unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:publishPath error:NULL] fileSize];
+        [_scrubbingInterfaceView setBitrateProvider:nil mediaBitrate:_duration > 0.0 && fileSize > 0 ? (double)fileSize * 8.0 / _duration : 0.0];
+        return true;
+    }
+    
+    _stream = [[OGMediaStreamServer sharedServer] streamWithDescriptor:descriptor publishPath:publishPath mimeType:mimeType pathExtension:pathExtension];
+    if (_stream == nil)
+        return false;
+    
+    [_playerView setVideoURL:_stream.URL duration:_duration];
+    
+    __weak OGMediaStream *weakStream = _stream;
+    int64_t size = [_stream size];
+    [_scrubbingInterfaceView setBitrateProvider:^double
+    {
+        OGMediaStream *stream = weakStream;
+        if (stream == nil || [stream isComplete])
+            return -1.0;
+        return [stream downloadRate];
+    } mediaBitrate:_duration > 0.0 && size > 0 ? (double)size * 8.0 / _duration : 0.0];
+    return true;
+}
+
+- (void)_invalidateStream
+{
+    if (_stream == nil)
+        return;
+    [_stream invalidate];
+    _stream = nil;
+    [_scrubbingInterfaceView setBitrateProvider:nil mediaBitrate:0.0];
+}
+
+- (void)_updateLocalBitrate
+{
+    if (_videoPath == nil || _duration <= 0.0)
+        return;
+    unsigned long long size = [[[NSFileManager defaultManager] attributesOfItemAtPath:_videoPath error:NULL] fileSize];
+    [_scrubbingInterfaceView setBitrateProvider:nil mediaBitrate:size > 0 ? (double)size * 8.0 / _duration : 0.0];
+}
+
 - (void)hidePlayButton
 {
     _actionButton.hidden = true;
@@ -534,7 +630,7 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
 {
     [self _setMediaAvailable:mediaAvailable];
     
-    if (_mediaAvailable)
+    if (_mediaAvailable || _streamable)
         [_progressView setPlay];
     else
         [_progressView setDownload];
@@ -549,9 +645,9 @@ static inline bool TGIOS6GalleryPeerIdIsModernRawChannel(int64_t peerId)
 
 - (void)setProgressVisible:(bool)progressVisible value:(float)value animated:(bool)animated
 {
-    if (progressVisible)
+    if (progressVisible && _stream == nil)
         [_progressView setProgress:value cancelEnabled:true animated:animated];
-    else if (_mediaAvailable)
+    else if (_mediaAvailable || _streamable)
         [_progressView setPlay];
     else
         [_progressView setDownload];

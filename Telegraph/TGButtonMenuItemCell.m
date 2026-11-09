@@ -97,18 +97,10 @@
     }
     else if (subtype == TGButtonMenuItemSubtypeGreenButton)
     {
-        static UIImage *buttonImage = nil;
-        static UIImage *buttonHighightedImage = nil;
-        
-        static dispatch_once_t onceToken;
-        dispatch_once(&onceToken, ^
-        {
-            UIImage *rawButtonImage = [UIImage imageNamed:@"GroupedActionButtonGreen.png"];
-            UIImage *rawButtonHighlightedImage = [UIImage imageNamed:@"GroupedActionButtonGreen_Highlighted.png"];
-            
-            buttonImage = [rawButtonImage stretchableImageWithLeftCapWidth:(int)(rawButtonImage.size.width / 2) topCapHeight:0];
-            buttonHighightedImage = [rawButtonHighlightedImage stretchableImageWithLeftCapWidth:(int)(rawButtonHighlightedImage.size.width / 2) topCapHeight:0];
-        });
+        UIImage *rawButtonImage = [UIImage imageNamed:@"GroupedActionButtonGreen.png"];
+        UIImage *rawButtonHighlightedImage = [UIImage imageNamed:@"GroupedActionButtonGreen_Highlighted.png"];
+        UIImage *buttonImage = [rawButtonImage stretchableImageWithLeftCapWidth:(int)(rawButtonImage.size.width / 2) topCapHeight:0];
+        UIImage *buttonHighightedImage = [rawButtonHighlightedImage stretchableImageWithLeftCapWidth:(int)(rawButtonHighlightedImage.size.width / 2) topCapHeight:0];
         
         [_button setBackgroundImage:buttonImage forState:UIControlStateNormal];
         [_button setBackgroundImage:buttonHighightedImage forState:UIControlStateHighlighted];

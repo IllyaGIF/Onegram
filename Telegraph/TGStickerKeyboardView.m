@@ -12,6 +12,8 @@
 #import "TGDatabase.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGStickerCollectionViewCell.h"
+#import "TGAnimatedStickerCollectionViewCell.h"
+#import "TGAnimatedStickerFrames.h"
 #import "TGStickerCollectionHeader.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGStickerKeyboardTabPanel.h"
 
@@ -73,6 +75,7 @@ typedef enum {
 @interface TGStickerKeyboardView () <PSUICollectionViewDataSource, PSUICollectionViewDelegateFlowLayout, TGGifKeyboardBalancedLayoutDelegate, UIGestureRecognizerDelegate, TGSearchBarDelegate>
 {
     bool _didScroll;
+    bool _stickerAnimationUpdateScheduled;
     id<SDisposable> _stickerPacksDisposable;
     id<SDisposable> _updatedFeaturedStickerPacksDisposable;
     SPipe *_pinPipe;
@@ -230,7 +233,7 @@ typedef enum {
         _collectionView.alwaysBounceVertical = true;
         _collectionView.delaysContentTouches = false;
         _collectionView.contentInset = UIEdgeInsetsMake(tabPanelHeight + preloadInset + [self searchBarInset], 0.0f, preloadInset, 0.0f);
-        [_collectionView registerClass:[TGStickerCollectionViewCell class] forCellWithReuseIdentifier:@"TGStickerCollectionViewCell"];
+        [_collectionView registerClass:[TGAnimatedStickerCollectionViewCell class] forCellWithReuseIdentifier:@"TGStickerCollectionViewCell"];
         [_collectionView registerClass:[TGStickerGroupPackCell class] forCellWithReuseIdentifier:@"TGStickerGroupPackCell"];
         [_collectionView registerClass:[TGStickerCollectionHeader class] forSupplementaryViewOfKind:PSTCollectionElementKindSectionHeader withReuseIdentifier:@"TGStickerCollectionHeader"];
         [self addSubview:_collectionView];
@@ -310,7 +313,7 @@ typedef enum {
             _searchCollectionView.alwaysBounceVertical = true;
             _searchCollectionView.delaysContentTouches = false;
             _searchCollectionView.contentInset = UIEdgeInsetsMake(preloadInset, 0.0f, preloadInset, 0.0f);
-            [_searchCollectionView registerClass:[TGStickerCollectionViewCell class] forCellWithReuseIdentifier:@"TGStickerCollectionViewCell"];
+            [_searchCollectionView registerClass:[TGAnimatedStickerCollectionViewCell class] forCellWithReuseIdentifier:@"TGStickerCollectionViewCell"];
             [_searchCollectionView registerClass:[TGTrendingStickerPackKeyboardCell class] forCellWithReuseIdentifier:@"TGTrendingStickerPackKeyboardCell"];
             [_searchCollectionView registerClass:[TGStickerCollectionHeader class] forSupplementaryViewOfKind:PSTCollectionElementKindSectionHeader withReuseIdentifier:@"TGStickerCollectionHeader"];
             [_searchWrapperView addSubview:_searchCollectionView];
@@ -1286,10 +1289,63 @@ typedef enum {
 - (void)collectionView:(PSUICollectionView *)collectionView didEndDisplayingCell:(PSUICollectionViewCell *)cell forItemAtIndexPath:(NSIndexPath *)__unused indexPath {
     if (collectionView == _gifsCollectionView) {
         [(TGGifKeyboardCell *)cell setEnableAnimation:false];
+    } else if ([cell isKindOfClass:[TGAnimatedStickerCollectionViewCell class]]) {
+        ((TGAnimatedStickerCollectionViewCell *)cell).animationAllowed = false;
+        [self setNeedsStickerAnimationUpdate];
+    }
+}
+
+- (void)setNeedsStickerAnimationUpdate
+{
+    if (_stickerAnimationUpdateScheduled)
+        return;
+    _stickerAnimationUpdateScheduled = true;
+    __weak TGStickerKeyboardView *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        __strong TGStickerKeyboardView *strongSelf = weakSelf;
+        if (strongSelf == nil)
+            return;
+        strongSelf->_stickerAnimationUpdateScheduled = false;
+        [strongSelf updateStickerAnimationsInCollectionView:strongSelf->_collectionView active:strongSelf->_enableAnimation && !strongSelf->_searchActive && strongSelf->_mode == TGStickerKeyboardViewModeStickers];
+        if (strongSelf->_searchCollectionView != nil)
+            [strongSelf updateStickerAnimationsInCollectionView:strongSelf->_searchCollectionView active:strongSelf->_enableAnimation && strongSelf->_searchActive];
+    });
+}
+
+- (void)updateStickerAnimationsInCollectionView:(PSUICollectionView *)collectionView active:(bool)active
+{
+    if (active && (collectionView.isDragging || collectionView.isDecelerating))
+        return;
+    CGRect bounds = collectionView.bounds;
+    bounds.origin.y += collectionView.contentInset.top;
+    bounds.size.height -= collectionView.contentInset.top + collectionView.contentInset.bottom;
+    NSArray *cells = [collectionView.visibleCells sortedArrayUsingComparator:^NSComparisonResult(UIView *first, UIView *second)
+    {
+        CGPoint a = first.frame.origin;
+        CGPoint b = second.frame.origin;
+        if (a.y < b.y - FLT_EPSILON)
+            return NSOrderedAscending;
+        if (a.y > b.y + FLT_EPSILON)
+            return NSOrderedDescending;
+        if (a.x < b.x)
+            return NSOrderedAscending;
+        return a.x > b.x ? NSOrderedDescending : NSOrderedSame;
+    }];
+    NSUInteger remaining = active && self.window != nil ? TGAnimatedStickerCurrentTier().maximumPlayingCount : 0;
+    for (TGAnimatedStickerCollectionViewCell *cell in cells)
+    {
+        if (![cell isKindOfClass:[TGAnimatedStickerCollectionViewCell class]])
+            continue;
+        bool allowed = remaining != 0 && cell.animatedSticker && !cell.hidden && CGRectContainsPoint(bounds, cell.center);
+        if (allowed)
+            remaining--;
+        cell.animationAllowed = allowed;
     }
 }
 
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView {
+    [self setNeedsStickerAnimationUpdate];
     if (scrollView == _collectionView) {
         _ignoreSetSection = false;
         [self updateCurrentSection];
@@ -1307,6 +1363,9 @@ typedef enum {
 
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
+    if (!decelerate)
+        [self setNeedsStickerAnimationUpdate];
+    
     if (_style != TGStickerKeyboardViewDefaultStyle || decelerate)
         return;
     
@@ -1608,6 +1667,7 @@ typedef enum {
             TGStickerCollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"TGStickerCollectionViewCell" forIndexPath:indexPath];
             TGDocumentMediaAttachment *document = ((TGStickerPack *)_searchLocalStickerPacks[indexPath.section]).documents[indexPath.item];
             [cell setDocumentMedia:document];
+            [self setNeedsStickerAnimationUpdate];
             return cell;
         } else {
             TGTrendingStickerPackKeyboardCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"TGTrendingStickerPackKeyboardCell" forIndexPath:indexPath];
@@ -1654,6 +1714,7 @@ typedef enum {
         } else {
             TGStickerCollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"TGStickerCollectionViewCell" forIndexPath:indexPath];
             [cell setDocumentMedia:[self documentAtIndexPath:indexPath]];
+            [self setNeedsStickerAnimationUpdate];
         
             return cell;
         }
@@ -2931,6 +2992,7 @@ typedef enum {
         _ignoreSetSection = true;
         [self scrollViewDidScroll:_gifsCollectionView];
         _ignoreSetSection = false;
+        [self setNeedsStickerAnimationUpdate];
     }
 }
 
@@ -2960,6 +3022,7 @@ typedef enum {
         _enableAnimation = enableAnimation;
         
         [self scrollViewDidScroll:_gifsCollectionView];
+        [self setNeedsStickerAnimationUpdate];
     }
 }
 
@@ -3183,6 +3246,7 @@ typedef enum {
         return false;
     
     _searchActive = true;
+    [self setNeedsStickerAnimationUpdate];
     
     _collectionView.blockScrolling = true;
     [_collectionView setForcedContentOffset:CGPointMake(0.0f, -_collectionView.contentInset.top) animated:false];
@@ -3426,6 +3490,7 @@ typedef enum {
 {
     _searchActive = false;
     _searchWrapperView.hidden = true;
+    [self setNeedsStickerAnimationUpdate];
     
     [_searchBar setShowsCancelButton:false animated:true];
     _collectionView.blockScrolling = false;

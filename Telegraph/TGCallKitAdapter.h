@@ -5,7 +5,7 @@
 
 @interface TGCallKitAdapter : NSObject
 
-- (void)startCallWithPeerId:(int64_t)peerId uuid:(NSUUID *)uuid;
+- (void)startCallWithPeerId:(int64_t)peerId uuid:(NSUUID *)uuid video:(bool)video;
 - (void)endCallWithUUID:(NSUUID *)uuid reason:(TGCallDiscardReason)reason completion:(void (^)(void))completion;
 
 - (void)reportIncomingCallWithPeerId:(int64_t)peerId session:(TGCallSession *)session uuid:(NSUUID *)uuid completion:(void (^)(bool))completion;

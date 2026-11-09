@@ -46,7 +46,7 @@
 - (id<TLObject>)TLbuildFromMetaObject:(std::tr1::shared_ptr<TLMetaObject>)metaObject
 {
     TLContactLocated$contactLocated *object = [[TLContactLocated$contactLocated alloc] init];
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.location = metaObject->getObject((int32_t)0x504a1f06);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.distance = metaObject->getInt32((int32_t)0xba1de8e4);
@@ -57,8 +57,8 @@
 {
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {

@@ -39,34 +39,41 @@ static int _phonebookVersion = 0;
 
 + (void)dispatchNewContactList
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
     {
-        _contactListVersion++;
         NSDictionary *invitees = [TGDatabaseInstance() loadPopularInvitees];
         NSArray *contacts = [TGDatabaseInstance() loadContactUsers];
-        NSDictionary *newCachedList = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_contactListVersion], @"version", contacts, @"contacts", invitees, @"invitees", nil];
-        dispatch_async(dispatch_get_main_queue(), ^
+        [ActionStageInstance() dispatchOnStageQueue:^
         {
-            _cachedContactListForMainThread = newCachedList;
-            _cachedInviteesForMainThread = invitees;
-        });
-        [ActionStageInstance() dispatchResource:@"/tg/contactlist" resource:[[SGraphObjectNode alloc] initWithObject:newCachedList]];
-    }];
+            _contactListVersion++;
+            NSDictionary *newCachedList = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_contactListVersion], @"version", contacts, @"contacts", invitees, @"invitees", nil];
+            dispatch_async(dispatch_get_main_queue(), ^
+            {
+                _cachedContactListForMainThread = newCachedList;
+                _cachedInviteesForMainThread = invitees;
+            });
+            [ActionStageInstance() dispatchResource:@"/tg/contactlist" resource:[[SGraphObjectNode alloc] initWithObject:newCachedList]];
+        }];
+    } synchronous:false];
 }
 
 + (void)dispatchNewPhonebook
 {
-    [ActionStageInstance() dispatchOnStageQueue:^
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
     {
-        _phonebookVersion++;
-        
-        NSDictionary *newPhonebook = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_phonebookVersion], @"version", [TGDatabaseInstance() loadPhonebookContacts:false], @"phonebook", nil];
-        dispatch_async(dispatch_get_main_queue(), ^
+        NSArray *phonebook = [TGDatabaseInstance() loadPhonebookContacts:false];
+        [ActionStageInstance() dispatchOnStageQueue:^
         {
-            _cachedPhonebookForMainThread = newPhonebook;
-        });
-        [ActionStageInstance() dispatchResource:@"/tg/phonebook" resource:[[SGraphObjectNode alloc] initWithObject:newPhonebook]];
-    }];
+            _phonebookVersion++;
+            
+            NSDictionary *newPhonebook = [NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:_phonebookVersion], @"version", phonebook, @"phonebook", nil];
+            dispatch_async(dispatch_get_main_queue(), ^
+            {
+                _cachedPhonebookForMainThread = newPhonebook;
+            });
+            [ActionStageInstance() dispatchResource:@"/tg/phonebook" resource:[[SGraphObjectNode alloc] initWithObject:newPhonebook]];
+        }];
+    } synchronous:false];
 }
 
 + (NSDictionary *)cachedContactList

@@ -9,7 +9,10 @@ extern "C" {
 
 void OGDatabaseRuntimeDispatch(dispatch_queue_t queue, BOOL synchronous, dispatch_block_t block);
 void OGDatabaseRuntimeDispatchContinuation(dispatch_queue_t queue, dispatch_block_t block);
+void OGDatabaseRuntimeDispatchBackground(dispatch_queue_t queue, dispatch_block_t block);
+void OGDatabaseRuntimeDispatchInteractive(dispatch_queue_t queue, dispatch_block_t block);
 BOOL OGDatabaseRuntimePriorityWorkPending(void);
+BOOL OGDatabaseRuntimeForegroundWorkPending(void);
 void OGDatabaseRuntimeBeginStartupCritical(void);
 void OGDatabaseRuntimeEndStartupCritical(void);
 void OGDatabaseRuntimeInteractionStateChanged(void);

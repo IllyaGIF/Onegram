@@ -6,7 +6,7 @@
 
 @interface TGRemoteWallpaperInfo ()
 {
-    int _remoteId;
+    int64_t _remoteId;
     NSString *_thumbnailUri;
     NSString *_fullscreenUri;
     int _tintColor;
@@ -16,7 +16,7 @@
 
 @implementation TGRemoteWallpaperInfo
 
-- (instancetype)initWithRemoteId:(int)remoteId thumbnailUri:(NSString *)thumbnailUri fullscreenUri:(NSString *)fullscreenUri tintColor:(int)tintColor
+- (instancetype)initWithRemoteId:(int64_t)remoteId thumbnailUri:(NSString *)thumbnailUri fullscreenUri:(NSString *)fullscreenUri tintColor:(int)tintColor
 {
     self = [super init];
     if (self != nil)
@@ -92,7 +92,7 @@
 
 + (TGWallpaperInfo *)infoWithDictionary:(NSDictionary *)dict
 {
-    return [[TGRemoteWallpaperInfo alloc] initWithRemoteId:[dict[@"remoteId"] intValue] thumbnailUri:dict[@"thumbnailUri"] fullscreenUri:dict[@"fullscreenUri"] tintColor:[dict[@"tintColor"] intValue]];
+    return [[TGRemoteWallpaperInfo alloc] initWithRemoteId:[dict[@"remoteId"] longLongValue] thumbnailUri:dict[@"thumbnailUri"] fullscreenUri:dict[@"fullscreenUri"] tintColor:[dict[@"tintColor"] intValue]];
 }
 
 @end

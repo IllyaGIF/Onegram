@@ -47,7 +47,6 @@ typedef void (*TGModernDrawingFunction)(CGContextRef context, TGModernDrawingOpe
 
 @end
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -58,7 +57,6 @@ void TGModernViewModelBindTraceAddPhase(const char *phase, CFAbsoluteTime durati
 bool TGModernViewModelBindTraceActive(void);
 #ifdef __cplusplus
 }
-#endif
 #endif
 
 #ifdef __cplusplus

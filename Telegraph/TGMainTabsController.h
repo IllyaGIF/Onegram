@@ -3,6 +3,15 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 @class TGPresentation;
+@class TGUser;
+
+typedef enum {
+    TGMainTabsContactsLogicalIndex = 0,
+    TGMainTabsCallsLogicalIndex = 1,
+    TGMainTabsChatsLogicalIndex = 2,
+    TGMainTabsSettingsLogicalIndex = 3,
+    TGMainTabsProfileLogicalIndex = 4
+} TGMainTabsLogicalIndex;
 
 @interface TGMainTabsController : UITabBarController <TGViewControllerNavigationBarAppearance, TGNavigationControllerTabsController>
 
@@ -21,6 +30,9 @@
 - (void)setMissedCallsCount:(int)callsCount;
 
 - (void)setCallsHidden:(bool)hidden animated:(bool)animated;
+- (void)setModernTabsEnabled:(bool)enabled animated:(bool)animated;
+- (bool)modernTabsEnabled;
+- (void)setProfileUser:(TGUser *)user;
 - (void)setContactsHidden:(bool)hidden animated:(bool)animated;
 
 - (void)localizationUpdated;

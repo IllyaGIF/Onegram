@@ -299,7 +299,7 @@ static NSString *TGIOS6CommentsTitleForCount(int32_t count)
 
 @interface TGMessageViewModel ()
 {
-    int _uid;
+    int64_t _uid;
     NSString *_firstName;
     NSString *_lastName;
     
@@ -416,6 +416,16 @@ static char TGMessageViewModelAvatarTapRecognizerPoolKey;
 - (CGFloat)groupedMediaOffsetY
 {
     return _groupedMediaOffsetY;
+}
+
+- (bool)groupedHeaderVisible
+{
+    return false;
+}
+
+- (bool)groupedTopCornersHidden
+{
+    return false;
 }
 
 - (TGMessageViewModelReference *)lifetimeReference

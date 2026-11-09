@@ -10,15 +10,25 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernButton.h"
 
 #import "TGMusicPlayerController.h"
+#import "TGMusicPlayerItemSignals.h"
+#import <objc/message.h>
 #import "TGBrandedMusicPlayerController.h"
 #import "TGVideoMessagePIPController.h"
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#endif
 #import "../OnegramUI/Core/OGTheme.h"
 #import "../OnegramUI/Core/OGMusicPlayerAppearance.h"
 #import "../OnegramUI/Core/OGSurfaceStyle.h"
 #import "../OnegramUI/Core/OGSurfaceRenderer.h"
+
+extern UIColor *TGPlayerPluginColor(id value);
+extern NSArray *TGPlayerPluginArtworkColors(UIImage *image);
+extern NSCache *TGPlayerPluginPaletteCache(void);
 
 @interface TGMusicPlayerTitleLabel : UILabel
 @property (nonatomic) bool embossedTitle;
@@ -87,6 +97,9 @@
     
     TGPresentation *_presentation;
     id<SDisposable> _presentationDisposable;
+    CAGradientLayer *_pluginGradient;
+    id<SDisposable> _pluginArtDisposable;
+    NSUInteger _pluginThemeGeneration;
 }
 @end
 
@@ -183,6 +196,7 @@
                 [strongSelf setStatus:status];
             }
         }];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(pluginThemeChanged:) name:@"OGSDKPlayerThemeChanged" object:nil];
         
         _updateLabelsLayout = true;
         
@@ -201,6 +215,8 @@
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [_pluginArtDisposable dispose];
     [_playerStatusDisposable dispose];
     [_presentationDisposable dispose];
 }
@@ -255,6 +271,96 @@
     [self updatePlayerVisibility];
     _updateLabelsLayout = true;
     [self setNeedsLayout];
+    [self refreshPluginTheme];
+}
+
+- (void)pluginThemeChanged:(NSNotification *)__unused notification
+{
+    [self refreshPluginTheme];
+}
+
+- (void)applyPluginColors:(NSArray *)colors
+{
+    if (colors.count == 0)
+        return;
+    if (_pluginGradient == nil)
+    {
+        _pluginGradient = [CAGradientLayer layer];
+        [_minimizedBar.layer insertSublayer:_pluginGradient atIndex:0];
+    }
+    NSMutableArray *layers = [[NSMutableArray alloc] init];
+    for (UIColor *color in colors)
+        if ([color isKindOfClass:[UIColor class]])
+            [layers addObject:(id)color.CGColor];
+    _pluginGradient.colors = layers;
+    _pluginGradient.frame = _minimizedBar.bounds;
+    _minimizedBar.backgroundColor = [UIColor clearColor];
+    _brandedBackgroundView.hidden = true;
+    _brandedDisplayView.hidden = true;
+    _titleLabel.textColor = [UIColor whiteColor];
+    _performerLabel.textColor = [UIColor colorWithWhite:1.0f alpha:0.8f];
+}
+
+- (void)refreshPluginTheme
+{
+    _pluginThemeGeneration++;
+    [_pluginArtDisposable dispose];
+    _pluginArtDisposable = nil;
+    [_pluginGradient removeFromSuperlayer];
+    _pluginGradient = nil;
+    bool branded = _brandedAppearance != nil;
+    _minimizedBar.backgroundColor = branded ? [UIColor clearColor] : _presentation.pallete.barBackgroundColor;
+    _brandedBackgroundView.hidden = !branded;
+    _brandedDisplayView.hidden = !branded || _playerLayout == TGNavigationBarMusicPlayerLayoutCompactConversation;
+    _titleLabel.textColor = branded ? _brandedAppearance.titleColor : _presentation.pallete.navigationTitleColor;
+    _performerLabel.textColor = _presentation.pallete.navigationSubtitleColor;
+    if (_currentStatus.item == nil || _currentStatus.item.isVoice)
+        return;
+    Class cls = NSClassFromString(@"OGPluginSDKDecoration");
+    SEL selector = NSSelectorFromString(@"playerThemeForTrack:");
+    NSString *track = [_currentStatus.item.key description] ?: @"";
+    NSDictionary *theme = [cls respondsToSelector:selector] ? ((id (*)(id, SEL, id))objc_msgSend)(cls, selector, track) : nil;
+    if (![theme isKindOfClass:[NSDictionary class]] || theme.count == 0)
+        return;
+    NSMutableArray *colors = [[NSMutableArray alloc] init];
+    for (id value in theme[@"palette"])
+    {
+        UIColor *color = TGPlayerPluginColor(value);
+        if (color != nil)
+            [colors addObject:color];
+    }
+    if (colors.count != 0)
+    {
+        [self applyPluginColors:colors];
+        return;
+    }
+    NSString *key = [NSString stringWithFormat:@"%lld:%lld:%@", (long long)TGTelegraphInstance.clientUserId, (long long)_currentStatus.item.peerId, track];
+    NSArray *cached = [TGPlayerPluginPaletteCache() objectForKey:key];
+    if (cached != nil)
+    {
+        [self applyPluginColors:cached];
+        return;
+    }
+    NSUInteger generation = _pluginThemeGeneration;
+    __weak TGMusicPlayerView *weakSelf = self;
+    SSignal *art = _currentStatus.albumArt ?: [TGMusicPlayerItemSignals albumArtForItem:_currentStatus.item thumbnail:true];
+    _pluginArtDisposable = [[art deliverOn:[SQueue mainQueue]] startWithNext:^(UIImage *image)
+    {
+        if (![image isKindOfClass:[UIImage class]])
+            return;
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+        {
+            NSArray *palette = TGPlayerPluginArtworkColors(image);
+            if (palette != nil)
+                [TGPlayerPluginPaletteCache() setObject:palette forKey:key];
+            dispatch_async(dispatch_get_main_queue(), ^
+            {
+                TGMusicPlayerView *strongSelf = weakSelf;
+                if (strongSelf != nil && strongSelf->_pluginThemeGeneration == generation && palette != nil)
+                    [strongSelf applyPluginColors:palette];
+            });
+        });
+    }];
 }
 
 - (CGFloat)preferredHeight
@@ -349,6 +455,19 @@
 {
     TGMusicPlayerStatus *previousStatus = _currentStatus;
     _currentStatus = status;
+    if (!TGObjectCompare(status.item.key, previousStatus.item.key))
+    {
+#if OG_PLUGINS_AVAILABLE
+        OGPluginUIPlayerTrackChangedWithAudio([status.item.key description], status.item.title, status.item.performer, status.item.duration, status.item.isVoice, TGMusicPlayerCurrentLocalAudioPath(status));
+#endif
+        [self refreshPluginTheme];
+    }
+    else if (status.downloadedStatus.downloaded && !previousStatus.downloadedStatus.downloaded)
+    {
+#if OG_PLUGINS_AVAILABLE
+        OGPluginUIPlayerTrackChangedWithAudio([status.item.key description], status.item.title, status.item.performer, status.item.duration, status.item.isVoice, TGMusicPlayerCurrentLocalAudioPath(status));
+#endif
+    }
     if (!TGObjectCompare(status.item, previousStatus.item))
     {
         NSString *title = nil;
@@ -484,6 +603,7 @@
         CGSize size = CGSizeMake(self.bounds.size.width, appearance.height);
         self.backgroundColor = [UIColor clearColor];
         _minimizedBar.frame = CGRectMake(0.0f, 0.0f, size.width, size.height);
+        _pluginGradient.frame = _minimizedBar.bounds;
         UIEdgeInsets outsets = [appearance.backgroundSurfaceStyle dropShadowOutsets];
         CGSize backgroundSize = CGSizeMake(size.width, size.height + outsets.bottom);
         _brandedBackgroundView.frame = CGRectMake(0.0f, 0.0f, backgroundSize.width, backgroundSize.height);
@@ -522,6 +642,7 @@
     self.backgroundColor = _presentation.pallete.barBackgroundColor;
     
     _minimizedBar.frame = CGRectMake(0.0f, 0.0f, self.frame.size.width, 37.0f);
+    _pluginGradient.frame = _minimizedBar.bounds;
     CGFloat separatorHeight = TGScreenPixel;
     _minimizedBarStripe.frame = CGRectMake(0.0f, 37.0f - separatorHeight, self.frame.size.width, separatorHeight);
     _closeButton.frame = CGRectMake(self.frame.size.width - 44.0f, TGRetinaPixel, 44.0f, 36.0f);
@@ -604,24 +725,7 @@
         return;
     }
     
-    UINavigationController *navigationController = _navigationController;
-    if ([TGPresentation brandedIOS6Style] && navigationController != nil)
-    {
-        for (UIViewController *viewController in navigationController.viewControllers)
-        {
-            if ([viewController isKindOfClass:[TGBrandedMusicPlayerController class]])
-                return;
-        }
-        [navigationController pushViewController:[[TGBrandedMusicPlayerController alloc] init] animated:true];
-        return;
-    }
-    
-    TGMusicPlayerController *controller = [[TGMusicPlayerController alloc] init];
-    controller.presentation = _presentation;
-    UIViewController *rootController = _navigationController.parentViewController;
-    if (rootController == nil)
-        rootController = _navigationController;
-    [controller presentFromController:rootController];
+    [TGMusicPlayerController presentFromNavigationController:_navigationController presentation:_presentation];
 }
 
 @end

@@ -31,8 +31,9 @@
 @property (nonatomic) bool isEncrypted;
 @property (nonatomic) bool isVerified;
 @property (nonatomic) bool isPremium;
+@property (nonatomic) int64_t emojiStatusDocumentId;
 @property (nonatomic) bool hasExplicitContent;
-@property (nonatomic) int encryptedUserId;
+@property (nonatomic) int64_t encryptedUserId;
 
 @property (nonatomic) int unreadCount;
 

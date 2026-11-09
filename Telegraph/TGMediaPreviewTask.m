@@ -129,8 +129,10 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
         _workerTask = workerTask;
         _thumbnailMetadataDisposable = [[SMetaDisposable alloc] init];
         __weak TGMediaPreviewTask *weakSelf = self;
+        __block bool receivedMessages = false;
         [_thumbnailMetadataDisposable setDisposable:[[[TGThumbnailMessageSignal(request) take:1] deliverOn:[SQueue mainQueue]] startWithNext:^(NSArray *messages)
         {
+            receivedMessages = true;
             TGMediaPreviewTask *strongSelf = weakSelf;
             if (strongSelf == nil || strongSelf->_idCancelled)
                 return;
@@ -175,6 +177,16 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
             if (origin != nil)
                 updatedOptions[@"originInfo"] = origin;
             [strongSelf executeThumbnailWithTargetFilePath:targetFilePath uri:thumbnailUri options:updatedOptions completion:completion workerTask:workerTask];
+        } error:^(__unused id error)
+        {
+            TGMediaPreviewTask *strongSelf = weakSelf;
+            if (strongSelf != nil && !strongSelf->_idCancelled && completion != nil)
+                completion(false);
+        } completed:^
+        {
+            TGMediaPreviewTask *strongSelf = weakSelf;
+            if (!receivedMessages && strongSelf != nil && !strongSelf->_idCancelled && completion != nil)
+                completion(false);
         }]];
         return;
     }
@@ -187,6 +199,8 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
     }
     NSMutableDictionary *thumbnailOptions = options == nil ? [[NSMutableDictionary alloc] init] : [options mutableCopy];
     thumbnailOptions[@"thumbnailOnly"] = @true;
+    thumbnailOptions[@"useCache"] = @false;
+    thumbnailOptions[@"allowThumbnailCache"] = @false;
     _thumbnailOnly = true;
     [self executeWithTargetFilePath:targetFilePath uri:uri options:thumbnailOptions completion:completion workerTask:workerTask];
 }
@@ -338,13 +352,21 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
     _idCancelled = true;
     [_thumbnailMetadataDisposable dispose];
     
-    [_workerTask cancel];
-    [_workerPool removeTask:_workerTask];
+    if (_workerTask != nil)
+    {
+        [_workerTask cancel];
+        [_workerPool removeTask:_workerTask];
+    }
     
     [_task cancel];
     
     if (_actionHandle != nil)
         [ActionStageInstance() removeWatcherByHandle:_actionHandle];
+}
+
+- (bool)isCancelled
+{
+    return _idCancelled;
 }
 
 - (void)actorCompleted:(int)status path:(NSString *)__unused path result:(id)result
@@ -358,13 +380,19 @@ static TLInputFileLocation *TGIOS6PreviewInputLocationFromImageUri(NSString *ima
             if (_idCancelled)
                 return;
             NSData *data = [_uri hasPrefix:@"file://"] ? [NSData dataWithContentsOfFile:[_uri substringFromIndex:7]] : [[TGRemoteImageView sharedCache] cachedDataForUrl:_uri];
-            if (data.length == 0 && [result isKindOfClass:[SGraphObjectNode class]])
+            bool videoData = data.length >= 12 && memcmp((const uint8_t *)data.bytes + 4, "ftyp", 4) == 0;
+            if ((data.length == 0 || videoData) && [result isKindOfClass:[SGraphObjectNode class]])
             {
                 id image = ((SGraphObjectNode *)result).object;
                 if ([image isKindOfClass:[UIImage class]])
                     data = UIImageJPEGRepresentation(image, 0.85f);
             }
-            bool success = data.length != 0 && data.length <= 512 * 1024 && [data writeToFile:_targetFilePath atomically:true];
+            bool success = false;
+            if (data.length != 0 && data.length <= 512 * 1024)
+            {
+                NSData *stored = [NSData dataWithContentsOfFile:_targetFilePath];
+                success = [stored isEqualToData:data] || [data writeToFile:_targetFilePath atomically:true];
+            }
             if (!_idCancelled && _completion != nil)
                 _completion(success);
         });

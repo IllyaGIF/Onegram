@@ -23,7 +23,6 @@
 static const NSInteger TGModernConversationLayoutIndexPathCacheLimit = 16384;
 static const NSUInteger TGModernConversationLayoutSpliceThreshold = 64;
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 static double TGModernConversationLayoutThreadTime(void)
 {
     thread_basic_info_data_t basicInfo;
@@ -32,7 +31,6 @@ static double TGModernConversationLayoutThreadTime(void)
         return 0.0;
     return (double)basicInfo.user_time.seconds + (double)basicInfo.user_time.microseconds / 1000000.0 + (double)basicInfo.system_time.seconds + (double)basicInfo.system_time.microseconds / 1000000.0;
 }
-#endif
 
 static NSIndexPath *TGModernConversationLayoutIndexPath(NSInteger item)
 {
@@ -89,6 +87,43 @@ struct TGModernConversationLayoutConvergence
     NSUInteger suffixUnreadLastIndex;
 };
 
+struct TGModernConversationPreparedFrame
+{
+    CGRect frame;
+    NSInteger zIndex;
+    bool valid;
+};
+
+struct TGModernConversationPreparedFrameOrder
+{
+    const std::vector<TGModernConversationPreparedFrame> *frames;
+    bool operator()(NSUInteger left, NSUInteger right) const
+    {
+        CGRect leftFrame = (*frames)[left].frame;
+        CGRect rightFrame = (*frames)[right].frame;
+        if (CGRectGetMaxY(leftFrame) == CGRectGetMaxY(rightFrame))
+            return left < right;
+        return CGRectGetMaxY(leftFrame) < CGRectGetMaxY(rightFrame);
+    }
+};
+
+@interface TGModernConversationPreparedLayout : NSObject
+{
+@public
+    NSArray *_items;
+    CGFloat _width;
+    int _dateOffset;
+    TGMessageRange _unreadMessageRange;
+    CGFloat _contentHeight;
+    std::vector<TGModernConversationPreparedFrame> _frames;
+    std::vector<NSUInteger> _orderedIndices;
+    std::vector<TGDecorationViewAttrubutes> _decorations;
+}
+@end
+
+@implementation TGModernConversationPreparedLayout
+@end
+
 static bool TGModernConversationCompletedGroupsCompatible(const std::vector<int64_t> &current, const std::vector<int64_t> &previous, size_t previousCount, const std::map<int64_t, NSUInteger> &suffixGroupLastIndex, NSUInteger index)
 {
     if (current.empty() && previousCount == 0)
@@ -133,6 +168,10 @@ static bool TGModernConversationCompletedGroupsCompatible(const std::vector<int6
     CGFloat _journalWidth;
     TGMessageRange _journalUnreadRange;
     bool _journalInhibitDateHeaders;
+    TGModernConversationPreparedLayout *_preparedLayout;
+    NSMutableDictionary *_preparedAttributes;
+    NSMutableArray *_retiredAttributes;
+    bool _preparedLayoutApplied;
 }
 
 @end
@@ -312,15 +351,15 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
 
 + (NSArray *)layoutAttributesForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth maxHeight:(CGFloat)maxHeight dateOffset:(int)dateOffset decorationViewAttributes:(std::vector<TGDecorationViewAttrubutes> *)decorationViewAttributes contentHeight:(CGFloat *)contentHeight unreadMessageRange:(TGMessageRange)unreadMessageRange viewStorage:(TGModernViewStorage *)viewStorage cachedGroupedLayouts:(NSMutableDictionary *)cachedGroupedLayouts inhibitDateHeaders:(bool)inhibitDateHeaders
 {
-    return [self _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:maxHeight dateOffset:dateOffset decorationViewAttributes:decorationViewAttributes contentHeight:contentHeight unreadMessageRange:unreadMessageRange viewStorage:viewStorage cachedGroupedLayouts:cachedGroupedLayouts inhibitDateHeaders:inhibitDateHeaders journal:NULL startIndex:0 convergence:NULL];
+    return [self _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:maxHeight dateOffset:dateOffset decorationViewAttributes:decorationViewAttributes contentHeight:contentHeight unreadMessageRange:unreadMessageRange viewStorage:viewStorage cachedGroupedLayouts:cachedGroupedLayouts inhibitDateHeaders:inhibitDateHeaders journal:NULL startIndex:0 convergence:NULL collectAttributes:true preparedLayout:nil];
 }
 
 + (NSArray *)layoutAttributesForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth maxHeight:(CGFloat)maxHeight dateOffset:(int)dateOffset decorationViewAttributes:(std::vector<TGDecorationViewAttrubutes> *)decorationViewAttributes contentHeight:(CGFloat *)contentHeight unreadMessageRange:(TGMessageRange)unreadMessageRange viewStorage:(TGModernViewStorage *)viewStorage cachedGroupedLayouts:(NSMutableDictionary *)cachedGroupedLayouts
 {
-    return [self _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:maxHeight dateOffset:dateOffset decorationViewAttributes:decorationViewAttributes contentHeight:contentHeight unreadMessageRange:unreadMessageRange viewStorage:viewStorage cachedGroupedLayouts:cachedGroupedLayouts inhibitDateHeaders:false journal:NULL startIndex:0 convergence:NULL];
+    return [self _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:maxHeight dateOffset:dateOffset decorationViewAttributes:decorationViewAttributes contentHeight:contentHeight unreadMessageRange:unreadMessageRange viewStorage:viewStorage cachedGroupedLayouts:cachedGroupedLayouts inhibitDateHeaders:false journal:NULL startIndex:0 convergence:NULL collectAttributes:true preparedLayout:nil];
 }
 
-+ (NSArray *)_layoutAttributesForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth maxHeight:(CGFloat)maxHeight dateOffset:(int)dateOffset decorationViewAttributes:(std::vector<TGDecorationViewAttrubutes> *)decorationViewAttributes contentHeight:(CGFloat *)contentHeight unreadMessageRange:(TGMessageRange)unreadMessageRange viewStorage:(TGModernViewStorage *)viewStorage cachedGroupedLayouts:(NSMutableDictionary *)cachedGroupedLayouts inhibitDateHeaders:(bool)inhibitDateHeaders journal:(TGModernConversationLayoutJournal *)journal startIndex:(NSUInteger)startIndex convergence:(TGModernConversationLayoutConvergence *)convergence
++ (NSArray *)_layoutAttributesForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth maxHeight:(CGFloat)maxHeight dateOffset:(int)dateOffset decorationViewAttributes:(std::vector<TGDecorationViewAttrubutes> *)decorationViewAttributes contentHeight:(CGFloat *)contentHeight unreadMessageRange:(TGMessageRange)unreadMessageRange viewStorage:(TGModernViewStorage *)viewStorage cachedGroupedLayouts:(NSMutableDictionary *)cachedGroupedLayouts inhibitDateHeaders:(bool)inhibitDateHeaders journal:(TGModernConversationLayoutJournal *)journal startIndex:(NSUInteger)startIndex convergence:(TGModernConversationLayoutConvergence *)convergence collectAttributes:(bool)collectAttributes preparedLayout:(TGModernConversationPreparedLayout *)preparedLayout
 {
     NSMutableArray *layoutAttributes = [[NSMutableArray alloc] init];
     
@@ -622,6 +661,8 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                     }
                     groupedMediaOffsetX = [primaryGroupItem groupedMediaOffsetX];
                     groupedMediaOffsetY = [primaryGroupItem groupedMediaOffsetY];
+                    groupedLayout.headerVisible = [primaryGroupItem groupedHeaderVisible];
+                    groupedLayout.topCornersHidden = [primaryGroupItem groupedTopCornersHidden];
                 }
 
                 for (TGMessageModernConversationItem *groupItem in groupedMessageItems)
@@ -642,16 +683,32 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                     }
                 }
 
-                for (TGMessageModernConversationItem *groupItem in groupedMessageItems)
+                if (preparedLayout != nil)
                 {
-                    NSInteger groupIndex = [indexes[@(groupItem->_message.mid)] integerValue];
-                    TGMessageGroupPositionFlags position = [groupedLayout positionForMessageId:groupItem->_message.mid];
+                    for (TGMessageModernConversationItem *groupItem in groupedMessageItems)
+                    {
+                        NSInteger groupIndex = [indexes[@(groupItem->_message.mid)] integerValue];
+                        TGMessageGroupPositionFlags position = [groupedLayout positionForMessageId:groupItem->_message.mid];
+                        bool primary = (position & TGMessageGroupPositionTop) && (position & TGMessageGroupPositionLeft);
+                        TGModernConversationPreparedFrame &frame = preparedLayout->_frames[(NSUInteger)groupIndex];
+                        frame.frame = CGRectMake(0, currentHeight, containerWidth, groupHeight);
+                        frame.zIndex = primary ? (NSIntegerMax - indexes.count - groupIndex) : (NSIntegerMax - groupIndex);
+                        frame.valid = true;
+                    }
+                }
+                if (collectAttributes)
+                {
+                    for (TGMessageModernConversationItem *groupItem in groupedMessageItems)
+                    {
+                        NSInteger groupIndex = [indexes[@(groupItem->_message.mid)] integerValue];
+                        TGMessageGroupPositionFlags position = [groupedLayout positionForMessageId:groupItem->_message.mid];
 
-                    PSUICollectionViewLayoutAttributes *attributes = [PSUICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:TGModernConversationLayoutIndexPath(groupIndex)];
-                    attributes.frame = CGRectMake(0, currentHeight, containerWidth, groupHeight);
-                    bool isPrimaryGroupItem = (position & TGMessageGroupPositionTop) && (position & TGMessageGroupPositionLeft);
-                    attributes.zIndex = isPrimaryGroupItem ? (NSIntegerMax - indexes.count - groupIndex) : (NSIntegerMax - groupIndex);
-                    [layoutAttributes addObject:attributes];
+                        PSUICollectionViewLayoutAttributes *attributes = [PSUICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:TGModernConversationLayoutIndexPath(groupIndex)];
+                        attributes.frame = CGRectMake(0, currentHeight, containerWidth, groupHeight);
+                        bool isPrimaryGroupItem = (position & TGMessageGroupPositionTop) && (position & TGMessageGroupPositionLeft);
+                        attributes.zIndex = isPrimaryGroupItem ? (NSIntegerMax - indexes.count - groupIndex) : (NSIntegerMax - groupIndex);
+                        [layoutAttributes addObject:attributes];
+                    }
                 }
                 
                 if (groupHeight > FLT_EPSILON)
@@ -687,10 +744,20 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
         
         if (groupedId == 0)
         {
-            PSUICollectionViewLayoutAttributes *attributes = [PSUICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:TGModernConversationLayoutIndexPath(index)];
-            attributes.frame = CGRectMake(0, currentHeight, itemSize.width, itemSize.height);
-            attributes.zIndex = NSIntegerMax - index;
-            [layoutAttributes addObject:attributes];
+            if (preparedLayout != nil)
+            {
+                TGModernConversationPreparedFrame &frame = preparedLayout->_frames[(NSUInteger)index];
+                frame.frame = CGRectMake(0, currentHeight, itemSize.width, itemSize.height);
+                frame.zIndex = NSIntegerMax - index;
+                frame.valid = true;
+            }
+            if (collectAttributes)
+            {
+                PSUICollectionViewLayoutAttributes *attributes = [PSUICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:TGModernConversationLayoutIndexPath(index)];
+                attributes.frame = CGRectMake(0, currentHeight, itemSize.width, itemSize.height);
+                attributes.zIndex = NSIntegerMax - index;
+                [layoutAttributes addObject:attributes];
+            }
         
             currentHeight += itemSize.height;
         }
@@ -718,12 +785,107 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
     if (items.count == 0 || containerWidth <= FLT_EPSILON)
         return;
     
-    [self layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:dateOffset decorationViewAttributes:NULL contentHeight:NULL unreadMessageRange:unreadMessageRange viewStorage:nil cachedGroupedLayouts:nil inhibitDateHeaders:true];
+    [self _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:dateOffset decorationViewAttributes:NULL contentHeight:NULL unreadMessageRange:unreadMessageRange viewStorage:nil cachedGroupedLayouts:nil inhibitDateHeaders:true journal:NULL startIndex:0 convergence:NULL collectAttributes:false preparedLayout:nil];
+}
+
++ (TGModernConversationPreparedLayout *)preparedLayoutForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth dateOffset:(int)dateOffset unreadMessageRange:(TGMessageRange)unreadMessageRange
+{
+    if (items.count == 0 || containerWidth <= FLT_EPSILON)
+        return nil;
+
+    TGModernConversationPreparedLayout *preparedLayout = [[TGModernConversationPreparedLayout alloc] init];
+    preparedLayout->_items = [items copy];
+    preparedLayout->_width = containerWidth;
+    preparedLayout->_dateOffset = dateOffset;
+    preparedLayout->_unreadMessageRange = unreadMessageRange;
+    preparedLayout->_frames.resize(items.count);
+    [self _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:dateOffset decorationViewAttributes:&preparedLayout->_decorations contentHeight:&preparedLayout->_contentHeight unreadMessageRange:unreadMessageRange viewStorage:nil cachedGroupedLayouts:nil inhibitDateHeaders:false journal:NULL startIndex:0 convergence:NULL collectAttributes:false preparedLayout:preparedLayout];
+    for (NSUInteger index = 0; index < preparedLayout->_frames.size(); index++)
+    {
+        if (preparedLayout->_frames[index].valid)
+            preparedLayout->_orderedIndices.push_back(index);
+    }
+    TGModernConversationPreparedFrameOrder order = {&preparedLayout->_frames};
+    std::sort(preparedLayout->_orderedIndices.begin(), preparedLayout->_orderedIndices.end(), order);
+    std::sort(preparedLayout->_decorations.begin(), preparedLayout->_decorations.end(), TGDecorationViewAttrubutesComparator());
+    return preparedLayout;
 }
 
 - (bool)hasLayoutAttributes
 {
     return _contentSize.height > FLT_EPSILON;
+}
+
+- (void)installPreparedLayout:(TGModernConversationPreparedLayout *)preparedLayout
+{
+    if (![NSThread isMainThread])
+        return;
+
+    [self _retainLayoutAttributesDuringCollectionUpdates];
+    _preparedLayout = preparedLayout;
+    _preparedAttributes = [[NSMutableDictionary alloc] init];
+    _preparedLayoutApplied = false;
+    _journalValid = false;
+    _journalItems = nil;
+    _journal.checkpoints.clear();
+    _journal.heights.clear();
+    _journalMessages.clear();
+    [_layoutAttributes removeAllObjects];
+    [_cachedGroupedLayouts removeAllObjects];
+    _contentSize = CGSizeZero;
+    _decorationViewAttributes.clear();
+    [super invalidateLayout];
+}
+
+- (void)_retainLayoutAttributesDuringCollectionUpdates
+{
+    if (_layoutAttributes.count == 0 && _preparedAttributes.count == 0)
+        return;
+
+    NSMutableArray *retained = [[NSMutableArray alloc] initWithArray:_layoutAttributes];
+    [retained addObjectsFromArray:[_preparedAttributes allValues]];
+    if (_retiredAttributes == nil)
+        _retiredAttributes = [[NSMutableArray alloc] init];
+    [_retiredAttributes addObject:retained];
+    __weak TGModernConversationViewLayout *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+    {
+        __strong TGModernConversationViewLayout *strongSelf = weakSelf;
+        if (strongSelf != nil)
+            [strongSelf->_retiredAttributes removeObjectIdenticalTo:retained];
+    });
+}
+
+- (void)invalidateLayout
+{
+    if (_preparedLayoutApplied)
+    {
+        [self _retainLayoutAttributesDuringCollectionUpdates];
+        _preparedLayout = nil;
+        _preparedAttributes = nil;
+        _preparedLayoutApplied = false;
+    }
+    [super invalidateLayout];
+}
+
+- (PSUICollectionViewLayoutAttributes *)_preparedAttributesAtIndex:(NSUInteger)index
+{
+    if (_preparedLayout == nil || index >= _preparedLayout->_frames.size())
+        return nil;
+    TGModernConversationPreparedFrame const &frame = _preparedLayout->_frames[index];
+    if (!frame.valid)
+        return nil;
+
+    NSNumber *key = @(index);
+    PSUICollectionViewLayoutAttributes *attributes = _preparedAttributes[key];
+    if (attributes == nil)
+    {
+        attributes = [PSUICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:TGModernConversationLayoutIndexPath(index)];
+        attributes.frame = frame.frame;
+        attributes.zIndex = frame.zIndex;
+        _preparedAttributes[key] = attributes;
+    }
+    return attributes;
 }
 
 - (NSUInteger)_journalStartIndexForItems:(NSArray *)items containerWidth:(CGFloat)containerWidth unreadMessageRange:(TGMessageRange)unreadMessageRange inhibitDateHeaders:(bool)inhibitDateHeaders
@@ -868,7 +1030,7 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
     
     std::vector<TGDecorationViewAttrubutes> decorations;
     CGFloat layoutHeight = 0.0f;
-    NSArray *prefixAttributes = [TGModernConversationViewLayout _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:_dateOffset decorationViewAttributes:&decorations contentHeight:&layoutHeight unreadMessageRange:unreadMessageRange viewStorage:_viewStorage cachedGroupedLayouts:_cachedGroupedLayouts inhibitDateHeaders:inhibitDateHeaders journal:&_journal startIndex:0 convergence:&convergence];
+    NSArray *prefixAttributes = [TGModernConversationViewLayout _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:_dateOffset decorationViewAttributes:&decorations contentHeight:&layoutHeight unreadMessageRange:unreadMessageRange viewStorage:_viewStorage cachedGroupedLayouts:_cachedGroupedLayouts inhibitDateHeaders:inhibitDateHeaders journal:&_journal startIndex:0 convergence:&convergence collectAttributes:true preparedLayout:nil];
     
     NSMutableArray *attributes = [[NSMutableArray alloc] initWithCapacity:previousAttributes.count + prefixAttributes.count];
     [attributes addObjectsFromArray:prefixAttributes];
@@ -935,16 +1097,54 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
 
 - (void)prepareLayout
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
-    CFAbsoluteTime diagnosticStartTime = CFAbsoluteTimeGetCurrent();
-    double diagnosticStartThreadTime = TGModernConversationLayoutThreadTime();
-#endif
+    bool diagnostics = OGDiagnosticsEnabled();
+    CFAbsoluteTime diagnosticStartTime = diagnostics ? CFAbsoluteTimeGetCurrent() : 0.0;
+    double diagnosticStartThreadTime = diagnostics ? TGModernConversationLayoutThreadTime() : 0.0;
     NSArray *items = [(id<TGModernConversationViewLayoutDelegate>)self.collectionView.delegate items];
     CGFloat containerWidth = self.collectionView.bounds.size.width;
     TGMessageRange unreadMessageRange = ((TGModernConversationCollectionView *)self.collectionView).unreadMessageRange;
     bool inhibitDateHeaders = self.inhibitDateHeaders;
+    bool retainedPreparedAttributes = false;
+
+    if (_preparedLayout != nil)
+    {
+        BOOL matches = !_animateLayout && !inhibitDateHeaders && _preparedLayout->_items.count == items.count && ABS(_preparedLayout->_width - containerWidth) < FLT_EPSILON && _preparedLayout->_dateOffset == _dateOffset && TGMessageRangeEquals(_preparedLayout->_unreadMessageRange, unreadMessageRange) && _preparedLayout->_unreadMessageRange.firstPeerId == unreadMessageRange.firstPeerId && _preparedLayout->_unreadMessageRange.lastPeerId == unreadMessageRange.lastPeerId;
+        if (matches)
+        {
+            for (NSUInteger index = 0; index < items.count; index++)
+            {
+                if (_preparedLayout->_items[index] != items[index])
+                {
+                    matches = false;
+                    break;
+                }
+            }
+        }
+        if (matches)
+        {
+            _contentSize = CGSizeMake(containerWidth, _preparedLayout->_contentHeight);
+            _decorationViewAttributes = _preparedLayout->_decorations;
+            _preparedLayoutApplied = true;
+            if (diagnostics)
+            {
+                CFAbsoluteTime duration = CFAbsoluteTimeGetCurrent() - diagnosticStartTime;
+                OGDiagnosticsTimingRecordOnce("chat_first_layout", duration * 1000.0);
+                if (duration >= 0.016)
+                    OGPlatformDiagnosticLog(@"LAYOUTSLOW items=%d start=0 spliced=0 prepared=1 ms=%.0f main=%.0f", (int)items.count, duration * 1000.0, (TGModernConversationLayoutThreadTime() - diagnosticStartThreadTime) * 1000.0);
+            }
+            return;
+        }
+        [self _retainLayoutAttributesDuringCollectionUpdates];
+        retainedPreparedAttributes = true;
+        _preparedLayout = nil;
+        _preparedAttributes = nil;
+        _preparedLayoutApplied = false;
+    }
     
     NSUInteger startIndex = [self _journalStartIndexForItems:items containerWidth:containerWidth unreadMessageRange:unreadMessageRange inhibitDateHeaders:inhibitDateHeaders];
+
+    if (!retainedPreparedAttributes)
+        [self _retainLayoutAttributesDuringCollectionUpdates];
     
     __block CGFloat contentHeight = 0.0f;
     __block bool spliced = false;
@@ -969,7 +1169,7 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
                 _decorationViewAttributes.resize(checkpoint.decorationsCount);
         }
         
-        [_layoutAttributes addObjectsFromArray:[TGModernConversationViewLayout _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:_dateOffset decorationViewAttributes:&_decorationViewAttributes contentHeight:&contentHeight unreadMessageRange:unreadMessageRange viewStorage:_viewStorage cachedGroupedLayouts:_cachedGroupedLayouts inhibitDateHeaders:inhibitDateHeaders journal:&_journal startIndex:startIndex convergence:NULL]];
+        [_layoutAttributes addObjectsFromArray:[TGModernConversationViewLayout _layoutAttributesForItems:items containerWidth:containerWidth maxHeight:FLT_MAX dateOffset:_dateOffset decorationViewAttributes:&_decorationViewAttributes contentHeight:&contentHeight unreadMessageRange:unreadMessageRange viewStorage:_viewStorage cachedGroupedLayouts:_cachedGroupedLayouts inhibitDateHeaders:inhibitDateHeaders journal:&_journal startIndex:startIndex convergence:NULL collectAttributes:true preparedLayout:nil]];
     };
     
     if (_animateLayout)
@@ -1003,11 +1203,14 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
     _journalUnreadRange = unreadMessageRange;
     _journalInhibitDateHeaders = inhibitDateHeaders;
     _journalValid = _journal.checkpoints.size() == items.count;
-#if defined(ONEGRAM_DIAGNOSTICS)
-    CFAbsoluteTime diagnosticDuration = CFAbsoluteTimeGetCurrent() - diagnosticStartTime;
-    if (diagnosticDuration >= 0.016)
-        OGPlatformDiagnosticLog(@"LAYOUTSLOW items=%d start=%d spliced=%d ms=%.0f main=%.0f", (int)items.count, (int)startIndex, spliced ? 1 : 0, diagnosticDuration * 1000.0, (TGModernConversationLayoutThreadTime() - diagnosticStartThreadTime) * 1000.0);
-#endif
+    if (diagnostics)
+    {
+        CFAbsoluteTime diagnosticDuration = CFAbsoluteTimeGetCurrent() - diagnosticStartTime;
+        if (items.count != 0)
+            OGDiagnosticsTimingRecordOnce("chat_first_layout", diagnosticDuration * 1000.0);
+        if (diagnosticDuration >= 0.016)
+            OGPlatformDiagnosticLog(@"LAYOUTSLOW items=%d start=%d spliced=%d ms=%.0f main=%.0f", (int)items.count, (int)startIndex, spliced ? 1 : 0, diagnosticDuration * 1000.0, (TGModernConversationLayoutThreadTime() - diagnosticStartThreadTime) * 1000.0);
+    }
 
 }
 
@@ -1016,17 +1219,25 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
     return _contentSize;
 }
 
-- (NSArray *)layoutAttributesForElementsInRect:(CGRect)rect
+- (NSUInteger)_firstAttributesIndexEndingAtOrBelowY:(CGFloat)minY
 {
-    NSUInteger count = _layoutAttributes.count;
-    if (count == 0)
-        return @[];
-
-    CGFloat minY = CGRectGetMinY(rect);
-    CGFloat maxY = CGRectGetMaxY(rect);
-
+    if (_preparedLayout != nil)
+    {
+        NSUInteger low = 0;
+        NSUInteger high = _preparedLayout->_orderedIndices.size();
+        while (low < high)
+        {
+            NSUInteger middle = low + (high - low) / 2;
+            CGRect frame = _preparedLayout->_frames[_preparedLayout->_orderedIndices[middle]].frame;
+            if (CGRectGetMaxY(frame) < minY)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        return low;
+    }
     NSUInteger low = 0;
-    NSUInteger high = count;
+    NSUInteger high = _layoutAttributes.count;
     while (low < high)
     {
         NSUInteger mid = low + (high - low) / 2;
@@ -1036,9 +1247,69 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
         else
             high = mid;
     }
+    return low;
+}
+
+- (void)enumerateItemsInVerticalRangeOfRect:(CGRect)rect usingBlock:(void (^)(NSUInteger itemIndex, CGRect frame))block
+{
+    if (_preparedLayout != nil)
+    {
+        NSUInteger count = _preparedLayout->_orderedIndices.size();
+        CGFloat maxY = CGRectGetMaxY(rect);
+        for (NSUInteger index = [self _firstAttributesIndexEndingAtOrBelowY:CGRectGetMinY(rect)]; index < count; index++)
+        {
+            NSUInteger itemIndex = _preparedLayout->_orderedIndices[index];
+            CGRect frame = _preparedLayout->_frames[itemIndex].frame;
+            if (CGRectGetMinY(frame) <= maxY)
+                block(itemIndex, frame);
+        }
+        return;
+    }
+    NSUInteger count = _layoutAttributes.count;
+    CGFloat maxY = CGRectGetMaxY(rect);
+    for (NSUInteger index = [self _firstAttributesIndexEndingAtOrBelowY:CGRectGetMinY(rect)]; index < count; index++)
+    {
+        PSUICollectionViewLayoutAttributes *attributes = _layoutAttributes[index];
+        CGRect frame = attributes.frame;
+        if (CGRectGetMinY(frame) > maxY)
+            break;
+        
+        NSIndexPath *indexPath = attributes.indexPath;
+        if (TGIOS6ValidConversationIndexPath(indexPath))
+            block((NSUInteger)indexPath.row, frame);
+    }
+}
+
+- (NSArray *)layoutAttributesForElementsInRect:(CGRect)rect
+{
+    if (_preparedLayout != nil)
+    {
+        NSMutableArray *attributes = [[NSMutableArray alloc] initWithCapacity:16];
+        NSUInteger count = _preparedLayout->_orderedIndices.size();
+        CGFloat maxY = CGRectGetMaxY(rect);
+        for (NSUInteger index = [self _firstAttributesIndexEndingAtOrBelowY:CGRectGetMinY(rect)]; index < count; index++)
+        {
+            NSUInteger itemIndex = _preparedLayout->_orderedIndices[index];
+            CGRect frame = _preparedLayout->_frames[itemIndex].frame;
+            if (CGRectGetMinY(frame) > maxY)
+                continue;
+            if (CGRectIntersectsRect(rect, frame))
+            {
+                PSUICollectionViewLayoutAttributes *itemAttributes = [self _preparedAttributesAtIndex:itemIndex];
+                if (itemAttributes != nil)
+                    [attributes addObject:itemAttributes];
+            }
+        }
+        return attributes;
+    }
+    NSUInteger count = _layoutAttributes.count;
+    if (count == 0)
+        return @[];
+
+    CGFloat maxY = CGRectGetMaxY(rect);
 
     NSMutableArray *array = [[NSMutableArray alloc] initWithCapacity:16];
-    for (NSUInteger index = low; index < count; index++)
+    for (NSUInteger index = [self _firstAttributesIndexEndingAtOrBelowY:CGRectGetMinY(rect)]; index < count; index++)
     {
         PSUICollectionViewLayoutAttributes *attributes = _layoutAttributes[index];
         if (CGRectGetMinY(attributes.frame) > maxY)
@@ -1058,6 +1329,14 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
 
 - (bool)frameForItemAtIndex:(NSUInteger)index frame:(CGRect *)frame
 {
+    if (_preparedLayout != nil)
+    {
+        if (index >= _preparedLayout->_frames.size() || !_preparedLayout->_frames[index].valid)
+            return false;
+        if (frame != NULL)
+            *frame = _preparedLayout->_frames[index].frame;
+        return true;
+    }
     NSUInteger count = _layoutAttributes.count;
     if (index < count)
     {
@@ -1086,6 +1365,12 @@ static inline CGFloat addUnreadHeader(CGFloat currentHeight, CGFloat containerWi
 
 - (PSUICollectionViewLayoutAttributes *)layoutAttributesForItemAtIndexPath:(NSIndexPath *)indexPath
 {
+    if (_preparedLayout != nil)
+    {
+        if (!TGIOS6ValidConversationIndexPath(indexPath))
+            return nil;
+        return [self _preparedAttributesAtIndex:(NSUInteger)indexPath.row];
+    }
     if (!TGIOS6ValidConversationIndexPath(indexPath) || indexPath.row >= (int)_layoutAttributes.count)
     {
         return nil;

@@ -1019,8 +1019,8 @@ static NSString *OGSurfaceImageContentIdentity(UIImage *image)
     if (self != nil)
     {
         _assets = assets;
-        _imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:OGSurfaceCacheBudget(24, 6u * 1024u * 1024u, 40u * 1024u * 1024u)];
-        _textureCache = [[OGMemoryCache alloc] initWithCountLimit:128 costLimit:OGSurfaceCacheBudget(64, 2u * 1024u * 1024u, 16u * 1024u * 1024u)];
+        _imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:OGMemoryCacheBudget(OGSurfaceCacheBudget(24, 6u * 1024u * 1024u, 40u * 1024u * 1024u))];
+        _textureCache = [[OGMemoryCache alloc] initWithCountLimit:128 costLimit:OGMemoryCacheBudget(OGSurfaceCacheBudget(64, 2u * 1024u * 1024u, 16u * 1024u * 1024u))];
         _textureAspects = [[OGMemoryCache alloc] initWithCountLimit:128 costLimit:64 * 1024];
         _renderCondition = [[NSCondition alloc] init];
         _renderingKeys = [[NSMutableSet alloc] init];

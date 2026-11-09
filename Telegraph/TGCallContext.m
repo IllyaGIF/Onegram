@@ -9,8 +9,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                              a:(NSData *)a
                             gA:(NSData *)gA
                       dhConfig:(id)dhConfig
@@ -39,8 +39,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                              b:(NSData *)b
                         gAHash:(NSData *)gAHash
                       dhConfig:(id)dhConfig
@@ -69,9 +69,10 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                         gAHash:(NSData *)gAHash
+                         video:(bool)video
                       declined:(bool)declined
 {
     self = [super init];
@@ -83,6 +84,7 @@
         _adminId = adminId;
         _participantId = participantId;
         _gAHash = gAHash;
+        _video = video;
         _declined = declined;
     }
     return self;
@@ -95,8 +97,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                       dhConfig:(id)dhConfig
                              b:(NSData *)b
                             gB:(NSData *)gB
@@ -125,8 +127,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                             gA:(NSData *)gA
                             gB:(NSData *)gB
 {
@@ -151,8 +153,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                             gA:(NSData *)gA
                 keyFingerprint:(int64_t)keyFingerprint
              defaultConnection:(TGCallConnectionDescription *)defaultConnection
@@ -177,8 +179,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                             gA:(NSData *)gA
                 keyFingerprint:(int64_t)keyFingerprint
              defaultConnection:(TGCallConnectionDescription *)defaultConnection
@@ -205,8 +207,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                             gA:(NSData *)gA
                 keyFingerprint:(int64_t)keyFingerprint
              defaultConnection:(TGCallConnectionDescription *)defaultConnection
@@ -245,8 +247,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                            key:(NSData *)key
                 keyFingerprint:(int64_t)keyFingerprint
              defaultConnection:(TGCallConnectionDescription *)defaultConnection
@@ -271,8 +273,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                            key:(NSData *)key
                 keyFingerprint:(int64_t)keyFingerprint
              defaultConnection:(TGCallConnectionDescription *)defaultConnection
@@ -299,8 +301,8 @@
 - (instancetype)initWithCallId:(int64_t)callId
                     accessHash:(int64_t)accessHash
                           date:(int32_t)date
-                       adminId:(int32_t)adminId
-                 participantId:(int32_t)participantId
+                       adminId:(int64_t)adminId
+                 participantId:(int64_t)participantId
                            key:(NSData *)key
                 keyFingerprint:(int64_t)keyFingerprint
              defaultConnection:(TGCallConnectionDescription *)defaultConnection

@@ -77,8 +77,15 @@
 #import "../OnegramUI/Core/OGSearchBarAppearance.h"
 #import "../OnegramUI/Core/OGTheme.h"
 #import "../OnegramUI/Chrome/OGNavigationTitleView.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGPeerIdAdapter.h"
 
 #pragma mark -
+
+static const int64_t TGContactListActionItemUid = TGPeerIdReservedBase + 101;
+static const int64_t TGContactListEncryptionItemUid = TGPeerIdReservedBase + 102;
+static const int64_t TGContactListChannelsItemUid = TGPeerIdReservedBase + 103;
+static const int64_t TGContactListChannelGroupItemUid = TGPeerIdReservedBase + 104;
+static const int64_t TGContactListSavedMessagesItemUid = TGPeerIdReservedBase + 110;
 
 static bool TGContactListItemSortByLastNameFunction(const TGUser *item1, const TGUser *item2)
 {
@@ -292,13 +299,13 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
 {
     std::vector<std::tr1::shared_ptr<TGContactListSection> > _sectionList;
     
-    std::map<int, TGUser *> _selectedUsers;
+    std::map<int64_t, TGUser *> _selectedUsers;
     
     UIColor *_brandedSectionHeaderBackgroundColor;
     OGNavigationTitleView *_brandedTitleView;
     bool _editingContacts;
     
-    std::set<int> _disabledUserIds;
+    std::set<int64_t> _disabledUserIds;
     
     UIView *_headerBackgroundView;
     UIView *_navigationBarBackgroundView;
@@ -1267,7 +1274,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     {
         if ([tokenId isKindOfClass:[NSNumber class]])
         {
-            std::map<int, TGUser *>::iterator it = _selectedUsers.find([tokenId intValue]);
+            std::map<int64_t, TGUser *>::iterator it = _selectedUsers.find([tokenId longLongValue]);
             if (it != _selectedUsers.end())
             {
                 [self setUsersSelected:[[NSArray alloc] initWithObjects:it->second, nil] selected:[[NSArray alloc] initWithObjects:[[NSNumber alloc] initWithBool:false], nil] callback:true];
@@ -1546,7 +1553,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     sectionContainer.clipsToBounds = searchBarOverlap > FLT_EPSILON;
     UIView *sectionView = [sectionContainer viewWithTag:10];
     sectionView.frame = CGRectMake(0, sectionViewOriginY, sectionContainer.frame.size.width, sectionViewHeight);
-    sectionView.backgroundColor = sectionBackgroundColor;
+    sectionView.backgroundColor = brandedMainContacts || !self.presentation.pallete.isDark ? sectionBackgroundColor : [UIColor clearColor];
     
     UILabel *sectionLabel = (UILabel *)[sectionContainer viewWithTag:100];
     sectionLabel.font = brandedMainContacts ? brandedAppearance.sectionTitleFont : TGBoldSystemFontOfSize(12.0f);
@@ -1554,7 +1561,7 @@ static bool TGContactListSectionComparator(std::tr1::shared_ptr<TGContactListSec
     sectionLabel.textColor = sectionTitleColor;
     sectionLabel.shadowColor = brandedAppearance.sectionTitleShadowColor;
     sectionLabel.shadowOffset = brandedAppearance.sectionTitleShadowColor != nil ? brandedAppearance.sectionTitleShadowOffset : CGSizeZero;
-    sectionLabel.backgroundColor = brandedMainContacts ? [UIColor clearColor] : sectionBackgroundColor;
+    sectionLabel.backgroundColor = [UIColor clearColor];
     [sectionLabel sizeToFit];
     
     CGFloat titleLeftInset = brandedMainContacts ? brandedAppearance.sectionTitleLeftInset : 14.0f;
@@ -1716,7 +1723,7 @@ static void adjustCellForSelectionEnabled(TGContactCell *contactCell, bool selec
     [contactCell setSelectionEnabled:selectionEnabled animated:animated];
 }
 
-static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int currentSortOrder, bool animated, std::map<int, TGUser *> const &selectedUsers, bool showMessageBadge, bool isDisabled, bool isSearch, bool isGlobalSearch, NSString *searchString, TGPresentation *presentation)
+static void adjustCellForUser(TGContactCell *contactCell, TGUser *user, int currentSortOrder, bool animated, std::map<int64_t, TGUser *> const &selectedUsers, bool showMessageBadge, bool isDisabled, bool isSearch, bool isGlobalSearch, NSString *searchString, TGPresentation *presentation)
 {
     bool brandedMainContacts = showMessageBadge && [TGPresentation brandedIOS6Style];
     contactCell.contactListAppearance = brandedMainContacts ? [TGPresentation brandedIOS6ContactListAppearance] : nil;
@@ -1919,7 +1926,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         return actionCell;
     }
     
-    if (user != nil && (user.uid == INT_MAX || user.uid == INT_MAX - 1 || user.uid == INT_MAX - 2 || user.uid == INT_MAX - 3))
+    if (user != nil && (user.uid == TGContactListActionItemUid || user.uid == TGContactListEncryptionItemUid || user.uid == TGContactListChannelsItemUid || user.uid == TGContactListChannelGroupItemUid))
     {
         static NSString *actionCellIdentifier = @"AC";
         TGFlatActionCell *actionCell = (TGFlatActionCell *)[_tableView dequeueReusableCellWithIdentifier:actionCellIdentifier];
@@ -1931,7 +1938,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         
         TGFlatActionCellMode mode;
         
-        if (user.uid == INT_MAX)
+        if (user.uid == TGContactListActionItemUid)
         {
             if ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption)
                 mode = TGFlatActionCellModeCreateGroup;
@@ -1940,16 +1947,16 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             else
                 mode = TGFlatActionCellModeInvite;
         }
-        else if (user.uid == INT_MAX - 1)
+        else if (user.uid == TGContactListEncryptionItemUid)
             mode = TGFlatActionCellModeCreateEncrypted;
-        else if (user.uid == INT_MAX - 2)
+        else if (user.uid == TGContactListChannelsItemUid)
         {
             if (_contactsMode & TGContactsModeCreateGroupOption)
                 mode = TGFlatActionCellModeCreateChannel;
             else
                 mode = TGFlatActionCellModeChannels;
         }
-        else if (user.uid == INT_MAX - 3)
+        else if (user.uid == TGContactListChannelGroupItemUid)
         {
             mode = TGFlatActionCellModeCreateChannelGroup;
         }
@@ -1978,7 +1985,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             if ((_contactsMode & TGContactsModeInvite) == TGContactsModeInvite)
                 cellSelectionEnabled = true;
             
-            std::map<int, TGUser *>::iterator it = _selectedUsers.find(user.uid);
+            std::map<int64_t, TGUser *>::iterator it = _selectedUsers.find(user.uid);
             if (it != _selectedUsers.end())
                 contactCell.contactSelected = true;
             else
@@ -2088,21 +2095,21 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         }];
     }
     
-    if (user != nil && (user.uid == INT_MAX - 10))
+    if (user != nil && (user.uid == TGContactListSavedMessagesItemUid))
     {
         [[TGInterfaceManager instance] navigateToConversationWithId:TGTelegraphInstance.clientUserId conversation:nil];
         return;
     }
     
-    if (user != nil && (user.uid == INT_MAX || user.uid == INT_MAX - 1 || user.uid == INT_MAX - 2 || user.uid == INT_MAX - 3))
+    if (user != nil && (user.uid == TGContactListActionItemUid || user.uid == TGContactListEncryptionItemUid || user.uid == TGContactListChannelsItemUid || user.uid == TGContactListChannelGroupItemUid))
     {
         if (indexPath.row == 0 || indexPath.row == 1 || indexPath.row == 2 || indexPath.row == 3)
         {
-            if (user.uid == INT_MAX - 1)
+            if (user.uid == TGContactListEncryptionItemUid)
                 [self encryptionItemSelected];
-            else if (user.uid == INT_MAX - 2)
+            else if (user.uid == TGContactListChannelsItemUid)
                 [self channelsItemSelected];
-            else if (user.uid == INT_MAX - 3)
+            else if (user.uid == TGContactListChannelGroupItemUid)
                 [self channelGroupItemSelected];
             else
                 [self actionItemSelected];
@@ -2174,7 +2181,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         }
         else
         {
-            TGPhonebookUserInfoController *userInfoController = [[TGPhonebookUserInfoController alloc] initWithNativeContactId:-user.uid];
+            TGPhonebookUserInfoController *userInfoController = [[TGPhonebookUserInfoController alloc] initWithNativeContactId:(int)(-user.uid)];
             [self.navigationController pushViewController:userInfoController animated:true];
         }
     }
@@ -2184,7 +2191,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 {
 }
 
-- (void)deleteUserFromList:(int)uid
+- (void)deleteUserFromList:(int64_t)uid
 {
     int sectionIndex = -1;
     for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator section = _sectionList.begin(); section != _sectionList.end(); section++)
@@ -2419,7 +2426,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }
 }
 
-- (TGUser *)findUser:(int)uid
+- (TGUser *)findUser:(int64_t)uid
 {
     for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator sectionIt = _sectionList.begin(); sectionIt != _sectionList.end(); sectionIt++)
     {
@@ -2445,7 +2452,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 - (void)clearUsersSelection
 {
     std::vector<TGUser *> deselectList;
-    for (std::map<int, TGUser *>::iterator it = _selectedUsers.begin(); it != _selectedUsers.end(); it++)
+    for (std::map<int64_t, TGUser *>::iterator it = _selectedUsers.begin(); it != _selectedUsers.end(); it++)
     {
         deselectList.push_back(it->second);
     }
@@ -2469,7 +2476,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     _disabledUserIds.clear();
     for (NSNumber *nUid in disabledUsers)
     {
-        _disabledUserIds.insert([nUid intValue]);
+        _disabledUserIds.insert([nUid longLongValue]);
     }
     
     for (id cell in _tableView.visibleCells)
@@ -2503,24 +2510,24 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 - (void)setUsersSelected:(NSArray *)users selected:(NSArray *)selected callback:(bool)callback updateSearchTable:(bool)updateSearchTable
 {
     bool updateView = self.isViewLoaded;
-    std::map<int, bool> updateViewItems;
-    std::vector<int> deselectedUids;
-    std::vector<int> selectedUids;
+    std::map<int64_t, bool> updateViewItems;
+    std::vector<int64_t> deselectedUids;
+    std::vector<int64_t> selectedUids;
     
     int index = -1;
     for (TGUser *user in users)
     {
         index++;
-        int uid = user.uid;
+        int64_t uid = user.uid;
         
         bool wasSelected = false;
         bool becameSelected = selected == nil ? false : [[selected objectAtIndex:index] boolValue];
         
-        std::map<int, TGUser *>::iterator it = _selectedUsers.find(uid);
+        std::map<int64_t, TGUser *>::iterator it = _selectedUsers.find(uid);
         if (it == _selectedUsers.end())
         {
             if (becameSelected && selected != nil)
-                _selectedUsers.insert(std::pair<int, TGUser *>(uid, user));
+                _selectedUsers.insert(std::pair<int64_t, TGUser *>(uid, user));
         }
         else
         {
@@ -2539,24 +2546,24 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         }
         
         if (wasSelected != becameSelected && updateView)
-            updateViewItems.insert(std::pair<int, bool>(uid, true));
+            updateViewItems.insert(std::pair<int64_t, bool>(uid, true));
     }
     
     if (updateView)
     {
         Class contactCellClass = [TGContactCell class];
         
-        std::map<int, bool> *pUpdateViewItems = &updateViewItems;
+        std::map<int64_t, bool> *pUpdateViewItems = &updateViewItems;
         
         void (^updateBlock)(id, NSUInteger, BOOL *) = ^(UITableViewCell *cell, __unused NSUInteger idx, __unused BOOL *stop)
         {
             if ([cell isKindOfClass:contactCellClass])
             {
                 TGContactCell *contactCell = (TGContactCell *)cell;
-                std::map<int, bool>::iterator it = pUpdateViewItems->find(contactCell.itemId);
+                std::map<int64_t, bool>::iterator it = pUpdateViewItems->find(contactCell.itemId);
                 if (it != updateViewItems.end())
                 {
-                    std::map<int, TGUser *>::iterator itemIt = _selectedUsers.find(contactCell.itemId);
+                    std::map<int64_t, TGUser *>::iterator itemIt = _selectedUsers.find(contactCell.itemId);
                     if (itemIt == _selectedUsers.end())
                         [contactCell updateFlags:false];
                     else
@@ -2581,14 +2588,14 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     
     if (callback)
     {
-        for (std::vector<int>::iterator it = deselectedUids.begin(); it != deselectedUids.end(); it++)
+        for (std::vector<int64_t>::iterator it = deselectedUids.begin(); it != deselectedUids.end(); it++)
         {
             TGUser *user = [self findUser:*it];
             if (user != nil)
                 [self contactDeselected:user];
         }
         
-        for (std::vector<int>::iterator it = selectedUids.begin(); it != selectedUids.end(); it++)
+        for (std::vector<int64_t>::iterator it = selectedUids.begin(); it != selectedUids.end(); it++)
         {
             TGUser *user = [self findUser:*it];
             if (user != nil)
@@ -2605,7 +2612,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (void)updateTokenField
 {
-    std::set<int> existingUids;
+    std::set<int64_t> existingUids;
     
     NSMutableIndexSet *removeIndexes = [[NSMutableIndexSet alloc] init];
     
@@ -2616,7 +2623,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         
         if ([tokenId isKindOfClass:[NSNumber class]])
         {
-            int uid = [tokenId intValue];
+            int64_t uid = [tokenId longLongValue];
             if (_selectedUsers.find(uid) == _selectedUsers.end())
                 [removeIndexes addIndex:index];
             else
@@ -2626,12 +2633,12 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     
     [_tokenFieldView removeTokensAtIndexes:removeIndexes];
     
-    for (std::map<int, TGUser *>::iterator it = _selectedUsers.begin(); it != _selectedUsers.end(); it++)
+    for (std::map<int64_t, TGUser *>::iterator it = _selectedUsers.begin(); it != _selectedUsers.end(); it++)
     {
         if (existingUids.find(it->first) != existingUids.end())
             continue;
         
-        [_tokenFieldView addToken:it->second.displayName tokenId:[[NSNumber alloc] initWithInt:it->second.uid] animated:true];
+        [_tokenFieldView addToken:it->second.displayName tokenId:[[NSNumber alloc] initWithLongLong:it->second.uid] animated:true];
     }
 }
 
@@ -2668,7 +2675,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     {
         if ([tokenId isKindOfClass:[NSNumber class]])
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:[tokenId intValue]];
+            TGUser *user = [TGDatabaseInstance() loadUser:[tokenId longLongValue]];
             if (user != nil)
                 [users addObject:user];
         }
@@ -2681,11 +2688,11 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 {
     NSMutableArray *array = [[NSMutableArray alloc] init];
     
-    for (std::map<int, TGUser *>::iterator it = _selectedUsers.begin(); it != _selectedUsers.end(); it++)
+    for (std::map<int64_t, TGUser *>::iterator it = _selectedUsers.begin(); it != _selectedUsers.end(); it++)
     {
         bool found = false;
         
-        int uid = it->first;
+        int64_t uid = it->first;
         for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator sectionIt = _sectionList.begin(); sectionIt != _sectionList.end(); sectionIt++)
         {
             std::vector<TGUser *>::iterator itemsEnd = sectionIt->get()->items.end();
@@ -2818,7 +2825,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 
 - (void)deleteContact:(TGUser *)user
 {
-    int uid = user.uid;
+    int64_t uid = user.uid;
     NSString *phoneNumber = user.phoneNumber;
     __weak TGContactsController *weakSelf = self;
     
@@ -2836,9 +2843,9 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         static int actionId = 0;
         int nativeId = [TGDatabaseInstance() phonebookContactByPhoneId:phoneMatchHash(phoneNumber)].nativeId;
         if (nativeId != 0)
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%d,%d,breakLinkLocal)", uid, actionId++] options:@{@"uid": @(uid), @"nativeId": @(nativeId)} watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%lld,%d,breakLinkLocal)", uid, actionId++] options:@{@"uid": @(uid), @"nativeId": @(nativeId)} watcher:TGTelegraphInstance];
         else
-            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%d,%d,breakLink)", uid, actionId++] options:@{@"uid": @(uid)} watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(break%lld,%d,breakLink)", uid, actionId++] options:@{@"uid": @(uid)} watcher:TGTelegraphInstance];
         
         TGDispatchOnMainThread(^
         {
@@ -2847,7 +2854,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }];
 }
 
-- (void)removeContactRowWithUid:(int)uid
+- (void)removeContactRowWithUid:(int64_t)uid
 {
     for (NSInteger section = 0; section < (NSInteger)_sectionList.size(); section++)
     {
@@ -3147,7 +3154,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
 {
     if ([action isEqualToString:@"/contactlist/toggleItem"])
     {
-        int itemId = [[options objectForKey:@"itemId"] intValue];
+        int64_t itemId = [[options objectForKey:@"itemId"] longLongValue];
         bool selected = [[options objectForKey:@"selected"] boolValue];
         
         if ([_disabledUsers containsObject:@(itemId)]) {
@@ -3181,7 +3188,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     }
     else if ([action isEqualToString:@"contactCellAction"])
     {
-        int itemId = [[options objectForKey:@"itemId"] intValue];
+        int64_t itemId = [[options objectForKey:@"itemId"] longLongValue];
         
         for (std::vector<std::tr1::shared_ptr<TGContactListSection> >::iterator section = _sectionList.begin(); section != _sectionList.end(); section++)
         {
@@ -3232,12 +3239,12 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     else if ([path isEqualToString:@"/tg/userdatachanges"] || [path isEqualToString:@"/tg/userpresencechanges"])
     {
         NSArray *users = ((SGraphObjectNode *)resource).object;
-        std::tr1::shared_ptr<std::map<int, int> > changedUidToIndex(new std::map<int, int>());
+        std::tr1::shared_ptr<std::map<int64_t, int> > changedUidToIndex(new std::map<int64_t, int>());
         int index = -1;
         for (TGUser *user in users)
         {
             index++;
-            changedUidToIndex->insert(std::pair<int, int>(user.uid, index));
+            changedUidToIndex->insert(std::pair<int64_t, int>(user.uid, index));
         }
         
         bool changedAnyPresence = false;
@@ -3248,7 +3255,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
         {
             index++;
             
-            std::map<int, int>::iterator it = changedUidToIndex->find(user.uid);
+            std::map<int64_t, int>::iterator it = changedUidToIndex->find(user.uid);
             if (it != changedUidToIndex->end())
             {
                 if (newContactList == nil)
@@ -3280,7 +3287,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
                     {
                         itemIndex++;
                         
-                        std::map<int, int>::iterator it = changedUidToIndex->find((*item).uid);
+                        std::map<int64_t, int>::iterator it = changedUidToIndex->find((*item).uid);
                         if (it != changedUidToIndex->end())
                         {
                             TGUser *user = [users objectAtIndex:it->second];
@@ -3316,7 +3323,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
                     if (user.uid < 0)
                         continue;
                     
-                    std::map<int, int>::iterator it = changedUidToIndex->find(user.uid);
+                    std::map<int64_t, int>::iterator it = changedUidToIndex->find(user.uid);
                     if (it != changedUidToIndex->end())
                     {
                         if (newSearchResults == nil)
@@ -3526,7 +3533,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     std::vector<std::tr1::shared_ptr<TGContactListSection> > newSectionListAll;
     std::vector<std::tr1::shared_ptr<TGContactListSection> > newSectionListTelegraph;
     
-    int clientUserId = TGTelegraphInstance.clientUserId;
+    int64_t clientUserId = TGTelegraphInstance.clientUserId;
     
     std::set<int> remoteContactIds;
     
@@ -3547,7 +3554,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             else
                 user = rawUser;
             
-            int uid = user.uid;
+            int64_t uid = user.uid;
             
             if (user.contactId)
                 remoteContactIds.insert(user.contactId);
@@ -3911,7 +3918,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             if (!TGAppDelegateInstance.contactsInhibitSync || ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption))
             {
                 TGUser *serviceUser = [[TGUser alloc] init];
-                serviceUser.uid = INT_MAX;
+                serviceUser.uid = TGContactListActionItemUid;
                 serviceSection->addItem(serviceUser);
             }
         
@@ -3923,13 +3930,13 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
             {
                 if ((_contactsMode & TGContactsModeMainContacts) != TGContactsModeMainContacts && (_contactsMode & TGContactsModeModalInvite) != TGContactsModeModalInvite) {
                     TGUser *serviceUser1 = [[TGUser alloc] init];
-                    serviceUser1.uid = INT_MAX - 1;
+                    serviceUser1.uid = TGContactListEncryptionItemUid;
                     serviceSection->addItem(serviceUser1);
                 }
                 
                 if ((_contactsMode & TGContactsModeCreateGroupOption) == TGContactsModeCreateGroupOption) {
                     TGUser *serviceUser2 = [[TGUser alloc] init];
-                    serviceUser2.uid = INT_MAX - 2;
+                    serviceUser2.uid = TGContactListChannelsItemUid;
                     serviceSection->addItem(serviceUser2);
                 }
             }
@@ -3946,7 +3953,7 @@ static inline NSString *subtitleStringForUser(TGUser *user, bool &subtitleActive
     
     dispatch_block_t mainThreadBlock =^
     {
-        int selectedUid = 0;
+        int64_t selectedUid = 0;
         if (self.isViewLoaded)
         {
             if ([_tableView indexPathForSelectedRow] != nil)

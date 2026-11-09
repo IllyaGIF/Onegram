@@ -170,6 +170,11 @@ static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool sele
     return CGRectMake(leftInset, 0.0f, MAX(0.0f, viewSize.width - leftInset - rightInset), viewSize.height);
 }
 
+- (UIColor *)cellBackgroundColor
+{
+    return _presentation.pallete.collectionMenuCellBackgroundColor;
+}
+
 - (void)setIgnoreSeparatorInset:(bool)ignoreSeparatorInset
 {
     _ignoreSeparatorInset = ignoreSeparatorInset;
@@ -200,7 +205,7 @@ static UIImage *TGCollectionItemViewClassicIOS6Image(int itemPosition, bool sele
         _classicIOS6SelectedBackgroundImageView.hidden = true;
         _topStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionFirstInBlock | TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionMiddleInBlock)) == 0 ? 0.0f : 1.0f;
         _bottomStripeView.alpha = (_itemPosition & (TGCollectionItemViewPositionLastInBlock | TGCollectionItemViewPositionIncludeNextSeparator)) == 0 ? 0.0f : 1.0f;
-        self.backgroundView.backgroundColor = _itemPosition == 0 ? [UIColor clearColor] : _presentation.pallete.collectionMenuCellBackgroundColor;
+        self.backgroundView.backgroundColor = _itemPosition == 0 ? [UIColor clearColor] : [self cellBackgroundColor];
         self.selectedBackgroundView.backgroundColor = self.highlightDisabled ? [UIColor clearColor] : _presentation.pallete.collectionMenuCellSelectionColor;
     }
 }

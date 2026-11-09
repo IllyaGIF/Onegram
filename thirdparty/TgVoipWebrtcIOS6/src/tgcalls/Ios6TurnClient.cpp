@@ -1995,6 +1995,7 @@ Ios6RelayReceiveResult Ios6RelayReceivePacket(
 
     if (fd < 0) {
         result.error = "TURN socket is not open";
+        result.errorCode = EBADF;
         return result;
     }
 
@@ -2015,7 +2016,8 @@ Ios6RelayReceiveResult Ios6RelayReceivePacket(
             return result;
         }
 
-        result.error = strerror(errno);
+        result.errorCode = errno;
+        result.error = strerror(result.errorCode);
         return result;
     }
 

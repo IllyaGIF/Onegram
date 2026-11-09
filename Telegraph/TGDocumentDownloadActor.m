@@ -12,7 +12,6 @@
 #import "TGGenericModernConversationCompanion.h"
 #import "TGFileDownloadActor.h"
 
-#import <CommonCrypto/CommonDigest.h>
 
 #import "TGAppDelegate.h"
 
@@ -21,6 +20,7 @@
 #import "TGRemoteHttpLocationSignal.h"
 
 #import "TGTelegramNetworking.h"
+#import "OGMediaFetchDescriptor+Telegraph.h"
 
 @interface TGDocumentDownloadActor ()
 {
@@ -70,106 +70,24 @@
     
     if (documentAttachment != nil)
     {
-        TLInputFileLocation *inputFileLocation = nil;
-        int datacenterId = 0;
-        int encryptedSize = documentAttachment.size;
-        int decryptedSize = documentAttachment.size;
-        NSDictionary *encryptionArgs = @{};
-        
-        NSString *documentsDirectory = [TGAppDelegate documentsPath];
-        NSString *currentDocumentDirectory = nil;
-        if (documentAttachment.documentId != 0)
+        NSString *storeFilePath = nil;
+        OGMediaFetchDescriptor *descriptor = [OGMediaFetchDescriptor descriptorForDocument:documentAttachment publishPath:&storeFilePath];
+        if (descriptor != nil)
         {
-            currentDocumentDirectory = [[documentsDirectory stringByAppendingPathComponent:@"files"] stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"%" PRIx64 "", documentAttachment.documentId]];
-        }
-        else
-        {
-            currentDocumentDirectory = [[documentsDirectory stringByAppendingPathComponent:@"files"] stringByAppendingPathComponent:[[NSString alloc] initWithFormat:@"local%" PRIx64 "", documentAttachment.localDocumentId]];
-        }
-        
-        if (![[NSFileManager defaultManager] fileExistsAtPath:currentDocumentDirectory])
-            [[NSFileManager defaultManager] createDirectoryAtPath:currentDocumentDirectory withIntermediateDirectories:true attributes:nil error:nil];
-        
-        _storeFilePath = [currentDocumentDirectory stringByAppendingPathComponent:documentAttachment.safeFileName];
-        
-        if (documentAttachment.documentUri.length != 0)
-        {
-            if ([documentAttachment.documentUri hasPrefix:@"mt-encrypted-file://"])
-            {
-                NSDictionary *args = [TGStringUtils argumentDictionaryInUrlString:[documentAttachment.documentUri substringFromIndex:@"mt-encrypted-file://?".length]];
-                
-                NSData *key = [args[@"key"] dataByDecodingHexString];
-                
-                if (key.length != 64)
-                    TGLog(@"***** Invalid file key length");
-                else
-                {
-                    NSData *encryptionKey = [key subdataWithRange:NSMakeRange(0, 32)];
-                    NSData *encryptionIv = [key subdataWithRange:NSMakeRange(32, 32)];
-                    
-                    unsigned char digest[CC_MD5_DIGEST_LENGTH];
-                    CC_MD5(key.bytes, 32 + 32, digest);
-                    
-                    int32_t digestHigh = 0;
-                    int32_t digestLow = 0;
-                    memcpy(&digestHigh, digest, 4);
-                    memcpy(&digestLow, digest + 4, 4);
-                    
-                    int32_t key_fingerprint = digestHigh ^ digestLow;
-                    if (args[@"fingerprint"] != nil && [args[@"fingerprint"] intValue] != key_fingerprint)
-                        TGLog(@"***** Invalid file key fingerprint");
-                    else
-                    {
-                        TLInputFileLocation$inputEncryptedFileLocation *inputEncryptedLocation = [[TLInputFileLocation$inputEncryptedFileLocation alloc] init];
-                        inputEncryptedLocation.n_id = [args[@"id"] longLongValue];
-                        inputEncryptedLocation.access_hash = [args[@"accessHash"] longLongValue];
-                        inputFileLocation = inputEncryptedLocation;
-                        
-                        datacenterId = [args[@"dc"] intValue];
-                        encryptedSize = [args[@"size"] intValue];
-                        decryptedSize = [args[@"decryptedSize"] intValue];
-                        
-                        encryptionArgs = @{@"key": encryptionKey, @"iv": encryptionIv};
-                    }
-                }
-            }
-        }
-        else
-        {
-            TGMediaOriginInfo *originInfo = documentAttachment.originInfo;
-            
-            TLInputFileLocation$inputDocumentFileLocation *inputDocumentLocation = [[TLInputFileLocation$inputDocumentFileLocation alloc] init];
-            inputDocumentLocation.n_id = documentAttachment.documentId;
-            inputDocumentLocation.access_hash = documentAttachment.accessHash;
-            inputDocumentLocation.file_reference = [originInfo fileReference] ?: [NSData data];
-            inputFileLocation = inputDocumentLocation;
-            
-            datacenterId = documentAttachment.datacenterId;
-        }
-        
-        if (inputFileLocation != nil)
-        {
-            TGNetworkMediaTypeTag mediaTypeTag = TGNetworkMediaTypeTagDocument;
-            for (id attribute in documentAttachment.attributes) {
-                if ([attribute isKindOfClass:[TGDocumentAttributeAudio class]]) {
-                    mediaTypeTag = TGNetworkMediaTypeTagAudio;
-                    break;
-                }
-            }
-            
+            _storeFilePath = storeFilePath;
             NSMutableDictionary *multiPartOptions = [[NSMutableDictionary alloc] initWithDictionary:@{
-                                                                                                      @"identifier": @(_documentAttachment.documentId),
-                                                                                                      @"fileLocation": inputFileLocation,
-                                                                                                      @"encryptedSize": @(encryptedSize),
-                                                                                                      @"decryptedSize": @(decryptedSize),
-                                                                                                      @"storeFilePath": _storeFilePath,
-                                                                                                      @"datacenterId": @(datacenterId),
-                                                                                                      @"encryptionArgs": encryptionArgs,
-                                                                                                      @"mediaTypeTag": @(mediaTypeTag)
-                                                                                                      }];
-            
-            if (documentAttachment.originInfo != nil)
-                multiPartOptions[@"originInfo"] = documentAttachment.originInfo;
+                @"identifier": @(descriptor.identifier),
+                @"fileLocation": descriptor.location,
+                @"encryptedSize": @(descriptor.size),
+                @"decryptedSize": @(descriptor.decryptedSize),
+                @"storeFilePath": storeFilePath,
+                @"tempStoreFilePath": descriptor.storePath,
+                @"datacenterId": @(descriptor.datacenterId),
+                @"encryptionArgs": descriptor.encryptionKey != nil ? @{@"key": descriptor.encryptionKey, @"iv": descriptor.encryptionIv} : @{},
+                @"mediaTypeTag": @(descriptor.mediaTypeTag)
+            }];
+            if (descriptor.originInfo != nil)
+                multiPartOptions[@"originInfo"] = descriptor.originInfo;
             
             [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/multipart-file/(document:%" PRId64 ":%d:%@)", documentAttachment.documentId, documentAttachment.datacenterId, documentAttachment.documentUri.length != 0 ? documentAttachment.documentUri : @""] options:multiPartOptions watcher:self];
         }

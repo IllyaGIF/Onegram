@@ -2,6 +2,7 @@
 
 #import "ATQueue.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGMemoryImageCache.h"
+#import "../OnegramPlatform/OGMemoryCache.h"
 
 #import <pthread.h>
 
@@ -9,7 +10,7 @@
 
 @interface TGMediaStoreContext ()
 {
-    NSMutableDictionary *_mediaImageAverageColorCache;
+    OGMemoryCache *_mediaImageAverageColorCache;
     TGMemoryImageCache *_mediaImageCache;
     TGMemoryImageCache *_mediaReducedImageCache;
     
@@ -31,13 +32,13 @@
     self = [super init];
     if (self != nil)
     {
-        _mediaImageAverageColorCache = [[NSMutableDictionary alloc] init];
+        _mediaImageAverageColorCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:0];
         
         CGFloat factor = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad ? 3.0f : 1.0f;
-        _mediaImageCache = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:(NSUInteger)(2 * 1024 * 1024 * factor) hardMemoryLimit:(NSUInteger)(3 * 1024 * 1024 * factor)];
+        _mediaImageCache = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:OGMemoryCacheBudget((NSUInteger)(8 * 1024 * 1024 * factor)) hardMemoryLimit:OGMemoryCacheBudget((NSUInteger)(10 * 1024 * 1024 * factor))];
         
         factor = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad || TGScreenScaling() > 2.0f ? 3.0f : 1.0f;
-        _mediaReducedImageCache = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:(NSUInteger)(1.5 * 1024 * 1024 * factor) hardMemoryLimit:(NSUInteger)(2.5 * 1024 * 1024 * factor)];
+        _mediaReducedImageCache = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:OGMemoryCacheBudget((NSUInteger)(1.5 * 1024 * 1024 * factor)) hardMemoryLimit:OGMemoryCacheBudget((NSUInteger)(2.5 * 1024 * 1024 * factor))];
         
         pthread_rwlock_init(&_mediaImageAverageColorCacheLock, NULL);
         pthread_rwlock_init(&_mediaImageCacheLock, NULL);
@@ -74,7 +75,7 @@
     
     NSNumber *result = nil;
     pthread_rwlock_rdlock(&_mediaImageAverageColorCacheLock);
-    result = _mediaImageAverageColorCache[key];
+    result = [_mediaImageAverageColorCache objectForKey:key];
     pthread_rwlock_unlock(&_mediaImageAverageColorCacheLock);
     
     return result;
@@ -86,7 +87,7 @@
         return;
     
     pthread_rwlock_wrlock(&_mediaImageAverageColorCacheLock);
-    _mediaImageAverageColorCache[key] = averageColor;
+    [_mediaImageAverageColorCache setObject:averageColor forKey:key cost:0];
     pthread_rwlock_unlock(&_mediaImageAverageColorCacheLock);
 }
 
@@ -138,10 +139,13 @@
 
 - (void)clearMemoryCache
 {
-    pthread_rwlock_rdlock(&_mediaImageCacheLock);
-    [_mediaReducedImageCache clearCache];
+    pthread_rwlock_wrlock(&_mediaImageCacheLock);
     [_mediaImageCache clearCache];
     pthread_rwlock_unlock(&_mediaImageCacheLock);
+
+    pthread_rwlock_wrlock(&_mediaReducedImageCacheLock);
+    [_mediaReducedImageCache clearCache];
+    pthread_rwlock_unlock(&_mediaReducedImageCacheLock);
 }
 
 - (void)setMediaImageForKey:(NSString *)key image:(UIImage *)image attributes:(NSDictionary *)attributes

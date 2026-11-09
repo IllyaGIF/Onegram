@@ -28,6 +28,7 @@
 #import "TGGroupInfoContactListCreateLinkCell.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGSelectContactController ()
 {
@@ -201,7 +202,7 @@
                     [userIds addObject:@(user.uid)];
                 }
                 
-                return [data addMembers:userIds timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime]];
+                return [data addMembers:userIds timestamp:(int32_t)OGRemoteClockTime()];
             }];
         }] deliverOn:[SQueue mainQueue]] onDispose:^{
             TGDispatchOnMainThread(^{

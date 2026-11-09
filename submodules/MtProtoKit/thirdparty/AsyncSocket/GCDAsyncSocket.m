@@ -12,9 +12,7 @@
 #import "GCDAsyncSocket.h"
 
 #import "MTLogging.h"
-#if defined(ONEGRAM_DIAGNOSTICS)
 #import "../../../../OnegramPlatform/OGPlatformDispatch.h"
-#endif
 
 #include <stdarg.h>
 #include <string.h>
@@ -3830,9 +3828,7 @@ static unsigned long GCDAsyncSocketConfirmedReadableBytes(int socketFD, BOOL *en
 	if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
 		return 0;
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 	OGPlatformDiagnosticLog(@"SOCKREAD eof fd=%d result=%ld errno=%d", socketFD, (long)result, result < 0 ? errno : 0);
-#endif
 	*endOfStream = YES;
 	return 0;
 }

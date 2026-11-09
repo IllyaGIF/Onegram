@@ -14,9 +14,11 @@
 #import "TGTelegraph.h"
 
 #import "TGImageInfo+Telegraph.h"
-#import "TGMediaOriginInfo+Telegraph.h"
+#import "TGDocumentMediaAttachment+Telegraph.h"
+#import "TGCloudThemeWallpaper.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGRemoteWallpaperInfo.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGColorWallpaperInfo.h"
 
 static bool alreadyCachedList = false;
 
@@ -77,12 +79,38 @@ static bool alreadyCachedList = false;
     
     for (id item in wallpaperList)
     {
-        if ([item isKindOfClass:[TLWallPaper$wallPaper class]])
+        if ([item isKindOfClass:[TLWallPaper$wallPaperNoFile class]])
+        {
+            TLWallPaper$wallPaperNoFile *wallpaper = item;
+            TLWallPaperSettings$wallPaperSettings *settings = wallpaper.settings;
+            if (!(settings.flags & 1))
+                continue;
+            NSMutableArray *colors = [[NSMutableArray alloc] initWithObjects:@((uint32_t)settings.background_color & 0xffffff), nil];
+            if (settings.flags & (1 << 4))
+                [colors addObject:@((uint32_t)settings.second_background_color & 0xffffff)];
+            if (settings.flags & (1 << 5))
+                [colors addObject:@((uint32_t)settings.third_background_color & 0xffffff)];
+            if (settings.flags & (1 << 6))
+                [colors addObject:@((uint32_t)settings.fourth_background_color & 0xffffff)];
+            if (colors.count == 1)
+            {
+                uint32_t rgb = [colors[0] unsignedIntValue];
+                CGFloat luminance = (0.299f * ((rgb >> 16) & 0xff) + 0.587f * ((rgb >> 8) & 0xff) + 0.114f * (rgb & 0xff)) / 255.0f;
+                if (luminance < 0.2f)
+                    [wallpaperInfos addObject:[[TGColorWallpaperInfo alloc] initWithColor:rgb tintColor:0xffffff systemAlpha:0.2f buttonsAlpha:0.3f highlightedButtonAlpha:0.45f progressAlpha:0.3f]];
+                else
+                    [wallpaperInfos addObject:[[TGColorWallpaperInfo alloc] initWithColor:rgb]];
+            }
+            else
+            {
+                [wallpaperInfos addObject:[[TGGradientWallpaperInfo alloc] initWithWallpaperId:wallpaper.n_id colors:colors rotation:settings.rotation]];
+            }
+        }
+        else if ([item isKindOfClass:[TLWallPaper$wallPaper class]])
         {
             TLWallPaper$wallPaper *concreteWallpaper = item;
-            
-            TGMediaOriginInfo *origin = [TGMediaOriginInfo mediaOriginInfoForWallpaper:concreteWallpaper];
-            TGImageInfo *imageInfo = [[TGImageInfo alloc] initWithTelegraphSizesDescription:concreteWallpaper.sizes];
+            TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:concreteWallpaper.document];
+            TGImageInfo *imageInfo = document.thumbnailInfo;
             
             NSString *thumbnailUri = [imageInfo closestImageUrlWithSize:CGSizeMake(256.0f, 256.0f) resultingSize:NULL];
             
@@ -90,26 +118,7 @@ static bool alreadyCachedList = false;
             NSString *fullscreenUri = [imageInfo closestImageUrlWithSize:fullscreenSize resultingSize:NULL];
             if (thumbnailUri != nil && fullscreenUri != nil)
             {
-                int64_t volumeId = 0;
-                int fileId = 0;
-                int64_t secret = 0;
-                int datacenterId = 0;
-                
-                NSString *fileReference = nil;
-                if (extractFileUrlComponents(thumbnailUri, &datacenterId, &volumeId, &fileId, &secret) && datacenterId != 0) {
-                    fileReference = [[origin fileReferenceForVolumeId:volumeId localId:fileId] stringByEncodingInHex];
-                    if (fileReference.length > 0)
-                        thumbnailUri = [thumbnailUri stringByAppendingFormat:@"_%@", fileReference];
-                }
-                
-                if (extractFileUrlComponents(fullscreenUri, &datacenterId, &volumeId, &fileId, &secret) && datacenterId != 0) {
-                    fileReference = [[origin fileReferenceForVolumeId:volumeId localId:fileId] stringByEncodingInHex];
-                    if (fileReference.length > 0)
-                        fullscreenUri = [fullscreenUri stringByAppendingFormat:@"_%@", fileReference];
-                }
-                
-                    
-                TGRemoteWallpaperInfo *wallpaperInfo = [[TGRemoteWallpaperInfo alloc] initWithRemoteId:concreteWallpaper.n_id thumbnailUri:thumbnailUri fullscreenUri:fullscreenUri tintColor:concreteWallpaper.color];
+                TGRemoteWallpaperInfo *wallpaperInfo = [[TGRemoteWallpaperInfo alloc] initWithRemoteId:concreteWallpaper.n_id thumbnailUri:thumbnailUri fullscreenUri:fullscreenUri tintColor:0];
                 [wallpaperInfos addObject:wallpaperInfo];
             }
         }

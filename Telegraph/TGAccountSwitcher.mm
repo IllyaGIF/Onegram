@@ -114,7 +114,7 @@ static const NSTimeInterval TGAccountSwitcherProgressDelay = 0.3;
     [self performSwitchToAccount:account completion:nil];
 }
 
-+ (int32_t)receiverUserIdFromPayload:(NSDictionary *)payload
++ (int64_t)receiverUserIdFromPayload:(NSDictionary *)payload
 {
     if (![payload isKindOfClass:[NSDictionary class]])
         return 0;
@@ -127,14 +127,21 @@ static const NSTimeInterval TGAccountSwitcherProgressDelay = 0.3;
             value = data[@"user_id"];
     }
 
-    if ([value respondsToSelector:@selector(intValue)])
-        return [value intValue];
+    if (value == nil)
+    {
+        NSDictionary *custom = payload[@"custom"];
+        if ([custom isKindOfClass:[NSDictionary class]])
+            value = custom[@"user_id"];
+    }
+
+    if ([value respondsToSelector:@selector(longLongValue)])
+        return [value longLongValue];
     return 0;
 }
 
 - (void)routeNotificationPayload:(NSDictionary *)payload completion:(void (^)(bool routed))completion
 {
-    int32_t receiverUserId = [TGAccountSwitcher receiverUserIdFromPayload:payload];
+    int64_t receiverUserId = [TGAccountSwitcher receiverUserIdFromPayload:payload];
     TGAccountRecord *account = receiverUserId == 0 ? nil : [[TGAccountManager instance] accountWithUserId:receiverUserId];
     TGAccountRecord *activeAccount = [[TGAccountManager instance] activeAccount];
 
@@ -145,7 +152,7 @@ static const NSTimeInterval TGAccountSwitcherProgressDelay = 0.3;
         return;
     }
 
-    TGLog(@"ACCOUNTS notification.route userId=%d", receiverUserId);
+    TGLog(@"ACCOUNTS notification.route userId=%lld", receiverUserId);
 
     if (![self ensureCanSwitch] || ![self performSwitchToAccount:account completion:^(bool transferred)
     {
@@ -242,7 +249,7 @@ static const NSTimeInterval TGAccountSwitcherProgressDelay = 0.3;
 
 - (void)refreshActiveAccount
 {
-    int32_t userId = TGTelegraphInstance.clientUserId;
+    int64_t userId = TGTelegraphInstance.clientUserId;
     if (userId == 0)
         return;
 
@@ -300,7 +307,7 @@ static const NSTimeInterval TGAccountSwitcherProgressDelay = 0.3;
     });
 }
 
-- (bool)consumeAuthorizationWithUserId:(int32_t)userId
+- (bool)consumeAuthorizationWithUserId:(int64_t)userId
 {
     if (userId == 0)
         return false;
@@ -323,7 +330,7 @@ static const NSTimeInterval TGAccountSwitcherProgressDelay = 0.3;
         return false;
     }
 
-    TGLog(@"ACCOUNTS duplicate userId=%d pending=%@ existing=%@", userId, activeAccount.accountId, existingAccount.accountId);
+    TGLog(@"ACCOUNTS duplicate userId=%lld pending=%@ existing=%@", userId, activeAccount.accountId, existingAccount.accountId);
 
     TGDispatchOnMainThread(^
     {

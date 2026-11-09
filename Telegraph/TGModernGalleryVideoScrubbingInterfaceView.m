@@ -3,6 +3,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGAudioSliderArea.h"
+#import "OGMediaBitrateIndicatorView.h"
 
 static CGFloat scrubberPadding = 13.0f;
 static CGFloat scrubberInternalInset = 4.0f;
@@ -10,6 +11,7 @@ static CGFloat scrubberInternalInset = 4.0f;
 @interface TGModernGalleryVideoScrubbingInterfaceView () <TGAudioSliderAreaDelegate>
 {
     UILabel *_currentTimeLabel;
+    OGMediaBitrateIndicatorView *_bitrateView;
     UILabel *_durationLabel;
     
     UIImageView *_scrubberBackground;
@@ -50,6 +52,10 @@ static CGFloat scrubberInternalInset = 4.0f;
         _durationLabel.backgroundColor = [UIColor clearColor];
         _durationLabel.textColor = [UIColor whiteColor];
         [self addSubview:_durationLabel];
+        
+        _bitrateView = [[OGMediaBitrateIndicatorView alloc] init];
+        _bitrateView.font = _durationLabel.font;
+        [self addSubview:_bitrateView];
         
         static UIImage *backgroundImage = nil;
         static UIImage *trackImage = nil;
@@ -200,6 +206,12 @@ static CGFloat scrubberInternalInset = 4.0f;
     }
 }
 
+- (void)setBitrateProvider:(double (^)(void))provider mediaBitrate:(double)mediaBitrate
+{
+    _bitrateView.rateProvider = provider;
+    _bitrateView.mediaBitrate = mediaBitrate;
+}
+
 - (void)setDuration:(NSTimeInterval)duration currentTime:(NSTimeInterval)currentTime isPlaying:(bool)isPlaying isPlayable:(bool)isPlayable animated:(bool)animated
 {
     NSString *currentTimeString = @"-:--";
@@ -259,6 +271,11 @@ static CGFloat scrubberInternalInset = 4.0f;
     _currentTimeLabel.frame = (CGRect){{scrubberPadding, CGFloor((self.frame.size.height - _currentTimeLabel.frame.size.height) / 2.0f) + 11.0f}, { MAX(_currentTimeMinWidth, _currentTimeLabel.frame.size.width), _currentTimeLabel.frame.size.height }};
     
     _durationLabel.frame = (CGRect){{self.frame.size.width - scrubberPadding - _durationLabel.frame.size.width, CGFloor((self.frame.size.height - _durationLabel.frame.size.height) / 2.0f) + 11.0f}, _durationLabel.frame.size};
+    
+    CGFloat bitrateLeft = CGRectGetMaxX(_currentTimeLabel.frame) + 8.0f;
+    CGFloat bitrateRight = CGRectGetMinX(_durationLabel.frame) - 8.0f;
+    CGFloat bitrateWidth = MAX(0.0f, MIN(bitrateRight - bitrateLeft, 2.0f * MIN(self.frame.size.width / 2.0f - bitrateLeft, bitrateRight - self.frame.size.width / 2.0f)));
+    _bitrateView.frame = CGRectMake(CGFloor((self.frame.size.width - bitrateWidth) / 2.0f), _durationLabel.frame.origin.y, bitrateWidth, _durationLabel.frame.size.height);
     
     CGFloat scrubberOriginX = scrubberPadding;
     _scrubberBackground.frame = (CGRect){{scrubberOriginX, CGFloor((self.frame.size.height - _scrubberBackground.frame.size.height) / 2.0f) - 7.0f}, {self.frame.size.width - scrubberPadding - scrubberOriginX, _scrubberBackground.frame.size.height}};

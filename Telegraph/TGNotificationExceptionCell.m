@@ -12,6 +12,7 @@
 #import "TGNotificationException.h"
 
 #import "TGAlertSoundController.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGNotificationExceptionCell ()
 {
@@ -160,7 +161,7 @@
     {
         CGSize size = CGSizeMake(diameter, diameter);
         if (TGPeerIdIsUser(exception.peerId)) {
-            [_avatarView loadUserPlaceholderWithSize:size uid:(int32_t)exception.peerId firstName:firstName lastName:lastName placeholder:placeholder];
+            [_avatarView loadUserPlaceholderWithSize:size uid:exception.peerId firstName:firstName lastName:lastName placeholder:placeholder];
         } else {
             [_avatarView loadGroupPlaceholderWithSize:size conversationId:exception.peerId title:title placeholder:placeholder];
         }
@@ -170,10 +171,10 @@
     if (exception.muteUntil != nil)
     {
         NSString *muteText = nil;
-        if (exception.muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime]) {
+        if (exception.muteUntil.intValue <= OGRemoteClockTime()) {
             muteText = TGLocalized(@"Notifications.ExceptionsUnmuted");
         } else {
-            int muteExpiration = exception.muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+            int muteExpiration = exception.muteUntil.intValue - (int)OGRemoteClockTime();
             if (muteExpiration >= 7 * 24 * 60 * 60)
                 muteText = TGLocalized(@"Notifications.ExceptionsMuted");
             else

@@ -13,6 +13,7 @@
 @interface TGDisclosureActionCollectionItemView ()
 {
     UILabel *_titleLabel;
+    UILabel *_subtitleLabel;
     TGSimpleImageView *_iconView;
     TGSimpleImageView *_disclosureIndicator;
     
@@ -45,6 +46,18 @@
     return self;
 }
 
+- (void)setDisclosureImage:(UIImage *)image
+{
+    _disclosureIndicator.image = image;
+    if (image != nil)
+    {
+        CGRect frame = _disclosureIndicator.frame;
+        frame.size = image.size;
+        _disclosureIndicator.frame = frame;
+    }
+    [self setNeedsLayout];
+}
+
 - (void)setPresentation:(TGPresentation *)presentation
 {
     [super setPresentation:presentation];
@@ -57,12 +70,11 @@
         disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:[OGTheme brandedTheme]] ?: disclosureImage;
     else if (classicDarkStyle)
         disclosureImage = [TGPresentation classicIOS6ThemedImage:disclosureImage tintColor:presentation.pallete.collectionMenuAccessoryColor alpha:0.82f];
-    _disclosureIndicator.image = disclosureImage;
-    if (disclosureImage != nil)
-        _disclosureIndicator.frame = CGRectMake(0.0f, 0.0f, disclosureImage.size.width, disclosureImage.size.height);
+    [self setDisclosureImage:disclosureImage];
     
     _badgeLabel.textColor = self.presentation.pallete.collectionMenuBadgeTextColor;
     _badgeView.image = self.presentation.images.collectionMenuBadgeImage;
+    _subtitleLabel.textColor = presentation.pallete.collectionMenuVariantColor;
 
     if ([TGPresentation brandedIOS6Style] && _brandedSettingsStyle)
     {
@@ -73,10 +85,7 @@
             [OGSettingsCell applyLegacyBrandedIconStyleWithTheme:theme iconView:_iconView];
         UIImage *brandedDisclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme];
         if (brandedDisclosureImage != nil)
-        {
-            _disclosureIndicator.image = brandedDisclosureImage;
-            _disclosureIndicator.frame = CGRectMake(0.0f, 0.0f, brandedDisclosureImage.size.width, brandedDisclosureImage.size.height);
-        }
+            [self setDisclosureImage:brandedDisclosureImage];
         _disclosureIndicator.hidden = false;
     }
     else if ([TGPresentation brandedIOS6Style] && _brandedProfileMusic)
@@ -85,10 +94,7 @@
         _titleLabel.textColor = UIColorRGB(0x111111);
         UIImage *brandedDisclosureImage = presentation.images.collectionMenuDisclosureIcon;
         if (brandedDisclosureImage != nil)
-        {
-            _disclosureIndicator.image = brandedDisclosureImage;
-            _disclosureIndicator.frame = CGRectMake(0.0f, 0.0f, brandedDisclosureImage.size.width, brandedDisclosureImage.size.height);
-        }
+            [self setDisclosureImage:brandedDisclosureImage];
         _disclosureIndicator.hidden = false;
     }
     else
@@ -105,6 +111,23 @@
     [self setNeedsLayout];
     
     [_titleLabel setNeedsDisplay];
+}
+
+- (void)setSubtitle:(NSString *)subtitle
+{
+    if (subtitle.length != 0 && _subtitleLabel == nil)
+    {
+        _subtitleLabel = [[UILabel alloc] init];
+        _subtitleLabel.textAlignment = NSTextAlignmentLeft;
+        _subtitleLabel.backgroundColor = [UIColor clearColor];
+        _subtitleLabel.font = TGSystemFontOfSize(14.0f);
+        _subtitleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        _subtitleLabel.textColor = self.presentation.pallete.collectionMenuVariantColor;
+        [self addSubview:_subtitleLabel];
+    }
+    _subtitleLabel.text = subtitle;
+    _subtitleLabel.hidden = subtitle.length == 0;
+    [self setNeedsLayout];
 }
 
 - (void)setIcon:(UIImage *)icon
@@ -224,7 +247,16 @@
     CGFloat startingX = (_iconView.image != nil) ? 59.0f : 15.0f;
     startingX += classicInset + self.safeAreaInset.left;
     CGFloat titleHeight = MAX(24.0f, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));
-    _titleLabel.frame = CGRectMake(startingX, CGFloor((bounds.size.height - titleHeight) / 2.0f), bounds.size.width - startingX - 40.0f - classicInset - self.safeAreaInset.right, titleHeight);
+    CGFloat textWidth = bounds.size.width - startingX - 40.0f - classicInset - self.safeAreaInset.right;
+    if (_subtitleLabel != nil && !_subtitleLabel.hidden)
+    {
+        CGFloat subtitleHeight = ceilf(OGPlatformFontLineHeight(_subtitleLabel.font));
+        CGFloat contentTop = CGFloor((bounds.size.height - titleHeight - subtitleHeight) / 2.0f);
+        _titleLabel.frame = CGRectMake(startingX, contentTop, textWidth, titleHeight);
+        _subtitleLabel.frame = CGRectMake(startingX, contentTop + titleHeight, textWidth, subtitleHeight);
+    }
+    else
+        _titleLabel.frame = CGRectMake(startingX, CGFloor((bounds.size.height - titleHeight) / 2.0f), textWidth, titleHeight);
     _disclosureIndicator.frame = CGRectMake(bounds.size.width - _disclosureIndicator.frame.size.width - 15 - classicInset - self.safeAreaInset.right, CGFloor((bounds.size.height - _disclosureIndicator.frame.size.height) / 2), _disclosureIndicator.frame.size.width, _disclosureIndicator.frame.size.height);
     
     if (_badgeLabel != nil) {

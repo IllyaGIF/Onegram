@@ -31,6 +31,8 @@ typedef enum {
 @property (nonatomic, readonly) int32_t discussionMessageId;
 @property (nonatomic) CGPoint mediaOrigin;
 @property (nonatomic, readonly) bool hasMediaOrigin;
+@property (nonatomic) bool headerVisible;
+@property (nonatomic) bool topCornersHidden;
 
 - (instancetype)initWithMessages:(NSArray *)messages larger:(bool)larger;
 

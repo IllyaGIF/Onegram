@@ -6,6 +6,10 @@
 
 #import "TLMessageAction$messageActionPhoneCall.h"
 #import "TLMessageAction$messageActionChangeCommunity.h"
+#import "TLMessage$modernMessageService.h"
+#import "TGTLDynamic.h"
+#import "TGStarGift.h"
+#import "TGStoryItem.h"
 
 @implementation TGActionMediaAttachment (Telegraph)
 
@@ -16,7 +20,67 @@
     {
         self.type = TGActionMediaAttachmentType;
         
-        if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChatAddUser class]])
+        if ([actionDesc isKindOfClass:[TGStarGiftTLMessageAction class]])
+        {
+            TGTLDynamicObject *object = ((TGStarGiftTLMessageAction *)actionDesc).giftAction;
+            TGStarGift *gift = [TGStarGift starGiftWithObject:[object objectField:@"gift"]];
+            if (gift != nil)
+            {
+                if ([object isConstructor:@"messageActionStarGift"])
+                    self.actionType = TGMessageActionStarGift;
+                else if ([object isConstructor:@"messageActionStarGiftUnique"])
+                    self.actionType = TGMessageActionStarGiftUnique;
+                else if ([object isConstructor:@"messageActionStarGiftPurchaseOffer"])
+                    self.actionType = TGMessageActionStarGiftPurchaseOffer;
+                else if ([object isConstructor:@"messageActionStarGiftPurchaseOfferDeclined"])
+                    self.actionType = TGMessageActionStarGiftPurchaseOfferDeclined;
+
+                TGTLDynamicObject *price = [object objectField:@"price"];
+                TGTLDynamicObject *resalePrice = [object objectField:@"resale_amount"];
+                NSString *messageText = [[object objectField:@"message"] stringField:@"text"];
+                self.actionData = @{
+                    @"gift": gift,
+                    @"actionKind": object.constructor,
+                    @"message": messageText ?: @"",
+                    @"nameHidden": @([object flag:@"name_hidden"]),
+                    @"saved": @([object flag:@"saved"]),
+                    @"converted": @([object flag:@"converted"]),
+                    @"upgraded": @([object flag:@"upgraded"] || [object flag:@"upgrade"]),
+                    @"transferred": @([object flag:@"transferred"]),
+                    @"canUpgrade": @([object flag:@"can_upgrade"]),
+                    @"refunded": @([object flag:@"refunded"]),
+                    @"prepaidUpgrade": @([object flag:@"prepaid_upgrade"]),
+                    @"upgradeSeparate": @([object flag:@"upgrade_separate"]),
+                    @"auctionAcquired": @([object flag:@"auction_acquired"]),
+                    @"assigned": @([object flag:@"assigned"]),
+                    @"fromOffer": @([object flag:@"from_offer"]),
+                    @"craft": @([object flag:@"craft"]),
+                    @"accepted": @([object flag:@"accepted"]),
+                    @"declined": @([object flag:@"declined"]),
+                    @"expired": @([object flag:@"expired"]),
+                    @"convertStars": @([object int64Field:@"convert_stars"]),
+                    @"upgradeStars": @([object int64Field:@"upgrade_stars"]),
+                    @"transferStars": @([object int64Field:@"transfer_stars"]),
+                    @"savedId": @([object int64Field:@"saved_id"]),
+                    @"upgradeMessageId": @([object int32Field:@"upgrade_msg_id"]),
+                    @"giftMessageId": @([object int32Field:@"gift_msg_id"]),
+                    @"giftNum": @([object int32Field:@"gift_num"]),
+                    @"fromPeerId": @(TGStoryPeerIdFromObject([object objectField:@"from_id"])),
+                    @"toPeerId": @(TGStoryPeerIdFromObject([object objectField:@"to_id"])),
+                    @"ownerPeerId": @(TGStoryPeerIdFromObject([object objectField:@"peer"])),
+                    @"priceStars": @([price int64Field:@"amount"]),
+                    @"resaleStars": @([resalePrice int64Field:@"amount"]),
+                    @"expiresAt": @([object int32Field:@"expires_at"]),
+                    @"canExportAt": @([object int32Field:@"can_export_at"]),
+                    @"canTransferAt": @([object int32Field:@"can_transfer_at"]),
+                    @"canResellAt": @([object int32Field:@"can_resell_at"]),
+                    @"canCraftAt": @([object int32Field:@"can_craft_at"]),
+                    @"dropDetailsStars": @([object int64Field:@"drop_original_details_stars"]),
+                    @"prepaidUpgradeHash": [object stringField:@"prepaid_upgrade_hash"] ?: @""
+                };
+            }
+        }
+        else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChatAddUser class]])
         {
             TLMessageAction$messageActionChatAddUser *concreteAction = (TLMessageAction$messageActionChatAddUser *)actionDesc;
             self.actionType = TGMessageActionChatAddMember;
@@ -32,7 +96,7 @@
         {
             TLMessageAction$messageActionChatDeleteUser *concreteAction = (TLMessageAction$messageActionChatDeleteUser *)actionDesc;
             self.actionType = TGMessageActionChatDeleteMember;
-            self.actionData = [NSDictionary dictionaryWithObject:[NSNumber numberWithInt:concreteAction.user_id] forKey:@"uid"];
+            self.actionData = [NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:concreteAction.user_id] forKey:@"uid"];
         }
         else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChatEditTitle class]])
         {
@@ -70,11 +134,12 @@
         {
             TLMessageAction$messageActionChatJoinedByLink *concreteAction = (TLMessageAction$messageActionChatJoinedByLink *)actionDesc;
             self.actionType = TGMessageActionJoinedByLink;
-            if (concreteAction.inviter_id == (-2147483647 - 1)) {
-                self.actionData = @{ @"invitedBy": @0, @"joinedByRequest": @(YES) };
-            } else {
-                self.actionData = [NSDictionary dictionaryWithObject:[NSNumber numberWithInt:concreteAction.inviter_id] forKey:@"invitedBy"];
-            }
+            self.actionData = @{ @"invitedBy": @(concreteAction.inviter_id) };
+        }
+        else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChatJoinedByRequest class]])
+        {
+            self.actionType = TGMessageActionJoinedByLink;
+            self.actionData = @{ @"invitedBy": @0, @"joinedByRequest": @true };
         }
         else if ([actionDesc isKindOfClass:[TLMessageAction$messageActionChannelCreate class]])
         {

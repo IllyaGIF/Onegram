@@ -11,6 +11,8 @@
 @property (nonatomic) int32_t flags2;
 @property (nonatomic) int32_t name_color_id;
 @property (nonatomic) int64_t linked_community_id;
+@property (nonatomic) int64_t linked_monoforum_id;
+@property (nonatomic) int64_t send_paid_messages_stars;
 
 @property (nonatomic, readonly) bool creator;
 @property (nonatomic, readonly) bool left;
@@ -22,6 +24,8 @@
 @property (nonatomic, readonly) bool democracy;
 @property (nonatomic, readonly) bool signatures;
 @property (nonatomic, readonly) bool min;
+@property (nonatomic, readonly) bool broadcast_messages_allowed;
+@property (nonatomic, readonly) bool monoforum;
 
 @property (nonatomic) int64_t access_hash;
 @property (nonatomic, strong) NSString *title;

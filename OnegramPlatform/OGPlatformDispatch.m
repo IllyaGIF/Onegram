@@ -87,7 +87,7 @@ static dispatch_queue_t OGPlatformDiagnosticLogQueue(void)
 
 void OGPlatformDiagnosticLog(NSString *format, ...)
 {
-    if (format == nil)
+    if (format == nil || !OGDiagnosticsEnabled())
         return;
     va_list arguments;
     va_start(arguments, format);

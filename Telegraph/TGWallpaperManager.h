@@ -10,6 +10,8 @@
 
 @class TGWallpaperInfo;
 
+extern NSString *const TGWallpaperManagerCurrentWallpaperDidChangeNotification;
+
 @interface TGWallpaperManager : NSObject
 
 + (instancetype)instance;

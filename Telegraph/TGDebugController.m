@@ -158,7 +158,7 @@
                 composeController.mailComposeDelegate = strongSelf;
                 [composeController setSubject:@"Telegram Logs"];
                 NSString *versionString = [[NSString alloc] initWithFormat:@"%@ (%@)", [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"], [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleVersion"]];
-                [composeController setMessageBody:[NSString stringWithFormat:@"User %d v %@", TGTelegraphInstance.clientUserId, versionString] isHTML:false];
+                [composeController setMessageBody:[NSString stringWithFormat:@"User %lld v %@", TGTelegraphInstance.clientUserId, versionString] isHTML:false];
                 
                 for (NSString *filePath in TGGetLogFilePaths(4)) {
                     NSData *data = [NSData dataWithContentsOfFile:filePath options:NSDataReadingMappedIfSafe error:nil];

@@ -100,28 +100,10 @@ static void TGIOS6ProfileMusicResolveForeignUser(TGUser *user, int64_t *userId, 
     if (user == nil)
         return;
 
-    int64_t resolvedUserId = TGModernUserIdForLegacyId(user.uid);
-    int64_t resolvedAccessHash = user.phoneNumberHash;
-
-    NSString *photoUrl = user.photoUrlSmall.length != 0 ? user.photoUrlSmall : user.photoUrlBig;
-    if ([photoUrl hasPrefix:@"peerphoto:"])
-    {
-        NSArray *components = [photoUrl componentsSeparatedByString:@":"];
-        if (components.count >= 5 && [components[2] intValue] == 1)
-        {
-            int64_t photoUserId = [components[3] longLongValue];
-            int64_t photoAccessHash = [components[4] longLongValue];
-            if (photoUserId > 0)
-                resolvedUserId = photoUserId;
-            if (photoAccessHash != 0)
-                resolvedAccessHash = photoAccessHash;
-        }
-    }
-
     if (userId != NULL)
-        *userId = resolvedUserId;
+        *userId = user.uid;
     if (accessHash != NULL)
-        *accessHash = resolvedAccessHash;
+        *accessHash = user.phoneNumberHash;
 }
 
 static NSData *TGIOS6ProfileSavedMusicRequestPayload(MTApiEnvironment *environment, int64_t userId, int64_t accessHash, bool isSelf)
@@ -200,7 +182,7 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
 
         if (!isSelf && (profileMusicUserId == 0 || profileMusicAccessHash == 0))
         {
-            TGLog(@"PROFILEMUSIC invalid input legacy=%d modern=%lld hash=%lld", user.uid, profileMusicUserId, profileMusicAccessHash);
+            TGLog(@"PROFILEMUSIC invalid input legacy=%lld modern=%lld hash=%lld", user.uid, profileMusicUserId, profileMusicAccessHash);
             [subscriber putNext:[NSNull null]];
             [subscriber putCompletion];
             return nil;
@@ -226,7 +208,7 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
             id outputValue = [NSNull null];
             if (error != nil)
             {
-                TGLog(@"PROFILEMUSIC rpc error uid=%d layer=%@ code=%d description=%@", user.uid, environment.layer, (int)error.errorCode, error.errorDescription);
+                TGLog(@"PROFILEMUSIC rpc error uid=%lld layer=%@ code=%d description=%@", user.uid, environment.layer, (int)error.errorCode, error.errorDescription);
             }
             else
             {
@@ -272,7 +254,7 @@ static SSignal *TGIOS6ProfileSavedMusicRawSignal(TGUser *user)
 static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 {
     TGTelegramNetworking *networking = [TGTelegramNetworking instance];
-    NSString *key = [[NSString alloc] initWithFormat:@"profileSavedMusic:%d", user.uid];
+    NSString *key = [[NSString alloc] initWithFormat:@"profileSavedMusic:%lld", user.uid];
     return [networking.genericTasksSignalManager multicastedSignalForKey:key producer:^SSignal *
     {
         return TGIOS6ProfileSavedMusicRawSignal(user);
@@ -281,7 +263,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 
 @interface TGUserUpdatesAdapter : NSObject <ASWatcher>
 {
-    int32_t _userId;
+    int64_t _userId;
     void (^_userUpdated)(TGUser *);
 }
 
@@ -291,7 +273,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 
 @implementation TGUserUpdatesAdapter
 
-- (instancetype)initWithUserId:(int32_t)userId userUpdated:(void (^)(TGUser *))userUpdated
+- (instancetype)initWithUserId:(int64_t)userId userUpdated:(void (^)(TGUser *))userUpdated
 {
     self = [super init];
     if (self != nil)
@@ -335,7 +317,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
 
 @implementation TGUserSignal
 
-+ (SSignal *)userWithUserId:(int32_t)userId
++ (SSignal *)userWithUserId:(int64_t)userId
 {
     SSignal *localSignal = [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
@@ -366,7 +348,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
     return [localSignal then:updatesSignal];
 }
 
-+ (SSignal *)profileSavedMusicWithUserId:(int32_t)userId {
++ (SSignal *)profileSavedMusicWithUserId:(int64_t)userId {
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
         TGUser *user = [TGDatabaseInstance() loadUser:userId];
         if (user == nil)
@@ -375,7 +357,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
     }] switchToLatest];
 }
 
-+ (SSignal *)updatedUserCachedDataWithUserId:(int32_t)userId {
++ (SSignal *)updatedUserCachedDataWithUserId:(int64_t)userId {
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
         TGUser *user = [TGDatabaseInstance() loadUser:userId];
         if (user != nil) {
@@ -423,7 +405,7 @@ static SSignal *TGIOS6ProfileSavedMusicSignal(TGUser *user)
     }] switchToLatest];
 }
 
-+ (SSignal *)groupsInCommon:(int32_t)userId {
++ (SSignal *)groupsInCommon:(int64_t)userId {
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id {
         TGUser *user = [TGDatabaseInstance() loadUser:userId];
         if (user != nil) {

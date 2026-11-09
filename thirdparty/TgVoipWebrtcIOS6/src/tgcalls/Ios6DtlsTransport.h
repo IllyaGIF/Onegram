@@ -48,14 +48,6 @@ public:
 
     const std::vector<uint8_t> &srtpKeyMaterial() const;
 
-    bool protectRtp(
-        std::vector<uint8_t> &packet
-    );
-
-    bool unprotectRtp(
-        std::vector<uint8_t> &packet
-    );
-
     static bool looksLikeDtls(
         const uint8_t *data,
         size_t size
@@ -76,10 +68,6 @@ private:
 
     bool driveHandshake();
     bool finishHandshake();
-
-    bool prepareSrtpKeys(
-        bool sending
-    );
 
     void fail(const char *where);
 
@@ -115,26 +103,6 @@ private:
     std::string _remoteHash;
     std::string _remoteFingerprint;
     std::string _remoteSetup;
-
-    std::vector<uint8_t> _srtpSendEncryptionKey;
-    std::vector<uint8_t> _srtpSendAuthenticationKey;
-    std::vector<uint8_t> _srtpSendSalt;
-
-    std::vector<uint8_t> _srtpRecvEncryptionKey;
-    std::vector<uint8_t> _srtpRecvAuthenticationKey;
-    std::vector<uint8_t> _srtpRecvSalt;
-
-    uint32_t _srtpSendRoc;
-    uint32_t _srtpRecvRoc;
-
-    uint32_t _srtpSendSsrc;
-    uint32_t _srtpRecvSsrc;
-
-    uint16_t _srtpSendLastSequence;
-    uint16_t _srtpRecvLastSequence;
-
-    bool _srtpSendInitialized;
-    bool _srtpRecvInitialized;
 
     std::vector<uint8_t> _srtpKeyMaterial;
 };

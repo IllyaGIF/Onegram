@@ -23,6 +23,8 @@
 - (void)play;
 - (void)loadAndPlay;
 - (void)hidePlayButton;
+- (bool)allowsStreaming;
+- (bool)isStreamable;
 - (void)stop;
 - (void)stopForOutTransition;
 

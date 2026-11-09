@@ -792,7 +792,7 @@
             [options setObject:filePath forKey:@"originalFileUrl"];
             [options setObject:_imageForPhotoUpload forKey:@"currentPhoto"];
             
-            NSString *action = [[NSString alloc] initWithFormat:@"/tg/timeline/(%d)/uploadPhoto/(%@)", TGTelegraphInstance.clientUserId, filePath];
+            NSString *action = [[NSString alloc] initWithFormat:@"/tg/timeline/(%lld)/uploadPhoto/(%@)", TGTelegraphInstance.clientUserId, filePath];
             [ActionStageInstance() requestActor:action options:options watcher:TGTelegraphInstance];
         }
         

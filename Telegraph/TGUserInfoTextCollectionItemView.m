@@ -299,6 +299,8 @@
 
 @end
 
+static const CGFloat TGUserInfoTextDescenderPadding = 6.0f;
+
 @implementation TGUserInfoTextCollectionItemView
 
 + (UIFont *)font
@@ -403,7 +405,7 @@
     labelSize.height = CGCeil(labelSize.height);
     _labelView.frame = CGRectMake(leftPadding, 11.0f, labelSize.width, labelSize.height);
     
-    CGRect frame = CGRectMake((hasCheck ? 60.0f : 15.0f) + self.safeAreaInset.left, CGFloor(labelSize.height + 1.0f) + 8.0f, _textContentView.textModel.frame.size.width, _textContentView.textModel.frame.size.height);
+    CGRect frame = CGRectMake((hasCheck ? 60.0f : 15.0f) + self.safeAreaInset.left, CGFloor(labelSize.height + 1.0f) + 8.0f, _textContentView.textModel.frame.size.width, _textContentView.textModel.frame.size.height + TGUserInfoTextDescenderPadding);
     
     if (!CGSizeEqualToSize(_textContentView.frame.size, frame.size) || !CGPointEqualToPoint(_textContentView.frame.origin, frame.origin))
     {

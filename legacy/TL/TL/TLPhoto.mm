@@ -81,7 +81,7 @@
     TLPhoto$wallPhoto *object = [[TLPhoto$wallPhoto alloc] init];
     object.n_id = metaObject->getInt64((int32_t)0x7a5601fb);
     object.access_hash = metaObject->getInt64((int32_t)0x8f305224);
-    object.user_id = metaObject->getInt32((int32_t)0xafdf4073);
+    object.user_id = metaObject->getInt64((int32_t)0xafdf4073);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.caption = metaObject->getString((int32_t)0x9bcfcf5a);
     object.geo = metaObject->getObject((int32_t)0x3c803e05);
@@ -106,8 +106,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.user_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.user_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xafdf4073, value));
     }
     {

@@ -3,14 +3,39 @@
 #import "../submodules/LegacyComponents/LegacyComponents/ASQueue.h"
 #import "TGPCMBuffer.h"
 #import "opusfile.h"
+#import "OGMediaStreamReader.h"
 #import <AudioUnit/AudioUnit.h>
 #import <AudioToolbox/AUGraph.h>
 #import <AudioToolbox/AudioServices.h>
 #include <pthread.h>
 #include <math.h>
 
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginMusicSpectrum.h"
+#endif
+
 static const int TGOpusAudioPlayerSampleRate = 48000;
 static const uint32_t TGOpusAudioPlayerDecodeFrames = 5760;
+static const int64_t TGOpusAudioPlayerStreamHeadroom = 16 * 1024;
+
+static int TGOpusAudioPlayerStreamRead(void *stream, unsigned char *buffer, int length)
+{
+    ssize_t result = [(__bridge OGMediaStreamReader *)stream read:buffer length:(size_t)MAX(0, length)];
+    return result < 0 ? -1 : (int)result;
+}
+
+static int TGOpusAudioPlayerStreamSeek(void *stream, opus_int64 offset, int whence)
+{
+    OGMediaStreamReader *reader = (__bridge OGMediaStreamReader *)stream;
+    int64_t base = whence == SEEK_CUR ? [reader position] : (whence == SEEK_END ? [reader size] : 0);
+    return [reader seekToOffset:base + offset] ? 0 : -1;
+}
+
+static opus_int64 TGOpusAudioPlayerStreamTell(void *stream)
+{
+    return [(__bridge OGMediaStreamReader *)stream position];
+}
 
 @interface TGOpusAudioPlayerReference : NSObject
 @property (nonatomic, weak) TGOpusAudioPlayerAU *value;
@@ -22,6 +47,7 @@ static const uint32_t TGOpusAudioPlayerDecodeFrames = 5760;
 @interface TGOpusAudioPlayerAU ()
 {
     NSString *_filePath;
+    OGMediaStreamReader *_reader;
     CGFloat _rate;
     bool _isPaused;
     bool _isSeekable;
@@ -63,6 +89,9 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, AudioUnitRenderActionF
     size_t requiredBytes = (size_t)frames * 2 * sizeof(int16_t);
     if (readBytes < requiredBytes)
         memset((uint8_t *)buffer->mData + readBytes, 0, requiredBytes - readBytes);
+#if OG_PLUGINS_AVAILABLE
+    OGPluginMusicSpectrumSubmitPCM((const int16_t *)buffer->mData, readFrames, 2);
+#endif
     buffer->mNumberChannels = 2;
     buffer->mDataByteSize = frames * 2 * sizeof(int16_t);
     if (readFrames == 0 && ioActionFlags != NULL)
@@ -98,8 +127,23 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, AudioUnitRenderActionF
     return self;
 }
 
+- (instancetype)initWithReader:(OGMediaStreamReader *)reader music:(bool)music controlAudioSession:(bool)controlAudioSession
+{
+    self = [super initWithMusic:music controlAudioSession:controlAudioSession];
+    if (self != nil)
+    {
+        _reader = reader;
+        _reader.blocking = true;
+        _rate = 1.0f;
+        _isPaused = true;
+        pthread_mutex_init(&_positionMutex, NULL);
+    }
+    return self;
+}
+
 - (void)dealloc
 {
+    [_reader cancel];
     [self cleanup];
     pthread_mutex_destroy(&_positionMutex);
 }
@@ -251,6 +295,8 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, AudioUnitRenderActionF
     int holes = 0;
     while (!_finished && TGPCMBufferWritable(_pcmBuffer) >= TGOpusAudioPlayerDecodeFrames)
     {
+        if (_reader != nil && ![_reader hasBufferedAhead:TGOpusAudioPlayerStreamHeadroom])
+            break;
         int frames = op_read_stereo(_opusFile, samples, TGOpusAudioPlayerDecodeFrames * 2);
         if (frames == OP_HOLE && holes++ < 16)
             continue;
@@ -348,7 +394,13 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, AudioUnitRenderActionF
         if (_opusFile == NULL)
         {
             int error = OPUS_OK;
-            _opusFile = op_open_file([_filePath fileSystemRepresentation], &error);
+            if (_reader != nil)
+            {
+                OpusFileCallbacks callbacks = {TGOpusAudioPlayerStreamRead, TGOpusAudioPlayerStreamSeek, TGOpusAudioPlayerStreamTell, NULL};
+                _opusFile = op_open_callbacks((__bridge void *)_reader, &callbacks, NULL, 0, &error);
+            }
+            else
+                _opusFile = op_open_file([_filePath fileSystemRepresentation], &error);
             if (_opusFile == NULL)
             {
                 TGLog(@"[TGOpusAudioPlayer#%p open failed: %d]", self, error);
@@ -427,6 +479,7 @@ static OSStatus TGOpusAudioPlayerCallback(void *inRefCon, AudioUnitRenderActionF
 
 - (void)stop
 {
+    [_reader cancel];
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
         [self cleanup];

@@ -1,6 +1,5 @@
 #import "OGCPUProfiler.h"
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 
 #import "../OnegramPlatform/OGPlatformDispatch.h"
 #include <dlfcn.h>
@@ -15,6 +14,7 @@
 #include <libkern/OSAtomic.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#include <malloc/malloc.h>
 
 enum {
     OGCPUProfilerMaximumThreads = 64,
@@ -22,7 +22,9 @@ enum {
     OGCPUProfilerFrameSlots = 64,
     OGCPUProfilerReportedThreads = 4,
     OGCPUProfilerReportedFrames = 6,
-    OGCPUProfilerReportedImages = 5
+    OGCPUProfilerReportedImages = 5,
+    OGCPUProfilerMainInclusiveSlots = 512,
+    OGCPUProfilerMainReportedFrames = 24
 };
 
 static const useconds_t OGCPUProfilerSampleInterval = 100000;
@@ -61,6 +63,31 @@ static uintptr_t OGCPUProfilerSlide = 0;
 static OGCPUProfilerGetNameFunction OGCPUProfilerGetName = NULL;
 static OGCPUProfilerFromMachThreadFunction OGCPUProfilerFromMachThread = NULL;
 static double OGCPUProfilerTickSeconds = 0.0;
+static pthread_mutex_t OGCPUProfilerMemoryCountersLock = PTHREAD_MUTEX_INITIALIZER;
+static NSMutableDictionary *OGCPUProfilerMemoryCounters = nil;
+
+void OGCPUProfilerRegisterMemoryCounter(NSString *name, uint64_t (^bytes)(void))
+{
+    if (![name isKindOfClass:[NSString class]] || name.length == 0 || name.length > 48 || bytes == nil)
+        return;
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_."];
+    if ([name rangeOfCharacterFromSet:[allowed invertedSet]].location != NSNotFound)
+        return;
+    pthread_mutex_lock(&OGCPUProfilerMemoryCountersLock);
+    if (OGCPUProfilerMemoryCounters == nil)
+        OGCPUProfilerMemoryCounters = [[NSMutableDictionary alloc] init];
+    if (OGCPUProfilerMemoryCounters[name] != nil || OGCPUProfilerMemoryCounters.count < 32)
+        OGCPUProfilerMemoryCounters[name] = [bytes copy];
+    pthread_mutex_unlock(&OGCPUProfilerMemoryCountersLock);
+}
+
+static NSDictionary *OGCPUProfilerMemoryCounterSnapshot(void)
+{
+    pthread_mutex_lock(&OGCPUProfilerMemoryCountersLock);
+    NSDictionary *snapshot = [OGCPUProfilerMemoryCounters copy];
+    pthread_mutex_unlock(&OGCPUProfilerMemoryCountersLock);
+    return snapshot;
+}
 #if defined(ONEGRAM_ARMV6)
 static OSSpinLock OGCPUProfilerGraphicsLock = OS_SPINLOCK_INIT;
 static OGCPUProfilerFrameSlot OGCPUProfilerGraphicsCallers[OGCPUProfilerFrameSlots];
@@ -163,8 +190,12 @@ static int OGCPUProfilerCaptureFrames(const OGCPUProfilerThread *thread, uintptr
 #endif
     while (count < capacity && thread->stackHigh != 0 && pointer >= thread->stackLow && pointer <= thread->stackHigh - 2 * sizeof(uintptr_t) && (pointer & (sizeof(uintptr_t) - 1)) == 0)
     {
-        uintptr_t next = ((const uintptr_t *)pointer)[0];
-        uintptr_t address = OGCPUProfilerCodeAddress(((const uintptr_t *)pointer)[1]);
+        uintptr_t record[2];
+        vm_size_t bytesRead = 0;
+        if (vm_read_overwrite(mach_task_self(), (vm_address_t)pointer, sizeof(record), (vm_address_t)record, &bytesRead) != KERN_SUCCESS || bytesRead != sizeof(record))
+            break;
+        uintptr_t next = record[0];
+        uintptr_t address = OGCPUProfilerCodeAddress(record[1]);
         if (address == 0 || next <= pointer)
             break;
         frames[count++] = address;
@@ -194,11 +225,59 @@ static void OGCPUProfilerCount(OGCPUProfilerThread *thread, OGCPUProfilerFrameSl
     thread->overflow++;
 }
 
+static OGCPUProfilerFrameSlot OGCPUProfilerMainInclusive[OGCPUProfilerMainInclusiveSlots];
+static uint32_t OGCPUProfilerMainInclusiveOverflow = 0;
+
+static void OGCPUProfilerRecordMainInclusive(const uintptr_t *frames, int count)
+{
+    for (int index = 0; index < count; index++)
+    {
+        uintptr_t frame = frames[index];
+        if (!OGCPUProfilerIsExecutableAddress(frame))
+            continue;
+        bool repeated = false;
+        for (int previous = 0; previous < index; previous++)
+        {
+            if (frames[previous] == frame)
+            {
+                repeated = true;
+                break;
+            }
+        }
+        if (repeated)
+            continue;
+        uintptr_t address = frame - OGCPUProfilerSlide;
+        uintptr_t slotIndex = (address >> 1) % OGCPUProfilerMainInclusiveSlots;
+        bool stored = false;
+        for (int probe = 0; probe < OGCPUProfilerMainInclusiveSlots; probe++)
+        {
+            OGCPUProfilerFrameSlot *slot = &OGCPUProfilerMainInclusive[(slotIndex + probe) % OGCPUProfilerMainInclusiveSlots];
+            if (slot->count == 0)
+            {
+                slot->address = address;
+                slot->count = 1;
+                stored = true;
+                break;
+            }
+            if (slot->address == address)
+            {
+                slot->count++;
+                stored = true;
+                break;
+            }
+        }
+        if (!stored)
+            OGCPUProfilerMainInclusiveOverflow++;
+    }
+}
+
 static void OGCPUProfilerRecord(OGCPUProfilerThread *thread, const uintptr_t *frames, int count)
 {
     if (count == 0)
         return;
     thread->samples++;
+    if (thread->port == OGCPUProfilerMainThread)
+        OGCPUProfilerRecordMainInclusive(frames, count);
     OGCPUProfilerCount(thread, thread->leafFrames, frames[0]);
     int first = OGCPUProfilerIsExecutableAddress(frames[0]) ? 0 : 1;
     bool foundCode = false;
@@ -350,6 +429,21 @@ static NSString *OGCPUProfilerThreadLabel(const OGCPUProfilerThread *thread)
     return [[NSString alloc] initWithFormat:@"#%x", (unsigned int)thread->port];
 }
 
+static NSString *OGCPUProfilerThreadPriority(const OGCPUProfilerThread *thread)
+{
+    if (!thread->present)
+        return @"-";
+    policy_rr_info_data_t fixedInfo;
+    mach_msg_type_number_t count = POLICY_RR_INFO_COUNT;
+    if (thread_info(thread->port, THREAD_SCHED_RR_INFO, (thread_info_t)&fixedInfo, &count) == KERN_SUCCESS)
+        return [[NSString alloc] initWithFormat:@"%df", fixedInfo.base_priority];
+    policy_timeshare_info_data_t timeshareInfo;
+    count = POLICY_TIMESHARE_INFO_COUNT;
+    if (thread_info(thread->port, THREAD_SCHED_TIMESHARE_INFO, (thread_info_t)&timeshareInfo, &count) == KERN_SUCCESS)
+        return [[NSString alloc] initWithFormat:@"%d/%d", timeshareInfo.cur_priority, timeshareInfo.base_priority];
+    return @"?";
+}
+
 static void OGCPUProfilerAppendTopFrames(NSMutableString *line, OGCPUProfilerFrameSlot *slots)
 {
     for (int rank = 0; rank < OGCPUProfilerReportedFrames; rank++)
@@ -414,6 +508,331 @@ static void OGCPUProfilerAppendLeafImages(NSMutableString *line, const OGCPUProf
     }
 }
 
+extern long long sqlite3_memory_used(void);
+extern long long sqlite3_memory_highwater(int resetFlag);
+
+static const size_t OGMemoryGrowthReportThreshold = 768 * 1024;
+
+OGMemoryGrowthSample OGMemoryGrowthBegin(void)
+{
+    malloc_statistics_t heap;
+    memset(&heap, 0, sizeof(heap));
+    malloc_zone_statistics(NULL, &heap);
+    OGMemoryGrowthSample sample = { heap.size_in_use, heap.size_allocated, mach_absolute_time() };
+    return sample;
+}
+
+void OGMemoryGrowthEnd(OGMemoryGrowthSample sample, const char *queue, const char *file, int line)
+{
+    malloc_statistics_t heap;
+    memset(&heap, 0, sizeof(heap));
+    malloc_zone_statistics(NULL, &heap);
+    long long reservedDelta = (long long)heap.size_allocated - (long long)sample.reserved;
+    long long inUseDelta = (long long)heap.size_in_use - (long long)sample.inUse;
+    if (reservedDelta < (long long)OGMemoryGrowthReportThreshold && inUseDelta < (long long)OGMemoryGrowthReportThreshold)
+        return;
+    mach_timebase_info_data_t timebase;
+    mach_timebase_info(&timebase);
+    double milliseconds = (double)(mach_absolute_time() - sample.ticks) * (double)timebase.numer / (double)timebase.denom / 1000000.0;
+    const char *fileName = file == NULL ? "?" : (strrchr(file, '/') != NULL ? strrchr(file, '/') + 1 : file);
+    OGPlatformDiagnosticLog(@"MEMGROW queue=%s site=%s:%d reserved_kb=%+lld inuse_kb=%+lld heap_kb=%u reserved_total_kb=%u ms=%.0f", queue, fileName, line, reservedDelta / 1024, inUseDelta / 1024, (unsigned int)(heap.size_in_use / 1024), (unsigned int)(heap.size_allocated / 1024), milliseconds);
+}
+
+typedef void (OGHeapProfilerLoggerFunction)(uint32_t type, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3, uintptr_t result, uint32_t skippedFrames);
+
+enum
+{
+    OGHeapProfilerLiveCapacity = 16384,
+    OGHeapProfilerSiteCapacity = 1024,
+    OGHeapProfilerSiteSlots = 2048,
+    OGHeapProfilerReportedSites = 20,
+    OGHeapProfilerFrameDepth = 24,
+    OGHeapProfilerTypeAllocate = 2,
+    OGHeapProfilerTypeDeallocate = 4,
+    OGHeapProfilerTypeHasZone = 8,
+    OGHeapProfilerSmallSampleShift = 6,
+    OGHeapProfilerSampledFlag = 0x80000000u
+};
+
+static const uintptr_t OGHeapProfilerThreshold = 16 * 1024;
+
+typedef struct
+{
+    uintptr_t pointer;
+    uint32_t size;
+    uint32_t site;
+} OGHeapProfilerLiveEntry;
+
+typedef struct
+{
+    uintptr_t address;
+    uint64_t liveBytes;
+    uint64_t peakBytes;
+    uint32_t liveCount;
+    uint32_t allocations;
+} OGHeapProfilerSite;
+
+static OGHeapProfilerLiveEntry OGHeapProfilerLive[OGHeapProfilerLiveCapacity];
+static OGHeapProfilerSite OGHeapProfilerSites[OGHeapProfilerSiteCapacity];
+static OGHeapProfilerSite OGHeapProfilerSnapshot[OGHeapProfilerSiteCapacity];
+static uint32_t OGHeapProfilerSiteIndices[OGHeapProfilerSiteSlots];
+static uint32_t OGHeapProfilerSiteCount = 0;
+static uint32_t OGHeapProfilerLiveCount = 0;
+static uint64_t OGHeapProfilerLiveBytes = 0;
+static uint64_t OGHeapProfilerPeakBytes = 0;
+static uint32_t OGHeapProfilerDropped = 0;
+static uint64_t OGHeapProfilerSmallSampledBytes = 0;
+static OSSpinLock OGHeapProfilerLock = OS_SPINLOCK_INIT;
+static OGHeapProfilerLoggerFunction *OGHeapProfilerPreviousLogger = NULL;
+
+static inline bool OGHeapProfilerSampledPointer(uintptr_t pointer)
+{
+    return ((uint32_t)((pointer >> 4) * 2654435761u) >> (32 - OGHeapProfilerSmallSampleShift)) == 0;
+}
+
+static inline uint32_t OGHeapProfilerPointerSlot(uintptr_t pointer)
+{
+    return (uint32_t)((pointer >> 12) * 2654435761u) & (OGHeapProfilerLiveCapacity - 1);
+}
+
+static uint32_t OGHeapProfilerSiteForAddressLocked(uintptr_t address)
+{
+    uint32_t slot = (uint32_t)((address >> 2) * 2654435761u) & (OGHeapProfilerSiteSlots - 1);
+    for (uint32_t probe = 0; probe < OGHeapProfilerSiteSlots; probe++)
+    {
+        uint32_t stored = OGHeapProfilerSiteIndices[slot];
+        if (stored == 0)
+        {
+            if (OGHeapProfilerSiteCount >= OGHeapProfilerSiteCapacity)
+                return 0;
+            OGHeapProfilerSites[OGHeapProfilerSiteCount].address = address;
+            OGHeapProfilerSiteCount++;
+            OGHeapProfilerSiteIndices[slot] = OGHeapProfilerSiteCount;
+            return OGHeapProfilerSiteCount;
+        }
+        if (OGHeapProfilerSites[stored - 1].address == address)
+            return stored;
+        slot = (slot + 1) & (OGHeapProfilerSiteSlots - 1);
+    }
+    return 0;
+}
+
+static void OGHeapProfilerRemoveLocked(uintptr_t pointer)
+{
+    uint32_t index = OGHeapProfilerPointerSlot(pointer);
+    for (uint32_t probe = 0; probe < OGHeapProfilerLiveCapacity; probe++)
+    {
+        uintptr_t stored = OGHeapProfilerLive[index].pointer;
+        if (stored == 0)
+            return;
+        if (stored == pointer)
+            break;
+        index = (index + 1) & (OGHeapProfilerLiveCapacity - 1);
+    }
+    if (OGHeapProfilerLive[index].pointer != pointer)
+        return;
+
+    OGHeapProfilerLiveEntry entry = OGHeapProfilerLive[index];
+    bool sampled = (entry.site & OGHeapProfilerSampledFlag) != 0;
+    uint32_t siteIndex = entry.site & ~OGHeapProfilerSampledFlag;
+    uint64_t weightedSize = sampled ? ((uint64_t)entry.size << OGHeapProfilerSmallSampleShift) : entry.size;
+    if (siteIndex != 0)
+    {
+        OGHeapProfilerSite *site = &OGHeapProfilerSites[siteIndex - 1];
+        site->liveBytes -= weightedSize;
+        site->liveCount--;
+    }
+    if (sampled)
+        OGHeapProfilerSmallSampledBytes -= entry.size;
+    else
+        OGHeapProfilerLiveBytes -= entry.size;
+    OGHeapProfilerLiveCount--;
+
+    uint32_t hole = index;
+    uint32_t next = index;
+    for (;;)
+    {
+        next = (next + 1) & (OGHeapProfilerLiveCapacity - 1);
+        uintptr_t candidate = OGHeapProfilerLive[next].pointer;
+        if (candidate == 0)
+            break;
+        uint32_t home = OGHeapProfilerPointerSlot(candidate);
+        bool movable = hole <= next ? (home <= hole || home > next) : (home <= hole && home > next);
+        if (movable)
+        {
+            OGHeapProfilerLive[hole] = OGHeapProfilerLive[next];
+            hole = next;
+        }
+    }
+    OGHeapProfilerLive[hole].pointer = 0;
+}
+
+static void OGHeapProfilerInsertLocked(uintptr_t pointer, uintptr_t size, uintptr_t address, bool sampled)
+{
+    if (OGHeapProfilerLiveCount >= OGHeapProfilerLiveCapacity / 2)
+    {
+        OGHeapProfilerDropped++;
+        return;
+    }
+    uint32_t index = OGHeapProfilerPointerSlot(pointer);
+    while (OGHeapProfilerLive[index].pointer != 0)
+        index = (index + 1) & (OGHeapProfilerLiveCapacity - 1);
+
+    uint32_t site = address == 0 ? 0 : OGHeapProfilerSiteForAddressLocked(address);
+    uint64_t weightedSize = sampled ? ((uint64_t)size << OGHeapProfilerSmallSampleShift) : size;
+    OGHeapProfilerLive[index].pointer = pointer;
+    OGHeapProfilerLive[index].size = (uint32_t)size;
+    OGHeapProfilerLive[index].site = site | (sampled ? OGHeapProfilerSampledFlag : 0);
+    OGHeapProfilerLiveCount++;
+    if (sampled)
+        OGHeapProfilerSmallSampledBytes += size;
+    else
+        OGHeapProfilerLiveBytes += size;
+    if (OGHeapProfilerLiveBytes > OGHeapProfilerPeakBytes)
+        OGHeapProfilerPeakBytes = OGHeapProfilerLiveBytes;
+    if (site != 0)
+    {
+        OGHeapProfilerSite *entry = &OGHeapProfilerSites[site - 1];
+        entry->liveBytes += weightedSize;
+        entry->liveCount++;
+        entry->allocations++;
+        if (entry->liveBytes > entry->peakBytes)
+            entry->peakBytes = entry->liveBytes;
+    }
+}
+
+__attribute__((noinline)) static uintptr_t OGHeapProfilerCallSite(void)
+{
+    uintptr_t *frame = (uintptr_t *)__builtin_frame_address(0);
+    for (int depth = 0; depth < OGHeapProfilerFrameDepth && frame != NULL; depth++)
+    {
+        uintptr_t *next = (uintptr_t *)frame[0];
+        uintptr_t returnAddress = frame[1];
+        if (depth >= 2 && OGCPUProfilerIsExecutableAddress(returnAddress))
+            return returnAddress;
+        if (next <= frame || (uintptr_t)next - (uintptr_t)frame > 1024 * 1024 || ((uintptr_t)next & (sizeof(uintptr_t) - 1)) != 0)
+            break;
+        frame = next;
+    }
+    return 0;
+}
+
+static void OGHeapProfilerLogger(uint32_t type, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3, uintptr_t result, uint32_t skippedFrames)
+{
+    if (OGHeapProfilerPreviousLogger != NULL)
+        OGHeapProfilerPreviousLogger(type, arg1, arg2, arg3, result, skippedFrames + 1);
+
+    bool allocate = (type & OGHeapProfilerTypeAllocate) != 0;
+    bool deallocate = (type & OGHeapProfilerTypeDeallocate) != 0;
+    if (!allocate && !deallocate)
+        return;
+    bool hasZone = (type & OGHeapProfilerTypeHasZone) != 0;
+    uintptr_t freed = deallocate ? (hasZone ? arg2 : arg1) : 0;
+    uintptr_t size = allocate ? (deallocate ? (hasZone ? arg3 : arg2) : (hasZone ? arg2 : arg1)) : 0;
+    bool trackFree = freed != 0 && ((freed & 0xfff) == 0 || OGHeapProfilerSampledPointer(freed));
+    bool large = size >= OGHeapProfilerThreshold;
+    bool trackAllocation = allocate && result != 0 && size != 0 && (large || OGHeapProfilerSampledPointer(result));
+    if (!trackFree && !trackAllocation)
+        return;
+
+    uintptr_t address = trackAllocation ? OGHeapProfilerCallSite() : 0;
+    OSSpinLockLock(&OGHeapProfilerLock);
+    if (trackFree)
+        OGHeapProfilerRemoveLocked(freed);
+    if (trackAllocation)
+        OGHeapProfilerInsertLocked(result, size, address, !large);
+    OSSpinLockUnlock(&OGHeapProfilerLock);
+}
+
+static void OGHeapProfilerInstall(void)
+{
+    OGHeapProfilerLoggerFunction **logger = (OGHeapProfilerLoggerFunction **)dlsym(RTLD_DEFAULT, "malloc_logger");
+    if (logger == NULL)
+    {
+        OGPlatformDiagnosticLog(@"HEAPTOP unavailable");
+        return;
+    }
+    OGHeapProfilerPreviousLogger = *logger;
+    *logger = OGHeapProfilerLogger;
+}
+
+static void OGHeapProfilerReport(const char *reason)
+{
+    OSSpinLockLock(&OGHeapProfilerLock);
+    uint32_t siteCount = OGHeapProfilerSiteCount;
+    memcpy(OGHeapProfilerSnapshot, OGHeapProfilerSites, sizeof(OGHeapProfilerSite) * siteCount);
+    uint64_t liveBytes = OGHeapProfilerLiveBytes;
+    uint64_t peakBytes = OGHeapProfilerPeakBytes;
+    uint32_t liveCount = OGHeapProfilerLiveCount;
+    uint32_t dropped = OGHeapProfilerDropped;
+    uint64_t smallEstimate = OGHeapProfilerSmallSampledBytes << OGHeapProfilerSmallSampleShift;
+    OSSpinLockUnlock(&OGHeapProfilerLock);
+
+    NSMutableString *line = [[NSMutableString alloc] initWithFormat:@"HEAPTOP reason=%s live_kb=%llu peak_kb=%llu small_estimate_kb=%llu blocks=%u dropped=%u sites=", reason, liveBytes / 1024, peakBytes / 1024, smallEstimate / 1024, liveCount, dropped];
+    for (int rank = 0; rank < OGHeapProfilerReportedSites; rank++)
+    {
+        uint32_t best = UINT32_MAX;
+        for (uint32_t index = 0; index < siteCount; index++)
+        {
+            if (OGHeapProfilerSnapshot[index].peakBytes == 0)
+                continue;
+            if (best == UINT32_MAX || OGHeapProfilerSnapshot[index].liveBytes > OGHeapProfilerSnapshot[best].liveBytes || (OGHeapProfilerSnapshot[index].liveBytes == OGHeapProfilerSnapshot[best].liveBytes && OGHeapProfilerSnapshot[index].peakBytes > OGHeapProfilerSnapshot[best].peakBytes))
+                best = index;
+        }
+        if (best == UINT32_MAX)
+            break;
+        OGHeapProfilerSite *site = &OGHeapProfilerSnapshot[best];
+        [line appendFormat:@"%s0x%lx:%llu/%u/%llu/%u", rank == 0 ? "" : ",", (unsigned long)(site->address - OGCPUProfilerSlide), site->liveBytes / 1024, site->liveCount, site->peakBytes / 1024, site->allocations];
+        site->peakBytes = 0;
+        site->liveBytes = 0;
+    }
+    OGPlatformDiagnosticLog(@"%@", line);
+}
+
+static void OGCPUProfilerReportMemory(double window)
+{
+    static bool initialized = false;
+    static integer_t previousFaults = 0;
+    static integer_t previousPageins = 0;
+    task_basic_info_data_t basic;
+    mach_msg_type_number_t basicCount = TASK_BASIC_INFO_COUNT;
+    task_events_info_data_t events;
+    mach_msg_type_number_t eventsCount = TASK_EVENTS_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&basic, &basicCount) != KERN_SUCCESS || task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&events, &eventsCount) != KERN_SUCCESS)
+        return;
+    malloc_statistics_t heap;
+    memset(&heap, 0, sizeof(heap));
+    malloc_zone_statistics(NULL, &heap);
+    int threads = 0;
+    for (int index = 0; index < OGCPUProfilerMaximumThreads; index++)
+    {
+        if (OGCPUProfilerThreads[index].used && OGCPUProfilerThreads[index].present)
+            threads++;
+    }
+    static uint32_t reports = 0;
+    if (initialized && (++reports % 6) == 0)
+        OGHeapProfilerReport("periodic");
+    if (initialized)
+    {
+        NSMutableString *line = [[NSMutableString alloc] initWithFormat:@"MEMSTAT window_ms=%.0f resident_kb=%u virtual_kb=%u heap_kb=%u heap_allocated_kb=%u sqlite_kb=%lld sqlite_peak_kb=%lld faults=%d pageins=%d threads=%d", window * 1000.0, (unsigned int)(basic.resident_size / 1024), (unsigned int)(basic.virtual_size / 1024), (unsigned int)(heap.size_in_use / 1024), (unsigned int)(heap.size_allocated / 1024), sqlite3_memory_used() / 1024, sqlite3_memory_highwater(0) / 1024, (int)(events.faults - previousFaults), (int)(events.pageins - previousPageins), threads];
+        NSDictionary *counters = OGCPUProfilerMemoryCounterSnapshot();
+        NSArray *names = [[counters allKeys] sortedArrayUsingSelector:@selector(compare:)];
+        for (NSString *name in names)
+        {
+            uint64_t (^counter)(void) = counters[name];
+            uint64_t value = counter();
+            if ([name hasPrefix:@"count."])
+                [line appendFormat:@" %@=%llu", name, (unsigned long long)value];
+            else
+                [line appendFormat:@" %@_kb=%llu", name, (unsigned long long)(value / 1024)];
+        }
+        OGPlatformDiagnosticLog(@"%@", line);
+    }
+    initialized = true;
+    previousFaults = events.faults;
+    previousPageins = events.pageins;
+}
+
 static void OGCPUProfilerReport(double window)
 {
     OGCPUProfilerThread *ranked[OGCPUProfilerMaximumThreads];
@@ -446,7 +865,7 @@ static void OGCPUProfilerReport(double window)
     {
         NSMutableString *summary = [[NSMutableString alloc] initWithFormat:@"CPUSTAT window_ms=%.0f cpu_ms=%.0f threads=", window * 1000.0, total * 1000.0];
         for (int index = 0; index < rankedCount; index++)
-            [summary appendFormat:@"%s%@:%.0f", index == 0 ? "" : ",", OGCPUProfilerThreadLabel(ranked[index]), (ranked[index]->current - ranked[index]->baseline) * 1000.0];
+            [summary appendFormat:@"%s%@:%.0f@%@", index == 0 ? "" : ",", OGCPUProfilerThreadLabel(ranked[index]), (ranked[index]->current - ranked[index]->baseline) * 1000.0, OGCPUProfilerThreadPriority(ranked[index])];
         OGPlatformDiagnosticLog(@"%@", summary);
 
         int reported = MIN(rankedCount, (int)OGCPUProfilerReportedThreads);
@@ -464,6 +883,30 @@ static void OGCPUProfilerReport(double window)
             OGPlatformDiagnosticLog(@"%@", line);
         }
     }
+    for (int index = 0; index < OGCPUProfilerMaximumThreads; index++)
+    {
+        OGCPUProfilerThread *thread = &OGCPUProfilerThreads[index];
+        if (!thread->used || thread->port != OGCPUProfilerMainThread || thread->samples == 0)
+            continue;
+        NSMutableString *line = [[NSMutableString alloc] initWithFormat:@"CPUMAIN cpu_ms=%.0f samples=%u overflow=%u inclusive=", (thread->current - thread->baseline) * 1000.0, (unsigned int)thread->samples, (unsigned int)OGCPUProfilerMainInclusiveOverflow];
+        for (int rank = 0; rank < OGCPUProfilerMainReportedFrames; rank++)
+        {
+            OGCPUProfilerFrameSlot *best = NULL;
+            for (int slot = 0; slot < OGCPUProfilerMainInclusiveSlots; slot++)
+            {
+                if (OGCPUProfilerMainInclusive[slot].count != 0 && (best == NULL || OGCPUProfilerMainInclusive[slot].count > best->count))
+                    best = &OGCPUProfilerMainInclusive[slot];
+            }
+            if (best == NULL)
+                break;
+            [line appendFormat:@"%s0x%lx:%u", rank == 0 ? "" : ",", (unsigned long)best->address, (unsigned int)best->count];
+            best->count = 0;
+        }
+        OGPlatformDiagnosticLog(@"%@", line);
+    }
+    memset(OGCPUProfilerMainInclusive, 0, sizeof(OGCPUProfilerMainInclusive));
+    OGCPUProfilerMainInclusiveOverflow = 0;
+    OGCPUProfilerReportMemory(window);
 
     for (int index = 0; index < OGCPUProfilerMaximumThreads; index++)
     {
@@ -502,16 +945,6 @@ static void OGCPUProfilerConfigureThread(void)
     thread_extended_policy_data_t extended;
     extended.timeshare = false;
     thread_policy_set(pthread_mach_thread_np(thread), THREAD_EXTENDED_POLICY, (thread_policy_t)&extended, THREAD_EXTENDED_POLICY_COUNT);
-
-    mach_timebase_info_data_t timebase;
-    mach_timebase_info(&timebase);
-    double ticksPerMillisecond = 1000000.0 * (double)timebase.denom / (double)timebase.numer;
-    thread_time_constraint_policy_data_t constraint;
-    constraint.period = (uint32_t)((double)(OGCPUProfilerSampleInterval / 1000) * ticksPerMillisecond);
-    constraint.computation = (uint32_t)(2.0 * ticksPerMillisecond);
-    constraint.constraint = (uint32_t)(5.0 * ticksPerMillisecond);
-    constraint.preemptible = 1;
-    thread_policy_set(pthread_mach_thread_np(thread), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&constraint, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
 }
 
 static void *OGCPUProfilerThreadMain(void *__unused argument)
@@ -556,6 +989,11 @@ void OGCPUProfilerStart(void)
     OGCPUProfilerGetName = (OGCPUProfilerGetNameFunction)dlsym(RTLD_DEFAULT, "pthread_getname_np");
     OGCPUProfilerFromMachThread = (OGCPUProfilerFromMachThreadFunction)dlsym(RTLD_DEFAULT, "pthread_from_mach_thread_np");
     OGCPUProfilerResolveExecutable();
+    OGHeapProfilerInstall();
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"UIApplicationDidReceiveMemoryWarningNotification" object:nil queue:nil usingBlock:^(__unused NSNotification *notification)
+    {
+        OGHeapProfilerReport("memory_warning");
+    }];
 #if defined(ONEGRAM_ARMV6)
     OnegramIOS3OffMainGraphicsHandler = OGCPUProfilerRecordOffMainGraphics;
 #endif
@@ -564,5 +1002,3 @@ void OGCPUProfilerStart(void)
     if (pthread_create(&profiler, NULL, OGCPUProfilerThreadMain, NULL) == 0)
         pthread_detach(profiler);
 }
-
-#endif

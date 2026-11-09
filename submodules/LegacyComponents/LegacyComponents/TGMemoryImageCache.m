@@ -55,8 +55,19 @@
         _hardMemoryLimit = MAX(hardMemoryLimit, softMemoryLimit);
         _cache = [[NSMutableDictionary alloc] init];
         _averageColors = [[NSMutableDictionary alloc] init];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(memoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
     }
     return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)memoryWarning:(NSNotification *)notification
+{
+    [self clearCache];
 }
 
 - (void)_addSize:(NSUInteger)size
@@ -95,6 +106,7 @@
     [_queue dispatch:^
     {
         [_cache removeAllObjects];
+        [_averageColors removeAllObjects];
         _cacheSize = 0;
     }];
 }
@@ -134,6 +146,7 @@
                     _cacheSize = 0;
                 else
                     _cacheSize -= item.size;
+                [_cache removeObjectForKey:key];
             }
             
             if (image != nil && [image isKindOfClass:[UIImage class]])
@@ -141,8 +154,11 @@
                 CGSize dimensions = image.size;
                 CGFloat scale = image.scale;
                 NSUInteger size = (NSUInteger)((dimensions.width * scale * dimensions.height * scale) * 4);
-                _cache[key] = [[TGMemoryImageCacheItem alloc] initWithObject:image attributes:attributes size:size timestamp:CFAbsoluteTimeGetCurrent()];
-                [self _addSize:size];
+                if (size <= _hardMemoryLimit)
+                {
+                    [self _addSize:size];
+                    _cache[key] = [[TGMemoryImageCacheItem alloc] initWithObject:image attributes:attributes size:size timestamp:CFAbsoluteTimeGetCurrent()];
+                }
             }
             else
                 [_cache removeObjectForKey:key];
@@ -157,6 +173,8 @@
     
     [_queue dispatch:^
     {
+        if (_averageColors.count >= 512 && _averageColors[key] == nil)
+            [_averageColors removeAllObjects];
         _averageColors[key] = @(color);
     }];
 }

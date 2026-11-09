@@ -7,7 +7,7 @@
 
 - (int64_t)conversationId
 {
-    return TGPeerIdFromAdminLogId(self.fid);
+    return TGPeerIdFromFeedId(self.fid);
 }
 
 - (int64_t)feedId

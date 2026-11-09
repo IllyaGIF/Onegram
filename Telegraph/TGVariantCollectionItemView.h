@@ -13,6 +13,7 @@
 - (void)setTitle:(NSString *)title;
 - (void)setTitleColor:(UIColor *)titleColor;
 - (void)setVariant:(NSString *)variant variantColor:(UIColor *)variantColor;
+- (void)setDescriptionText:(NSString *)descriptionText;
 - (void)setIcon:(UIImage *)icon;
 - (void)setVariantIcon:(UIImage *)variantIcon;
 - (void)setEnabled:(bool)enabled;

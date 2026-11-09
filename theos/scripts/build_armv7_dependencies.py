@@ -5,8 +5,10 @@ import sys
 from pathlib import Path
 
 from generate import OUT
+from toolchain_flags import codegen_flags
 from xcode_graph import ROOT
 from build_pst import build_pst
+from build_webp_demux import build_webp_demux, plugins_enabled
 
 
 def main():
@@ -26,14 +28,18 @@ def main():
     products.mkdir(parents=True, exist_ok=True)
     archive = products / 'libPSTCollectionView.a'
     sources = sorted((pst / 'PSTCollectionView').glob('*.m'))
-    release_logging = ROOT / 'OnegramRuntime/OGReleaseLogging.h'
-    inputs = sorted((pst / 'PSTCollectionView').glob('*.h')) + [release_logging, pst / 'PSTCollectionView.podspec']
+    diagnostics_logging = ROOT / 'OnegramRuntime/OGDiagnosticsLogging.h'
+    inputs = sorted((pst / 'PSTCollectionView').glob('*.h')) + [diagnostics_logging, pst / 'PSTCollectionView.podspec']
     output = OUT / 'pst-armv7'
     output.mkdir(parents=True, exist_ok=True)
     compiler = [clang, '-arch', 'armv7', '-isysroot', str(args.sdk), '-miphoneos-version-min=' + args.deployment,
-                '-fobjc-arc', '-std=gnu99', '-Os', '-Wno-everything', '-include', str(release_logging)]
-    compiler += ['-target', 'armv7-apple-ios' + args.deployment]
+                '-fobjc-arc', '-std=gnu99', '-Os', '-Wno-everything', '-include', str(diagnostics_logging)]
+    compiler += ['-target', 'armv7-apple-ios' + args.deployment] + codegen_flags('armv7')
     build_pst(sources, compiler, libtool, lipo, 'armv7', archive, output, inputs)
+    if plugins_enabled():
+        build_webp_demux(OUT, [clang, '-arch', 'armv7', '-isysroot', str(args.sdk), '-miphoneos-version-min=' + args.deployment,
+                               '-target', 'armv7-apple-ios' + args.deployment] + codegen_flags('armv7'),
+                         libtool, lipo, 'armv7')
 
 
 if __name__ == '__main__':

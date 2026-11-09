@@ -13,8 +13,8 @@
 
 #define TGAssert(expr) assert(expr)
 
-#define UIColorRGB(rgb) ([[UIColor alloc] initWithRed:(((rgb >> 16) & 0xff) / 255.0f) green:(((rgb >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:1.0f])
-#define UIColorRGBA(rgb,a) ([[UIColor alloc] initWithRed:(((rgb >> 16) & 0xff) / 255.0f) green:(((rgb >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:a])
+#define UIColorRGB(rgb) ([[UIColor alloc] initWithRed:((((rgb) >> 16) & 0xff) / 255.0f) green:((((rgb) >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:1.0f])
+#define UIColorRGBA(rgb,a) ([[UIColor alloc] initWithRed:((((rgb) >> 16) & 0xff) / 255.0f) green:((((rgb) >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:(a)])
 
 #define TGRestrictedToMainThread {if(![[NSThread currentThread] isMainThread]) TGLog(@"***** Warning: main thread-bound operation is running in background! *****");}
 
@@ -38,6 +38,16 @@ typedef enum {
 } TGPerformanceClass;
 
 int cpuCoreCount();
+
+static inline int64_t TGApiHashCombine(int64_t hash, int64_t value)
+{
+    uint64_t acc = (uint64_t)hash;
+    acc ^= acc >> 21;
+    acc ^= acc << 35;
+    acc ^= acc >> 4;
+    acc += (uint64_t)value;
+    return (int64_t)acc;
+}
 bool hasModernCpu();
 int deviceMemorySize();
 TGPerformanceClass devicePerformanceClass();
@@ -87,25 +97,29 @@ inline void TGDispatchAfter(double delay, dispatch_queue_t queue, dispatch_block
 void TGLogSetEnabled(bool enabled);
 bool TGLogEnabled();
 bool TGLogAvailable();
-#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
 #undef TGLog
 #undef TGLogv
-void TGLog(NSString *format, ...);
-void TGLogv(NSString *format, va_list args);
-#else
-#undef TGLog
-#define TGLog(...) ((void)0)
-#define TGLogv(...) ((void)0)
+void TGLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+void TGLogv(NSString *format, va_list args) __attribute__((format(__NSString__, 1, 0)));
+#if !defined(ONEGRAM_LOG_IMPLEMENTATION)
+#define TGLog(...) (OGDiagnosticsEnabled() ? TGLog(__VA_ARGS__) : (void)0)
+#define TGLogv(...) (OGDiagnosticsEnabled() ? TGLogv(__VA_ARGS__) : (void)0)
 #endif
 
 void TGLogSynchronize();
 void TGLogClear();
+bool TGCanDeleteLogFile(NSString *path);
 bool TGDeleteLogFile(NSString *path, NSError **error);
 NSString *TGIOS6DiagnosticBreadcrumbPath();
+NSString *TGIOS6PreviousDiagnosticBreadcrumbPath();
+void TGDiagnosticLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
 void TGIOS6PrepareDiagnosticBreadcrumbs();
 void TGIOS6NativeDiagnosticWrite(const char *bytes, size_t length);
+int TGIOS6NativeDiagnosticsEnabled(void);
 NSArray *TGGetLogFilePaths(int count);
 NSArray *TGGetArchivedLogFilePaths();
+bool TGCountLiveLogEntries(NSUInteger *count, NSError **error);
+NSString *TGSaveLiveLogWithError(NSError **error);
 NSString *TGSaveCurrentLogLines(int lineCount);
 NSString *TGSaveCurrentLogLinesWithError(int lineCount, NSError **error);
 NSString *TGArchiveCrashLogText(NSString *text, NSDate *date);

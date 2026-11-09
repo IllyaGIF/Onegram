@@ -10,17 +10,6 @@
 
 #import "TL/TLMetaScheme.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-int64_t TGIOS6ApiChannelIdForConversation(TGConversation *conversation);
-int64_t TGIOS6ApiChatIdForConversation(TGConversation *conversation);
-
-#ifdef __cplusplus
-}
-#endif
-
 @interface TGConversationParticipantsData (Telegraph)
 
 - (id)initWithTelegraphParticipantsDesc:(TLChatParticipants *)participantsDesc;

@@ -91,17 +91,17 @@ const int32_t TGCallLegacyMaxLayer = 92;
     
     if (phoneCallProtocol.library_versions == nil)
         phoneCallProtocol.library_versions = [NSArray array];
-    
+    TGDiagnosticLog(@"CALL protocol.offer min=%d max=%d versions=%@", phoneCallProtocol.min_layer, phoneCallProtocol.max_layer, phoneCallProtocol.library_versions);
     
     return phoneCallProtocol;
 }
 
-+ (SSignal *)requestedOutgoingCallWithPeerId:(int64_t)peerId
++ (SSignal *)requestedOutgoingCallWithPeerId:(int64_t)peerId video:(bool)video
 {
     
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id
              {
-                 return [TGTelegraphInstance createInputUserForUid:(int32_t)peerId];
+                 return [TGTelegraphInstance createInputUserForUid:peerId];
              }] mapToSignal:^SSignal *(TLInputUser *inputUser)
             {
                 if (inputUser == nil)
@@ -114,7 +114,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                         {
                             TLRPCphone_requestCall$phone_requestCall *requestCall = [[TLRPCphone_requestCall$phone_requestCall alloc] init];
                             
-                            requestCall.flags = 0;
+                            requestCall.flags = video ? (1 << 0) : 0;
                             requestCall.user_id = inputUser;
                             requestCall.random_id = (int32_t)arc4random();
                             
@@ -161,7 +161,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                                                     accessHash:0
                                                                     date:0
                                                                     adminId:0
-                                                                    participantId:(int32_t)peerId
+                                                                    participantId:peerId
                                                                     a:aBytes
                                                                     gA:gA
                                                                     dhConfig:config
@@ -203,7 +203,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                         }
                                         else
                                         {
-                                            TGLog(@"CALL rpc.phone.requestCall.unknown peer=%lld call=%@",
+                                            TGDiagnosticLog(@"CALL rpc.phone.requestCall.unknown peer=%lld call=%@",
                                                   peerId,
                                                   NSStringFromClass([result.phone_call class]));
                                             
@@ -271,8 +271,8 @@ const int32_t TGCallLegacyMaxLayer = 92;
 + (SSignal *)receivedIncomingCallWithCallId:(int64_t)callId
                                  accessHash:(int64_t)accessHash
                                        date:(int32_t)date
-                                    adminId:(int32_t)adminId
-                              participantId:(int32_t)participantId
+                                    adminId:(int64_t)adminId
+                              participantId:(int64_t)participantId
                                      gAHash:(NSData *)gAHash
 {
     return [[self encryptionConfig] mapToSignal:^SSignal *(TLmessages_DhConfig$messages_dhConfig *config)
@@ -456,7 +456,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                 concreteConnection.peer_tag.length < 16 ||
                                 (concreteConnection.ip.length == 0 && concreteConnection.ipv6.length == 0))
                             {
-                                TGLog(@"CALL confirmed.connection.skipBad id=%lld ip=%@ ipv6=%@ port=%d peerTag=%@",
+                                TGDiagnosticLog(@"CALL confirmed.connection.skipBad id=%lld ip=%@ ipv6=%@ port=%d peerTag=%@",
                                       concreteConnection.n_id,
                                       concreteConnection.ip,
                                       concreteConnection.ipv6,
@@ -494,7 +494,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                             }
                             else
                             {
-                                TGLog(@"CALL confirmed.webrtc.skipBad id=%lld ip=%@ ipv6=%@ port=%d",
+                                TGDiagnosticLog(@"CALL confirmed.webrtc.skipBad id=%lld ip=%@ ipv6=%@ port=%d",
                                       webRtcConnection.n_id,
                                       webRtcConnection.ip,
                                       webRtcConnection.ipv6,
@@ -636,7 +636,7 @@ const int32_t TGCallLegacyMaxLayer = 92;
                                 comment:(NSString *)comment
                             includeLogs:(bool)includeLogs
 {
-    int32_t voipUid = [TGTelegraphInstance createVoipSupportUserIfNeeded];
+    int64_t voipUid = [TGTelegraphInstance createVoipSupportUserIfNeeded];
     
     SSignal *signal = [self _reportCallRatingWithCallId:callId
                                              accessHash:accessHash

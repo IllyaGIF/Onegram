@@ -6,6 +6,7 @@
 + (UIImage *)tabBarCallsIcon:(UIColor *)color;
 + (UIImage *)tabBarChatsIcon:(UIColor *)color downArrow:(NSNumber *)downArrow;
 + (UIImage *)tabBarSettingsIcon:(UIColor *)color;
++ (UIImage *)tabBarProfileIcon:(UIColor *)color;
 
 + (UIImage *)contactsInviteIcon:(UIColor *)color;
 + (UIImage *)contactsShareIcon:(UIColor *)color;
@@ -59,6 +60,7 @@
 + (UIImage *)chatTitleInfoIcon:(UIColor *)color;
 + (UIImage *)chatTitleCallIcon:(UIColor *)color;
 + (UIImage *)chatTitleGroupIcon:(UIColor *)color;
++ (UIImage *)chatTitleMoreIcon:(UIColor *)color;
 
 + (UIImage *)chatSearchNextIcon:(UIColor *)color;
 + (UIImage *)chatSearchPreviousIcon:(UIColor *)color;
@@ -67,7 +69,8 @@
 
 + (UIImage *)chatPlaceholderEncryptedIcon;
 
-+ (UIImage *)chatBubbleImage:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail;
++ (UIImage *)chatBubbleImage:(UIColor *)color borderColor:(UIColor *)borderColor outgoing:(bool)outgoing hasTail:(bool)hasTail radius:(NSInteger)radius;
++ (CGFloat)defaultChatBubbleRadius;
 + (UIImage *)brandedIOS6DeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read;
 + (UIImage *)brandedIOS6FlatDeliveryTagImage:(NSString *)timeText incoming:(bool)incoming read:(bool)read;
 + (CGFloat)brandedIOS6DeliveryTagBottomInset;

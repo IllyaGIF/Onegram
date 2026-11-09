@@ -30,7 +30,7 @@
     TGImageView *_legacyImageView;
     TransformImageView *_transformImageView;
     
-    NSString *_videoPath;
+    NSURL *_videoURL;
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
     OGPlatformMoviePlayer *_player;
     UIView *_legacyVideoView;
@@ -108,7 +108,14 @@
 
 - (void)setVideoPath:(NSString *)videoPath duration:(NSTimeInterval)duration
 {
-    _videoPath = videoPath;
+    [self setVideoURL:videoPath != nil ? [NSURL fileURLWithPath:videoPath] : nil duration:duration];
+}
+
+- (void)setVideoURL:(NSURL *)videoURL duration:(NSTimeInterval)duration
+{
+    if (_player != nil && ![videoURL isEqual:_videoURL])
+        [self stop];
+    _videoURL = videoURL;
     [self updateState:[TGModernGalleryVideoPlayerState stateWithPlaying:false duration:duration position:0.0]];
 }
 
@@ -208,7 +215,7 @@
 
 - (void)playVideo
 {
-    if (_videoPath == nil)
+    if (_videoURL == nil)
         return;
 
     if (_player == nil)
@@ -230,7 +237,7 @@
         }];
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 40000
-        _player = [[OGPlatformMoviePlayer alloc] initWithURL:[NSURL fileURLWithPath:_videoPath]];
+        _player = [[OGPlatformMoviePlayer alloc] initWithURL:_videoURL];
         if (_player == nil)
             return;
 
@@ -255,7 +262,7 @@
         if (actualDuration > 0.1f)
             [self updateState:[TGModernGalleryVideoPlayerState stateWithPlaying:false duration:actualDuration position:0.0]];
 #else
-        _player = [[AVPlayer alloc] initWithURL:[NSURL fileURLWithPath:_videoPath]];
+        _player = [[AVPlayer alloc] initWithURL:_videoURL];
         _player.actionAtItemEnd = AVPlayerActionAtItemEndNone;
 
         _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:[_player currentItem]];
@@ -334,6 +341,8 @@
 #endif
     if (actualDuration > 0.1f)
         duration = actualDuration;
+    if (!(position >= 0.0))
+        position = 0.0;
 
     [self updateState:[TGModernGalleryVideoPlayerState stateWithPlaying:self.state.isPlaying duration:duration position:position]];
 }

@@ -309,7 +309,7 @@
                 
                 NSMutableArray *users = [[NSMutableArray alloc] init];
                 for (NSNumber *nUserId in _userIds) {
-                    TGUser *user = [TGDatabaseInstance() loadUser:[nUserId intValue]];
+                    TGUser *user = [TGDatabaseInstance() loadUser:[nUserId longLongValue]];
                     if (user != nil) {
                         [users addObject:user];
                     }
@@ -396,7 +396,7 @@
     NSMutableArray *users = [[NSMutableArray alloc] init];
     for (NSNumber *nUid in _userIds)
     {
-        TGUser *user = [TGDatabaseInstance() loadUser:[nUid intValue]];
+        TGUser *user = [TGDatabaseInstance() loadUser:[nUid longLongValue]];
         if (user != nil)
             [users addObject:user];
     }
@@ -433,7 +433,7 @@
         conversation.chatTitle = _groupInfoItem.editingTitle;
         [_groupInfoItem setConversation:conversation];
     } else if ([action isEqualToString:@"openUser"]) {
-        [[TGInterfaceManager instance] navigateToProfileOfUser:[options[@"uid"] intValue]];
+        [[TGInterfaceManager instance] navigateToProfileOfUser:[options[@"uid"] longLongValue]];
     } else if ([action isEqualToString:@"openAvatar"]) {
         [self setGroupPhotoPressed];
     }

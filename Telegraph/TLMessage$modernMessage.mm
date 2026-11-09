@@ -238,19 +238,19 @@ static TLPeer *TGModernReadPeerCompat(NSInputStream *is, id<TLSerializationEnvir
         if (signature == (int32_t)0x59511722 || signature == (int32_t)0x15752102)
         {
             TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-            peer.user_id = TGModernLegacyIdForModernId(modernPeerId);
+            peer.user_id = modernPeerId;
             return peer;
         }
         else if (signature == (int32_t)0x36c6019a)
         {
             TLPeer$peerChat *peer = [[TLPeer$peerChat alloc] init];
-            peer.chat_id = (int32_t)modernPeerId;
+            peer.chat_id = modernPeerId;
             return peer;
         }
         else
         {
             TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-            peer.channel_id = (int32_t)modernPeerId;
+            peer.channel_id = modernPeerId;
             return peer;
         }
     }
@@ -264,13 +264,13 @@ static TLPeer *TGModernReadPeerCompat(NSInputStream *is, id<TLSerializationEnvir
     if (rawPeerId < 0)
     {
         TLPeer$peerChannel *peer = [[TLPeer$peerChannel alloc] init];
-        peer.channel_id = (int32_t)-rawPeerId;
+        peer.channel_id = -rawPeerId;
         return peer;
     }
     else
     {
         TLPeer$peerUser *peer = [[TLPeer$peerUser alloc] init];
-        peer.user_id = TGModernLegacyIdForModernId(rawPeerId);
+        peer.user_id = rawPeerId;
         return peer;
     }
 }
@@ -366,7 +366,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
             if (error != nil && *error != nil)
                 return nil;
             result.senderPeerId = TGModernPeerLegacyId(fromPeer);
-            result.from_id = TGPeerIdIsUser(result.senderPeerId) ? (int32_t)result.senderPeerId : 0;
+            result.from_id = TGPeerIdIsUser(result.senderPeerId) ? result.senderPeerId : 0;
         }
         else
             result.from_id = [is readInt32];
@@ -385,9 +385,10 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     
     if (hasModernFlags2 && (flags & (1 << 28)))
     {
-        TGModernReadObject(is, environment, error);
+        TLPeer *savedPeer = TGModernReadPeerCompat(is, environment, error);
         if (error != nil && *error != nil)
             return nil;
+        result.saved_peer_id = TGModernPeerLegacyId(savedPeer);
     }
     
     if (flags & (1 << 2))
@@ -400,7 +401,7 @@ static int32_t TGModernReadReplyHeader(NSInputStream *is, id<TLSerializationEnvi
     
     if (flags & (1 << 11))
     {
-        result.via_bot_id = hasModernFlags2 ? TGModernLegacyIdForModernId([is readInt64]) : [is readInt32];
+        result.via_bot_id = hasModernFlags2 ? [is readInt64] : [is readInt32];
     }
     
     if (hasModernFlags2 && (flags2 & (1 << 0)))

@@ -4,6 +4,8 @@
 
 #import "TGUserInfoCollectionItemView.h"
 #import "TGPresentation.h"
+#import "TGOnegramSettings.h"
+#import "TGProfileHeaderLayout.h"
 #import "../OnegramUI/Core/OGTheme.h"
 #import "../OnegramUI/Core/OGProfileAppearance.h"
 
@@ -66,9 +68,46 @@
         return CGSizeMake(containerSize.width, baseHeight + _additinalHeight + musicHeight);
     }
 
+    if ([self usesModernLayout])
+        return CGSizeMake(containerSize.width, TGProfileHeaderHeight(_profileMusicDocument != nil ? 36.0f : 0.0f));
+
     CGFloat baseHeight = 97.0f;
     CGFloat musicHeight = _profileMusicDocument != nil ? 44.0f : 0.0f;
     return CGSizeMake(containerSize.width, baseHeight + _additinalHeight + musicHeight);
+}
+
+- (bool)usesModernLayout
+{
+    return !_editing && TGOnegramModernInterfaceEnabled();
+}
+
+- (bool)transparent
+{
+    return [super transparent] || [self usesModernLayout];
+}
+
+- (void)setModernHeaderColor:(UIColor *)modernHeaderColor
+{
+    _modernHeaderColor = modernHeaderColor;
+    [(TGUserInfoCollectionItemView *)[self boundView] setModernHeaderColor:modernHeaderColor];
+}
+
+- (void)setStarsRatingLevel:(NSNumber *)starsRatingLevel
+{
+    _starsRatingLevel = starsRatingLevel;
+    [(TGUserInfoCollectionItemView *)[self boundView] setStarsRatingLevel:starsRatingLevel];
+}
+
+- (void)setStoryRingState:(int)storyRingState
+{
+    _storyRingState = storyRingState;
+    [(TGUserInfoCollectionItemView *)[self boundView] setStoryRingState:storyRingState];
+}
+
+- (void)setModernSubtitleShowsContactDetails:(bool)modernSubtitleShowsContactDetails
+{
+    _modernSubtitleShowsContactDetails = modernSubtitleShowsContactDetails;
+    [(TGUserInfoCollectionItemView *)[self boundView] setModernSubtitleShowsContactDetails:modernSubtitleShowsContactDetails];
 }
 
 - (NSString *)currentFirstName
@@ -101,6 +140,10 @@
     [view setUsername:_username];
     [view setAbout:_about];
     [view setBrandedDetailsTextScale:_brandedDetailsTextScale];
+    [view setModernSubtitleShowsContactDetails:_modernSubtitleShowsContactDetails];
+    [view setStoryRingState:_storyRingState];
+    [view setModernHeaderColor:_modernHeaderColor];
+    [view setStarsRatingLevel:_starsRatingLevel];
     
     if (!_disableAvatar)
     {

@@ -10,7 +10,7 @@
 
 #import "TGTelegraphProtocols.h"
 
-@interface TGFileDownloadActor : TGActor <TGFileDownloadActor>
+@interface TGFileDownloadActor : TGActor
 
 - (void)completeWithData:(NSData *)data;
 

@@ -32,15 +32,6 @@
 
 @end
 
-static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
-{
-    int32_t channelId = TGChannelIdFromPeerId(peerId);
-    if (channelId != 0)
-        return channelId < 0 ? (int64_t)(uint32_t)channelId : (int64_t)channelId;
-    
-    return 0;
-}
-
 @implementation TGSynchronizeActionQueueActor
 
 + (NSString *)genericPath
@@ -106,9 +97,9 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                 TGDatabaseAction action;
                 [(NSValue *)[readConversationActions objectAtIndex:0] getValue:&action];
                 _currentReadConversationId = action.subject;
-                _currentReadMaxMid = action.arg0;
+                _currentReadMaxMid = (int32_t)action.arg0;
                 
-                if (_currentReadConversationId <= INT_MIN)
+                if (TGPeerIdIsSecretChat(_currentReadConversationId))
                 {
                     int64_t encryptedConversationId = [TGDatabaseInstance() encryptedConversationIdForPeerId:_currentReadConversationId];
                     int64_t accessHash = [TGDatabaseInstance() encryptedConversationAccessHash:_currentReadConversationId];
@@ -119,7 +110,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                         [self readMessagesSuccess:nil];
                 }
                 else
-                    self.cancelToken = [TGTelegraphInstance doConversationReadHistory:action.subject accessHash:0 maxMid:action.arg0 offset:0 actor:self];
+                    self.cancelToken = [TGTelegraphInstance doConversationReadHistory:action.subject accessHash:0 maxMid:(int32_t)action.arg0 offset:0 actor:self];
             }
             else if (deleteMessageActions.count != 0)
             {
@@ -221,9 +212,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                     TGDatabaseAction action;
                     [value getValue:&action];
                     
-                    int64_t conversationId = 0;
-                    ((int32_t *)&conversationId)[0] = action.arg0;
-                    ((int32_t *)&conversationId)[1] = action.arg1;
+                    int64_t conversationId = action.arg0;
                     
                     if (currentConversationId == 0 || conversationId == currentConversationId)
                     {
@@ -268,7 +257,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                 TGDatabaseAction action;
                 [(NSValue *)[deleteConversationActions objectAtIndex:0] getValue:&action];
                 _currentDeleteConversationId = action.subject;
-                _currentDeleteConversationTopMessageId = action.arg0;
+                _currentDeleteConversationTopMessageId = (int32_t)action.arg0;
                 
                 _currentClearConversation = false;
                 
@@ -277,7 +266,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                     if (action.subject < 0)
                         [TGUpdateStateRequestBuilder addIgnoreConversationId:_currentDeleteConversationId];
                     
-                    if (_currentDeleteConversationId <= INT_MIN)
+                    if (TGPeerIdIsSecretChat(_currentDeleteConversationId))
                     {
                         int64_t encryptedConversationId = [TGDatabaseInstance() encryptedConversationIdForPeerId:_currentDeleteConversationId];
                         
@@ -293,7 +282,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                 }
                 else
                 {
-                    if (_currentDeleteConversationId <= INT_MIN)
+                    if (TGPeerIdIsSecretChat(_currentDeleteConversationId))
                         [self deleteHistorySuccess:nil];
                     else
                         self.cancelToken = [TGTelegraphInstance doDeleteConversation:_currentDeleteConversationId onlyClear:false maxId:_currentDeleteConversationTopMessageId accessHash:0 offset:0 actor:self];
@@ -304,7 +293,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                 TGDatabaseAction action;
                 [(NSValue *)[clearConversationActions objectAtIndex:0] getValue:&action];
                 _currentDeleteConversationId = action.subject;
-                _currentDeleteConversationTopMessageId = action.arg0;
+                _currentDeleteConversationTopMessageId = (int32_t)action.arg0;
                 
                 _currentClearConversation = true;
                 
@@ -328,7 +317,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                         }
                     }]];
                 } else {
-                    if (_currentDeleteConversationId <= INT_MIN)
+                    if (TGPeerIdIsSecretChat(_currentDeleteConversationId))
                         [self deleteHistorySuccess:nil];
                     else
                         self.cancelToken = [TGTelegraphInstance doDeleteConversation:_currentDeleteConversationId onlyClear:true maxId:_currentDeleteConversationTopMessageId accessHash:0 offset:0 actor:self];
@@ -418,7 +407,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                     
                     TLRPCchannels_readMessageContents$channels_readMessageContents *readMessageContents = [[TLRPCchannels_readMessageContents$channels_readMessageContents alloc] init];
                     TLInputChannel$inputChannel *inputChannel = [[TLInputChannel$inputChannel alloc] init];
-                    inputChannel.channel_id = TGIOS6SynchronizeChannelIdFromPeerId([nPeerId longLongValue]);
+                    inputChannel.channel_id = TGChannelIdFromPeerId([nPeerId longLongValue]);
                     TGConversation *conversation = ((TGConversation *)[TGDatabaseInstance() loadChannels:@[nPeerId]][nPeerId]);
                     inputChannel.access_hash = conversation.accessHash;
                     readMessageContents.channel = inputChannel;
@@ -464,7 +453,7 @@ static inline int64_t TGIOS6SynchronizeChannelIdFromPeerId(int64_t peerId)
                 sendScreenshotNotification.random_id = messageRandomId;
                 
                 TLInputReplyTo$inputReplyToMessage *replyTo = [[TLInputReplyTo$inputReplyToMessage alloc] init];
-                replyTo.reply_to_msg_id = action.arg0;
+                replyTo.reply_to_msg_id = (int32_t)action.arg0;
                 sendScreenshotNotification.reply_to = replyTo;
                 
                 sendScreenshotNotification.peer = [TGTelegraphInstance createInputPeerForConversation:action.subject accessHash:0];

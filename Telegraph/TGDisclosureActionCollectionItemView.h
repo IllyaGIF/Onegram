@@ -11,6 +11,7 @@
 @interface TGDisclosureActionCollectionItemView : TGCollectionItemView
 
 - (void)setTitle:(NSString *)title;
+- (void)setSubtitle:(NSString *)subtitle;
 - (void)setIcon:(UIImage *)icon;
 - (void)setBadge:(NSString *)badge;
 - (void)setHideArrow:(bool)hideArrow;

@@ -16,6 +16,8 @@ static inline NSString *IOS6NotificationProbeLogPath()
     return [documentsPath stringByAppendingPathComponent:@"ios6-notification-probe.log"];
 }
 
+static inline void IOS6NotificationProbeWrite(NSString *stage, NSString *format, ...) __attribute__((format(__NSString__, 2, 3)));
+
 static inline void IOS6NotificationProbeWrite(NSString *stage, NSString *format, ...)
 {
     if (stage.length == 0)

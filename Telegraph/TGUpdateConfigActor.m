@@ -22,6 +22,8 @@
 
 #import "TGLocalizationSignals.h"
 #import "TGNetworkSettings.h"
+#import "TGOnegramSettings.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static NSTimeInterval configInvalidationDate = 0.0;
 
@@ -126,9 +128,9 @@ static bool sharedExperimentalPasscodeBlurDisabledInitialized = false;
             [[TGTelegramNetworking instance] addRequest:request];
         }
         
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cached)", INT_MAX - 1] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 1] forKey:@"peerId"] watcher:self];
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cached)", INT_MAX - 2] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 2] forKey:@"peerId"] watcher:self];
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cached)", INT_MAX - 4] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 4] forKey:@"peerId"] watcher:self];
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cached)", TGPeerIdNotificationDefaultsPrivate] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsPrivate] forKey:@"peerId"] watcher:self];
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cached)", TGPeerIdNotificationDefaultsGroup] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsGroup] forKey:@"peerId"] watcher:self];
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cached)", TGPeerIdNotificationDefaultsChannel] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsChannel] forKey:@"peerId"] watcher:self];
     }
 }
 
@@ -188,6 +190,8 @@ static bool sharedExperimentalPasscodeBlurDisabledInitialized = false;
 
 - (void)configRequestSuccess:(TLConfig *)config
 {
+    if (config.reactions_default.length != 0)
+        [TGOnegramSettings setString:config.reactions_default forKey:TGOnegramSettingMessagesQuickReaction];
     int32_t experimentalPasscodeBlurDisabled = 0;
     if (config.flags & (1 << 28)) {
         experimentalPasscodeBlurDisabled = true;
@@ -337,7 +341,7 @@ static bool sharedExperimentalPasscodeBlurDisabledInitialized = false;
 {
     [_timer invalidate];
     
-    NSTimeInterval timeout = MAX(60.0, configInvalidationDate - [[TGTelegramNetworking instance] approximateRemoteTime]);
+    NSTimeInterval timeout = MAX(60.0, configInvalidationDate - OGRemoteClockTime());
     
     NSString *actorPath = [self.path copy];
     _timer = [[TGTimer alloc] initWithTimeout:timeout repeat:false completion:^

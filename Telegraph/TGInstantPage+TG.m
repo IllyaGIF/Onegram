@@ -46,6 +46,32 @@ static TGRichText *parseText(TLRichText *textDesc) {
     return nil;
 }
 
+static TGInstantPageBlock *parseBlock(TLPageBlock *blockDesc);
+
+static NSArray *parseListBlocks(NSArray *blockDescs) {
+    NSMutableArray *blocks = [[NSMutableArray alloc] init];
+    for (TLPageBlock *blockDesc in blockDescs) {
+        TGInstantPageBlock *block = parseBlock(blockDesc);
+        if (block != nil)
+            [blocks addObject:block];
+    }
+    return blocks;
+}
+
+static id parseListItem(id item) {
+    if ([item isKindOfClass:[TLPageListItem$pageListItemText class]])
+        return parseText(((TLPageListItem$pageListItemText *)item).text);
+    if ([item isKindOfClass:[TLPageListOrderedItem$pageListOrderedItemText class]])
+        return parseText(((TLPageListOrderedItem$pageListOrderedItemText *)item).text);
+    if ([item isKindOfClass:[TLPageListItem$pageListItemBlocks class]])
+        return parseListBlocks(((TLPageListItem$pageListItemBlocks *)item).blocks);
+    if ([item isKindOfClass:[TLPageListOrderedItem$pageListOrderedItemBlocks class]])
+        return parseListBlocks(((TLPageListOrderedItem$pageListOrderedItemBlocks *)item).blocks);
+    if ([item isKindOfClass:[TLRichText class]])
+        return parseText(item);
+    return nil;
+}
+
 static TGInstantPageBlock *parseBlock(TLPageBlock *blockDesc) {
     if ([blockDesc isKindOfClass:[TLPageBlock$pageBlockTitle class]]) {
         TLPageBlock$pageBlockTitle *block = (TLPageBlock$pageBlockTitle *)blockDesc;
@@ -76,13 +102,47 @@ static TGInstantPageBlock *parseBlock(TLPageBlock *blockDesc) {
     } else if ([blockDesc isKindOfClass:[TLPageBlock$pageBlockList class]]) {
         TLPageBlock$pageBlockList *block = (TLPageBlock$pageBlockList *)blockDesc;
         NSMutableArray *items = [[NSMutableArray alloc] init];
-        for (TLRichText *item in block.items) {
-            TGRichText *parsedItem = parseText(item);
+        for (id item in block.items) {
+            id parsedItem = parseListItem(item);
             if (parsedItem != nil) {
                 [items addObject:parsedItem];
             }
         }
-        return [[TGInstantPageBlockList alloc] initWithOrdered:block.ordered items:items];
+        return [[TGInstantPageBlockList alloc] initWithOrdered:false items:items];
+    } else if ([blockDesc isKindOfClass:[TLPageBlock$pageBlockOrderedList class]]) {
+        TLPageBlock$pageBlockOrderedList *block = (TLPageBlock$pageBlockOrderedList *)blockDesc;
+        NSMutableArray *items = [[NSMutableArray alloc] init];
+        NSMutableArray *indices = [[NSMutableArray alloc] init];
+        bool reversed = (block.flags & (1 << 2)) != 0;
+        int32_t number = (block.flags & 1) != 0 ? block.start : (reversed ? (int32_t)block.items.count : 1);
+        for (id item in block.items) {
+            id parsedItem = parseListItem(item);
+            if (parsedItem == nil)
+                continue;
+            NSString *label = nil;
+            int32_t flags = 0;
+            if ([item isKindOfClass:[TLPageListOrderedItem$pageListOrderedItemText class]]) {
+                TLPageListOrderedItem$pageListOrderedItemText *orderedItem = item;
+                flags = orderedItem.flags;
+                if (flags & (1 << 2))
+                    label = orderedItem.num;
+                if (flags & (1 << 3))
+                    number = orderedItem.value;
+            } else if ([item isKindOfClass:[TLPageListOrderedItem$pageListOrderedItemBlocks class]]) {
+                TLPageListOrderedItem$pageListOrderedItemBlocks *orderedItem = item;
+                flags = orderedItem.flags;
+                if (flags & (1 << 2))
+                    label = orderedItem.num;
+                if (flags & (1 << 3))
+                    number = orderedItem.value;
+            }
+            if (label.length == 0)
+                label = [NSString stringWithFormat:@"%d.", number];
+            [items addObject:parsedItem];
+            [indices addObject:label];
+            number += reversed ? -1 : 1;
+        }
+        return [[TGInstantPageBlockList alloc] initWithOrdered:true items:items indices:indices];
     } else if ([blockDesc isKindOfClass:[TLPageBlock$pageBlockBlockquote class]]) {
         TLPageBlock$pageBlockBlockquote *block = (TLPageBlock$pageBlockBlockquote *)blockDesc;
         return [[TGInstantPageBlockBlockQuote alloc] initWithText:parseText(block.text) caption:parseText(block.caption)];

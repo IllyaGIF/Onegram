@@ -14,7 +14,7 @@
     NSString *_firstName;
     NSString *_lastName;
     NSString *_title;
-    int32_t _uid;
+    int64_t _uid;
     int64_t _groupId;
 }
 
@@ -36,7 +36,7 @@
     {
     }
     
-    return [[NSString alloc] initWithFormat:@"TGModernLetteredAvatarView/%@/%@/%@/%@/%" PRId32 "/%@/%lld", self.currentFilter, _avatarUri, _firstName, _lastName, _uid, _title, _groupId];
+    return [[NSString alloc] initWithFormat:@"TGModernLetteredAvatarView/%@/%@/%@/%@/%" PRId64 "/%@/%lld", self.currentFilter, _avatarUri, _firstName, _lastName, _uid, _title, _groupId];
 }
 
 - (void)setAvatarUri:(NSString *)avatarUri filter:(NSString *)filter placeholder:(UIImage *)placeholder
@@ -50,7 +50,7 @@
     [self loadImage:avatarUri filter:filter placeholder:placeholder forceFade:false];
 }
 
-- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uid:(int32_t)uid placeholder:(UIImage *)placeholder
+- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uid:(int64_t)uid placeholder:(UIImage *)placeholder
 {
     _firstName = firstName;
     _lastName = lastName;

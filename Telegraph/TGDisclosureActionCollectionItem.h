@@ -11,6 +11,7 @@
 @interface TGDisclosureActionCollectionItem : TGCollectionItem
 
 @property (nonatomic, strong) NSString *title;
+@property (nonatomic, strong) NSString *subtitle;
 @property (nonatomic, strong) UIImage *icon;
 @property (nonatomic) bool hideArrow;
 @property (nonatomic) bool brandedProfileMusic;

@@ -571,6 +571,7 @@ typedef enum {
     BOOL _onegramDelaysTouchesBegan;
     BOOL _onegramDelaysTouchesEnded;
     NSSet *_onegramTouches;
+    NSMutableArray *_onegramReferences;
 }
 - (instancetype)initWithTarget:(id)target action:(SEL)action;
 - (void)addTarget:(id)target action:(SEL)action;
@@ -795,6 +796,12 @@ typedef UITextAlignment NSTextAlignment;
 - (id)objectAtIndex:(NSUInteger)index;
 - (BOOL)containsObject:(id)object;
 - (NSArray *)allObjects;
+- (id)firstObject;
+@end
+
+#define NSMutableOrderedSet TGIOS3MutableOrderedSet
+@interface TGIOS3MutableOrderedSet : TGIOS3OrderedSet
+- (void)addObject:(id)object;
 @end
 
 @interface TGIOS3AttributedString : NSObject <NSCopying, NSMutableCopying>
@@ -845,6 +852,7 @@ void UIGraphicsBeginImageContextWithOptions(CGSize size, BOOL opaque, CGFloat sc
 + (UIImage *)imageWithCGImage:(CGImageRef)cgImage scale:(CGFloat)scale orientation:(UIImageOrientation)orientation;
 - (instancetype)initWithCGImage:(CGImageRef)cgImage scale:(CGFloat)scale orientation:(UIImageOrientation)orientation;
 - (UIImage *)resizableImageWithCapInsets:(UIEdgeInsets)capInsets;
+- (UIEdgeInsets)capInsets;
 @end
 
 #if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000

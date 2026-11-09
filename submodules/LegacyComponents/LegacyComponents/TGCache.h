@@ -21,7 +21,6 @@ typedef UIImage *(^TGCacheJpegDecodingBlock)(NSData *data);
 @property (nonatomic) int avatarMemoryLimit;
 @property (nonatomic) int dataMemoryEvictionInterval;
 
-@property (nonatomic) int memoryWarningBaseline;
 @property (nonatomic) int backgroundBaseline;
 
 @property (nonatomic) int diskLimit;

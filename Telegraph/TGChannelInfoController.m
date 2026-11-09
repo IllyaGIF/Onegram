@@ -1,4 +1,10 @@
+#import "TGOnegramSettings.h"
+#import "TGOnegramPeerIdentity.h"
 #import "TGChannelInfoController.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginUI.h"
+#endif
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -17,6 +23,7 @@
 #import "TGTelegramNetworking.h"
 
 #import "TGInterfaceManager.h"
+#import "TGChannelDirectMessagesSignals.h"
 #import "TGTelegraphDialogListCompanion.h"
 #import "TGConversationChangeTitleRequestActor.h"
 #import "TGConversationChangePhotoActor.h"
@@ -27,6 +34,8 @@
 #import "TGButtonCollectionItem.h"
 #import "TGCommentCollectionItem.h"
 #import "TGGroupInfoCollectionItem.h"
+#import "TGProfileActionsCollectionItem.h"
+#import "TGProfileMediaSections.h"
 #import "TGGroupInfoUserCollectionItem.h"
 
 #import "TGTelegraphUserInfoController.h"
@@ -78,12 +87,22 @@
 #import "../submodules/LegacyComponents/SafariServices/SafariServices.h"
 #import "TGOpenInMenu.h"
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+#import "TGPluginHost.h"
+#import "TGPluginMenuSection.h"
 
-@interface TGChannelInfoController () <TGGroupInfoSelectContactControllerDelegate, TGAlertSoundControllerDelegate, ASWatcher>
+@interface TGChannelInfoController () <TGGroupInfoSelectContactControllerDelegate, TGAlertSoundControllerDelegate, ASWatcher
+#if OG_PLUGINS_AVAILABLE
+, OGPluginUIProfileHost
+#endif
+>
 {
     bool _editing;
     
     int64_t _peerId;
+#if OG_PLUGINS_AVAILABLE
+    TGPluginMenuSection *_pluginMenuSection;
+#endif
     TGConversation *_conversation;
     
     TGCollectionMenuSection *_groupInfoSection;
@@ -94,14 +113,23 @@
     TGCollectionMenuSection *_infoSection;
     TGUserInfoTextCollectionItem *_aboutItem;
     TGUserInfoUsernameCollectionItem *_linkItem;
+    NSArray *_onegramIdentityItems;
     
     TGCollectionMenuSection *_leaveSection;
+
+    TGCollectionMenuSection *_modernActionsSection;
+    TGProfileActionsCollectionItem *_modernActionsItem;
+    TGProfileMediaSections *_profileMedia;
     TGUserInfoButtonCollectionItem *_leaveItem;
     
     TGCollectionMenuSection *_adminInfoSection;
     TGUserInfoVariantCollectionItem *_infoManagementItem;
     TGUserInfoVariantCollectionItem *_infoBlacklistItem;
     TGUserInfoVariantCollectionItem *_infoMembersItem;
+    TGUserInfoVariantCollectionItem *_directMessagesItem;
+    
+    TGCollectionMenuSection *_directMessagesSection;
+    TGUserInfoButtonCollectionItem *_sendDirectMessageItem;
     
     TGCollectionMenuSection *_editingInfoSection;
     TGCollectionMultilineInputItem *_channelAboutItem;
@@ -141,6 +169,28 @@
 
 @implementation TGChannelInfoController
 
+- (bool)onegramSyncIdentityItems
+{
+    bool show = [TGOnegramSettings boolForKey:TGOnegramSettingGeneralShowPeerIds] && ![TGPresentation brandedIOS6Style];
+    NSArray *items = show ? TGOnegramPeerIdentityItems(_conversation.conversationId, _conversation.chatPhotoSmall) : @[];
+    NSMutableArray *oldValues = [[NSMutableArray alloc] init];
+    for (TGUserInfoUsernameCollectionItem *item in _onegramIdentityItems)
+        [oldValues addObject:item.username ?: @""];
+    NSMutableArray *newValues = [[NSMutableArray alloc] init];
+    for (TGUserInfoUsernameCollectionItem *item in items)
+        [newValues addObject:item.username ?: @""];
+    _linkItem.lastInList = !show;
+    bool present = _onegramIdentityItems.count == 0 || [_infoSection indexOfItem:_onegramIdentityItems.firstObject] != NSNotFound;
+    if ([oldValues isEqualToArray:newValues] && present)
+        return false;
+    for (TGCollectionItem *item in _onegramIdentityItems)
+        [_infoSection deleteItem:item];
+    _onegramIdentityItems = items;
+    for (TGCollectionItem *item in items)
+        [_infoSection addItem:item];
+    return true;
+}
+
 - (instancetype)initWithPeerId:(int64_t)peerId
 {
     self = [super init];
@@ -153,6 +203,9 @@
         _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
         
         _peerId = peerId;
+#if OG_PLUGINS_AVAILABLE
+        _pluginMenuSection = [[TGPluginMenuSection alloc] initWithMenuType:OGPluginMenuTypeProfileAction controller:self peerId:peerId];
+#endif
         _groupNotificationSettings = [[NSMutableDictionary alloc] initWithDictionary:@{@"muteUntil": @(0), @"soundId": @(1)}];
         
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:_peerId];
@@ -197,6 +250,7 @@
         _linkItem.lastInList = true;
         _linkItem.action = @selector(sharePressed);
         _infoSection = [[TGCollectionMenuSection alloc] initWithItems:@[_aboutItem, _linkItem]];
+        [self onegramSyncIdentityItems];
         _infoSection.insets = UIEdgeInsetsMake(1.0f, 0.0f, 22.0f, 0.0f);
         
         TGUserInfoButtonCollectionItem *reportChannelItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"ReportPeer.Report") action:@selector(reportChannelPressed)];
@@ -216,6 +270,12 @@
         _infoBlacklistItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.Info.BlackList") variant:@"" action:@selector(infoBlacklistPressed)];
         _infoMembersItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.Info.Subscribers") variant:@"" action:@selector(infoMembersPressed)];
         _adminInfoSection = [[TGCollectionMenuSection alloc] initWithItems:@[_infoManagementItem, _infoMembersItem]];
+        _directMessagesItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.DirectMessages.Title") variant:@"" action:@selector(directMessagesPressed)];
+        
+        _sendDirectMessageItem = [[TGUserInfoButtonCollectionItem alloc] initWithTitle:TGLocalized(@"Channel.DirectMessages.SendMessage") action:@selector(directMessagesPressed)];
+        _sendDirectMessageItem.titleColor = self.presentation.pallete.collectionMenuAccentColor;
+        _sendDirectMessageItem.deselectAutomatically = true;
+        _directMessagesSection = [[TGCollectionMenuSection alloc] initWithItems:@[_sendDirectMessageItem]];
         
         _channelAboutItem = [[TGCollectionMultilineInputItem alloc] init];
         _channelAboutItem.placeholder = TGLocalized(@"Channel.About.Placeholder");
@@ -253,6 +313,34 @@
         _sharedMediaItem = [[TGUserInfoVariantCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.SharedMedia") variant:@"" action:@selector(sharedMediaPressed)];
         
         _notificationsAndMediaSection = [[TGCollectionMenuSection alloc] initWithItems:@[_notificationsItem, _sharedMediaItem]];
+
+        _modernActionsItem = [[TGProfileActionsCollectionItem alloc] initWithTarget:self];
+        _modernActionsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_modernActionsItem]];
+        _modernActionsSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 22.0f, 0.0f);
+
+        _profileMedia = [[TGProfileMediaSections alloc] initWithPeerId:_peerId parentController:self];
+        _profileMedia.canReceiveGifts = true;
+        __weak TGChannelInfoController *weakMediaSelf = self;
+        _profileMedia.contentChanged = ^
+        {
+            __strong TGChannelInfoController *strongSelf = weakMediaSelf;
+            if (strongSelf != nil && !strongSelf->_editing && [strongSelf updateProfileMediaSections])
+                [strongSelf.collectionView reloadData];
+        };
+        _profileMedia.heightChanged = ^
+        {
+            __strong TGChannelInfoController *strongSelf = weakMediaSelf;
+            if (strongSelf == nil)
+                return;
+            [strongSelf.collectionLayout invalidateLayout];
+            [strongSelf.collectionView layoutSubviews];
+        };
+        _profileMedia.storyRingChanged = ^(TGStoryRingState state)
+        {
+            __strong TGChannelInfoController *strongSelf = weakMediaSelf;
+            if (strongSelf != nil)
+                strongSelf->_groupInfoItem.storyRingState = [strongSelf usesModernProfileLayout] ? state : TGStoryRingStateNone;
+        };
         UIEdgeInsets notificationsAndMediaSectionInsets = _notificationsAndMediaSection.insets;
         notificationsAndMediaSectionInsets.bottom = 22.0f;
         _notificationsAndMediaSection.insets = notificationsAndMediaSectionInsets;
@@ -272,8 +360,8 @@
              [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _peerId] watcher:self];
              [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _peerId] options:@{@"peerId": @(_peerId), @"accessHash": @(accessHash)} watcher:self];
              
-             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2] watcher:self];
-             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 2] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 2] forKey:@"peerId"] watcher:self];
+             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsGroup] watcher:self];
+             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsGroup] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsGroup] forKey:@"peerId"] watcher:self];
              
              NSArray *changeTitleActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/conversation/@/changeTitle/@" prefix:[NSString stringWithFormat:@"/tg/conversation/(%" PRId64 ")", _peerId] watcher:self];
              NSArray *changeAvatarActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/conversation/@/updateAvatar/@" prefix:[NSString stringWithFormat:@"/tg/conversation/(%" PRId64 ")", _peerId] watcher:self];
@@ -322,6 +410,7 @@
                 [strongSelf->_infoBlacklistItem setVariant:[[NSString alloc] initWithFormat:@"%d", cachedData.blacklistCount]];
                 int32_t memberCount = MAX(cachedData.memberCount, strongSelf->_conversation.chatParticipantCount);
                 [strongSelf->_infoMembersItem setVariant:[[NSString alloc] initWithFormat:@"%d", memberCount]];
+                [strongSelf->_groupInfoItem setMemberCount:memberCount];
                 strongSelf->_privateLink = cachedData.privateLink;
             }
         }];
@@ -340,9 +429,67 @@
     _leaveItem.titleColor = self.presentation.pallete.collectionMenuDestructiveColor;
     _deleteChannelItem.titleColor = self.presentation.pallete.collectionMenuDestructiveColor;
     _setGroupPhotoItem.titleColor = self.presentation.pallete.collectionMenuAccentColor;
+    _sendDirectMessageItem.titleColor = self.presentation.pallete.collectionMenuAccentColor;
     
     self.view.backgroundColor = _editing ? self.presentation.pallete.collectionMenuBackgroundColor : self.presentation.pallete.backgroundColor;
     self.collectionView.backgroundColor = self.presentation.pallete.backgroundColor;
+}
+
+- (bool)usesModernProfileLayout
+{
+    return !_editing && TGOnegramModernInterfaceEnabled();
+}
+
+- (bool)notificationsMuted
+{
+    NSNumber *muteUntil = _groupNotificationSettings[@"muteUntil"];
+    if (muteUntil == nil)
+        muteUntil = _defaultNotificationSettings[@"muteUntil"];
+    return muteUntil.intValue > OGRemoteClockTime();
+}
+
+- (void)unmuteNotificationsPressed
+{
+    [self _commitEnableNotifications:@true orMuteFor:0];
+}
+
+- (CGRect)sourceRectForModernAction:(SEL)action fallbackView:(UIView *)fallbackView
+{
+    UIView *sourceView = [_modernActionsItem sourceViewForActionWithSelector:action];
+    if (sourceView == nil)
+        sourceView = fallbackView;
+    if (sourceView == nil)
+        return CGRectZero;
+    return [sourceView convertRect:sourceView.bounds toView:self.view];
+}
+
+- (bool)updateProfileMediaSections
+{
+    _profileMedia.canManageGifts = _conversation.channelRole == TGChannelRoleCreator || _conversation.channelAdminRights.hasAnyRights;
+    NSUInteger anchorIndex = [self indexForSection:_notificationsAndMediaSection];
+    if (anchorIndex == NSNotFound)
+        anchorIndex = [self indexForSection:_infoSection];
+    if (anchorIndex == NSNotFound)
+        anchorIndex = 0;
+    bool changed = [_profileMedia updateSectionsEnabled:[self usesModernProfileLayout] afterSectionIndex:anchorIndex];
+    _groupInfoItem.storyRingState = [self usesModernProfileLayout] ? [_profileMedia storyRingState] : TGStoryRingStateNone;
+    return changed;
+}
+
+- (NSArray *)modernProfileActions
+{
+    if (![self usesModernProfileLayout])
+        return @[];
+    
+    NSMutableArray *actions = [[NSMutableArray alloc] init];
+    if ([self canSendDirectMessage])
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Message") icon:TGProfileActionIconMessage action:@selector(directMessagesPressed)]];
+    [actions addObject:[TGProfileAction notificationsActionMuted:[self notificationsMuted] muteAction:@selector(notificationsPressed) unmuteAction:@selector(unmuteNotificationsPressed)]];
+    if (_conversation.username.length != 0)
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Share") icon:TGProfileActionIconShare action:@selector(sharePressed)]];
+    if (_conversation.kind == TGConversationKindPersistentChannel && _conversation.channelRole != TGChannelRoleCreator)
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Leave") icon:TGProfileActionIconLeave action:@selector(leavePressed) destructive:true]];
+    return actions;
 }
 
 - (void)_setupSections:(bool)editing {
@@ -404,7 +551,16 @@
         _groupInfoSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 0.0f, 0.0f);
         
         [self.menuSections addSection:_groupInfoSection];
+        
+        NSArray *modernActions = [self modernProfileActions];
+        _modernActionsItem.actions = modernActions;
+        if (modernActions.count != 0)
+            [self.menuSections addSection:_modernActionsSection];
+        
         [self.menuSections addSection:_infoSection];
+        
+        if (![self usesModernProfileLayout] && [self canSendDirectMessage])
+            [self.menuSections addSection:_directMessagesSection];
         
         while (_adminInfoSection.items.count != 0) {
             [_adminInfoSection deleteItemAtIndex:0];
@@ -418,6 +574,9 @@
             }
             
             [_adminInfoSection addItem:_infoMembersItem];
+            
+            if ([TGChannelDirectMessagesSignals channelAcceptsDirectMessages:_conversation] && [TGChannelDirectMessagesSignals canManageDirectMessagesInChannel:_conversation])
+                [_adminInfoSection addItem:_directMessagesItem];
         }
         
         if (_adminInfoSection.items.count != 0) {
@@ -428,7 +587,8 @@
             [_notificationsAndMediaSection deleteItemAtIndex:0];
         }
         
-        [_notificationsAndMediaSection addItem:_notificationsItem];
+        if (![self usesModernProfileLayout])
+            [_notificationsAndMediaSection addItem:_notificationsItem];
         [_notificationsAndMediaSection addItem:_sharedMediaItem];
         
         [self.menuSections addSection:_notificationsAndMediaSection];
@@ -436,10 +596,25 @@
         if (_conversation.kind == TGConversationKindPersistentChannel) {
             [self.menuSections addSection:_leaveSection];
         }
+        [self updateProfileMediaSections];
         self.collectionView.backgroundColor = self.presentation.pallete.backgroundColor;
     }
     
+#if OG_PLUGINS_AVAILABLE
+    [_pluginMenuSection updateVisible:!editing beforeSection:_leaveSection];
+#endif
     [self.collectionView reloadData];
+}
+
+- (bool)canSendDirectMessage
+{
+    return [TGChannelDirectMessagesSignals channelAcceptsDirectMessages:_conversation] && ![TGChannelDirectMessagesSignals canManageDirectMessagesInChannel:_conversation];
+}
+
+- (void)directMessagesPressed
+{
+    TGNavigationController *navigationController = [self.navigationController isKindOfClass:[TGNavigationController class]] ? (TGNavigationController *)self.navigationController : nil;
+    [[TGInterfaceManager instance] navigateToDirectMessagesOfChannel:_conversation navigationController:navigationController];
 }
 
 - (void)backPressed
@@ -691,7 +866,7 @@
 {
     NSMutableArray *actions = [[NSMutableArray alloc] init];
     
-    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= [[TGTelegramNetworking instance] approximateRemoteTime];
+    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= OGRemoteClockTime();
     NSString *defaultTitle = defaultEnabled ? TGLocalized(@"UserInfo.NotificationsDefaultEnabled") : TGLocalized(@"UserInfo.NotificationsDefaultDisabled");
     
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:defaultTitle action:@"default"]];
@@ -734,7 +909,7 @@
     }
     else
     {
-        muteUntil = @((int)([[TGTelegramNetworking instance] approximateRemoteTime] + muteFor));
+        muteUntil = @((int)(OGRemoteClockTime() + muteFor));
     }
     
     if (!TGObjectCompare(muteUntil, _groupNotificationSettings[@"muteUntil"]))
@@ -900,19 +1075,20 @@
 {
     [_muteExpirationTimer invalidate];
     _muteExpirationTimer = nil;
+    _modernActionsItem.actions = [self modernProfileActions];
     
     NSString *variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     NSNumber *muteUntil = _groupNotificationSettings[@"muteUntil"];
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
     {
         variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         if (muteExpiration >= 7 * 24 * 60 * 60)
             variant = TGLocalized(@"UserInfo.NotificationsDisabled");
         else
@@ -939,17 +1115,18 @@
 
 - (void)updateMuteExpiration
 {
+    _modernActionsItem.actions = [self modernProfileActions];
     NSString *variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     NSNumber *muteUntil = _groupNotificationSettings[@"muteUntil"];
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime])
+    if (muteUntil.intValue <= OGRemoteClockTime())
     {
         variant = TGLocalized(@"UserInfo.NotificationsEnabled");
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         variant = [TGStringUtils stringForRemainingMuteInterval:muteExpiration];
     }
     
@@ -970,7 +1147,7 @@
     {
         bool reloadData = false;
         
-        if (_conversation.channelRole != conversation.channelRole || !TGObjectCompare(_conversation.channelAdminRights, conversation.channelAdminRights)) {
+        if (_conversation.channelRole != conversation.channelRole || !TGObjectCompare(_conversation.channelAdminRights, conversation.channelAdminRights) || [TGChannelDirectMessagesSignals channelAcceptsDirectMessages:_conversation] != [TGChannelDirectMessagesSignals channelAcceptsDirectMessages:conversation]) {
             reloadData = true;
         }
         
@@ -1009,6 +1186,9 @@
                 [_infoSection addItem:_linkItem];
             }
         }
+        
+        if ([self onegramSyncIdentityItems])
+            reloadData = true;
         
         if (!_editing) {
             _channelAboutItem.text = conversation.about;
@@ -1133,7 +1313,7 @@
 {
     if ([action isEqualToString:@"openUser"])
     {
-        int32_t uid = [options[@"uid"] intValue];
+        int64_t uid = [options[@"uid"] longLongValue];
         if (uid != 0)
         {
             TGUser *user = [TGDatabaseInstance() loadUser:uid];
@@ -1155,6 +1335,10 @@
         
         if (_editing)
             self.navigationItem.rightBarButtonItem.enabled = title.length != 0;
+    }
+    else if ([action isEqualToString:@"openAvatar"] && [self usesModernProfileLayout] && [_profileMedia hasActiveStories])
+    {
+        [_profileMedia openActiveStories];
     }
     else if ([action isEqualToString:@"openAvatar"])
     {
@@ -1221,7 +1405,7 @@
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 2]])
+    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsGroup]])
     {
         TGDispatchOnMainThread(^
         {
@@ -1310,7 +1494,7 @@
         if (strongSelf == nil)
             return CGRectZero;
         
-        return [strongSelf->_linkItem.view convertRect:strongSelf->_linkItem.view.bounds toView:strongSelf.view];
+        return [strongSelf sourceRectForModernAction:@selector(sharePressed) fallbackView:strongSelf->_linkItem.view];
     };
     
     [TGShareMenu presentChannelShareMenuInParentController:self conversation:_conversation sourceView:self.view sourceRect:sourceRect];
@@ -1661,5 +1845,19 @@
         [actionSheet showInView:self.view];
     }
 }
+
+#if OG_PLUGINS_AVAILABLE
+
+- (int64_t)pluginUIProfilePeerId
+{
+    return _peerId;
+}
+
+- (UIView *)pluginUIOverlayContainer
+{
+    return self.view;
+}
+
+#endif
 
 @end

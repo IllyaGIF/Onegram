@@ -20,6 +20,8 @@
 @property (nonatomic, copy) void (^toggleReadConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^toggleArchiveConversation)(int64_t, bool);
 @property (nonatomic, copy) void (^openCommunity)(int64_t);
+@property (nonatomic, copy) void (^openStories)(int64_t);
+@property (nonatomic) int storyRingState;
 
 @property (nonatomic, strong) ASHandle *watcherHandle;
 
@@ -66,7 +68,7 @@
 
 @property (nonatomic) bool isEncrypted;
 @property (nonatomic) int encryptionStatus;
-@property (nonatomic) int encryptedUserId;
+@property (nonatomic) int64_t encryptedUserId;
 @property (nonatomic) bool encryptionOutgoing;
 @property (nonatomic) NSString *encryptionFirstName;
 
@@ -84,6 +86,7 @@
 
 @property (nonatomic) bool isVerified;
 @property (nonatomic) bool isPremium;
+@property (nonatomic) int64_t emojiStatusDocumentId;
 @property (nonatomic) bool hasExplicitContent;
 
 @property (nonatomic) bool isLastCell;
@@ -105,7 +108,7 @@
 + (CGFloat)communityContentInsetForContainerWidth:(CGFloat)containerWidth;
 + (uint64_t)renderCacheGeneration;
 
-+ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium deliveryState:(TGMessageDeliveryState)deliveryState dateText:(NSString *)dateText encrypted:(bool)encrypted showsDeliveryStatus:(bool)showsDeliveryStatus branded:(bool)branded classic:(bool)classic;
++ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium emojiStatus:(bool)emojiStatus deliveryState:(TGMessageDeliveryState)deliveryState dateText:(NSString *)dateText encrypted:(bool)encrypted showsDeliveryStatus:(bool)showsDeliveryStatus branded:(bool)branded classic:(bool)classic;
 + (NSDictionary *)preparedPreviewForConversationId:(int64_t)conversationId messageText:(NSString *)messageText attachments:(NSArray *)attachments isSavedMessages:(int)isSavedMessages isGroupChat:(bool)isGroupChat isChannel:(bool)isChannel isChannelGroup:(bool)isChannelGroup isEncrypted:(bool)isEncrypted encryptionStatus:(int)encryptionStatus encryptionOutgoing:(bool)encryptionOutgoing encryptionFirstName:(NSString *)encryptionFirstName;
 
 - (void)collectCachedPhotos:(NSMutableDictionary *)dict;
@@ -123,13 +126,13 @@
 
 - (bool)isEditingControlsTracking;
 - (bool)isEditingControlsExpanded;
+- (bool)isEditingControlsExpandedToLeft;
 - (void)setEditingConrolsExpanded:(bool)expanded animated:(bool)animated;
+- (void)setEditingConrolsExpanded:(bool)expanded toLeft:(bool)toLeft animated:(bool)animated;
 - (void)setSwipeActionsEnabled:(bool)enabled;
 - (void)setFastScrolling:(bool)fastScrolling;
 - (void)resumeDeferredContent;
-#if defined(ONEGRAM_DIAGNOSTICS)
 - (NSString *)diagnosticState;
-#endif
 
 - (void)animateHighlight;
 
@@ -138,5 +141,14 @@
 - (UIView *)avatarSnapshotView;
 - (CGRect)avatarFrame;
 - (CGRect)textContentFrame;
+- (CGRect)pluginDecorationAvatarRect;
+- (CGRect)pluginDecorationNameRect;
+- (void)setPluginDecorationNameColor:(UIColor *)color gradient:(NSArray *)gradient;
+- (void)setPluginDecorationNameFont:(UIFont *)font glow:(NSDictionary *)glow shadow:(NSDictionary *)shadow;
+- (UIFont *)pluginDecorationBaseNameFont;
+- (void)setPluginDecorationBadgeBackgroundActive:(bool)active;
+- (UIView *)pluginDecorationAvatarView;
+- (void)setPluginDecorationEmojiVisible:(bool)visible;
+- (void)setPluginDecorationAccessoryWidth:(CGFloat)width;
 
 @end

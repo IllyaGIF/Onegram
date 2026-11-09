@@ -9,6 +9,7 @@
 #import <UIKit/UIKit.h>
 
 #import "TGModernConversationCompanion.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
 
 typedef enum {
     TGModernConversationTitleViewActivityTyping,
@@ -59,5 +60,8 @@ typedef enum {
 
 - (void)setShowStatus:(bool)showStatus showArrow:(bool)showArrow;
 - (void)setMarkedUserBadgeVisible:(bool)visible;
+#if OG_PLUGINS_AVAILABLE
+- (void)setPluginNameDecorationColor:(UIColor *)color gradient:(NSArray *)gradient emojiView:(UIView *)emojiView;
+#endif
 
 @end

@@ -13,6 +13,10 @@
 #import "TGOpusAudioPlayerAU.h"
 #import "TGNativeAudioPlayer.h"
 #import "TGFlacDecoder.h"
+#import "OGMediaStreamReader.h"
+#import "OGMediaStreamServer.h"
+#import "TGStreamingAudioPlayer.h"
+#import "../OnegramPlatform/OGPlatformMedia.h"
 
 #import <AudioToolbox/AudioToolbox.h>
 #import <math.h>
@@ -26,6 +30,11 @@
 #import <AVFoundation/AVFoundation.h>
 
 #import "TGAudioSessionManager.h"
+
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginMusicSpectrum.h"
+#endif
 
 
 static const int TGFlacAudioPlayerBufferCount = 3;
@@ -129,6 +138,7 @@ static TGFlacAudioPlayer *TGFlacAudioPlayerResolveQueueReference(TGFlacAudioPlay
 @interface TGFlacAudioPlayer : TGAudioPlayer
 {
     NSString *_filePath;
+    OGMediaStreamReader *_reader;
     TGFLACDecoder *_decoder;
     AudioQueueRef _audioQueue;
     AudioQueueBufferRef _audioBuffers[TGFlacAudioPlayerBufferCount];
@@ -147,6 +157,7 @@ static TGFlacAudioPlayer *TGFlacAudioPlayerResolveQueueReference(TGFlacAudioPlay
 
 + (bool)canPlayFile:(NSString *)path;
 - (instancetype)initWithPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession;
+- (instancetype)initWithReader:(OGMediaStreamReader *)reader music:(bool)music controlAudioSession:(bool)controlAudioSession;
 - (void)_audioQueueBufferCompleted:(AudioQueueBufferRef)buffer;
 - (void)_retryGrowingBuffer:(AudioQueueBufferRef)buffer generation:(uint32_t)generation;
 
@@ -185,10 +196,39 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
     return self;
 }
 
+- (instancetype)initWithReader:(OGMediaStreamReader *)reader music:(bool)music controlAudioSession:(bool)controlAudioSession
+{
+    self = [super initWithMusic:music controlAudioSession:controlAudioSession];
+    if (self != nil)
+    {
+        _reader = reader;
+        pthread_mutex_init(&_lock, NULL);
+        _queueReference = [[TGFlacAudioPlayerQueueReference alloc] init];
+        _paused = true;
+    }
+    return self;
+}
+
 - (void)dealloc
 {
+    [_reader cancel];
     [self _cleanup];
     pthread_mutex_destroy(&_lock);
+}
+
+- (bool)_openStreamDecoder
+{
+    if (_decoder != NULL || _reader == nil)
+        return _decoder != NULL;
+    _reader.blocking = true;
+    TGFLACDecoder *decoder = tgflac_open_file([_reader openFile]);
+    _reader.blocking = false;
+    pthread_mutex_lock(&_lock);
+    _decoder = decoder;
+    pthread_mutex_unlock(&_lock);
+    if (decoder == NULL)
+        TGLog(@"FLAC stream open failed");
+    return decoder != NULL;
 }
 
 - (bool)_setupAudioQueue
@@ -263,6 +303,9 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
     }
 
     buffer->mAudioDataByteSize = (UInt32)(frames * _bytesPerFrame);
+#if OG_PLUGINS_AVAILABLE
+    OGPluginMusicSpectrumSubmitPCM((const int16_t *)buffer->mAudioData, (uint32_t)frames, _bytesPerFrame / sizeof(int16_t));
+#endif
     OSStatus status = AudioQueueEnqueueBuffer(_audioQueue, buffer, 0, NULL);
     if (status != noErr)
     {
@@ -408,7 +451,7 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
 {
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
-        if (_decoder == NULL)
+        if (![self _openStreamDecoder] && _decoder == NULL)
             return;
         if (![self _setupAudioQueue])
             return;
@@ -426,8 +469,10 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
             uint64_t target = (uint64_t)(MAX(0.0, position) * _decoder->sampleRate);
             if (_decoder->totalFrames != 0 && target > _decoder->totalFrames)
                 target = _decoder->totalFrames;
+            _reader.blocking = true;
             if (!tgflac_seek(_decoder, target))
                 TGLog(@"FLAC seek failed target=%llu", target);
+            _reader.blocking = false;
             _playedFrames = _decoder->decodedFramePosition;
             _queuedBufferCount = 0;
             _finished = false;
@@ -440,7 +485,9 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
             AudioQueueStop(_audioQueue, true);
             AudioQueueReset(_audioQueue);
             pthread_mutex_lock(&_lock);
+            _reader.blocking = true;
             tgflac_seek(_decoder, 0);
+            _reader.blocking = false;
             _playedFrames = 0;
             _queuedBufferCount = 0;
             _finished = false;
@@ -508,6 +555,7 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
 
 - (void)stop
 {
+    [_reader cancel];
     [[TGAudioPlayer _playerQueue] dispatchOnQueue:^
     {
         [self _cleanup];
@@ -586,6 +634,25 @@ static void TGFlacAudioQueueCallback(void *userData, AudioQueueRef __unused queu
     }
 
     return [[TGNativeAudioPlayer alloc] initWithPath:path music:music controlAudioSession:controlAudioSession];
+}
+
++ (TGAudioPlayer *)audioPlayerForStream:(OGMediaStream *)stream pathExtension:(NSString *)pathExtension music:(bool)music controlAudioSession:(bool)controlAudioSession
+{
+    if (stream == nil)
+        return nil;
+    NSString *extension = [pathExtension lowercaseString];
+    if ([extension isEqualToString:@"ogg"] || [extension isEqualToString:@"oga"] || [extension isEqualToString:@"opus"])
+        return [[TGOpusAudioPlayerAU alloc] initWithReader:[[OGMediaStreamReader alloc] initWithStream:stream] music:music controlAudioSession:controlAudioSession];
+    if ([extension isEqualToString:@"flac"])
+        return [[TGFlacAudioPlayer alloc] initWithReader:[[OGMediaStreamReader alloc] initWithStream:stream] music:music controlAudioSession:controlAudioSession];
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    if (OGPlatformAVPlayerAvailable())
+        return [[TGNativeAudioPlayer alloc] initWithURL:stream.URL music:music controlAudioSession:controlAudioSession];
+#endif
+    AudioFileTypeID fileType = [TGStreamingAudioPlayer fileTypeForPathExtension:extension];
+    if (fileType == 0)
+        return nil;
+    return [[TGStreamingAudioPlayer alloc] initWithReader:[[OGMediaStreamReader alloc] initWithStream:stream] fileType:fileType music:music controlAudioSession:controlAudioSession];
 }
 
 - (instancetype)init {

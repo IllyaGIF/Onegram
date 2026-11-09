@@ -5,22 +5,50 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGStickerAssociation.h"
+#import "TGAnimatedStickerView.h"
 
 @interface TGStickerPreviewPageImageView : TGImageView
 {
+    TGAnimatedStickerView *_animatedView;
 }
+
+- (void)setAnimatedDocument:(TGDocumentMediaAttachment *)document placeholderUri:(NSString *)placeholderUri;
 
 @end
 
 @implementation TGStickerPreviewPageImageView
 
-- (instancetype)initWithFrame:(CGRect)frame
+- (void)setAnimatedDocument:(TGDocumentMediaAttachment *)document placeholderUri:(NSString *)placeholderUri
 {
-    self = [super initWithFrame:frame];
-    if (self != nil)
+    [super reset];
+    if (_animatedView == nil)
     {
+        _animatedView = [[TGAnimatedStickerView alloc] initWithFrame:self.bounds];
+        _animatedView.playing = false;
+        [self addSubview:_animatedView];
     }
-    return self;
+    _animatedView.hidden = false;
+    [_animatedView setDocument:document placeholderUri:placeholderUri];
+}
+
+- (void)reset
+{
+    [super reset];
+    [_animatedView reset];
+    _animatedView.hidden = true;
+}
+
+- (void)loadUri:(NSString *)uri withOptions:(NSDictionary *)options
+{
+    [_animatedView reset];
+    _animatedView.hidden = true;
+    [super loadUri:uri withOptions:options];
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    _animatedView.frame = self.bounds;
 }
 
 @end
@@ -115,7 +143,10 @@
         
         [uri appendFormat:@"&width=132&height=132"];
         [uri appendFormat:@"&highQuality=1"];
-        [imageView loadUri:uri withOptions:@{}];
+        if ([TGAnimatedStickerView isAnimatedStickerDocument:documentMedia])
+            [imageView setAnimatedDocument:documentMedia placeholderUri:uri];
+        else
+            [imageView loadUri:uri withOptions:@{}];
         
         NSString *alt = @"";
         for (id attribute in documentMedia.attributes)

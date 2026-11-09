@@ -20,6 +20,7 @@
 
 @property (nonatomic, strong) TGVideoInfo *videoInfo;
 @property (nonatomic, strong) TGImageInfo *thumbnailInfo;
+@property (nonatomic, strong) NSString *strippedThumbnailUrl;
 
 @property (nonatomic) NSString *caption;
 @property (nonatomic) bool hasStickers;

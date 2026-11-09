@@ -2,10 +2,13 @@
 
 @class TGCallSessionState;
 @class TGCallCommState;
+@class TGCallVideoView;
+@class TGCallVideoCapturer;
 
 @interface TGCallView : UIView
 
 @property (nonatomic, readonly) UIButton *speakerButton;
+@property (nonatomic, readonly) TGCallVideoView *remoteVideoView;
 
 @property (nonatomic, assign) UIEdgeInsets safeAreaInset;
 
@@ -13,6 +16,8 @@
 @property (nonatomic, copy) void (^mutePressed)(void);
 @property (nonatomic, copy) void (^messagePressed)(void);
 @property (nonatomic, copy) void (^speakerPressed)(void);
+@property (nonatomic, copy) void (^cameraPressed)(void);
+@property (nonatomic, copy) void (^flipCameraPressed)(void);
 
 @property (nonatomic, copy) void (^cancelPressed)(void);
 @property (nonatomic, copy) void (^declinePressed)(void);
@@ -23,6 +28,7 @@
 @property (nonatomic, copy) void (^minimizeRequested)(void);
 
 - (void)setState:(TGCallSessionState *)state duration:(NSTimeInterval)duration;
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer;
 
 - (void)centralize;
 - (void)resetPan;

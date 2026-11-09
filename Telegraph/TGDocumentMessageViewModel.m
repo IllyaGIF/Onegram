@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGImageInfo+Telegraph.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "TGDocumentMessageViewModel.h"
@@ -227,7 +228,7 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
             [_dateModel setText:[TGDateUtils stringForShortTime:(int)status.date daytimeVariant:&variant] daytimeVariant:variant];
             _messageViewsModel.count = status.viewCount.viewCount;
             if (status.isEdited && _editedLabelModel == nil) {
-                _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGLocalized(@"Conversation.MessageEditedLabel") textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
+                _editedLabelModel = [[TGModernLabelViewModel alloc] initWithText:TGOnegramEditedLabel() textColor:_dateModel.textColor font:[TGModernDateViewModel dateFont] maxWidth:CGFLOAT_MAX];
                 [_contentModel addSubmodel:_editedLabelModel];
             }
         }
@@ -912,14 +913,14 @@ static NSString *TGDocumentMessagePreviewUri(TGDocumentMediaAttachment *document
                 [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
         }
         else if (recognizer.doubleTapped)
-            [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+            [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
         else if (linkCandidate != nil)
             [_context.companionHandle requestAction:@"openLinkRequested" options:@{@"url": linkCandidate, @"mid": @(_mid)}];
         else if (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)) {
             if (TGPeerIdIsChannel(_forwardedPeerId)) {
                 [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
             } else {
-                [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
+                [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @(_forwardedPeerId)}];
             }
         }
         else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))

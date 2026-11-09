@@ -39,6 +39,11 @@
     return 0.35f;
 }
 
+- (UIImage *)thumbnailImage
+{
+    return nil;
+}
+
 - (UIImage *)image
 {
     return nil;

@@ -11,6 +11,7 @@
 - (void)loadImageWithUri:(NSString *)uri update:(bool)update synchronously:(bool)synchronously;
 - (void)loadImageWithSignal:(SSignal *)signal;
 - (void)setVideoPath:(NSString *)videoPath duration:(NSTimeInterval)duration;
+- (void)setVideoURL:(NSURL *)videoURL duration:(NSTimeInterval)duration;
 
 - (void)reset;
 - (void)stop;

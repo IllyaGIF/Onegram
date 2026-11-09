@@ -11,5 +11,6 @@
 @interface TGHeaderCollectionItemView : TGCollectionItemView
 
 - (void)setTitle:(NSString *)title;
+- (void)setBadgeText:(NSString *)badgeText;
 
 @end

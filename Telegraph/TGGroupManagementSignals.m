@@ -42,6 +42,7 @@
 #import "TGDialogListRequestBuilder.h"
 
 #import "TLPeerNotifySettings$peerNotifySettings.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static SQueue *OGPeerDialogsPreparationQueue(void)
 {
@@ -88,17 +89,6 @@ static SSignal *OGPeerDialogsDatabaseSignal(const char *file, int line, id (^blo
         return nil;
     }] startOn:OGPeerDialogsStorageQueue()];
 }
-
-static inline bool TGIOS6GroupPeerIdLooksLikeModernRawChannel(int64_t peerId)
-{
-    return peerId <= ((int64_t)INT32_MIN) * 3 && peerId > ((int64_t)INT32_MIN) * 4;
-}
-
-static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
-{
-    return TGIOS6GroupPeerIdLooksLikeModernRawChannel(peerId) && [TGDatabaseInstance() loadConversationWithId:peerId] != nil;
-}
-
 
 @implementation TGSynchronizePinnedConversationsAction
 
@@ -166,7 +156,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
     }];
 }
 
-+ (SSignal *)exportGroupInvitationLink:(int32_t)groupId
++ (SSignal *)exportGroupInvitationLink:(int64_t)groupId
 {
     TLRPCmessages_exportChatInvite$messages_exportChatInvite *exportChatInvite = [[TLRPCmessages_exportChatInvite$messages_exportChatInvite alloc] init];
     exportChatInvite.flags = (1 << 2);
@@ -345,7 +335,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
     }];
 }
 
-+ (SSignal *)inviteUserWithId:(int32_t)userId toGroupWithId:(int32_t)groupId
++ (SSignal *)inviteUserWithId:(int64_t)userId toGroupWithId:(int64_t)groupId
 {
     TLRPCmessages_addChatUser$messages_addChatUser *addChatUser = [[TLRPCmessages_addChatUser$messages_addChatUser alloc] init];
     addChatUser.chat_id = groupId;
@@ -604,7 +594,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         for (TGConversation *peer in peers) {
             int64_t accessHash = peer.accessHash;
             if (TGPeerIdIsUser(peer.conversationId)) {
-                accessHash = [TGDatabaseInstance() loadUser:(int)peer.conversationId].phoneNumberHash;
+                accessHash = [TGDatabaseInstance() loadUser:peer.conversationId].phoneNumberHash;
             }
             TLInputPeer *inputPeer = [TGTelegraphInstance createInputPeerForConversation:peer.conversationId accessHash:accessHash];
             if (inputPeer != nil) {
@@ -700,7 +690,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
         if (TGPeerIdIsChannel(peerId)) {
             accessHash = [TGDatabaseInstance() loadConversationWithId:peerId].accessHash;
         } else if (TGPeerIdIsUser(peerId)) {
-            accessHash = [TGDatabaseInstance() loadUser:(int)peerId].phoneNumberHash;
+            accessHash = [TGDatabaseInstance() loadUser:peerId].phoneNumberHash;
         }
         
         saveDraft.peer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
@@ -797,7 +787,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 if (conversation.isChannel) {
                     channelItems[@(conversation.conversationId)] = conversation;
                 } else {
-                    [chatItems setObject:conversation forKey:[NSNumber numberWithInt:(int)conversation.conversationId]];
+                    [chatItems setObject:conversation forKey:[NSNumber numberWithLongLong:conversation.conversationId]];
                 }
             }
         }
@@ -892,7 +882,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                                     messagesMuted = @(concreteSettings.silent);
                                 }
                                 if (concreteSettings.flags & (1 << 2)) {
-                                    if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+                                    if (concreteSettings.mute_until > OGRemoteClockTime())
                                         peerMuteUntil = @(concreteSettings.mute_until);
                                     else
                                         peerMuteUntil = @0;
@@ -957,7 +947,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                                     messagesMuted = @(concreteSettings.silent);
                                 }
                                 if (concreteSettings.flags & (1 << 2)) {
-                                    if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+                                    if (concreteSettings.mute_until > OGRemoteClockTime())
                                         peerMuteUntil = @(concreteSettings.mute_until);
                                     else
                                         peerMuteUntil = @0;
@@ -1004,7 +994,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                                         messagesMuted = @(concreteSettings.silent);
                                     }
                                     if (concreteSettings.flags & (1 << 2)) {
-                                        if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+                                        if (concreteSettings.mute_until > OGRemoteClockTime())
                                             peerMuteUntil = @(concreteSettings.mute_until);
                                         else
                                             peerMuteUntil = @0;
@@ -1038,7 +1028,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                     }
                     else if ([baseDialog isKindOfClass:[TLDialog$dialogFeedMeta class]]) {
                         TLDialog$dialogFeedMeta *dialog = (TLDialog$dialogFeedMeta *)baseDialog;
-                        int64_t conversationId = TGPeerIdFromAdminLogId(dialog.feed_id);
+                        int64_t conversationId = TGPeerIdFromFeedId(dialog.feed_id);
                         TGMessage *message = [messagesDict objectForKey:[NSNumber numberWithInt:dialog.top_message]];
                         
                         if (message != nil) {
@@ -1059,8 +1049,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 [multipleMessagesByConversation enumerateKeysAndObjectsUsingBlock:^(NSNumber *nConversationId, NSArray *messages, __unused  BOOL *stop)
                  {
                      int64_t conversationId = [nConversationId longLongValue];
-                     bool isModernRawChannel = TGIOS6GroupPeerIdIsModernRawChannel(conversationId);
-                     if (TGPeerIdIsAdminLog(conversationId) && !isModernRawChannel) {
+                     if (TGPeerIdIsFeed(conversationId)) {
                          NSMutableArray *addedHoles = [[NSMutableArray alloc] init];
                          
                          NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
@@ -1084,9 +1073,9 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                              }
                          }
                          
-                         [TGDatabaseInstance() addMessagesToFeed:TGAdminLogIdFromPeerId(conversationId) messages:messages deleteMessages:nil addedHoles:addedHoles removedHoles:nil keepUnreadCounters:true changedMessages:nil];
+                         [TGDatabaseInstance() addMessagesToFeed:TGFeedIdFromPeerId(conversationId) messages:messages deleteMessages:nil addedHoles:addedHoles removedHoles:nil keepUnreadCounters:true changedMessages:nil];
                      }
-                     else if (TGPeerIdIsChannel(conversationId) || isModernRawChannel) {
+                     else if (TGPeerIdIsChannel(conversationId)) {
                          NSMutableArray *addedHoles = [[NSMutableArray alloc] init];
                          
                          NSArray *sortedMessages = [messages sortedArrayUsingComparator:^NSComparisonResult(TGMessage *lhs, TGMessage *rhs) {
@@ -1153,7 +1142,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
 
 + (TLInputPeer *)inputPeerWithPeerId:(int64_t)peerId {
     if (TGPeerIdIsUser(peerId)) {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+        TGUser *user = [TGDatabaseInstance() loadUser:peerId];
         if (user != nil) {
             TLInputPeer$inputPeerUser *inputPeerUser = [[TLInputPeer$inputPeerUser alloc] init];
             inputPeerUser.user_id = user.uid;
@@ -1242,7 +1231,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                 continue;
             }
         
-            if (TGPeerIdIsAdminLog(conversation.conversationId) && !TGIOS6GroupPeerIdIsModernRawChannel(conversation.conversationId)) {
+            if (TGPeerIdIsFeed(conversation.conversationId)) {
                 continue;
             }
             
@@ -1284,7 +1273,7 @@ static inline bool TGIOS6GroupPeerIdIsModernRawChannel(int64_t peerId)
                             peerId = TGPeerIdFromChannelId(((TLPeer$peerChannel *)dialog.peer).channel_id);
                         }
                     } else if ([dialog isKindOfClass:[TLDialog$dialogFeedMeta class]]) {
-                        peerId = TGPeerIdFromAdminLogId(((TLDialog$dialogFeedMeta *)dialog).feed_id);
+                        peerId = TGPeerIdFromFeedId(((TLDialog$dialogFeedMeta *)dialog).feed_id);
                     }
                     [peerIds addObject:@(peerId)];
                 }

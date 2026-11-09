@@ -34,8 +34,6 @@ extern CGFloat TGModernFlatteningViewModelTilingLimit;
 
 - (void)prepareContentsAsynchronouslyWithPriority:(CGFloat)priority fromBottomEdge:(bool)fromBottomEdge;
 - (void)cancelAsynchronousContentsPreparation;
-#if defined(ONEGRAM_DIAGNOSTICS)
 + (void)logRenderingStatistics;
-#endif
 
 @end

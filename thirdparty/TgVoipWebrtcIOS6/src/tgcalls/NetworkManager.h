@@ -56,6 +56,7 @@ namespace tgcalls {
 
 struct Message;
 class Ios6DtlsTransport;
+class MediaTransport;
 class Ios6TurnSocket;
 class Ios6RelayConnection;
 
@@ -84,6 +85,7 @@ public:
         bool enableStunMarking,
         std::vector<RtcServer> const &rtcServers,
         std::unique_ptr<Proxy> proxy,
+        std::shared_ptr<MediaTransport> mediaTransport,
         std::function<void(const State &)> stateUpdated,
         DecryptedMessageCallback transportMessageReceived,
         MessageCallback sendSignalingMessage,
@@ -146,6 +148,7 @@ private:
     void ios56ScheduleTurnMaintenance();
     void ios56PerformTurnMaintenance();
     void ios56StartTransportReceiver();
+    void ios56HandleReceiverFailure();
     void ios56MaybeStartDtls();
     void ios56ScheduleDtlsTimer();
     void ios56ApplyDtlsState();
@@ -197,6 +200,9 @@ private:
 
 
     rtc::Thread *_thread = nullptr;
+    std::shared_ptr<MediaTransport> _mediaTransport;
+    uint64_t _mediaBytesSentAccounted = 0;
+    uint64_t _mediaBytesReceivedAccounted = 0;
 
     bool _enableP2P = false;
     bool _enableTCP = false;

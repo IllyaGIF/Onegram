@@ -65,6 +65,7 @@
 #import "TLpayments_SavedInfo$payments_savedInfo.h"
 #import "TLPaymentRequestedInfo$paymentRequestedInfo.h"
 #import "TLPayments_sendPaymentForm.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static const bool TGIOS6BotVerboseButtonLogs = false;
 
@@ -87,7 +88,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
         return nil;
 }
 
-+ (TGBotReplyMarkup *)botReplyMarkupForMarkup:(TLReplyMarkup *)markup userId:(int32_t)userId messageId:(int32_t)messageId hidePreviousMarkup:(bool *)hidePreviousMarkup forceReply:(bool *)forceReply onlyIfRelevantToUser:(bool *)onlyIfRelevantToUser
++ (TGBotReplyMarkup *)botReplyMarkupForMarkup:(TLReplyMarkup *)markup userId:(int64_t)userId messageId:(int32_t)messageId hidePreviousMarkup:(bool *)hidePreviousMarkup forceReply:(bool *)forceReply onlyIfRelevantToUser:(bool *)onlyIfRelevantToUser
 {
     if ([markup isKindOfClass:[TLReplyMarkup$replyKeyboardMarkup class]])
     {
@@ -195,7 +196,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     return nil;
 }
 
-+ (SSignal *)botInfoForUserId:(int32_t)userId
++ (SSignal *)botInfoForUserId:(int64_t)userId
 {
     SSignal *cached = [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
     {
@@ -234,7 +235,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     }];
 }
 
-+ (SSignal *)botStartForUserId:(int32_t)userId payload:(NSString *)payload
++ (SSignal *)botStartForUserId:(int64_t)userId payload:(NSString *)payload
 {
     TLRPCmessages_startBot$messages_startBot *startBot = [[TLRPCmessages_startBot$messages_startBot alloc] init];
     startBot.bot = [TGTelegraphInstance createInputUserForUid:userId];
@@ -252,7 +253,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     }];
 }
 
-+ (SSignal *)botInviteUserId:(int32_t)userId toPeerId:(int64_t)peerId accessHash:(int64_t)accessHash payload:(NSString *)payload {
++ (SSignal *)botInviteUserId:(int64_t)userId toPeerId:(int64_t)peerId accessHash:(int64_t)accessHash payload:(NSString *)payload {
     TLRPCmessages_startBot$messages_startBot *startBot = [[TLRPCmessages_startBot$messages_startBot alloc] init];
     startBot.bot = [TGTelegraphInstance createInputUserForUid:userId];
     startBot.peer = [TGTelegraphInstance createInputPeerForConversation:peerId accessHash:accessHash];
@@ -336,7 +337,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     }];
 }
 
-+ (SSignal *)userLocationForInlineBot:(int32_t)userId force:(bool)force {
++ (SSignal *)userLocationForInlineBot:(int64_t)userId force:(bool)force {
     return [[SSignal defer:^SSignal *{
         static NSMutableDictionary *disabledTimestamps = nil;
         static dispatch_once_t onceToken;
@@ -386,7 +387,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     }];
 }
 
-+ (SSignal *)botContextResultForUserId:(int32_t)userId peerId:(int64_t)peerId accessHash:(int64_t)accessHash query:(NSString *)query geoPoint:(SSignal *)__unused geoPoint offset:(NSString *)offset forceAllowLocation:(bool)forceAllowLocation {
++ (SSignal *)botContextResultForUserId:(int64_t)userId peerId:(int64_t)peerId accessHash:(int64_t)accessHash query:(NSString *)query geoPoint:(SSignal *)__unused geoPoint offset:(NSString *)offset forceAllowLocation:(bool)forceAllowLocation {
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         return [TGDatabaseInstance() loadUser:userId];
     }] mapToSignal:^SSignal *(TGUser *user) {
@@ -420,7 +421,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                     NSMutableData *request = [[NSMutableData alloc] init];
                     int32_t magic = 0x751236f4;
                     [request appendBytes:&magic length:4];
-                    int32_t userId = user.uid;
+                    int64_t userId = user.uid;
                     [request appendBytes:&userId length:4];
                     int64_t localPeerId = peerId;
                     [request appendBytes:&localPeerId length:8];
@@ -434,7 +435,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                             NSDictionary *maybeResult = [NSKeyedUnarchiver unarchiveObjectWithData:response];
                             if ([maybeResult respondsToSelector:@selector(objectForKey:)]) {
                                 if ([maybeResult[@"result"] isKindOfClass:[TGBotContextResults class]]) {
-                                    int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+                                    int32_t timestamp = (int32_t)OGRemoteClockTime();
                                     if (maybeResult[@"cacheTime"] != nil && maybeResult[@"cacheTimestamp"] != nil && timestamp <= ([maybeResult[@"cacheTimestamp"] intValue] + [maybeResult[@"cacheTime"] intValue])) {
                                         result = maybeResult[@"result"];
                                     }
@@ -508,7 +509,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
                         if (location == nil && result.cache_time > 0) {
                             @try {
                                 int32_t cacheTime = result.cache_time;
-                                int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+                                int32_t timestamp = (int32_t)OGRemoteClockTime();
                                 NSData *data = [NSKeyedArchiver archivedDataWithRootObject:@{@"result": apiResults, @"cacheTimestamp": @(timestamp), @"cacheTime": @(cacheTime)}];
                                 [TGDatabaseInstance() cacheBotCallbackResponse:request response:data];
                             } @catch(__unused NSException *e) {
@@ -614,7 +615,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
             @try {
                 NSDictionary *maybeResult = [NSKeyedUnarchiver unarchiveObjectWithData:response];
                 if ([maybeResult respondsToSelector:@selector(objectForKey:)]) {
-                    int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+                    int32_t timestamp = (int32_t)OGRemoteClockTime();
                     if (maybeResult[@"cacheTime"] != nil && maybeResult[@"cacheTimestamp"] != nil && timestamp <= [maybeResult[@"cacheTimestamp"] intValue] + [maybeResult[@"cacheTime"] intValue]) {
                         result = maybeResult;
                     }
@@ -631,7 +632,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
             getBotCallbackAnswer.data = data;
             getBotCallbackAnswer.game = isGame;
             return [[[[TGTelegramNetworking instance] requestSignal:getBotCallbackAnswer continueOnServerErrors:false failOnFloodErrors:false failOnServerErrorsImmediately:true] map:^id(TLmessages_BotCallbackAnswer$botCallbackAnswer *result) {
-                NSDictionary *response = @{@"text": result.message == nil ? @"" : result.message, @"alert": @(result.alert), @"url": result.url == nil ? @"" : result.url, @"cacheTimestamp": @((int32_t)[[TGTelegramNetworking instance] approximateRemoteTime]), @"cacheTime": @(result.cache_time), @"nativeUI": @(result.flags & (1 << 4))};
+                NSDictionary *response = @{@"text": result.message == nil ? @"" : result.message, @"alert": @(result.alert), @"url": result.url == nil ? @"" : result.url, @"cacheTimestamp": @((int32_t)OGRemoteClockTime()), @"cacheTime": @(result.cache_time), @"nativeUI": @(result.flags & (1 << 4))};
                 if (result.cache_time > 0) {
                     [TGDatabaseInstance() cacheBotCallbackResponse:request response:[NSKeyedArchiver archivedDataWithRootObject:response]];
                 }
@@ -646,7 +647,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
 
 + (TLInputPeer *)inputPeerWithPeerId:(int64_t)peerId {
     if (TGPeerIdIsUser(peerId)) {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+        TGUser *user = [TGDatabaseInstance() loadUser:peerId];
         if (user != nil) {
             TLInputPeer$inputPeerUser *inputPeerUser = [[TLInputPeer$inputPeerUser alloc] init];
             inputPeerUser.user_id = user.uid;
@@ -702,7 +703,7 @@ static const bool TGIOS6BotVerboseButtonLogs = false;
     }];
 }
 
-+ (SSignal *)sendBotGame:(NSString *)shortName toPeerId:(int64_t)peerId botId:(int32_t)botId {
++ (SSignal *)sendBotGame:(NSString *)shortName toPeerId:(int64_t)peerId botId:(int64_t)botId {
     return [[TGDatabaseInstance() modifyDebug:__FILE__ line:__LINE__ block:^id{
         TLInputPeer *toPeer = [self inputPeerWithPeerId:peerId];
         TLInputUser *botUser = [TGTelegraphInstance createInputUserForUid:botId];

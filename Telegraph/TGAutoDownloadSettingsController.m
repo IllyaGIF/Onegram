@@ -53,6 +53,10 @@
                     title = TGLocalized(@"AutoDownloadSettings.PhotosTitle");
                     break;
                 
+                case TGAutoDownloadSettingsModeGifs:
+                    autoDownloadMode = preferences.gifs;
+                    title = TGLocalized(@"ChatSettings.AutoDownloadGifs");
+                    break;
                 case TGAutoDownloadSettingsModeVideos:
                     autoDownloadMode = preferences.videos;
                     title = TGLocalized(@"AutoDownloadSettings.VideosTitle");
@@ -190,6 +194,9 @@
                 preferences = [preferences updatePhotosMode:autoDownloadMode];
                 break;
                 
+            case TGAutoDownloadSettingsModeGifs:
+                preferences = [preferences updateGifsMode:autoDownloadMode];
+                break;
             case TGAutoDownloadSettingsModeVideos:
                 preferences = [preferences updateVideosMode:autoDownloadMode maximumSize:_sizeItem.value];
                 break;

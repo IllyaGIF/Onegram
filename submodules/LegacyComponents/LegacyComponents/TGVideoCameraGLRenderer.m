@@ -117,6 +117,15 @@ static bool TGVideoCameraGLIsNV12(CVPixelBufferRef pixelBuffer)
     [self updateTextureVertices];
 }
 
+- (void)updateInputFormatDescription:(CMFormatDescriptionRef)inputFormatDescription
+{
+    CMVideoDimensions dimensions = CMVideoFormatDescriptionGetDimensions(inputFormatDescription);
+    if (dimensions.width <= 0 || dimensions.height <= 0)
+        return;
+    _aspectRatio = (CGFloat)MIN(dimensions.width, dimensions.height) / (CGFloat)MAX(dimensions.width, dimensions.height);
+    [self updateTextureVertices];
+}
+
 - (void)setMirror:(bool)mirror
 {
     _mirror = mirror;

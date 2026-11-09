@@ -15,6 +15,19 @@
 @implementation OGMemoryCacheEntry
 @end
 
+NSUInteger OGMemoryCacheBudget(NSUInteger referenceBytes)
+{
+    static double scale = 1.0;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        unsigned long long physicalMemory = [[NSProcessInfo processInfo] physicalMemory];
+        if (physicalMemory != 0)
+            scale = MIN(1.0, MAX(0.25, (double)physicalMemory / (512.0 * 1024.0 * 1024.0)));
+    });
+    return (NSUInteger)((double)referenceBytes * scale);
+}
+
 @interface OGMemoryCache ()
 {
     NSRecursiveLock *_lock;

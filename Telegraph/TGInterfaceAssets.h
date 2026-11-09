@@ -24,11 +24,11 @@
 
 - (UIColor *)footerBackground;
 
-- (UIColor *)userColor:(int)uid;
+- (UIColor *)userColor:(int64_t)uid;
 - (UIColor *)userColorForIndex:(int)index;
 - (UIColor *)userColorForIndex:(int)index dark:(bool)dark;
 - (UIColor *)groupColor:(int64_t)groupId;
-- (int)userColorIndex:(int)uid;
+- (int)userColorIndex:(int64_t)uid;
 - (int)userColorIndexForId:(int64_t)uid;
 - (int)groupColorIndex:(int64_t)groupId;
 

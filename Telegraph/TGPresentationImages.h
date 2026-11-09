@@ -6,7 +6,9 @@
 
 @interface TGPresentationImages : NSObject
 
-+ (instancetype)imagesWithPallete:(TGPresentationPallete *)pallete;
++ (instancetype)imagesWithPallete:(TGPresentationPallete *)pallete bubbleRadius:(NSInteger)bubbleRadius;
+
+@property (nonatomic, readonly) NSInteger bubbleRadius;
 
 IMAGE tabBarContactsIcon;
 IMAGE tabBarCallsIcon;
@@ -14,6 +16,7 @@ IMAGE tabBarChatsIcon;
 IMAGE tabBarChatsUpIcon;
 IMAGE tabBarChatsDownIcon;
 IMAGE tabBarSettingsIcon;
+IMAGE tabBarProfileIcon;
 IMAGE tabBarBadgeImage;
 
 IMAGE contactsInviteIcon;
@@ -87,6 +90,7 @@ IMAGE chatTitleReportIcon;
 IMAGE chatTitleInfoIcon;
 IMAGE chatTitleCallIcon;
 IMAGE chatTitleGroupIcon;
+IMAGE chatTitleMoreIcon;
 
 IMAGE chatSearchNextIcon;
 IMAGE chatSearchNextDisabledIcon;

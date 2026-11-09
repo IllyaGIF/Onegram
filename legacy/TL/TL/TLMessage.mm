@@ -84,7 +84,7 @@
     TLMessage$message *object = [[TLMessage$message alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
-    object.from_id = metaObject->getInt32((int32_t)0xf39a7861);
+    object.from_id = metaObject->getInt64((int32_t)0xf39a7861);
     object.to_id = metaObject->getObject((int32_t)0x98822893);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.message = metaObject->getString((int32_t)0xc43b7853);
@@ -108,8 +108,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.from_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.from_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xf39a7861, value));
     }
     {
@@ -159,10 +159,10 @@
     TLMessage$messageMeta *object = [[TLMessage$messageMeta alloc] init];
     object.flags = metaObject->getInt32((int32_t)0x81915c23);
     object.n_id = metaObject->getInt32((int32_t)0x7a5601fb);
-    object.from_id = metaObject->getInt32((int32_t)0xf39a7861);
+    object.from_id = metaObject->getInt64((int32_t)0xf39a7861);
     object.to_id = metaObject->getObject((int32_t)0x98822893);
     object.fwd_from = metaObject->getObject((int32_t)0xe9482124);
-    object.via_bot_id = metaObject->getInt32((int32_t)0x5651e2e2);
+    object.via_bot_id = metaObject->getInt64((int32_t)0x5651e2e2);
     object.reply_to_msg_id = metaObject->getInt32((int32_t)0x598ed37b);
     object.date = metaObject->getInt32((int32_t)0xb76958ba);
     object.message = metaObject->getString((int32_t)0xc43b7853);
@@ -192,8 +192,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.from_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.from_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0xf39a7861, value));
     }
     {
@@ -210,8 +210,8 @@
     }
     {
         TLConstructedValue value;
-        value.type = TLConstructedValueTypePrimitiveInt32;
-        value.primitive.int32Value = self.via_bot_id;
+        value.type = TLConstructedValueTypePrimitiveInt64;
+        value.primitive.int64Value = self.via_bot_id;
         values->insert(std::pair<int32_t, TLConstructedValue>((int32_t)0x5651e2e2, value));
     }
     {

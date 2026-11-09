@@ -35,6 +35,8 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernConversationAssociatedInputPanel.h"
 
 #import "TGPresentationAssets.h"
+#import "TGOnegramSettings.h"
+#import "TGPresentationCustomColors.h"
 #import "../OnegramUI/Core/OGTheme.h"
 #import "../OnegramUI/Core/OGNavigationAppearance.h"
 #import "../OnegramUI/Core/OGTabBarAppearance.h"
@@ -147,7 +149,7 @@ static NSString *const TGInterfaceStyleDefaultsKey = @"TGInterfaceStyle";
 static TGPresentationPallete *TGPresentationPalleteForInterfaceStyle(TGPresentationPallete *pallete)
 {
     if (![TGPresentation brandedIOS6Style])
-        return pallete;
+        return [TGPresentationCustomColors palleteApplyingCustomColors:pallete];
     if ([pallete isMemberOfClass:[TGDefaultPresentationPallete class]] || [pallete isMemberOfClass:[TGNightPresentationPallete class]])
         return pallete;
     return pallete.isDark ? [[TGNightPresentationPallete alloc] init] : [[TGDefaultPresentationPallete alloc] init];
@@ -1319,12 +1321,17 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
 
 - (instancetype)initWithPallete:(TGPresentationPallete *)pallete
 {
+    return [self initWithPallete:pallete bubbleRadius:[TGOnegramSettings integerForKey:TGOnegramSettingMessagesBubbleRadius]];
+}
+
+- (instancetype)initWithPallete:(TGPresentationPallete *)pallete bubbleRadius:(NSInteger)bubbleRadius
+{
     self = [super init];
     if (self != nil)
     {
         _currentId = arc4random();
         _pallete = pallete;
-        _images = [TGPresentationImages imagesWithPallete:pallete];
+        _images = [TGPresentationImages imagesWithPallete:pallete bubbleRadius:bubbleRadius];
     }
     return self;
 }
@@ -1332,6 +1339,11 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
 + (instancetype)presentationWithPallete:(TGPresentationPallete *)pallete
 {
     return [[self alloc] initWithPallete:pallete];
+}
+
++ (instancetype)presentationWithPallete:(TGPresentationPallete *)pallete bubbleRadius:(NSInteger)bubbleRadius
+{
+    return [[self alloc] initWithPallete:pallete bubbleRadius:bubbleRadius];
 }
 
 + (instancetype)defaultPresentation
@@ -1651,6 +1663,30 @@ static UIImage *TGBrandedIOS6PinnedBubbleImage(OGTheme *theme, CGFloat width, UI
     [self switchToPallete:pallete temporary:false];
 }
 
++ (void)refreshAssets
+{
+    TGPresentation *presentation = [self current];
+    if (presentation == nil)
+        return;
+    currentPresentation = [[TGPresentation alloc] initWithPallete:presentation.pallete];
+    presentationPipe.sink(currentPresentation);
+}
+
++ (void)reloadCustomColors
+{
+    TGPresentationPallete *pallete = currentPresentation != nil ? currentPresentation.pallete : [self currentSavedPallete];
+    pallete = TGPresentationPalleteForInterfaceStyle(pallete);
+
+    [TGCheckButtonView resetCache];
+    [[TGMediaStoreContext instance] clearMemoryCache];
+
+    currentPresentation = [[TGPresentation alloc] initWithPallete:pallete];
+    presentationPipe.sink(currentPresentation);
+
+    [self refreshUIAppearance];
+    [self prewarmBrandedIOS6ConversationSurfaces];
+}
+
 + (void)switchToPallete:(TGPresentationPallete *)pallete temporary:(bool)temporary
 {
     pallete = TGPresentationPalleteForInterfaceStyle(pallete);
@@ -1829,6 +1865,7 @@ static volatile int32_t TGPresentationCachedInterfaceStyle = -1;
     [defaults setInteger:style forKey:TGInterfaceStyleDefaultsKey];
     [defaults setBool:style != TGInterfaceStyleModern forKey:TGClassicIOS6StyleDefaultsKey];
     [defaults synchronize];
+    OGPlatformInvalidateCachedDefaults();
     TGPresentationCachedInterfaceStyle = -1;
 
     if (currentPresentation != nil)

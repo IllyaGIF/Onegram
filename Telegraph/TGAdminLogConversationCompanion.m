@@ -71,6 +71,7 @@
 #import "TGChannelBanController.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static bool isEventFilterAllSet(TGChannelEventFilter filter) {
     if (!filter.join) {
@@ -151,7 +152,7 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
     self = [super initWithConversation:conversation mayHaveUnreadMessages:false];
     if (self != nil) {
         _conversation = conversation;
-        int32_t randomId = ABS((int32_t)(arc4random()));
+        int64_t randomId = 1 + (int64_t)(arc4random() % (uint32_t)INT32_MAX);
         _nativeConversationId = TGPeerIdFromAdminLogId(randomId);
         _conversationId = _nativeConversationId;
         
@@ -1204,7 +1205,7 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
     [self.controller presentViewController:navigationController animated:true completion:nil];
 }
 
-- (bool)canBanUser:(int32_t)userId {
+- (bool)canBanUser:(int64_t)userId {
     if (userId == TGTelegraphInstance.clientUserId) {
         return false;
     }
@@ -1245,7 +1246,7 @@ static bool isEventFilterAllSet(TGChannelEventFilter filter) {
                                 data = [[TGCachedConversationData alloc] init];
                             }
                             
-                            return [data updateMemberBannedRights:user.uid rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
+                            return [data updateMemberBannedRights:user.uid rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
                         }];
                         
                         [strongSelf.controller dismissViewControllerAnimated:true completion:nil];

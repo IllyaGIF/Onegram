@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGDialogListCell.h"
 #import "TGCommon.h"
 #import "OGPlatformText.h"
@@ -32,6 +33,10 @@
 #import "TGCommunitySignals.h"
 
 #import "TGSimpleImageView.h"
+#import "../../OnegramRuntime/OGRemoteClock.h"
+#import "../../OnegramRuntime/OGRuntime.h"
+#import "TGStoryRingView.h"
+#import "TGRichMessageInlineImageStore.h"
 
 #include <math.h>
 
@@ -57,6 +62,7 @@ static NSString *TGDialogListStartupLocalized(NSString *key)
 }
 
 static const CGFloat TGDialogListBrandedIOS6TitleFontSize = 15.6f;
+static const CGFloat TGDialogListEmojiStatusSize = 18.0f;
 static const CGFloat TGDialogListBrandedIOS6BodyFontSize = 12.0f;
 static const CGFloat TGDialogListBrandedIOS6BadgeScale = 0.97f;
 static const CGFloat TGDialogListBrandedIOS6BadgeSpacing = 6.0f;
@@ -203,6 +209,18 @@ static OGMemoryCache *TGDialogListSharedTextLayoutCache(void)
     {
         NSUInteger count = TGDialogListTextCacheLimit();
         cache = [[OGMemoryCache alloc] initWithCountLimit:count costLimit:count * 4096];
+    });
+    return cache;
+}
+
+static OGMemoryCache *TGDialogListNameEffectCache(void)
+{
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        NSUInteger limit = devicePerformanceClass() == TGPerformanceClassConstrained ? 32 : 96;
+        cache = [[OGMemoryCache alloc] initWithCountLimit:limit costLimit:limit * 32768];
     });
     return cache;
 }
@@ -474,7 +492,7 @@ static OGMemoryCache *TGDialogListSharedLegacyTextLayoutCache(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:1536 * 1024];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:384 costLimit:OGMemoryCacheBudget(1536 * 1024)];
     });
     return cache;
 }
@@ -963,6 +981,10 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
 @property (nonatomic) CGRect statusFrame;
 
 @property (nonatomic, strong, readonly) UIColor *backdropColor;
+@property (nonatomic, strong) UIColor *pluginNameColor;
+@property (nonatomic, copy) NSArray *pluginNameGradient;
+@property (nonatomic, copy) NSDictionary *pluginNameGlow;
+@property (nonatomic, copy) NSDictionary *pluginNameShadow;
 
 - (void)setBackdropColor:(UIColor *)backdropColor image:(UIImage *)backdropImage imageFrame:(CGRect)backdropImageFrame;
 
@@ -1297,29 +1319,110 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
         [image drawAtPoint:CGPointMake(1.0f, 6.0f) blendMode:kCGBlendModeNormal alpha:1.0f];
     }
     
-    CGContextSetFillColorWithColor(context, _isEncrypted ? _presentation.pallete.dialogEncryptedColor.CGColor : _presentation.pallete.dialogTitleColor.CGColor);
+    UIColor *resolvedTitleColor = _pluginNameColor ?: (_isEncrypted ? _presentation.pallete.dialogEncryptedColor : _presentation.pallete.dialogTitleColor);
+    CGContextSetFillColorWithColor(context, resolvedTitleColor.CGColor);
     if (CGRectIntersectsRect(rect, titleFrame))
     {
-        UIColor *titleColor = _isEncrypted ? _presentation.pallete.dialogEncryptedColor : _presentation.pallete.dialogTitleColor;
-        bool legacyIOS3Title = iosMajorVersion() <= 3;
-        bool nativeTitle = TGDialogListUseLegacyNativeText(_title);
-        if (legacyIOS3Title)
+        BOOL cachedEffect = _pluginNameGlow != nil || _pluginNameShadow != nil || _pluginNameGradient.count >= 2;
+        id effectKey = nil;
+        UIImage *effectImage = nil;
+        CGFloat padding = 16.0f;
+        CGContextRef originalContext = context;
+        if (cachedEffect && _titleFont != nil && titleFrame.size.width > 0 && titleFrame.size.height > 0)
         {
-            if (nativeTitle)
-                TGDialogListDrawLegacyNativeText(_title, _titleFont, titleColor, titleFrame, 1, NSTextAlignmentLeft);
-            else
+            effectKey = @[_title ?: @"", _titleFont.fontName ?: @"", @(_titleFont.pointSize),
+                          @(titleFrame.size.width), @(titleFrame.size.height), resolvedTitleColor,
+                          _pluginNameGradient ?: @[], _pluginNameGlow ?: [NSNull null],
+                          _pluginNameShadow ?: [NSNull null], @([UIScreen mainScreen].scale)];
+            effectImage = [TGDialogListNameEffectCache() objectForKey:effectKey];
+            if (effectImage == nil)
             {
-                if (_legacyTitleLayout == nil)
-                    _legacyTitleLayout = TGDialogListLegacyTextLayoutForText(_title, _titleFont, titleFrame.size.width, 1);
-                TGDialogListDrawLegacyEmojiText(_legacyTitleLayout, _titleFont, titleColor, titleFrame, NSTextAlignmentLeft, emojiProvider);
+                UIGraphicsBeginImageContextWithOptions(CGSizeMake(ceilf(titleFrame.size.width + padding * 2),
+                                                                    ceilf(titleFrame.size.height + padding * 2)), NO, 0);
+                context = UIGraphicsGetCurrentContext();
+                CGContextTranslateCTM(context, padding - titleFrame.origin.x, padding - titleFrame.origin.y);
+                CGContextSetFillColorWithColor(context, resolvedTitleColor.CGColor);
             }
         }
-        else
+        if (effectImage == nil)
         {
-            if (_titleLayout == nil)
-                _titleLayout = TGDialogListTextLayout(_title, _titleFont, titleFrame.size.width, 1, NSTextAlignmentLeft);
-            TGDialogListDrawLayout(_titleLayout, titleFrame);
+        NSUInteger effectPasses = _pluginNameGlow != nil && _pluginNameShadow != nil ? 2 : 1;
+        for (NSUInteger effectPass = 0; effectPass < effectPasses; effectPass++)
+        {
+            CGContextSaveGState(context);
+            NSDictionary *effect = effectPass == 0 ? (_pluginNameShadow ?: _pluginNameGlow) : _pluginNameGlow;
+            if ([effect isKindOfClass:[NSDictionary class]])
+            {
+                NSString *hex = effect[@"color"];
+                unsigned int rgb = 0;
+                NSScanner *scanner = [hex isKindOfClass:[NSString class]] ? [NSScanner scannerWithString:[hex stringByReplacingOccurrencesOfString:@"#" withString:@""]] : nil;
+                if (scanner != nil && [scanner scanHexInt:&rgb] && scanner.isAtEnd)
+                {
+                    CGFloat opacity = MAX(0.0f, MIN(1.0f, [effect[@"opacity"] floatValue]));
+                    __attribute__((objc_precise_lifetime)) UIColor *shadowColor = [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0f
+                                                                                                  green:((rgb >> 8) & 255) / 255.0f
+                                                                                                   blue:(rgb & 255) / 255.0f alpha:opacity];
+                    CGContextSetShadowWithColor(context, CGSizeMake([effect[@"dx"] floatValue], [effect[@"dy"] floatValue]),
+                                                MIN(12.0f, [effect[@"radius"] floatValue]), shadowColor.CGColor);
+                }
+            }
+            UIColor *titleColor = resolvedTitleColor;
+            CGGradientRef pluginGradient = NULL;
+            if (_pluginNameGradient.count >= 2)
+            {
+                NSMutableArray *colors = [[NSMutableArray alloc] initWithCapacity:_pluginNameGradient.count];
+                for (UIColor *color in _pluginNameGradient)
+                    [colors addObject:(id)color.CGColor];
+                CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+                pluginGradient = CGGradientCreateWithColors(space, (__bridge CFArrayRef)colors, NULL);
+                CGColorSpaceRelease(space);
+            }
+            if (pluginGradient != NULL)
+            {
+                CGContextSaveGState(context);
+                CGContextBeginTransparencyLayer(context, NULL);
+            }
+            bool legacyIOS3Title = iosMajorVersion() <= 3;
+            bool nativeTitle = TGDialogListUseLegacyNativeText(_title);
+            if (legacyIOS3Title)
+            {
+                if (nativeTitle)
+                    TGDialogListDrawLegacyNativeText(_title, _titleFont, titleColor, titleFrame, 1, NSTextAlignmentLeft);
+                else
+                {
+                    if (_legacyTitleLayout == nil)
+                        _legacyTitleLayout = TGDialogListLegacyTextLayoutForText(_title, _titleFont, titleFrame.size.width, 1);
+                    TGDialogListDrawLegacyEmojiText(_legacyTitleLayout, _titleFont, titleColor, titleFrame, NSTextAlignmentLeft, emojiProvider);
+                }
+            }
+            else
+            {
+                if (_titleLayout == nil)
+                    _titleLayout = TGDialogListTextLayout(_title, _titleFont, titleFrame.size.width, 1, NSTextAlignmentLeft);
+                TGDialogListDrawLayout(_titleLayout, titleFrame);
+            }
+            if (pluginGradient != NULL)
+            {
+                CGContextSetBlendMode(context, kCGBlendModeSourceIn);
+                CGContextDrawLinearGradient(context, pluginGradient, CGPointMake(CGRectGetMinX(titleFrame), CGRectGetMidY(titleFrame)), CGPointMake(CGRectGetMaxX(titleFrame), CGRectGetMidY(titleFrame)), 0);
+                CGContextEndTransparencyLayer(context);
+                CGContextRestoreGState(context);
+                CGGradientRelease(pluginGradient);
+            }
+            CGContextRestoreGState(context);
         }
+        if (context != originalContext)
+        {
+            effectImage = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            context = originalContext;
+            if (effectImage != nil)
+                [TGDialogListNameEffectCache() setObject:effectImage forKey:effectKey
+                                                  cost:(NSUInteger)(effectImage.size.width * effectImage.size.height * 4)];
+        }
+        }
+        if (effectImage != nil)
+            [effectImage drawAtPoint:CGPointMake(titleFrame.origin.x - padding, titleFrame.origin.y - padding)];
     }
 
     CGRect statusFrame = CGRectOffset(_statusFrame, -frame.origin.x, -frame.origin.y);
@@ -1382,6 +1485,8 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
             }
             
             NSUInteger maxLines = TGDialogListBrandedIOS6Style() ? (_authorName.length == 0 ? 2 : 1) : (textFrame.size.height >= 30.0f ? 2 : 1);
+            if ([TGOnegramSettings boolForKey:TGOnegramSettingChatListCompact])
+                maxLines = 1;
             bool legacyIOS3Text = iosMajorVersion() <= 3;
             bool nativeText = TGDialogListUseLegacyNativeText(_text);
             if (legacyIOS3Text)
@@ -1469,8 +1574,10 @@ static void TGDialogListDrawLegacyNativeText(NSString *text, UIFont *font, UICol
     bool isMuted;
     bool isVerified;
     bool premiumVisible;
+    CGFloat premiumWidth;
     NSString *titleText;
     UIFont *titleFont;
+    CGFloat pluginDecorationEmojiWidth;
     NSString *typingText;
     UIFont *typingFont;
     bool typingVisible;
@@ -1510,7 +1617,7 @@ static OGMemoryCache *TGDialogListCellGeometryCache(void)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        cache = [[OGMemoryCache alloc] initWithCountLimit:TGDialogListTextCacheLimit() / 2 costLimit:2 * 1024 * 1024];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:TGDialogListTextCacheLimit() / 2 costLimit:OGMemoryCacheBudget(2 * 1024 * 1024)];
     });
     return cache;
 }
@@ -1530,6 +1637,11 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
 
 @interface TGDialogListCell () <UIGestureRecognizerDelegate>
 {
+    CGFloat _pluginDecorationEmojiWidth;
+    bool _pluginBadgeBackgroundActive;
+    UIFont *_pluginSavedTitleFont;
+    TGStoryRingView *_storyRingView;
+    UITapGestureRecognizer *_avatarStoriesRecognizer;
     CALayer *_separatorLayer;
     UIImageView *_communityIndicatorView;
     
@@ -1594,7 +1706,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     NSString *_resetAvatarTitleText;
     int64_t _resetAvatarConversationId;
     int _resetAvatarIsSavedMessages;
-    int _resetAvatarEncryptedUserId;
+    int64_t _resetAvatarEncryptedUserId;
     bool _resetAvatarIsFeed;
     bool _resetAvatarHasExplicitContent;
     bool _resetAvatarIsEncrypted;
@@ -1742,9 +1854,11 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         return nil;
     if (!TGDialogListObjectsEqual(entry->statusText, _textView.statusText ?: @"") || !TGDialogListObjectsEqual(entry->statusFont, _textView.statusFont) || entry->statusHidden != ![self brandedStatusVisible])
         return nil;
-    if (entry->isEncrypted != _isEncrypted || entry->isMuted != _isMuted || entry->isVerified != _isVerified || entry->premiumVisible != (_premiumIcon.superview != nil))
+    if (entry->isEncrypted != _isEncrypted || entry->isMuted != _isMuted || entry->isVerified != _isVerified || entry->premiumVisible != (_premiumIcon.superview != nil) || entry->premiumWidth != _premiumIcon.bounds.size.width)
         return nil;
     if (!TGDialogListObjectsEqual(entry->titleText, _titleText) || !TGDialogListObjectsEqual(entry->titleFont, _textView.titleFont))
+        return nil;
+    if (entry->pluginDecorationEmojiWidth != _pluginDecorationEmojiWidth)
         return nil;
     bool typingVisible = _typingDotsContainer.superview != nil;
     if (!TGDialogListObjectsEqual(entry->typingText, _textView.typingText ?: @"") || !TGDialogListObjectsEqual(entry->typingFont, _textView.textFont) || entry->typingVisible != typingVisible)
@@ -1833,8 +1947,10 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     entry->isMuted = _isMuted;
     entry->isVerified = _isVerified;
     entry->premiumVisible = _premiumIcon.superview != nil;
+    entry->premiumWidth = _premiumIcon.bounds.size.width;
     entry->titleText = [_titleText copy];
     entry->titleFont = _textView.titleFont;
+    entry->pluginDecorationEmojiWidth = _pluginDecorationEmojiWidth;
     entry->typingText = [_textView.typingText ?: @"" copy];
     entry->typingFont = _textView.textFont;
     entry->typingVisible = _typingDotsContainer.superview != nil;
@@ -2095,7 +2211,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     return @{ @"text": preparedText ?: @"", @"colorRole": @(colorRole), @"hideAuthor": @(hideAuthorName) };
 }
 
-+ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium deliveryState:(TGMessageDeliveryState)deliveryState dateText:(NSString *)dateText encrypted:(bool)encrypted showsDeliveryStatus:(bool)showsDeliveryStatus branded:(bool)branded classic:(bool)classic
++ (void)prewarmTitleText:(NSString *)titleText messageText:(NSString *)messageText authorName:(NSString *)authorName statusText:(NSString *)statusText width:(CGFloat)width presentation:(TGPresentation *)presentation unread:(bool)unread unreadCount:(int)unreadCount serviceUnreadCount:(int)serviceUnreadCount unreadMark:(bool)unreadMark unreadMentionCount:(int)unreadMentionCount pinned:(bool)pinned muted:(bool)muted verified:(bool)verified premium:(bool)premium emojiStatus:(bool)emojiStatus deliveryState:(TGMessageDeliveryState)deliveryState dateText:(NSString *)dateText encrypted:(bool)encrypted showsDeliveryStatus:(bool)showsDeliveryStatus branded:(bool)branded classic:(bool)classic
 {
     if (presentation == nil || width <= 0.0f)
         return;
@@ -2110,7 +2226,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     bool showBadge = !deliveryFailed && (totalUnreadCount > 0 || unreadMark);
     bool showPinned = !deliveryFailed && !showBadge && pinned;
     bool showMention = !deliveryFailed && unreadMentionCount > 0 && (totalUnreadCount > 0 || unreadMark || unread);
-    NSString *badgeText = totalUnreadCount > 0 ? (branded ? [TGPresentation brandedIOS6BadgeTextForCount:totalUnreadCount] : (totalUnreadCount < 1000 ? [NSString stringWithFormat:@"%d", totalUnreadCount] : [NSString stringWithFormat:@"%dK", totalUnreadCount / 1000])) : @"";
+    NSString *badgeText = totalUnreadCount > 0 ? (branded ? [TGPresentation brandedIOS6BadgeTextForCount:totalUnreadCount] : (totalUnreadCount < 1000 ? [NSString stringWithFormat:@"%d", totalUnreadCount] : (TGOnegramUsesExactNumbers() ? TGOnegramExactCountString(totalUnreadCount) : [NSString stringWithFormat:@"%dK", totalUnreadCount / 1000]))) : @"";
     CGFloat badgeTextWidth = badgeText.length == 0 ? 9.0f : TGDialogListCachedTextMetric(badgeText, badgeFont, 0.0f, 1, 0).width;
     CGFloat badgeWidth = branded ? MAX(18.0f * TGDialogListBrandedIOS6BadgeScale, badgeTextWidth + 10.0f * TGDialogListBrandedIOS6BadgeScale) : MAX(20.0f, badgeTextWidth + 11.0f);
     CGFloat statusWidth = branded && statusText.length != 0 ? MIN(103.2f, TGDialogListCachedTextMetric(statusText, bodyFont, 0.0f, 1, 0).width) : 0.0f;
@@ -2125,7 +2241,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     input.badgeWidth = badgeWidth;
     input.mentionWidth = branded ? TGDialogListBrandedMentionWidth(presentation) : presentation.images.dialogMentionedIcon.size.width;
     input.verifiedWidth = verified ? presentation.images.dialogVerifiedIcon.size.width : 0.0f;
-    input.premiumWidth = premium && !verified ? [TGPresentationAssets premiumBadgeIcon:14.0f].size.width : 0.0f;
+    input.premiumWidth = verified ? 0.0f : (emojiStatus ? TGDialogListEmojiStatusSize : (premium ? [TGPresentationAssets premiumBadgeIcon:14.0f].size.width : 0.0f));
     input.previewPadding = branded ? TGDialogListBrandedPreviewRightPadding(bodyFont) : 0.0f;
     input.branded = branded;
     input.encrypted = encrypted;
@@ -2150,7 +2266,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     else if (iosMajorVersion() > 3)
         TGDialogListTextLayout(titleText, titleFont, titleWidth, 1, NSTextAlignmentLeft);
 
-    NSUInteger maxLines = branded ? (authorName.length == 0 ? 2 : 1) : 2;
+    NSUInteger maxLines = [TGOnegramSettings boolForKey:TGOnegramSettingChatListCompact] ? 1 : (branded ? (authorName.length == 0 ? 2 : 1) : 2);
     if (iosMajorVersion() <= 3 && TGDialogListRequiresPackEmoji(messageText))
         TGDialogListLegacyTextLayoutForText(messageText, bodyFont, geometry.previewWidth, maxLines);
     else if (iosMajorVersion() <= 3)
@@ -2305,12 +2421,15 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
         _unreadCountLabel.backgroundColor = [UIColor clearColor];
         
         _validSize = CGSizeZero;
+
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(inlineImageLoaded:) name:TGRichMessageInlineImageLoadedNotification object:nil];
     }
     return self;
 }
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGRichMessageInlineImageLoadedNotification object:nil];
     [_avatarView cancelLoading];
     
     if (_typingDotsTimer != nil)
@@ -2458,7 +2577,7 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     _deliveryErrorBackgrond.image = presentation.images.dialogUnsentIcon;
     _pendingIndicator.image = presentation.images.dialogPendingIcon;
     _verifiedIcon.image = presentation.images.dialogVerifiedIcon;
-    _premiumIcon.image = [TGPresentationAssets premiumBadgeIcon:14.0f];
+    _premiumIcon.image = [self premiumBadgeImage];
     
     if (_deliveredCheckmark == nil)
     {
@@ -2482,6 +2601,29 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     
     if (reset)
         [self resetView:false];
+}
+
+- (void)setStoryRingState:(int)storyRingState
+{
+    _storyRingState = storyRingState;
+    if (storyRingState != TGStoryRingStateNone && _storyRingView == nil)
+    {
+        _storyRingView = [[TGStoryRingView alloc] init];
+        _storyRingView.lineWidth = 2.0f;
+        [_wrapView insertSubview:_storyRingView belowSubview:_avatarView];
+        _avatarStoriesRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(avatarStoriesTapped:)];
+        [_avatarView addGestureRecognizer:_avatarStoriesRecognizer];
+    }
+    _storyRingView.state = (TGStoryRingState)storyRingState;
+    _avatarView.userInteractionEnabled = storyRingState != TGStoryRingStateNone;
+    _avatarStoriesRecognizer.enabled = storyRingState != TGStoryRingStateNone;
+    [_storyRingView layoutAroundFrame:_avatarView.frame spacing:1.5f];
+}
+
+- (void)avatarStoriesTapped:(UITapGestureRecognizer *)recognizer
+{
+    if (recognizer.state == UIGestureRecognizerStateEnded && _storyRingState != TGStoryRingStateNone && _openStories != nil)
+        _openStories(_conversationId);
 }
 
 - (void)prepareForReuse
@@ -2619,7 +2761,6 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     }
 }
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 - (NSString *)diagnosticState
 {
     CGRect cellFrame = self.frame;
@@ -2628,7 +2769,6 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
     CGRect avatarFrame = _avatarView.frame;
     return [[NSString alloc] initWithFormat:@"peer=%lld tag=%d title=%d cell=%.0f,%.0f,%.0f,%.0f h=%d a=%.2f content=%d/%.2f wrap=%.0f,%.0f,%.0f,%.0f h=%d a=%.2f super=%d expanded=%d text=%.0f,%.0f,%.0f,%.0f h=%d a=%.2f contents=%d super=%d avatar=%.0f,%.0f,%.0f,%.0f h=%d a=%.2f image=%d fast=%d", _conversationId, self.reuseTag != 0 ? 1 : 0, (int)self.titleText.length, cellFrame.origin.x, cellFrame.origin.y, cellFrame.size.width, cellFrame.size.height, self.hidden ? 1 : 0, self.alpha, self.contentView.hidden ? 1 : 0, self.contentView.alpha, wrapFrame.origin.x, wrapFrame.origin.y, wrapFrame.size.width, wrapFrame.size.height, _wrapView.hidden ? 1 : 0, _wrapView.alpha, _wrapView.superview != nil ? 1 : 0, [_wrapView isExpanded] ? 1 : 0, textFrame.origin.x, textFrame.origin.y, textFrame.size.width, textFrame.size.height, _textView.hidden ? 1 : 0, _textView.alpha, _textView.layer.contents != nil ? 1 : 0, _textView.superview != nil ? 1 : 0, avatarFrame.origin.x, avatarFrame.origin.y, avatarFrame.size.width, avatarFrame.size.height, _avatarView.hidden ? 1 : 0, _avatarView.alpha, _avatarView.image != nil ? 1 : 0, _fastScrolling ? 1 : 0];
 }
-#endif
 
 - (void)resumeDeferredContent
 {
@@ -2830,10 +2970,11 @@ static void TGDialogListCellGeometryCachePut(TGDialogListCellGeometryCacheEntry 
 }
 
 static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool mutable, bool groupable, bool grouped, bool archived, bool isAd) {
+    bool archiveButton = !isAd && !(archived && [TGOnegramSettings boolForKey:TGOnegramSettingGeneralDisableUnarchiveSwipe]);
     if (TGDialogListBrandedIOS6Style())
     {
         NSMutableArray *buttons = [[NSMutableArray alloc] init];
-        if (!isAd)
+        if (archiveButton)
             [buttons addObject:archived ? @(TGDialogListCellEditingControlsUnarchive) : @(TGDialogListCellEditingControlsArchive)];
         if (pinnable && !isAd)
             [buttons addObject:pinned ? @(TGDialogListCellEditingControlsUnpin) : @(TGDialogListCellEditingControlsPin)];
@@ -2860,10 +3001,10 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     if (groupable && !isAd)
         key |= grouped ? TGDialogListCellEditingControlsUngroup : TGDialogListCellEditingControlsGroup;
     
-    if (!isAd) {
+    if (archiveButton)
         key |= archived ? TGDialogListCellEditingControlsUnarchive : TGDialogListCellEditingControlsArchive;
+    if (!isAd)
         key |= TGDialogListCellEditingControlsDelete;
-    }
 
     if (buttonTypes[@(key)] != nil)
         return buttonTypes[@(key)];
@@ -2876,7 +3017,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         [buttons addObject:@(TGDialogListCellEditingControlsMute)];
     
     
-    if (!isAd)
+    if (archiveButton)
         [buttons addObject:archived ? @(TGDialogListCellEditingControlsUnarchive) : @(TGDialogListCellEditingControlsArchive)];
     [buttons addObject:@(TGDialogListCellEditingControlsDelete)];
     
@@ -2939,6 +3080,11 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             }
         }
     }
+    if (_pluginBadgeBackgroundActive)
+    {
+        color = nil;
+        image = nil;
+    }
     [_textView setBackdropColor:color image:image imageFrame:imageFrame];
 }
 
@@ -2947,6 +3093,32 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     if ([self brandedBackgroundImage] != nil)
         return [TGPresentation brandedIOS6DialogCellBackgroundColor];
     return _pinnedToTop || _isAd || _isSavedMessages == 2 ? _presentation.pallete.dialogPinnedBackgroundColor : _presentation.pallete.backgroundColor;
+}
+
+- (UIImage *)premiumBadgeImage
+{
+    if (_emojiStatusDocumentId == 0)
+        return [TGPresentationAssets premiumBadgeIcon:14.0f];
+    int64_t documentId = _emojiStatusDocumentId;
+    NSString *key = [TGRichMessageInlineImageStore customEmojiKey:documentId];
+    UIImage *image = [TGRichMessageInlineImageStore imageForKey:key];
+    if (image == nil)
+    {
+        [TGRichMessageInlineImageStore requestImageForKey:key signalGenerator:^SSignal *
+        {
+            return [TGRichMessageInlineImageStore customEmojiImageSignal:documentId];
+        }];
+    }
+    return image;
+}
+
+- (void)inlineImageLoaded:(NSNotification *)notification
+{
+    if (_emojiStatusDocumentId == 0 || _premiumIcon.superview == nil)
+        return;
+    if (![notification.userInfo[@"key"] isEqual:[TGRichMessageInlineImageStore customEmojiKey:_emojiStatusDocumentId]])
+        return;
+    _premiumIcon.image = [self premiumBadgeImage];
 }
 
 - (void)resetView:(bool)keepState
@@ -2993,7 +3165,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     [self updateBrandedBackground];
     [self updateTextBackdrop];
     
-    int currentDate = (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+    int currentDate = (int)OGRemoteClockTime();
     NSString *dateString = _date == 0 || _isSavedMessages == 2 ? nil : [TGDateUtils stringForMessageListDate:(int)_date relativeToDate:currentDate];
     if (_isAd)
         dateString = TGLocalized(@"DialogList.AdLabel");
@@ -3261,14 +3433,14 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                         case TGMessageActionChannelInviter:
                         {
                             TGUser *user = [_users objectForKey:@"author"];
-                            if ([actionAttachment.actionData[@"uid"] intValue] == user.uid) {
+                            if ([actionAttachment.actionData[@"uid"] longLongValue] == user.uid) {
                                 if (_isChannelGroup) {
                                     _messageText = TGLocalized(@"Notification.GroupInviterSelf");
                                 } else {
                                     _messageText = TGLocalized(@"Notification.ChannelInviterSelf");
                                 }
                             } else {
-                                int32_t inviterUid = [actionAttachment.actionData[@"uid"] intValue];
+                                int64_t inviterUid = [actionAttachment.actionData[@"uid"] longLongValue];
                                 NSString *inviterName = nil;
                                 TGUser *user = _users[@(inviterUid)];
                                 if (user.uid == inviterUid) {
@@ -3933,6 +4105,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             unreadText = [TGStringUtils stringWithLocalizedNumberCharacters:[[NSString alloc] initWithFormat:@"%d", totalUnreadCount]];
         else if (totalUnreadCount < 1000)
             unreadText = [[NSString alloc] initWithFormat:@"%d", totalUnreadCount];
+        else if (TGOnegramUsesExactNumbers())
+            unreadText = TGOnegramExactCountString(totalUnreadCount);
         else
             unreadText = [[NSString alloc] initWithFormat:@"%dK", totalUnreadCount / 1000];
 
@@ -3992,14 +4166,12 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                 {
                     [avatarView loadGroupPlaceholderWithSize:CGSizeMake(29.0f, 29.0f) conversationId:[_feedChatIds[i] longLongValue] title:_feedChatTitles[i] placeholder:placeholder];
                 }
-                else if (_fastScrolling)
-                {
-                    UIImage *cachedAvatar = [TGRemoteImageView imageFromCache:uri filter:@"circle:29x29" cache:nil];
-                    [avatarView loadImage:cachedAvatar != nil ? cachedAvatar : placeholder];
-                }
                 else if (![avatarView.currentUrl isEqualToString:uri])
                 {
-                    [avatarView loadImage:uri filter:@"circle:29x29" placeholder:nil];
+                    if (_fastScrolling && OGRuntimeSingleCoreDevice())
+                        [avatarView loadCachedImage:uri filter:@"circle:29x29" placeholder:placeholder];
+                    else
+                        [avatarView loadImage:uri filter:@"circle:29x29" placeholder:nil];
                 }
                 i++;
             }
@@ -4020,17 +4192,11 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                 _avatarView.fadeTransitionDuration = keepState ? 0.3 : 0.14;
                 NSString *avatarFilter = brandedStyle ? @"scale:50x50" : (classicStyle ? @"scale:52x52" : @"circle:62x62");
 
-                if (_fastScrolling)
+                if (![_avatarView.currentUrl isEqualToString:_avatarUrl])
                 {
-                    UIImage *cachedAvatar = [TGRemoteImageView imageFromCache:_avatarUrl filter:avatarFilter cache:nil];
-                    if (cachedAvatar != nil)
-                        [_avatarView loadImage:cachedAvatar];
-                    else
-                        [_avatarView loadImage:placeholder];
-                }
-                else if (![_avatarView.currentUrl isEqualToString:_avatarUrl])
-                {
-                    if (keepState)
+                    if (_fastScrolling && OGRuntimeSingleCoreDevice())
+                        [_avatarView loadCachedImage:_avatarUrl filter:avatarFilter placeholder:placeholder];
+                    else if (keepState)
                         [_avatarView loadImage:_avatarUrl filter:avatarFilter placeholder:(_avatarView.currentImage != nil ? _avatarView.currentImage : placeholder) forceFade:true];
                     else
                         [_avatarView loadImage:_avatarUrl filter:avatarFilter placeholder:placeholder forceFade:false];
@@ -4054,7 +4220,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
                         firstName = _titleLetters[0];
                     }
 
-                    [_avatarView loadUserPlaceholderWithSize:CGSizeMake(avatarSize, avatarSize) uid:_isEncrypted ? _encryptedUserId : (int32_t)_conversationId firstName:firstName lastName:lastName placeholder:placeholder];
+                    [_avatarView loadUserPlaceholderWithSize:CGSizeMake(avatarSize, avatarSize) uid:_isEncrypted ? _encryptedUserId : _conversationId firstName:firstName lastName:lastName placeholder:placeholder];
                 }
                 else
                 {
@@ -4156,11 +4322,23 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         needsLayout = true;
     }
 
-    bool showPremiumBadge = _isPremium && !_isVerified && !_isSavedMessages;
+    bool showPremiumBadge = (_isPremium || _emojiStatusDocumentId != 0) && !_isVerified && !_isSavedMessages;
     if (showPremiumBadge)
     {
         if (_premiumIcon == nil)
-            _premiumIcon = [[TGSimpleImageView alloc] initWithImage:[TGPresentationAssets premiumBadgeIcon:14.0f]];
+        {
+            _premiumIcon = [[TGSimpleImageView alloc] init];
+            _premiumIcon.contentMode = UIViewContentModeScaleAspectFit;
+        }
+        UIImage *badgeImage = [self premiumBadgeImage];
+        if (_premiumIcon.image != badgeImage)
+            _premiumIcon.image = badgeImage;
+        CGSize badgeSize = _emojiStatusDocumentId != 0 ? CGSizeMake(TGDialogListEmojiStatusSize, TGDialogListEmojiStatusSize) : badgeImage.size;
+        if (!CGSizeEqualToSize(_premiumIcon.bounds.size, badgeSize))
+        {
+            _premiumIcon.bounds = CGRectMake(0.0f, 0.0f, badgeSize.width, badgeSize.height);
+            needsLayout = true;
+        }
         if (_premiumIcon.superview == nil)
         {
             [_wrapView addSubview:_premiumIcon];
@@ -4488,6 +4666,8 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     CGRect avatarFrame = CGRectMake(avatarX, avatarY, avatarSize, avatarSize);
     if (!CGRectEqualToRect(_avatarView.frame, avatarFrame))
         _avatarView.frame = avatarFrame;
+    if (_storyRingView != nil)
+        [_storyRingView layoutAroundFrame:avatarFrame spacing:1.5f];
     if (TGDialogListBrandedIOS6Style() && _brandedAvatarOverlayView != nil && !CGSizeEqualToSize(_brandedAvatarOverlayView.image.size, avatarFrame.size))
         _brandedAvatarOverlayView.image = [TGPresentation brandedIOS6DialogAvatarOverlayImageForSize:avatarFrame.size];
 
@@ -4645,7 +4825,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             }
             titleTextWidth = _layoutTitleWidth;
         }
-        titleLabelWidth = OGDialogTitleWidth(geometry, titleTextWidth);
+        titleLabelWidth = MIN(OGDialogTitleWidth(geometry, titleTextWidth), MAX(0.0f, geometry.maximumTitleWidth - _pluginDecorationEmojiWidth));
         
         TG_TIMESTAMP_MEASURE(cellLayout);
         
@@ -4676,7 +4856,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
             UIFont *statusFont = _textView.statusFont;
             CGFloat statusHeight = CGCeil(OGPlatformFontLineHeight(statusFont));
             CGFloat statusY = TGDialogListPixelRound(titleRect.origin.y + titleBaselineOffset - TGDialogListTitleBaselineOffset(statusFont));
-            CGFloat statusX = CGRectGetMaxX(titleRect) + 2.0f;
+            CGFloat statusX = CGRectGetMaxX(titleRect) + _pluginDecorationEmojiWidth + 2.0f;
             if (_isVerified)
                 statusX += _verifiedIcon.bounds.size.width + 7.0f;
             else if (_premiumIcon.superview != nil)
@@ -4775,12 +4955,12 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         CGFloat titleIconCenterY = titleRect.origin.y + titleBaselineOffset - OGPlatformFontCapHeight(titleFont) / 2.0f;
         if (_isVerified) {
             CGRect verifiedRect = _verifiedIcon.bounds;
-            verifiedRect.origin = CGPointMake(titleRect.origin.x + titleRect.size.width + 4.0f, TGDialogListCenteredOrigin(titleIconCenterY, verifiedRect.size.height));
+            verifiedRect.origin = CGPointMake(titleRect.origin.x + titleRect.size.width + _pluginDecorationEmojiWidth + 4.0f, TGDialogListCenteredOrigin(titleIconCenterY, verifiedRect.size.height));
             if (!CGRectEqualToRect(_verifiedIcon.frame, verifiedRect))
                 _verifiedIcon.frame = verifiedRect;
         } else if (_premiumIcon.superview != nil) {
             CGRect premiumRect = _premiumIcon.bounds;
-            premiumRect.origin = CGPointMake(titleRect.origin.x + titleRect.size.width + 4.0f, TGDialogListCenteredOrigin(titleIconCenterY, premiumRect.size.height));
+            premiumRect.origin = CGPointMake(titleRect.origin.x + titleRect.size.width + _pluginDecorationEmojiWidth + 4.0f, TGDialogListCenteredOrigin(titleIconCenterY, premiumRect.size.height));
             if (!CGRectEqualToRect(_premiumIcon.frame, premiumRect))
                 _premiumIcon.frame = premiumRect;
         }
@@ -4788,7 +4968,7 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
         if (_isMuted)
         {
             CGRect muteRect = _muteIcon.frame;
-            CGFloat muteX = titleRect.origin.x + titleRect.size.width + 3.0f;
+            CGFloat muteX = titleRect.origin.x + titleRect.size.width + _pluginDecorationEmojiWidth + 3.0f;
             if (_isVerified)
                 muteX += _verifiedIcon.bounds.size.width + 7.0f;
             else if (_premiumIcon.superview != nil)
@@ -4851,12 +5031,20 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
     return [_wrapView isExpanded];
 }
 
+- (bool)isEditingControlsExpandedToLeft {
+    return [_wrapView isExpandedToLeft];
+}
+
 - (bool)isEditingControlsTracking {
     return [_wrapView isTracking];
 }
 
 - (void)setEditingConrolsExpanded:(bool)expanded animated:(bool)animated {
     [_wrapView setExpanded:expanded animated:animated];
+}
+
+- (void)setEditingConrolsExpanded:(bool)expanded toLeft:(bool)toLeft animated:(bool)animated {
+    [_wrapView setExpanded:expanded toLeft:toLeft animated:animated];
 }
 
 - (void)setSwipeActionsEnabled:(bool)enabled {
@@ -4887,6 +5075,80 @@ static NSArray *editingButtonTypes(bool muted, bool pinnable, bool pinned, bool 
 - (CGRect)textContentFrame
 {
     return self.bounds;
+}
+
+- (CGRect)pluginDecorationAvatarRect
+{
+    return _avatarView.superview != nil ? [_avatarView.superview convertRect:_avatarView.frame toView:self.contentView] : CGRectZero;
+}
+
+- (CGRect)pluginDecorationNameRect
+{
+    return _wrapView.superview != nil ? [_wrapView convertRect:_textView.titleFrame toView:self.contentView] : CGRectZero;
+}
+
+- (void)setPluginDecorationNameColor:(UIColor *)color gradient:(NSArray *)gradient
+{
+    _textView.pluginNameColor = color;
+    _textView.pluginNameGradient = gradient;
+    [_textView setNeedsDisplay];
+}
+
+- (void)setPluginDecorationNameFont:(UIFont *)font glow:(NSDictionary *)glow shadow:(NSDictionary *)shadow
+{
+    UIFont *before = _textView.titleFont;
+    if (font != nil && _pluginSavedTitleFont == nil)
+        _pluginSavedTitleFont = _textView.titleFont;
+    if (font != nil)
+        _textView.titleFont = font;
+    else if (_pluginSavedTitleFont != nil)
+    {
+        _textView.titleFont = _pluginSavedTitleFont;
+        _pluginSavedTitleFont = nil;
+    }
+    _textView.pluginNameGlow = glow;
+    _textView.pluginNameShadow = shadow;
+    [_textView setNeedsDisplay];
+    if (before != _textView.titleFont)
+    {
+        _validSize = CGSizeZero;
+        [self setNeedsLayout];
+    }
+}
+
+- (UIFont *)pluginDecorationBaseNameFont
+{
+    return _pluginSavedTitleFont ?: _textView.titleFont;
+}
+
+- (void)setPluginDecorationBadgeBackgroundActive:(bool)active
+{
+    if (_pluginBadgeBackgroundActive != active)
+    {
+        _pluginBadgeBackgroundActive = active;
+        [self updateTextBackdrop];
+    }
+}
+
+- (UIView *)pluginDecorationAvatarView
+{
+    return _avatarView;
+}
+
+- (void)setPluginDecorationEmojiVisible:(bool)visible
+{
+    [self setPluginDecorationAccessoryWidth:visible ? 22.0f : 0.0f];
+}
+
+- (void)setPluginDecorationAccessoryWidth:(CGFloat)width
+{
+    width = MAX(0.0f, MIN(240.0f, width));
+    if (_pluginDecorationEmojiWidth != width)
+    {
+        _pluginDecorationEmojiWidth = width;
+        _validSize = CGSizeZero;
+        [self setNeedsLayout];
+    }
 }
 
 - (void)animateHighlight

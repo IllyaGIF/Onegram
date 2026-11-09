@@ -117,7 +117,7 @@
         bool isNegativeModernUser = false;
         if (conversationId < 0)
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int)conversationId];
+            TGUser *user = [TGDatabaseInstance() loadUser:conversationId];
             isNegativeModernUser = user != nil && user.phoneNumberHash != 0;
         }
         bool isTopRefreshRequest = offset == 0 && (maxMid == 0 || maxMid == INT_MAX);

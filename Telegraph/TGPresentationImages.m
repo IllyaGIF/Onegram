@@ -64,6 +64,13 @@
     }];
 }
 
+- (UIImage *)tabBarProfileIcon
+{
+    return [self imageWithKey:@"tabProfile" generator:^UIImage *{
+        return [TGPresentationAssets tabBarProfileIcon:self.pallete.tabIconColor];
+    }];
+}
+
 - (UIImage *)tabBarBadgeImage
 {
     return [self imageWithKey:@"tabBadge" generator:^UIImage *{
@@ -484,6 +491,13 @@
     }];
 }
 
+- (UIImage *)chatTitleMoreIcon
+{
+    return [self imageWithKey:@"chatTitleMore" generator:^UIImage *{
+        return [TGPresentationAssets chatTitleMoreIcon:self.pallete.navigationButtonColor];
+    }];
+}
+
 - (UIImage *)chatSearchNextIcon
 {
     return [self imageWithKey:@"chatSearchNext" generator:^UIImage *{
@@ -558,7 +572,7 @@
     return [self imageWithKey:@"chatBubbleIncomingFull" generator:^UIImage *{
         if ([TGPresentation brandedIOS6Style])
             return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:false];
-        return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingBubbleColor borderColor:self.pallete.chatIncomingBubbleBorderColor outgoing:false hasTail:true];
+        return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingBubbleColor borderColor:self.pallete.chatIncomingBubbleBorderColor outgoing:false hasTail:true radius:_bubbleRadius];
     }];
 }
 
@@ -566,7 +580,7 @@
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:true];
-    return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingHighlightedBubbleColor borderColor:self.pallete.chatIncomingHighlightedBubbleBorderColor outgoing:false hasTail:true];
+    return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingHighlightedBubbleColor borderColor:self.pallete.chatIncomingHighlightedBubbleBorderColor outgoing:false hasTail:true radius:_bubbleRadius];
 }
 
 - (UIImage *)chatBubbleIncomingPartialImage
@@ -574,7 +588,7 @@
     return [self imageWithKey:@"chatBubbleIncomingPartial" generator:^UIImage *{
         if ([TGPresentation brandedIOS6Style])
             return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:false];
-        return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingBubbleColor borderColor:self.pallete.chatIncomingBubbleBorderColor outgoing:false hasTail:false];
+        return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingBubbleColor borderColor:self.pallete.chatIncomingBubbleBorderColor outgoing:false hasTail:false radius:_bubbleRadius];
     }];
 }
 
@@ -582,7 +596,7 @@
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6BubbleImageOutgoing:false highlighted:true];
-    return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingHighlightedBubbleColor borderColor:self.pallete.chatIncomingHighlightedBubbleBorderColor outgoing:false hasTail:false];
+    return [TGPresentationAssets chatBubbleImage:self.pallete.chatIncomingHighlightedBubbleColor borderColor:self.pallete.chatIncomingHighlightedBubbleBorderColor outgoing:false hasTail:false radius:_bubbleRadius];
 }
 
 - (UIImage *)chatBubbleOutgoingFullImage
@@ -590,7 +604,7 @@
     return [self imageWithKey:@"chatBubbleOutgoingFull" generator:^UIImage *{
         if ([TGPresentation brandedIOS6Style])
             return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:false];
-        return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingBubbleColor borderColor:self.pallete.chatOutgoingBubbleBorderColor outgoing:true hasTail:true];
+        return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingBubbleColor borderColor:self.pallete.chatOutgoingBubbleBorderColor outgoing:true hasTail:true radius:_bubbleRadius];
     }];
 }
 
@@ -598,7 +612,7 @@
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:true];
-    return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingHighlightedBubbleColor borderColor:self.pallete.chatOutgoingHighlightedBubbleBorderColor outgoing:true hasTail:true];
+    return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingHighlightedBubbleColor borderColor:self.pallete.chatOutgoingHighlightedBubbleBorderColor outgoing:true hasTail:true radius:_bubbleRadius];
 }
 
 - (UIImage *)chatBubbleOutgoingPartialImage
@@ -606,7 +620,7 @@
     return [self imageWithKey:@"chatBubbleOutgoingPartial" generator:^UIImage *{
         if ([TGPresentation brandedIOS6Style])
             return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:false];
-        return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingBubbleColor borderColor:self.pallete.chatOutgoingBubbleBorderColor outgoing:true hasTail:false];
+        return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingBubbleColor borderColor:self.pallete.chatOutgoingBubbleBorderColor outgoing:true hasTail:false radius:_bubbleRadius];
     }];
 }
 
@@ -614,7 +628,7 @@
 {
     if ([TGPresentation brandedIOS6Style])
         return [TGPresentation brandedIOS6BubbleImageOutgoing:true highlighted:true];
-    return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingHighlightedBubbleColor borderColor:self.pallete.chatOutgoingHighlightedBubbleBorderColor outgoing:true hasTail:false];
+    return [TGPresentationAssets chatBubbleImage:self.pallete.chatOutgoingHighlightedBubbleColor borderColor:self.pallete.chatOutgoingHighlightedBubbleBorderColor outgoing:true hasTail:false radius:_bubbleRadius];
 }
 
 - (UIImage *)chatPlaceholderBackground
@@ -1560,12 +1574,13 @@
 
 #pragma mark - Common
 
-- (instancetype)initWithPallete:(TGPresentationPallete *)pallete
+- (instancetype)initWithPallete:(TGPresentationPallete *)pallete bubbleRadius:(NSInteger)bubbleRadius
 {
     self = [super init];
     if (self != nil)
     {
         _pallete = pallete;
+        _bubbleRadius = bubbleRadius;
         _cache = [[NSCache alloc] init];
     }
     return self;
@@ -1596,9 +1611,9 @@
     return cachedImage;
 }
 
-+ (instancetype)imagesWithPallete:(TGPresentationPallete *)pallete
++ (instancetype)imagesWithPallete:(TGPresentationPallete *)pallete bubbleRadius:(NSInteger)bubbleRadius
 {
-    return [[TGPresentationImages alloc] initWithPallete:pallete];
+    return [[TGPresentationImages alloc] initWithPallete:pallete bubbleRadius:bubbleRadius];
 }
 
 @end

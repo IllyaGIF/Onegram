@@ -2,4 +2,6 @@
 
 @interface TGAppearanceController : TGCollectionMenuController
 
++ (NSArray *)previewMessages;
+
 @end

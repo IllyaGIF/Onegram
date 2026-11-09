@@ -32,6 +32,7 @@
 - (void)navigateToConversationWithId:(int64_t)conversationId conversation:(TGConversation *)conversation performActions:(NSDictionary *)performActions atMessage:(NSDictionary *)atMessage clearStack:(bool)clearStack openKeyboard:(bool)openKeyboard canOpenKeyboardWhileInTransition:(bool)canOpenKeyboardWhileInTransition navigationController:(TGNavigationController *)navigationController animated:(bool)animated;
 - (void)navigateToConversationWithId:(int64_t)conversationId conversation:(TGConversation *)__unused conversation performActions:(NSDictionary *)performActions atMessage:(NSDictionary *)atMessage clearStack:(bool)clearStack openKeyboard:(bool)openKeyboard canOpenKeyboardWhileInTransition:(bool)canOpenKeyboardWhileInTransition navigationController:(TGNavigationController *)navigationController selectChat:(bool)selectChat animated:(bool)animated;
 - (void)navigateToChannelLogWithConversation:(TGConversation *)conversation animated:(bool)animated;
+- (void)navigateToDirectMessagesOfChannel:(TGConversation *)channel navigationController:(TGNavigationController *)navigationController;
 - (void)navigateToCommentsForChannelConversation:(TGConversation *)conversation messageId:(int32_t)messageId discussionChannelId:(int64_t)discussionChannelId navigationController:(TGNavigationController *)navigationController;
 - (void)navigateToChannelsFeed:(int32_t)feedId animated:(bool)animated;
 - (TGModernConversationController *)configuredPreviewConversationControlerWithId:(int64_t)conversationId;
@@ -40,11 +41,11 @@
 
 - (TGModernConversationController *)currentControllerWithPeerId:(int64_t)peerId;
 - (void)dismissConversation;
-- (void)navigateToProfileOfUser:(int)uid preferNativeContactId:(int)preferNativeContactId;
-- (void)navigateToProfileOfUser:(int)uid;
-- (void)navigateToProfileOfUser:(int)uid shareVCard:(void (^)())shareVCard;
-- (void)navigateToProfileOfUser:(int)uid encryptedConversationId:(int64_t)encryptedConversationId;
-- (void)navigateToProfileOfUser:(int)uid callMessages:(NSArray *)callMessages;
+- (void)navigateToProfileOfUser:(int64_t)uid preferNativeContactId:(int)preferNativeContactId;
+- (void)navigateToProfileOfUser:(int64_t)uid;
+- (void)navigateToProfileOfUser:(int64_t)uid shareVCard:(void (^)())shareVCard;
+- (void)navigateToProfileOfUser:(int64_t)uid encryptedConversationId:(int64_t)encryptedConversationId;
+- (void)navigateToProfileOfUser:(int64_t)uid callMessages:(NSArray *)callMessages;
 - (void)navigateToSharedMediaOfConversationWithId:(int64_t)conversationId mode:(int)mode atMessage:(NSDictionary *)atMessage;
 
 - (void)displayHashtagOverview:(NSString *)hashtag conversationId:(int64_t)conversationId;
@@ -59,10 +60,13 @@
 - (void)setupCallManager:(TGCallManager *)callManager;
 - (void)callPeerWithId:(int64_t)peerId;
 - (void)callPeerWithId:(int64_t)peerId completion:(void (^)(void))completion;
+- (void)callPeerWithId:(int64_t)peerId video:(bool)video completion:(void (^)(void))completion;
+- (void)requestCallToPeerId:(int64_t)peerId video:(bool)video completion:(void (^)(void))completion;
+- (void)presentCallOptionsForPeerId:(int64_t)peerId inView:(UIView *)view;
 - (void)dismissAllCalls;
 - (void)maybeDisplayCallsTabAlert;
 - (bool)hasCallControllerInForeground;
-- (void)resetForAccountSwitch;
+- (void)resetInterface;
 
 - (SSignal *)callControllerInForeground;
 - (SSignal *)messageVisibilitySignalWithConversationId:(int64_t)conversationId messageId:(int32_t)messageId peerId:(int64_t)peerId;

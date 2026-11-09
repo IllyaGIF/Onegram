@@ -4,6 +4,8 @@
 
 #import <MediaPlayer/MediaPlayer.h>
 
+#import "../OnegramPlatform/OGPlatformUIKit.h"
+
 @interface TGRemoteControlsClient : NSObject
 
 @property (nonatomic, readonly) int32_t clientId;
@@ -61,7 +63,24 @@
 
 - (bool)isEnabled
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
     return iosMajorVersion() > 7 || (iosMajorVersion() == 7 && iosMinorVersion() >= 1);
+#else
+    return false;
+#endif
+}
+
+- (void)setReceivingLegacyRemoteControlEvents:(bool)receiving
+{
+    if ([self isEnabled])
+        return;
+    dispatch_async(dispatch_get_main_queue(), ^
+    {
+        if (receiving)
+            OGPlatformBeginReceivingRemoteControlEvents([UIApplication sharedApplication]);
+        else
+            OGPlatformEndReceivingRemoteControlEvents([UIApplication sharedApplication]);
+    });
 }
 
 - (instancetype)init
@@ -244,6 +263,7 @@
         
         [_currentClients removeAllObjects];
         [_currentClients addObject:[[TGRemoteControlsClient alloc] initWithId:clientId previous:previous next:next play:play pause:pause position:position]];
+        [self setReceivingLegacyRemoteControlEvents:true];
         
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
         if ([self isEnabled])
@@ -290,7 +310,7 @@
         
         if (_currentClients.count == 0 && previousHadClients)
         {
-            
+            [self setReceivingLegacyRemoteControlEvents:false];
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 70000
             if ([self isEnabled])
             {

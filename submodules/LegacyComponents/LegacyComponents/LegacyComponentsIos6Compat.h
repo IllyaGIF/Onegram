@@ -693,23 +693,21 @@ TGLocalization *nativeEnglishLocalization(void);
 TGLocalization *currentCustomLocalization();
 void setCurrentCustomLocalization(TGLocalization *localization);
 TGLocalization *effectiveLocalization();
-#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
 #undef TGLog
 #undef TGLogv
-void TGLog(NSString *format, ...);
-void TGLogv(NSString *format, va_list args);
-#else
-#undef TGLog
-#define TGLog(...) ((void)0)
-#define TGLogv(...) ((void)0)
+void TGLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+void TGLogv(NSString *format, va_list args) __attribute__((format(__NSString__, 1, 0)));
+#if !defined(ONEGRAM_LOG_IMPLEMENTATION)
+#define TGLog(...) (OGDiagnosticsEnabled() ? TGLog(__VA_ARGS__) : (void)0)
+#define TGLogv(...) (OGDiagnosticsEnabled() ? TGLogv(__VA_ARGS__) : (void)0)
 #endif
+void TGDiagnosticLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
 bool TGObjectCompare(id obj1, id obj2);
 bool TGStringCompare(NSString *s1, NSString *s2);
-#if defined(ONEGRAM_DIAGNOSTICS) || defined(ONEGRAM_LOG_IMPLEMENTATION)
 #undef TGLegacyLog
-void TGLegacyLog(NSString *format, ...);
-#else
-#define TGLegacyLog(...) ((void)0)
+void TGLegacyLog(NSString *format, ...) __attribute__((format(__NSString__, 1, 2)));
+#if !defined(ONEGRAM_LOG_IMPLEMENTATION)
+#define TGLegacyLog(...) (OGDiagnosticsEnabled() ? TGLegacyLog(__VA_ARGS__) : (void)0)
 #endif
 int iosMajorVersion();
 int iosMinorVersion();
@@ -723,10 +721,10 @@ UIColor *TGSeparatorColor();
 }
 #endif
 #ifndef UIColorRGB
-#define UIColorRGB(rgb) ([[UIColor alloc] initWithRed:(((rgb >> 16) & 0xff) / 255.0f) green:(((rgb >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:1.0f])
+#define UIColorRGB(rgb) ([[UIColor alloc] initWithRed:((((rgb) >> 16) & 0xff) / 255.0f) green:((((rgb) >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:1.0f])
 #endif
 #ifndef UIColorRGBA
-#define UIColorRGBA(rgb,a) ([[UIColor alloc] initWithRed:(((rgb >> 16) & 0xff) / 255.0f) green:(((rgb >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:a])
+#define UIColorRGBA(rgb,a) ([[UIColor alloc] initWithRed:((((rgb) >> 16) & 0xff) / 255.0f) green:((((rgb) >> 8) & 0xff) / 255.0f) blue:(((rgb) & 0xff) / 255.0f) alpha:(a)])
 #endif
 #ifndef CGFloor
 #ifdef __LP64__

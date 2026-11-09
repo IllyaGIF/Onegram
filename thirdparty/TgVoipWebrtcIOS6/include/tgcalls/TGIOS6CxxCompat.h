@@ -23,6 +23,8 @@ using weak_ptr = tr1::weak_ptr<T>;
 template <class T>
 using enable_shared_from_this = tr1::enable_shared_from_this<T>;
 
+using tr1::static_pointer_cast;
+
 template <class T, T V>
 struct integral_constant {
     static const T value = V;

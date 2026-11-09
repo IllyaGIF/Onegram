@@ -26,7 +26,7 @@
 - (void)setEditing:(bool)editing animated:(bool)animated;
 - (void)setStatus:(NSString *)status active:(bool)active;
 
-- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int32_t)uidForPlaceholderCalculation;
+- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int64_t)uidForPlaceholderCalculation;
 - (void)setAvatarUri:(NSString *)avatarUri animated:(bool)animated synchronous:(bool)synchronous;
 - (void)setAvatarImage:(UIImage *)avatarImage animated:(bool)animated;
 - (void)setUpdatingAvatar:(bool)updatingAvatar animated:(bool)animated;
@@ -44,6 +44,10 @@
 - (void)setUsername:(NSString *)username;
 - (void)setAbout:(NSString *)about;
 - (void)setBrandedDetailsTextScale:(CGFloat)scale;
+- (void)setModernSubtitleShowsContactDetails:(bool)showsContactDetails;
+- (void)setStoryRingState:(int)storyRingState;
+- (void)setModernHeaderColor:(UIColor *)modernHeaderColor;
+- (void)setStarsRatingLevel:(NSNumber *)starsRatingLevel;
 
 - (void)setAvatarHidden:(bool)hidden animated:(bool)animated;
 - (id)avatarView;

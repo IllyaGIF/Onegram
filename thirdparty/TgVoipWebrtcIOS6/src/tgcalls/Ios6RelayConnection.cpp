@@ -30,7 +30,11 @@ static std::string CandidateHost(uint8_t serverId, uint32_t tag) {
 
 }
 
-Ios6RelayConnection::Ios6RelayConnection(std::shared_ptr<Ios6TurnSocket> socket) : _socket(socket) { memset(_peerTag.data(), 0, _peerTag.size()); }
+Ios6RelayConnection::Ios6RelayConnection(std::shared_ptr<Ios6TurnSocket> socket) : _socket(socket) {
+    memset(_peerTag.data(), 0, _peerTag.size());
+    _transactionPrefix[0] = arc4random();
+    _transactionPrefix[1] = arc4random();
+}
 std::shared_ptr<Ios6RelayConnection> Ios6RelayConnection::turn(std::shared_ptr<Ios6TurnSocket> socket) {
     return std::shared_ptr<Ios6RelayConnection>(new Ios6RelayConnection(socket));
 }
@@ -118,6 +122,65 @@ std::vector<uint8_t> Ios6RelayConnection::encodePacket(const std::string &host, 
     }
     return result;
 }
+bool Ios6RelayConnection::resolvePeer(const std::string &host, uint16_t port, Ios6RelayPeerAddress *address) const {
+    Ios6RelayPeerAddress result;
+    if (_reflector) {
+        uint32_t tag = 0;
+        if (!parsePeer(host, port, &tag)) return false;
+        result.reflectorTag = tag;
+    } else {
+        struct in_addr ip;
+        if (port == 0 || inet_pton(AF_INET, host.c_str(), &ip) != 1) return false;
+        result.ipv4 = ntohl(ip.s_addr);
+    }
+    result.port = port;
+    result.valid = true;
+    *address = result;
+    return true;
+}
+
+size_t Ios6RelayConnection::framingHeaderSize() const {
+    return _reflector ? 24 : 36;
+}
+
+void Ios6RelayConnection::writeFraming(const Ios6RelayPeerAddress &address, size_t payloadSize, uint32_t transactionSeed, uint8_t *header) const {
+    const size_t paddedSize = (payloadSize + 3) & ~static_cast<size_t>(3);
+    if (_reflector) {
+        memcpy(header, _peerTag.data(), 12);
+        for (unsigned int i = 0; i < 4; ++i) header[12 + i] = static_cast<uint8_t>(address.reflectorTag >> (8 * i));
+        for (unsigned int i = 0; i < 4; ++i) header[16 + i] = static_cast<uint8_t>(_localTag >> (8 * i));
+        for (int i = 0; i < 4; ++i) header[20 + i] = static_cast<uint8_t>(payloadSize >> ((3 - i) * 8));
+        return;
+    }
+    const size_t messageLength = 16 + paddedSize;
+    header[0] = 0x00;
+    header[1] = 0x16;
+    header[2] = static_cast<uint8_t>(messageLength >> 8);
+    header[3] = static_cast<uint8_t>(messageLength & 255);
+    header[4] = 0x21;
+    header[5] = 0x12;
+    header[6] = 0xa4;
+    header[7] = 0x42;
+    for (int i = 0; i < 4; ++i) header[8 + i] = static_cast<uint8_t>(_transactionPrefix[0] >> ((3 - i) * 8));
+    for (int i = 0; i < 4; ++i) header[12 + i] = static_cast<uint8_t>(_transactionPrefix[1] >> ((3 - i) * 8));
+    for (int i = 0; i < 4; ++i) header[16 + i] = static_cast<uint8_t>(transactionSeed >> ((3 - i) * 8));
+    header[20] = 0x00;
+    header[21] = 0x12;
+    header[22] = 0x00;
+    header[23] = 0x08;
+    header[24] = 0x00;
+    header[25] = 0x01;
+    const uint16_t xorPort = static_cast<uint16_t>(address.port ^ 0x2112);
+    header[26] = static_cast<uint8_t>(xorPort >> 8);
+    header[27] = static_cast<uint8_t>(xorPort & 255);
+    const uint32_t xorAddress = address.ipv4 ^ 0x2112a442U;
+    for (int i = 0; i < 4; ++i) header[28 + i] = static_cast<uint8_t>(xorAddress >> ((3 - i) * 8));
+    header[32] = 0x00;
+    header[33] = 0x13;
+    header[34] = static_cast<uint8_t>(payloadSize >> 8);
+    header[35] = static_cast<uint8_t>(payloadSize & 255);
+}
+
 bool Ios6RelayConnection::decodePacket(const uint8_t *packet, size_t size, std::string *host, uint16_t *port, const uint8_t **data, size_t *dataSize) const {
     if (packet == NULL) return false;
     if (_reflector) {

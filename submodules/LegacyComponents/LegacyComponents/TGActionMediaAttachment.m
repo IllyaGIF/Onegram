@@ -2,6 +2,23 @@
 
 #import "TGImageMediaAttachment.h"
 
+static const int32_t TGActionMediaAttachmentVersion2Magic = 0x7a3cf002;
+
+static int64_t TGActionMediaAttachmentReadId(NSInputStream *is, bool wideIds, int *dataLength)
+{
+    if (wideIds)
+    {
+        int64_t value = 0;
+        [is read:(uint8_t *)&value maxLength:8];
+        *dataLength -= 8;
+        return value;
+    }
+    int32_t value = 0;
+    [is read:(uint8_t *)&value maxLength:4];
+    *dataLength -= 4;
+    return value;
+}
+
 @implementation TGActionMediaAttachment
 
 - (id)init
@@ -16,6 +33,9 @@
 
 - (void)serialize:(NSMutableData *)data
 {
+    int32_t magic = TGActionMediaAttachmentVersion2Magic;
+    [data appendBytes:&magic length:4];
+    
     int dataLengthPtr = (int)data.length;
     int zero = 0;
     [data appendBytes:&zero length:4];
@@ -25,20 +45,22 @@
     
     if (actionType == TGMessageActionChatAddMember || actionType == TGMessageActionChatDeleteMember)
     {
-        int uid = [[_actionData objectForKey:@"uid"] intValue];
-        [data appendBytes:&uid length:4];
+        int64_t uid = [[_actionData objectForKey:@"uid"] longLongValue];
+        [data appendBytes:&uid length:8];
         NSArray *uids = _actionData[@"uids"];
         int32_t uidsCount = (int32_t)uids.count;
         [data appendBytes:&uidsCount length:4];
         for (NSNumber *nUid in uids) {
-            int32_t listUid = [nUid intValue];
-            [data appendBytes:&listUid length:4];
+            int64_t listUid = [nUid longLongValue];
+            [data appendBytes:&listUid length:8];
         }
     }
     else if (actionType == TGMessageActionJoinedByLink)
     {
-        int uid = [[_actionData objectForKey:@"inviterId"] intValue];
-        [data appendBytes:&uid length:4];
+        int64_t invitedBy = [[_actionData objectForKey:@"invitedBy"] longLongValue];
+        [data appendBytes:&invitedBy length:8];
+        uint8_t joinedByRequest = [[_actionData objectForKey:@"joinedByRequest"] boolValue] ? 1 : 0;
+        [data appendBytes:&joinedByRequest length:1];
     }
     else if (actionType == TGMessageActionChatEditTitle)
     {
@@ -61,8 +83,8 @@
         [data appendBytes:&count length:4];
         for (NSNumber *nUid in uids)
         {
-            int uid = [nUid intValue];
-            [data appendBytes:&uid length:4];
+            int64_t uid = [nUid longLongValue];
+            [data appendBytes:&uid length:8];
         }
     }
     else if (actionType == TGMessageActionCreateBroadcastList)
@@ -78,8 +100,8 @@
         [data appendBytes:&count length:4];
         for (NSNumber *nUid in uids)
         {
-            int uid = [nUid intValue];
-            [data appendBytes:&uid length:4];
+            int64_t uid = [nUid longLongValue];
+            [data appendBytes:&uid length:8];
         }
     }
     else if (actionType == TGMessageActionChatEditPhoto)
@@ -140,11 +162,11 @@
         uint8_t enabled = [_actionData[@"enabled"] boolValue];
         [data appendBytes:&enabled length:1];
     } else if (actionType == TGMessageActionChannelInviter) {
-        int32_t inviter = [_actionData[@"uid"] intValue];
-        [data appendBytes:&inviter length:4];
+        int64_t inviter = [_actionData[@"uid"] longLongValue];
+        [data appendBytes:&inviter length:8];
     } else if (actionType == TGMessageActionGroupMigratedTo) {
-        int32_t channelId = [_actionData[@"channelId"] intValue];
-        [data appendBytes:&channelId length:4];
+        int64_t channelId = [_actionData[@"channelId"] longLongValue];
+        [data appendBytes:&channelId length:8];
     } else if (actionType == TGMessageActionGroupDeactivated) {
         
     } else if (actionType == TGMessageActionGroupActivated) {
@@ -156,8 +178,8 @@
         [data appendBytes:&length length:4];
         [data appendData:titleData];
         
-        int32_t channelId = [_actionData[@"groupId"] intValue];
-        [data appendBytes:&channelId length:4];
+        int64_t groupId = [_actionData[@"groupId"] longLongValue];
+        [data appendBytes:&groupId length:8];
     } else if (actionType == TGMessageActionPinnedMessage) {
     } else if (actionType == TGMessageActionClearChat) {
     } else if (actionType == TGMessageActionGameScore) {
@@ -201,6 +223,11 @@
     } else if (actionType == TGMessageActionCommunityChanged) {
         int64_t communityId = [_actionData[@"communityId"] longLongValue];
         [data appendBytes:&communityId length:8];
+    } else if (actionType == TGMessageActionStarGift || actionType == TGMessageActionStarGiftUnique || actionType == TGMessageActionStarGiftPurchaseOffer || actionType == TGMessageActionStarGiftPurchaseOfferDeclined) {
+        NSData *archive = [NSKeyedArchiver archivedDataWithRootObject:_actionData ?: @{}];
+        int32_t length = (int32_t)archive.length;
+        [data appendBytes:&length length:4];
+        [data appendData:archive];
     }
 
     int dataLength = (int)data.length - dataLengthPtr - 4;
@@ -209,8 +236,20 @@
 
 - (TGMediaAttachment *)parseMediaAttachment:(NSInputStream *)is
 {
+    int32_t header = 0;
+    [is read:(uint8_t *)&header maxLength:4];
+    
     int dataLength = 0;
-    [is read:(uint8_t *)&dataLength maxLength:4];
+    bool wideIds = false;
+    if (header == TGActionMediaAttachmentVersion2Magic)
+    {
+        wideIds = true;
+        [is read:(uint8_t *)&dataLength maxLength:4];
+    }
+    else
+    {
+        dataLength = header;
+    }
     
     TGActionMediaAttachment *actionAttachment = [[TGActionMediaAttachment alloc] init];
     
@@ -221,9 +260,7 @@
     
     if (actionType == TGMessageActionChatAddMember || actionType == TGMessageActionChatDeleteMember)
     {
-        int uid = 0;
-        [is read:(uint8_t *)&uid maxLength:4];
-        dataLength -= 4;
+        int64_t uid = TGActionMediaAttachmentReadId(is, wideIds, &dataLength);
         
         NSMutableArray *uids = [[NSMutableArray alloc] init];
         if (dataLength >= 4) {
@@ -232,10 +269,7 @@
             dataLength -= 4;
             
             for (int32_t i = 0; dataLength > 0 && i < uidsCount; i++) {
-                int32_t listUid = 0;
-                [is read:(uint8_t *)&listUid maxLength:4];
-                [uids addObject:@(listUid)];
-                dataLength -= 4;
+                [uids addObject:@(TGActionMediaAttachmentReadId(is, wideIds, &dataLength))];
             }
         }
         
@@ -247,9 +281,15 @@
     }
     else if (actionType == TGMessageActionJoinedByLink)
     {
-        int uid = 0;
-        [is read:(uint8_t *)&uid maxLength:4];
-        actionAttachment.actionData = [NSDictionary dictionaryWithObject:[NSNumber numberWithInt:uid] forKey:@"inviterId"];
+        int64_t invitedBy = TGActionMediaAttachmentReadId(is, wideIds, &dataLength);
+        bool joinedByRequest = false;
+        if (wideIds)
+        {
+            uint8_t joinedByRequestValue = 0;
+            [is read:&joinedByRequestValue maxLength:1];
+            joinedByRequest = joinedByRequestValue != 0;
+        }
+        actionAttachment.actionData = joinedByRequest ? @{@"invitedBy": @(invitedBy), @"joinedByRequest": @true} : @{@"invitedBy": @(invitedBy)};
     }
     else if (actionType == TGMessageActionChatEditTitle)
     {
@@ -273,10 +313,9 @@
         NSMutableArray *uids = [[NSMutableArray alloc] initWithCapacity:count];
         for (int i = 0; i < count; i++)
         {
-            int uid = 0;
-            [is read:(uint8_t *)&uid maxLength:4];
+            int64_t uid = TGActionMediaAttachmentReadId(is, wideIds, &dataLength);
             if (uid != 0)
-                [uids addObject:[[NSNumber alloc] initWithInt:uid]];
+                [uids addObject:@(uid)];
         }
         
         actionAttachment.actionData = [[NSDictionary alloc] initWithObjectsAndKeys:(title == nil ? @"" : title), @"title", uids, @"uids", nil];
@@ -294,10 +333,9 @@
         NSMutableArray *uids = [[NSMutableArray alloc] initWithCapacity:count];
         for (int i = 0; i < count; i++)
         {
-            int uid = 0;
-            [is read:(uint8_t *)&uid maxLength:4];
+            int64_t uid = TGActionMediaAttachmentReadId(is, wideIds, &dataLength);
             if (uid != 0)
-                [uids addObject:[[NSNumber alloc] initWithInt:uid]];
+                [uids addObject:@(uid)];
         }
         
         actionAttachment.actionData = [[NSDictionary alloc] initWithObjectsAndKeys:(title == nil ? @"" : title), @"title", uids, @"uids", nil];
@@ -358,12 +396,10 @@
         [is read:(uint8_t *)&enabled maxLength:1];
         actionAttachment.actionData = @{@"enabled": @(enabled != 0)};
     } else if (actionType == TGMessageActionChannelInviter) {
-        int32_t uid = 0;
-        [is read:(uint8_t *)&uid maxLength:4];
+        int64_t uid = TGActionMediaAttachmentReadId(is, wideIds, &dataLength);
         actionAttachment.actionData = @{@"uid": @(uid)};
     } else if (actionType == TGMessageActionGroupMigratedTo) {
-        int32_t channelId = 0;
-        [is read:(uint8_t *)&channelId maxLength:4];
+        int64_t channelId = wideIds ? TGActionMediaAttachmentReadId(is, true, &dataLength) : (int64_t)(uint32_t)TGActionMediaAttachmentReadId(is, false, &dataLength);
         actionAttachment.actionData = @{@"channelId": @(channelId)};
     } else if (actionType == TGMessageActionChannelMigratedFrom) {
         int length = 0;
@@ -372,8 +408,7 @@
         [is read:titleBytes maxLength:length];
         NSString *title = [[NSString alloc] initWithBytesNoCopy:titleBytes length:length encoding:NSUTF8StringEncoding freeWhenDone:true];
         
-        int32_t groupId = 0;
-        [is read:(uint8_t *)&groupId maxLength:4];
+        int64_t groupId = TGActionMediaAttachmentReadId(is, wideIds, &dataLength);
         
         actionAttachment.actionData = @{@"groupId": @(groupId), @"title": title};
     } else if (actionType == TGMessageActionPinnedMessage) {
@@ -430,6 +465,34 @@
         int64_t communityId = 0;
         [is read:(uint8_t *)&communityId maxLength:8];
         actionAttachment.actionData = @{@"communityId": @(communityId)};
+    } else if (actionType == TGMessageActionStarGift || actionType == TGMessageActionStarGiftUnique || actionType == TGMessageActionStarGiftPurchaseOffer || actionType == TGMessageActionStarGiftPurchaseOfferDeclined) {
+        int32_t length = 0;
+        [is read:(uint8_t *)&length maxLength:4];
+        if (length > 0 && length <= 4 * 1024 * 1024 && length <= dataLength - 4)
+        {
+            NSMutableData *archive = [[NSMutableData alloc] initWithLength:(NSUInteger)length];
+            NSInteger totalRead = 0;
+            while (totalRead < length)
+            {
+                NSInteger count = [is read:(uint8_t *)archive.mutableBytes + totalRead maxLength:(NSUInteger)(length - totalRead)];
+                if (count <= 0)
+                    break;
+                totalRead += count;
+            }
+            if (totalRead == length)
+            {
+                @try
+                {
+                    id fields = [NSKeyedUnarchiver unarchiveObjectWithData:archive];
+                    if ([fields isKindOfClass:[NSDictionary class]])
+                        actionAttachment.actionData = fields;
+                }
+                @catch (NSException *exception)
+                {
+                    actionAttachment.actionData = nil;
+                }
+            }
+        }
     }
     
     return actionAttachment;

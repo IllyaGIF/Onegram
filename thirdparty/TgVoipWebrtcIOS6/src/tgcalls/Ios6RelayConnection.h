@@ -6,6 +6,13 @@
 
 namespace tgcalls {
 
+struct Ios6RelayPeerAddress {
+    bool valid = false;
+    uint32_t reflectorTag = 0;
+    uint32_t ipv4 = 0;
+    uint16_t port = 0;
+};
+
 class Ios6RelayConnection {
 public:
     static std::shared_ptr<Ios6RelayConnection> turn(std::shared_ptr<Ios6TurnSocket> socket);
@@ -18,6 +25,9 @@ public:
     bool acceptsPeer(const std::string &host, uint16_t port) const;
     std::vector<uint8_t> encodePacket(const std::string &host, uint16_t port, const std::vector<uint8_t> &data) const;
     bool decodePacket(const uint8_t *packet, size_t size, std::string *host, uint16_t *port, const uint8_t **data, size_t *dataSize) const;
+    bool resolvePeer(const std::string &host, uint16_t port, Ios6RelayPeerAddress *address) const;
+    size_t framingHeaderSize() const;
+    void writeFraming(const Ios6RelayPeerAddress &address, size_t payloadSize, uint32_t transactionSeed, uint8_t *header) const;
     bool sendHello(std::string *error) const;
     bool probe(std::string *error) const;
 
@@ -31,6 +41,7 @@ private:
     uint16_t _serverPort = 0;
     std::array<uint8_t, 16> _peerTag;
     uint32_t _localTag = 0;
+    uint32_t _transactionPrefix[2];
 };
 
 }

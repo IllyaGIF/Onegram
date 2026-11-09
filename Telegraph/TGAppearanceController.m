@@ -2,7 +2,6 @@
 
 #import "TGAppDelegate.h"
 
-#import "TGLegacyComponentsContext.h"
 
 #import "TGHeaderCollectionItem.h"
 #import "TGDisclosureActionCollectionItem.h"
@@ -10,9 +9,7 @@
 #import "TGCheckCollectionItem.h"
 #import "TGSwitchCollectionItem.h"
 #import "TGAppearancePreviewCollectionItem.h"
-#import "TGAppearanceColorCollectionItem.h"
 
-#import "TGAppearanceColorPickerItemView.h"
 #import "TGPresentation.h"
 #import "TGDefaultPresentationPallete.h"
 #import "TGDayPresentationPallete.h"
@@ -25,13 +22,26 @@
 
 #import "TGWallpaperListController.h"
 #import "TGAppearanceAutoNightController.h"
+#import "TGStickerPacksSettingsController.h"
+#import "TGOnegramColorsController.h"
+#import "TGOnegramSettings.h"
+#import "TGSnowflakesView.h"
+#import "TGCloudTheme.h"
+#import "TGCloudThemeCollectionItem.h"
+#import "TGOnegramNightSurfaceController.h"
+#import "TGVariantCollectionItem.h"
+#import "TGCommentCollectionItem.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGFont.h"
 
-@interface TGAppearanceController () <ASWatcher>
+@interface TGAppearanceController () <ASWatcher, TGInterfaceRebuildRestorable>
 {
     TGFontSizeCollectionItem *_sizeItem;
     
-    TGAppearanceColorCollectionItem *_colorItem;
+    TGDisclosureActionCollectionItem *_colorsItem;
+    TGSwitchCollectionItem *_roundChatAvatarItem;
+    TGSwitchCollectionItem *_snowfallItem;
+    TGSwitchCollectionItem *_separatorsItem;
+    TGVariantCollectionItem *_nightSurfaceItem;
     TGCollectionMenuSection *_previewSection;
     TGAppearancePreviewCollectionItem *_previewItem;
     TGDisclosureActionCollectionItem *_backgroundItem;
@@ -40,9 +50,9 @@
     TGCheckCollectionItem *_dayItem;
     TGCheckCollectionItem *_nightItem;
     TGCheckCollectionItem *_nightBlueItem;
+    NSMutableDictionary *_cloudThemeItems;
     
     TGDisclosureActionCollectionItem *_autoNightItem;
-    TGSwitchCollectionItem *_newGesturesItem;
     TGSwitchCollectionItem *_callsTabItem;
     TGCheckCollectionItem *_interfaceModernItem;
     TGCheckCollectionItem *_interfaceClassicItem;
@@ -51,7 +61,6 @@
     TGCheckCollectionItem *_emojiNewItem;
     TGCheckCollectionItem *_emojiCombinedItem;
 
-    bool _previewRelayoutScheduled;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -108,12 +117,12 @@
         _previewItem.heightChanged = ^ {
             __strong TGAppearanceController *strongSelf = weakSelf;
             if (strongSelf != nil)
-                [strongSelf schedulePreviewRelayout];
+                [strongSelf.collectionLayout invalidateLayout];
         };
-        _previewItem.messages = [self messages];
+        _previewItem.messages = [TGAppearanceController previewMessages];
         
-        _colorItem = [[TGAppearanceColorCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.AccentColor") action:@selector(accentColorPressed)];
-        _colorItem.deselectAutomatically = true;
+        _colorsItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramColors.Title") action:@selector(colorsPressed)];
+        _colorsItem.deselectAutomatically = true;
         
         _autoNightItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.AutoNightTheme") action:@selector(autoNightPressed)];
         
@@ -129,15 +138,12 @@
         
         [self updateColorItem:TGPresentation.currentSavedPallete];
         
-        _newGesturesItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.NewGestures") isOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"TGIOS6NewChatListGestures"]];
-        _newGesturesItem.interfaceHandle = _actionHandle;
         _callsTabItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.CallsTabIcon") isOn:TGAppDelegateInstance.showCallsTab];
         _callsTabItem.interfaceHandle = _actionHandle;
 
         TGCollectionMenuSection *interfaceStyleSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyle")],
-         _newGesturesItem,
          _callsTabItem,
          _interfaceModernItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleModern") action:@selector(interfaceModernPressed)],
          _interfaceClassicItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.InterfaceStyleClassic") action:@selector(interfaceClassicPressed)],
@@ -154,6 +160,33 @@
         ]];
         [self.menuSections addSection:emojiSection];
 
+        if (![TGPresentation brandedIOS6Style])
+        {
+            _roundChatAvatarItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramAppearance.RoundChatAvatar") isOn:[TGOnegramSettings boolForKey:TGOnegramSettingAppearanceRoundChatAvatar]];
+            _roundChatAvatarItem.interfaceHandle = _actionHandle;
+            _snowfallItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramAppearance.Snowfall") isOn:TGSnowfallSettingEnabled()];
+            _snowfallItem.interfaceHandle = _actionHandle;
+            _separatorsItem = [[TGSwitchCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramAppearance.Separators") isOn:[TGOnegramSettings boolForKey:TGOnegramSettingAppearanceSeparators]];
+            _separatorsItem.interfaceHandle = _actionHandle;
+            _nightSurfaceItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramAppearance.NightSurface") variant:nil action:@selector(nightSurfacePressed)];
+            [self updateNightSurfaceItem];
+            [self.menuSections addSection:[[TGCollectionMenuSection alloc] initWithItems:@[
+                [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramAppearance.Extra")],
+                _nightSurfaceItem,
+                _separatorsItem,
+                _roundChatAvatarItem,
+                _snowfallItem,
+                [[TGCommentCollectionItem alloc] initWithText:TGLocalized(@"OnegramAppearance.SnowfallInfo")]
+            ]]];
+        }
+
+        if (TGOnegramModernInterfaceEnabled() && ![TGPresentation brandedIOS6Style])
+        {
+            TGDisclosureActionCollectionItem *stickersItem = [[TGDisclosureActionCollectionItem alloc] initWithTitle:TGLocalized(@"ChatSettings.Stickers") action:@selector(stickersPressed)];
+            stickersItem.deselectAutomatically = true;
+            [self.menuSections addSection:[[TGCollectionMenuSection alloc] initWithItems:@[stickersItem]]];
+        }
+
         _themeSection = [[TGCollectionMenuSection alloc] initWithItems:@
         [
          [[TGHeaderCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ColorTheme")],
@@ -162,6 +195,7 @@
          _nightBlueItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeNightBlue") action:@selector(nightBluePressed)],
          _nightItem = [[TGCheckCollectionItem alloc] initWithTitle:TGLocalized(@"Appearance.ThemeNight") action:@selector(nightPressed)]
         ]];
+        _cloudThemeItems = [[NSMutableDictionary alloc] init];
         [self.menuSections addSection:_themeSection];
 
         [self updateSelection];
@@ -171,24 +205,6 @@
         [ActionStageInstance() watchForPaths:@[@"/tg/assets/currentWallpaperInfo"] watcher:self];
     }
     return self;
-}
-
-- (void)schedulePreviewRelayout
-{
-    if (_previewRelayoutScheduled)
-        return;
-    _previewRelayoutScheduled = true;
-
-    __weak TGAppearanceController *weakSelf = self;
-    dispatch_async(dispatch_get_main_queue(), ^
-    {
-        __strong TGAppearanceController *strongSelf = weakSelf;
-        if (strongSelf == nil)
-            return;
-        strongSelf->_previewRelayoutScheduled = false;
-        [strongSelf.collectionLayout invalidateLayout];
-        [strongSelf.collectionView layoutSubviews];
-    });
 }
 
 - (void)dealloc
@@ -201,12 +217,21 @@
 {
     [super viewWillAppear:animated];
     
+    [self updateThemeItems];
+    [self updateNightSurfaceItem];
+    
     if (iosMajorVersion() < 8)
     {
         [_previewItem refreshMetrics];
         [self.collectionLayout invalidateLayout];
         [self.collectionView layoutSubviews];
     }
+}
+
+- (void)stickersPressed
+{
+    TGStickerPacksSettingsController *controller = [[TGStickerPacksSettingsController alloc] initWithEditing:false masksMode:false];
+    [self.navigationController pushViewController:controller animated:true];
 }
 
 - (void)wallpapersPressed
@@ -219,49 +244,11 @@
     [self.navigationController pushViewController:controller animated:true];
 }
 
-- (void)accentColorPressed
+- (void)colorsPressed
 {
-    if ([TGPresentation brandedIOS6Style])
-        return;
-
-    TGMenuSheetController *controller = [[TGMenuSheetController alloc] initWithContext:[TGLegacyComponentsContext shared] dark:false];
-    controller.dismissesByOutsideTap = true;
-    controller.narrowInLandscape = true;
-    controller.hasSwipeGesture = true;
-    
-    __weak TGMenuSheetController *weakController = controller;
-    __weak TGAppearanceController *weakSelf = self;
-    TGAppearanceColorPickerItemView *colorItem = [[TGAppearanceColorPickerItemView alloc] initWithCurrentColor:self.presentation.pallete.accentColor];
-    colorItem.colorSelected = ^(UIColor *color)
-    {
-        __strong TGMenuSheetController *strongController = weakController;
-        if (strongController != nil)
-            [strongController dismissAnimated:true];
-        
-        __strong TGAppearanceController *strongSelf = weakSelf;
-        if (strongSelf != nil)
-        {
-            TGDayPresentationPallete *pallete = [TGDayPresentationPallete dayPalleteWithAccentColor:color];
-            [strongSelf setPallete:pallete applyColorWallpaper:false];
-        }
-    };
-    TGMenuSheetButtonItemView *cancelItem = [[TGMenuSheetButtonItemView alloc] initWithTitle:TGLocalized(@"Common.Cancel") type:TGMenuSheetButtonTypeCancel action:^
-    {
-        __strong TGMenuSheetController *strongController = weakController;
-        if (strongController != nil)
-            [strongController dismissAnimated:true];
-    }];
-    [controller setItemViews:@[colorItem, cancelItem]];
-    
-    controller.sourceRect = ^CGRect{
-        __strong TGAppearanceController *strongSelf = weakSelf;
-        if (strongSelf == nil)
-            return CGRectZero;
-        
-        return [strongSelf frameForItem:strongSelf->_colorItem];
-    };
-    
-    [controller presentInViewController:self sourceView:self.view animated:true];
+    TGOnegramColorsController *controller = [[TGOnegramColorsController alloc] init];
+    controller.presentation = self.presentation;
+    [self.navigationController pushViewController:controller animated:true];
 }
 
 - (void)autoNightPressed
@@ -271,33 +258,16 @@
     [self.navigationController pushViewController:controller animated:true];
 }
 
-- (CGRect)frameForItem:(TGCollectionItem *)item
-{
-    for (TGCollectionItemView *itemView in self.collectionView.visibleCells)
-    {
-        if (![itemView isKindOfClass:[TGCollectionItemView class]])
-            continue;
-        
-        if (itemView.boundItem == item)
-            return [itemView convertRect:itemView.bounds toView:self.view];
-    }
-    return CGRectZero;
-}
-
 - (void)updateColorItem:(TGPresentationPallete *)pallete
 {
     bool fekla = [TGPresentation brandedIOS6Style];
-    bool colorVisible = !fekla && [pallete isKindOfClass:[TGDayPresentationPallete class]];
     bool autoNightVisible = [pallete isKindOfClass:[TGDefaultPresentationPallete class]];
-    
-    if (colorVisible)
-        _colorItem.color = pallete.accentColor;
-    
+
     NSMutableArray *items = [NSMutableArray arrayWithObjects:_previewSection.items.firstObject, _previewItem, nil];
     if (!fekla)
         [items addObject:_backgroundItem];
-    if (colorVisible)
-        [items addObject:_colorItem];
+    if (!fekla)
+        [items addObject:_colorsItem];
     if (autoNightVisible)
         [items addObject:_autoNightItem];
 
@@ -313,13 +283,7 @@
     if (_dayClassicItem.isChecked)
         return;
     
-    [self setPallete:[TGDefaultPresentationPallete new] applyColorWallpaper:false];
-
-    if ([TGPresentation brandedIOS6Style])
-        return;
-    
-    TGWallpaperInfo *info = [[TGWallpaperManager instance] builtinWallpaperList].firstObject;
-    [[TGWallpaperManager instance] setCurrentWallpaperWithInfo:info];
+    [self setPallete:[TGDefaultPresentationPallete new] wallpaper:[self builtinWallpaper]];
 }
 
 - (void)dayPressed
@@ -328,7 +292,7 @@
         return;
 
     TGPresentationPallete *pallete = [TGDayPresentationPallete new];
-    [self setPallete:pallete applyColorWallpaper:true];
+    [self setPallete:pallete wallpaper:[self colorWallpaperForPallete:pallete]];
 }
 
 - (void)nightPressed
@@ -337,7 +301,47 @@
         return;
     
     TGPresentationPallete *pallete = [TGNightPresentationPallete new];
-    [self setPallete:pallete applyColorWallpaper:true];
+    [self setPallete:pallete wallpaper:[self colorWallpaperForPallete:pallete]];
+}
+
+- (void)applyCloudTheme:(TGCloudTheme *)theme
+{
+    if ([[TGCloudTheme activeThemeIdentifier] isEqualToString:theme.identifier])
+        return;
+    [TGAppDelegateInstance rebuildInterfaceApplyingChange:^
+    {
+        [theme apply];
+    }];
+    [self updateThemeItems];
+    [self updateColorItem:TGPresentation.currentSavedPallete];
+}
+
+- (void)removeCloudTheme:(TGCloudTheme *)theme
+{
+    bool wasActive = [TGCloudTheme removeStoredThemeWithIdentifier:theme.identifier];
+    [_cloudThemeItems removeObjectForKey:theme.identifier];
+    if (!wasActive)
+    {
+        [self updateThemeItems];
+        return;
+    }
+    Class palleteClass = [theme basePalleteClass];
+    TGPresentationPallete *pallete = [[palleteClass alloc] init];
+    bool classic = palleteClass == [TGDefaultPresentationPallete class];
+    [self setPallete:pallete wallpaper:classic ? [self builtinWallpaper] : [self colorWallpaperForPallete:pallete]];
+}
+
+- (void)nightSurfacePressed
+{
+    [self.navigationController pushViewController:[[TGOnegramNightSurfaceController alloc] init] animated:true];
+}
+
+- (void)updateNightSurfaceItem
+{
+    if (_nightSurfaceItem == nil)
+        return;
+    NSInteger tone = [TGOnegramSettings integerForKey:TGOnegramSettingAppearanceNightSurface];
+    _nightSurfaceItem.variant = TGLocalized([[NSString alloc] initWithFormat:@"OnegramAppearance.NightSurface.%d", (int)tone]);
 }
 
 - (void)nightBluePressed
@@ -346,7 +350,7 @@
         return;
     
     TGPresentationPallete *pallete = [TGNightBluePresentationPallete new];
-    [self setPallete:pallete applyColorWallpaper:true];
+    [self setPallete:pallete wallpaper:[self colorWallpaperForPallete:pallete]];
 }
 
 - (void)updateEmojiRenderMode:(TGEmojiRenderMode)mode
@@ -375,45 +379,46 @@
     [self updateEmojiRenderMode:TGEmojiRenderModeCombined];
 }
 
-- (void)setPallete:(TGPresentationPallete *)pallete applyColorWallpaper:(bool)applyColorWallpaper
+- (TGWallpaperInfo *)builtinWallpaper
 {
-    if (applyColorWallpaper && ![TGPresentation brandedIOS6Style])
+    if ([TGPresentation brandedIOS6Style])
+        return nil;
+    return [[TGWallpaperManager instance] builtinWallpaperList].firstObject;
+}
+
+- (TGWallpaperInfo *)colorWallpaperForPallete:(TGPresentationPallete *)pallete
+{
+    if ([TGPresentation brandedIOS6Style])
+        return nil;
+    return [[TGColorWallpaperInfo alloc] initWithColor:TGColorHexCode(pallete.backgroundColor)];
+}
+
+- (void)setPallete:(TGPresentationPallete *)pallete wallpaper:(TGWallpaperInfo *)wallpaper
+{
+    [TGAppDelegateInstance rebuildInterfaceApplyingChange:^
     {
-        TGColorWallpaperInfo *info = [[TGColorWallpaperInfo alloc] initWithColor:TGColorHexCode(pallete.backgroundColor)];
-        [[TGWallpaperManager instance] setCurrentWallpaperWithInfo:info];
-    }
-    
-    [TGPresentation switchToPallete:pallete];
-    [self updateSelection];
-    
-    [self updateColorItem:pallete];
-    
-    if (TGIsPad() || iosMajorVersion() < 8)
-    {
-        [self setNeedsStatusBarAppearanceUpdate];
-        return;
-    }
-    
-    UIView *snapshotView = [self.navigationController.view snapshotViewAfterScreenUpdates:false];
-    [self.navigationController.view addSubview:snapshotView];
-    
-    [UIView animateWithDuration:0.2 animations:^
-    {
-        snapshotView.alpha = 0.0f;
-        [self setNeedsStatusBarAppearanceUpdate];
-    } completion:^(__unused BOOL finished)
-    {
-        [snapshotView removeFromSuperview];
+        if (wallpaper != nil)
+            [[TGWallpaperManager instance] setCurrentWallpaperWithInfo:wallpaper];
+        [TGCloudTheme resetInstalledTheme];
+        [TGPresentation switchToPallete:pallete];
     }];
+    [self updateThemeItems];
+    [self updateColorItem:pallete];
 }
 
 - (void)actionStageActionRequested:(NSString *)action options:(id)options
 {
-    if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _newGesturesItem)
+    if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _roundChatAvatarItem)
     {
-        [[NSUserDefaults standardUserDefaults] setBool:_newGesturesItem.isOn forKey:@"TGIOS6NewChatListGestures"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
-        [[NSNotificationCenter defaultCenter] postNotificationName:@"TGIOS6NewChatListGesturesChanged" object:nil];
+        [TGOnegramSettings setBool:_roundChatAvatarItem.isOn forKey:TGOnegramSettingAppearanceRoundChatAvatar];
+    }
+    else if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _separatorsItem)
+    {
+        [TGOnegramSettings setBool:_separatorsItem.isOn forKey:TGOnegramSettingAppearanceSeparators];
+    }
+    else if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _snowfallItem)
+    {
+        [TGOnegramSettings setInteger:_snowfallItem.isOn ? 1 : 0 forKey:TGOnegramSettingAppearanceSnowfall];
     }
     else if ([action isEqualToString:@"switchItemChanged"] && options[@"item"] == _callsTabItem)
     {
@@ -427,11 +432,15 @@
     if ([TGPresentation interfaceStyle] == style)
         return;
 
-    [TGPresentation setInterfaceStyle:style];
-    [self updateInterfaceStyleSelection];
-    [_previewItem refreshMetrics];
-    [self.collectionView reloadData];
-    [self setNeedsStatusBarAppearanceUpdate];
+    [TGAppDelegateInstance rebuildInterfaceApplyingChange:^
+    {
+        [TGPresentation setInterfaceStyle:style];
+    }];
+}
+
+- (UIViewController *)controllerForInterfaceRebuild
+{
+    return [[TGAppearanceController alloc] init];
 }
 
 - (void)interfaceModernPressed
@@ -459,19 +468,76 @@
     bool fekla = style == TGInterfaceStyleFekla;
     _dayClassicItem.title = TGLocalized(fekla ? @"Appearance.ThemeWhite" : @"Appearance.ThemeDayClassic");
     _nightItem.title = TGLocalized(fekla ? @"Appearance.ThemeBlack" : @"Appearance.ThemeNight");
-    TGCollectionItem *header = _themeSection.items.firstObject;
-    [_themeSection replaceItems:fekla ? @[header, _dayClassicItem, _nightItem] : @[header, _dayClassicItem, _dayItem, _nightBlueItem, _nightItem]];
-    [self updateSelection];
+    [self updateThemeItems];
     [self updateColorItem:TGPresentation.currentSavedPallete];
+}
+
+- (void)updateThemeItems
+{
+    bool fekla = [TGPresentation interfaceStyle] == TGInterfaceStyleFekla;
+    NSMutableArray *items = [[NSMutableArray alloc] initWithObjects:_themeSection.items.firstObject, _dayClassicItem, nil];
+    if (!fekla)
+        [items addObjectsFromArray:@[_dayItem, _nightBlueItem]];
+    [items addObject:_nightItem];
+    if (!fekla)
+    {
+        NSMutableSet *identifiers = [[NSMutableSet alloc] init];
+        __weak TGAppearanceController *weakSelf = self;
+        for (TGCloudTheme *theme in [TGCloudTheme storedThemes])
+        {
+            if (theme.identifier == nil)
+                continue;
+            [identifiers addObject:theme.identifier];
+            TGCloudThemeCollectionItem *item = _cloudThemeItems[theme.identifier];
+            if (item == nil)
+            {
+                item = [[TGCloudThemeCollectionItem alloc] init];
+                _cloudThemeItems[theme.identifier] = item;
+            }
+            item.title = theme.title.length != 0 ? theme.title : TGLocalized(@"OnegramTheme.Installed");
+            item.pressed = ^
+            {
+                __strong TGAppearanceController *strongSelf = weakSelf;
+                [strongSelf applyCloudTheme:theme];
+            };
+            item.removeRequested = ^
+            {
+                __strong TGAppearanceController *strongSelf = weakSelf;
+                [strongSelf removeCloudTheme:theme];
+            };
+            [items addObject:item];
+        }
+        for (NSString *identifier in [_cloudThemeItems allKeys])
+        {
+            if (![identifiers containsObject:identifier])
+                [_cloudThemeItems removeObjectForKey:identifier];
+        }
+    }
+    if (![_themeSection.items isEqualToArray:items])
+    {
+        [_themeSection replaceItems:items];
+        if (self.isViewLoaded)
+            [self.collectionView reloadData];
+    }
+    [self updateSelection];
 }
 
 - (void)updateSelection
 {
     TGPresentationPallete *savedPallete = TGPresentation.currentSavedPallete;
-    _dayClassicItem.isChecked = [savedPallete isMemberOfClass:[TGDefaultPresentationPallete class]];
-    _dayItem.isChecked = [savedPallete isMemberOfClass:[TGDayPresentationPallete class]];
-    _nightItem.isChecked = [savedPallete isMemberOfClass:[TGNightPresentationPallete class]];
-    _nightBlueItem.isChecked = [savedPallete isMemberOfClass:[TGNightBluePresentationPallete class]];
+    NSString *activeIdentifier = [TGCloudTheme activeThemeIdentifier];
+    bool cloudTheme = false;
+    for (NSString *identifier in _cloudThemeItems)
+    {
+        TGCloudThemeCollectionItem *item = _cloudThemeItems[identifier];
+        bool active = [identifier isEqualToString:activeIdentifier] && [_themeSection.items containsObject:item];
+        item.isChecked = active;
+        cloudTheme = cloudTheme || active;
+    }
+    _dayClassicItem.isChecked = !cloudTheme && [savedPallete isMemberOfClass:[TGDefaultPresentationPallete class]];
+    _dayItem.isChecked = !cloudTheme && [savedPallete isMemberOfClass:[TGDayPresentationPallete class]];
+    _nightItem.isChecked = !cloudTheme && [savedPallete isMemberOfClass:[TGNightPresentationPallete class]];
+    _nightBlueItem.isChecked = !cloudTheme && [savedPallete isMemberOfClass:[TGNightBluePresentationPallete class]];
 }
 
 - (void)updateEmojiSelection
@@ -482,7 +548,7 @@
     _emojiCombinedItem.isChecked = mode == TGEmojiRenderModeCombined;
 }
 
-- (NSArray *)messages
++ (NSArray *)previewMessages
 {
     TGUser *replyAuthor = [[TGUser alloc] init];
     replyAuthor.firstName = TGLocalized(@"Appearance.PreviewReplyAuthor");

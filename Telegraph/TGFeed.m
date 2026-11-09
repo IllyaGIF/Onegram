@@ -97,8 +97,9 @@
     
     NSArray *channelIds = [[self.channelIds allObjects] sortedArrayUsingSelector:@selector(compare:)];
     for (NSNumber *peerId in channelIds) {
-        uint32_t channelId = TGChannelIdFromPeerId(peerId.longLongValue);
-        acc = (acc * 20261) + channelId;
+        uint64_t channelId = (uint64_t)TGChannelIdFromPeerId(peerId.longLongValue);
+        acc = (acc * 20261) + (uint32_t)(channelId >> 32);
+        acc = (acc * 20261) + (uint32_t)channelId;
     }
     return acc % 0x7FFFFFFF;
 }

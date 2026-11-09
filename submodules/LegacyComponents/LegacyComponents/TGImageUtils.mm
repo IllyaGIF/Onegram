@@ -832,11 +832,12 @@ UIImage *TGImageNamed(NSString *name)
     {
         missingNames = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:512 * 64];
     });
-    if ([missingNames objectForKey:name] != nil)
+    NSArray *missingKey = @[name, @(TGCurrentInterfaceStyle())];
+    if ([missingNames objectForKey:missingKey] != nil)
         return nil;
     UIImage *image = [UIImage imageNamed:name];
     if (image == nil)
-        [missingNames setObject:[NSNull null] forKey:name cost:64];
+        [missingNames setObject:[NSNull null] forKey:missingKey cost:64];
     return image;
 }
 
@@ -982,6 +983,14 @@ NSString *TGImageHash(NSData *data)
 
 - (UIImage *)preloadedImage
 {
+    if (self.imageOrientation == UIImageOrientationUp && self.CGImage != NULL)
+    {
+        CGRect rect = CGRectMake(0.0f, 0.0f, self.size.width, self.size.height);
+        return OGPlatformRenderImage(rect.size, self.scale, false, ^(CGContextRef context)
+        {
+            OGPlatformDrawImageInRect(context, self, rect);
+        });
+    }
     UIGraphicsBeginImageContextWithOptions(self.size, false, self.scale);
     [self drawInRect:CGRectMake(0, 0, self.size.width, self.size.height)];
     UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
@@ -990,18 +999,21 @@ NSString *TGImageHash(NSData *data)
 }
 
 - (UIImage *)preloadedImageWithAlpha {
-    UIGraphicsBeginImageContextWithOptions(self.size, false, self.scale);
-    [self drawInRect:CGRectMake(0, 0, self.size.width, self.size.height)];
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return result;
+    return [self preloadedImage];
 }
 
 - (void)tgPreload
 {
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(1, 1), true, 0);
-    [self drawAtPoint:CGPointZero];
-    UIGraphicsEndImageContext();
+    CGImageRef image = self.CGImage;
+    if (image == NULL)
+        return;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(NULL, 1, 1, 8, 4, colorSpace, kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Host);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+        return;
+    CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, (CGFloat)CGImageGetWidth(image), (CGFloat)CGImageGetHeight(image)), image);
+    CGContextRelease(context);
 }
 
 static char mediumImageKey;

@@ -13,10 +13,35 @@
 #include <mach/mach_time.h>
 #include <mach/thread_switch.h>
 #include <time.h>
+#include <libkern/OSAtomic.h>
 
 static volatile int OGRuntimeInteractionFastFlag = 0;
 static volatile int OGRuntimeStartupPhaseCompletedFlag = 0;
+static volatile int OGRuntimeFirstFrameCompletedFlag = 0;
 static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
+static const NSTimeInterval OGRuntimeFirstFrameTimeout = 12.0;
+static const NSTimeInterval OGRuntimeStartupSyncQuietInterval = 0.75;
+static volatile int32_t OGRuntimeStartupSyncFinishedFlag = 0;
+static volatile int32_t OGRuntimeSyncActivityCount = 0;
+static volatile int32_t OGRuntimeStartupSyncGeneration = 0;
+
+@class OGRuntimeState;
+
+@interface OGRuntimeGate : NSObject
+{
+    pthread_mutex_t _lock;
+    __unsafe_unretained OGRuntimeState *_state;
+    volatile int *_completedFlag;
+    NSTimeInterval _timeout;
+    NSMutableArray *_deferredTasks;
+    BOOL _completed;
+    uint64_t _timeoutGeneration;
+}
+- (instancetype)initWithState:(OGRuntimeState *)state timeout:(NSTimeInterval)timeout completedFlag:(volatile int *)completedFlag;
+- (void)dispatchPriority:(OGRuntimePriority)priority block:(dispatch_block_t)block;
+- (void)complete;
+- (void)extend;
+@end
 
 @interface OGRuntimeState : NSObject
 {
@@ -38,9 +63,8 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
     NSUInteger _preloadWorkerLimit;
     BOOL _preloadCoolingDown;
     BOOL _suspendsBackgroundWorkDuringInteraction;
-    NSMutableArray *_startupDeferredTasks;
-    BOOL _startupPhaseCompleted;
-    uint64_t _startupPhaseTimeoutGeneration;
+    OGRuntimeGate *_startupGate;
+    OGRuntimeGate *_firstFrameGate;
 }
 - (void)beginInteraction;
 - (void)enqueuePreload:(id<NSCopying>)key block:(dispatch_block_t)block;
@@ -53,11 +77,88 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
 - (void)dispatchPriority:(OGRuntimePriority)priority after:(NSTimeInterval)delay block:(dispatch_block_t)block;
 - (void)dispatchCoalesced:(NSString *)key priority:(OGRuntimePriority)priority delay:(NSTimeInterval)delay block:(dispatch_block_t)block;
 - (void)cancelCoalesced:(NSString *)key;
-- (void)dispatchAfterStartupPhase:(OGRuntimePriority)priority block:(dispatch_block_t)block;
-- (void)completeStartupPhase:(NSString *)reason;
-- (void)extendStartupPhase;
-- (void)scheduleStartupPhaseTimeoutLocked;
+- (OGRuntimeGate *)startupGate;
+- (OGRuntimeGate *)firstFrameGate;
 - (uint64_t)nextToken;
+@end
+
+@implementation OGRuntimeGate
+
+- (instancetype)initWithState:(OGRuntimeState *)state timeout:(NSTimeInterval)timeout completedFlag:(volatile int *)completedFlag
+{
+    self = [super init];
+    if (self != nil)
+    {
+        pthread_mutex_init(&_lock, NULL);
+        _state = state;
+        _timeout = timeout;
+        _completedFlag = completedFlag;
+        _deferredTasks = [[NSMutableArray alloc] init];
+    }
+    return self;
+}
+
+- (void)completeLocked
+{
+    if (_completed)
+        return;
+
+    _completed = YES;
+    *_completedFlag = 1;
+
+    NSArray *tasks = _deferredTasks;
+    _deferredTasks = [[NSMutableArray alloc] init];
+    for (NSArray *task in tasks)
+        [_state dispatchPriority:(OGRuntimePriority)[[task objectAtIndex:0] intValue] block:[task objectAtIndex:1]];
+}
+
+- (void)scheduleTimeoutLocked
+{
+    _timeoutGeneration++;
+    uint64_t generation = _timeoutGeneration;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_timeout * (NSTimeInterval)NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+    {
+        pthread_mutex_lock(&_lock);
+        if (generation == _timeoutGeneration)
+            [self completeLocked];
+        pthread_mutex_unlock(&_lock);
+    });
+}
+
+- (void)dispatchPriority:(OGRuntimePriority)priority block:(dispatch_block_t)block
+{
+    if (block == nil)
+        return;
+
+    dispatch_block_t deferredBlock = [block copy];
+    pthread_mutex_lock(&_lock);
+    if (_completed)
+    {
+        pthread_mutex_unlock(&_lock);
+        [_state dispatchPriority:priority block:deferredBlock];
+        return;
+    }
+    [_deferredTasks addObject:[[NSArray alloc] initWithObjects:[NSNumber numberWithInt:(int)priority], deferredBlock, nil]];
+    if (_timeoutGeneration == 0)
+        [self scheduleTimeoutLocked];
+    pthread_mutex_unlock(&_lock);
+}
+
+- (void)complete
+{
+    pthread_mutex_lock(&_lock);
+    [self completeLocked];
+    pthread_mutex_unlock(&_lock);
+}
+
+- (void)extend
+{
+    pthread_mutex_lock(&_lock);
+    if (!_completed)
+        [self scheduleTimeoutLocked];
+    pthread_mutex_unlock(&_lock);
+}
+
 @end
 
 @implementation OGRuntimeState
@@ -108,9 +209,20 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
             _preloadWorkerLimit = 1;
         _tokens = [[NSMutableDictionary alloc] init];
         _nextToken = 1;
-        _startupDeferredTasks = [[NSMutableArray alloc] init];
+        _startupGate = [[OGRuntimeGate alloc] initWithState:self timeout:OGRuntimeStartupPhaseTimeout completedFlag:&OGRuntimeStartupPhaseCompletedFlag];
+        _firstFrameGate = [[OGRuntimeGate alloc] initWithState:self timeout:OGRuntimeFirstFrameTimeout completedFlag:&OGRuntimeFirstFrameCompletedFlag];
     }
     return self;
+}
+
+- (OGRuntimeGate *)startupGate
+{
+    return _startupGate;
+}
+
+- (OGRuntimeGate *)firstFrameGate
+{
+    return _firstFrameGate;
 }
 
 - (void)beginInteraction
@@ -326,73 +438,6 @@ static const NSTimeInterval OGRuntimeStartupPhaseTimeout = 30.0;
     pthread_mutex_unlock(&_lock);
 }
 
-- (void)completeStartupPhaseLocked:(NSString *)reason
-{
-    if (_startupPhaseCompleted)
-        return;
-
-    _startupPhaseCompleted = YES;
-    OGRuntimeStartupPhaseCompletedFlag = 1;
-
-    NSArray *tasks = _startupDeferredTasks;
-    _startupDeferredTasks = [[NSMutableArray alloc] init];
-
-
-    for (NSArray *task in tasks)
-    {
-        OGRuntimePriority priority = (OGRuntimePriority)[[task objectAtIndex:0] intValue];
-        dispatch_block_t block = [task objectAtIndex:1];
-        [self dispatchPriority:priority block:block];
-    }
-}
-
-- (void)dispatchAfterStartupPhase:(OGRuntimePriority)priority block:(dispatch_block_t)block
-{
-    if (block == nil)
-        return;
-
-    dispatch_block_t deferredBlock = [block copy];
-    pthread_mutex_lock(&_lock);
-    if (_startupPhaseCompleted)
-    {
-        pthread_mutex_unlock(&_lock);
-        [self dispatchPriority:priority block:deferredBlock];
-        return;
-    }
-    [_startupDeferredTasks addObject:[[NSArray alloc] initWithObjects:[NSNumber numberWithInt:(int)priority], deferredBlock, nil]];
-    if (_startupPhaseTimeoutGeneration == 0)
-        [self scheduleStartupPhaseTimeoutLocked];
-    pthread_mutex_unlock(&_lock);
-}
-
-- (void)scheduleStartupPhaseTimeoutLocked
-{
-    _startupPhaseTimeoutGeneration++;
-    uint64_t generation = _startupPhaseTimeoutGeneration;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(OGRuntimeStartupPhaseTimeout * (NSTimeInterval)NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
-    {
-        pthread_mutex_lock(&_lock);
-        if (generation == _startupPhaseTimeoutGeneration)
-            [self completeStartupPhaseLocked:@"timeout"];
-        pthread_mutex_unlock(&_lock);
-    });
-}
-
-- (void)extendStartupPhase
-{
-    pthread_mutex_lock(&_lock);
-    if (!_startupPhaseCompleted)
-        [self scheduleStartupPhaseTimeoutLocked];
-    pthread_mutex_unlock(&_lock);
-}
-
-- (void)completeStartupPhase:(NSString *)reason
-{
-    pthread_mutex_lock(&_lock);
-    [self completeStartupPhaseLocked:reason.length != 0 ? reason : @"unspecified"];
-    pthread_mutex_unlock(&_lock);
-}
-
 @end
 
 static OGRuntimeState *OGRuntimeSharedState(void)
@@ -418,7 +463,11 @@ void OGRuntimeConfigureMainThread(void)
     memset(&schedulingParameters, 0, sizeof(schedulingParameters));
     if (pthread_getschedparam(thread, &schedulingPolicy, &schedulingParameters) != 0)
         return;
+#if defined(ONEGRAM_ARMV6)
+    int maximumPriority = MIN(OGRuntimeMainThreadPriority, sched_get_priority_max(schedulingPolicy));
+#else
     int maximumPriority = sched_get_priority_max(schedulingPolicy);
+#endif
     
     thread_extended_policy_data_t currentPolicy;
     mach_msg_type_number_t count = THREAD_EXTENDED_POLICY_COUNT;
@@ -427,10 +476,8 @@ void OGRuntimeConfigureMainThread(void)
     if (schedulingParameters.sched_priority == maximumPriority && policyKnown && !currentPolicy.timeshare)
         return;
     
-#if defined(ONEGRAM_DIAGNOSTICS)
     int previousPriority = schedulingParameters.sched_priority;
     int previousTimeshare = policyKnown ? (int)currentPolicy.timeshare : -1;
-#endif
     int priorityResult = 0;
     if (schedulingParameters.sched_priority != maximumPriority)
     {
@@ -440,12 +487,8 @@ void OGRuntimeConfigureMainThread(void)
     thread_extended_policy_data_t policy;
     policy.timeshare = FALSE;
     kern_return_t result = thread_policy_set(port, THREAD_EXTENDED_POLICY, (thread_policy_t)&policy, THREAD_EXTENDED_POLICY_COUNT);
-#if defined(ONEGRAM_DIAGNOSTICS)
-    OGPlatformDiagnosticLog(@"MAINPOLICY previousPriority=%d previousTimeshare=%d priority=%d priorityResult=%d fixed=1 result=%d", previousPriority, previousTimeshare, maximumPriority, priorityResult, (int)result);
-#else
-    (void)priorityResult;
-    (void)result;
-#endif
+    if (OGDiagnosticsEnabled())
+        OGPlatformDiagnosticLog(@"MAINPOLICY previousPriority=%d previousTimeshare=%d priority=%d priorityResult=%d fixed=1 result=%d", previousPriority, previousTimeshare, maximumPriority, priorityResult, (int)result);
 }
 
 void OGRuntimeBeginInteraction(void)
@@ -488,7 +531,6 @@ BOOL OGRuntimeInteractionActiveFast(void)
 
 static pthread_key_t OGRuntimeLatencyCriticalKey;
 static pthread_once_t OGRuntimeLatencyCriticalKeyOnce = PTHREAD_ONCE_INIT;
-static const int OGRuntimeLatencyCriticalPriority = 33;
 
 static void OGRuntimeCreateLatencyCriticalKey(void)
 {
@@ -526,7 +568,10 @@ void OGRuntimePerformLatencyCritical(dispatch_block_t block)
 @end
 
 static const uint64_t OGRuntimeLatencyYieldSliceNanoseconds = 4000000ULL;
+#if !defined(ONEGRAM_ARMV6)
 static const mach_msg_timeout_t OGRuntimeLatencyYieldMilliseconds = 4;
+static const int OGRuntimeLatencyCriticalPriority = 33;
+#endif
 static pthread_key_t OGRuntimeLatencyLaneKey;
 static pthread_once_t OGRuntimeLatencyLaneKeyOnce = PTHREAD_ONCE_INIT;
 
@@ -559,6 +604,9 @@ void OGRuntimeLatencyYield(void)
         return;
     if (state->lastYieldTime != 0)
     {
+#if defined(ONEGRAM_ARMV6)
+        thread_switch(MACH_PORT_NULL, SWITCH_OPTION_NONE, 0);
+#else
         if (OGRuntimeInteractionFastFlag != 0)
         {
             struct timespec interval;
@@ -568,6 +616,7 @@ void OGRuntimeLatencyYield(void)
         }
         else
             thread_switch(MACH_PORT_NULL, SWITCH_OPTION_DEPRESS, OGRuntimeLatencyYieldMilliseconds);
+#endif
     }
     state->lastYieldTime = OGRuntimeAbsoluteNanoseconds();
 }
@@ -598,35 +647,36 @@ static void OGRuntimeConfigureLatencyThread(const char *name)
     int priorityResult = -1;
     if (pthread_getschedparam(thread, &schedulingPolicy, &parameters) == 0)
     {
+#if defined(ONEGRAM_ARMV6)
+        parameters.sched_priority = MIN(OGRuntimeBackgroundWorkPriority, sched_get_priority_max(schedulingPolicy));
+#else
         parameters.sched_priority = MIN(OGRuntimeLatencyCriticalPriority, sched_get_priority_max(schedulingPolicy) - 1);
+#endif
         priorityResult = pthread_setschedparam(thread, schedulingPolicy, &parameters);
     }
     thread_extended_policy_data_t policy;
     policy.timeshare = FALSE;
     kern_return_t policyResult = thread_policy_set(port, THREAD_EXTENDED_POLICY, (thread_policy_t)&policy, THREAD_EXTENDED_POLICY_COUNT);
-#if defined(ONEGRAM_DIAGNOSTICS)
-    thread_extended_policy_data_t currentPolicy;
-    mach_msg_type_number_t count = THREAD_EXTENDED_POLICY_COUNT;
-    boolean_t getDefault = FALSE;
-    kern_return_t getResult = thread_policy_get(port, THREAD_EXTENDED_POLICY, (thread_policy_t)&currentPolicy, &count, &getDefault);
-    int currentPriority = -1;
-    policy_rr_info_data_t fixedInfo;
-    count = POLICY_RR_INFO_COUNT;
-    if (thread_info(port, THREAD_SCHED_RR_INFO, (thread_info_t)&fixedInfo, &count) == KERN_SUCCESS)
-        currentPriority = fixedInfo.base_priority;
-    else
+    if (OGDiagnosticsEnabled())
     {
-        policy_timeshare_info_data_t timeshareInfo;
-        count = POLICY_TIMESHARE_INFO_COUNT;
-        if (thread_info(port, THREAD_SCHED_TIMESHARE_INFO, (thread_info_t)&timeshareInfo, &count) == KERN_SUCCESS)
-            currentPriority = timeshareInfo.base_priority;
+        thread_extended_policy_data_t currentPolicy;
+        mach_msg_type_number_t count = THREAD_EXTENDED_POLICY_COUNT;
+        boolean_t getDefault = FALSE;
+        kern_return_t getResult = thread_policy_get(port, THREAD_EXTENDED_POLICY, (thread_policy_t)&currentPolicy, &count, &getDefault);
+        int currentPriority = -1;
+        policy_rr_info_data_t fixedInfo;
+        count = POLICY_RR_INFO_COUNT;
+        if (thread_info(port, THREAD_SCHED_RR_INFO, (thread_info_t)&fixedInfo, &count) == KERN_SUCCESS)
+            currentPriority = fixedInfo.base_priority;
+        else
+        {
+            policy_timeshare_info_data_t timeshareInfo;
+            count = POLICY_TIMESHARE_INFO_COUNT;
+            if (thread_info(port, THREAD_SCHED_TIMESHARE_INFO, (thread_info_t)&timeshareInfo, &count) == KERN_SUCCESS)
+                currentPriority = timeshareInfo.base_priority;
+        }
+        OGPlatformDiagnosticLog(@"LATENCYTHREAD lane=%s priority=%d priorityResult=%d policyResult=%d timeshare=%d", name, currentPriority, priorityResult, (int)policyResult, getResult == KERN_SUCCESS ? (int)currentPolicy.timeshare : -1);
     }
-    OGPlatformDiagnosticLog(@"LATENCYTHREAD lane=%s priority=%d priorityResult=%d policyResult=%d timeshare=%d", name, currentPriority, priorityResult, (int)policyResult, getResult == KERN_SUCCESS ? (int)currentPolicy.timeshare : -1);
-#else
-    (void)name;
-    (void)priorityResult;
-    (void)policyResult;
-#endif
 }
 
 static void *OGRuntimeLatencyThreadMain(void *context)
@@ -705,7 +755,9 @@ void OGRuntimePerformOnLatencyLane(OGRuntimeLatencyLane laneIndex, dispatch_bloc
     pthread_mutex_unlock(&lane->lock);
     
     dispatch_semaphore_wait(task->_semaphore, DISPATCH_TIME_FOREVER);
+#if !OS_OBJECT_USE_OBJC
     dispatch_release(task->_semaphore);
+#endif
     task->_semaphore = NULL;
 }
 
@@ -720,6 +772,16 @@ dispatch_block_t OGRuntimeLatencyCriticalBlock(dispatch_block_t block)
     } copy];
 }
 
+static const uint64_t OGRuntimeCooperationSliceNanoseconds = 2000000ULL;
+static const long OGRuntimeCooperationSleepNanoseconds = 2000000L;
+static pthread_key_t OGRuntimeCooperationKey;
+static pthread_once_t OGRuntimeCooperationKeyOnce = PTHREAD_ONCE_INIT;
+
+static void OGRuntimeCreateCooperationKey(void)
+{
+    pthread_key_create(&OGRuntimeCooperationKey, free);
+}
+
 void OGRuntimeCooperateWithInteraction(void)
 {
     if (OGRuntimeCurrentThreadLatencyCritical())
@@ -729,9 +791,26 @@ void OGRuntimeCooperateWithInteraction(void)
     }
     if (OGRuntimeInteractionFastFlag == 0)
         return;
-    if ([NSThread isMainThread])
+    if (pthread_main_np() != 0)
         return;
-    usleep(1000);
+    pthread_once(&OGRuntimeCooperationKeyOnce, OGRuntimeCreateCooperationKey);
+    uint64_t *sliceStart = (uint64_t *)pthread_getspecific(OGRuntimeCooperationKey);
+    if (sliceStart == NULL)
+    {
+        sliceStart = (uint64_t *)malloc(sizeof(uint64_t));
+        if (sliceStart == NULL)
+            return;
+        *sliceStart = OGRuntimeAbsoluteNanoseconds();
+        pthread_setspecific(OGRuntimeCooperationKey, sliceStart);
+        return;
+    }
+    if (OGRuntimeAbsoluteNanoseconds() - *sliceStart < OGRuntimeCooperationSliceNanoseconds)
+        return;
+    struct timespec interval;
+    interval.tv_sec = 0;
+    interval.tv_nsec = OGRuntimeCooperationSleepNanoseconds;
+    nanosleep(&interval, NULL);
+    *sliceStart = OGRuntimeAbsoluteNanoseconds();
 }
 
 dispatch_queue_t OGRuntimeTransferQueue(void)
@@ -772,15 +851,15 @@ void OGRuntimeCancelCoalesced(NSString *key)
 
 void OGRuntimeDispatchAfterStartupPhase(OGRuntimePriority priority, dispatch_block_t block)
 {
-    [OGRuntimeSharedState() dispatchAfterStartupPhase:priority block:block];
+    [[OGRuntimeSharedState() startupGate] dispatchPriority:priority block:block];
 }
 
-void OGRuntimeCompleteStartupPhase(NSString *reason)
+void OGRuntimeCompleteStartupPhase(NSString *__unused reason)
 {
     if (OGRuntimeStartupPhaseCompletedFlag != 0)
         return;
 
-    [OGRuntimeSharedState() completeStartupPhase:reason];
+    [[OGRuntimeSharedState() startupGate] complete];
 }
 
 void OGRuntimeExtendStartupPhase(void)
@@ -788,10 +867,78 @@ void OGRuntimeExtendStartupPhase(void)
     if (OGRuntimeStartupPhaseCompletedFlag != 0)
         return;
 
-    [OGRuntimeSharedState() extendStartupPhase];
+    [[OGRuntimeSharedState() startupGate] extend];
 }
 
 BOOL OGRuntimeStartupPhaseCompleted(void)
 {
     return OGRuntimeStartupPhaseCompletedFlag != 0;
+}
+
+static void OGRuntimeScheduleStartupSyncCompletion(void)
+{
+    if (OGRuntimeStartupPhaseCompletedFlag != 0 || OSAtomicAdd32Barrier(0, &OGRuntimeStartupSyncFinishedFlag) == 0 || OSAtomicAdd32Barrier(0, &OGRuntimeSyncActivityCount) != 0)
+        return;
+
+    int32_t generation = OSAtomicIncrement32Barrier(&OGRuntimeStartupSyncGeneration);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(OGRuntimeStartupSyncQuietInterval * (NSTimeInterval)NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+    {
+        if (generation == OSAtomicAdd32Barrier(0, &OGRuntimeStartupSyncGeneration) && OSAtomicAdd32Barrier(0, &OGRuntimeSyncActivityCount) == 0)
+            OGRuntimeCompleteStartupPhase(@"sync");
+    });
+}
+
+void OGRuntimeCompleteStartupSync(void)
+{
+    OSAtomicCompareAndSwap32Barrier(0, 1, &OGRuntimeStartupSyncFinishedFlag);
+    OGRuntimeScheduleStartupSyncCompletion();
+}
+
+@implementation OGRuntimeSyncActivity
+{
+    volatile int32_t _ended;
+}
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+    {
+        OSAtomicIncrement32Barrier(&OGRuntimeSyncActivityCount);
+        OSAtomicIncrement32Barrier(&OGRuntimeStartupSyncGeneration);
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    [self end];
+}
+
+- (void)end
+{
+    if (!OSAtomicCompareAndSwap32Barrier(0, 1, &_ended))
+        return;
+    if (OSAtomicDecrement32Barrier(&OGRuntimeSyncActivityCount) == 0)
+        OGRuntimeScheduleStartupSyncCompletion();
+}
+
+@end
+
+void OGRuntimeDispatchAfterFirstFrame(OGRuntimePriority priority, dispatch_block_t block)
+{
+    [[OGRuntimeSharedState() firstFrameGate] dispatchPriority:priority block:block];
+}
+
+void OGRuntimeCompleteFirstFrame(void)
+{
+    if (OGRuntimeFirstFrameCompletedFlag != 0)
+        return;
+
+    [[OGRuntimeSharedState() firstFrameGate] complete];
+}
+
+BOOL OGRuntimeFirstFrameCompleted(void)
+{
+    return OGRuntimeFirstFrameCompletedFlag != 0;
 }

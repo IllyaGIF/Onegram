@@ -36,7 +36,11 @@
 - (void)setWallpaperInfo:(TGWallpaperInfo *)wallpaperInfo
 {
     _wallpaperInfo = wallpaperInfo;
-    [_imageView loadImage:[wallpaperInfo thumbnailUrl] filter:nil placeholder:self.presentation.images.placeholderImage];
+    UIImage *thumbnailImage = [wallpaperInfo thumbnailImage];
+    if (thumbnailImage != nil)
+        [_imageView loadImage:thumbnailImage];
+    else
+        [_imageView loadImage:[wallpaperInfo thumbnailUrl] filter:nil placeholder:self.presentation.images.placeholderImage];
     
     if ([wallpaperInfo isKindOfClass:[TGColorWallpaperInfo class]] && ((TGColorWallpaperInfo *)wallpaperInfo).color == TGColorHexCode([UIColor whiteColor]))
     {

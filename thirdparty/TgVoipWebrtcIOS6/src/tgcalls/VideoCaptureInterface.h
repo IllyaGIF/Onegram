@@ -14,16 +14,12 @@ namespace webrtc {
 class VideoFrame;
 } // namespace webrtc
 
+#include "VideoState.h"
+
 namespace tgcalls {
 
 class PlatformContext;
 class Threads;
-
-enum class VideoState {
-	Inactive,
-	Paused,
-	Active,
-};
 
 
 class VideoCaptureInterface {

@@ -5,10 +5,11 @@
 #import "TGTelegraph.h"
 
 #import "TGImageInfo+Telegraph.h"
+#import "TGDocumentMediaAttachment+Telegraph.h"
 
 #import "TGAppDelegate.h"
 
-#define TGWallpaperListVersion 2
+#define TGWallpaperListVersion 3
 
 @implementation TGWallpaperListRequestActor
 
@@ -29,11 +30,11 @@
     int count = [is readInt32];
     for (int i = 0; i < count; i++)
     {
-        int itemId = [is readInt32];
+        int64_t itemId = [is readInt64];
         TGImageInfo *imageInfo = [TGImageInfo deserialize:is];
         int color = [is readInt32];
         
-        [array addObject:[[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:itemId], @"id", imageInfo, @"imageInfo", [[NSNumber alloc] initWithInt:color], @"color", nil]];
+        [array addObject:[[NSDictionary alloc] initWithObjectsAndKeys:@(itemId), @"id", imageInfo, @"imageInfo", [[NSNumber alloc] initWithInt:color], @"color", nil]];
     }
     
     [is close];
@@ -45,7 +46,7 @@
 {
     NSMutableData *data = [[NSMutableData alloc] init];
     
-    int version = 2;
+    int version = TGWallpaperListVersion;
     [data appendBytes:&version length:4];
     
     int count = (int)wallpaperList.count;
@@ -53,8 +54,8 @@
     
     for (NSDictionary *dict in wallpaperList)
     {
-        int itemId = [[dict objectForKey:@"id"] intValue];
-        [data appendBytes:&itemId length:4];
+        int64_t itemId = [[dict objectForKey:@"id"] longLongValue];
+        [data appendBytes:&itemId length:8];
         
         TGImageInfo *imageInfo = [dict objectForKey:@"imageInfo"];
         [imageInfo serialize:data];
@@ -114,10 +115,12 @@
         {
             TLWallPaper$wallPaper *concreteWallpaper = (TLWallPaper$wallPaper *)wallpaperDesc;
             
-            if (concreteWallpaper.sizes.count == 0)
+            TGDocumentMediaAttachment *document = [[TGDocumentMediaAttachment alloc] initWithTelegraphDocumentDesc:concreteWallpaper.document];
+            TGImageInfo *imageInfo = document.thumbnailInfo;
+            if (imageInfo.empty)
                 continue;
             
-            NSDictionary *dict = [[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:concreteWallpaper.n_id], @"id", [[TGImageInfo alloc] initWithTelegraphSizesDescription:concreteWallpaper.sizes], @"imageInfo", [[NSNumber alloc] initWithInt:concreteWallpaper.color], @"color", nil];
+            NSDictionary *dict = [[NSDictionary alloc] initWithObjectsAndKeys:@(concreteWallpaper.n_id), @"id", imageInfo, @"imageInfo", @(0), @"color", nil];
             [parsedList addObject:dict];
         }
     }

@@ -32,9 +32,20 @@
 
 + (instancetype)presentSecureTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *))completionBlock
 {
+    return [self presentTextInputAlertWithTitle:title message:message placeholder:placeholder text:text keyboardType:UIKeyboardTypeDefault secure:true cancelButtonTitle:cancelButtonTitle okButtonTitle:okButtonTitle completionBlock:completionBlock];
+}
+
++ (instancetype)presentTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text keyboardType:(UIKeyboardType)keyboardType cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *))completionBlock
+{
+    return [self presentTextInputAlertWithTitle:title message:message placeholder:placeholder text:text keyboardType:keyboardType secure:false cancelButtonTitle:cancelButtonTitle okButtonTitle:okButtonTitle completionBlock:completionBlock];
+}
+
++ (instancetype)presentTextInputAlertWithTitle:(NSString *)title message:(NSString *)message placeholder:(NSString *)placeholder text:(NSString *)text keyboardType:(UIKeyboardType)keyboardType secure:(bool)secure cancelButtonTitle:(NSString *)cancelButtonTitle okButtonTitle:(NSString *)okButtonTitle completionBlock:(void (^)(NSString *))completionBlock
+{
     UITextField *textField = [[UITextField alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 230.0f, 36.0f)];
     textField.borderStyle = UITextBorderStyleRoundedRect;
-    textField.secureTextEntry = true;
+    textField.secureTextEntry = secure;
+    textField.keyboardType = keyboardType;
     textField.placeholder = placeholder;
     textField.text = text;
 

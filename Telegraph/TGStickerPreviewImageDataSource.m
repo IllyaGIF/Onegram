@@ -19,6 +19,14 @@
 #import "TGSharedMediaUtils.h"
 
 #import "TGAppDelegate.h"
+#import "TGAnimatedStickerFrames.h"
+
+static bool TGStickerPreviewIsAnimatedFile(NSDictionary *args)
+{
+    NSString *mimeType = [args[@"mimeType"] lowercaseString];
+    NSString *extension = [[args[@"fileName"] pathExtension] lowercaseString];
+    return [mimeType isEqualToString:@"video/webm"] || [mimeType isEqualToString:@"application/x-tgsticker"] || [extension isEqualToString:@"webm"] || [extension isEqualToString:@"tgs"];
+}
 
 static ASQueue *taskManagementQueue()
 {
@@ -108,9 +116,13 @@ static ASQueue *taskManagementQueue()
                  });
                  
                  NSString *fileDirectoryName = nil;
-                 if (args[@"documentId"] != nil)
+                 if ([args[@"documentId"] longLongValue] != 0)
                  {
                      fileDirectoryName = [[NSString alloc] initWithFormat:@"%" PRIx64 "", (int64_t)[args[@"documentId"] longLongValue]];
+                 }
+                 else
+                 {
+                     fileDirectoryName = [[NSString alloc] initWithFormat:@"local%" PRIx64 "", (int64_t)[args[@"localDocumentId"] longLongValue]];
                  }
                  NSString *fileDirectory = [filesDirectory stringByAppendingPathComponent:fileDirectoryName];
                  
@@ -223,9 +235,9 @@ static ASQueue *taskManagementQueue()
     bool highQuality = [args[@"highQuality"] boolValue];
     
     NSString *filePath = [fileDirectory stringByAppendingPathComponent:highQuality ? @"thumbnail-high-v2" :  @"thumbnail"];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL])
+    if ([[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL] || [[NSFileManager defaultManager] fileExistsAtPath:[filePath stringByAppendingString:@".cached.bin"] isDirectory:NULL])
         return true;
-    
+
     if ([args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)])
     {
         NSString *documentFilePath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
@@ -309,14 +321,14 @@ static ASQueue *taskManagementQueue()
     bool highQuality = [args[@"highQuality"] boolValue];
     
     NSString *filePath = [fileDirectory stringByAppendingPathComponent:highQuality ? @"thumbnail-high-v2" :  @"thumbnail"];
-    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL] && [args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)])
+    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:NULL] && ![[NSFileManager defaultManager] fileExistsAtPath:[filePath stringByAppendingString:@".cached.bin"] isDirectory:NULL] && [args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)])
     {
         NSString *documentFilePath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
         if ([[NSFileManager defaultManager] fileExistsAtPath:documentFilePath isDirectory:NULL])
             filePath = documentFilePath;
     }
     
-    UIImage *image = nil;
+    __block UIImage *image = nil;
     
     NSString *cachedFilePath = [filePath stringByAppendingString:@".cached.bin"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:cachedFilePath isDirectory:NULL])
@@ -325,17 +337,40 @@ static ASQueue *taskManagementQueue()
     }
     
     
-    image = [[UIImage alloc] initWithContentsOfFile:filePath];
-    if (image != nil)
+    if (image == nil)
     {
-        image = TGScaleImageToPixelSize(image, TGFitSize(image.size, size));
-    }
-    else
-    {
-        __autoreleasing NSData *compressedData = nil;
-        image = [UIImage convertFromWebP:filePath compressedData:&compressedData error:nil];
+        image = [[UIImage alloc] initWithContentsOfFile:filePath];
+        if (image != nil)
+        {
+            image = TGScaleImageToPixelSize(image, TGFitSize(image.size, size));
+        }
+        else if (![[[filePath pathExtension] lowercaseString] isEqualToString:@"webm"] && ![[[filePath pathExtension] lowercaseString] isEqualToString:@"tgs"])
+        {
+            __autoreleasing NSData *compressedData = nil;
+            image = [UIImage convertFromWebP:filePath compressedData:&compressedData error:nil];
             if (compressedData != nil)
                 [compressedData writeToFile:cachedFilePath atomically:true];
+        }
+    }
+
+    if (image == nil && TGStickerPreviewIsAnimatedFile(args) && [args[@"fileName"] respondsToSelector:@selector(characterAtIndex:)] && !(isCancelled && isCancelled()))
+    {
+        NSString *documentPath = [fileDirectory stringByAppendingPathComponent:args[@"fileName"]];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:documentPath] && ![NSThread isMainThread])
+        {
+            NSString *key = [[NSString alloc] initWithFormat:@"preview-%@-%@", args[@"documentId"] ?: args[@"localDocumentId"], args[@"fileName"]];
+            CGSize pixelSize = CGSizeMake(MAX(1.0f, size.width), MAX(1.0f, size.height));
+            dispatch_sync(TGAnimatedStickerRenderQueue(), ^
+            {
+                TGAnimatedStickerFrames *frames = [TGAnimatedStickerFrames framesWithKey:key filePath:documentPath pixelSize:pixelSize];
+                CGImageRef poster = [frames copyPosterImage];
+                if (poster != NULL)
+                {
+                    image = [UIImage imageWithCGImage:poster];
+                    CGImageRelease(poster);
+                }
+            });
+        }
     }
     
     

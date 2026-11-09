@@ -11,9 +11,10 @@
 #import "TGVariantCollectionItem.h"
 #import "TGButtonCollectionItem.h"
 #import "TGCommentCollectionItem.h"
-#import "TGPowerServersController.h"
+#import "TGVLESSServersController.h"
+#import "TGOnegramCoreSheet.h"
 
-#import "../OnegramDante/PowerSubscriptions.h"
+#import "../OnegramCore/VLESSSubscriptions.h"
 #import "../OnegramPlatform/OGPlatformText.h"
 
 static const CGFloat TGOnegramCoreMethodRowHeight = 58.0f;
@@ -167,7 +168,7 @@ static const CGFloat TGOnegramCoreMethodSubtitleTop = 32.0f;
 
 static bool TGOnegramCoreModeUsesTunnel(OGOnegramCoreMode mode)
 {
-    return mode == OGOnegramCoreModeDanteWARP || mode == OGOnegramCoreModeDantePower;
+    return mode == OGOnegramCoreModeWARP || mode == OGOnegramCoreModeVLESS;
 }
 
 static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
@@ -176,10 +177,10 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
     {
         case OGOnegramCoreModeWebSocket:
             return TGLocalized(@"OnegramCore.WebSocketInfo");
-        case OGOnegramCoreModeDanteWARP:
+        case OGOnegramCoreModeWARP:
             return TGLocalized(@"OnegramCore.WarpInfo");
-        case OGOnegramCoreModeDantePower:
-            return TGLocalized(@"OnegramCore.PowerInfo");
+        case OGOnegramCoreModeVLESS:
+            return TGLocalized(@"OnegramCore.VLESSInfo");
         default:
             return TGLocalized(@"OnegramCore.OffInfo");
     }
@@ -200,8 +201,8 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
     TGCommentCollectionItem *_errorItem;
     TGCollectionMenuSection *_statusSection;
 
-    TGVariantCollectionItem *_powerServersItem;
-    TGCollectionMenuSection *_powerSection;
+    TGVariantCollectionItem *_vlessServersItem;
+    TGCollectionMenuSection *_vlessSection;
 }
 @end
 
@@ -235,8 +236,8 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
 
         _methodItems = @[
             [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeWebSocket title:TGLocalized(@"OnegramCore.Mode.WebSocket") subtitle:TGLocalized(@"OnegramCore.Mode.WebSocketSubtitle")],
-            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeDanteWARP title:TGLocalized(@"OnegramCore.Mode.WARP") subtitle:TGLocalized(@"OnegramCore.Mode.WARPSubtitle")],
-            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeDantePower title:TGLocalized(@"OnegramCore.Mode.Power") subtitle:TGLocalized(@"OnegramCore.Mode.PowerSubtitle")]
+            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeWARP title:TGLocalized(@"OnegramCore.Mode.WARP") subtitle:TGLocalized(@"OnegramCore.Mode.WARPSubtitle")],
+            [[TGOnegramCoreMethodCollectionItem alloc] initWithMode:OGOnegramCoreModeVLESS title:TGLocalized(@"OnegramCore.Mode.VLESS") subtitle:TGLocalized(@"OnegramCore.Mode.VLESSSubtitle")]
         ];
         for (TGOnegramCoreMethodCollectionItem *item in _methodItems)
         {
@@ -262,9 +263,9 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
         _errorItem = [[TGCommentCollectionItem alloc] initWithText:@""];
         _statusSection = [[TGCollectionMenuSection alloc] initWithItems:@[]];
 
-        _powerServersItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.PowerServers") variant:@"" action:@selector(powerServersPressed)];
-        _powerServersItem.deselectAutomatically = true;
-        _powerSection = [[TGCollectionMenuSection alloc] initWithItems:@[_powerServersItem]];
+        _vlessServersItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"OnegramCore.VLESSServers") variant:@"" action:@selector(vlessServersPressed)];
+        _vlessServersItem.deselectAutomatically = true;
+        _vlessSection = [[TGCollectionMenuSection alloc] initWithItems:@[_vlessServersItem]];
 
         UIEdgeInsets insets = _enabledSection.insets;
         insets.top = 32.0f;
@@ -272,7 +273,7 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
 
         NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
         [center addObserver:self selector:@selector(proxyChanged:) name:OGOnegramCoreDidChangeNotification object:nil];
-        [center addObserver:self selector:@selector(proxyChanged:) name:PowerSubscriptionsDidChangeNotification object:nil];
+        [center addObserver:self selector:@selector(proxyChanged:) name:VLESSSubscriptionsDidChangeNotification object:nil];
 
         [self updateItems];
     }
@@ -325,10 +326,10 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
         [_statusSection replaceItems:statusItems];
         [sections addObject:_statusSection];
     }
-    if (mode == OGOnegramCoreModeDantePower)
+    if (mode == OGOnegramCoreModeVLESS)
     {
-        _powerServersItem.variant = [TGPowerServersController selectedServerTitle];
-        [sections addObject:_powerSection];
+        _vlessServersItem.variant = [TGVLESSServersController selectedServerTitle];
+        [sections addObject:_vlessSection];
     }
 
     while (self.menuSections.sections.count != 0)
@@ -340,11 +341,11 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
 
 - (void)selectMode:(OGOnegramCoreMode)mode
 {
-    if (mode == OGOnegramCoreModeDantePower && [[PowerSubscriptions shared] allLines].count == 0)
+    if (mode == OGOnegramCoreModeVLESS && [[VLESSSubscriptions shared] allLines].count == 0)
     {
         [self updateItems];
-        TGPowerServersController *controller = [[TGPowerServersController alloc] init];
-        controller.enablesPowerAfterAddingServers = true;
+        TGVLESSServersController *controller = [[TGVLESSServersController alloc] init];
+        controller.enablesVLESSAfterAddingServers = true;
         [self.navigationController pushViewController:controller animated:true];
         return;
     }
@@ -358,9 +359,9 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
     [[OGOnegramCore sharedCore] reconnect];
 }
 
-- (void)powerServersPressed
+- (void)vlessServersPressed
 {
-    [self.navigationController pushViewController:[[TGPowerServersController alloc] init] animated:true];
+    [self.navigationController pushViewController:[[TGVLESSServersController alloc] init] animated:true];
 }
 
 - (void)donePressed
@@ -370,16 +371,7 @@ static NSString *TGOnegramCoreModeInfo(OGOnegramCoreMode mode)
 
 + (void)presentFromViewController:(UIViewController *)viewController
 {
-    if (viewController == nil)
-        return;
-
-    TGNavigationController *navigationController = [TGNavigationController navigationControllerWithControllers:@[[[TGOnegramCoreController alloc] initModal:true]]];
-    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
-    {
-        navigationController.presentationStyle = TGNavigationControllerPresentationStyleInFormSheet;
-        navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
-    }
-    TGPresentViewController(viewController, navigationController, true, nil);
+    [TGOnegramCoreSheet presentFromViewController:viewController];
 }
 
 + (NSString *)statusText

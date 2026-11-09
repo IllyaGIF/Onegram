@@ -5,12 +5,12 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGIconSwitchView.h"
 
 #import "TGPresentation.h"
-#import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "TGFlatControls.h"
 
 @interface TGConversationSwitchCollectionItemView ()
 {
     UILabel *_titleLabel;
-    UISwitch *_switchView;
+    UIControl<TGSwitchControl> *_switchView;
     TGLetteredAvatarView *_avatarView;
     
     NSString *_avatarUrl;
@@ -35,7 +35,7 @@
         _titleLabel.textAlignment = NSTextAlignmentLeft;
         [self addSubview:_titleLabel];
 
-        _switchView = [[UISwitch alloc] init];
+        _switchView = TGSwitchControlCreate();
         [_switchView addTarget:self action:@selector(switchValueChanged) forControlEvents:UIControlEventValueChanged];
         
         [self addSubview:_switchView];
@@ -48,7 +48,7 @@
     [super setPresentation:presentation];
     
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
-    OGPlatformSetSwitchColors(_switchView, presentation.pallete.collectionMenuSwitchColor, presentation.pallete.collectionMenuSwitchColor != nil ? presentation.pallete.collectionMenuAccessoryColor : nil);
+    [_switchView setSwitchOnColor:presentation.pallete.collectionMenuSwitchColor offColor:presentation.pallete.collectionMenuSwitchColor != nil ? presentation.pallete.collectionMenuAccessoryColor : nil];
 }
 
 - (void)setFullSeparator:(bool)fullSeparator {
@@ -70,7 +70,7 @@
         }
         else
         {
-            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(40.0f, 40.0f) uid:(int32_t)conversation.conversationId firstName:nil lastName:nil placeholder:placeholder];
+            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(40.0f, 40.0f) uid:conversation.conversationId firstName:nil lastName:nil placeholder:placeholder];
         }
     }
     else

@@ -21,6 +21,8 @@
     NSMutableSet *_collectionRegisteredIdentifiers;
     
     NSArray *_items;
+    CGFloat _itemsContainerWidth;
+    bool _itemsBuiltOutsideWindow;
     TGModernViewStorage *_viewStorage;
     TGModernConversationViewContext *_viewContext;
 }
@@ -47,19 +49,39 @@
 
 - (void)setPresentation:(TGPresentation *)presentation
 {
-    bool hadPresentation = self.presentation != nil;
     [super setPresentation:presentation];
-    
+    [self updateMessageContextPresentation];
+}
+
+- (void)setMessagePresentation:(TGPresentation *)messagePresentation
+{
+    if (_messagePresentation == messagePresentation)
+        return;
+    _messagePresentation = messagePresentation;
+    [self updateMessageContextPresentation];
+}
+
+- (void)updateMessageContextPresentation
+{
+    TGPresentation *presentation = _messagePresentation ?: self.presentation;
+    if (_viewContext.presentation == presentation)
+        return;
     _viewContext.presentation = presentation;
-    
-    if (hadPresentation)
-    {
-        [self _reset];
-        [self setMessages:_messages];
-        
-        [_collectionView reloadData];
-        [_collectionView layoutSubviews];
-    }
+    if (presentation != nil)
+        [self reset];
+}
+
+- (void)setStickerScale:(CGFloat)stickerScale
+{
+    if (fabs(_viewContext.stickerScale - stickerScale) < FLT_EPSILON)
+        return;
+    _viewContext.stickerScale = stickerScale;
+    [self setMessages:_messages];
+}
+
+- (CGFloat)stickerScale
+{
+    return _viewContext.stickerScale;
 }
 
 - (void)reset
@@ -71,8 +93,18 @@
     [_collectionView layoutSubviews];
 }
 
+- (void)unbindItems
+{
+    for (TGModernConversationItem *item in _items)
+    {
+        if (item.boundCell != nil)
+            [item unbindCell:_viewStorage];
+    }
+}
+
 - (void)_reset
 {
+    [self unbindItems];
     [_collectionView removeFromSuperview];
     _collectionView = nil;
  
@@ -82,7 +114,7 @@
     _collectionLayout = [[TGModernConversationViewLayout alloc] init];
     _collectionLayout.inhibitDateHeaders = true;
     _collectionLayout.viewStorage = _viewStorage;
-    _collectionView = [[TGModernConversationCollectionView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, self.frame.size.width, self.frame.size.height) collectionViewLayout:_collectionLayout];
+    _collectionView = [[TGModernConversationCollectionView alloc] initWithFrame:[self collectionFrame] collectionViewLayout:_collectionLayout];
     if (iosMajorVersion() >= 11)
         _collectionView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     _collectionView.transform = CGAffineTransformMakeRotation((CGFloat)M_PI);
@@ -188,17 +220,30 @@
 - (void)setMessages:(NSArray *)messages
 {
     _messages = messages;
+    [self unbindItems];
+    
+    CGFloat width = _collectionView.frame.size.width;
+    if (_viewContext.presentation == nil || width < FLT_EPSILON)
+    {
+        _items = nil;
+        _itemsContainerWidth = 0.0f;
+        _itemsBuiltOutsideWindow = false;
+        [_collectionView reloadData];
+        return;
+    }
     
     TGUser *replyAuthor = [[TGUser alloc] init];
     replyAuthor.firstName = TGLocalized(@"Appearance.PreviewReplyAuthor");
     replyAuthor.uid = 2;
     
+    _itemsContainerWidth = width;
+    _itemsBuiltOutsideWindow = self.window == nil && messages.count != 0;
     NSMutableArray *items = [[NSMutableArray alloc] init];
     for (TGMessage *message in messages)
     {
         TGMessageModernConversationItem *messageItem = [[TGMessageModernConversationItem alloc] initWithMessage:message context:_viewContext];
         messageItem->_additionalUsers = @[replyAuthor];
-        [messageItem sizeForContainerSize:CGSizeMake(_collectionView.frame.size.width, 0.0f) viewStorage:nil];
+        [messageItem sizeForContainerSize:CGSizeMake(_itemsContainerWidth, 0.0f) viewStorage:nil];
         
         [items addObject:messageItem];
     }
@@ -212,13 +257,37 @@
 {
     [super layoutSubviews];
     
-    bool brandedGroupedSurface = [self usesBrandedGroupedSurface];
-    _backgroundView.hidden = brandedGroupedSurface;
+    _backgroundView.hidden = [self usesBrandedGroupedSurface];
     _backgroundView.frame = self.bounds;
-    if (brandedGroupedSurface)
-        _collectionView.frame = [self classicIOS6GroupedFrame];
-    else
-        _collectionView.frame = CGRectMake(self.safeAreaInset.left, 0.0f, self.frame.size.width - self.safeAreaInset.left - self.safeAreaInset.right, self.frame.size.height);
+    _collectionView.frame = [self collectionFrame];
+    
+    CGFloat width = _collectionView.frame.size.width;
+    if (_messages.count != 0 && width > FLT_EPSILON && fabs(width - _itemsContainerWidth) > FLT_EPSILON)
+        [self rebuildForCurrentGeometry];
+}
+
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+    if (self.window != nil && _itemsBuiltOutsideWindow)
+        [self rebuildForCurrentGeometry];
+}
+
+- (CGRect)collectionFrame
+{
+    if ([self usesBrandedGroupedSurface])
+        return [self classicIOS6GroupedFrame];
+    return CGRectMake(self.safeAreaInset.left, 0.0f, self.frame.size.width - self.safeAreaInset.left - self.safeAreaInset.right, self.frame.size.height);
+}
+
+- (void)rebuildForCurrentGeometry
+{
+    if (_viewContext.presentation == nil)
+        return;
+    CGFloat previousHeight = self.contentHeight;
+    [self reset];
+    if (_contentHeightChanged != nil && fabs(previousHeight - self.contentHeight) > FLT_EPSILON)
+        _contentHeightChanged();
 }
 
 @end

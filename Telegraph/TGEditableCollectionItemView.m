@@ -27,6 +27,7 @@
     if (self != nil)
     {
         _enableEditing = true;
+        _revealsOptionsOnSwipe = true;
         
         _editingScrollView = [[TGEditingScrollView alloc] init];
         if (iosMajorVersion() >= 11)
@@ -133,6 +134,17 @@ static TGCollectionMenuView *_findCollectionMenuView(UIView *baseView)
     return _actionButton;
 }
 
+- (void)setRevealsOptionsOnSwipe:(bool)revealsOptionsOnSwipe
+{
+    _revealsOptionsOnSwipe = revealsOptionsOnSwipe;
+    [self _updateEditingScroll];
+}
+
+- (void)_updateEditingScroll
+{
+    _editingScrollView.disableScroll = !_enableEditing || !_revealsOptionsOnSwipe;
+}
+
 - (void)setEnableEditing:(bool)enableEditing
 {
     [self setEnableEditing:enableEditing animated:false];
@@ -147,7 +159,7 @@ static TGCollectionMenuView *_findCollectionMenuView(UIView *baseView)
         if (!_enableEditing)
             [_editingScrollView setOptionsAreRevealed:false animated:animated];
         
-        _editingScrollView.disableScroll = !_enableEditing;
+        [self _updateEditingScroll];
         
         if (_deleteIndicator != nil)
         {
@@ -245,7 +257,7 @@ static TGCollectionMenuView *_findCollectionMenuView(UIView *baseView)
         }
         
         _editingScrollView.lockScroll = showsDeleteIndicator;
-        _editingScrollView.disableScroll = !_enableEditing;
+        [self _updateEditingScroll];
     }
 }
 
@@ -261,7 +273,7 @@ static TGCollectionMenuView *_findCollectionMenuView(UIView *baseView)
         
         if (showsEditingOptions || !animated)
         {
-            [_editingScrollView setOptionsAreRevealed:true animated:animated];
+            [_editingScrollView setOptionsAreRevealed:showsEditingOptions animated:animated];
         }
         else
         {

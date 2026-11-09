@@ -7,6 +7,7 @@
 #import <netdb.h>
 #import <arpa/inet.h>
 #import <sys/time.h>
+#import <libkern/OSAtomic.h>
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
@@ -14,7 +15,9 @@
 #import "../OnegramPlatform/OGPlatformVersion.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
 #import "../OnegramRuntime/OGRuntime.h"
-#import "../OnegramPushHelper/OGPushHelperProtocol.h"
+#import "../OnegramRuntime/OGStartupDiagnostics.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+#import "../OnegramHelper/OGHelperProtocol.h"
 
 #if !TGUseModernNetworking
 #import "TGSession.h"
@@ -22,12 +25,12 @@
 
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 
-static NSDictionary *TGShareProtectionQuery(int32_t userId)
+static NSDictionary *TGShareProtectionQuery(int64_t userId)
 {
-    return @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword, (__bridge id)kSecAttrService: @"Onegram.Core.ShareProtection", (__bridge id)kSecAttrAccount: [NSString stringWithFormat:@"%d", userId]};
+    return @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword, (__bridge id)kSecAttrService: @"Onegram.Core.ShareProtection", (__bridge id)kSecAttrAccount: [NSString stringWithFormat:@"%lld", userId]};
 }
 
-static NSDictionary *TGShareReadProtection(int32_t userId, NSData *fingerprint)
+static NSDictionary *TGShareReadProtection(int64_t userId, NSData *fingerprint)
 {
     NSMutableDictionary *query = [TGShareProtectionQuery(userId) mutableCopy];
     query[(__bridge id)kSecReturnData] = [NSNumber numberWithBool:YES];
@@ -44,7 +47,7 @@ static NSDictionary *TGShareReadProtection(int32_t userId, NSData *fingerprint)
     return record;
 }
 
-static bool TGShareWriteProtection(int32_t userId, NSDictionary *record)
+static bool TGShareWriteProtection(int64_t userId, NSDictionary *record)
 {
     NSString *error = nil;
     NSData *data = [NSPropertyListSerialization dataFromPropertyList:record format:NSPropertyListBinaryFormat_v1_0 errorDescription:&error];
@@ -287,6 +290,10 @@ static bool TGIOS6FetchNetworkUnixTime(NSTimeInterval *unixTime)
 }
 
 #import "TGTLSerialization.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
+#if OG_PLUGINS_AVAILABLE
+#import "../OnegramPlugins/OGPluginRequestInterceptor.h"
+#endif
 #import "TGKeychainImport.h"
 
 #import "TGLoginPasswordController.h"
@@ -323,32 +330,6 @@ static bool TGIOS6FetchNetworkUnixTime(NSTimeInterval *unixTime)
 static int TGMaxWorkerCount(void)
 {
     return cpuCoreCount() > 1 ? 4 : 2;
-}
-
-static void TGIOS6NormalizeInputChannelForModernApi(TLInputChannel *channel, NSString *context)
-{
-    if ([channel isKindOfClass:[TLInputChannel$inputChannel class]])
-    {
-        TLInputChannel$inputChannel *inputChannel = (TLInputChannel$inputChannel *)channel;
-        if (inputChannel.channel_id < 0 && inputChannel.channel_id >= INT32_MIN)
-        {
-            int64_t oldChannelId = inputChannel.channel_id;
-            inputChannel.channel_id = (int64_t)(uint32_t)((int32_t)inputChannel.channel_id);
-            TGLog(@"AUTH normalize inputChannel %@ raw=%lld id=%lld hash=%lld", context, oldChannelId, inputChannel.channel_id, inputChannel.access_hash);
-        }
-    }
-}
-
-static void TGIOS6NormalizeRpcForModernApi(TLMetaRpc *rpc)
-{
-    if ([rpc isKindOfClass:[TLRPCupdates_getChannelDifference class]])
-        TGIOS6NormalizeInputChannelForModernApi(((TLRPCupdates_getChannelDifference *)rpc).channel, @"updates.getChannelDifference");
-    else if ([rpc isKindOfClass:[TLRPCchannels_getFullChannel class]])
-        TGIOS6NormalizeInputChannelForModernApi(((TLRPCchannels_getFullChannel *)rpc).channel, @"channels.getFullChannel");
-    else if ([rpc isKindOfClass:[TLRPCchannels_getMessages class]])
-        TGIOS6NormalizeInputChannelForModernApi(((TLRPCchannels_getMessages *)rpc).channel, @"channels.getMessages");
-    else if ([rpc isKindOfClass:[TLRPCchannels_getParticipant class]])
-        TGIOS6NormalizeInputChannelForModernApi(((TLRPCchannels_getParticipant *)rpc).channel, @"channels.getParticipant");
 }
 
 static NSString *TGIOS6DescribeInputChannel(TLInputChannel *channel)
@@ -638,6 +619,38 @@ static int TGMaxUploadWorkerCount(void)
 - (void)resetMainMtProto:(NSInteger)datacenterId completion:(void (^)(void))completion;
 - (void)shutdownForAccountSwitch;
 - (void)completeWakeUpIfAny:(NSString *)reason;
+- (void)_exportHelperAuthInfo;
+- (void)_removeHelperAuthInfo;
+
+@end
+
+@interface TGTelegramNetworkingResources : NSObject
+
+@property (nonatomic, strong, readonly) MTFileBasedKeychain *settingsKeychain;
+@property (nonatomic, strong, readonly) MTFileBasedKeychain *keychain;
+@property (nonatomic, readonly) bool isTestingEnvironment;
+@property (nonatomic, strong, readonly) NSData *socksProxyData;
+@property (nonatomic, strong, readonly) NSData *networkSettingsData;
+
++ (instancetype)loadResources;
+
+@end
+
+@implementation TGTelegramNetworkingResources
+
++ (instancetype)loadResources
+{
+    TGTelegramNetworkingResources *resources = [[TGTelegramNetworkingResources alloc] init];
+    NSString *documentsPath = [TGAppDelegate documentsPath];
+    resources->_settingsKeychain = [MTFileBasedKeychain keychainWithName:@"Telegram-Settings" documentsPath:documentsPath];
+    NSString *environmentId = [resources->_settingsKeychain objectForKey:@"environmentId" group:@"environment"];
+    resources->_isTestingEnvironment = [environmentId isEqualToString:@"testing"];
+    resources->_keychain = [MTFileBasedKeychain keychainWithName:resources->_isTestingEnvironment ? @"Telegram-Testing" : @"Telegram" documentsPath:documentsPath];
+    [resources->_keychain preloadGroups:@[@"meta", @"persistent", @"temp", @"ephemeral", @"cleanup"]];
+    resources->_socksProxyData = [TGDatabaseInstance() customProperty:@"socksProxyData"];
+    resources->_networkSettingsData = [TGDatabaseInstance() customProperty:@"networkSettingsData"];
+    return resources;
+}
 
 @end
 
@@ -668,6 +681,18 @@ static void TGTelegramLoggingFunction(NSString *format, va_list args)
 static TGTelegramNetworking *singleton = nil;
 static TGTelegramNetworking *retiredSingleton = nil;
 static bool singletonCreationSuspended = false;
+static TGTelegramNetworkingResources *preparedResources = nil;
+static uint32_t preparedResourcesGeneration = 0;
+
+static TGTelegramNetworkingResources *TGTelegramNetworkingTakePreparedResources(void)
+{
+    @synchronized ([TGTelegramNetworkingResources class])
+    {
+        TGTelegramNetworkingResources *resources = preparedResources;
+        preparedResources = nil;
+        return resources;
+    }
+}
 
 + (TGTelegramNetworking *)instance
 {
@@ -675,25 +700,44 @@ static bool singletonCreationSuspended = false;
     if (current != nil)
         return current;
 
+    NSTimeInterval waitStart = OGStartupDiagnosticsTime();
     @synchronized (self)
     {
         if (singleton == nil && !singletonCreationSuspended)
         {
+            OGStartupDiagnosticsMark(pthread_main_np() != 0 ? "network.create.begin.main" : "network.create.begin");
             static dispatch_once_t loggingOnceToken;
             dispatch_once(&loggingOnceToken, ^
             {
                 MTLogSetLoggingFunction(&TGTelegramLoggingFunction);
             });
-            NSData *socksProxyData = [TGDatabaseInstance() customProperty:@"socksProxyData"];
-            NSData *networkSettingsData = [TGDatabaseInstance() customProperty:@"networkSettingsData"];
-            singleton = [[TGTelegramNetworking alloc] initWithSocksProxyData:socksProxyData networkSettingsData:networkSettingsData];
+            TGTelegramNetworkingResources *resources = TGTelegramNetworkingTakePreparedResources();
+            if (resources == nil)
+                resources = [TGTelegramNetworkingResources loadResources];
+            TGTelegramNetworking *created = [[TGTelegramNetworking alloc] initWithResources:resources];
+            OSMemoryBarrier();
+            singleton = created;
+            OGStartupDiagnosticsMark("network.create.end");
         }
-        return singleton;
+        current = singleton;
     }
+    if (OGDiagnosticsEnabled())
+    {
+        NSTimeInterval waited = OGStartupDiagnosticsTime() - waitStart;
+        if (waited >= 0.05 && (pthread_main_np() != 0 || [ActionStageInstance() isCurrentQueueStageQueue]))
+            TGLog(@"NETWAIT thread=%s wait_ms=%.0f callers=%@", pthread_main_np() != 0 ? "main" : "stage", waited * 1000.0, OGStartupDiagnosticsCallers());
+    }
+    return current;
 }
 
 + (void)suspendInstanceForAccountSwitch
 {
+    @synchronized ([TGTelegramNetworkingResources class])
+    {
+        preparedResourcesGeneration++;
+        preparedResources = nil;
+    }
+    
     TGTelegramNetworking *previous = nil;
     @synchronized (self)
     {
@@ -770,11 +814,51 @@ static bool singletonCreationSuspended = false;
 
 + (void)prepareInstanceWithCompletion:(dispatch_block_t)completion
 {
-    OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
+    OGStartupDiagnosticsMark("network.prepare.dispatch");
+    OGRuntimeDispatchAfterFirstFrame(OGRuntimePriorityUserInitiated, ^
     {
+        OGStartupDiagnosticsMark("network.prepare.start");
         [self instance];
         if (completion)
             completion();
+    });
+}
+
++ (void)prewarmInstance
+{
+    if (singleton != nil)
+        return;
+
+    uint32_t generation = 0;
+    @synchronized ([TGTelegramNetworkingResources class])
+    {
+        generation = preparedResourcesGeneration;
+    }
+
+    static dispatch_queue_t bootstrapQueue = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        bootstrapQueue = dispatch_queue_create("dev.IllyaGIF.Onegram.network.bootstrap", DISPATCH_QUEUE_SERIAL);
+        dispatch_set_target_queue(bootstrapQueue, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    });
+    dispatch_async(bootstrapQueue, ^
+    {
+        @autoreleasepool
+        {
+            if (singleton != nil)
+                return;
+
+            TGTelegramNetworkingResources *resources = [TGTelegramNetworkingResources loadResources];
+            @synchronized ([TGTelegramNetworkingResources class])
+            {
+                if (preparedResourcesGeneration != generation)
+                    return;
+                if (singleton == nil)
+                    preparedResources = resources;
+            }
+            [self instance];
+        }
     });
 }
 
@@ -783,7 +867,71 @@ static bool singletonCreationSuspended = false;
     return singleton;
 }
 
-- (instancetype)initWithSocksProxyData:(NSData *)socksProxyData networkSettingsData:(NSData *)networkSettingsData
++ (SSignal *)readyInstance
+{
+    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber)
+    {
+        TGTelegramNetworking *current = singleton;
+        if (current != nil)
+        {
+            [subscriber putNext:current];
+            [subscriber putCompletion];
+            return nil;
+        }
+        [self prepareInstanceWithCompletion:^
+        {
+            TGTelegramNetworking *networking = singleton;
+            if (networking == nil)
+            {
+                [subscriber putError:nil];
+                return;
+            }
+            [subscriber putNext:networking];
+            [subscriber putCompletion];
+        }];
+        return nil;
+    }];
+}
+
++ (bool)deferActorUntilInstanceReady:(ASActor *)actor options:(NSDictionary *)options
+{
+    if (singleton != nil)
+        return false;
+
+    [self prepareInstanceWithCompletion:^
+    {
+        [ActionStageInstance() dispatchOnStageQueue:^
+        {
+            if (actor.cancelled || [ActionStageInstance() executingActorWithPath:actor.path] != actor)
+                return;
+            if (singleton == nil)
+                [ActionStageInstance() actionFailed:actor.path reason:-1];
+            else
+                [actor execute:options];
+        }];
+    }];
+    return true;
+}
+
+- (void)_resolveNetworkSettingsForUserId:(int64_t)userId
+{
+    if (userId == 0)
+        return;
+    MTContext *context = _context;
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
+    {
+        TGUser *user = [TGDatabaseInstance() loadUser:userId];
+        NSString *phoneNumber = user == nil ? @"" : [TGPhoneUtils cleanPhone:user.phoneNumber];
+        if (![phoneNumber hasPrefix:@"7"])
+            return;
+        [context updateApiEnvironment:^MTApiEnvironment *(MTApiEnvironment *apiEnvironment)
+        {
+            return [apiEnvironment withUpdatedNetworkSettings:[[MTNetworkSettings alloc] initWithReducedBackupDiscoveryTimeout:true]];
+        }];
+    } synchronous:false];
+}
+
+- (instancetype)initWithResources:(TGTelegramNetworkingResources *)resources
 {
     self = [super init];
     if (self != nil)
@@ -795,14 +943,10 @@ static bool singletonCreationSuspended = false;
         _postponedRequests = [[NSMutableArray alloc] init];
         _currentWakeUpCompletions = [[NSMutableArray alloc] init];
         
-        _settingsKeychain = [MTFileBasedKeychain keychainWithName:@"Telegram-Settings" documentsPath:[TGAppDelegate documentsPath]];
-
-        NSString *environmentId = [_settingsKeychain objectForKey:@"environmentId" group:@"environment"];
-
-        _isTestingEnvironment = environmentId != nil && [environmentId isEqualToString:@"testing"];
-        
-        NSString *keychainName = _isTestingEnvironment ? @"Telegram-Testing" : @"Telegram";
-        _keychain = [MTFileBasedKeychain keychainWithName:keychainName documentsPath:[TGAppDelegate documentsPath]];
+        _settingsKeychain = resources.settingsKeychain;
+        _isTestingEnvironment = resources.isTestingEnvironment;
+        _keychain = resources.keychain;
+        OGStartupDiagnosticsMark("network.init.keychain");
 
         _cdnDatas = [[NSMutableDictionary alloc] init];
         
@@ -814,7 +958,7 @@ static bool singletonCreationSuspended = false;
         bool importedLegacyKeychain = keychainImportedLegacyKeychain || defaultsImportedLegacyKeychain;
         if (!importedLegacyKeychain)
         {
-            TGLog(@"AUTH legacyKeychain.import.begin clientUserId=%d", TGTelegraphInstance.clientUserId);
+            TGLog(@"AUTH legacyKeychain.import.begin clientUserId=%lld", TGTelegraphInstance.clientUserId);
             [TGKeychainImport importKeychain:_keychain clientUserId:TGTelegraphInstance.clientUserId];
             [_keychain setObject:@(true) forKey:@"importedLegacyKeychain" group:@"meta"];
             [userDefaults setBool:true forKey:@"TGModernNetworkingImportedLegacyKeychain"];
@@ -822,6 +966,7 @@ static bool singletonCreationSuspended = false;
             TGLog(@"AUTH legacyKeychain.import.end");
         }
 #endif
+        OGStartupDiagnosticsMark("network.init.legacyKeychain");
 
         MTApiEnvironment *apiEnvironment = [[MTApiEnvironment alloc] init];
 
@@ -856,13 +1001,16 @@ static bool singletonCreationSuspended = false;
 
         apiEnvironment = [apiEnvironment withUpdatedLangPackCode:currentNativeLocalizationCode()];
 
+        OGStartupDiagnosticsMark("network.init.environment");
         OGOnegramCore *onegramCore = [OGOnegramCore sharedCore];
         OGOnegramCoreMode proxyMode = onegramCore.mode;
+        OGStartupDiagnosticsMark("network.init.core");
         bool webSocketEnabled = proxyMode == OGOnegramCoreModeWebSocket;
         if (OGPlatformMajorVersion() <= 3 && proxyMode == OGOnegramCoreModeNone) {
             apiEnvironment = [apiEnvironment withUpdatedPreferHttpTransport:true];
         }
 
+        NSData *socksProxyData = resources.socksProxyData;
         if (socksProxyData != nil) {
             NSDictionary *socksProxyDict = [NSKeyedUnarchiver unarchiveObjectWithData:socksProxyData];
             if (socksProxyDict[@"ip"] != nil && socksProxyDict[@"port"] != nil && ![socksProxyDict[@"inactive"] boolValue]) {
@@ -879,28 +1027,18 @@ static bool singletonCreationSuspended = false;
             apiEnvironment = [apiEnvironment withUpdatedOnegramWebSocketEnabled:true];
         }
 
-        if (proxyMode == OGOnegramCoreModeDanteWARP || proxyMode == OGOnegramCoreModeDantePower) {
+        if (proxyMode == OGOnegramCoreModeWARP || proxyMode == OGOnegramCoreModeVLESS) {
             apiEnvironment = [apiEnvironment withUpdatedSocksProxySettings:[[MTSocksProxySettings alloc] initWithIp:@"127.0.0.1" port:onegramCore.socksPort username:nil password:nil secret:nil]];
             apiEnvironment = [apiEnvironment withUpdatedPreferHttpTransport:false];
         }
 
         TGNetworkSettings *networkSettings = nil;
-        if (networkSettingsData != nil) {
-            networkSettings = [NSKeyedUnarchiver unarchiveObjectWithData:networkSettingsData];
+        if (resources.networkSettingsData != nil) {
+            networkSettings = [NSKeyedUnarchiver unarchiveObjectWithData:resources.networkSettingsData];
         }
 
-        if (networkSettings == nil) {
-            TGUser *user = [TGDatabaseInstance() loadUser:TGTelegraphInstance.clientUserId];
+        bool resolveNetworkSettingsFromUser = networkSettings == nil;
 
-            NSString *phoneNumber = @"";
-            if (user != nil) {
-                phoneNumber = [TGPhoneUtils cleanPhone:user.phoneNumber];
-            }
-            if ([phoneNumber hasPrefix:@"7"]) {
-                networkSettings = [[TGNetworkSettings alloc] initWithReducedBackupDiscoveryTimeout:true];
-            }
-        }
-        
         if (networkSettings != nil) {
             apiEnvironment = [apiEnvironment withUpdatedNetworkSettings:[[MTNetworkSettings alloc] initWithReducedBackupDiscoveryTimeout:networkSettings.reducedBackupDiscoveryTimeout]];
         }
@@ -911,8 +1049,14 @@ static bool singletonCreationSuspended = false;
 
 
         _context = [[MTContext alloc] initWithSerialization:[[TGTLSerialization alloc] init] apiEnvironment:apiEnvironment isTestingEnvironment:_isTestingEnvironment useTempAuthKeys:false];
+#if OG_PLUGINS_AVAILABLE
+        _context.requestInterceptor = [OGPluginRequestInterceptor sharedInterceptor];
+#endif
 
+        OGStartupDiagnosticsMark("network.init.context");
         [_context addChangeListener:self];
+        if (resolveNetworkSettingsFromUser)
+            [self _resolveNetworkSettingsForUserId:TGTelegraphInstance.clientUserId];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramCoreDidChange:) name:OGOnegramCoreDidChangeNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onegramWebSocketStatusChanged:) name:MTTcpConnectionOnegramWebSocketStatusNotification object:nil];
         
@@ -1065,10 +1209,11 @@ static bool singletonCreationSuspended = false;
             }
         }
 
+        OGStartupDiagnosticsMark("network.init.move");
         [self moveToDatacenterId:[nDefaultDatacenterId integerValue]];
 
         MTDatacenterAuthInfo *masterAuthInfo = [_context authInfoForDatacenterWithId:[nDefaultDatacenterId integerValue]];
-        TGLog(@"AUTH session.start userId=%d dc=%d storedDc=%d authorizations=%d authKeyId=%llx", TGTelegraphInstance.clientUserId, [nDefaultDatacenterId intValue], storedDefaultDatacenter ? 1 : 0, foundAuthorizations ? 1 : 0, (unsigned long long)masterAuthInfo.authKeyId);
+        TGLog(@"AUTH session.start userId=%lld dc=%d storedDc=%d authorizations=%d authKeyId=%llx", TGTelegraphInstance.clientUserId, [nDefaultDatacenterId intValue], storedDefaultDatacenter ? 1 : 0, foundAuthorizations ? 1 : 0, (unsigned long long)masterAuthInfo.authKeyId);
         
         [ActionStageInstance() requestActor:@"/tg/datacenterWatchdog" options:nil flags:0 watcher:self];
 
@@ -1110,7 +1255,7 @@ static bool singletonCreationSuspended = false;
 
 - (void)removeCredentialsForExtensions
 {
-    TGLog(@"AUTH extensions.credentials.remove userId=%d activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
+    TGLog(@"AUTH extensions.credentials.remove userId=%lld activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
     
     if (iosMajorVersion() < 8)
         return;
@@ -1139,7 +1284,7 @@ static bool singletonCreationSuspended = false;
 
     [_context performBatchUpdates:^
     {
-        int32_t exportingUserId = TGTelegraphInstance.clientUserId;
+        int64_t exportingUserId = TGTelegraphInstance.clientUserId;
         if (exportingUserId == 0 || !TGTelegraphInstance.clientIsActivated) return;
         bool isStrong = false;
         bool passwordSet = [TGDatabaseInstance() isPasswordSet:&isStrong];
@@ -1168,7 +1313,7 @@ static bool singletonCreationSuspended = false;
                 {
                     container = nil;
                 }
-                if (![container[@"fingerprint"] isEqual:fingerprint] || [container[@"userId"] intValue] != exportingUserId)
+                if (![container[@"fingerprint"] isEqual:fingerprint] || [container[@"userId"] longLongValue] != exportingUserId)
                     [[NSFileManager defaultManager] removeItemAtURL:destination error:nil];
                 return;
             }
@@ -1236,34 +1381,50 @@ static bool singletonCreationSuspended = false;
     }];
 }
 
-static NSString *TGPushHelperDirectory(void)
+static dispatch_queue_t TGOnegramHelperQueue(void)
 {
-    NSString *documentsPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true)[0];
-    NSString *dir = [documentsPath stringByAppendingPathComponent:@OGPushHelperAuthInfoDirectoryName];
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:true attributes:nil error:NULL];
-    return dir;
+    static dispatch_queue_t queue = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        queue = dispatch_queue_create("org.telegram.pushHelper", NULL);
+    });
+    return queue;
 }
 
-static NSString *TGPushHelperDaemonFlagPath(void)
+static NSString *TGOnegramHelperDirectory(void)
 {
-    return [TGPushHelperDirectory() stringByAppendingPathComponent:@OGPushHelperDaemonFlagFileName];
+    static NSString *directory = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        NSString *documentsPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true)[0];
+        directory = [documentsPath stringByAppendingPathComponent:@OGHelperAuthInfoDirectoryName];
+        [[NSFileManager defaultManager] createDirectoryAtPath:directory withIntermediateDirectories:true attributes:nil error:NULL];
+    });
+    return directory;
 }
 
-static NSString *TGPushHelperAppStatePath(void)
+static NSString *TGOnegramHelperDaemonFlagPath(void)
 {
-    return [TGPushHelperDirectory() stringByAppendingPathComponent:@OGPushHelperAppStateFileName];
+    return [TGOnegramHelperDirectory() stringByAppendingPathComponent:@OGHelperDaemonFlagFileName];
 }
 
-static bool TGPushHelperDaemonAvailable(void)
+static NSString *TGOnegramHelperAppStatePath(void)
 {
-    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:TGPushHelperDaemonFlagPath() error:NULL];
+    return [TGOnegramHelperDirectory() stringByAppendingPathComponent:@OGHelperAppStateFileName];
+}
+
+static bool TGOnegramHelperDaemonAvailable(void)
+{
+    NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:TGOnegramHelperDaemonFlagPath() error:NULL];
     NSDate *modified = attributes[NSFileModificationDate];
     if (modified == nil)
         return false;
-    return -[modified timeIntervalSinceNow] < OGPushHelperDaemonFlagFreshnessSeconds;
+    return -[modified timeIntervalSinceNow] < OGHelperDaemonFlagFreshnessSeconds;
 }
 
-static NSDictionary *TGPushHelperApiEnvironmentDescription(MTApiEnvironment *apiEnvironment)
+static NSDictionary *TGOnegramHelperApiEnvironmentDescription(MTApiEnvironment *apiEnvironment)
 {
     if (apiEnvironment.appVersion == nil || apiEnvironment.layer == nil || apiEnvironment.langPack == nil || apiEnvironment.systemLangCode == nil)
         return nil;
@@ -1279,80 +1440,112 @@ static NSDictionary *TGPushHelperApiEnvironmentDescription(MTApiEnvironment *api
     return description;
 }
 
-static void TGPushHelperDaemonStateChanged(__unused CFNotificationCenterRef center, __unused void *observer, __unused CFStringRef name, __unused const void *object, __unused CFDictionaryRef userInfo)
+static void TGOnegramHelperDaemonStateChanged(__unused CFNotificationCenterRef center, __unused void *observer, __unused CFStringRef name, __unused const void *object, __unused CFDictionaryRef userInfo)
 {
     [[TGTelegramNetworking maybeInstance] exportHelperAuthInfo];
 }
 
-+ (void)ensurePushHelperObserver
++ (void)ensureOnegramHelperObserver
 {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &TGPushHelperDaemonStateChanged, CFSTR(OGPushHelperDaemonStateNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, &TGOnegramHelperDaemonStateChanged, CFSTR(OGHelperDaemonStateNotification), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     });
 }
 
 + (bool)pushHelperAvailable
 {
-    return TGPushHelperDaemonAvailable();
+    return TGOnegramHelperDaemonAvailable();
 }
 
-static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState state)
+static NSString *TGOnegramHelperApplicationStateName(TGOnegramHelperApplicationState state)
 {
     switch (state)
     {
-        case TGPushHelperApplicationStateReceiving:
+        case TGOnegramHelperApplicationStateReceiving:
             return @"receiving";
-        case TGPushHelperApplicationStateFinishing:
+        case TGOnegramHelperApplicationStateFinishing:
             return @"finishing";
-        case TGPushHelperApplicationStateSuspended:
+        case TGOnegramHelperApplicationStateSuspended:
             return @"suspended";
     }
     return @"receiving";
 }
 
-+ (void)updatePushHelperApplicationState:(TGPushHelperApplicationState)applicationState
++ (void)updateOnegramHelperApplicationState:(TGOnegramHelperApplicationState)applicationState
 {
-    [self ensurePushHelperObserver];
+    [self ensureOnegramHelperObserver];
 
     NSMutableDictionary *state = [[NSMutableDictionary alloc] init];
-    state[@"state"] = TGPushHelperApplicationStateName(applicationState);
+    state[@"state"] = TGOnegramHelperApplicationStateName(applicationState);
     state[@"pid"] = @(getpid());
     state[@"time"] = @([[NSDate date] timeIntervalSince1970]);
     NSString *bundleIdentifier = [[NSBundle mainBundle] bundleIdentifier];
     if (bundleIdentifier != nil)
         state[@"bundleIdentifier"] = bundleIdentifier;
-    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:state];
-    NSString *path = TGPushHelperAppStatePath();
-    if (data != nil && [data writeToFile:path options:NSDataWritingAtomic error:NULL] && iosMajorVersion() >= 4)
-        [[NSFileManager defaultManager] setAttributes:@{@"NSFileProtectionKey": @"NSFileProtectionNone"} ofItemAtPath:path error:NULL];
-    notify_post(OGPushHelperApplicationStateNotification);
-
-    [[TGTelegramNetworking maybeInstance] exportHelperAuthInfo];
+    TGTelegramNetworking *networking = [TGTelegramNetworking maybeInstance];
+    dispatch_block_t block = ^
+    {
+        @autoreleasepool
+        {
+            NSData *data = [NSKeyedArchiver archivedDataWithRootObject:state];
+            NSString *path = TGOnegramHelperAppStatePath();
+            if (data != nil && [data writeToFile:path options:NSDataWritingAtomic error:NULL] && iosMajorVersion() >= 4)
+                [[NSFileManager defaultManager] setAttributes:@{@"NSFileProtectionKey": @"NSFileProtectionNone"} ofItemAtPath:path error:NULL];
+            notify_post(OGHelperApplicationStateNotification);
+            [networking _exportHelperAuthInfo];
+        }
+    };
+    if (applicationState == TGOnegramHelperApplicationStateReceiving)
+        dispatch_async(TGOnegramHelperQueue(), block);
+    else
+        dispatch_sync(TGOnegramHelperQueue(), block);
 }
 
-+ (void)notifyPushHelperApplicationTerminating
++ (void)notifyOnegramHelperApplicationTerminating
 {
-    notify_post(OGPushHelperApplicationStateNotification);
+    notify_post(OGHelperApplicationStateNotification);
 }
 
 + (NSString *)helperAuthInfoPath
 {
-    return [TGPushHelperDirectory() stringByAppendingPathComponent:@OGPushHelperAuthInfoFileName];
+    return [TGOnegramHelperDirectory() stringByAppendingPathComponent:@OGHelperAuthInfoFileName];
 }
 
 - (void)removeHelperAuthInfo
 {
+    dispatch_async(TGOnegramHelperQueue(), ^
+    {
+        @autoreleasepool
+        {
+            [self _removeHelperAuthInfo];
+        }
+    });
+}
+
+- (void)_removeHelperAuthInfo
+{
     if ([[NSFileManager defaultManager] removeItemAtPath:[TGTelegramNetworking helperAuthInfoPath] error:NULL])
-        notify_post(OGPushHelperAuthInfoChangedNotification);
+        notify_post(OGHelperAuthInfoChangedNotification);
 }
 
 - (void)exportHelperAuthInfo
 {
-    if (!TGPushHelperDaemonAvailable())
+    dispatch_async(TGOnegramHelperQueue(), ^
     {
-        [self removeHelperAuthInfo];
+        @autoreleasepool
+        {
+            [self _exportHelperAuthInfo];
+        }
+    });
+}
+
+- (void)_exportHelperAuthInfo
+{
+    if (!TGOnegramHelperDaemonAvailable())
+    {
+        [self _removeHelperAuthInfo];
         return;
     }
 
@@ -1360,7 +1553,7 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 
     [_context performBatchUpdates:^
     {
-        int32_t exportingUserId = TGTelegraphInstance.clientUserId;
+        int64_t exportingUserId = TGTelegraphInstance.clientUserId;
         if (exportingUserId == 0 || !TGTelegraphInstance.clientIsActivated)
         {
             [self removeHelperAuthInfo];
@@ -1383,7 +1576,7 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
         if (authInfo == nil)
             return;
 
-        NSDictionary *apiEnvironmentDescription = TGPushHelperApiEnvironmentDescription(_context.apiEnvironment);
+        NSDictionary *apiEnvironmentDescription = TGOnegramHelperApiEnvironmentDescription(_context.apiEnvironment);
         if (apiEnvironmentDescription == nil)
             return;
 
@@ -1402,7 +1595,7 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
             return;
         if (iosMajorVersion() >= 5)
             [[NSFileManager defaultManager] setAttributes:@{@"NSFileProtectionKey": @"NSFileProtectionCompleteUntilFirstUserAuthentication"} ofItemAtPath:path error:NULL];
-        notify_post(OGPushHelperAuthInfoChangedNotification);
+        notify_post(OGHelperAuthInfoChangedNotification);
     }];
 }
 
@@ -1517,6 +1710,11 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 #endif
 }
 
+- (void)contextGlobalTimeDifferenceUpdated:(MTContext *)__unused context globalTimeDifference:(NSTimeInterval)globalTimeDifference
+{
+    OGRemoteClockSetDifference(globalTimeDifference);
+}
+
 - (NSTimeInterval)approximateRemoteTime
 {
 #if TGUseModernNetworking
@@ -1602,7 +1800,7 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 - (void)restartWithCleanCredentials
 {
 #if TGUseModernNetworking
-    TGLog(@"AUTH restartWithCleanCredentials.begin userId=%d activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
+    TGLog(@"AUTH restartWithCleanCredentials.begin userId=%lld activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
     
     if (_requestService != nil)
     {
@@ -1617,7 +1815,7 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
     TGTelegraphInstance.clientUserId = 0;
     TGTelegraphInstance.clientIsActivated = false;
     [TGAppDelegateInstance saveSettings];
-    TGLog(@"AUTH restartWithCleanCredentials.saved userId=%d activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
+    TGLog(@"AUTH restartWithCleanCredentials.saved userId=%lld activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
     
     [_context removeAllAuthTokens];
     [_context updateApiEnvironment:^MTApiEnvironment *(MTApiEnvironment *environment) {
@@ -1945,7 +2143,6 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
         return nil;
     
 
-    TGIOS6NormalizeRpcForModernApi(rpc);
 
 
     
@@ -2335,10 +2532,10 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 
 - (void)requestMessageServiceAuthorizationRequired:(MTRequestMessageService *)__unused requestMessageService
 {
-    int32_t userId = TGTelegraphInstance.clientUserId;
+    int64_t userId = TGTelegraphInstance.clientUserId;
     bool activated = TGTelegraphInstance.clientIsActivated;
     MTDatacenterAuthInfo *authInfo = [_context authInfoForDatacenterWithId:_mtProto.datacenterId];
-    TGLog(@"AUTH authorizationRequired userId=%d activated=%d dc=%d authKeyId=%llx", userId, activated ? 1 : 0, (int)_mtProto.datacenterId, (unsigned long long)authInfo.authKeyId);
+    TGLog(@"AUTH authorizationRequired userId=%lld activated=%d dc=%d authKeyId=%llx", userId, activated ? 1 : 0, (int)_mtProto.datacenterId, (unsigned long long)authInfo.authKeyId);
 
     if (userId == 0 || !activated || _authorizationRecoveryInProgress)
         return;
@@ -2349,8 +2546,8 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 
     [ActionStageInstance() dispatchOnStageQueue:^
     {
-        TGLog(@"AUTH authorizationRequired.logoutActor userId=%d", userId);
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%d)", userId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
+        TGLog(@"AUTH authorizationRequired.logoutActor userId=%lld", userId);
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/auth/logout/(%lld)", userId] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithBool:true] forKey:@"force"] watcher:TGTelegraphInstance];
     }];
 }
 
@@ -2515,7 +2712,6 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 {
     return [[SSignal alloc] initWithGenerator:^(SSubscriber *subscriber)
     {
-        TGIOS6NormalizeRpcForModernApi(rpc);
         MTRequest *request = [[MTRequest alloc] init];
         request.body = rpc;
         [request setCompleted:^(id result, __unused NSTimeInterval timestamp, id error)
@@ -2609,7 +2805,6 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 - (SSignal *)requestSignalWithResponseTimestamp:(TLMetaRpc *)rpc {
     return [[SSignal alloc] initWithGenerator:^(SSubscriber *subscriber)
     {
-        TGIOS6NormalizeRpcForModernApi(rpc);
         MTRequest *request = [[MTRequest alloc] init];
         request.body = rpc;
         [request setCompleted:^(id result, NSTimeInterval timestamp, id error)
@@ -2702,7 +2897,6 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
 {
     return [[SSignal alloc] initWithGenerator:^(SSubscriber *subscriber)
     {
-        TGIOS6NormalizeRpcForModernApi(rpc);
         MTRequest *request = [[MTRequest alloc] init];
         request.body = rpc;
         [request setCompleted:^(id result, __unused NSTimeInterval timestamp, id error)
@@ -2956,7 +3150,7 @@ static NSString *TGPushHelperApplicationStateName(TGPushHelperApplicationState s
     OGOnegramCore *proxy = [OGOnegramCore sharedCore];
     OGOnegramCoreMode mode = proxy.mode;
     MTSocksProxySettings *settings = nil;
-    if (mode == OGOnegramCoreModeDanteWARP || mode == OGOnegramCoreModeDantePower)
+    if (mode == OGOnegramCoreModeWARP || mode == OGOnegramCoreModeVLESS)
         settings = [[MTSocksProxySettings alloc] initWithIp:@"127.0.0.1" port:proxy.socksPort username:nil password:nil secret:nil];
     else if (mode == OGOnegramCoreModeNone)
         settings = TGOnegramStoredProxySettings();

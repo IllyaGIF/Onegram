@@ -299,7 +299,7 @@ static UIImage *generatePauseButton(UIColor *color) {
             }
         }
         
-        _scrubbingHandle.hidden = _currentStatus == nil || !status.downloadedStatus.downloaded;
+        _scrubbingHandle.hidden = _currentStatus == nil || !status.downloadedStatus.playable;
         
         __weak TGInstantPageAudioView *weakSelf = self;
         
@@ -475,7 +475,7 @@ static UIImage *generatePauseButton(UIColor *color) {
     CGFloat displayOffset = _scrubbing ? _scrubbingOffset : _playbackOffset;
     
     int positionLabelValue = (int)(displayOffset * _currentStatus.duration);
-    if (_currentStatus == nil || !_currentStatus.downloadedStatus.downloaded) {
+    if (_currentStatus == nil || !_currentStatus.downloadedStatus.playable) {
         positionLabelValue = _duration;
     }
     if (_positionLabelValue != positionLabelValue) {

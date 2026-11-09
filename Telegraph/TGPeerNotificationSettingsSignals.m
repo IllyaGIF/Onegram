@@ -6,6 +6,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/ActionStage.h"
 #import "TGTelegramNetworking.h"
 #import "TGTelegraph.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGPeerNotificationSettingsHelper : NSObject <ASWatcher>
 {
@@ -51,7 +52,7 @@
         NSDictionary *notificationSettings = ((SGraphObjectNode *)resource).object;
         
         int muteUntil = [notificationSettings[@"muteUntil"] intValue];
-        if (muteUntil <= [[TGTelegramNetworking instance] approximateRemoteTime])
+        if (muteUntil <= OGRemoteClockTime())
             muteUntil = 0;
         
         TGPeerNotificationSettings *updatedSettings = [[TGPeerNotificationSettings alloc] initWithMuteUntil:muteUntil];

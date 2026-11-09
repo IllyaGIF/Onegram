@@ -12,6 +12,7 @@
 #import "TGTelegramNetworking.h"
 
 #import "TLPeerNotifySettings$peerNotifySettings.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 int cachedMessageSettingsVersion = -1;
 int cachedGroupSettingsVersion = -1;
@@ -22,6 +23,9 @@ int cachedChannelSettingsVersion = -1;
 @property (nonatomic) int64_t peerId;
 
 @property (nonatomic) bool force;
+
+- (void)continueWithStoredSoundId:(NSNumber *)peerSoundId muteUntil:(NSNumber *)peerMuteUntil previewText:(NSNumber *)peerPreviewText messagesMuted:(NSNumber *)messagesMuted notFound:(bool)notFound cachedOnly:(bool)cachedOnly accessHash:(int64_t)accessHash;
+- (void)completeWithServerSoundId:(NSNumber *)peerSoundId muteUntil:(NSNumber *)peerMuteUntil previewText:(NSNumber *)peerPreviewText messagesMuted:(NSNumber *)messagesMuted pendingAction:(TGChangeNotificationSettingsFutureAction *)action clearPending:(bool)clearPending;
 
 @end
 
@@ -55,21 +59,34 @@ int cachedChannelSettingsVersion = -1;
     
     _force = [[options objectForKey:@"force"] boolValue];
     
-    bool notFound = false;
-    
-    NSNumber *peerSoundId = nil;
-    NSNumber *peerMuteUntil = nil;
-    NSNumber *peerPreviewText = nil;
-    NSNumber *messagesMuted = nil;
-    
-    [TGDatabaseInstance() loadPeerNotificationSettings:_peerId soundId:&peerSoundId muteUntil:&peerMuteUntil previewText:&peerPreviewText messagesMuted:&messagesMuted notFound:&notFound];
+    int64_t peerId = _peerId;
+    int64_t accessHash = [options[@"accessHash"] longLongValue];
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
+    {
+        bool notFound = false;
+        NSNumber *peerSoundId = nil;
+        NSNumber *peerMuteUntil = nil;
+        NSNumber *peerPreviewText = nil;
+        NSNumber *messagesMuted = nil;
+        [TGDatabaseInstance() loadPeerNotificationSettings:peerId soundId:&peerSoundId muteUntil:&peerMuteUntil previewText:&peerPreviewText messagesMuted:&messagesMuted notFound:&notFound];
+        [ActionStageInstance() dispatchOnStageQueue:^
+        {
+            if (self.cancelled)
+                return;
+            [self continueWithStoredSoundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted notFound:notFound cachedOnly:cachedOnly accessHash:accessHash];
+        }];
+    } synchronous:false];
+}
+
+- (void)continueWithStoredSoundId:(NSNumber *)peerSoundId muteUntil:(NSNumber *)peerMuteUntil previewText:(NSNumber *)peerPreviewText messagesMuted:(NSNumber *)messagesMuted notFound:(bool)notFound cachedOnly:(bool)cachedOnly accessHash:(int64_t)accessHash
+{
     if ((notFound || _force) && !cachedOnly)
     {
-        self.cancelToken = [TGTelegraphInstance doRequestPeerNotificationSettings:_peerId accessHash:[options[@"accessHash"] longLongValue] actor:self];
+        self.cancelToken = [TGTelegraphInstance doRequestPeerNotificationSettings:_peerId accessHash:accessHash actor:self];
     }
     else
     {
-        if ((_peerId == INT_MAX - 1 || _peerId == INT_MAX - 2 || _peerId == INT_MAX - 4))
+        if (TGPeerIdIsNotificationDefaults(_peerId))
         {
             if (peerSoundId == nil)
                 peerSoundId = @1;
@@ -96,7 +113,7 @@ int cachedChannelSettingsVersion = -1;
         
         [ActionStageInstance() nodeRetrieved:self.path node:[[SGraphObjectNode alloc] initWithObject:dict]];
         
-        if ((_peerId == INT_MAX - 1 && cachedMessageSettingsVersion < [TGUpdateStateRequestBuilder stateVersion]) || (_peerId == INT_MAX - 2 && cachedGroupSettingsVersion < [TGUpdateStateRequestBuilder stateVersion]) || (_peerId == INT_MAX - 4 && cachedChannelSettingsVersion < [TGUpdateStateRequestBuilder stateVersion]))
+        if ((_peerId == TGPeerIdNotificationDefaultsPrivate && cachedMessageSettingsVersion < [TGUpdateStateRequestBuilder stateVersion]) || (_peerId == TGPeerIdNotificationDefaultsGroup && cachedGroupSettingsVersion < [TGUpdateStateRequestBuilder stateVersion]) || (_peerId == TGPeerIdNotificationDefaultsChannel && cachedChannelSettingsVersion < [TGUpdateStateRequestBuilder stateVersion]))
         {
             [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/peerSettings/(%lld,force)", _peerId] options:[[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:_peerId], @"peerId", [[NSNumber alloc] initWithBool:true], @"force", nil] watcher:TGTelegraphInstance];
         }
@@ -120,7 +137,7 @@ int cachedChannelSettingsVersion = -1;
             messagesMuted = @(concreteSettings.silent);
         }
         if (concreteSettings.flags & (1 << 2)) {
-            if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+            if (concreteSettings.mute_until > OGRemoteClockTime())
                 peerMuteUntil = @(concreteSettings.mute_until);
             else
                 peerMuteUntil = @0;
@@ -136,8 +153,22 @@ int cachedChannelSettingsVersion = -1;
         }
     }
     
-    TGChangeNotificationSettingsFutureAction *action = (TGChangeNotificationSettingsFutureAction *)[TGDatabaseInstance() loadFutureAction:_peerId type:TGChangeNotificationSettingsFutureActionType];
-    
+    int64_t peerId = _peerId;
+    [TGDatabaseInstance() dispatchOnDatabaseThread:^
+    {
+        TGChangeNotificationSettingsFutureAction *action = (TGChangeNotificationSettingsFutureAction *)[TGDatabaseInstance() loadFutureAction:peerId type:TGChangeNotificationSettingsFutureActionType];
+        bool clearPending = action == nil && [TGDatabaseInstance() loadFutureAction:0 type:TGClearNotificationsFutureActionType] != nil;
+        [ActionStageInstance() dispatchOnStageQueue:^
+        {
+            if (self.cancelled)
+                return;
+            [self completeWithServerSoundId:peerSoundId muteUntil:peerMuteUntil previewText:peerPreviewText messagesMuted:messagesMuted pendingAction:action clearPending:clearPending];
+        }];
+    } synchronous:false];
+}
+
+- (void)completeWithServerSoundId:(NSNumber *)peerSoundId muteUntil:(NSNumber *)peerMuteUntil previewText:(NSNumber *)peerPreviewText messagesMuted:(NSNumber *)messagesMuted pendingAction:(TGChangeNotificationSettingsFutureAction *)action clearPending:(bool)clearPending
+{
     if (action != nil)
     {
         peerSoundId = action.soundId;
@@ -145,7 +176,7 @@ int cachedChannelSettingsVersion = -1;
         peerPreviewText = action.previewText;
         messagesMuted = action.messagesMuted;
     }
-    else if ([TGDatabaseInstance() loadFutureAction:0 type:TGClearNotificationsFutureActionType] != nil)
+    else if (clearPending)
     {
         peerSoundId = nil;
         peerMuteUntil = nil;
@@ -153,11 +184,11 @@ int cachedChannelSettingsVersion = -1;
         messagesMuted = nil;
     }
     
-    if (_peerId == INT_MAX - 1)
+    if (_peerId == TGPeerIdNotificationDefaultsPrivate)
         cachedMessageSettingsVersion = [TGUpdateStateRequestBuilder stateVersion];
-    else if (_peerId == INT_MAX - 2)
+    else if (_peerId == TGPeerIdNotificationDefaultsGroup)
         cachedGroupSettingsVersion = [TGUpdateStateRequestBuilder stateVersion];
-    else if (_peerId == INT_MAX - 4)
+    else if (_peerId == TGPeerIdNotificationDefaultsChannel)
         cachedChannelSettingsVersion = [TGUpdateStateRequestBuilder stateVersion];
     
     bool force = _force;

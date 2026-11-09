@@ -5,6 +5,75 @@
 #import "TGModernConversationViewContext.h"
 #import "TGPresentation.h"
 
+static UIColor *TGPluginBubbleColor(id value)
+{
+    if (![value isKindOfClass:[NSString class]] || [value length] != 7 || ![value hasPrefix:@"#"])
+        return nil;
+    unsigned int rgb = 0;
+    NSScanner *scanner = [NSScanner scannerWithString:[value substringFromIndex:1]];
+    if (![scanner scanHexInt:&rgb] || !scanner.isAtEnd)
+        return nil;
+    return [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0f green:((rgb >> 8) & 255) / 255.0f blue:(rgb & 255) / 255.0f alpha:1];
+}
+
+static UIImage *TGPluginBubbleImage(UIImage *original, NSDictionary *style, bool classic)
+{
+    NSArray *values = [style[@"gradient"] isKindOfClass:[NSArray class]] ? style[@"gradient"] : nil;
+    NSMutableArray *colors = [[NSMutableArray alloc] init];
+    for (id value in values)
+    {
+        UIColor *color = TGPluginBubbleColor(value);
+        if (color != nil)
+            [colors addObject:(id)color.CGColor];
+    }
+    UIColor *fill = TGPluginBubbleColor(style[@"color"]);
+    if (colors.count < 2 && fill == nil)
+        return original;
+    UIGraphicsBeginImageContextWithOptions(original.size, false, original.scale);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    [original drawAtPoint:CGPointZero];
+    CGContextSetBlendMode(context, kCGBlendModeSourceAtop);
+    if (colors.count >= 2)
+    {
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGGradientRef gradient = CGGradientCreateWithColors(space, (__bridge CFArrayRef)colors, NULL);
+        CGFloat degrees = [style[@"angle"] respondsToSelector:@selector(doubleValue)] ? [style[@"angle"] doubleValue] : 90.0f;
+        CGFloat radians = degrees * (CGFloat)M_PI / 180.0f;
+        CGFloat radius = hypotf(original.size.width, original.size.height) * 0.5f;
+        CGPoint center = CGPointMake(original.size.width * 0.5f, original.size.height * 0.5f);
+        CGPoint direction = CGPointMake(cosf(radians) * radius, sinf(radians) * radius);
+        CGContextDrawLinearGradient(context, gradient, CGPointMake(center.x - direction.x, center.y - direction.y), CGPointMake(center.x + direction.x, center.y + direction.y), kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
+        CGGradientRelease(gradient);
+        CGColorSpaceRelease(space);
+    }
+    else
+    {
+        CGContextSetFillColorWithColor(context, fill.CGColor);
+        CGContextFillRect(context, CGRectMake(0, 0, original.size.width, original.size.height));
+    }
+    if (classic)
+    {
+        CGContextSetBlendMode(context, kCGBlendModeNormal);
+        [original drawAtPoint:CGPointZero blendMode:kCGBlendModeNormal alpha:0.28f];
+    }
+    UIImage *output = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return [output resizableImageWithCapInsets:original.capInsets];
+}
+
+static NSCache *TGPluginBubbleCache(void)
+{
+    static NSCache *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^
+    {
+        cache = [[NSCache alloc] init];
+        cache.totalCostLimit = 4 * 1024 * 1024;
+        cache.countLimit = 96;
+    });
+    return cache;
+}
+
 @interface TGTextMessageBackgroundViewModel ()
 {
     TGModernViewContext *_context;
@@ -13,6 +82,9 @@
     
     bool _highlighted;
     UIView *_animatingHighligtedView;
+    NSDictionary *_pluginBubbleStyle;
+    NSString *_pluginBubblePendingKey;
+    NSUInteger _pluginBubbleGeneration;
 }
 
 @end
@@ -99,17 +171,15 @@
 {
     if (!_drawsBubble)
         return nil;
-    if (_voiceMessage && [TGPresentation brandedIOS6Style])
-        return [TGPresentation brandedIOS6BubbleImageOutgoing:_type == TGTextMessageBackgroundOutgoing highlighted:_highlighted voice:true];
-    UIImage *newImage = nil;
-    if (_type == TGTextMessageBackgroundIncoming)
+    UIImage *newImage = (_voiceMessage && [TGPresentation brandedIOS6Style]) ? [TGPresentation brandedIOS6BubbleImageOutgoing:_type == TGTextMessageBackgroundOutgoing highlighted:_highlighted voice:true] : nil;
+    if (newImage == nil && _type == TGTextMessageBackgroundIncoming)
     {
         if (_partialMode)
             newImage = _highlighted ? _context.presentation.images.chatBubbleIncomingPartialHighlightedImage : _context.presentation.images.chatBubbleIncomingPartialImage;
         else
             newImage = _highlighted ? _context.presentation.images.chatBubbleIncomingFullHighlightedImage : _context.presentation.images.chatBubbleIncomingFullImage;
     }
-    else
+    else if (newImage == nil)
     {
         if (_partialMode)
             newImage = _highlighted ? _context.presentation.images.chatBubbleOutgoingPartialHighlightedImage : _context.presentation.images.chatBubbleOutgoingPartialImage;
@@ -117,7 +187,49 @@
             newImage = _highlighted ? _context.presentation.images.chatBubbleOutgoingFullHighlightedImage : _context.presentation.images.chatBubbleOutgoingFullImage;
     }
     
+    if (_pluginBubbleStyle == nil || newImage == nil)
+        return newImage;
+    NSString *key = [NSString stringWithFormat:@"%p:%d:%@", newImage.CGImage, [TGPresentation classicIOS6Style], _pluginBubbleStyle];
+    UIImage *cached = [TGPluginBubbleCache() objectForKey:key];
+    if (cached != nil)
+        return cached;
+    if (![_pluginBubblePendingKey isEqualToString:key])
+    {
+        _pluginBubblePendingKey = key;
+        NSUInteger generation = _pluginBubbleGeneration;
+        NSDictionary *style = _pluginBubbleStyle;
+        bool classic = [TGPresentation classicIOS6Style];
+        __weak TGTextMessageBackgroundViewModel *weakSelf = self;
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^
+        {
+            UIImage *rendered = TGPluginBubbleImage(newImage, style, classic);
+            if (rendered != nil)
+                [TGPluginBubbleCache() setObject:rendered forKey:key cost:(NSUInteger)(rendered.size.width * rendered.size.height * rendered.scale * rendered.scale * 4)];
+            dispatch_async(dispatch_get_main_queue(), ^
+            {
+                TGTextMessageBackgroundViewModel *strongSelf = weakSelf;
+                if (strongSelf == nil || strongSelf->_pluginBubbleGeneration != generation || ![strongSelf->_pluginBubblePendingKey isEqualToString:key])
+                    return;
+                strongSelf->_pluginBubblePendingKey = nil;
+                strongSelf->_imageIsValid = true;
+                strongSelf.image = rendered;
+                [(UIImageView *)strongSelf.boundView setImage:rendered];
+            });
+        });
+    }
     return newImage;
+}
+
+- (void)setPluginBubbleStyle:(NSDictionary *)style
+{
+    if ((_pluginBubbleStyle == style) || [_pluginBubbleStyle isEqualToDictionary:style])
+        return;
+    _pluginBubbleStyle = [style copy];
+    _pluginBubbleGeneration++;
+    _pluginBubblePendingKey = nil;
+    _imageIsValid = true;
+    self.image = [self currentImage];
+    [(UIImageView *)self.boundView setImage:self.image];
 }
 
 - (void)setDrawsBubble:(bool)drawsBubble

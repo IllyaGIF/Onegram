@@ -16,6 +16,7 @@
 
 #import "TGForwardTargetController.h"
 #import "TGAlertSoundController.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @interface TGNotificationExceptionsController () <TGSearchDisplayMixinDelegate, UITableViewDelegate, UITableViewDataSource, ASWatcher, TGAlertSoundControllerDelegate>
 {
@@ -62,11 +63,11 @@
         _defaultPrivateNotificationSettings = [[NSMutableDictionary alloc] initWithDictionary:@{@"muteUntil": @(0), @"soundId": @(1)}];
         _defaultGroupNotificationSettings = [[NSMutableDictionary alloc] initWithDictionary:@{@"muteUntil": @(0), @"soundId": @(1)}];
         
-        [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 1] watcher:self];
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 1] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 1] forKey:@"peerId"] watcher:self];
+        [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsPrivate] watcher:self];
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsPrivate] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsPrivate] forKey:@"peerId"] watcher:self];
         
-        [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2] watcher:self];
-        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 2] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 2] forKey:@"peerId"] watcher:self];
+        [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsGroup] watcher:self];
+        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsGroup] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsGroup] forKey:@"peerId"] watcher:self];
     }
     return self;
 }
@@ -387,7 +388,7 @@ static NSArray *breakStringIntoParts(NSString *string)
     
     NSDictionary *defaultNotificationSettings = isGroup ? _defaultGroupNotificationSettings : _defaultPrivateNotificationSettings;
     
-    bool defaultEnabled = [defaultNotificationSettings[@"muteUntil"] intValue] <= [[TGTelegramNetworking instance] approximateRemoteTime];
+    bool defaultEnabled = [defaultNotificationSettings[@"muteUntil"] intValue] <= OGRemoteClockTime();
     NSString *defaultTitle = defaultEnabled ? TGLocalized(@"UserInfo.NotificationsDefaultEnabled") : TGLocalized(@"UserInfo.NotificationsDefaultDisabled");
     NSNumber *defaultSoundId = defaultNotificationSettings[@"soundId"];
     
@@ -440,7 +441,7 @@ static NSArray *breakStringIntoParts(NSString *string)
     }
     else
     {
-        muteUntil = @((int)([[TGTelegramNetworking instance] approximateRemoteTime] + muteFor));
+        muteUntil = @((int)(OGRemoteClockTime() + muteFor));
     }
     
     [self updateSettingsForPeerId:peerId changingSoundId:false muteUntil:muteUntil soundId:nil];
@@ -507,7 +508,7 @@ static NSArray *breakStringIntoParts(NSString *string)
         
         if (_peers[@(peerId)] == nil)
         {
-            id peer = TGPeerIdIsUser(peerId) ? [TGDatabaseInstance() loadUser:(int32_t)peerId] : [TGDatabaseInstance() loadConversationWithId:peerId];
+            id peer = TGPeerIdIsUser(peerId) ? [TGDatabaseInstance() loadUser:peerId] : [TGDatabaseInstance() loadConversationWithId:peerId];
             if (peer != nil)
             {
                 NSMutableDictionary *peers = [[NSMutableDictionary alloc] init];
@@ -600,10 +601,10 @@ static NSArray *breakStringIntoParts(NSString *string)
 {
     TGDispatchOnMainThread(^
     {
-        if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 1]])
+        if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsPrivate]])
         {
             _defaultPrivateNotificationSettings = [((SGraphObjectNode *)result).object mutableCopy];
-        } else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 2]])
+        } else if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsGroup]])
         {
             _defaultGroupNotificationSettings = [((SGraphObjectNode *)result).object mutableCopy];
         }

@@ -33,6 +33,7 @@ typedef enum {
 @property (nonatomic) OGMusicPlayerScreenRepeat repeat;
 @property (nonatomic, readonly) UIView *displayView;
 @property (nonatomic, readonly) bool scrubbing;
+@property (nonatomic, strong) UIView *progressAccessoryView;
 
 @property (nonatomic, copy) void (^backPressed)(void);
 @property (nonatomic, copy) void (^playPausePressed)(void);

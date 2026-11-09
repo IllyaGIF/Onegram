@@ -32,7 +32,7 @@
         
         bool isSelf = [concreteUser.flags intValue] & (1 << 10);
         
-        return [[TGUserModel alloc] initWithUserId:[concreteUser.pid intValue] accessHash:isSelf ? -1 :[concreteUser.accessHash longLongValue] firstName:concreteUser.firstName lastName:concreteUser.lastName avatarLocation:[self fileLocationWithUserProfilePhoto:concreteUser.photo]];
+        return [[TGUserModel alloc] initWithUserId:[concreteUser.pid longLongValue] accessHash:isSelf ? -1 :[concreteUser.accessHash longLongValue] firstName:concreteUser.firstName lastName:concreteUser.lastName avatarLocation:[self fileLocationWithUserProfilePhoto:concreteUser.photo]];
     }
     
     return nil;
@@ -83,7 +83,7 @@
                             {
                                 avatarLocation = [self fileLocationWithApiLocation:((Api86_ChatPhoto_chatPhoto *)concreteChat.photo).photoSmall];
                             }
-                            [chatModels addObject:[[TGGroupChatModel alloc] initWithGroupId:[concreteChat.pid intValue] title:concreteChat.title avatarLocation:avatarLocation]];
+                            [chatModels addObject:[[TGGroupChatModel alloc] initWithGroupId:[concreteChat.pid longLongValue] title:concreteChat.title avatarLocation:avatarLocation]];
                         }
                         break;
                     }
@@ -128,7 +128,7 @@
                             if (!isGroup && !isAdmin)
                                 continue;
                             
-                            TGChannelChatModel *channelModel = [[TGChannelChatModel alloc] initWithChannelId:[concreteChannel.pid intValue] title:concreteChannel.title avatarLocation:avatarLocation isGroup:isGroup accessHash:concreteChannel.accessHash.integerValue];
+                            TGChannelChatModel *channelModel = [[TGChannelChatModel alloc] initWithChannelId:[concreteChannel.pid longLongValue] title:concreteChannel.title avatarLocation:avatarLocation isGroup:isGroup accessHash:concreteChannel.accessHash.longLongValue];
                             [chatModels addObject:channelModel];
                             [userModels addObject:channelModel];
                         }
@@ -142,13 +142,13 @@
         
         if (dialogs.count != 0) {
             Api86_Dialog *lastDialog = dialogs.lastObject;
-            int32_t peerId = 0;
+            int64_t peerId = 0;
             if ([lastDialog.peer isKindOfClass:[Api86_Peer_peerUser class]]) {
-                peerId = [((Api86_Peer_peerUser *)lastDialog.peer).userId intValue];
+                peerId = [((Api86_Peer_peerUser *)lastDialog.peer).userId longLongValue];
             } else if ([lastDialog.peer isKindOfClass:[Api86_Peer_peerChat class]]) {
-                peerId = [((Api86_Peer_peerChat *)lastDialog.peer).chatId intValue];
+                peerId = [((Api86_Peer_peerChat *)lastDialog.peer).chatId longLongValue];
             } else if ([lastDialog.peer isKindOfClass:[Api86_Peer_peerChannel class]]) {
-                peerId = [((Api86_Peer_peerChannel *)lastDialog.peer).channelId intValue];
+                peerId = [((Api86_Peer_peerChannel *)lastDialog.peer).channelId longLongValue];
             }
             
             if (peerId != 0) {
@@ -156,19 +156,19 @@
                     if ([message isKindOfClass:[Api86_Message_message class]]) {
                         Api86_Message_message *concreteMessage = (Api86_Message_message *)message;
                         
-                        int32_t messagePeerId = 0;
+                        int64_t messagePeerId = 0;
                         Api86_InputPeer *messagePeer = [Api86_InputPeer inputPeerEmpty];
                         
                         if ([concreteMessage.toId isKindOfClass:[Api86_Peer_peerUser class]]) {
                             if (([concreteMessage.flags intValue] & 2) != 0) {
-                                messagePeerId = [((Api86_Peer_peerUser *)concreteMessage.toId).userId intValue];
+                                messagePeerId = [((Api86_Peer_peerUser *)concreteMessage.toId).userId longLongValue];
                             } else {
-                                messagePeerId = [concreteMessage.fromId intValue];
+                                messagePeerId = [concreteMessage.fromId longLongValue];
                             }
                         } else if ([concreteMessage.toId isKindOfClass:[Api86_Peer_peerChat class]]) {
-                            messagePeerId = [((Api86_Peer_peerChat *)concreteMessage.toId).chatId intValue];
+                            messagePeerId = [((Api86_Peer_peerChat *)concreteMessage.toId).chatId longLongValue];
                         } else if ([concreteMessage.toId isKindOfClass:[Api86_Peer_peerChannel class]]) {
-                            messagePeerId = [((Api86_Peer_peerChannel *)concreteMessage.toId).channelId intValue];
+                            messagePeerId = [((Api86_Peer_peerChannel *)concreteMessage.toId).channelId longLongValue];
                         }
                         
                         if (messagePeerId == peerId) {
@@ -179,19 +179,19 @@
                     } else if ([message isKindOfClass:[Api86_Message_messageService class]]) {
                         Api86_Message_messageService *concreteMessage = (Api86_Message_messageService *)message;
                         
-                        int32_t messagePeerId = 0;
+                        int64_t messagePeerId = 0;
                         Api86_InputPeer *messagePeer = [Api86_InputPeer inputPeerEmpty];
                         
                         if ([concreteMessage.toId isKindOfClass:[Api86_Peer_peerUser class]]) {
                             if (([concreteMessage.flags intValue] & 2) != 0) {
-                                messagePeerId = [((Api86_Peer_peerUser *)concreteMessage.toId).userId intValue];
+                                messagePeerId = [((Api86_Peer_peerUser *)concreteMessage.toId).userId longLongValue];
                             } else {
-                                messagePeerId = [concreteMessage.fromId intValue];
+                                messagePeerId = [concreteMessage.fromId longLongValue];
                             }
                         } else if ([concreteMessage.toId isKindOfClass:[Api86_Peer_peerChat class]]) {
-                            messagePeerId = [((Api86_Peer_peerChat *)concreteMessage.toId).chatId intValue];
+                            messagePeerId = [((Api86_Peer_peerChat *)concreteMessage.toId).chatId longLongValue];
                         } else if ([concreteMessage.toId isKindOfClass:[Api86_Peer_peerChannel class]]) {
-                            messagePeerId = [((Api86_Peer_peerChannel *)concreteMessage.toId).channelId intValue];
+                            messagePeerId = [((Api86_Peer_peerChannel *)concreteMessage.toId).channelId longLongValue];
                         }
                         
                         if (messagePeerId == peerId) {

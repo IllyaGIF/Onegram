@@ -52,6 +52,7 @@
 @property (nonatomic) int32_t duration;
 @property (nonatomic) int32_t w;
 @property (nonatomic) int32_t h;
+@property (nonatomic, retain) NSString *video_codec;
 
 @end
 

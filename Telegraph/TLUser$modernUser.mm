@@ -2,74 +2,6 @@
 
 #import "TLMetaClassStore.h"
 
-static NSMutableDictionary *TGModernUserIdMap()
-{
-    static NSMutableDictionary *dict = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        dict = [[NSMutableDictionary alloc] init];
-    });
-    return dict;
-}
-
-static NSMutableDictionary *TGLegacyUserIdMap()
-{
-    static NSMutableDictionary *dict = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        dict = [[NSMutableDictionary alloc] init];
-    });
-    return dict;
-}
-
-int64_t TGModernUserIdForLegacyId(int32_t uid)
-{
-    NSNumber *value = nil;
-    @synchronized(TGModernUserIdMap())
-    {
-        value = [TGModernUserIdMap() objectForKey:@(uid)];
-    }
-    return value == nil ? (int64_t)uid : [value longLongValue];
-}
-
-int32_t TGModernLegacyIdForModernId(int64_t modernUserId)
-{
-    NSNumber *value = nil;
-    @synchronized(TGLegacyUserIdMap())
-    {
-        value = [TGLegacyUserIdMap() objectForKey:@(modernUserId)];
-    }
-    if (value != nil)
-        return [value intValue];
-
-    if (modernUserId > 0 && modernUserId <= 0x7fffffffLL)
-    {
-        TGRegisterModernUserId((int32_t)modernUserId, modernUserId);
-        return (int32_t)modernUserId;
-    }
-
-    uint32_t mixed = (uint32_t)(modernUserId ^ (modernUserId >> 32));
-    int32_t legacyId = (int32_t)(1000000000 + (mixed % 1000000000));
-    TGRegisterModernUserId(legacyId, modernUserId);
-    return legacyId;
-}
-
-void TGRegisterModernUserId(int32_t uid, int64_t modernUserId)
-{
-    if (uid == 0 || modernUserId == 0)
-        return;
-    @synchronized(TGModernUserIdMap())
-    {
-        [TGModernUserIdMap() setObject:@(modernUserId) forKey:@(uid)];
-    }
-    @synchronized(TGLegacyUserIdMap())
-    {
-        [TGLegacyUserIdMap() setObject:@(uid) forKey:@(modernUserId)];
-    }
-}
-
 static int64_t TGModernUserReadEmojiStatusDocumentId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     if (signature == (int32_t)0x2de11aae)
@@ -99,7 +31,7 @@ static int64_t TGModernUserReadEmojiStatusDocumentId(NSInputStream *is, int32_t 
     return 0;
 }
 
-static int32_t TGModernUserReadNameColorId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
+static int32_t TGModernUserReadPeerColorId(NSInputStream *is, int32_t signature, id<TLSerializationEnvironment> environment, __autoreleasing NSError **error)
 {
     if (signature == (int32_t)0xb54b5acf)
     {
@@ -141,6 +73,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
 {
     TLUser$modernUser *object = [[TLUser$modernUser alloc] init];
     object.nameColorId = -1;
+    object.profileColorId = -1;
     
     object.flags = [is readInt32];
     int32_t flags2 = 0;
@@ -149,9 +82,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
     if (hasModernFlags2)
         flags2 = [is readInt32];
     
-    object.n_id_long = isModernLongUser ? [is readInt64] : [is readInt32];
-    object.n_id = TGModernLegacyIdForModernId(object.n_id_long);
-    TGRegisterModernUserId(object.n_id, object.n_id_long);
+    object.n_id = isModernLongUser ? [is readInt64] : [is readInt32];
     
     if (object.flags & (1 << 0))
         object.access_hash = [is readInt64];
@@ -180,7 +111,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         int32_t signature = [is readInt32];
         object.photo = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
         if (error != nil && *error != nil) {
-            TGLog(@"AUTH modernUser id=%d photo failed sig=0x%x error=%@", object.n_id, signature, *error);
+            TGLog(@"AUTH modernUser id=%lld photo failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
             return nil;
         }
     }
@@ -190,7 +121,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         int32_t signature = [is readInt32];
         object.status = TLMetaClassStore::constructObject(is, signature, environment, nil, error);
         if (error != nil && *error != nil) {
-            TGLog(@"AUTH modernUser id=%d status failed sig=0x%x error=%@", object.n_id, signature, *error);
+            TGLog(@"AUTH modernUser id=%lld status failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
             return nil;
         }
     }
@@ -224,7 +155,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         object.emojiStatusDocumentId = TGModernUserReadEmojiStatusDocumentId(is, signature, environment, error);
         if (error != nil && *error != nil)
         {
-            TGLog(@"AUTH modernUser id=%d emoji_status failed sig=0x%x error=%@", object.n_id, signature, *error);
+            TGLog(@"AUTH modernUser id=%lld emoji_status failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
             return nil;
         }
     }
@@ -254,7 +185,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
             TLMetaClassStore::constructObject(is, recentStorySignature, environment, nil, error);
             if (error != nil && *error != nil)
             {
-                TGLog(@"AUTH modernUser id=%d recent_story failed sig=0x%x error=%@", object.n_id, recentStorySignature, *error);
+                TGLog(@"AUTH modernUser id=%lld recent_story failed sig=0x%x error=%@", (long long)object.n_id, recentStorySignature, *error);
                 return nil;
             }
         }
@@ -266,7 +197,7 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
                 TLMetaClassStore::constructObject(is, recentStorySignature, environment, nil, error);
                 if (error != nil && *error != nil)
                 {
-                    TGLog(@"AUTH modernUser id=%d recent_story failed sig=0x%x error=%@", object.n_id, recentStorySignature, *error);
+                    TGLog(@"AUTH modernUser id=%lld recent_story failed sig=0x%x error=%@", (long long)object.n_id, recentStorySignature, *error);
                     return nil;
                 }
             }
@@ -281,10 +212,10 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         int32_t signature = [is readInt32];
         if (signature != 0)
         {
-            object.nameColorId = TGModernUserReadNameColorId(is, signature, environment, error);
+            object.nameColorId = TGModernUserReadPeerColorId(is, signature, environment, error);
             if (error != nil && *error != nil)
             {
-                TGLog(@"AUTH modernUser id=%d color failed sig=0x%x error=%@", object.n_id, signature, *error);
+                TGLog(@"AUTH modernUser id=%lld color failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
                 return nil;
             }
         }
@@ -297,10 +228,10 @@ static void TGModernUserSkipObjectVector(NSInputStream *is, id<TLSerializationEn
         }
         else
         {
-            TLMetaClassStore::constructObject(is, signature, environment, nil, error);
+            object.profileColorId = TGModernUserReadPeerColorId(is, signature, environment, error);
             if (error != nil && *error != nil)
             {
-                TGLog(@"AUTH modernUser id=%d profile_color failed sig=0x%x error=%@", object.n_id, signature, *error);
+                TGLog(@"AUTH modernUser id=%lld profile_color failed sig=0x%x error=%@", (long long)object.n_id, signature, *error);
                 return nil;
             }
         }

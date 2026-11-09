@@ -3,6 +3,8 @@
 #import "TGAudioSessionManager.h"
 
 @class TGUser;
+@class TGCallVideoCapturer;
+@class TGCallVideoView;
 
 @interface TGCallSession : NSObject
 
@@ -14,6 +16,9 @@
 @property (nonatomic, readonly) bool hungUpOutside;
 
 @property (nonatomic, assign) bool hasCallKit;
+@property (nonatomic, assign) bool isVideoCall;
+@property (nonatomic, readonly) bool localVideoEnabled;
+@property (nonatomic, strong, readonly) TGCallVideoCapturer *videoCapturer;
 
 @property (nonatomic, copy) void (^onStartedConnecting)(void);
 @property (nonatomic, copy) void (^onConnected)(void);
@@ -39,6 +44,12 @@
 - (void)setMuted:(bool)muted;
 - (void)toggleSpeaker;
 - (void)applyAudioRoute:(TGAudioRoute *)audioRoute;
+
++ (bool)supportsVideoSending;
++ (bool)supportsVideoReceiving;
+- (void)setOutgoingVideoEnabled:(bool)enabled;
+- (void)switchCamera;
+- (void)setIncomingVideoView:(TGCallVideoView *)view;
 
 - (void)presentCallNotification:(int64_t)peerId;
 
@@ -87,6 +98,13 @@ typedef enum {
 @property (nonatomic, readonly) bool mute;
 @property (nonatomic, readonly) bool speaker;
 
-- (instancetype)initWithOutgoing:(bool)outgoing callStateData:(TGCallStateData *)stateData transmissionState:(TGCallTransmissionState)transmissionState peer:(TGUser *)peer keySha256:(NSData *)keySha256 startTime:(CFAbsoluteTime)startTime signalBars:(NSInteger)signalBars mute:(bool)mute speaker:(bool)speaker audioRoutes:(NSArray *)audioRoutes activeAudioRoute:(TGAudioRoute *)activeAudioRoute;
+@property (nonatomic, readonly) bool isVideoCall;
+@property (nonatomic, readonly) bool canSendVideo;
+@property (nonatomic, readonly) bool localVideoEnabled;
+@property (nonatomic, readonly) bool remoteVideoActive;
+@property (nonatomic, readonly) bool remoteVideoPaused;
+@property (nonatomic, readonly) bool remoteMuted;
+
+- (instancetype)initWithOutgoing:(bool)outgoing callStateData:(TGCallStateData *)stateData transmissionState:(TGCallTransmissionState)transmissionState peer:(TGUser *)peer keySha256:(NSData *)keySha256 startTime:(CFAbsoluteTime)startTime signalBars:(NSInteger)signalBars mute:(bool)mute speaker:(bool)speaker audioRoutes:(NSArray *)audioRoutes activeAudioRoute:(TGAudioRoute *)activeAudioRoute isVideoCall:(bool)isVideoCall canSendVideo:(bool)canSendVideo localVideoEnabled:(bool)localVideoEnabled remoteVideoActive:(bool)remoteVideoActive remoteVideoPaused:(bool)remoteVideoPaused remoteMuted:(bool)remoteMuted;
 
 @end

@@ -109,6 +109,26 @@
 
 @end
 
+@implementation TGMessageSavedPeerContentProperty
+
+- (instancetype)initWithPeerId:(int64_t)peerId {
+    self = [super init];
+    if (self != nil) {
+        _peerId = peerId;
+    }
+    return self;
+}
+
+- (instancetype)initWithKeyValueCoder:(PSKeyValueCoder *)coder {
+    return [self initWithPeerId:[coder decodeInt64ForCKey:"sp"]];
+}
+
+- (void)encodeWithKeyValueCoder:(PSKeyValueCoder *)coder {
+    [coder encodeInt64:_peerId forCKey:"sp"];
+}
+
+@end
+
 
 @implementation TGMessageDiscussionContentProperty
 

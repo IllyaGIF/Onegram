@@ -156,7 +156,7 @@
     return participantsData;
 }
 
-- (void)addParticipantWithId:(int32_t)uid invitedBy:(int32_t)invitedBy date:(int32_t)date
+- (void)addParticipantWithId:(int64_t)uid invitedBy:(int64_t)invitedBy date:(int32_t)date
 {
     NSMutableArray *chatParticipantUids = [[NSMutableArray alloc] initWithArray:_chatParticipantUids];
     if (![chatParticipantUids containsObject:@(uid)])
@@ -174,7 +174,7 @@
     }
 }
 
-- (void)removeParticipantWithId:(int32_t)uid
+- (void)removeParticipantWithId:(int64_t)uid
 {
     NSMutableArray *chatParticipantUids = [[NSMutableArray alloc] initWithArray:_chatParticipantUids];
     [chatParticipantUids removeObject:@(uid)];
@@ -227,6 +227,38 @@
     _chatParticipantChatPeerIds = chatParticipantChatPeerIds;
 }
 
+static bool TGConversationParticipantsReadId(NSData *data, int *ptr, int length, bool wideIds, int64_t *result)
+{
+    if (wideIds)
+    {
+        if (*ptr + 8 > length)
+            return false;
+        int64_t value = 0;
+        [data getBytes:&value range:NSMakeRange(*ptr, 8)];
+        *ptr += 8;
+        *result = value;
+    }
+    else
+    {
+        if (*ptr + 4 > length)
+            return false;
+        int32_t value = 0;
+        [data getBytes:&value range:NSMakeRange(*ptr, 4)];
+        *ptr += 4;
+        *result = value;
+    }
+    return true;
+}
+
+static bool TGConversationParticipantsReadInt32(NSData *data, int *ptr, int length, int32_t *result)
+{
+    if (*ptr + 4 > length)
+        return false;
+    [data getBytes:result range:NSMakeRange(*ptr, 4)];
+    *ptr += 4;
+    return true;
+}
+
 + (TGConversationParticipantsData *)deserializeData:(NSData *)data
 {
     TGConversationParticipantsData *participantsData = [[TGConversationParticipantsData alloc] init];
@@ -238,89 +270,63 @@
         return nil;
     }
     
-    int version = 0;
-    [data getBytes:&version range:NSMakeRange(ptr, 4)];
-    ptr += 4;
+    int32_t version = 0;
+    TGConversationParticipantsReadInt32(data, &ptr, length, &version);
     
     int32_t formatVersion = 0;
-    if (version == (int)0xabcdef12)
+    if (version == (int32_t)0xabcdef12)
     {
-        [data getBytes:&formatVersion range:NSMakeRange(ptr, 4)];
-        ptr += 4;
-        
-        [data getBytes:&version range:NSMakeRange(ptr, 4)];
-        ptr += 4;
+        if (!TGConversationParticipantsReadInt32(data, &ptr, length, &formatVersion) || !TGConversationParticipantsReadInt32(data, &ptr, length, &version))
+            return nil;
     }
     
-    int adminId = 0;
-    [data getBytes:&adminId range:NSMakeRange(ptr, 4)];
-    ptr += 4;
+    bool wideIds = formatVersion >= 5;
     
-    int count = 0;
-    [data getBytes:&count range:NSMakeRange(ptr, 4)];
-    ptr += 4;
+    int64_t adminId = 0;
+    if (!TGConversationParticipantsReadId(data, &ptr, length, wideIds, &adminId))
+        return nil;
+    
+    int32_t count = 0;
+    if (!TGConversationParticipantsReadInt32(data, &ptr, length, &count))
+        return nil;
     
     NSMutableArray *uids = [[NSMutableArray alloc] init];
     NSMutableDictionary *invitedBy = [[NSMutableDictionary alloc] init];
     NSMutableDictionary *invitedDates = [[NSMutableDictionary alloc] init];
     
-    for (int i = 0; i < count; i++)
+    for (int32_t i = 0; i < count; i++)
     {
-        if (ptr + 4 > length)
+        int64_t uid = 0;
+        int64_t inviter = 0;
+        int32_t date = 0;
+        if (!TGConversationParticipantsReadId(data, &ptr, length, wideIds, &uid) || !TGConversationParticipantsReadId(data, &ptr, length, wideIds, &inviter) || !TGConversationParticipantsReadInt32(data, &ptr, length, &date))
         {
             TGLegacyLog(@"Invalid participants data");
             return nil;
         }
         
-        int uid = 0;
-        [data getBytes:&uid range:NSMakeRange(ptr, 4)];
-        ptr += 4;
-        
-        if (ptr + 4 > length)
-        {
-            TGLegacyLog(@"Invalid participants data");
-            return nil;
-        }
-        int inviter = 0;
-        [data getBytes:&inviter range:NSMakeRange(ptr, 4)];
-        ptr += 4;
-        
-        if (ptr + 4 > length)
-        {
-            TGLegacyLog(@"Invalid participants data");
-            return nil;
-        }
-        int date = 0;
-        [data getBytes:&date range:NSMakeRange(ptr, 4)];
-        ptr += 4;
-        
-        NSNumber *nUid = [[NSNumber alloc] initWithInt:uid];
-        
+        NSNumber *nUid = @(uid);
         [uids addObject:nUid];
-        [invitedBy setObject:[[NSNumber alloc] initWithInt:inviter] forKey:nUid];
-        [invitedDates setObject:[[NSNumber alloc] initWithInt:date] forKey:nUid];
+        [invitedBy setObject:@(inviter) forKey:nUid];
+        [invitedDates setObject:@(date) forKey:nUid];
     }
     
     NSMutableArray *chatParticipantSecretChatPeerIds = [[NSMutableArray alloc] init];
     
     if (formatVersion >= 1)
     {
-        int count = 0;
-        [data getBytes:&count range:NSMakeRange(ptr, 4)];
-        ptr += 4;
+        int32_t peerCount = 0;
+        if (!TGConversationParticipantsReadInt32(data, &ptr, length, &peerCount))
+            return nil;
         
-        for (int i = 0; i < count; i++)
+        for (int32_t i = 0; i < peerCount; i++)
         {
-            if (ptr + 8 > length)
+            int64_t peerId = 0;
+            if (!TGConversationParticipantsReadId(data, &ptr, length, true, &peerId))
             {
                 TGLegacyLog(@"Invalid participants data");
                 return nil;
             }
-            
-            int64_t peerId = 0;
-            [data getBytes:&peerId range:NSMakeRange(ptr, 8)];
-            ptr += 8;
-            
             [chatParticipantSecretChatPeerIds addObject:@(peerId)];
         }
     }
@@ -329,48 +335,46 @@
     
     if (formatVersion >= 2)
     {
-        int count = 0;
-        [data getBytes:&count range:NSMakeRange(ptr, 4)];
-        ptr += 4;
+        int32_t peerCount = 0;
+        if (!TGConversationParticipantsReadInt32(data, &ptr, length, &peerCount))
+            return nil;
         
-        for (int i = 0; i < count; i++)
+        for (int32_t i = 0; i < peerCount; i++)
         {
-            if (ptr + 8 > length)
+            int64_t peerId = 0;
+            if (!TGConversationParticipantsReadId(data, &ptr, length, true, &peerId))
             {
                 TGLegacyLog(@"Invalid participants data");
                 return nil;
             }
-            
-            int64_t peerId = 0;
-            [data getBytes:&peerId range:NSMakeRange(ptr, 8)];
-            ptr += 8;
-            
             [chatParticipantChatPeerIds addObject:@(peerId)];
         }
     }
     
     if (formatVersion >= 3)
     {
-        int32_t length = 0;
-        [data getBytes:&length range:NSMakeRange(ptr, 4)];
-        ptr += 4;
+        int32_t linkLength = 0;
+        if (!TGConversationParticipantsReadInt32(data, &ptr, length, &linkLength) || linkLength < 0 || ptr + linkLength > length)
+            return nil;
         
-        NSData *linkData = [data subdataWithRange:NSMakeRange(ptr, length)];
-        ptr += length;
+        NSData *linkData = [data subdataWithRange:NSMakeRange(ptr, linkLength)];
+        ptr += linkLength;
         
         participantsData.exportedChatInviteString = [[NSString alloc] initWithData:linkData encoding:NSUTF8StringEncoding];
     }
     
-    if (formatVersion >= 4) {
-        int32_t length = 0;
-        [data getBytes:&length range:NSMakeRange(ptr, 4)];
-        ptr += 4;
+    if (formatVersion >= 4)
+    {
+        int32_t adminCount = 0;
+        if (!TGConversationParticipantsReadInt32(data, &ptr, length, &adminCount))
+            return nil;
         
         NSMutableSet *chatAdminUids = [[NSMutableSet alloc] init];
-        for (int32_t i = 0; i < length; i++) {
-            int32_t item = 0;
-            [data getBytes:&item range:NSMakeRange(ptr, 4)];
-            ptr += 4;
+        for (int32_t i = 0; i < adminCount; i++)
+        {
+            int64_t item = 0;
+            if (!TGConversationParticipantsReadId(data, &ptr, length, wideIds, &item))
+                return nil;
             [chatAdminUids addObject:@(item)];
         }
         
@@ -394,26 +398,29 @@
     {
         NSMutableData *data = [[NSMutableData alloc] init];
         
-        int32_t magic = 0xabcdef12;
+        int32_t magic = (int32_t)0xabcdef12;
         [data appendBytes:&magic length:4];
         
-        int32_t formatVersion = 4;
+        int32_t formatVersion = 5;
         [data appendBytes:&formatVersion length:4];
         
-        [data appendBytes:&_version length:4];
-        [data appendBytes:&_chatAdminId length:4];
+        int32_t version = _version;
+        [data appendBytes:&version length:4];
         
-        int count = (int)_chatParticipantUids.count;
+        int64_t chatAdminId = _chatAdminId;
+        [data appendBytes:&chatAdminId length:8];
+        
+        int32_t count = (int32_t)_chatParticipantUids.count;
         [data appendBytes:&count length:4];
         for (NSNumber *nUid in _chatParticipantUids)
         {
-            int uid = [nUid intValue];
-            [data appendBytes:&uid length:4];
+            int64_t uid = [nUid longLongValue];
+            [data appendBytes:&uid length:8];
             
-            int invitedBy = [[_chatInvitedBy objectForKey:nUid] intValue];
-            [data appendBytes:&invitedBy length:4];
+            int64_t invitedBy = [[_chatInvitedBy objectForKey:nUid] longLongValue];
+            [data appendBytes:&invitedBy length:8];
             
-            int invitedDate = [[_chatInvitedDates objectForKey:nUid] intValue];
+            int32_t invitedDate = [[_chatInvitedDates objectForKey:nUid] intValue];
             [data appendBytes:&invitedDate length:4];
         }
         
@@ -435,16 +442,17 @@
             [data appendBytes:&peerId length:8];
         }
         
-        int32_t linkLength = (int32_t)_exportedChatInviteString.length;
+        NSData *linkData = [_exportedChatInviteString dataUsingEncoding:NSUTF8StringEncoding];
+        int32_t linkLength = (int32_t)linkData.length;
         [data appendBytes:&linkLength length:4];
         if (linkLength != 0)
-            [data appendData:[_exportedChatInviteString dataUsingEncoding:NSUTF8StringEncoding]];
+            [data appendData:linkData];
         
         int32_t chatAdminUidsCount = (int32_t)_chatAdminUids.count;
         [data appendBytes:&chatAdminUidsCount length:4];
         for (NSNumber *nUid in _chatAdminUids) {
-            int32_t uid = [nUid intValue];
-            [data appendBytes:&uid length:4];
+            int64_t uid = [nUid longLongValue];
+            [data appendBytes:&uid length:8];
         }
         
         _serializedData = data;
@@ -502,12 +510,14 @@
         _username = [coder decodeStringForCKey:"username"];
         _nameColorId = [coder decodeInt32ForCKey:"nci"] - 1;
         _linkedCommunityId = [coder decodeInt64ForCKey:"lcm"];
+        _linkedMonoforumId = [coder decodeInt64ForCKey:"lmf"];
+        _sendPaidMessagesStars = [coder decodeInt64ForCKey:"spm"];
         _outgoing = [coder decodeInt32ForCKey:"out"];
         _unread = [coder decodeInt32ForCKey:"unr"];
         _deliveryError = [coder decodeInt32ForCKey:"der"];
         _deliveryState = [coder decodeInt32ForCKey:"ds"];
         _messageDate = [coder decodeInt32ForCKey:"date"];
-        _fromUid = [coder decodeInt32ForCKey:"from"];
+        _fromUid = [coder decodeInt64ForCKey:"from"];
         _text = [coder decodeStringForCKey:"text"];
         _media = [TGMessage parseMediaAttachments:[coder decodeDataCorCKey:"media"]];
         _unreadCount = [coder decodeInt32ForCKey:"ucount"];
@@ -533,7 +543,7 @@
         _isDeleted = false;
         _encryptedData = nil;
         _isBroadcast = false;
-        _migratedToChannelId = [coder decodeInt32ForCKey:"mtci"];
+        _migratedToChannelId = [coder decodeInt64ForCKey:"mtci"];
         _migratedToChannelAccessHash = [coder decodeInt64ForCKey:"mtch"];
         _restrictionReason = nil;
         _pinnedMessageId = [coder decodeInt32ForCKey:"pmi"];
@@ -571,12 +581,14 @@
     [coder encodeString:_username forCKey:"username"];
     [coder encodeInt32:_nameColorId + 1 forCKey:"nci"];
     [coder encodeInt64:_linkedCommunityId forCKey:"lcm"];
+    [coder encodeInt64:_linkedMonoforumId forCKey:"lmf"];
+    [coder encodeInt64:_sendPaidMessagesStars forCKey:"spm"];
     [coder encodeInt32:_outgoing ? 1 : 0 forCKey:"out"];
     [coder encodeInt32:_unread ? 1 : 0 forCKey:"unr"];
     [coder encodeInt32:_deliveryError ? 1 : 0 forCKey:"der"];
     [coder encodeInt32:_deliveryState forCKey:"ds"];
     [coder encodeInt32:_messageDate forCKey:"date"];
-    [coder encodeInt32:_fromUid forCKey:"from"];
+    [coder encodeInt64:_fromUid forCKey:"from"];
     [coder encodeString:_text forCKey:"text"];
     [coder encodeData:[TGMessage serializeMediaAttachments:true attachments:_media] forCKey:"media"];
     [coder encodeInt32:_unreadCount forCKey:"ucount"];
@@ -594,7 +606,7 @@
     [coder encodeInt64:_flags forCKey:"flags"];
     [coder encodeInt32:_leftChat forCKey:"lef"];
     [coder encodeInt32:_kickedFromChat forCKey:"kk"];
-    [coder encodeInt32:_migratedToChannelId forCKey:"mtci"];
+    [coder encodeInt64:_migratedToChannelId forCKey:"mtci"];
     [coder encodeInt64:_migratedToChannelAccessHash forCKey:"mtch"];
     [coder encodeString:_restrictionReason forCKey:"rr"];
     [coder encodeInt32:_pinnedMessageId forCKey:"pmi"];
@@ -629,6 +641,8 @@
     conversation.username = _username;
     conversation.nameColorId = _nameColorId;
     conversation.linkedCommunityId = _linkedCommunityId;
+    conversation.linkedMonoforumId = _linkedMonoforumId;
+    conversation.sendPaidMessagesStars = _sendPaidMessagesStars;
     conversation.outgoing = _outgoing;
     conversation.unread = _unread;
     conversation.deliveryError = _deliveryError;
@@ -705,7 +719,7 @@
 {
     _outgoing = message.outgoing;
     _messageDate = (int)message.date;
-    _fromUid = (int)message.fromUid;
+    _fromUid = message.fromUid;
     _text = message.text;
     _media = message.mediaAttachments;
     _unread = [self isMessageUnread:message];
@@ -897,7 +911,7 @@
     
     int32_t magic = 0x7acde441;
     [data appendBytes:&magic length:4];
-    int32_t version = 9;
+    int32_t version = 10;
     [data appendBytes:&version length:4];
     
     for (int i = 0; i < 3; i++)
@@ -924,7 +938,7 @@
     
     [data appendBytes:&_flags length:4];
     
-    [data appendBytes:&_migratedToChannelId length:4];
+    [data appendBytes:&_migratedToChannelId length:8];
     [data appendBytes:&_migratedToChannelAccessHash length:8];
     
     [data appendBytes:&_maxReadMessageId length:4];
@@ -1010,8 +1024,15 @@
             ptr += 4;
             
             if (version >= 4) {
-                [data getBytes:&_migratedToChannelId range:NSMakeRange(ptr, 4)];
-                ptr += 4;
+                if (version >= 10) {
+                    [data getBytes:&_migratedToChannelId range:NSMakeRange(ptr, 8)];
+                    ptr += 8;
+                } else {
+                    int32_t migratedToChannelId = 0;
+                    [data getBytes:&migratedToChannelId range:NSMakeRange(ptr, 4)];
+                    ptr += 4;
+                    _migratedToChannelId = (int64_t)(uint32_t)migratedToChannelId;
+                }
                 [data getBytes:&_migratedToChannelAccessHash range:NSMakeRange(ptr, 8)];
                 ptr += 8;
                 
@@ -1141,7 +1162,16 @@
         self.channelRole = channel.channelRole;
         _leftChat = channel.leftChat;
         _kickedFromChat = channel.kickedFromChat;
-        self.kind = channel.leftChat || channel.kickedFromChat ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
+        _linkedMonoforumId = channel.linkedMonoforumId;
+        _sendPaidMessagesStars = channel.sendPaidMessagesStars;
+        self.isMonoforum = channel.isMonoforum;
+        self.directMessagesEnabled = channel.directMessagesEnabled;
+        if (channel.isMonoforum) {
+            bool hasDialog = _kind == TGConversationKindPersistentChannel || channel.kind == TGConversationKindPersistentChannel;
+            self.kind = hasDialog && !channel.kickedFromChat ? TGConversationKindPersistentChannel : TGConversationKindTemporaryChannel;
+        } else {
+            self.kind = channel.leftChat || channel.kickedFromChat ? TGConversationKindTemporaryChannel : TGConversationKindPersistentChannel;
+        }
         self.hasExplicitContent = channel.hasExplicitContent;
         self.signaturesEnabled = channel.signaturesEnabled;
         self.restrictionReason = channel.restrictionReason;
@@ -1291,6 +1321,30 @@
     }
 }
 
+- (bool)isMonoforum {
+    return _flags & TGConversationFlagIsMonoforum;
+}
+
+- (void)setIsMonoforum:(bool)isMonoforum {
+    if (isMonoforum) {
+        _flags |= TGConversationFlagIsMonoforum;
+    } else {
+        _flags &= ~TGConversationFlagIsMonoforum;
+    }
+}
+
+- (bool)directMessagesEnabled {
+    return _flags & TGConversationFlagDirectMessagesEnabled;
+}
+
+- (void)setDirectMessagesEnabled:(bool)directMessagesEnabled {
+    if (directMessagesEnabled) {
+        _flags |= TGConversationFlagDirectMessagesEnabled;
+    } else {
+        _flags &= ~TGConversationFlagDirectMessagesEnabled;
+    }
+}
+
 - (bool)canNotSetUsername {
     return _flags & TGConversationFlagCanNotSetUsername;
 }
@@ -1386,7 +1440,7 @@
 - (int64_t)conversationFeedId {
     if (_feedId.intValue == 0)
         return 0;
-    return TGPeerIdFromAdminLogId(_feedId.intValue);
+    return TGPeerIdFromFeedId(_feedId.intValue);
 }
 
 - (int32_t)searchMessageId {

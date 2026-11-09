@@ -924,6 +924,13 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
     return [TGViewController autorotationAllowed];
 }
 
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
+{
+    if (![TGViewController autorotationAllowed])
+        return interfaceOrientation == [UIApplication sharedApplication].statusBarOrientation;
+    return ([self supportedInterfaceOrientations] & (1 << interfaceOrientation)) != 0;
+}
+
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations
 {
     Method method = class_getInstanceMethod([UIViewController class], _cmd);
@@ -933,7 +940,7 @@ static void TGSetLegacyInterfaceOrientation(UIInterfaceOrientation interfaceOrie
         if (function != NULL)
             return function(self, _cmd);
     }
-    return UIInterfaceOrientationMaskAllButUpsideDown;
+    return TGIsPad() ? UIInterfaceOrientationMaskAll : UIInterfaceOrientationMaskAllButUpsideDown;
 }
 
 - (UIInterfaceOrientation)preferredInterfaceOrientationForPresentation

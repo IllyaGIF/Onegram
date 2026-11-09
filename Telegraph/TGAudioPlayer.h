@@ -10,6 +10,7 @@
 
 @class ASQueue;
 @class TGAudioPlayer;
+@class OGMediaStream;
 
 @protocol TGAudioPlayerDelegate <NSObject>
 
@@ -25,6 +26,7 @@
 @property (nonatomic, weak) id<TGAudioPlayerDelegate> delegate;
 
 + (TGAudioPlayer *)audioPlayerForPath:(NSString *)path music:(bool)music controlAudioSession:(bool)controlAudioSession;
++ (TGAudioPlayer *)audioPlayerForStream:(OGMediaStream *)stream pathExtension:(NSString *)pathExtension music:(bool)music controlAudioSession:(bool)controlAudioSession;
 
 - (instancetype)init;
 - (instancetype)initWithMusic:(bool)music controlAudioSession:(bool)controlAudioSession;

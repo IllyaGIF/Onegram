@@ -19,6 +19,7 @@
 #import "TLUserFull$userFull.h"
 
 #import "TLPeerNotifySettings$peerNotifySettings.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 @implementation TGExtendedUserDataRequestActor
 
@@ -29,7 +30,7 @@
 
 - (void)execute:(NSDictionary *)__unused options
 {
-    int uid = [[options objectForKey:@"uid"] intValue];
+    int64_t uid = [[options objectForKey:@"uid"] longLongValue];
     if (uid == 0)
     {
         [ActionStageInstance() nodeRetrieveFailed:self.path];
@@ -47,7 +48,7 @@
     {
         if (outdated)
         {
-            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/completeUsers/(%d,force)", uid] options:[[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithInt:uid], @"uid", nil] watcher:TGTelegraphInstance];
+            [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/completeUsers/(%lld,force)", uid] options:[[NSDictionary alloc] initWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:uid], @"uid", nil] watcher:TGTelegraphInstance];
         }
         
         NSMutableDictionary *resultDict = [[NSMutableDictionary alloc] init];
@@ -60,14 +61,14 @@
 {   
     TLUser *sourceUser = userDesc.user != nil ? userDesc.user : userDesc.link.user;
     TGUser *user = [[TGUser alloc] initWithTelegraphUserDesc:sourceUser];
-    int userId = user.uid;
+    int64_t userId = user.uid;
     if (userId == 0 && [sourceUser isKindOfClass:[TLUser$modernUser class]])
         userId = ((TLUser$modernUser *)sourceUser).n_id;
     [TGUserDataRequestBuilder executeUserObjectsUpdate:[NSArray arrayWithObject:user]];
     
     int userLink = extractUserLink(userDesc.link);
     if (userId != 0)
-        [TGUserDataRequestBuilder executeUserLinkUpdates:[[NSArray alloc] initWithObjects:[[NSArray alloc] initWithObjects:[[NSNumber alloc] initWithInt:userId], [[NSNumber alloc] initWithInt:userLink], nil], nil]];
+        [TGUserDataRequestBuilder executeUserLinkUpdates:[[NSArray alloc] initWithObjects:[[NSArray alloc] initWithObjects:[[NSNumber alloc] initWithLongLong:userId], [[NSNumber alloc] initWithInt:userLink], nil], nil]];
     
     NSNumber *peerSoundId = nil;
     NSNumber *peerMuteUntil = nil;
@@ -84,7 +85,7 @@
             messagesMuted = @(concreteSettings.silent);
         }
         if (concreteSettings.flags & (1 << 2)) {
-            if (concreteSettings.mute_until > [[TGTelegramNetworking instance] approximateRemoteTime])
+            if (concreteSettings.mute_until > OGRemoteClockTime())
                 peerMuteUntil = @(concreteSettings.mute_until);
             else
                 peerMuteUntil = @0;
@@ -114,7 +115,7 @@
             if (messagesMuted != nil)
                 dict[@"messagesMuted"] = messagesMuted;
             
-            [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/peerSettings/(%d)", userId] resource:[[SGraphObjectNode alloc] initWithObject:dict]];
+            [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/peerSettings/(%lld)", userId] resource:[[SGraphObjectNode alloc] initWithObject:dict]];
         }
     }];
     

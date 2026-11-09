@@ -139,7 +139,9 @@
 }
 
 + (SSignal *)updatedAdItemId {
-    SSignal *signal = [[[[TGTelegramNetworking instance] socksProxySettings] mapToSignal:^SSignal *(MTSocksProxySettings *settings) {
+    SSignal *signal = [[[[TGTelegramNetworking readyInstance] mapToSignal:^SSignal *(TGTelegramNetworking *networking) {
+        return [networking socksProxySettings];
+    }] mapToSignal:^SSignal *(MTSocksProxySettings *settings) {
         if (settings.secret != nil) {
             return [[[self remoteProxy] then:[[SSignal complete] delay:10.0 * 60.0 onQueue:[SQueue mainQueue]]] restart];
         } else {

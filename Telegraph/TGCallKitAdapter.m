@@ -80,7 +80,7 @@ static void TGCallKitConfigureAudioSession(void)
 + (CXProviderConfiguration *)configuration
 {
     CXProviderConfiguration *config = [[CXProviderConfiguration alloc] initWithLocalizedName:TGAppDelegateInstance.applicationName];
-    config.supportsVideo = false;
+    config.supportsVideo = [TGCallSession supportsVideoReceiving];
     config.maximumCallsPerCallGroup = 1;
     config.maximumCallGroups = 1;
     config.supportedHandleTypes = [NSSet setWithObjects:@(CXHandleTypeGeneric), @(CXHandleTypePhoneNumber), nil];
@@ -89,12 +89,13 @@ static void TGCallKitConfigureAudioSession(void)
     return config;
 }
 
-- (void)startCallWithPeerId:(int64_t)peerId uuid:(NSUUID *)uuid
+- (void)startCallWithPeerId:(int64_t)peerId uuid:(NSUUID *)uuid video:(bool)video
 {
     TGUser *user = nil;
     CXHandle *handle = [self _handleForPeerId:peerId outUser:&user];
     CXStartCallAction *action = [[CXStartCallAction alloc] initWithCallUUID:uuid handle:handle];
     action.contactIdentifier = user.displayName;
+    action.video = video;
     
     CXTransaction *transaction = [[CXTransaction alloc] initWithAction:action];
     [self _requestTransaction:transaction completion:^(__unused bool succeed)
@@ -106,6 +107,7 @@ static void TGCallKitConfigureAudioSession(void)
         update.supportsGrouping = false;
         update.supportsUngrouping = false;
         update.supportsDTMF = false;
+        update.hasVideo = video;
         
         [[self provider] reportCallWithUUID:uuid updated:update];
     }];
@@ -162,7 +164,7 @@ static void TGCallKitConfigureAudioSession(void)
     [[self controller] requestTransaction:transaction completion:^(NSError *error)
     {
         if (error != nil)
-            TGLog(@"CALLKITERROR %@", error);
+            TGDiagnosticLog(@"CALLKITERROR %@", error);
         
         if (completion != nil)
             completion(error == nil);
@@ -180,6 +182,7 @@ static void TGCallKitConfigureAudioSession(void)
     update.supportsGrouping = false;
     update.supportsUngrouping = false;
     update.supportsDTMF = false;
+    update.hasVideo = session.isVideoCall;
     
     TGDispatchOnMainThread(^
     {
@@ -194,7 +197,7 @@ static void TGCallKitConfigureAudioSession(void)
 
 - (CXHandle *)_handleForPeerId:(int64_t)peerId outUser:(TGUser **)outUser
 {
-    TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+    TGUser *user = [TGDatabaseInstance() loadUser:peerId];
     if (outUser != NULL)
        *outUser = user;
     
@@ -204,7 +207,7 @@ static void TGCallKitConfigureAudioSession(void)
     if (isContact)
         handle = [[CXHandle alloc] initWithType:CXHandleTypePhoneNumber value:user.phoneNumber];
     else
-        handle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:[NSString stringWithFormat:@"TGCA%d", user.uid]];
+        handle = [[CXHandle alloc] initWithType:CXHandleTypeGeneric value:[NSString stringWithFormat:@"TGCA%lld", user.uid]];
 
     return handle;
 }
@@ -345,7 +348,7 @@ static void TGCallKitConfigureAudioSession(void)
 
 @implementation TGCallKitAdapter
 
-- (void)startCallWithPeerId:(int64_t)__unused peerId uuid:(NSUUID *)__unused uuid
+- (void)startCallWithPeerId:(int64_t)__unused peerId uuid:(NSUUID *)__unused uuid video:(bool)__unused video
 {
 }
 

@@ -1,8 +1,11 @@
 #import "../OnegramRuntime/OGStartupDiagnostics.h"
 #import "../OnegramRuntime/OGCPUProfiler.h"
+#import "../OnegramRuntime/OGDiagnosticsLogging.h"
 #import "../OnegramPlatform/OGPlatformMedia.h"
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponentsGlobals.h"
 #import "TGAppDelegate.h"
+#import "TGDownloadManager.h"
+#import "TGNetworkTypeManager.h"
 #import "TGAlertView.h"
 #import "TGRichMessageMediaAttachment.h"
 #import "TGPollMediaAttachment.h"
@@ -20,6 +23,7 @@
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <stdint.h>
 #include <vector>
 #include <sys/xattr.h>
@@ -33,16 +37,20 @@
 #import "TGRemoteControlsManager.h"
 
 #import "TGCommon.h"
+#import "TGOnegramUpdateController.h"
 #import "IOS6NotificationProbe.h"
 #import "TGApplyUpdatesActor.h"
 #import "TGPresentation.h"
 #import "../OnegramPlatform/OGPlatformUIKit.h"
+#import "../OnegramPlatform/OGLaunchSnapshot.h"
 #import "../OnegramPlatform/OGPlatformDispatch.h"
 #import "../OnegramPlatform/OGPlatformVersion.h"
 #import "../OnegramPlatform/OGPlatformGraphics.h"
 #import "../OnegramPlatform/OGPlatformText.h"
 #import "../OnegramPlatform/OGMemoryCache.h"
 #import "../OnegramRuntime/OGRuntime.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+#import "../OnegramRuntime/OGCrashSections.h"
 #include <libkern/OSAtomic.h>
 #import "../OnegramRuntime/OGDatabaseRuntime.h"
 #import "../legacy/TL/TLMetaClassStore.h"
@@ -226,8 +234,8 @@ static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:8 * 1024 * 1024];
-        themedCache = [[OGMemoryCache alloc] initWithCountLimit:256 costLimit:4 * 1024 * 1024];
+        imageCache = [[OGMemoryCache alloc] initWithCountLimit:512 costLimit:OGMemoryCacheBudget(8 * 1024 * 1024)];
+        themedCache = [[OGMemoryCache alloc] initWithCountLimit:256 costLimit:OGMemoryCacheBudget(4 * 1024 * 1024)];
     });
 
     NSString *component = [name lastPathComponent];
@@ -356,11 +364,18 @@ static UIImage *TGClassicIOS6OriginalImageNamed(NSString *name)
 #import "TGEmbedPIPController.h"
 
 #import "TGStickersMenu.h"
+#import "TGCloudTheme.h"
+#import "TGCloudThemePreviewController.h"
 #import "TGProxyMenu.h"
 #import "TGOnegramCoreController.h"
+#import "TGCrashReportCenter.h"
+#import "TGAnimatedEmojiStore.h"
+#import "TGOnegramSettings.h"
 #import "TGAccountSwitcher.h"
+#import "TGPluginHost.h"
+#import "TGPluginsController.h"
 #import "TGAccountSwitcherPanel.h"
-#import "../OnegramDante/OGDanteSocket.h"
+#import "../OnegramCore/OGCoreSocket.h"
 
 #import "TGGroupInviteSheet.h"
 
@@ -408,10 +423,12 @@ CFAbsoluteTime mainLaunchTimestamp = 0;
 TGAppDelegate *TGAppDelegateInstance = nil;
 TGTelegraph *telegraph = nil;
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 #include <mach/mach_time.h>
 #include <sys/resource.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
 #include <limits.h>
+#include <asl.h>
 
 static pthread_mutex_t TGDiagnosticLock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t TGDiagnosticOrigin = 0;
@@ -480,6 +497,99 @@ static TGDiagnosticDatabaseSite TGDiagnosticSites[32] = {};
 static TGDiagnosticStartupState TGDiagnosticStartup = {};
 static struct rusage TGDiagnosticInitialUsage;
 
+struct TGDiagnosticPremainSample {
+    bool valid;
+    struct timeval wall;
+    struct rusage usage;
+    integer_t faults;
+    integer_t pageins;
+};
+
+static TGDiagnosticPremainSample TGDiagnosticPremainConstructor = {};
+
+static double TGDiagnosticCPUTime(const struct timeval *value);
+
+static void TGDiagnosticCapturePremainSample(TGDiagnosticPremainSample *sample)
+{
+    gettimeofday(&sample->wall, NULL);
+    getrusage(RUSAGE_SELF, &sample->usage);
+    task_events_info_data_t events;
+    mach_msg_type_number_t count = TASK_EVENTS_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&events, &count) == KERN_SUCCESS)
+    {
+        sample->faults = events.faults;
+        sample->pageins = events.pageins;
+    }
+    sample->valid = true;
+}
+
+__attribute__((constructor)) static void TGDiagnosticCapturePremainConstructor(void)
+{
+    TGDiagnosticCapturePremainSample(&TGDiagnosticPremainConstructor);
+}
+
+static double TGDiagnosticPremainCPU(const TGDiagnosticPremainSample *sample)
+{
+    return (TGDiagnosticCPUTime(&sample->usage.ru_utime) + TGDiagnosticCPUTime(&sample->usage.ru_stime)) * 1000.0;
+}
+
+static NSString *TGDiagnosticSubstrateEvent(const char *text)
+{
+    static const char *injecting = "MS:Notice: Injecting:";
+    static const char *loading = "MS:Notice: Loading: ";
+    static const char *rejected = "MS:Error: failure to check ";
+    if (strncmp(text, injecting, strlen(injecting)) == 0)
+        return @"inject";
+    if (strncmp(text, loading, strlen(loading)) == 0)
+        return [@"load:" stringByAppendingString:[[NSString stringWithUTF8String:text + strlen(loading)] lastPathComponent]];
+    if (strncmp(text, rejected, strlen(rejected)) == 0)
+        return [@"reject:" stringByAppendingString:[[NSString stringWithUTF8String:text + strlen(rejected)] lastPathComponent]];
+    return nil;
+}
+
+static void TGDiagnosticReportPremainTimeline(double processStart, double constructorMilliseconds, double mainMilliseconds)
+{
+    @autoreleasepool
+    {
+        aslmsg query = asl_new(ASL_TYPE_QUERY);
+        if (query == NULL)
+            return;
+        char pid[16];
+        char since[32];
+        snprintf(pid, sizeof(pid), "%d", (int)getpid());
+        snprintf(since, sizeof(since), "%ld", (long)floor(processStart));
+        asl_set_query(query, ASL_KEY_PID, pid, ASL_QUERY_OP_EQUAL | ASL_QUERY_OP_NUMERIC);
+        asl_set_query(query, ASL_KEY_TIME, since, ASL_QUERY_OP_GREATER_EQUAL | ASL_QUERY_OP_NUMERIC);
+        asl_set_query(query, ASL_KEY_MSG, "MS:", ASL_QUERY_OP_EQUAL | ASL_QUERY_OP_PREFIX);
+        CFAbsoluteTime searchStart = CFAbsoluteTimeGetCurrent();
+        aslresponse response = asl_search(NULL, query);
+        NSMutableString *events = [[NSMutableString alloc] init];
+        int count = 0;
+        bool precise = true;
+        aslmsg message = NULL;
+        while (response != NULL && (message = aslresponse_next(response)) != NULL)
+        {
+            const char *text = asl_get(message, ASL_KEY_MSG);
+            const char *seconds = asl_get(message, ASL_KEY_TIME);
+            const char *nanoseconds = asl_get(message, ASL_KEY_TIME_NSEC);
+            if (text == NULL || seconds == NULL)
+                continue;
+            NSString *event = TGDiagnosticSubstrateEvent(text);
+            if (event == nil)
+                continue;
+            if (nanoseconds == NULL)
+                precise = false;
+            double time = strtod(seconds, NULL) + (nanoseconds != NULL ? strtod(nanoseconds, NULL) / 1000000000.0 : 0.0);
+            [events appendFormat:@" %@@%.0f", event, (time - processStart) * 1000.0];
+            count++;
+        }
+        if (response != NULL)
+            aslresponse_free(response);
+        asl_free(query);
+        OGPlatformDiagnosticLog(@"PREMAIN events=%d precise=%d search_ms=%.0f%@ ctor@%.0f main@%.0f", count, precise ? 1 : 0, (CFAbsoluteTimeGetCurrent() - searchStart) * 1000.0, events, constructorMilliseconds, mainMilliseconds);
+    }
+}
+
 NSTimeInterval OGStartupDiagnosticsTime(void)
 {
     return (mach_absolute_time() - TGDiagnosticOrigin) * TGDiagnosticTickSeconds;
@@ -502,15 +612,57 @@ void OGStartupDiagnosticsInitialize(uint64_t ticks, NSTimeInterval unixTime)
         return;
     TGDiagnosticOrigin = ticks;
     TGDiagnosticTickSeconds = (double)timebase.numer / (double)timebase.denom / 1000000000.0;
-    getrusage(RUSAGE_SELF, &TGDiagnosticInitialUsage);
+    TGDiagnosticPremainSample mainSample = {};
+    TGDiagnosticCapturePremainSample(&mainSample);
+    TGDiagnosticInitialUsage = mainSample.usage;
     OSAtomicCompareAndSwap32Barrier(0, 1, &TGDiagnosticCollecting);
-    OGPlatformDiagnosticLog(@"STARTUP_ORIGIN pid=%d unix_ms=%.0f ticks=%llu", getpid(), unixTime * 1000.0, (unsigned long long)ticks);
+    double processStart = 0.0;
+    double premainMilliseconds = -1.0;
+    double constructorMilliseconds = -1.0;
+    int processMib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    struct kinfo_proc processInfo;
+    size_t processInfoSize = sizeof(processInfo);
+    if (sysctl(processMib, 4, &processInfo, &processInfoSize, NULL, 0) == 0 && processInfoSize != 0)
+    {
+        processStart = (double)processInfo.kp_proc.p_starttime.tv_sec + (double)processInfo.kp_proc.p_starttime.tv_usec / 1000000.0;
+        premainMilliseconds = (unixTime - processStart) * 1000.0;
+        if (TGDiagnosticPremainConstructor.valid)
+            constructorMilliseconds = (TGDiagnosticCPUTime(&TGDiagnosticPremainConstructor.wall) - processStart) * 1000.0;
+    }
+    const TGDiagnosticPremainSample *constructorSample = TGDiagnosticPremainConstructor.valid ? &TGDiagnosticPremainConstructor : &mainSample;
+    OGPlatformDiagnosticLog(@"STARTUP_ORIGIN pid=%d unix_ms=%.0f ticks=%llu premain_ms=%.0f premain_cpu_ms=%.0f faults=%d pageins=%d ctor_ms=%.0f ctor_cpu_ms=%.0f ctor_faults=%d ctor_pageins=%d images=%u", getpid(), unixTime * 1000.0, (unsigned long long)ticks, premainMilliseconds, TGDiagnosticPremainCPU(&mainSample), (int)mainSample.faults, (int)mainSample.pageins, constructorMilliseconds, TGDiagnosticPremainCPU(constructorSample), (int)constructorSample->faults, (int)constructorSample->pageins, (unsigned)_dyld_image_count());
+    if (processStart > 0.0)
+    {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^
+        {
+            TGDiagnosticReportPremainTimeline(processStart, constructorMilliseconds, premainMilliseconds);
+        });
+    }
 }
 
 void OGStartupDiagnosticsMark(const char *stage)
 {
     if (OGStartupDiagnosticsIsCollecting())
         OGPlatformDiagnosticLog(@"STARTUP_PHASE name=%s elapsed_ms=%.0f", stage, OGStartupDiagnosticsTime() * 1000.0);
+}
+
+NSString *OGStartupDiagnosticsCallers(void)
+{
+    void *frames[12];
+    int count = backtrace(frames, 12);
+    NSMutableString *result = [[NSMutableString alloc] init];
+    for (int i = 1; i < count; i++) {
+        uintptr_t address = (uintptr_t)frames[i];
+        Dl_info info;
+        memset(&info, 0, sizeof(info));
+        if (dladdr((const void *)address, &info) != 0 && info.dli_fname != NULL) {
+            const char *name = strrchr(info.dli_fname, '/');
+            [result appendFormat:@"%s%s+0x%lx", result.length == 0 ? "" : ",", name == NULL ? info.dli_fname : name + 1, (unsigned long)(address - (uintptr_t)info.dli_fbase)];
+        } else {
+            [result appendFormat:@"%s0x%lx", result.length == 0 ? "" : ",", (unsigned long)address];
+        }
+    }
+    return result;
 }
 
 void OGStartupDiagnosticsSyncStarted(void)
@@ -757,6 +909,23 @@ static void TGDiagnosticReport(BOOL final)
         });
 }
 
+static void TGDiagnosticSetMonitorSampling(bool sampling)
+{
+    pthread_t thread = pthread_self();
+    thread_extended_policy_data_t extended;
+    extended.timeshare = sampling ? false : true;
+    thread_policy_set(pthread_mach_thread_np(thread), THREAD_EXTENDED_POLICY, (thread_policy_t)&extended, THREAD_EXTENDED_POLICY_COUNT);
+    int policy = 0;
+    struct sched_param parameters;
+    if (pthread_getschedparam(thread, &policy, &parameters) != 0)
+        return;
+    int priority = sampling ? sched_get_priority_max(policy) : sched_get_priority_min(policy);
+    if (priority == -1)
+        return;
+    parameters.sched_priority = priority;
+    pthread_setschedparam(thread, policy, &parameters);
+}
+
 static int TGDiagnosticSampleMainThread(uintptr_t *frames, int capacity)
 {
     if (thread_suspend(TGDiagnosticMainThreadPort) != KERN_SUCCESS)
@@ -795,7 +964,9 @@ static int TGDiagnosticSampleMainThread(uintptr_t *frames, int capacity)
 static void TGDiagnosticLogRawStack(double delay)
 {
     uintptr_t frames[12];
+    TGDiagnosticSetMonitorSampling(true);
     int count = TGDiagnosticSampleMainThread(frames, 12);
+    TGDiagnosticSetMonitorSampling(false);
     NSMutableString *line = [[NSMutableString alloc] initWithFormat:@"STARTUP_STACK elapsed_ms=%.0f delay_ms=%.0f frames=", OGStartupDiagnosticsTime() * 1000.0, delay * 1000.0];
     for (int i = 0; i < count; i++) {
         uintptr_t address = frames[i] & ~(uintptr_t)1;
@@ -809,6 +980,110 @@ static void TGDiagnosticLogRawStack(double delay)
         }
     }
     OGPlatformDiagnosticLog(@"%@", line);
+}
+
+enum { TGDiagnosticStallFrameCapacity = 24, TGDiagnosticStallThreadCapacity = 48 };
+
+typedef struct {
+    thread_t port;
+    integer_t runState;
+    int count;
+    uintptr_t frames[TGDiagnosticStallFrameCapacity];
+} TGDiagnosticThreadStack;
+
+static bool TGDiagnosticReadFrame(uintptr_t pointer, uintptr_t *next, uintptr_t *address)
+{
+    uintptr_t words[2];
+    vm_size_t size = 0;
+    if (vm_read_overwrite(mach_task_self(), (vm_address_t)pointer, sizeof(words), (vm_address_t)words, &size) != KERN_SUCCESS || size != sizeof(words))
+        return false;
+    *next = words[0];
+    *address = words[1];
+    return true;
+}
+
+static void TGDiagnosticSampleThread(thread_t port, TGDiagnosticThreadStack *stack)
+{
+    stack->port = port;
+    stack->runState = -1;
+    stack->count = 0;
+
+    thread_basic_info_data_t info;
+    mach_msg_type_number_t infoCount = THREAD_BASIC_INFO_COUNT;
+    if (thread_info(port, THREAD_BASIC_INFO, (thread_info_t)&info, &infoCount) == KERN_SUCCESS)
+        stack->runState = info.run_state;
+
+    if (thread_suspend(port) != KERN_SUCCESS)
+        return;
+    uintptr_t pointer = 0;
+#if defined(__arm64__)
+    arm_thread_state64_t state;
+    mach_msg_type_number_t stateCount = ARM_THREAD_STATE64_COUNT;
+    if (thread_get_state(port, ARM_THREAD_STATE64, (thread_state_t)&state, &stateCount) == KERN_SUCCESS) {
+        stack->frames[stack->count++] = state.__pc;
+        stack->frames[stack->count++] = state.__lr;
+        pointer = state.__fp;
+    }
+#elif defined(__arm__)
+    arm_thread_state_t state;
+    mach_msg_type_number_t stateCount = ARM_THREAD_STATE_COUNT;
+    if (thread_get_state(port, ARM_THREAD_STATE, (thread_state_t)&state, &stateCount) == KERN_SUCCESS) {
+        stack->frames[stack->count++] = state.__pc;
+        stack->frames[stack->count++] = state.__lr;
+        pointer = state.__r[7];
+    }
+#endif
+    while (stack->count != 0 && stack->count < TGDiagnosticStallFrameCapacity && pointer != 0 && (pointer & (sizeof(uintptr_t) - 1)) == 0) {
+        uintptr_t next = 0;
+        uintptr_t address = 0;
+        if (!TGDiagnosticReadFrame(pointer, &next, &address) || address == 0 || next <= pointer)
+            break;
+        stack->frames[stack->count++] = address;
+        pointer = next;
+    }
+    thread_resume(port);
+}
+
+static void TGDiagnosticLogAllThreadStacks(const char *reason, double pending)
+{
+    static TGDiagnosticThreadStack stacks[TGDiagnosticStallThreadCapacity];
+    thread_act_array_t threads = NULL;
+    mach_msg_type_number_t threadCount = 0;
+    if (task_threads(mach_task_self(), &threads, &threadCount) != KERN_SUCCESS)
+        return;
+
+    thread_t current = mach_thread_self();
+    int sampled = 0;
+    TGDiagnosticSetMonitorSampling(true);
+    for (mach_msg_type_number_t index = 0; index < threadCount; index++) {
+        if (threads[index] != current && sampled < TGDiagnosticStallThreadCapacity)
+            TGDiagnosticSampleThread(threads[index], &stacks[sampled++]);
+    }
+    TGDiagnosticSetMonitorSampling(false);
+    mach_port_deallocate(mach_task_self(), current);
+
+    OGPlatformDiagnosticLog(@"STALLSTACK begin reason=%s pending_ms=%.0f threads=%u", reason, pending * 1000.0, (unsigned int)threadCount);
+    for (int index = 0; index < sampled; index++) {
+        TGDiagnosticThreadStack *stack = &stacks[index];
+        NSMutableString *line = [[NSMutableString alloc] initWithFormat:@"STALLSTACK thread=#%x%@ state=%d frames=", (unsigned int)stack->port, stack->port == TGDiagnosticMainThreadPort ? @"(main)" : @"", (int)stack->runState];
+        for (int frame = 0; frame < stack->count; frame++) {
+            uintptr_t address = stack->frames[frame] & ~(uintptr_t)1;
+            Dl_info info;
+            memset(&info, 0, sizeof(info));
+            if (dladdr((const void *)address, &info) != 0 && info.dli_fname != NULL) {
+                const char *name = strrchr(info.dli_fname, '/');
+                [line appendFormat:@"%s%s+0x%lx", frame == 0 ? "" : ",", name == NULL ? info.dli_fname : name + 1, (unsigned long)(address - (uintptr_t)info.dli_fbase)];
+            } else {
+                [line appendFormat:@"%s0x%lx", frame == 0 ? "" : ",", (unsigned long)address];
+            }
+        }
+        OGPlatformDiagnosticLog(@"%@", line);
+    }
+    OGPlatformDiagnosticLog(@"STALLSTACK end");
+
+    for (mach_msg_type_number_t index = 0; index < threadCount; index++)
+        mach_port_deallocate(mach_task_self(), threads[index]);
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, threadCount * sizeof(thread_t));
 }
 
 static void TGDiagnosticSendQueueProbes(void)
@@ -852,19 +1127,7 @@ static void TGDiagnosticSendQueueProbes(void)
 
 static void *TGDiagnosticMonitorThreadMain(void *)
 {
-    pthread_t thread = pthread_self();
-    int policy = 0;
-    struct sched_param parameters;
-    if (pthread_getschedparam(thread, &policy, &parameters) == 0) {
-        int priority = sched_get_priority_min(policy);
-        if (priority != -1) {
-            parameters.sched_priority = priority;
-            pthread_setschedparam(thread, policy, &parameters);
-        }
-    }
-    thread_extended_policy_data_t extended;
-    extended.timeshare = true;
-    thread_policy_set(pthread_mach_thread_np(thread), THREAD_EXTENDED_POLICY, (thread_policy_t)&extended, THREAD_EXTENDED_POLICY_COUNT);
+    TGDiagnosticSetMonitorSampling(false);
     double nextPing = 0.0;
     double nextProbe = 5.0;
     double nextReport = 10.0;
@@ -872,6 +1135,8 @@ static void *TGDiagnosticMonitorThreadMain(void *)
     double lastStack = -30.0;
     int stacks = 0;
     bool sampled = false;
+    double lastStallDump = -60.0;
+    int stallDumps = 0;
     while (OGStartupDiagnosticsIsCollecting()) {
         usleep(250000);
         @autoreleasepool {
@@ -922,6 +1187,22 @@ static void *TGDiagnosticMonitorThreadMain(void *)
                 nextProbe = now + 5.0;
                 TGDiagnosticSendQueueProbes();
             }
+            const char *stallReason = NULL;
+            double stallPending = 0.0;
+            pthread_mutex_lock(&TGDiagnosticLock);
+            if (TGDiagnosticDatabasePending && now - TGDiagnosticDatabaseSent >= 8.0) {
+                stallReason = "database";
+                stallPending = now - TGDiagnosticDatabaseSent;
+            } else if (TGDiagnosticStagePending && now - TGDiagnosticStageSent >= 8.0) {
+                stallReason = "stage";
+                stallPending = now - TGDiagnosticStageSent;
+            }
+            pthread_mutex_unlock(&TGDiagnosticLock);
+            if (stallReason != NULL && stallDumps < 2 && now - lastStallDump >= 60.0) {
+                stallDumps++;
+                lastStallDump = now;
+                TGDiagnosticLogAllThreadStacks(stallReason, stallPending);
+            }
             if (now >= nextReport) {
                 nextReport = now + 10.0;
                 TGDiagnosticReport(false);
@@ -955,13 +1236,10 @@ static void TGStartMainThreadStallMonitor(void)
         TGDiagnosticReport(true);
     }
 }
-#endif
 
 static void TGEarlyLaunchPerf(NSString *stage)
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     OGStartupDiagnosticsMark(stage.UTF8String);
-#endif
 }
 
 #if defined(__IPHONE_OS_VERSION_MIN_REQUIRED) && __IPHONE_OS_VERSION_MIN_REQUIRED < 50000
@@ -1121,9 +1399,7 @@ static NSString *TGIOS6CrashReportSecret()
 
 static NSString *TGIOS6CrashReportPath()
 {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true);
-    NSString *documentsPath = paths.count == 0 ? NSTemporaryDirectory() : [paths objectAtIndex:0];
-    return [documentsPath stringByAppendingPathComponent:@"ios6_last_crash.txt"];
+    return [TGCrashReportCenter pendingReportPath];
 }
 
 static NSString *TGIOS6SystemCrashMarkerPath()
@@ -1166,7 +1442,7 @@ static intptr_t TGIOS6ExecutableImageSlide = 0;
 static volatile sig_atomic_t TGIOS6HandlingFatalSignal = 0;
 static volatile sig_atomic_t TGIOS6ExceptionRecordedThisRun = 0;
 
-#define TGIOS6_CRASH_IMAGE_MAX 256
+#define TGIOS6_CRASH_IMAGE_MAX 512
 #define TGIOS6_CRASH_IMAGE_NAME_MAX 96
 
 typedef struct
@@ -1175,10 +1451,13 @@ typedef struct
     uintptr_t end;
     char name[TGIOS6_CRASH_IMAGE_NAME_MAX];
     size_t nameLength;
+    intptr_t slide;
+    char uuid[37];
+    volatile sig_atomic_t loaded;
 } TGIOS6CrashImageRange;
 
 static TGIOS6CrashImageRange TGIOS6CrashImageRanges[TGIOS6_CRASH_IMAGE_MAX];
-static size_t TGIOS6CrashImageRangeCount = 0;
+static volatile sig_atomic_t TGIOS6CrashImageRangeCount = 0;
 
 static void TGIOS6WriteHexPointer(int fd, const void *pointer);
 
@@ -1218,85 +1497,87 @@ static void TGIOS6PrepareExecutableImageRange()
     }
 }
 
-static void TGIOS6PrepareLoadedImageRanges()
+static void TGIOS6RecordLoadedImage(const struct mach_header *header, intptr_t slide)
 {
-    TGIOS6CrashImageRangeCount = 0;
-    uint32_t imageCount = _dyld_image_count();
-    for (uint32_t imageIndex = 0; imageIndex < imageCount && TGIOS6CrashImageRangeCount < TGIOS6_CRASH_IMAGE_MAX; imageIndex++)
+    if (header == NULL || TGIOS6CrashImageRangeCount >= TGIOS6_CRASH_IMAGE_MAX)
+        return;
+    TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[TGIOS6CrashImageRangeCount];
+    const char *name = header->filetype == MH_EXECUTE ? "Telegram" : "?";
+    const uint8_t *cursor = (const uint8_t *)header + (header->magic == MH_MAGIC_64 ? sizeof(struct mach_header_64) : sizeof(struct mach_header));
+    const uint8_t *commandsEnd = cursor + header->sizeofcmds;
+    for (uint32_t i = 0; i < header->ncmds && (size_t)(commandsEnd - cursor) >= sizeof(struct load_command); i++)
     {
-        const struct mach_header *header = _dyld_get_image_header(imageIndex);
-        if (header == NULL)
-            continue;
-
-        intptr_t slide = _dyld_get_image_vmaddr_slide(imageIndex);
-        uintptr_t textStart = 0;
-        uintptr_t textEnd = 0;
-        const uint8_t *cursor = (const uint8_t *)header + (header->magic == MH_MAGIC_64 ? sizeof(struct mach_header_64) : sizeof(struct mach_header));
-        const uint8_t *commandsEnd = cursor + header->sizeofcmds;
-        for (uint32_t commandIndex = 0; commandIndex < header->ncmds; commandIndex++)
+        const struct load_command *command = (const struct load_command *)cursor;
+        if (command->cmdsize < sizeof(*command) || command->cmdsize > (size_t)(commandsEnd - cursor))
+            break;
+        if (command->cmd == LC_SEGMENT && command->cmdsize >= sizeof(struct segment_command))
         {
-            if ((size_t)(commandsEnd - cursor) < sizeof(struct load_command))
-                break;
-            const struct load_command *command = (const struct load_command *)cursor;
-            if (command->cmdsize < sizeof(struct load_command) || command->cmdsize > (size_t)(commandsEnd - cursor))
-                break;
-
-            if (command->cmd == LC_SEGMENT && command->cmdsize >= sizeof(struct segment_command))
+            const struct segment_command *segment = (const struct segment_command *)command;
+            if (strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)) == 0)
             {
-                const struct segment_command *segment = (const struct segment_command *)command;
-                if (strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)) == 0)
-                {
-                    textStart = (uintptr_t)((intptr_t)segment->vmaddr + slide);
-                    textEnd = textStart + (uintptr_t)segment->vmsize;
-                    break;
-                }
+                range->start = (uintptr_t)segment->vmaddr + slide;
+                range->end = range->start + (uintptr_t)segment->vmsize;
             }
-            else if (command->cmd == LC_SEGMENT_64 && command->cmdsize >= sizeof(struct segment_command_64))
-            {
-                const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
-                if (strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)) == 0)
-                {
-                    textStart = (uintptr_t)((intptr_t)segment->vmaddr + slide);
-                    textEnd = textStart + (uintptr_t)segment->vmsize;
-                    break;
-                }
-            }
-            cursor += command->cmdsize;
         }
-
-        if (textStart == 0 || textEnd <= textStart)
-            continue;
-
-        const char *path = _dyld_get_image_name(imageIndex);
-        const char *name = path;
-        if (path != NULL)
+        else if (command->cmd == LC_SEGMENT_64 && command->cmdsize >= sizeof(struct segment_command_64))
         {
-            const char *slash = strrchr(path, '/');
-            if (slash != NULL && slash[1] != 0)
-                name = slash + 1;
+            const struct segment_command_64 *segment = (const struct segment_command_64 *)command;
+            if (strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)) == 0)
+            {
+                range->start = (uintptr_t)segment->vmaddr + slide;
+                range->end = range->start + (uintptr_t)segment->vmsize;
+            }
         }
-        if (name == NULL || name[0] == 0)
-            name = "?";
+        else if (command->cmd == LC_UUID && command->cmdsize >= sizeof(struct uuid_command))
+        {
+            const uint8_t *uuid = ((const struct uuid_command *)command)->uuid;
+            snprintf(range->uuid, sizeof(range->uuid), "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
+        }
+        else if (command->cmd == LC_ID_DYLIB && command->cmdsize >= sizeof(struct dylib_command))
+        {
+            uint32_t offset = ((const struct dylib_command *)command)->dylib.name.offset;
+            if (offset >= sizeof(struct dylib_command) && offset < command->cmdsize && memchr(cursor + offset, 0, command->cmdsize - offset) != NULL)
+                name = (const char *)cursor + offset;
+        }
+        cursor += command->cmdsize;
+    }
+    if (range->start == 0 || range->end <= range->start)
+    {
+        memset(range, 0, sizeof(*range));
+        return;
+    }
+    const char *slash = strrchr(name, '/');
+    if (slash != NULL && slash[1] != 0)
+        name = slash + 1;
+    range->nameLength = MIN(strlen(name), sizeof(range->name) - 1);
+    memcpy(range->name, name, range->nameLength);
+    range->name[range->nameLength] = 0;
+    range->slide = slide;
+    range->loaded = 1;
+    __sync_synchronize();
+    TGIOS6CrashImageRangeCount++;
+}
 
-        TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[TGIOS6CrashImageRangeCount++];
-        range->start = textStart;
-        range->end = textEnd;
-        size_t nameLength = strlen(name);
-        if (nameLength >= TGIOS6_CRASH_IMAGE_NAME_MAX)
-            nameLength = TGIOS6_CRASH_IMAGE_NAME_MAX - 1;
-        memcpy(range->name, name, nameLength);
-        range->name[nameLength] = 0;
-        range->nameLength = nameLength;
+static void TGIOS6RecordUnloadedImage(const struct mach_header *header, intptr_t __unused slide)
+{
+    sig_atomic_t count = TGIOS6CrashImageRangeCount;
+    __sync_synchronize();
+    for (sig_atomic_t i = 0; i < count; i++)
+    {
+        if (TGIOS6CrashImageRanges[i].start == (uintptr_t)header)
+            TGIOS6CrashImageRanges[i].loaded = 0;
     }
 }
 
 static const TGIOS6CrashImageRange *TGIOS6CrashImageRangeForAddress(uintptr_t address)
 {
     uintptr_t normalizedAddress = address & ~(uintptr_t)1;
-    for (size_t i = 0; i < TGIOS6CrashImageRangeCount; i++)
+    sig_atomic_t count = TGIOS6CrashImageRangeCount;
+    __sync_synchronize();
+    for (sig_atomic_t i = count; i > 0; i--)
     {
-        const TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[i];
-        if (normalizedAddress >= range->start && normalizedAddress < range->end)
+        const TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[i - 1];
+        if (range->loaded && normalizedAddress >= range->start && normalizedAddress < range->end)
             return range;
     }
     return NULL;
@@ -1316,7 +1597,8 @@ static void TGIOS6PrepareCrashEnvironment()
     uname(&systemInfo);
 
     TGIOS6PrepareExecutableImageRange();
-    TGIOS6PrepareLoadedImageRanges();
+    _dyld_register_func_for_add_image(TGIOS6RecordLoadedImage);
+    _dyld_register_func_for_remove_image(TGIOS6RecordUnloadedImage);
 
 #if defined(ONEGRAM_ARMV6)
     const char *architecture = "armv6";
@@ -1387,6 +1669,37 @@ static void TGIOS6WriteImageAddressLine(int fd, const char *name, uintptr_t addr
     write(fd, "\n", 1);
 }
 
+static void TGIOS6WriteImageTable(int fd)
+{
+    sig_atomic_t count = TGIOS6CrashImageRangeCount;
+    __sync_synchronize();
+    static const char begin[] = "CRASH images-begin\n";
+    static const char end[] = "CRASH images-end\n";
+    write(fd, begin, sizeof(begin) - 1);
+    for (sig_atomic_t i = 0; i < count; i++)
+    {
+        const TGIOS6CrashImageRange *range = &TGIOS6CrashImageRanges[i];
+        if (!range->loaded)
+            continue;
+        write(fd, range->name, range->nameLength);
+        write(fd, " ", 1);
+        TGIOS6WriteHexPointer(fd, (const void *)range->start);
+        write(fd, "-", 1);
+        TGIOS6WriteHexPointer(fd, (const void *)range->end);
+        write(fd, " slide=", 7);
+        TGIOS6WriteHexPointer(fd, (const void *)range->slide);
+        write(fd, " uuid=", 6);
+        write(fd, range->uuid, range->uuid[0] != 0 ? sizeof(range->uuid) - 1 : 0);
+        write(fd, "\n", 1);
+    }
+    if (count == TGIOS6_CRASH_IMAGE_MAX)
+    {
+        static const char limit[] = "CRASH image_table_limit_reached=1\n";
+        write(fd, limit, sizeof(limit) - 1);
+    }
+    write(fd, end, sizeof(end) - 1);
+}
+
 static bool TGIOS6ReadCrashMemory(uintptr_t address, void *buffer, size_t length)
 {
     if (address == 0 || length == 0 || address > UINTPTR_MAX - length)
@@ -1414,6 +1727,8 @@ static void TGIOS6WriteSignalStack(int fd, uintptr_t pc, uintptr_t lr, uintptr_t
     if (sp == 0)
         return;
 
+    static const char scanKind[] = "CRASH stack_scan=unverified_words\n";
+    write(fd, scanKind, sizeof(scanKind) - 1);
     int stackAppCount = 0;
     int stackImageCount = 0;
     uintptr_t previousImageCandidate = 0;
@@ -1425,31 +1740,33 @@ static void TGIOS6WriteSignalStack(int fd, uintptr_t pc, uintptr_t lr, uintptr_t
             break;
         uintptr_t normalizedCandidate = candidate & ~(uintptr_t)1;
         TGIOS6WriteRegisterLine(fd, "stack_raw", candidate);
-        if (TGIOS6ExecutableImageBase != 0 && normalizedCandidate >= TGIOS6ExecutableImageBase && normalizedCandidate < TGIOS6ExecutableImageEnd && stackAppCount < 20)
+        if (TGIOS6ExecutableImageBase != 0 && normalizedCandidate >= TGIOS6ExecutableImageBase && normalizedCandidate < TGIOS6ExecutableImageEnd && TGIOS6CrashImageRangeForAddress(normalizedCandidate) != NULL && stackAppCount < 20)
         {
-            TGIOS6WriteRegisterLine(fd, "stack_app", (uintptr_t)((intptr_t)normalizedCandidate - TGIOS6ExecutableImageSlide));
+            TGIOS6WriteRegisterLine(fd, "stack_candidate_app", (uintptr_t)((intptr_t)normalizedCandidate - TGIOS6ExecutableImageSlide));
             stackAppCount++;
         }
         if (stackImageCount < 32 && normalizedCandidate != previousImageCandidate && TGIOS6CrashImageRangeForAddress(normalizedCandidate) != NULL)
         {
-            TGIOS6WriteImageAddressLine(fd, "stack_image", normalizedCandidate);
+            TGIOS6WriteImageAddressLine(fd, "stack_candidate_image", normalizedCandidate);
             previousImageCandidate = normalizedCandidate;
             stackImageCount++;
         }
     }
 }
 
-#if defined(__arm64__)
-static void TGIOS6WriteArm64Frames(int fd, uintptr_t fp, uintptr_t sp)
+#if defined(__arm64__) || defined(__arm__)
+static void TGIOS6WriteFrames(int fd, uintptr_t fp, uintptr_t sp)
 {
     for (int i = 0; i < 32; i++)
     {
-        if (sp == 0 || fp < sp || fp - sp > 8 * 1024 * 1024 || (fp & 15) != 0)
+        if (sp == 0 || fp < sp || fp - sp > 8 * 1024 * 1024 || (fp & (sizeof(uintptr_t) - 1)) != 0)
             break;
         uintptr_t frame[2];
         if (!TGIOS6ReadCrashMemory(fp, frame, sizeof(frame)))
             break;
         uintptr_t returnAddress = frame[1];
+        if (TGIOS6CrashImageRangeForAddress(returnAddress) == NULL)
+            break;
         TGIOS6WriteRegisterLine(fd, "frame_lr", returnAddress);
         TGIOS6WriteImageAddressLine(fd, "frame_image", returnAddress);
         if (TGIOS6ExecutableImageBase != 0 && returnAddress >= TGIOS6ExecutableImageBase && returnAddress < TGIOS6ExecutableImageEnd)
@@ -1579,26 +1896,87 @@ static NSString *TGIOS6ExceptionStackSymbols(NSException *exception)
 #endif
 }
 
+static void TGIOS6WriteBreadcrumbTail(int fd)
+{
+    static const char begin[] = "CRASH context-begin\n";
+    static const char end[] = "\nCRASH context-end\n";
+    write(fd, begin, sizeof(begin) - 1);
+    int source = open(TGIOS6SignalBreadcrumbPath, O_RDONLY);
+    if (source >= 0)
+    {
+        off_t size = lseek(source, 0, SEEK_END);
+        off_t start = size > 128 * 1024 ? size - 128 * 1024 : 0;
+        if (size >= 0 && lseek(source, start, SEEK_SET) >= 0)
+        {
+            off_t remaining = size - start;
+            bool skipPartialLine = start != 0;
+            char buffer[2048];
+            while (remaining > 0)
+            {
+                ssize_t count = read(source, buffer, (size_t)MIN(remaining, (off_t)sizeof(buffer)));
+                if (count < 0 && errno == EINTR)
+                    continue;
+                if (count <= 0)
+                    break;
+                remaining -= count;
+                ssize_t offset = 0;
+                if (skipPartialLine)
+                {
+                    while (offset < count && buffer[offset] != '\n')
+                        offset++;
+                    if (offset < count)
+                    {
+                        offset++;
+                        skipPartialLine = false;
+                    }
+                }
+                while (offset < count)
+                {
+                    ssize_t written = write(fd, buffer + offset, (size_t)(count - offset));
+                    if (written < 0 && errno == EINTR)
+                        continue;
+                    if (written <= 0)
+                    {
+                        remaining = 0;
+                        break;
+                    }
+                    offset += written;
+                }
+            }
+        }
+        close(source);
+    }
+    else
+    {
+        static const char unavailable[] = "CRASH context_status=unavailable\n";
+        write(fd, unavailable, sizeof(unavailable) - 1);
+    }
+    write(fd, end, sizeof(end) - 1);
+}
+
 static void TGIOS6UncaughtExceptionHandler(NSException *exception)
 {
     NSString *stack = TGIOS6ExceptionStackSymbols(exception);
-    NSString *breadcrumbs = [NSString stringWithContentsOfFile:TGIOS6DiagnosticBreadcrumbPath() encoding:NSUTF8StringEncoding error:nil];
-    if (breadcrumbs.length > 128 * 1024)
-        breadcrumbs = [breadcrumbs substringFromIndex:breadcrumbs.length - 128 * 1024];
 
     NSString *environment = TGIOS6CrashEnvironmentLength != 0 ?
         [[NSString alloc] initWithBytes:TGIOS6CrashEnvironment length:TGIOS6CrashEnvironmentLength encoding:NSUTF8StringEncoding] : @"";
     NSString *message = [NSString stringWithFormat:
-        @"%@CRASH type=exception\nCRASH context=%@\nCRASH name=%@\nCRASH reason=%@\nCRASH stack=%@\nCRASH context-begin\n%@CRASH context-end\n",
+        @"%@CRASH type=exception\nCRASH context=%@\nCRASH name=%@\nCRASH reason=%@\nCRASH stack=%@\n",
         environment ?: @"",
         TGIOS6BotContext(),
         exception.name ?: @"",
         exception.reason ?: @"",
-        stack ?: @"",
-        breadcrumbs ?: @""];
+        stack ?: @""];
 
-    TGIOS6ExceptionRecordedThisRun = 1;
-    [message writeToFile:TGIOS6CrashReportPath() atomically:false encoding:NSUTF8StringEncoding error:nil];
+    TGIOS6ExceptionRecordedThisRun = [message writeToFile:TGIOS6CrashReportPath() atomically:false encoding:NSUTF8StringEncoding error:nil] ? 1 : 0;
+    int fd = open(TGIOS6SignalCrashPath, O_WRONLY | O_APPEND);
+    if (fd >= 0)
+    {
+        TGIOS6WriteImageTable(fd);
+        TGIOS6WriteBreadcrumbTail(fd);
+        fsync(fd);
+        close(fd);
+    }
 
     if (TGIOS6PreviousUncaughtExceptionHandler != NULL &&
         TGIOS6PreviousUncaughtExceptionHandler != &TGIOS6UncaughtExceptionHandler)
@@ -1661,6 +2039,19 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
         _exit(128 + signalNumber);
     TGIOS6HandlingFatalSignal = 1;
 
+    siginfo_t capturedInfo;
+    signalInfo = TGIOS6ReadCrashMemory((uintptr_t)signalInfo, &capturedInfo, sizeof(capturedInfo)) ? &capturedInfo : NULL;
+    ucontext_t capturedContext;
+    __typeof__(*capturedContext.uc_mcontext) capturedMachine;
+    if (TGIOS6ReadCrashMemory((uintptr_t)context, &capturedContext, sizeof(capturedContext)) &&
+        TGIOS6ReadCrashMemory((uintptr_t)capturedContext.uc_mcontext, &capturedMachine, sizeof(capturedMachine)))
+    {
+        capturedContext.uc_mcontext = &capturedMachine;
+        context = &capturedContext;
+    }
+    else
+        context = NULL;
+
     if (TGIOS6SignalCrashPath[0] != 0)
     {
         int flags = O_WRONLY | O_CREAT | (TGIOS6ExceptionRecordedThisRun ? O_APPEND : O_TRUNC);
@@ -1673,8 +2064,6 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
             static const char prefix[] = "CRASH type=signal\nCRASH signal=";
             static const char codePrefix[] = "\nCRASH code=";
             static const char addressPrefix[] = "\nCRASH address=";
-            static const char contextPrefix[] = "\nCRASH context-begin\n";
-            static const char contextSuffix[] = "CRASH context-end\n";
             write(fd, prefix, sizeof(prefix) - 1);
             TGIOS6WriteSignalNumber(fd, signalNumber);
             write(fd, codePrefix, sizeof(codePrefix) - 1);
@@ -1739,6 +2128,11 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                 TGIOS6WriteRegisterLine(fd, "r12", (uintptr_t)ucontext->uc_mcontext->ss.r[12]);
 #endif
                 TGIOS6WriteSignalStack(fd, pc, lr, sp);
+#if __DARWIN_UNIX03
+                TGIOS6WriteFrames(fd, (uintptr_t)ucontext->uc_mcontext->__ss.__r[7], sp);
+#else
+                TGIOS6WriteFrames(fd, (uintptr_t)ucontext->uc_mcontext->ss.r[7], sp);
+#endif
 #elif defined(__arm64__)
 #if __DARWIN_UNIX03
                 const _STRUCT_ARM_THREAD_STATE64 *state = &ucontext->uc_mcontext->__ss;
@@ -1776,7 +2170,7 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
                     TGIOS6WriteRegisterLine(fd, name, (uintptr_t)registers[i]);
                 }
                 TGIOS6WriteSignalStack(fd, pc, lr, sp);
-                TGIOS6WriteArm64Frames(fd, fp, sp);
+                TGIOS6WriteFrames(fd, fp, sp);
 #elif defined(__i386__)
 #if __DARWIN_UNIX03
                 TGIOS6WriteRegisterLine(fd, "pc", (uintptr_t)ucontext->uc_mcontext->__ss.__eip);
@@ -1790,45 +2184,10 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
 #endif
             }
 
-            write(fd, contextPrefix, sizeof(contextPrefix) - 1);
-
-            if (TGIOS6SignalBreadcrumbPath[0] != 0)
-            {
-                int breadcrumbFd = open(TGIOS6SignalBreadcrumbPath, O_RDONLY);
-                if (breadcrumbFd >= 0)
-                {
-                    off_t endOffset = lseek(breadcrumbFd, 0, SEEK_END);
-                    const off_t maximumContextBytes = 128 * 1024;
-                    off_t startOffset = endOffset > maximumContextBytes ? endOffset - maximumContextBytes : 0;
-                    if (startOffset > 0)
-                        lseek(breadcrumbFd, startOffset, SEEK_SET);
-                    else
-                        lseek(breadcrumbFd, 0, SEEK_SET);
-
-                    char copyBuffer[2048];
-                    ssize_t count = 0;
-                    bool skipPartialLine = startOffset > 0;
-                    while ((count = read(breadcrumbFd, copyBuffer, sizeof(copyBuffer))) > 0)
-                    {
-                        ssize_t begin = 0;
-                        if (skipPartialLine)
-                        {
-                            while (begin < count && copyBuffer[begin] != '\n')
-                                begin++;
-                            if (begin < count)
-                            {
-                                begin++;
-                                skipPartialLine = false;
-                            }
-                        }
-                        if (!skipPartialLine && begin < count)
-                            write(fd, copyBuffer + begin, (size_t)(count - begin));
-                    }
-                    close(breadcrumbFd);
-                }
-            }
-
-            write(fd, contextSuffix, sizeof(contextSuffix) - 1);
+            OGCrashSectionsWrite(fd);
+            if (!TGIOS6ExceptionRecordedThisRun)
+                TGIOS6WriteImageTable(fd);
+            TGIOS6WriteBreadcrumbTail(fd);
             fsync(fd);
             close(fd);
         }
@@ -1844,6 +2203,28 @@ static void TGIOS6FatalSignalHandler(int signalNumber, siginfo_t *signalInfo, vo
     sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
     raise(signalNumber);
     _exit(128 + signalNumber);
+}
+
+static NSString *TGAppDelegateLaunchSnapshotPath(void)
+{
+    return [[TGAppDelegate cachePath] stringByAppendingPathComponent:@"launch-snapshot.bin"];
+}
+
+static NSString *TGAppDelegateLaunchSnapshotIdentity(int64_t userId)
+{
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSString *build = [bundle objectForInfoDictionaryKey:@"OGOnegramBuildIdentifier"] ?: [bundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+    CGSize size = [UIScreen mainScreen].bounds.size;
+    return [[NSString alloc] initWithFormat:@"%lld|%@|%dx%d", userId, build, (int)size.width, (int)size.height];
+}
+
+static bool TGAppDelegateStoredAuthorizationActive(void)
+{
+    TGUserDefaults *userDefaults = [TGUserDefaults standard];
+    if ([[userDefaults objectForKey:@"telegraphUserId"] longLongValue] != 0)
+        return [[userDefaults objectForKey:@"telegraphUserActivated"] boolValue];
+    NSUserDefaults *legacyUserDefaults = [NSUserDefaults standardUserDefaults];
+    return [[legacyUserDefaults objectForKey:@"telegraphUserId"] longLongValue] != 0 && [[legacyUserDefaults objectForKey:@"telegraphUserActivated"] boolValue];
 }
 
 static void TGIOS6InstallCrashReporter()
@@ -1871,17 +2252,22 @@ static void TGIOS6InstallCrashReporter()
     sigemptyset(&action.sa_mask);
     action.sa_sigaction = TGIOS6FatalSignalHandler;
     action.sa_flags = SA_SIGINFO;
+    static unsigned char alternateStack[64 * 1024] __attribute__((aligned(16)));
+    stack_t stack;
+    memset(&stack, 0, sizeof(stack));
+    stack.ss_sp = alternateStack;
+    stack.ss_size = sizeof(alternateStack);
+    if (sigaltstack(&stack, NULL) == 0)
+        action.sa_flags |= SA_ONSTACK;
 
     sigaction(SIGABRT, &action, NULL);
     sigaction(SIGSEGV, &action, NULL);
     sigaction(SIGBUS, &action, NULL);
     sigaction(SIGILL, &action, NULL);
     sigaction(SIGFPE, &action, NULL);
-#if defined(ONEGRAM_DIAGNOSTICS) && ONEGRAM_DIAGNOSTICS
     struct sigaction previousPipeAction;
-    if (sigaction(SIGPIPE, NULL, &previousPipeAction) == 0 && previousPipeAction.sa_handler == SIG_DFL)
+    if (OGDiagnosticsEnabled() && sigaction(SIGPIPE, NULL, &previousPipeAction) == 0 && previousPipeAction.sa_handler == SIG_DFL)
         sigaction(SIGPIPE, &action, NULL);
-#endif
 #ifdef SIGTRAP
     sigaction(SIGTRAP, &action, NULL);
 #endif
@@ -1946,10 +2332,17 @@ static NSString *TGIOS6CrashSelectorName(uintptr_t selectorAddress)
     return result;
 }
 
-static NSString *TGIOS6CrashResolvedSystemAddress(NSString *label, uintptr_t address, uintptr_t previousImageBase, uintptr_t previousImageEnd)
+static NSString *TGIOS6CrashResolvedSystemAddress(NSString *report, NSString *label, uintptr_t address, uintptr_t previousImageBase, uintptr_t previousImageEnd)
 {
     uintptr_t normalizedAddress = address & ~(uintptr_t)1;
     if (normalizedAddress == 0 || (previousImageBase != 0 && normalizedAddress >= previousImageBase && normalizedAddress < previousImageEnd))
+        return nil;
+
+    const TGIOS6CrashImageRange *range = TGIOS6CrashImageRangeForAddress(normalizedAddress);
+    if (range == NULL || range->uuid[0] == 0)
+        return nil;
+    NSString *identity = [NSString stringWithFormat:@"\n%s 0x%lx-0x%lx slide=0x%lx uuid=%s\n", range->name, (unsigned long)range->start, (unsigned long)range->end, (unsigned long)range->slide, range->uuid];
+    if ([report rangeOfString:identity].location == NSNotFound)
         return nil;
 
     Dl_info info;
@@ -1985,24 +2378,26 @@ static void TGIOS6SendPendingCrashReport()
             selectorAddress = TGIOS6CrashRegisterValue(localMessage, @"r1");
         NSString *selectorName = TGIOS6CrashSelectorName(selectorAddress);
         if (selectorName.length != 0)
-            localMessage = [localMessage stringByAppendingFormat:@"CRASH selector=%@\n", selectorName];
+            localMessage = [localMessage stringByAppendingFormat:@"CRASH selector_candidate_current_process=%@\n", selectorName];
 
         uintptr_t previousImageBase = TGIOS6CrashRegisterValue(localMessage, @"image_base");
         uintptr_t previousImageEnd = TGIOS6CrashRegisterValue(localMessage, @"image_end");
         uintptr_t pc = TGIOS6CrashRegisterValue(localMessage, @"pc");
         uintptr_t lr = TGIOS6CrashRegisterValue(localMessage, @"lr");
-        NSString *pcResolved = TGIOS6CrashResolvedSystemAddress(@"pc", pc, previousImageBase, previousImageEnd);
-        NSString *lrResolved = TGIOS6CrashResolvedSystemAddress(@"lr", lr, previousImageBase, previousImageEnd);
+        NSString *pcResolved = TGIOS6CrashResolvedSystemAddress(localMessage, @"pc", pc, previousImageBase, previousImageEnd);
+        NSString *lrResolved = TGIOS6CrashResolvedSystemAddress(localMessage, @"lr", lr, previousImageBase, previousImageEnd);
         if (pcResolved.length != 0)
             localMessage = [localMessage stringByAppendingString:pcResolved];
         if (lrResolved.length != 0)
             localMessage = [localMessage stringByAppendingString:lrResolved];
 
         NSDictionary *attributes = [[NSFileManager defaultManager] attributesOfItemAtPath:localPath error:nil];
-        TGArchiveCrashLogText(localMessage, [attributes objectForKey:NSFileModificationDate]);
+        NSString *archivedPath = TGArchiveCrashLogText(localMessage, [attributes objectForKey:NSFileModificationDate]);
         TGLog(@"CRASH previous-begin\n%@CRASH previous-end", localMessage);
-        [[NSFileManager defaultManager] removeItemAtPath:localPath error:nil];
+        if (archivedPath != nil)
+            [[NSFileManager defaultManager] removeItemAtPath:localPath error:nil];
     }
+    [TGCrashReportCenter archiveDidFinish];
     return;
 
     NSString *path = TGIOS6CrashReportPath();
@@ -2141,6 +2536,7 @@ static void TGIOS6SendLatestSystemCrashReport()
     bool _didBecomeInactive;
     
     TGPasscodeWindow *_passcodeWindow;
+    bool _automaticMediaDownloadsSuspended;
     UIWindow *_blurredContentWindow;
     
     SMetaDisposable *_deviceLockedRequestDisposable;
@@ -2168,6 +2564,7 @@ static void TGIOS6SendLatestSystemCrashReport()
     bool _ios6NotificationTransportAllowedForBackgroundSession;
     TGIOS3BackgroundTaskIdentifier _ios6ColdLaunchTaskIdentifier;
     bool _ios6ColdLaunchTaskActive;
+    UIView *_launchSnapshotView;
     
     TGGroupInviteSheet *_groupInviteSheet;
     
@@ -2175,6 +2572,9 @@ static void TGIOS6SendLatestSystemCrashReport()
     SVariable *_isActive;
     
     PKPushRegistry *_pushRegistry;
+    bool _pushAPNsMigrationPending;
+    NSString *_pushVoipToken;
+    void (^_pushForegroundBootstrap)(void);
     bool _ios6LocalNotificationSettingsRegistered;
     SPipe *_localizationUpdatedPipe;
     SPipe *_statusBarPressedPipe;
@@ -2216,7 +2616,7 @@ static void TGIOS6SendLatestSystemCrashReport()
 - (void)ios6StartVoipHealthProbe:(int32_t)generation attempt:(int32_t)attempt timeout:(NSTimeInterval)timeout;
 - (void)ios6FinishVoipHealthCheck:(int32_t)generation attempt:(int32_t)attempt success:(bool)success reason:(NSString *)reason;
 - (void)disableAPNsNotificationRegistration;
-- (bool)ios6PushHelperOwnsBackgroundDelivery;
+- (bool)ios6OnegramHelperOwnsBackgroundDelivery;
 - (void)beginBackgroundExecutionWindowForApplication:(UIApplication *)application;
 - (void)concludeBackgroundExecutionWindow;
 
@@ -2495,7 +2895,7 @@ static NSString *TGLoginQRCodeJavaScript(void)
 {
     [_refreshTimer invalidate];
     _refreshTimer = nil;
-    NSTimeInterval remoteNow = [[TGTelegramNetworking instance] approximateRemoteTime];
+    NSTimeInterval remoteNow = OGRemoteClockTime();
     NSTimeInterval delay = expires > 0 ? ((NSTimeInterval)expires - remoteNow - 3.0) : 20.0;
     delay = MAX(5.0, MIN(25.0, delay));
     _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:delay target:self selector:@selector(refreshTimerFired) userInfo:nil repeats:false];
@@ -2976,6 +3376,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 - (bool)enableLogging
 {
     NSNumber *logsEnabled = [[NSUserDefaults standardUserDefaults] objectForKey:@"__logsEnabled"];
+    if (logsEnabled == nil)
+        return TGLogAvailable();
     return [logsEnabled boolValue];
 }
 
@@ -3055,21 +3457,34 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }];
 }
 
+- (void)actionStageResourceDispatched:(NSString *)path resource:(id)__unused resource arguments:(id)__unused arguments
+{
+    if ([path isEqualToString:@"/tg/service/stateUpdated"])
+    {
+        OGDiagnosticsTimingEnd("first_sync");
+        [ActionStageInstance() removeWatcher:self fromPath:path];
+    }
+}
+
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
 {
+    OGDiagnosticsTimingBeginOnce("first_sync");
+    [LegacyComponentsGlobals setProvider:[[TGLegacyComponentsGlobalsProvider alloc] init]];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(databaseOpenFailed:) name:@"OnegramDatabaseOpenFailed" object:nil];
 
     NSDictionary *buildInfo = [[NSBundle mainBundle] infoDictionary];
     TGLog(@"ONEGRAM build=%@ arch=%@ diagnostics=%d transport=%s",
           [buildInfo objectForKey:@"OGOnegramBuildIdentifier"] ?: @"unrecorded",
           [buildInfo objectForKey:@"OGOnegramBuildArchitecture"] ?: @"unrecorded",
-          [[buildInfo objectForKey:@"OGOnegramBuildDiagnostics"] boolValue], OGDanteSocketRevision());
-#if defined(ONEGRAM_DIAGNOSTICS)
-    TGStartMainThreadStallMonitor();
-    OGCPUProfilerStart();
-#endif
+          [[buildInfo objectForKey:@"OGOnegramBuildDiagnostics"] boolValue], OGCoreSocketRevision());
+    if (OGDiagnosticsEnabled())
+    {
+        TGStartMainThreadStallMonitor();
+        OGCPUProfilerStart();
+    }
     TGEarlyLaunchPerf(@"didFinish.enter");
-    [TGTelegramNetworking updatePushHelperApplicationState:application.applicationState == UIApplicationStateBackground ? TGPushHelperApplicationStateFinishing : TGPushHelperApplicationStateReceiving];
+    TGLogSetEnabled([self enableLogging]);
+    [TGTelegramNetworking updateOnegramHelperApplicationState:application.applicationState == UIApplicationStateBackground ? TGOnegramHelperApplicationStateFinishing : TGOnegramHelperApplicationStateReceiving];
     OGPlatformInstallUIKitGuards();
     TGEarlyLaunchPerf(@"didFinish.uikitGuards");
     [self updateBackgroundFetchAvailability:application];
@@ -3081,13 +3496,20 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     bool ios6ColdBackgroundApplicationLaunch =
     OGPlatformSupportsBackgroundVoipTransport() &&
     application.applicationState == UIApplicationStateBackground;
+    bool pushKitColdBackgroundLaunch = application.applicationState == UIApplicationStateBackground && [self usesPushKitNotifications];
+    if (pushKitColdBackgroundLaunch)
+        _inBackground = true;
     if (!ios6ColdBackgroundApplicationLaunch)
     {
-        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityMaintenance, ^
+        OGRuntimeDispatchAfterFirstFrame(OGRuntimePriorityMaintenance, ^
         {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
             {
                 [TGStickersSignals prewarmCachedStickerPacks];
+            });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^
+            {
+                [TGOnegramUpdateController startLaunchCheck];
             });
         });
     }
@@ -3095,7 +3517,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     bool ios6ColdBackgroundLaunch =
     ios6ColdBackgroundApplicationLaunch &&
     TGIOS6BackgroundNotificationsEnabled() &&
-    ![self ios6PushHelperOwnsBackgroundDelivery];
+    ![self ios6OnegramHelperOwnsBackgroundDelivery];
     
     if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch)
     {
@@ -3104,8 +3526,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         TGIOS3ClearKeepAliveTimeout(application);
     }
 
-    bool pushHelperBackgroundLaunch = application.applicationState == UIApplicationStateBackground && !ios6ColdBackgroundLaunch && [self ios6PushHelperOwnsBackgroundDelivery];
-    if (pushHelperBackgroundLaunch)
+    bool onegramHelperBackgroundLaunch = application.applicationState == UIApplicationStateBackground && !ios6ColdBackgroundLaunch && [self ios6OnegramHelperOwnsBackgroundDelivery];
+    if (onegramHelperBackgroundLaunch)
     {
         _inBackground = true;
         [self beginBackgroundExecutionWindowForApplication:application];
@@ -3160,61 +3582,19 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }
     
     TGIOS6InstallCrashReporter();
+    [TGOnegramSettings startApplyingRuntimeSettings];
     TGEarlyLaunchPerf(@"didFinish.crashReporter");
-
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
-    if (iosMajorVersion() >= 9) {
-        if ([effectiveLocalization().code isEqualToString:@"ar"]) {
-            [UIView appearance].semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
-        } else {
-            [UIView appearance].semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
-        }
-    }
-#endif
-    [LegacyComponentsGlobals setProvider:[[TGLegacyComponentsGlobalsProvider alloc] init]];
-    [TGViewController setDefaultContext:[TGLegacyComponentsContext shared]];
-    [TGNavigationBar setMusicPlayerProvider:[[TGNavigationBarMusicPlayerProvider alloc] init]];
-    TGEarlyLaunchPerf(@"didFinish.legacyGlobals");
-    TGLocalization *launchLocalization = effectiveLocalization();
-    void (^preloadLaunchFonts)(void) = ^
+    if (OGDiagnosticsEnabled())
     {
-        [launchLocalization preloadFallback];
-        OGPlatformTextWarmFallbackFonts();
-    };
-    if (OGPlatformUsesConstrainedBackgroundExecution())
-        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityUtility, preloadLaunchFonts);
-    else
-        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, preloadLaunchFonts);
-    
-    TGIsRetina();
-    TGLogSetEnabled([self enableLogging]);
-
-    
-    if (OGPlatformSupportsBackgroundVoipTransport())
-    {
-        IOS6NotificationProbe(@"SESSION", @"launch version=%@ build=%@ state=%d",
-                              [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?",
-                              [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?",
-                              (int)application.applicationState);
-    }
-    
-    if (OGPlatformUsesConstrainedBackgroundExecution())
-    {
-        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityMaintenance, ^
+        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityInteractive, ^
         {
-            TGIOS6SendPendingCrashReport();
-            TGIOS6SendLatestSystemCrashReport();
+            OGStartupDiagnosticsMark("startup_gate.open");
         });
     }
-    else
-    {
-        TGIOS6SendPendingCrashReport();
-        TGIOS6SendLatestSystemCrashReport();
-    }
-    TGEarlyLaunchPerf(@"didFinish.crashReportsSent");
 
     if ([TGAppDelegate respondsToSelector:@selector(movePathsToContainer)])
         [TGAppDelegate movePathsToContainer];
+    [TGCrashReportCenter startMonitoring];
     
     NSString *documentsDirectory = TGAppDelegateDocumentsPathCompat();
     if (documentsDirectory.length != 0)
@@ -3266,6 +3646,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [TGMessage registerMediaAttachmentParser:TGRichMessageMediaAttachmentType parser:[[TGRichMessageMediaAttachment alloc] init]];
     [TGMessage registerMediaAttachmentParser:TGPollMediaAttachmentType parser:[[TGPollMediaAttachment alloc] init]];
     TGEarlyLaunchPerf(@"didFinish.mediaParsers");
+
     
     [TGDatabase setPasswordRequiredBlock:^TGDatabasePasswordCheckResultBlock (void (^verifyBlock)(NSString *), bool simple)
     {
@@ -3369,7 +3750,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }];
     [TGDatabase setUpgradingBlock:^TGDatabaseUpgradeCompletedBlock ()
     {
-        if (TGTelegraphInstance.clientUserId == 0 || !TGTelegraphInstance.clientIsActivated)
+        if (!TGAppDelegateStoredAuthorizationActive())
             return nil;
 
         __block TGProgressWindow *progressWindow = nil;
@@ -3391,6 +3772,56 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [TGDatabase setLiveMessagesDispatchPath:@"/tg/conversations"];
     [TGDatabase setLiveUnreadCountDispatchPath:@"/tg/unreadCount"];
     TGEarlyLaunchPerf(@"didFinish.databaseHooks");
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
+    if (iosMajorVersion() >= 9) {
+        if ([effectiveLocalization().code isEqualToString:@"ar"]) {
+            [UIView appearance].semanticContentAttribute = UISemanticContentAttributeForceRightToLeft;
+        } else {
+            [UIView appearance].semanticContentAttribute = UISemanticContentAttributeForceLeftToRight;
+        }
+    }
+#endif
+    [TGViewController setDefaultContext:[TGLegacyComponentsContext shared]];
+    [TGNavigationBar setMusicPlayerProvider:[[TGNavigationBarMusicPlayerProvider alloc] init]];
+    TGEarlyLaunchPerf(@"didFinish.legacyGlobals");
+    if (TGAppDelegateStoredAuthorizationActive())
+    {
+        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, ^
+        {
+            (void)TGDatabaseInstance();
+        });
+    }
+    TGLocalization *launchLocalization = effectiveLocalization();
+    TGEarlyLaunchPerf(@"didFinish.localization");
+    void (^preloadLaunchFonts)(void) = ^
+    {
+        [launchLocalization preloadFallback];
+        OGPlatformTextWarmFallbackFonts();
+    };
+    if (OGPlatformUsesConstrainedBackgroundExecution())
+        OGRuntimeDispatchAfterStartupPhase(OGRuntimePriorityUtility, preloadLaunchFonts);
+    else
+        OGRuntimeDispatch(OGRuntimePriorityUserInitiated, preloadLaunchFonts);
+    
+    TGIsRetina();
+
+    
+    if (OGPlatformSupportsBackgroundVoipTransport())
+    {
+        IOS6NotificationProbe(@"SESSION", @"launch version=%@ build=%@ state=%d",
+                              [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?",
+                              [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"?",
+                              (int)application.applicationState);
+    }
+    
+    OGRuntimeDispatch(OGRuntimePriorityUtility, ^
+    {
+        TGIOS6SendPendingCrashReport();
+        TGIOS6SendLatestSystemCrashReport();
+    });
+    TGEarlyLaunchPerf(@"didFinish.crashReportsSent");
+
 
 #if !defined(ONEGRAM_ARMV6)
     [[TGDatabase instance] markAllPendingMessagesAsFailed];
@@ -3484,6 +3915,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGEarlyLaunchPerf(@"didFinish.soundSamples");
     
     _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:false];
+    if (OGDiagnosticsEnabled())
+        [ActionStageInstance() watchForPath:@"/tg/service/stateUpdated" watcher:self];
     TGEarlyLaunchPerf(@"didFinish.actionHandle");
     
     [ASActor registerActorClass:[TGImageDownloadActor class]];
@@ -3504,11 +3937,14 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [self loadSettings];
     TGEarlyLaunchPerf(@"didFinish.settings");
     bool launchAuthorized = TGTelegraphInstance.clientUserId != 0 && TGTelegraphInstance.clientIsActivated;
-    if (launchAuthorized && !OGPlatformUsesConstrainedBackgroundExecution())
+    if (launchAuthorized && !OGPlatformUsesConstrainedBackgroundExecution() && !pushKitColdBackgroundLaunch)
         [TGTelegramNetworking prepareInstanceWithCompletion:nil];
-    bool deferAuthorizedRoot = launchAuthorized && OGPlatformUsesConstrainedBackgroundExecution();
-    if (deferAuthorizedRoot)
+    bool deferAuthorizedRoot = launchAuthorized && (OGPlatformUsesConstrainedBackgroundExecution() || pushKitColdBackgroundLaunch);
+    if (deferAuthorizedRoot && !pushKitColdBackgroundLaunch)
+    {
         (void)TGDatabaseInstance();
+        [TGTelegramNetworking prewarmInstance];
+    }
 
     if (deferAuthorizedRoot)
     {
@@ -3526,7 +3962,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         self.window.rootViewController = [self loginNavigationController];
     }
 
-    TGLog(@"AUTH startup.route=%@ userId=%d activated=%d", launchAuthorized ? @"main" : @"login", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
+    TGLog(@"AUTH startup.route=%@ userId=%lld activated=%d", pushKitColdBackgroundLaunch ? @"push" : launchAuthorized ? @"main" : @"login", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
 
     if (!launchAuthorized)
     {
@@ -3539,11 +3975,15 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGEarlyLaunchPerf(@"didFinish.rootController");
     self.window.backgroundColor = [UIColor blackColor];
     
-    [self.window makeKeyAndVisible];
+    if (!pushKitColdBackgroundLaunch)
+        [self.window makeKeyAndVisible];
+    if (deferAuthorizedRoot && !pushKitColdBackgroundLaunch)
+        [self presentLaunchSnapshot];
     TGEarlyLaunchPerf(@"didFinish.keyAndVisible");
 
     [TGPresentation startAutoNight];
-    [TGPresentation prewarmBrandedIOS6ConversationSurfaces];
+    if (!pushKitColdBackgroundLaunch)
+        [TGPresentation prewarmBrandedIOS6ConversationSurfaces];
 
     if (_rootController != nil && [TGKeyCommandController keyCommandsSupported])
         _keyCommandController = [[TGKeyCommandController alloc] initWithRootController:_rootController];
@@ -3551,7 +3991,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGCache *sharedCache = [[TGCache alloc] init];
     [TGRemoteImageView setSharedCache:sharedCache];
     
-    if ((launchAuthorized || !OGPlatformUsesConstrainedBackgroundExecution()) && ![TGDatabaseInstance() isEncryptionEnabled])
+    if (!pushKitColdBackgroundLaunch && (launchAuthorized || !OGPlatformUsesConstrainedBackgroundExecution()) && ![TGDatabaseInstance() isEncryptionEnabled])
     {
         TGDispatchOnMainThread(^
         {
@@ -3595,7 +4035,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                     });
 
                     [[TGTelegramNetworking instance] start];
-                    if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch && !pushHelperBackgroundLaunch)
+                    if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch && !onegramHelperBackgroundLaunch)
                         [[TGTelegramNetworking instance] pause];
                     [_finishedLaunching set:[SSignal single:@true]];
 
@@ -3609,9 +4049,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         int initialDialogLimit = legacyConstrained ? 18 : 50;
         if (legacyConstrained)
             OGDatabaseRuntimeBeginStartupCritical();
-#if defined(ONEGRAM_DIAGNOSTICS)
         TGLog(@"STARTUP dialogs load requested limit=%d at=%.0fms", initialDialogLimit, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
-#endif
         [TGDatabaseInstance() loadConversationListFromDate:INT32_MAX
                                                      limit:initialDialogLimit
                                     excludeConversationIds:nil
@@ -3619,10 +4057,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                                 completion:^(NSArray *dialogList, __unused bool loadedAllRegular)
          {
              
-#if defined(ONEGRAM_DIAGNOSTICS)
-             bool dialogListLoaded = [TGDatabaseInstance() customProperty:@"dialogListLoaded"].length != 0;
-             TGLog(@"STARTUP dialogs loaded count=%d listLoaded=%d loadedAll=%d at=%.0fms", (int)dialogList.count, dialogListLoaded ? 1 : 0, loadedAllRegular ? 1 : 0, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
-#endif
+             if (OGDiagnosticsEnabled())
+             {
+                 bool dialogListLoaded = [TGDatabaseInstance() customProperty:@"dialogListLoaded"].length != 0;
+                 TGLog(@"STARTUP dialogs loaded count=%d listLoaded=%d loadedAll=%d at=%.0fms", (int)dialogList.count, dialogListLoaded ? 1 : 0, loadedAllRegular ? 1 : 0, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
+             }
              
              NSMutableArray *filteredResult = TGSortedInitialDialogList(dialogList);
              
@@ -3635,16 +4074,16 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                  for (TGConversation *conversation in filteredResult)
                  {
                      if ([conversation isKindOfClass:[TGConversation class]] && conversation.conversationId > 0 && conversation.conversationId <= INT32_MAX)
-                         [initialUserIds addObject:@((int32_t)conversation.conversationId)];
+                         [initialUserIds addObject:@(conversation.conversationId)];
                  }
                  if (initialUserIds.count != 0)
                  {
                      OGRuntimeDispatch(OGRuntimePriorityUtility, ^
                      {
-                         std::vector<int> userIds;
+                         std::vector<int64_t> userIds;
                          userIds.reserve(initialUserIds.count);
                          for (NSNumber *userId in initialUserIds)
-                             userIds.push_back([userId intValue]);
+                             userIds.push_back([userId longLongValue]);
                          [TGDatabaseInstance() loadUsers:userIds];
                      });
                  }
@@ -3663,9 +4102,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                   actorCompleted:ASStatusSuccess
                   path:@"/tg/dialoglist/(0)"
                   result:node];
-#if defined(ONEGRAM_DIAGNOSTICS)
                  TGLog(@"STARTUP cached dialogs delivered count=%d at=%.0fms", (int)filteredResult.count, (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
-#endif
 #if defined(ONEGRAM_ARMV6)
                  TGDispatchAfter(2.0, dispatch_get_main_queue(), ^
                  {
@@ -3739,7 +4176,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                  if ([cid respondsToSelector:@selector(longLongValue)])
                                  {
                                      int64_t peerId = [cid longLongValue];
-                                     TGIOS6OpenNotificationPeer(peerId);
+                                     [[TGAccountSwitcher instance] routeNotificationPayload:userInfo completion:^(bool routed)
+                                     {
+                                         if (routed)
+                                             TGIOS6OpenNotificationPeer(peerId);
+                                     }];
                                  }
                              });
                          }
@@ -3797,7 +4238,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                          [[TGTelegramNetworking instance] start];
                      }
 
-                     if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch && !pushHelperBackgroundLaunch)
+                     if (ios6ColdBackgroundApplicationLaunch && !ios6ColdBackgroundLaunch && !onegramHelperBackgroundLaunch)
                          [[TGTelegramNetworking instance] pause];
 
                      [_finishedLaunching set:[SSignal single:@true]];
@@ -3907,9 +4348,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
              OGPlatformDispatchOnMainThread(^
              {
-#if defined(ONEGRAM_DIAGNOSTICS)
                  TGLog(@"STARTUP dialogs deliver root=%d companion=%@ at=%.0fms", _rootController != nil ? 1 : 0, NSStringFromClass([_rootController.dialogListController.dialogListCompanion class]), (CFAbsoluteTimeGetCurrent() - mainLaunchTimestamp) * 1000.0);
-#endif
                  if (_rootController != nil)
                      deliverInitialDialogs();
                  else
@@ -3920,13 +4359,18 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     if (deferAuthorizedRoot)
     {
+        void (^startDeferredRoot)(void) = ^
+        {
         loadInitialDialogs();
         OGPlatformDispatchAfterCurrentMainRunLoop(^
         {
-            CFAbsoluteTime rootPhaseStart = CFAbsoluteTimeGetCurrent();
+            TGEarlyLaunchPerf(@"root.begin");
             _rootController = [[TGRootController alloc] init];
-            rootPhaseStart = CFAbsoluteTimeGetCurrent();
+            TGEarlyLaunchPerf(@"root.created");
             self.window.rootViewController = _rootController;
+            if (_launchSnapshotView != nil)
+                [self.window bringSubviewToFront:_launchSnapshotView];
+            TGEarlyLaunchPerf(@"root.attached");
             if (launchAuthorized && OGPlatformUsesConstrainedBackgroundExecution() && !ios6ColdBackgroundLaunch && !ios6ColdBackgroundApplicationLaunch)
             {
                 bool processAuthorization = !initialAuthorizationProcessed;
@@ -3984,6 +4428,14 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                 });
             }
         });
+        };
+        if (pushKitColdBackgroundLaunch)
+        {
+            _pushForegroundBootstrap = [startDeferredRoot copy];
+            [_finishedLaunching set:[SSignal single:@true]];
+        }
+        else
+            startDeferredRoot();
     }
     else
     {
@@ -4061,10 +4513,14 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGLog(@"******* Memory warning ******");
     [[TGRemoteImageView sharedCache] clearCache:TGCacheMemory];
     TGClearEmojiImageCache();
+    if (TGTelegraphInstance.clientUserId != 0)
+        [TGDatabaseInstance() releaseMemory];
 }
 
 - (void)applicationWillResignActive:(UIApplication *)__unused application
 {
+    _automaticMediaDownloadsSuspended = true;
+    [self refreshAutomaticMediaDownloads];
     if (OGPlatformSupportsBackgroundVoipTransport())
         IOS6NotificationProbe(@"LIFECYCLE", @"resign_active state=%d", (int)[UIApplication sharedApplication].applicationState);
 
@@ -4395,7 +4851,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [self ios6PerformVoipHealthCheck];
 }
 
-- (bool)ios6PushHelperOwnsBackgroundDelivery
+- (bool)ios6OnegramHelperOwnsBackgroundDelivery
 {
     return [TGTelegramNetworking pushHelperAvailable] && !TGTelegraphInstance.callManager.hasActiveCall;
 }
@@ -4409,7 +4865,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         return false;
     }
 
-    if ([self ios6PushHelperOwnsBackgroundDelivery])
+    if ([self ios6OnegramHelperOwnsBackgroundDelivery])
     {
         _ios6NotificationTransportAllowedForBackgroundSession = false;
         TGIOS3ClearKeepAliveTimeout(application);
@@ -4481,7 +4937,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 {
     UIRemoteNotificationType enabledTypes = [[UIApplication sharedApplication] enabledRemoteNotificationTypes];
 
-    if ([self ios6PushHelperOwnsBackgroundDelivery])
+    if ([self ios6OnegramHelperOwnsBackgroundDelivery])
     {
         if (systemTypes != NULL)
             *systemTypes = enabledTypes;
@@ -4541,8 +4997,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     NSNumber *privateMuteUntil = nil;
     NSNumber *groupMuteUntil = nil;
-    [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 1 soundId:NULL muteUntil:&privateMuteUntil previewText:NULL messagesMuted:NULL notFound:NULL];
-    [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 2 soundId:NULL muteUntil:&groupMuteUntil previewText:NULL messagesMuted:NULL notFound:NULL];
+    [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsPrivate soundId:NULL muteUntil:&privateMuteUntil previewText:NULL messagesMuted:NULL notFound:NULL];
+    [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsGroup soundId:NULL muteUntil:&groupMuteUntil previewText:NULL messagesMuted:NULL notFound:NULL];
 
     bool privateCategoryEnabled = privateMuteUntil == nil || privateMuteUntil.longLongValue < INT_MAX;
     bool groupCategoryEnabled = groupMuteUntil == nil || groupMuteUntil.longLongValue < INT_MAX;
@@ -4917,7 +5373,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     _enteredBackgroundTime = CFAbsoluteTimeGetCurrent();
     
     double maxBackgroundTime = MAX(15.0, MIN(40.0, TGIOS3BackgroundTimeRemaining(application) - 0.5 * 60.0));
-    if (_disableBackgroundMode || (voipTransport && !_ios6NotificationTransportAllowedForBackgroundSession && !TGTelegraphInstance.callManager.hasActiveCall && ![self ios6PushHelperOwnsBackgroundDelivery]))
+    if (_disableBackgroundMode || (voipTransport && !_ios6NotificationTransportAllowedForBackgroundSession && !TGTelegraphInstance.callManager.hasActiveCall && ![self ios6OnegramHelperOwnsBackgroundDelivery]))
         maxBackgroundTime = 1;
     
 #ifdef DEBUG
@@ -4935,7 +5391,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     TGLogSynchronize();
 #endif
 
-    [TGTelegramNetworking updatePushHelperApplicationState:TGPushHelperApplicationStateFinishing];
+    [TGTelegramNetworking updateOnegramHelperApplicationState:TGOnegramHelperApplicationStateFinishing];
+    [self captureLaunchSnapshotTruncatingWriteAheadLogWithin:0.0];
 
     bool voipTransport = OGPlatformSupportsBackgroundVoipTransport();
     if (voipTransport && _ios6BackgroundLifecycleEntered)
@@ -4949,7 +5406,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
     _inBackground = true;
 
-    _ios6NotificationTransportAllowedForBackgroundSession = (TGIOS6BackgroundNotificationsEnabled() || TGTelegraphInstance.callManager.hasActiveCall) && ![self ios6PushHelperOwnsBackgroundDelivery];
+    _ios6NotificationTransportAllowedForBackgroundSession = (TGIOS6BackgroundNotificationsEnabled() || TGTelegraphInstance.callManager.hasActiveCall) && ![self ios6OnegramHelperOwnsBackgroundDelivery];
 
     if (iosMajorVersion() <= 6)
     {
@@ -5013,7 +5470,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     bool keepsTransport = preserveIos6NotificationTransport || (voipTransport && TGTelegraphInstance.callManager.hasActiveCall);
     if (!keepsTransport)
         [[TGTelegramNetworking instance] pause];
-    [TGTelegramNetworking updatePushHelperApplicationState:keepsTransport ? TGPushHelperApplicationStateReceiving : TGPushHelperApplicationStateSuspended];
+    [TGTelegramNetworking updateOnegramHelperApplicationState:keepsTransport ? TGOnegramHelperApplicationStateReceiving : TGOnegramHelperApplicationStateSuspended];
 }
 
 - (void)backgroundExpirationTimerEvent:(NSTimer *)__unused timer
@@ -5042,6 +5499,14 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)applicationWillEnterForeground:(UIApplication *)application
 {
+    if (self.window.hidden)
+        [self.window makeKeyAndVisible];
+    if (_pushForegroundBootstrap != nil)
+    {
+        void (^bootstrap)(void) = _pushForegroundBootstrap;
+        _pushForegroundBootstrap = nil;
+        bootstrap();
+    }
     if (OGPlatformSupportsBackgroundVoipTransport())
         IOS6NotificationProbe(@"LIFECYCLE", @"foreground_enter network=%d connecting=%d updating=%d",
                               [[TGTelegramNetworking instance] isNetworkAvailable] ? 1 : 0,
@@ -5093,8 +5558,10 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)applicationDidBecomeActive:(UIApplication *)__unused application
 {
+    _automaticMediaDownloadsSuspended = false;
+    [self refreshAutomaticMediaDownloads];
     OGRuntimeConfigureMainThread();
-    [TGTelegramNetworking updatePushHelperApplicationState:TGPushHelperApplicationStateReceiving];
+    [TGTelegramNetworking updateOnegramHelperApplicationState:TGOnegramHelperApplicationStateReceiving];
     if (OGPlatformSupportsBackgroundVoipTransport())
     {
         IOS6NotificationProbe(@"LIFECYCLE", @"became_active network=%d connecting=%d updating=%d",
@@ -5146,15 +5613,78 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)remoteControlReceivedWithEvent:(UIEvent *)event
 {
-    if (iosMajorVersion() <= 6)
-        [[TGRemoteControlsManager instance] handleLegacyRemoteControlEvent:event];
+    [[TGRemoteControlsManager instance] handleLegacyRemoteControlEvent:event];
+}
+
+- (void)presentLaunchSnapshot
+{
+    int64_t userId = TGTelegraphInstance.clientUserId;
+    if (userId == 0 || _launchSnapshotView != nil || [TGDatabaseInstance() isPasswordSet:NULL])
+        return;
+
+    UIView *snapshotView = OGLaunchSnapshotCreateView(TGAppDelegateLaunchSnapshotPath(), TGAppDelegateLaunchSnapshotIdentity(userId), self.window.bounds);
+    if (snapshotView == nil)
+        return;
+
+    _launchSnapshotView = snapshotView;
+    [self.window addSubview:snapshotView];
+    OGStartupDiagnosticsMark("launch_snapshot.shown");
+    OGRuntimeDispatchAfterFirstFrame(OGRuntimePriorityInteractive, ^
+    {
+        dispatch_async(dispatch_get_main_queue(), ^
+        {
+            [_launchSnapshotView removeFromSuperview];
+            _launchSnapshotView = nil;
+        });
+    });
+}
+
+- (void)captureLaunchSnapshot
+{
+    int64_t userId = TGTelegraphInstance.clientUserId;
+    if (userId == 0 || !TGTelegraphInstance.clientIsActivated || _launchSnapshotView != nil || !OGPlatformUsesConstrainedBackgroundExecution())
+        return;
+
+    NSString *path = TGAppDelegateLaunchSnapshotPath();
+    if ([TGDatabaseInstance() isPasswordSet:NULL])
+    {
+        [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+        return;
+    }
+
+    TGDialogListController *dialogListController = _rootController.dialogListController;
+    if (dialogListController == nil || !dialogListController.isViewLoaded || dialogListController.view.window != self.window || _rootController.presentedViewController != nil || (_passcodeWindow != nil && !_passcodeWindow.hidden))
+        return;
+
+    OGLaunchSnapshotCapture(self.window, path, TGAppDelegateLaunchSnapshotIdentity(userId));
+}
+
+- (void)captureLaunchSnapshotTruncatingWriteAheadLogWithin:(NSTimeInterval)timeout
+{
+    CFAbsoluteTime startTime = CFAbsoluteTimeGetCurrent();
+    __block CFAbsoluteTime snapshotTime = 0.0;
+    dispatch_block_t snapshotBlock = ^
+    {
+        [self captureLaunchSnapshot];
+        snapshotTime = CFAbsoluteTimeGetCurrent() - startTime;
+    };
+
+    if (TGTelegraphInstance.clientUserId == 0)
+    {
+        snapshotBlock();
+        return;
+    }
+
+    bool truncated = [TGDatabaseInstance() truncateWriteAheadLogWithin:timeout whilePerforming:snapshotBlock];
+    TGLog(@"LAUNCHSNAP capture snapshot_ms=%d total_ms=%d wal_truncated=%d timeout_ms=%d", (int)(snapshotTime * 1000.0), (int)((CFAbsoluteTimeGetCurrent() - startTime) * 1000.0), truncated ? 1 : 0, (int)(timeout * 1000.0));
 }
 
 - (void)applicationWillTerminate:(UIApplication *)__unused application
 {
     if (OGPlatformSupportsBackgroundVoipTransport())
         IOS6NotificationProbe(@"LIFECYCLE", @"will_terminate");
-    [TGTelegramNetworking notifyPushHelperApplicationTerminating];
+    [TGTelegramNetworking notifyOnegramHelperApplicationTerminating];
+    [self captureLaunchSnapshotTruncatingWriteAheadLogWithin:1.0];
     TGLogSynchronize();
 }
 
@@ -5284,6 +5814,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         
         return;
     }
+
+    [TGAnimatedEmojiStore preload];
     
     TGNavigationController *loginNavigationController = self.loginNavigationController;
     if (self.window.rootViewController == loginNavigationController)
@@ -5329,7 +5861,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 - (void)prepareInterfaceForAccountSwitch
 {
     [TGEmbedPIPController dismissPictureInPicture];
-    [[TGInterfaceManager instance] resetForAccountSwitch];
+    [[TGInterfaceManager instance] resetInterface];
     if (_contentWindow != nil)
         [self dismissContentController];
     
@@ -5349,6 +5881,93 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     OGPlatformCancelAllLocalNotifications([UIApplication sharedApplication]);
 }
 
+- (TGRootController *)attachNewRootController
+{
+    TGRootController *rootController = [[TGRootController alloc] init];
+    _rootController = rootController;
+    _keyCommandController = [TGKeyCommandController keyCommandsSupported] ? [[TGKeyCommandController alloc] initWithRootController:rootController] : nil;
+    self.window.rootViewController = rootController;
+    [self.window makeKeyAndVisible];
+    return rootController;
+}
+
+- (void)loadCachedDialogListIntoRootController:(TGRootController *)rootController
+{
+    [TGDatabaseInstance() loadConversationListFromDate:INT32_MAX limit:50 excludeConversationIds:nil folderId:0 completion:^(NSArray *dialogList, __unused bool loadedAllRegular)
+    {
+        SGraphListNode *node = [[SGraphListNode alloc] init];
+        node.items = TGSortedInitialDialogList(dialogList);
+        [ActionStageInstance() dispatchOnStageQueue:^
+        {
+            [(id<ASWatcher>)rootController.dialogListController.dialogListCompanion actorCompleted:ASStatusSuccess path:@"/tg/dialoglist/(0)" result:node];
+        }];
+    }];
+}
+
+- (void)rebuildInterfaceApplyingChange:(dispatch_block_t)change
+{
+    if (_rootController == nil || self.window.rootViewController != _rootController)
+    {
+        if (change != nil)
+            change();
+        return;
+    }
+    
+    UIView *snapshotView = [self.window snapshotViewAfterScreenUpdates:false];
+    
+    TGMainTabsController *previousTabsController = _rootController.mainTabsController;
+    NSUInteger selectedTabIndex = [previousTabsController logicalSelectedIndex];
+    NSArray *previousStack = previousTabsController.navigationController.viewControllers;
+    NSUInteger tabsIndex = [previousStack indexOfObject:previousTabsController];
+    NSArray *previousControllers = tabsIndex == NSNotFound ? @[] : [previousStack subarrayWithRange:NSMakeRange(tabsIndex + 1, previousStack.count - tabsIndex - 1)];
+    
+    if (change != nil)
+        change();
+    
+    [[TGInterfaceManager instance] resetInterface];
+    if (_contentWindow != nil)
+        [self dismissContentController];
+    [_rootController resetControllers];
+    [_rootController dismissViewControllerAnimated:false completion:nil];
+    
+    TGRootController *rootController = [self attachNewRootController];
+    [self loadCachedDialogListIntoRootController:rootController];
+    [ActionStageInstance() dispatchResource:@"/tg/unreadChatsCount" resource:[[SGraphObjectNode alloc] initWithObject:@(0)]];
+    __weak TGRootController *weakRootController = rootController;
+    OGPlatformDispatchOnMainThreadAfter(1.0, ^
+    {
+        [weakRootController.callsController initialize];
+    });
+    
+    TGMainTabsController *tabsController = rootController.mainTabsController;
+    [tabsController setSelectedIndex:selectedTabIndex];
+    UINavigationController *navigationController = tabsController.navigationController;
+    NSMutableArray *restoredStack = [[NSMutableArray alloc] initWithArray:navigationController.viewControllers];
+    for (UIViewController *controller in previousControllers)
+    {
+        if (![controller conformsToProtocol:@protocol(TGInterfaceRebuildRestorable)])
+            break;
+        UIViewController *restoredController = [(id<TGInterfaceRebuildRestorable>)controller controllerForInterfaceRebuild];
+        if (restoredController == nil)
+            break;
+        [restoredStack addObject:restoredController];
+    }
+    if (navigationController != nil && restoredStack.count != navigationController.viewControllers.count)
+        [navigationController setViewControllers:restoredStack animated:false];
+    
+    if (snapshotView == nil)
+        return;
+    snapshotView.frame = self.window.bounds;
+    [self.window addSubview:snapshotView];
+    [UIView animateWithDuration:0.25 animations:^
+    {
+        snapshotView.alpha = 0.0f;
+    } completion:^(__unused BOOL finished)
+    {
+        [snapshotView removeFromSuperview];
+    }];
+}
+
 - (void)startSessionAfterAccountSwitch:(bool)inheritSettings
 {
     if (inheritSettings)
@@ -5358,29 +5977,16 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }
     [self loadSettings];
     
-    int32_t userId = TGTelegraphInstance.clientUserId;
+    int64_t userId = TGTelegraphInstance.clientUserId;
     bool activated = TGTelegraphInstance.clientIsActivated;
-    TGLog(@"ACCOUNTS session.start userId=%d activated=%d", userId, activated ? 1 : 0);
+    TGLog(@"ACCOUNTS session.start userId=%lld activated=%d", userId, activated ? 1 : 0);
     
     if (userId != 0 && activated)
     {
-        TGRootController *rootController = [[TGRootController alloc] init];
-        _rootController = rootController;
-        if ([TGKeyCommandController keyCommandsSupported])
-            _keyCommandController = [[TGKeyCommandController alloc] initWithRootController:rootController];
-        self.window.rootViewController = rootController;
-        [self.window makeKeyAndVisible];
+        TGRootController *rootController = [self attachNewRootController];
         
         [[TGDatabase instance] markAllPendingMessagesAsFailed];
-        [TGDatabaseInstance() loadConversationListFromDate:INT32_MAX limit:50 excludeConversationIds:nil folderId:0 completion:^(NSArray *dialogList, __unused bool loadedAllRegular)
-        {
-            SGraphListNode *node = [[SGraphListNode alloc] init];
-            node.items = TGSortedInitialDialogList(dialogList);
-            [ActionStageInstance() dispatchOnStageQueue:^
-            {
-                [(id<ASWatcher>)rootController.dialogListController.dialogListCompanion actorCompleted:ASStatusSuccess path:@"/tg/dialoglist/(0)" result:node];
-            }];
-        }];
+        [self loadCachedDialogListIntoRootController:rootController];
         
         [TGTelegraphInstance.liveLocationManager restoreSessions];
         [TGTelegraphInstance startPresenceUpdates];
@@ -5624,15 +6230,15 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     NSUserDefaults *legacyUserDefaults = [NSUserDefaults standardUserDefaults];
     TGUserDefaults *userDefaults = [TGUserDefaults standard];
     
-    int32_t userId = [[userDefaults objectForKey:@"telegraphUserId"] intValue];
-    int32_t legacyUserId = [[legacyUserDefaults objectForKey:@"telegraphUserId"] intValue];
+    int64_t userId = [[userDefaults objectForKey:@"telegraphUserId"] longLongValue];
+    int64_t legacyUserId = [[legacyUserDefaults objectForKey:@"telegraphUserId"] longLongValue];
     
     if (userId == 0 && legacyUserId != 0)
         [self migrateSettings];
 
-	    TGTelegraphInstance.clientUserId = [[userDefaults objectForKey:@"telegraphUserId"] intValue];
+	    TGTelegraphInstance.clientUserId = [[userDefaults objectForKey:@"telegraphUserId"] longLongValue];
 	    TGTelegraphInstance.clientIsActivated = [[userDefaults objectForKey:@"telegraphUserActivated"] boolValue];
-        TGLog(@"AUTH settings.load userId=%d activated=%d legacyUserId=%d migrated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0, legacyUserId, (userId == 0 && legacyUserId != 0) ? 1 : 0);
+        TGLog(@"AUTH settings.load userId=%lld activated=%d legacyUserId=%lld migrated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0, legacyUserId, (userId == 0 && legacyUserId != 0) ? 1 : 0);
     
     id value = nil;
     if ((value = [userDefaults objectForKey:@"soundEnabled"]) != nil)
@@ -5703,6 +6309,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         _autoSavePhotosMode = (TGAutoDownloadMode)[value intValue];
     
     _autoDownloadPreferences = [self loadAutoDownloadPreferences];
+    [self refreshAutomaticMediaDownloads];
     
     if ((value = [userDefaults objectForKey:@"autoPlayAudio"]) != nil)
         _autoPlayAudio = [value boolValue];
@@ -5789,26 +6396,23 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         } @catch (NSException *e) {
         }
         
-        if (loadedPreferences != nil)
+        if ([loadedPreferences isKindOfClass:[TGAutoDownloadPreferences class]])
             preferences = loadedPreferences;
     }
     
+    uint32_t selectedModes = preferences.photos | preferences.videos | preferences.documents | preferences.gifs | preferences.voiceMessages | preferences.videoMessages;
     TGUserDefaults *defaults = [TGUserDefaults standard];
-    if (![[defaults objectForKey:@"onegramPreviewFirstMediaDownloadsV1"] boolValue])
+    if ([[defaults objectForKey:@"onegramPreviewFirstMediaDownloadsV1"] boolValue])
     {
-        bool disabled = preferences.disabled;
-        preferences = [preferences updatePhotosMode:TGAutoDownloadModeNone];
-        preferences = [preferences updateVideosMode:TGAutoDownloadModeNone maximumSize:preferences.maximumVideoSize];
-        preferences = [preferences updateDocumentsMode:TGAutoDownloadModeNone maximumSize:preferences.maximumDocumentSize];
-        preferences = [preferences updateVideoMessagesMode:TGAutoDownloadModeNone];
-        preferences = [preferences updateDisabled:disabled];
-        NSData *updatedData = [NSKeyedArchiver archivedDataWithRootObject:preferences];
-        if ([updatedData writeToFile:[self autoDownloadPreferencesPath] atomically:true])
+        if (selectedModes == TGAutoDownloadModeNone)
         {
-            [defaults setObject:@true forKey:@"onegramPreviewFirstMediaDownloadsV1"];
-            [defaults synchronize];
+            preferences = [[TGAutoDownloadPreferences defaultPreferences] updateDisabled:preferences.disabled];
+            [[NSKeyedArchiver archivedDataWithRootObject:preferences] writeToFile:[self autoDownloadPreferencesPath] atomically:true];
         }
+        [defaults removeObjectForKey:@"onegramPreviewFirstMediaDownloadsV1"];
+        [defaults synchronize];
     }
+
     return preferences;
 }
 
@@ -5819,6 +6423,27 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     _autoDownloadPreferences = autoDownloadPreferences;
     [[NSKeyedArchiver archivedDataWithRootObject:autoDownloadPreferences] writeToFile:[self autoDownloadPreferencesPath] atomically:true];
+    [self refreshAutomaticMediaDownloads];
+}
+
+- (void)refreshAutomaticMediaDownloads
+{
+    if (![NSThread isMainThread])
+    {
+        dispatch_async(dispatch_get_main_queue(), ^{ [self refreshAutomaticMediaDownloads]; });
+        return;
+    }
+    TGNetworkType networkType = TGTelegraphInstance.networkTypeManager.networkType;
+    bool connected = networkType != TGNetworkTypeNone && networkType != TGNetworkTypeUnknown;
+    bool fastNetwork = networkType == TGNetworkTypeWiFi || networkType == TGNetworkTypeLTE;
+    NSUInteger maximumCount = fastNetwork ? (cpuCoreCount() > 1 ? 4 : 2) : (networkType == TGNetworkType3G ? 2 : 1);
+    int64_t byteBudget = networkType == TGNetworkTypeWiFi ? 16LL * 1024 * 1024 : 8LL * 1024 * 1024;
+    bool enabled = _autoDownloadPreferences != nil && !_autoDownloadPreferences.disabled && connected && !_automaticMediaDownloadsSuspended;
+    [[TGDownloadManager instance] configureAutomaticDownloadsEnabled:enabled maximumCount:maximumCount concurrencyLimit:^NSUInteger {
+        OGTransferParameters parameters = [TGNetworkTypeManager transferParametersForUpload:false];
+        return (parameters.maximumRequests + 1) / 2;
+    } byteBudget:byteBudget];
+    [[NSNotificationCenter defaultCenter] postNotificationName:TGAutoDownloadPreferencesDidChangeNotification object:self];
 }
 
 - (void)setAutoSavePhotosMode:(TGAutoDownloadMode)autoSavePhotosMode
@@ -5837,9 +6462,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     TGUserDefaults *userDefaults = [TGUserDefaults standard];
     
-	    [userDefaults setObject:[[NSNumber alloc] initWithInt:TGTelegraphInstance.clientUserId] forKey:@"telegraphUserId"];
+	    [userDefaults setObject:[[NSNumber alloc] initWithLongLong:TGTelegraphInstance.clientUserId] forKey:@"telegraphUserId"];
 	    [userDefaults setObject:[[NSNumber alloc] initWithBool:TGTelegraphInstance.clientIsActivated] forKey:@"telegraphUserActivated"];
-        TGLog(@"AUTH settings.save userId=%d activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
+        TGLog(@"AUTH settings.save userId=%lld activated=%d", TGTelegraphInstance.clientUserId, TGTelegraphInstance.clientIsActivated ? 1 : 0);
     
     [userDefaults setObject:[NSNumber numberWithBool:_soundEnabled] forKey:@"soundEnabled"];
     [userDefaults setObject:[NSNumber numberWithBool:_outgoingSoundEnabled] forKey:@"outgoingSoundEnabled"];
@@ -6027,6 +6652,28 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 #pragma mark -
 
+- (bool)usesPushKitNotifications
+{
+    if (iosMajorVersion() < 8 || iosMajorVersion() >= 13)
+        return false;
+    static Class registryClass = Nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        dlopen("/System/Library/Frameworks/PushKit.framework/PushKit", RTLD_LAZY | RTLD_LOCAL);
+        registryClass = NSClassFromString(@"PKPushRegistry");
+    });
+    return registryClass != Nil;
+}
+
+- (void)migrateAPNsRegistrationAfterVoIPRegistration
+{
+    if (!TGIOS6APNsNotificationsEnabled() || ![self usesPushKitNotifications] || _pushAPNsMigrationPending || [[NSUserDefaults standardUserDefaults] boolForKey:@"Onegram.PushKit.APNSTokenRemoved"])
+        return;
+    _pushAPNsMigrationPending = true;
+    [[UIApplication sharedApplication] registerForRemoteNotifications];
+}
+
 - (void)requestDeviceToken:(id<TGDeviceTokenListener>)listener
 {
 
@@ -6034,6 +6681,31 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     {
         [listener deviceTokenRequestCompleted:nil];
         [self disableAPNsNotificationRegistration];
+        return;
+    }
+
+    if ([self usesPushKitNotifications])
+    {
+        [self ios6RegisterLocalNotificationSettings];
+        if (_pushRegistry == nil)
+        {
+            Class registryClass = NSClassFromString(@"PKPushRegistry");
+            _pushRegistry = [[registryClass alloc] initWithQueue:dispatch_get_main_queue()];
+            _pushRegistry.delegate = self;
+        }
+        _pushRegistry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
+        NSString *knownToken = _pushVoipToken ?: [[NSUserDefaults standardUserDefaults] stringForKey:@"Onegram.PushKit.VoIPToken"];
+        if (knownToken.length != 0)
+        {
+            [[TGAccountSignals registerDeviceToken:knownToken voip:true] startWithNext:^(__unused id result)
+            {
+                TGDispatchOnMainThread(^
+                {
+                    [self migrateAPNsRegistrationAfterVoIPRegistration];
+                });
+            }];
+        }
+        [listener deviceTokenRequestCompleted:nil];
         return;
     }
 
@@ -6055,13 +6727,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if (OGPlatformRegisterUserNotificationSettings(application, [self ios6UserNotificationCategories]))
     {
         _ios6LocalNotificationSettingsRegistered = true;
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
         [application registerForRemoteNotifications];
-        
-        _pushRegistry = [[PKPushRegistry alloc] initWithQueue:dispatch_get_main_queue()];
-        _pushRegistry.delegate = self;
-        _pushRegistry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
-#endif
     }
     else
     {
@@ -6104,9 +6770,9 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)application:(UIApplication *)application didRegisterUserNotificationSettings:(UIUserNotificationSettings *)__unused notificationSettings
 {
-    if (TGIOS6APNsNotificationsEnabled())
+    if (TGIOS6APNsNotificationsEnabled() && ![self usesPushKitNotifications])
         [application registerForRemoteNotifications];
-    else
+    else if (!TGIOS6APNsNotificationsEnabled())
         [self disableAPNsNotificationRegistration];
 }
 
@@ -6117,6 +6783,27 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         [_deviceTokenListener deviceTokenRequestCompleted:nil];
         _deviceTokenListener = nil;
         [self disableAPNsNotificationRegistration];
+        return;
+    }
+
+    if ([self usesPushKitNotifications])
+    {
+        if (!_pushAPNsMigrationPending)
+            return;
+        _pushAPNsMigrationPending = false;
+        NSString *apnsToken = [[deviceToken description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
+        apnsToken = [apnsToken stringByReplacingOccurrencesOfString:@" " withString:@""];
+        [[TGAccountSignals unregisterDeviceToken:apnsToken voip:false] startWithNext:^(__unused id result)
+        {
+            [[NSUserDefaults standardUserDefaults] setBool:true forKey:@"Onegram.PushKit.APNSTokenRemoved"];
+            TGDispatchOnMainThread(^
+            {
+                [[UIApplication sharedApplication] unregisterForRemoteNotifications];
+            });
+        } error:^(id error)
+        {
+            TGLog(@"PUSH APNs migration failed: %@", error);
+        } completed:nil];
         return;
     }
 
@@ -6132,6 +6819,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)application:(UIApplication*)__unused application didFailToRegisterForRemoteNotificationsWithError:(NSError*)error
 {
+    if ([self usesPushKitNotifications] && _pushAPNsMigrationPending)
+    {
+        _pushAPNsMigrationPending = false;
+        TGLog(@"PUSH APNs migration token failure: %@", error);
+        return;
+    }
     _tokenAlreadyRequested = true;
     
 	TGLog(@"PUSH token failure bundle=%@ domain=%@ code=%d error=%@", [[NSBundle mainBundle] bundleIdentifier], error.domain, (int)error.code, error);
@@ -6141,7 +6834,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (void)pushRegistry:(PKPushRegistry *)__unused registry didUpdatePushCredentials:(PKPushCredentials *)credentials forType:(PKPushType)type
 {
-    if (type != PKPushTypeVoIP)
+    if (![type isEqualToString:PKPushTypeVoIP])
         return;
     if (!TGIOS6APNsNotificationsEnabled())
     {
@@ -6151,29 +6844,232 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     
     NSString *token = [[credentials.token description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
     token = [token stringByReplacingOccurrencesOfString:@" " withString:@""];
-    
-    [[TGAccountSignals registerDeviceToken:token voip:true] startWithNext:nil];
+    _pushVoipToken = token;
+    [[NSUserDefaults standardUserDefaults] setObject:token forKey:@"Onegram.PushKit.VoIPToken"];
+    [[TGAccountSignals registerDeviceToken:token voip:true] startWithNext:^(__unused id result)
+    {
+        TGDispatchOnMainThread(^
+        {
+            [self migrateAPNsRegistrationAfterVoIPRegistration];
+        });
+    } error:^(id error)
+    {
+        TGLog(@"PUSH VoIP token registration failed: %@", error);
+    } completed:nil];
+}
+
+- (void)pushRegistry:(PKPushRegistry *)__unused registry didInvalidatePushTokenForType:(PKPushType)type
+{
+    if (![type isEqualToString:PKPushTypeVoIP])
+        return;
+    NSString *token = _pushVoipToken ?: [[NSUserDefaults standardUserDefaults] stringForKey:@"Onegram.PushKit.VoIPToken"];
+    _pushVoipToken = nil;
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"Onegram.PushKit.VoIPToken"];
+    if (token.length != 0)
+        [[TGAccountSignals unregisterDeviceToken:token voip:true] startWithNext:nil];
 }
 
 - (void)pushRegistry:(PKPushRegistry *)__unused registry didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(PKPushType)__unused type
 {
+    CFAbsoluteTime startedAt = CFAbsoluteTimeGetCurrent();
 #ifdef INTERNAL_RELEASE
     TGLog(@"voip push: %@", payload.dictionaryPayload);
 #endif
-    
-    [self processPossibleAnnouncement:payload.dictionaryPayload];
-    [self processPossibleLiveLocationRequest:payload.dictionaryPayload];
-    [self processPossibleCallRequest:payload.dictionaryPayload];
-    [self processPossibleConfigUpdateNotification:payload.dictionaryPayload];
+    NSDictionary *data = payload.dictionaryPayload;
+    NSString *reason = @"non_message";
+    bool shown = false;
+    NSString *handled = data[@"call_id"] != nil ? @"call" : @"other";
+    if ([data isKindOfClass:[NSDictionary class]])
+    {
+        if ([self handleVoIPMessagePayload:data shown:&shown reason:&reason])
+            handled = @"message";
+        [self processPossibleAnnouncement:data];
+        [self processPossibleLiveLocationRequest:data];
+        [self processPossibleCallRequest:data];
+        [self processPossibleConfigUpdateNotification:data];
+    }
+    TGLog(@"PUSHWAKE kind=voip handled=%@ shown=%d reason=%@ ms=%.0f", handled, shown ? 1 : 0, reason, (CFAbsoluteTimeGetCurrent() - startedAt) * 1000.0);
+}
+
+- (void)pushRegistry:(PKPushRegistry *)registry didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(PKPushType)type withCompletionHandler:(void (^)(void))completion
+{
+    [self pushRegistry:registry didReceiveIncomingPushWithPayload:payload forType:type];
+    if (completion != nil)
+        completion();
+}
+
+- (void)cancelVoIPNotificationsForPeerId:(int64_t)peerId messageIds:(NSArray *)messageIds maxReadId:(int32_t)maxReadId
+{
+    if (peerId == 0)
+        return;
+    UIApplication *application = [UIApplication sharedApplication];
+    for (id notification in OGPlatformScheduledLocalNotifications(application))
+    {
+        NSDictionary *info = OGPlatformLocalNotificationUserInfo(notification);
+        if ([info[@"cid"] longLongValue] != peerId)
+            continue;
+        int32_t mid = [info[@"mid"] intValue];
+        if ((messageIds != nil && [messageIds containsObject:@(mid)]) || (messageIds == nil && (maxReadId == 0 || mid <= maxReadId)))
+            OGPlatformCancelLocalNotification(application, notification);
+    }
+}
+
+- (bool)handleVoIPMessagePayload:(NSDictionary *)payload shown:(bool *)shown reason:(NSString **)reason
+{
+    NSDictionary *aps = [payload[@"aps"] isKindOfClass:[NSDictionary class]] ? payload[@"aps"] : nil;
+    NSDictionary *alert = [aps[@"alert"] isKindOfClass:[NSDictionary class]] ? aps[@"alert"] : nil;
+    NSDictionary *custom = [payload[@"custom"] isKindOfClass:[NSDictionary class]] ? payload[@"custom"] : nil;
+    NSMutableDictionary *data = [payload mutableCopy];
+    if (custom != nil)
+        [data addEntriesFromDictionary:custom];
+    NSString *localizationKey = [alert[@"loc-key"] isKindOfClass:[NSString class]] ? alert[@"loc-key"] : nil;
+    NSString *event = [data[@"event"] isKindOfClass:[NSString class]] ? data[@"event"] : ([data[@"type"] isKindOfClass:[NSString class]] ? data[@"type"] : nil);
+    bool readEvent = [event isEqualToString:@"READ_HISTORY"] || [event isEqualToString:@"read_history"] || [localizationKey isEqualToString:@"READ_HISTORY"];
+    bool deleteEvent = [event isEqualToString:@"MESSAGES_DELETED"] || [event isEqualToString:@"messages_deleted"] || [localizationKey isEqualToString:@"MESSAGES_DELETED"];
+    id fromId = data[@"from_id"];
+    id chatId = data[@"chat_id"];
+    id channelId = data[@"channel_id"];
+    int64_t peerId = 0;
+    if (channelId != nil && [TGSchema canCreateIntFromObject:channelId])
+        peerId = TGPeerIdFromChannelId([TGSchema intFromObject:channelId]);
+    else if (chatId != nil && [TGSchema canCreateIntFromObject:chatId])
+        peerId = -[TGSchema intFromObject:chatId];
+    else if (fromId != nil && [TGSchema canCreateIntFromObject:fromId])
+        peerId = [TGSchema intFromObject:fromId];
+    if (readEvent || deleteEvent)
+    {
+        id deletedIds = data[@"messages"];
+        if (deletedIds == nil)
+            deletedIds = data[@"message_ids"];
+        NSArray *messageIds = deleteEvent && [deletedIds isKindOfClass:[NSArray class]] ? deletedIds : nil;
+        int32_t maxReadId = [data[@"max_id"] respondsToSelector:@selector(intValue)] ? [data[@"max_id"] intValue] : 0;
+        if (readEvent || messageIds != nil)
+            [self cancelVoIPNotificationsForPeerId:peerId messageIds:messageIds maxReadId:maxReadId];
+        if ([aps[@"badge"] respondsToSelector:@selector(integerValue)])
+            [[UIApplication sharedApplication] setApplicationIconBadgeNumber:MAX(0, [aps[@"badge"] integerValue])];
+        if (reason != NULL)
+            *reason = readEvent ? @"read_history" : @"messages_deleted";
+        return true;
+    }
+    if (localizationKey.length == 0 || peerId == 0 || ![data[@"msg_id"] respondsToSelector:@selector(intValue)])
+        return false;
+    if ([localizationKey isEqualToString:@"GEO_LIVE_PENDING"])
+        return false;
+    int32_t messageId = [data[@"msg_id"] intValue];
+    if (messageId <= 0)
+        return false;
+    if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive && [[TGInterfaceManager instance] isConversationVisible:peerId])
+    {
+        if (reason != NULL)
+            *reason = @"visible_chat";
+        return true;
+    }
+    int64_t targetUserId = [TGAccountSwitcher receiverUserIdFromPayload:payload];
+    bool sameAccount = targetUserId == 0 || targetUserId == TGTelegraphInstance.clientUserId;
+    TGConversation *conversation = sameAccount ? [TGDatabaseInstance() loadConversationWithId:peerId] : nil;
+    if (sameAccount && conversation != nil && messageId <= MAX(conversation.maxReadMessageId, conversation.maxLocallyReadMessageId))
+    {
+        if (reason != NULL)
+            *reason = @"already_read";
+        return true;
+    }
+    if (sameAccount && [TGDatabaseInstance() isPeerMuted:peerId])
+    {
+        if (reason != NULL)
+            *reason = @"muted_peer";
+        return true;
+    }
+    if ([data[@"mute"] respondsToSelector:@selector(boolValue)] && [data[@"mute"] boolValue])
+    {
+        if (reason != NULL)
+            *reason = @"muted_payload";
+        return true;
+    }
+    NSNumber *previewValue = nil;
+    NSNumber *soundIdValue = nil;
+    if (sameAccount)
+    {
+        [TGDatabaseInstance() loadPeerNotificationSettings:peerId soundId:&soundIdValue muteUntil:NULL previewText:&previewValue messagesMuted:NULL notFound:NULL];
+        if (previewValue == nil)
+        {
+            int64_t defaultPeerId = TGPeerIdIsGroup(peerId) || TGPeerIdIsChannel(peerId) ? TGPeerIdNotificationDefaultsGroup : TGPeerIdNotificationDefaultsPrivate;
+            [TGDatabaseInstance() loadPeerNotificationSettings:defaultPeerId soundId:NULL muteUntil:NULL previewText:&previewValue messagesMuted:NULL notFound:NULL];
+        }
+    }
+    bool locked = [self isOrWillBeLocked] || [TGDatabaseInstance() isEncryptionEnabled];
+    bool showPreview = !locked && sameAccount && (previewValue == nil || [previewValue boolValue]);
+    NSString *text = nil;
+    NSArray *args = [alert[@"loc-args"] isKindOfClass:[NSArray class]] ? alert[@"loc-args"] : @[];
+    if (showPreview)
+    {
+        NSString *format = TGLocalized(localizationKey);
+        if (format.length != 0 && ![format isEqualToString:localizationKey])
+        {
+            NSString *values[4] = {@"", @"", @"", @""};
+            for (NSUInteger index = 0; index < MIN(args.count, 4); index++)
+                if ([args[index] isKindOfClass:[NSString class]])
+                    values[index] = args[index];
+            text = [NSString stringWithFormat:format, values[0], values[1], values[2], values[3]];
+        }
+        else if ([alert[@"body"] isKindOfClass:[NSString class]])
+            text = alert[@"body"];
+    }
+    if (text.length == 0)
+        text = [NSString stringWithFormat:TGLocalized(@"LOCKED_MESSAGE"), @""];
+    if (![TGApplyUpdatesActor claimNotificationForPeerId:peerId messageId:messageId accountId:targetUserId == 0 ? TGTelegraphInstance.clientUserId : targetUserId])
+    {
+        if (reason != NULL)
+            *reason = @"duplicate";
+        return true;
+    }
+    id notification = OGPlatformCreateLocalNotification();
+    if (notification == nil)
+    {
+        if (reason != NULL)
+            *reason = @"unsupported";
+        return true;
+    }
+    NSMutableDictionary *info = [NSMutableDictionary dictionaryWithDictionary:@{@"cid": @(peerId), @"mid": @(messageId)}];
+    if (targetUserId != 0)
+        info[@"user_id"] = @(targetUserId);
+    OGPlatformSetLocalNotificationUserInfo(notification, info);
+    if (showPreview && args.count != 0 && [args[0] isKindOfClass:[NSString class]])
+        OGPlatformSetLocalNotificationAlertTitle(notification, args[0]);
+    bool silent = [data[@"silent"] respondsToSelector:@selector(boolValue)] && [data[@"silent"] boolValue];
+    if (!silent && (soundIdValue == nil || [soundIdValue intValue] != 0))
+    {
+        NSString *sound = [aps[@"sound"] isKindOfClass:[NSString class]] ? aps[@"sound"] : nil;
+        if (sound.length != 0 && ![sound isEqualToString:@"0"])
+            OGPlatformSetLocalNotificationSoundName(notification, [sound isEqualToString:@"default"] ? OGPlatformDefaultLocalNotificationSoundName() : sound);
+        else if (soundIdValue != nil && [soundIdValue intValue] > 1)
+            OGPlatformSetLocalNotificationSoundName(notification, [NSString stringWithFormat:@"%d.m4a", [soundIdValue intValue]]);
+        else
+            OGPlatformSetLocalNotificationSoundName(notification, OGPlatformDefaultLocalNotificationSoundName());
+    }
+    if ([aps[@"badge"] respondsToSelector:@selector(integerValue)])
+        [[UIApplication sharedApplication] setApplicationIconBadgeNumber:MAX(0, [aps[@"badge"] integerValue])];
+    if (showPreview)
+        OGPlatformSetLocalNotificationCategory(notification, TGPeerIdIsChannel(peerId) ? @"c" : TGPeerIdIsGroup(peerId) ? @"m" : @"r");
+    [TGApplyUpdatesActor presentSafeLocalNotification:notification text:text];
+    if (shown != NULL)
+        *shown = TGIOS6BackgroundNotificationsEnabled() && [UIApplication sharedApplication].applicationState != UIApplicationStateActive;
+    if (reason != NULL)
+        *reason = @"message";
+    return true;
 }
 
 - (void)application:(UIApplication *)__unused application didReceiveLocalNotification:(UILocalNotification *)notification
 {
     if (!_inBackground || [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)
         return;
-    
-    int64_t peerId = [[OGPlatformLocalNotificationUserInfo(notification) objectForKey:@"cid"] longLongValue];
-    TGIOS6OpenNotificationPeer(peerId);
+
+    NSDictionary *info = OGPlatformLocalNotificationUserInfo(notification);
+    int64_t peerId = [info[@"cid"] longLongValue];
+    [[TGAccountSwitcher instance] routeNotificationPayload:info completion:^(bool routed)
+    {
+        if (routed)
+            TGIOS6OpenNotificationPeer(peerId);
+    }];
 }
 
 - (void)application:(UIApplication *)__unused application didReceiveRemoteNotification:(NSDictionary *)userInfo
@@ -6311,7 +7207,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             bool globalMessagePreviewText = true;
             int globalMessageMuteUntil = 0;
             bool notFound = false;
-            [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 1 soundId:&globalMessageSoundIdVal muteUntil:&globalMessageMuteUntilVal previewText:&globalMessagePreviewTextVal messagesMuted:NULL notFound:&notFound];
+            [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsPrivate soundId:&globalMessageSoundIdVal muteUntil:&globalMessageMuteUntilVal previewText:&globalMessagePreviewTextVal messagesMuted:NULL notFound:&notFound];
             if (notFound) {
                 globalMessageSoundId = 1;
                 globalMessagePreviewText = true;
@@ -6330,7 +7226,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             bool globalGroupPreviewText = true;
             int globalGroupMuteUntil = 0;
             notFound = false;
-            [TGDatabaseInstance() loadPeerNotificationSettings:INT_MAX - 2 soundId:&globalGroupSoundIdVal muteUntil:&globalGroupMuteUntilVal previewText:&globalGroupPreviewTextVal messagesMuted:NULL notFound:&notFound];
+            [TGDatabaseInstance() loadPeerNotificationSettings:TGPeerIdNotificationDefaultsGroup soundId:&globalGroupSoundIdVal muteUntil:&globalGroupMuteUntilVal previewText:&globalGroupPreviewTextVal messagesMuted:NULL notFound:&notFound];
             if (notFound) {
                 globalGroupSoundId = 1;
                 globalGroupPreviewText = true;
@@ -6343,7 +7239,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             NSString *alert = aps[@"alert"];
             int32_t timestamp = (int32_t)[[NSDate date] timeIntervalSince1970];
             
-            int uid = [TGTelegraphInstance createServiceUserIfNeeded];
+            int64_t uid = [TGTelegraphInstance createServiceUserIfNeeded];
             int32_t uniqueId = [dict[@"announcement"] intValue];
             
             [TGDatabaseInstance() loadMessagesFromConversation:uid maxMid:INT32_MAX maxDate:INT32_MAX maxLocalMid:INT32_MAX atMessageId:0 limit:20 extraUnread:false completion:^(NSArray *messages, __unused bool historyExistsBelow) {
@@ -6386,13 +7282,13 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                         
                         int64_t notificationPeerId = 0;
                         
-                        if (message.cid <= INT_MIN)
+                        if (TGPeerIdIsSecretChat(message.cid))
                         {
                             notificationPeerId = [TGDatabaseInstance() encryptedParticipantIdForConversationId:message.cid];
                         }
                         else if (message.cid > 0)
                         {
-                            user = [TGDatabaseInstance() loadUser:(int)message.cid];
+                            user = [TGDatabaseInstance() loadUser:message.cid];
                             notificationPeerId = message.cid;
                         }
                         else
@@ -6401,7 +7297,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                 notificationPeerId = message.fromUid;
                             else
                                 notificationPeerId = message.cid;
-                            user = [TGDatabaseInstance() loadUser:(int)message.fromUid];
+                            user = [TGDatabaseInstance() loadUser:message.fromUid];
                             TGConversation *conversation = [TGDatabaseInstance() loadConversationWithIdCached:message.cid];
                             if (conversation != nil)
                                 chatName = conversation.chatTitle;
@@ -6428,7 +7324,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                         if (soundId > 0)
                             OGPlatformSetLocalNotificationSoundName(localNotification, [[NSString alloc] initWithFormat:@"%d.m4a", soundId]);
                         
-                        if (message.cid <= INT_MIN)
+                        if (TGPeerIdIsSecretChat(message.cid))
                         {
                             text = [[NSString alloc] initWithFormat:TGLocalized(@"ENCRYPTED_MESSAGE"), @""];
                         }
@@ -6464,7 +7360,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                                 OGPlatformSetLocalNotificationCategory(localNotification, @"m");
                             else if (TGPeerIdIsChannel(message.cid))
                                 OGPlatformSetLocalNotificationCategory(localNotification, @"c");
-                            else if (message.cid > INT_MIN)
+                            else if (!TGPeerIdIsSecretChat(message.cid))
                                 OGPlatformSetLocalNotificationCategory(localNotification, @"r");
                         }
                         
@@ -6599,7 +7495,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     return UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPhone ? UIInterfaceOrientationMaskAllButUpsideDown : UIInterfaceOrientationMaskAll;
 }
 
-- (void)reloadSettingsController:(int)uid
+- (void)reloadSettingsController:(int64_t)uid
 {
     TGAccountSettingsController *accountSettingsController = [[TGAccountSettingsController alloc] initWithUid:uid];
     NSArray *currentViewControllers = _rootController.mainTabsController.viewControllers;
@@ -6628,15 +7524,33 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
 
 - (BOOL)application:(UIApplication *)__unused application openURL:(NSURL *)url sourceApplication:(NSString *)__unused sourceApplication annotation:(id)__unused annotation
 {
-    [self handleOpenDocument:url animated:false keepStack:false bundleId:sourceApplication];
+    [self handleExternalURL:url bundleId:sourceApplication];
     
     return true;
 }
 
 - (BOOL)application:(UIApplication *)__unused application openURL:(NSURL *)url options:(NSDictionary *)__unused options {
-    [self handleOpenDocument:url animated:false keepStack:false bundleId:options[UIApplicationOpenURLOptionsSourceApplicationKey]];
+    [self handleExternalURL:url bundleId:options[UIApplicationOpenURLOptionsSourceApplicationKey]];
     
     return true;
+}
+
+- (void)handleExternalURL:(NSURL *)url bundleId:(NSString *)bundleId
+{
+#if OG_PLUGINS_AVAILABLE
+    [TGPluginHost resolveLink:url completion:^(NSURL *resolved)
+    {
+        if (resolved == nil)
+            return;
+        if (resolved.isFileURL && [TGPluginsController isPluginArchivePath:resolved.path fileName:nil])
+            [TGPluginsController presentInstallPromptForPath:resolved.path fileName:nil];
+        else
+            [self handleOpenDocument:resolved animated:false keepStack:false bundleId:bundleId];
+        [TGPluginHost completeLink:resolved];
+    }];
+#else
+    [self handleOpenDocument:url animated:false keepStack:false bundleId:bundleId];
+#endif
 }
 
 - (void)resetControllerStack
@@ -6807,7 +7721,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             }
             else if ([url.host isEqualToString:@"msg"])
             {
-                std::map<int, int> phoneIdToUid;
+                std::map<int, int64_t> phoneIdToUid;
                 [TGDatabaseInstance() loadRemoteContactUidsContactIds:phoneIdToUid];
                 
                 if ([dict[@"to"] respondsToSelector:@selector(characterAtIndex:)] && [(NSString *)dict[@"to"] length] != 0)
@@ -6861,7 +7775,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             }
             else if (isPassport)
             {
-                int32_t botId = [dict[@"bot_id"] respondsToSelector:@selector(intValue)] ? [dict[@"bot_id"] intValue] : 0;
+                int64_t botId = [dict[@"bot_id"] respondsToSelector:@selector(longLongValue)] ? [dict[@"bot_id"] longLongValue] : 0;
                 NSString *scope = [dict[@"scope"] respondsToSelector:@selector(characterAtIndex:)] ? dict[@"scope"] : nil;
                 
                 NSString *callbackUrl = dict[@"callback_url"];
@@ -6930,7 +7844,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                          {
                              NSString *url = nil;
                              if ([callbackUrl hasPrefix:@"tgbot"]) {
-                                 url = [NSString stringWithFormat:@"tgbot%d://passport/error?error=%@", botId, error];
+                                 url = [NSString stringWithFormat:@"tgbot%lld://passport/error?error=%@", botId, error];
                              } else {
                                  url = [TGPassportRequestController urlString:callbackUrl byAppendingQueryString:[NSString stringWithFormat:@"tg_passport=error&error=%@", error]];
                              }
@@ -7083,6 +7997,11 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
                     [self previewStickerPackWithReference:packReference];
                 }
             }
+            else if ([url.host isEqualToString:@"addtheme"])
+            {
+                if ([dict[@"slug"] respondsToSelector:@selector(characterAtIndex:)])
+                    [TGCloudThemePreviewController presentThemeWithSignal:[TGCloudTheme themeWithSlug:dict[@"slug"]]];
+            }
             else if ([url.host isEqualToString:@"msg_url"])
             {
                 if ([dict[@"url"] respondsToSelector:@selector(characterAtIndex:)]) {
@@ -7191,7 +8110,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
             {
                 if ([dict[@"id"] respondsToSelector:@selector(characterAtIndex:)])
                 {
-                    NSInteger uid = [dict[@"id"] integerValue];
+                    int64_t uid = [dict[@"id"] longLongValue];
                     [[TGInterfaceManager instance] navigateToConversationWithId:uid conversation:nil performActions:nil animated:false];
                 }
             }
@@ -7349,14 +8268,14 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     if ([userActivity.activityType isEqualToString:@"NSUserActivityTypeBrowsingWeb"]) {
         [application openURL:userActivity.webpageURL];
     } else if ([userActivity.activityType isEqualToString:@"dev.IllyaGIF.Onegram.conversation"]) {
-        if ([userActivity.userInfo[@"user_id"] intValue] == TGTelegraphInstance.clientUserId)
+        if ([userActivity.userInfo[@"user_id"] longLongValue] == TGTelegraphInstance.clientUserId)
         {
             int64_t peerId = 0;
             
             if ([userActivity.userInfo[@"peer"][@"type"] isEqual:@"user"])
-                peerId = [userActivity.userInfo[@"peer"][@"id"] intValue];
+                peerId = [userActivity.userInfo[@"peer"][@"id"] longLongValue];
             else if ([userActivity.userInfo[@"peer"][@"type"] isEqual:@"group"])
-                peerId = -[userActivity.userInfo[@"peer"][@"id"] intValue];
+                peerId = TGPeerIdFromGroupId([userActivity.userInfo[@"peer"][@"id"] longLongValue]);
             
             if (peerId != 0)
             {
@@ -7698,7 +8617,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     [TGDatabaseInstance() loadPeerNotificationSettings:peerId soundId:NULL muteUntil:&muteUntil previewText:NULL messagesMuted:NULL notFound:NULL];
     
     int muteTime = (int)duration * 60 * 60;
-    muteUntil = @(MAX(muteUntil.intValue, (int)[[TGTelegramNetworking instance] approximateRemoteTime] + muteTime));
+    muteUntil = @(MAX(muteUntil.intValue, (int)OGRemoteClockTime() + muteTime));
     
     static int actionId = 0;
     
@@ -7752,6 +8671,8 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         }
     }
 }
+
+#endif
 
 - (bool)isManuallyLocked
 {
@@ -8058,8 +8979,6 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     _currentStartGame = shortName;
 }
 
-#endif
-
 - (void)setupShortcutItems
 {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
@@ -8306,7 +9225,7 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     else if ([action isEqualToString:@"willForwardMessages"])
     {
         if (_currentInviteBot != nil) {
-            int32_t uid = _currentInviteBot.uid;
+            int64_t uid = _currentInviteBot.uid;
             NSString *payload = _currentInviteBotPayload;
             _currentInviteBot = nil;
             _currentInviteBotPayload = nil;
@@ -8349,6 +9268,12 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
         return;
     }
 
+    if ([self usesPushKitNotifications])
+    {
+        [self requestDeviceToken:nil];
+        return;
+    }
+
     if (_pushToken != nil) {
         NSString *token = [[_pushToken description] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"<>"]];
         token = [token stringByReplacingOccurrencesOfString:@" " withString:@""];
@@ -8381,6 +9306,15 @@ static unsigned int overrideIndexAbove(__unused id self, __unused SEL _cmd)
     }
     else
     {
+        if (_pushRegistry != nil)
+            _pushRegistry.desiredPushTypes = [NSSet set];
+        NSString *voipToken = _pushVoipToken ?: [[NSUserDefaults standardUserDefaults] stringForKey:@"Onegram.PushKit.VoIPToken"];
+        if (voipToken.length != 0)
+        {
+            [[TGAccountSignals unregisterDeviceToken:voipToken voip:true] startWithNext:nil];
+            _pushVoipToken = nil;
+            [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"Onegram.PushKit.VoIPToken"];
+        }
         NSString *token = nil;
         if (_pushToken != nil)
         {

@@ -14,6 +14,7 @@
 @class TGUser;
 @class TGMessage;
 @class TGModernTemporaryView;
+@class TGModernConversationPreparedLayout;
 
 @class TGModernConversationTitlePanel;
 
@@ -62,6 +63,7 @@ typedef enum {
 - (TGMessage *)latestVisibleMessage;
 - (NSArray *)visibleMessageIds;
 - (NSArray *)_currentItems;
+- (void)setPreparedConversationLayout:(TGModernConversationPreparedLayout *)preparedLayout;
 - (void)replaceItems:(NSArray *)newItems messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection;
 - (void)replaceItems:(NSArray *)newItems positionAtMessageId:(int32_t)positionAtMessageId peerId:(int64_t)positionAtPeerId expandAt:(int32_t)expandMessageId jump:(bool)jump top:(bool)top messageIdForVisibleHoleDirection:(int32_t)messageIdForVisibleHoleDirection scrollBackMessageId:(int32_t)scrollBackMessageId animated:(bool)animated;
 - (void)replaceItemsWithFastScroll:(NSArray *)newItems intent:(TGModernConversationInsertItemIntent)intent scrollToMessageId:(int32_t)scrollToMessageId peerId:(int64_t)scrollToPeerId scrollBackMessageId:(int32_t)scrollBackMessageId animated:(bool)animated;
@@ -91,6 +93,8 @@ typedef enum {
 - (void)openLocationFromMessage:(TGMessage *)message previewMode:(bool)previewMode zoomToFitAll:(bool)zoomToFitAll;
 - (void)showActionsMenuForUnsentMessage:(int32_t)messageId edit:(bool)edit;
 - (void)highlightAndShowActionsMenuForMessage:(int32_t)messageId peerId:(int64_t)peerId groupedId:(int64_t)groupedId;
+- (void)handleSingleTapForMessage:(int32_t)messageId peerId:(int64_t)peerId groupedId:(int64_t)groupedId;
+- (void)handleDoubleTapForMessage:(int32_t)messageId peerId:(int64_t)peerId groupedId:(int64_t)groupedId;
 - (void)temporaryHighlightMessage:(int32_t)messageId automatically:(bool)automatically;
 - (void)temporaryHighlightMessage:(int32_t)messageId grouped:(bool)grouped automatically:(bool)automatically;
 - (void)showActionsMenuForLink:(NSString *)url webPage:(TGWebPageMediaAttachment *)webPage;

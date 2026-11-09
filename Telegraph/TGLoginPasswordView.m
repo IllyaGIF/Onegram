@@ -59,6 +59,8 @@
         _passwordField.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
         _passwordField.placeholder = TGLocalized(@"LoginPassword.PasswordPlaceholder");
         _passwordField.secureTextEntry = true;
+        _passwordField.autocorrectionType = UITextAutocorrectionTypeNo;
+        _passwordField.autocapitalizationType = UITextAutocapitalizationTypeNone;
         _passwordField.delegate = self;
         [self addSubview:_passwordField];
         

@@ -27,7 +27,7 @@
 {
     for (NSArray *record in usersLinks)
     {
-        int uid = [[record objectAtIndex:0] intValue];
+        int64_t uid = [[record objectAtIndex:0] longLongValue];
         int userLink = [[record objectAtIndex:1] intValue];
         
         if ([TGDatabaseInstance() loadUserLink:uid outdated:NULL] != userLink)
@@ -88,7 +88,7 @@
                     {
                         [[TGSynchronizeContactsManager instance] scheduleContactPhoneAddition:user.uid];
                         static int actionId = 0;
-                        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%dappend,appendPhone)", actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithInt:user.uid], @"uid", user.phoneNumber, @"phoneNumber", @(phonebookContact.nativeId), @"nativeId", nil] watcher:TGTelegraphInstance];
+                        [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/synchronizeContacts/(%dappend,appendPhone)", actionId++] options:[NSDictionary dictionaryWithObjectsAndKeys:[[NSNumber alloc] initWithLongLong:user.uid], @"uid", user.phoneNumber, @"phoneNumber", @(phonebookContact.nativeId), @"nativeId", nil] watcher:TGTelegraphInstance];
                     }
                 }
                 
@@ -104,8 +104,6 @@
                     updatedUser.phonebookLastName = originalUser.phonebookLastName;
                     updatedUser.isPremium = originalUser.isPremium;
                     updatedUser.emojiStatusDocumentId = originalUser.emojiStatusDocumentId;
-                    if (updatedUser.modernUserId == 0)
-                        updatedUser.modernUserId = originalUser.modernUserId;
                     if (updatedUser.nameColorId < 0)
                         updatedUser.nameColorId = originalUser.nameColorId;
                 }
@@ -155,8 +153,8 @@
     else
     {
         NSString *userIdString = [self.path substringWithRange:NSMakeRange(11, self.path.length - 11 - 1)];
-        int uid = [userIdString intValue];
-        if (![[NSString stringWithFormat:@"%d", uid] isEqualToString:userIdString])
+        int64_t uid = [userIdString longLongValue];
+        if (![[NSString stringWithFormat:@"%lld", uid] isEqualToString:userIdString])
         {
             [ActionStageInstance() nodeRetrieveFailed:self.path];
             return;
@@ -178,8 +176,8 @@
     [TGUserDataRequestBuilder executeUserDataUpdate:users];
     
     NSString *userIdString = [self.path substringWithRange:NSMakeRange(11, self.path.length - 11 - 1)];
-    int uid = [userIdString intValue];
-    if (![[NSString stringWithFormat:@"%d", uid] isEqualToString:userIdString])
+    int64_t uid = [userIdString longLongValue];
+    if (![[NSString stringWithFormat:@"%lld", uid] isEqualToString:userIdString])
     {
         [ActionStageInstance() nodeRetrieveFailed:self.path];
         return;

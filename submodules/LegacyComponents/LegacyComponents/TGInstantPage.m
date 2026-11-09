@@ -534,10 +534,15 @@
 @implementation TGInstantPageBlockList
 
 - (instancetype)initWithOrdered:(bool)ordered items:(NSArray *)items {
+    return [self initWithOrdered:ordered items:items indices:nil];
+}
+
+- (instancetype)initWithOrdered:(bool)ordered items:(NSArray *)items indices:(NSArray *)indices {
     self = [super init];
     if (self != nil) {
         _ordered = ordered;
         _items = items;
+        _indices = indices;
     }
     return self;
 }
@@ -547,6 +552,7 @@
     if (self != nil) {
         _ordered = [aDecoder decodeBoolForKey:@"ord"];
         _items = [aDecoder decodeObjectForKey:@"items"];
+        _indices = [aDecoder decodeObjectForKey:@"indices"];
     }
     return self;
 }
@@ -554,6 +560,7 @@
 - (void)encodeWithCoder:(NSCoder *)aCoder {
     [aCoder encodeBool:_ordered forKey:@"ord"];
     [aCoder encodeObject:_items forKey:@"items"];
+    [aCoder encodeObject:_indices forKey:@"indices"];
 }
 
 @end

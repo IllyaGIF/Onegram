@@ -66,7 +66,7 @@ def ensure_ios_runtime(toolchain, theos, versions, recipe):
         if data.get('signature') == signature and data.get('binary') == hashlib.sha256(output.read_bytes()).hexdigest():
             return
     tools = toolchain / 'bin'
-    architectures = {'3.1.3': ('armv6', '3.1.3'), '6.1': ('armv7', '4.3'), '11.2': ('arm64', '7.0')}
+    architectures = {'3.1.3': ('armv6', '3.0'), '6.1': ('armv7', '4.3'), '11.2': ('arm64', '7.0')}
     print('[Onegram setup] Preparing native iOS compiler runtime', flush=True)
     slices = []
     log = root / 'build.log'

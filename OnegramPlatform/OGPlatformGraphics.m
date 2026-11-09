@@ -1,5 +1,7 @@
 #import "OGPlatformGraphics.h"
+#import "OGPlatformDispatch.h"
 #import "OGPlatformVersion.h"
+#import "OGMemoryCache.h"
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
 #import <ImageIO/ImageIO.h>
 #endif
@@ -7,6 +9,44 @@
 #include <float.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/sysctl.h>
+
+@interface OGPlatformImageDecodeTicket : NSObject
+
+@property (nonatomic) NSInteger priority;
+
+@end
+
+@implementation OGPlatformImageDecodeTicket
+@end
+
+static volatile int32_t OGPlatformImageActiveDecodes = 0;
+
+static OGMemoryCache *OGPlatformGraphicsCache(void)
+{
+    static OGMemoryCache *cache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        cache = [[OGMemoryCache alloc] initWithCountLimit:64 costLimit:0];
+    });
+    return cache;
+}
+
+uint64_t OGPlatformActiveImageDecodes(void)
+{
+    return (uint64_t)__sync_add_and_fetch(&OGPlatformImageActiveDecodes, 0);
+}
+
+uint64_t OGPlatformCachedGraphicsBytes(void)
+{
+    return [OGPlatformGraphicsCache() totalCost];
+}
+
+void OGPlatformTrimGraphicsCacheToCost(NSUInteger bytes)
+{
+    [OGPlatformGraphicsCache() trimToCost:bytes];
+}
 
 @interface OGPlatformLegacyShadowView : UIView
 {
@@ -57,13 +97,7 @@ static void OGPlatformColorComponents(UIColor *color, CGFloat components[4]);
     OGPlatformColorComponents(_shadowColor, components);
     NSString *key = [[NSString alloc] initWithFormat:@"%.2f:%.2f:%.1f:%.3f:%.3f:%.3f:%.3f:%.3f:%.2f:%.2f:%.2f:%.2f", size.width, size.height, scale, components[0], components[1], components[2], components[3], _shadowOpacity, _shadowRadius, _shadowOffset.width, _shadowOffset.height, _cornerRadius];
 
-    static NSCache *cache = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^
-    {
-        cache = [[NSCache alloc] init];
-        cache.countLimit = 64;
-    });
+    OGMemoryCache *cache = OGPlatformGraphicsCache();
     UIImage *image = [cache objectForKey:key];
     if (image == nil)
     {
@@ -90,7 +124,11 @@ static void OGPlatformColorComponents(UIColor *color, CGFloat components[4]);
         }
         UIGraphicsEndImageContext();
         if (image != nil)
-            [cache setObject:image forKey:key];
+        {
+            CGImageRef bitmap = image.CGImage;
+            NSUInteger cost = bitmap == NULL ? 0 : CGImageGetBytesPerRow(bitmap) * CGImageGetHeight(bitmap);
+            [cache setObject:image forKey:key cost:cost];
+        }
     }
 
     SEL contentsScaleSelector = NSSelectorFromString(@"setContentsScale:");
@@ -337,6 +375,48 @@ void OGPlatformAddRoundedRectPath(CGContextRef context, CGRect rect, CGFloat rad
     CGContextClosePath(context);
 }
 
+UIImage *OGPlatformRenderImage(CGSize size, CGFloat scale, BOOL opaque, void (^drawing)(CGContextRef context))
+{
+    if (drawing == nil || size.width <= 0.0f || size.height <= 0.0f)
+        return nil;
+    if (scale <= 0.0f)
+        scale = OGPlatformScreenScale();
+    size_t width = (size_t)ceilf(size.width * scale);
+    size_t height = (size_t)ceilf(size.height * scale);
+    if (width == 0 || height == 0 || width > (SIZE_MAX - 15) / 4)
+        return nil;
+    size_t bytesPerRow = (width * 4 + 15) & ~(size_t)15;
+    if (height > SIZE_MAX / bytesPerRow)
+        return nil;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(NULL, width, height, 8, bytesPerRow, colorSpace, (opaque ? kCGImageAlphaNoneSkipFirst : kCGImageAlphaPremultipliedFirst) | kCGBitmapByteOrder32Host);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+        return nil;
+    CGContextTranslateCTM(context, 0.0f, (CGFloat)height);
+    CGContextScaleCTM(context, scale, -scale);
+    drawing(context);
+    CGImageRef image = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    if (image == NULL)
+        return nil;
+    UIImage *result = [UIImage imageWithCGImage:image scale:scale orientation:UIImageOrientationUp];
+    CGImageRelease(image);
+    return result;
+}
+
+void OGPlatformDrawImageInRect(CGContextRef context, UIImage *image, CGRect rect)
+{
+    CGImageRef cgImage = image.CGImage;
+    if (context == NULL || cgImage == NULL || CGRectIsEmpty(rect))
+        return;
+    CGContextSaveGState(context);
+    CGContextTranslateCTM(context, rect.origin.x, CGRectGetMaxY(rect));
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextDrawImage(context, CGRectMake(0.0f, 0.0f, rect.size.width, rect.size.height), cgImage);
+    CGContextRestoreGState(context);
+}
+
 UIImage *OGPlatformImageFromData(NSData *data)
 {
     if (data == nil || [data length] == 0)
@@ -346,14 +426,80 @@ UIImage *OGPlatformImageFromData(NSData *data)
 
 CGSize OGPlatformImagePixelSizeFromData(NSData *data)
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    if (data.length != 0)
+    {
+        NSDictionary *options = @{(__bridge id)kCGImageSourceShouldCache: @false};
+        CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, (__bridge CFDictionaryRef)options);
+        if (source != NULL)
+        {
+            NSDictionary *properties = CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, NULL));
+            CFRelease(source);
+            CGFloat width = [properties[(__bridge id)kCGImagePropertyPixelWidth] doubleValue];
+            CGFloat height = [properties[(__bridge id)kCGImagePropertyPixelHeight] doubleValue];
+            if (width > 0.0f && height > 0.0f)
+                return CGSizeMake(width, height);
+        }
+    }
+#endif
     UIImage *image = OGPlatformImageFromData(data);
     if (image == nil || image.CGImage == NULL)
         return CGSizeZero;
     return CGSizeMake((CGFloat)CGImageGetWidth(image.CGImage), (CGFloat)CGImageGetHeight(image.CGImage));
 }
 
-UIImage *OGPlatformThumbnailFromImageData(NSData *data, CGSize maximumSize)
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+static UIImage *OGPlatformCreateImageSourceThumbnail(CGImageSourceRef source, CGSize maximumSize)
 {
+    if (source != NULL && maximumSize.width > 0.0f && maximumSize.height > 0.0f)
+    {
+        NSDictionary *properties = CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, NULL));
+        CGFloat width = [properties[(__bridge id)kCGImagePropertyPixelWidth] doubleValue];
+        CGFloat height = [properties[(__bridge id)kCGImagePropertyPixelHeight] doubleValue];
+        NSInteger orientation = [properties[(__bridge id)kCGImagePropertyOrientation] integerValue];
+        if (orientation >= 5 && orientation <= 8)
+        {
+            CGFloat swap = width;
+            width = height;
+            height = swap;
+        }
+        if (width <= 0.0f || height <= 0.0f)
+            return nil;
+        CGFloat factor = MIN(1.0f, MIN(maximumSize.width / width, maximumSize.height / height));
+        size_t maximumPixels = MAX((size_t)1, (size_t)ceil(MAX(width, height) * factor));
+        NSDictionary *options = @{
+            (__bridge id)kCGImageSourceCreateThumbnailFromImageAlways: @true,
+            (__bridge id)kCGImageSourceCreateThumbnailWithTransform: @true,
+            (__bridge id)kCGImageSourceThumbnailMaxPixelSize: @(maximumPixels)
+        };
+        CGImageRef thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
+        if (thumbnail != NULL)
+        {
+            UIImage *result = [UIImage imageWithCGImage:thumbnail];
+            CGImageRelease(thumbnail);
+            return result;
+        }
+    }
+    return nil;
+}
+#endif
+
+static UIImage *OGPlatformCreateDecodedImage(NSData *data, CGSize maximumSize)
+{
+    if (data.length == 0)
+        return nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    if (maximumSize.width > 0.0f && maximumSize.height > 0.0f)
+    {
+        NSDictionary *sourceOptions = @{(__bridge id)kCGImageSourceShouldCache: @false};
+        CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, (__bridge CFDictionaryRef)sourceOptions);
+        UIImage *thumbnail = OGPlatformCreateImageSourceThumbnail(source, maximumSize);
+        if (source != NULL)
+            CFRelease(source);
+        if (thumbnail != nil)
+            return thumbnail;
+    }
+#endif
     UIImage *image = OGPlatformImageFromData(data);
     if (image == nil || maximumSize.width <= 0.0f || maximumSize.height <= 0.0f)
         return image;
@@ -373,55 +519,136 @@ UIImage *OGPlatformThumbnailFromImageData(NSData *data, CGSize maximumSize)
     return result != nil ? result : image;
 }
 
+UIImage *OGPlatformDecodeImageWithBlock(UIImage *(^decode)(void), CGSize maximumPixelSize, NSInteger priority, bool (^isCancelled)(void))
+{
+    if (decode == nil || (isCancelled != nil && isCancelled()))
+        return nil;
+    if ([NSThread isMainThread])
+    {
+        __sync_add_and_fetch(&OGPlatformImageActiveDecodes, 1);
+        @try
+        {
+            return decode();
+        }
+        @finally
+        {
+            __sync_sub_and_fetch(&OGPlatformImageActiveDecodes, 1);
+        }
+    }
+    static NSCondition *condition = nil;
+    static NSMutableArray *waiting = nil;
+    static NSUInteger active = 0;
+    static NSUInteger limit = 1;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        condition = [[NSCondition alloc] init];
+        waiting = [[NSMutableArray alloc] init];
+        int cores = 1;
+        size_t size = sizeof(cores);
+        if (sysctlbyname("hw.ncpu", &cores, &size, NULL, 0) != 0 || cores < 1)
+            cores = 1;
+        limit = cores > 2 ? 2 : 1;
+    });
+    OGPlatformImageDecodeTicket *ticket = [[OGPlatformImageDecodeTicket alloc] init];
+    ticket.priority = priority;
+    [condition lock];
+    [waiting addObject:ticket];
+    bool admitted = false;
+    while (!admitted)
+    {
+        if (isCancelled != nil && isCancelled())
+        {
+            [waiting removeObjectIdenticalTo:ticket];
+            NSUInteger queued = waiting.count;
+            NSUInteger concurrent = active;
+            [condition broadcast];
+            [condition unlock];
+            OGPlatformDiagnosticLog(@"IMAGEDECODE state=cancelled active=%lu queued=%lu", (unsigned long)concurrent, (unsigned long)queued);
+            return nil;
+        }
+        OGPlatformImageDecodeTicket *selected = nil;
+        for (OGPlatformImageDecodeTicket *candidate in waiting)
+        {
+            if (selected == nil || candidate.priority > selected.priority)
+                selected = candidate;
+        }
+        if (active < limit && selected == ticket)
+        {
+            [waiting removeObjectIdenticalTo:ticket];
+            active++;
+            __sync_add_and_fetch(&OGPlatformImageActiveDecodes, 1);
+            admitted = true;
+        }
+        else
+            [condition waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    NSUInteger queued = waiting.count;
+    NSUInteger concurrent = active;
+    [condition unlock];
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    OGPlatformDiagnosticLog(@"IMAGEDECODE state=start active=%lu queued=%lu target_px=%.0f priority=%ld", (unsigned long)concurrent, (unsigned long)queued, MAX(maximumPixelSize.width, maximumPixelSize.height), (long)priority);
+    UIImage *image = nil;
+    @try
+    {
+        if (isCancelled == nil || !isCancelled())
+            image = decode();
+    }
+    @finally
+    {
+        [condition lock];
+        active--;
+        __sync_sub_and_fetch(&OGPlatformImageActiveDecodes, 1);
+        concurrent = active;
+        queued = waiting.count;
+        [condition broadcast];
+        [condition unlock];
+    }
+    bool cancelled = isCancelled != nil && isCancelled();
+    if (cancelled)
+        image = nil;
+    CGSize output = image.CGImage == NULL ? CGSizeZero : CGSizeMake(CGImageGetWidth(image.CGImage), CGImageGetHeight(image.CGImage));
+    OGPlatformDiagnosticLog(@"IMAGEDECODE state=finish active=%lu queued=%lu decode_ms=%.1f output_px=%.0fx%.0f cancelled=%d success=%d", (unsigned long)concurrent, (unsigned long)queued, (CFAbsoluteTimeGetCurrent() - started) * 1000.0, output.width, output.height, cancelled, image != nil);
+    return image;
+}
+
+UIImage *OGPlatformDecodeImageData(NSData *data, CGSize maximumPixelSize, NSInteger priority, bool (^isCancelled)(void))
+{
+    if (data.length == 0)
+        return nil;
+    return OGPlatformDecodeImageWithBlock(^UIImage *
+    {
+        return OGPlatformCreateDecodedImage(data, maximumPixelSize);
+    }, maximumPixelSize, priority, isCancelled);
+}
+
+UIImage *OGPlatformThumbnailFromImageData(NSData *data, CGSize maximumSize)
+{
+    return OGPlatformDecodeImageData(data, maximumSize, 1, nil);
+}
+
 UIImage *OGPlatformThumbnailFromImageFile(NSString *path, size_t maximumPixelSize)
 {
     if (path.length == 0)
         return nil;
-
+    CGSize size = maximumPixelSize == 0 ? CGSizeZero : CGSizeMake(maximumPixelSize, maximumPixelSize);
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-    if (maximumPixelSize != 0)
+    return OGPlatformDecodeImageWithBlock(^UIImage *
     {
-        CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], NULL);
+        NSURL *url = [NSURL fileURLWithPath:path];
+        NSDictionary *options = @{(__bridge id)kCGImageSourceShouldCache: @false};
+        CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)url, (__bridge CFDictionaryRef)options);
+        UIImage *thumbnail = OGPlatformCreateImageSourceThumbnail(source, size);
         if (source != NULL)
-        {
-            NSDictionary *options = @{
-                (__bridge id)kCGImageSourceCreateThumbnailFromImageAlways: @true,
-                (__bridge id)kCGImageSourceCreateThumbnailWithTransform: @true,
-                (__bridge id)kCGImageSourceThumbnailMaxPixelSize: @(maximumPixelSize)
-            };
-            CGImageRef thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, (__bridge CFDictionaryRef)options);
             CFRelease(source);
-            if (thumbnail != NULL)
-            {
-                UIImage *thumbnailImage = [UIImage imageWithCGImage:thumbnail];
-                CGImageRelease(thumbnail);
-                return thumbnailImage;
-            }
-        }
-    }
-#endif
-
-    UIImage *image = [UIImage imageWithContentsOfFile:path];
-    if (image == nil || image.CGImage == NULL || maximumPixelSize == 0)
-        return image;
-
-    size_t sourceWidth = CGImageGetWidth(image.CGImage);
-    size_t sourceHeight = CGImageGetHeight(image.CGImage);
-    size_t sourceMaximum = MAX(sourceWidth, sourceHeight);
-    if (sourceMaximum <= maximumPixelSize)
-        return image;
-
-    CGFloat scale = (CGFloat)maximumPixelSize / (CGFloat)sourceMaximum;
-    CGSize targetSize = CGSizeMake(MAX(1.0f, floorf((CGFloat)sourceWidth * scale)), MAX(1.0f, floorf((CGFloat)sourceHeight * scale)));
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
-    UIGraphicsBeginImageContextWithOptions(targetSize, NO, 1.0f);
+        if (thumbnail != nil)
+            return thumbnail;
+        return OGPlatformCreateDecodedImage([NSData dataWithContentsOfFile:path], size);
+    }, size, 1, nil);
 #else
-    UIGraphicsBeginImageContext(targetSize);
+    NSData *data = [NSData dataWithContentsOfFile:path];
+    return OGPlatformDecodeImageData(data, size, 1, nil);
 #endif
-    [image drawInRect:CGRectMake(0.0f, 0.0f, targetSize.width, targetSize.height)];
-    UIImage *result = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
-    return result != nil ? result : image;
 }
 
 NSData *OGPlatformJPEGRepresentation(UIImage *image, CGFloat quality)

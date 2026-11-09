@@ -48,7 +48,7 @@
         int64_t peerId = [peerIdValue longLongValue];
         if (TGPeerIdIsUser(peerId))
         {
-            TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+            TGUser *user = [TGDatabaseInstance() loadUser:peerId];
             if (user != nil)
                 [repliers addObject:[[TGMessageCommentsFooterReplier alloc] initWithPeerId:peerId isUser:true avatarUrl:user.photoFullUrlSmall firstName:user.firstName lastName:user.lastName]];
         }

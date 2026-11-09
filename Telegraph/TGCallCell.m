@@ -409,7 +409,7 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
     }
     else
     {
-        [_avatarView loadUserPlaceholderWithSize:CGSizeMake(diameter, diameter) uid:(int32_t)peer.uid firstName:peer.firstName lastName:peer.lastName placeholder:placeholder];
+        [_avatarView loadUserPlaceholderWithSize:CGSizeMake(diameter, diameter) uid:peer.uid firstName:peer.firstName lastName:peer.lastName placeholder:placeholder];
     }
 
     if ([TGPresentation brandedIOS6Style])
@@ -605,7 +605,7 @@ static UIImage *TGCallCellBrandedIOS6InfoIcon(void)
 
 - (NSString *)identifier
 {
-    return [NSString stringWithFormat:@"%d_%d", _peer.uid, self.message.mid];
+    return [NSString stringWithFormat:@"%lld_%d", _peer.uid, self.message.mid];
 }
 
 - (TGMessage *)message

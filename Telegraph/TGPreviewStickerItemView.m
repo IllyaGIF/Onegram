@@ -5,12 +5,14 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGStickerAssociation.h"
 
 #import "TGMessageImageView.h"
+#import "TGAnimatedStickerView.h"
 
 @interface TGPreviewStickerItemView ()
 {
     CGSize _imageSize;
     
     TGMessageImageView *_imageView;
+    TGAnimatedStickerView *_animatedView;
 }
 @end
 
@@ -31,6 +33,9 @@
                 isSticker = true;
         }
         
+        bool animatedSticker = [TGAnimatedStickerView isAnimatedStickerDocument:document];
+        if (animatedSticker && (imageSize.width < 1.0f || imageSize.height < 1.0f))
+            imageSize = CGSizeMake(512.0f, 512.0f);
         CGSize displaySize = [self displaySizeForSize:imageSize];
         _imageSize = displaySize;
         
@@ -61,7 +66,15 @@
         
         _imageView.frame = CGRectMake(0, 0, displaySize.width, displaySize.height);
         
-        [_imageView loadUri:imageUri withOptions:@{}];
+        if (animatedSticker)
+        {
+            _imageView.hidden = true;
+            _animatedView = [[TGAnimatedStickerView alloc] initWithFrame:_imageView.frame];
+            [self addSubview:_animatedView];
+            [_animatedView setDocument:document placeholderUri:[TGAnimatedStickerView placeholderUriForDocument:document size:displaySize]];
+        }
+        else
+            [_imageView loadUri:imageUri withOptions:@{}];
     }
     return self;
 }
@@ -90,6 +103,7 @@
 - (void)layoutSubviews
 {
     _imageView.frame = CGRectMake(CGFloor((self.frame.size.width - _imageView.frame.size.width) / 2.0f), CGFloor((self.frame.size.height - _imageView.frame.size.height) / 2.0f), _imageView.frame.size.width, _imageView.frame.size.height);
+    _animatedView.frame = _imageView.frame;
 }
 
 @end

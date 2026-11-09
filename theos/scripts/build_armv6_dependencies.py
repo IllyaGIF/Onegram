@@ -467,7 +467,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
     cc_wrapper = wrappers / 'armv6-cc'
     cxx_wrapper = wrappers / 'armv6-cxx'
-    target_flags = driver_tool_flags + ['-target', 'armv6-apple-ios3.1.3', '-arch', 'armv6', '-miphoneos-version-min=3.1.3', '-isysroot', str(args.sdk)]
+    target_flags = driver_tool_flags + ['-target', 'armv6-apple-ios3.0', '-arch', 'armv6', '-miphoneos-version-min=3.0', '-isysroot', str(args.sdk)]
     ccache = shutil.which('ccache')
     cc_driver = ccache or clang
     cxx_driver = ccache or clangxx
@@ -505,8 +505,6 @@ def main():
     arclite_stamp = objects / '.onegram-armv6-arclite.signature'
     arclite_sources = (compat / 'OnegramBlocksRuntimeClasses.m', compat / 'OnegramARCRuntime.m', compat / 'OnegramIOS3Compatibility.m')
     arclite_compile_flags = ['-DONEGRAM_LINKER_BLOCK_ALIASES=1']
-    if os.environ.get('ONEGRAM_DIAGNOSTICS') == '1':
-        arclite_compile_flags.append('-DONEGRAM_DIAGNOSTICS=1')
     arclite_signature = build_signature(
         'arclite',
         values=common_signature_values + (tuple(arclite_compile_flags),),
@@ -554,12 +552,12 @@ def main():
     resource_include.symlink_to(resource_source / 'include')
     resource_lib.mkdir(parents=True, exist_ok=True)
     shutil.copy2(compiler_rt, resource_lib / 'libclang_rt.ios.a')
-    crt_source = args.sdk / 'usr/lib/crt1.3.1.o'
+    crt_source = args.sdk / 'usr/lib/crt1.o'
     if not crt_source.is_file():
-        raise SystemExit('Missing iOS 3.1 CRT: ' + str(crt_source))
-    crt_armv6 = products / 'crt1.3.1-armv6.o'
+        raise SystemExit('Missing iOS 3.0 CRT: ' + str(crt_source))
+    crt_armv6 = products / 'crt1-armv6.o'
     crt_stamp = objects / '.onegram-armv6-crt.signature'
-    crt_signature = build_signature('crt1.3.1', values=common_signature_values, paths=(crt_source,))
+    crt_signature = build_signature('crt1', values=common_signature_values, paths=(crt_source,))
     if not cache_valid(crt_stamp, crt_signature, (crt_armv6,)):
         extract_armv6_slice(crt_source, crt_armv6, lipo)
         cache_store(crt_stamp, crt_signature)
@@ -948,21 +946,24 @@ _dispatch_continuation_free(dispatch_continuation_t dc)
 		_dispatch_worker_thread2(context);
 """
         worker_priority_function = """
+static const int _dispatch_worker_thread_fixed_priority = 18;
+
 static void
-_dispatch_worker_thread_apply_priority(dispatch_queue_t dq)
+_dispatch_worker_thread_apply_priority(dispatch_queue_t dq DISPATCH_UNUSED)
 {
-	thread_precedence_policy_data_t policy;
-	switch (dq - _dispatch_root_queues) {
-	case DISPATCH_ROOT_QUEUE_IDX_HIGH_PRIORITY:
-	case DISPATCH_ROOT_QUEUE_IDX_HIGH_OVERCOMMIT_PRIORITY:
-		policy.importance = 4;
-		break;
-	default:
-		return;
+	pthread_t thread = pthread_self();
+	int policy = 0;
+	struct sched_param param;
+	if (pthread_getschedparam(thread, &policy, &param) == 0) {
+		param.sched_priority = _dispatch_worker_thread_fixed_priority;
+		(void)dispatch_assume_zero(pthread_setschedparam(thread, policy,
+				&param));
 	}
+	thread_extended_policy_data_t extended;
+	extended.timeshare = FALSE;
 	(void)dispatch_assume_zero(thread_policy_set(
-			pthread_mach_thread_np(pthread_self()), THREAD_PRECEDENCE_POLICY,
-			(thread_policy_t)&policy, THREAD_PRECEDENCE_POLICY_COUNT));
+			pthread_mach_thread_np(thread), THREAD_EXTENDED_POLICY,
+			(thread_policy_t)&extended, THREAD_EXTENDED_POLICY_COUNT));
 }
 
 // 6618342 Contact the team that owns the Instrument DTrace probe before
@@ -983,6 +984,51 @@ _dispatch_worker_thread(void *context)
             queue_text = queue_text.replace(worker_thread_declaration, worker_priority_function, 1)
             if '#include <mach/thread_policy.h>' not in queue_text:
                 queue_text = '#include <mach/thread_policy.h>\n' + queue_text
+
+        target_queue_original = """	if (slowpath(!dq)) {
+		bool is_concurrent_q = (type == _DISPATCH_QUEUE_TYPE &&
+				slowpath(dou._dq->dq_width > 1));
+		dq = _dispatch_get_root_queue(0, !is_concurrent_q);
+	}
+	// TODO: put into the vtable
+"""
+        target_queue_serial_overcommit = """	if (slowpath(!dq)) {
+		bool is_concurrent_q = (type == _DISPATCH_QUEUE_TYPE &&
+				slowpath(dou._dq->dq_width > 1));
+		dq = _dispatch_get_root_queue(0, !is_concurrent_q);
+	} else if (type == _DISPATCH_QUEUE_TYPE || type == _DISPATCH_SOURCE_TYPE) {
+		bool is_concurrent_q = (type == _DISPATCH_QUEUE_TYPE &&
+				dou._dq->dq_width > 1);
+		uintptr_t first = (uintptr_t)&_dispatch_root_queues[0];
+		uintptr_t end = (uintptr_t)&_dispatch_root_queues[DISPATCH_ROOT_QUEUE_COUNT];
+		uintptr_t target = (uintptr_t)dq;
+		if (!is_concurrent_q && target >= first && target < end) {
+			size_t index = (target - first) / sizeof(struct dispatch_queue_s);
+			dq = &_dispatch_root_queues[index | 1];
+		}
+	}
+	// TODO: put into the vtable
+"""
+        if target_queue_serial_overcommit not in queue_text:
+            if target_queue_original not in queue_text:
+                raise SystemExit('libdispatch set target queue code changed unexpectedly')
+            queue_text = queue_text.replace(target_queue_original, target_queue_serial_overcommit, 1)
+
+        worker_idle_original = """	do {
+		_dispatch_worker_thread2(context);
+		// we use 65 seconds in case there are any timers that run once a minute
+	} while (dispatch_semaphore_wait(qc->dgq_thread_mediator,
+			dispatch_time(0, 65ull * NSEC_PER_SEC)) == 0);
+"""
+        worker_idle_reclaimed = """	do {
+		_dispatch_worker_thread2(context);
+	} while (dispatch_semaphore_wait(qc->dgq_thread_mediator,
+			dispatch_time(0, 10ull * NSEC_PER_SEC)) == 0);
+"""
+        if worker_idle_reclaimed not in queue_text:
+            if worker_idle_original not in queue_text:
+                raise SystemExit('libdispatch worker idle wait changed unexpectedly')
+            queue_text = queue_text.replace(worker_idle_original, worker_idle_reclaimed, 1)
 
         queue.write_text(queue_text)
 

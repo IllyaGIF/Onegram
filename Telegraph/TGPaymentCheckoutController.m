@@ -50,6 +50,7 @@
 #import "TGShareSheetTitleItemView.h"
 
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 static const NSTimeInterval passwordSaveDurationGeneric = 1.0 * 60.0 * 60.0;
 static const NSTimeInterval passwordSaveDurationTouchId = 5.0 * 60.0 * 60.0;
@@ -132,7 +133,7 @@ static bool isNativeApplePayProvider(NSString *provider) {
 - (instancetype)initWithMessage:(TGMessage *)message {
     self = [super init];
     if (self != nil) {
-        _bot = [TGDatabaseInstance() loadUser:(int32_t)message.fromUid];
+        _bot = [TGDatabaseInstance() loadUser:message.fromUid];
         
         bool isTest = false;
 
@@ -675,7 +676,7 @@ static bool isNativeApplePayProvider(NSString *provider) {
                 currentStoredPassword = [NSKeyedUnarchiver unarchiveObjectWithData:currentStoredPasswordData];
             }
             
-            int32_t timestamp = (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+            int32_t timestamp = (int32_t)OGRemoteClockTime();
             if (currentStoredPassword != nil && timestamp < currentStoredPassword.validUntil - 10) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 80000
                 if ([TGPasscodeSettingsController supportsBiometrics:NULL]) {

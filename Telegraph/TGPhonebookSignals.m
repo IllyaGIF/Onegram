@@ -1,14 +1,11 @@
 #import "TGPhonebookSignals.h"
 
 #import <AddressBook/AddressBook.h>
-#if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000
-typedef void (^ABAddressBookRequestAccessCompletionHandler)(bool granted, CFErrorRef error);
-#endif
 #import <libkern/OSAtomic.h>
 
 #import "TGPhonebookRecord.h"
 
-#import <dlfcn.h>
+#import "../OnegramPlatform/OGPlatformAddressBook.h"
 
 static NSMutableDictionary *addressBookChangeBlockById()
 {
@@ -42,35 +39,6 @@ static void TGAddressBook_Changed(__unused ABAddressBookRef addressBook, __unuse
 
 @end
 
-static void TGAddressBookRequestAccessCompat(ABAddressBookRef addressBook, ABAddressBookRequestAccessCompletionHandler completion)
-{
-    typedef void (*ABRequestAccessFunc)(
-                                        ABAddressBookRef,
-                                        ABAddressBookRequestAccessCompletionHandler
-                                        );
-    
-    ABRequestAccessFunc func =
-    (ABRequestAccessFunc)dlsym(RTLD_DEFAULT, "ABAddressBookRequestAccessWithCompletion");
-    
-    if (func != NULL)
-        func(addressBook, completion);
-    else if (completion != nil)
-        completion(true, NULL);
-}
-
-static ABAddressBookRef TGAddressBookCreateCompat(CFErrorRef *error)
-{
-    typedef ABAddressBookRef (*ABCreateWithOptionsFunc)(CFDictionaryRef, CFErrorRef *);
-    
-    ABCreateWithOptionsFunc func =
-    (ABCreateWithOptionsFunc)dlsym(RTLD_DEFAULT, "ABAddressBookCreateWithOptions");
-    
-    if (func != NULL)
-        return func(NULL, error);
-    
-    return ABAddressBookCreate();
-}
-
 @implementation TGAddressBook
 
 - (instancetype)init
@@ -78,7 +46,7 @@ static ABAddressBookRef TGAddressBookCreateCompat(CFErrorRef *error)
     self = [super init];
     if (self != nil)
     {
-        _addressBook = TGAddressBookCreateCompat(NULL);
+        _addressBook = OGPlatformAddressBookCreate(NULL);
         
         __weak TGAddressBook *weakSelf = self;
         static int32_t nextChangeKey = 0;
@@ -100,7 +68,7 @@ static ABAddressBookRef TGAddressBookCreateCompat(CFErrorRef *error)
 
 - (void)requestAccess:(void (^)(bool))completion
 {
-    TGAddressBookRequestAccessCompat(_addressBook, ^(bool granted, __unused CFErrorRef error)
+    OGPlatformAddressBookRequestAccess(_addressBook, ^(bool granted, __unused CFErrorRef error)
     {
         if (completion)
             completion(granted);

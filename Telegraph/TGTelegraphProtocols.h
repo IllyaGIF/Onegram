@@ -36,20 +36,6 @@
 
 @end
 
-@protocol TGFileDownloadActor <NSObject>
-
-- (void)fileDownloadSuccess:(int64_t)volumeId fileId:(int)fileId secret:(int64_t)secret data:(NSData *)data;
-- (void)fileDownloadFailed:(int64_t)volumeId fileId:(int)fileId secret:(int64_t)secret;
-- (void)fileDownloadProgress:(int64_t)volumeId fileId:(int)fileId secret:(int64_t)secret progress:(float)progress;
-
-@optional
-
-- (void)filePartDownloadProgress:(TLInputFileLocation *)location offset:(int)offset length:(int)length packetLength:(int)packetLength progress:(float)progress;
-- (void)filePartDownloadSuccess:(TLInputFileLocation *)location offset:(int)offset length:(int)length data:(NSData *)data;
-- (void)filePartDownloadFailed:(TLInputFileLocation *)location offset:(int)offset length:(int)length;
-
-@end
-
 @protocol TGPeerSettingsActorProtocol <NSObject>
 
 - (void)peerNotifySettingsRequestSuccess:(TLPeerNotifySettings *)settings;

@@ -16,6 +16,21 @@ static NSString *modernPhotoUrl(TLPhoto$photo *photo, TLPhotoSize$photoSize *siz
     return [[NSString alloc] initWithFormat:@"photo:%d:%lld:%lld:%d:%@:%@", photo.dc_id, photo.n_id, photo.access_hash, size.size, thumbSize, fileReference];
 }
 
+static void TGCacheEmbeddedPhotoSize(NSData *data, NSString *url)
+{
+    if (data.length == 0 || url.length == 0)
+        return;
+    dispatch_async([TGCache diskCacheQueue], ^
+    {
+        TGCache *cache = [TGRemoteImageView sharedCache];
+        if (![[cache cachedDataForUrl:url] isEqualToData:data])
+        {
+            [cache removeFromMemoryCache:url matchEnd:false];
+            [cache cacheImage:nil withData:data url:url availability:TGCacheDisk];
+        }
+    });
+}
+
 NSString *extractFileUrl(id fileLocation)
 {
     if ([fileLocation isKindOfClass:[TLFileLocation$fileLocation class]])
@@ -75,26 +90,27 @@ NSString *extractFileUrl(id fileLocation)
 {
     NSString *selected = nil;
     CGSize selectedSize = CGSizeZero;
-    CGFloat bestDistance = CGFLOAT_MAX;
+    CGFloat targetSide = MIN(1024.0f, MAX(320.0f, 320.0f * TGScreenScaling()));
+    CGFloat selectedSide = 0.0f;
     NSDictionary *sizes = [self allSizes];
     for (NSString *uri in sizes)
     {
         if ([uri hasPrefix:@"photo:"] || [uri hasPrefix:@"documentthumb:"])
         {
             NSArray *parts = [uri componentsSeparatedByString:@":"];
-            if (parts.count < 7 || [parts[5] length] == 0 || [parts[4] longLongValue] > 512 * 1024)
+            if (parts.count < 7 || [parts[5] length] == 0 || [parts[5] isEqualToString:@"i"] || [parts[4] longLongValue] > 512 * 1024)
                 continue;
         }
         CGSize candidate = [sizes[uri] CGSizeValue];
         CGFloat side = MAX(candidate.width, candidate.height);
-        if (!(candidate.width > 0.0f && candidate.height > 0.0f && side <= 640.0f) || [self fileSizeForUrl:uri] > 512 * 1024)
+        if (!(candidate.width > 0.0f && candidate.height > 0.0f && side <= 4096.0f) || [self fileSizeForUrl:uri] > 512 * 1024)
             continue;
-        CGFloat distance = ABS(side - 320.0f);
-        if (distance < bestDistance)
+        if (selected == nil || (selectedSide < targetSide && side > selectedSide) ||
+            (side >= targetSide && side < selectedSide))
         {
             selected = uri;
             selectedSize = candidate;
-            bestDistance = distance;
+            selectedSide = side;
         }
     }
     if (size != NULL)
@@ -155,28 +171,7 @@ NSString *extractFileUrl(id fileLocation)
                     if (cachedData != NULL)
                        *cachedData = imageData;
                     else
-                    {
-                        if (url != nil)
-                        {
-                            [[TGRemoteImageView sharedCache] diskCacheContains:url orUrl:nil completion:^(bool containsFirst, __unused bool containsSecond)
-                            {
-                                if (!containsFirst)
-                                {
-                                    if (TGEnableBlur() && cpuCoreCount() > 1)
-                                    {
-                                        NSData *data = nil;
-                                        TGScaleAndBlurImage(imageData, CGSizeZero, &data);
-                                        if (data != nil)
-                                            [[TGRemoteImageView sharedCache] cacheImage:nil withData:data url:url availability:TGCacheDisk];
-                                        else
-                                            [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                    }
-                                    else
-                                        [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                }
-                            }];
-                        }
-                    }
+                        TGCacheEmbeddedPhotoSize(imageData, url);
                 }
             }
         }
@@ -252,28 +247,7 @@ NSString *extractFileUrl(id fileLocation)
                     if (cachedData != NULL)
                    *cachedData = imageData;
                     else
-                    {
-                        if (url != nil)
-                        {
-                            [[TGRemoteImageView sharedCache] diskCacheContains:url orUrl:nil completion:^(bool containsFirst, __unused bool containsSecond)
-                             {
-                                 if (!containsFirst)
-                                 {
-                                     if (TGEnableBlur() && cpuCoreCount() > 1)
-                                     {
-                                         NSData *data = nil;
-                                         TGScaleAndBlurImage(imageData, CGSizeZero, &data);
-                                         if (data != nil)
-                                         [[TGRemoteImageView sharedCache] cacheImage:nil withData:data url:url availability:TGCacheDisk];
-                                         else
-                                         [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                     }
-                                     else
-                                     [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                 }
-                             }];
-                        }
-                    }
+                        TGCacheEmbeddedPhotoSize(imageData, url);
                 }
             }
         }
@@ -308,28 +282,7 @@ NSString *extractFileUrl(id fileLocation)
                     if (cachedData != NULL)
                        *cachedData = imageData;
                     else
-                    {
-                        if (url != nil)
-                        {
-                            [[TGRemoteImageView sharedCache] diskCacheContains:url orUrl:nil completion:^(bool containsFirst, __unused bool containsSecond)
-                             {
-                                 if (!containsFirst)
-                                 {
-                                     if (TGEnableBlur() && cpuCoreCount() > 1)
-                                     {
-                                         NSData *data = nil;
-                                         TGScaleAndBlurImage(imageData, CGSizeZero, &data);
-                                         if (data != nil)
-                                             [[TGRemoteImageView sharedCache] cacheImage:nil withData:data url:url availability:TGCacheDisk];
-                                         else
-                                             [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                     }
-                                     else
-                                         [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                 }
-                             }];
-                        }
-                    }
+                        TGCacheEmbeddedPhotoSize(imageData, url);
                 }
             }
         }
@@ -364,28 +317,7 @@ NSString *extractFileUrl(id fileLocation)
                     if (cachedData != NULL)
                        *cachedData = imageData;
                     else
-                    {
-                        if (url != nil)
-                        {
-                            [[TGRemoteImageView sharedCache] diskCacheContains:url orUrl:nil completion:^(bool containsFirst, __unused bool containsSecond)
-                             {
-                                 if (!containsFirst)
-                                 {
-                                     if (TGEnableBlur() && cpuCoreCount() > 1)
-                                     {
-                                         NSData *data = nil;
-                                         TGScaleAndBlurImage(imageData, CGSizeZero, &data);
-                                         if (data != nil)
-                                             [[TGRemoteImageView sharedCache] cacheImage:nil withData:data url:url availability:TGCacheDisk];
-                                         else
-                                             [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                     }
-                                     else
-                                         [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                 }
-                             }];
-                        }
-                    }
+                        TGCacheEmbeddedPhotoSize(imageData, url);
                 }
             }
         }
@@ -420,28 +352,7 @@ NSString *extractFileUrl(id fileLocation)
                     if (cachedData != NULL)
                        *cachedData = imageData;
                     else
-                    {
-                        if (url != nil)
-                        {
-                            [[TGRemoteImageView sharedCache] diskCacheContains:url orUrl:nil completion:^(bool containsFirst, __unused bool containsSecond)
-                             {
-                                 if (!containsFirst)
-                                 {
-                                     if (TGEnableBlur() && cpuCoreCount() > 1)
-                                     {
-                                         NSData *data = nil;
-                                         TGScaleAndBlurImage(imageData, CGSizeZero, &data);
-                                         if (data != nil)
-                                             [[TGRemoteImageView sharedCache] cacheImage:nil withData:data url:url availability:TGCacheDisk];
-                                         else
-                                             [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                     }
-                                     else
-                                         [[TGRemoteImageView sharedCache] cacheImage:nil withData:imageData url:url availability:TGCacheDisk];
-                                 }
-                             }];
-                        }
-                    }
+                        TGCacheEmbeddedPhotoSize(imageData, url);
                 }
             }
         }

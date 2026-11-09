@@ -10,6 +10,7 @@
 
 #import "TGVariantCollectionItemView.h"
 #import "TGPresentation.h"
+#import "TGCollectionItemDescription.h"
 
 @interface TGVariantCollectionItem ()
 
@@ -42,7 +43,9 @@
 
 - (CGSize)itemSizeForContainerSize:(CGSize)containerSize
 {
-    return CGSizeMake(containerSize.width, [TGPresentation brandedIOS6Style] && _brandedSettingsStyle ? 35.0f : 44.0f);
+    if ([TGPresentation brandedIOS6Style] && _brandedSettingsStyle)
+        return CGSizeMake(containerSize.width, 35.0f);
+    return CGSizeMake(containerSize.width, TGCollectionItemVariantHeightWithDescription(_descriptionText, containerSize.width));
 }
 
 - (void)bindView:(TGCollectionItemView *)view
@@ -52,6 +55,7 @@
     [((TGVariantCollectionItemView *)view) setTitle:_title];
     [((TGVariantCollectionItemView *)view) setTitleColor:_titleColor];
     [((TGVariantCollectionItemView *)view) setVariant:_variant variantColor:_variantColor];
+    [((TGVariantCollectionItemView *)view) setDescriptionText:_descriptionText];
     [((TGVariantCollectionItemView *)view) setIcon:_icon];
     [((TGVariantCollectionItemView *)view) setVariantIcon:_variantIcon];
     [((TGVariantCollectionItemView *)view) setEnabled:_enabled];
@@ -59,6 +63,15 @@
     [((TGVariantCollectionItemView *)view) setMinLeftPadding:_minLeftPadding];
     [((TGVariantCollectionItemView *)view) setFlexibleLayout:_flexibleLayout];
     [((TGVariantCollectionItemView *)view) setBrandedSettingsStyle:_brandedSettingsStyle iconName:_brandedSettingsIconName];
+}
+
+- (void)setDescriptionText:(NSString *)descriptionText
+{
+    if (!TGStringCompare(_descriptionText, descriptionText))
+    {
+        _descriptionText = descriptionText;
+        [((TGVariantCollectionItemView *)[self boundView]) setDescriptionText:_descriptionText];
+    }
 }
 
 - (void)itemSelected:(id)actionTarget

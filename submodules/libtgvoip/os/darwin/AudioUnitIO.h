@@ -27,6 +27,7 @@ public:
 	void DetachOutput();
 	void EnableInput(bool enabled);
 	void EnableOutput(bool enabled);
+	void Stop();
 	bool IsFailed();
 	uint32_t GetConfiguredSampleRate(){ return configuredSampleRate; }
 	void GetStreamSampleRates(double* inputRate, double* outputRate);

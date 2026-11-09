@@ -23,9 +23,7 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
 @interface TGRemoteImageView ()
 {
     NSUInteger _loadGeneration;
-#if defined(ONEGRAM_DIAGNOSTICS)
     CFAbsoluteTime _avatarRequestedAt;
-#endif
     int _peerPhotoRetryCount;
     NSString *_peerPhotoRetryUrl;
     UIImage *_peerPhotoRetryPlaceholder;
@@ -38,7 +36,6 @@ static NSString *TGStrippedPlaceholderCacheUrl(NSString *url)
 
 @end
 
-#if defined(ONEGRAM_DIAGNOSTICS)
 static NSUInteger TGRemoteAvatarMemoryHits = 0;
 static NSUInteger TGRemoteAvatarColdLoads = 0;
 static NSUInteger TGRemoteAvatarCancelledLoads = 0;
@@ -59,7 +56,6 @@ static void TGRemoteAvatarReportStatistics(void)
     TGRemoteAvatarVisibleDuration = 0.0;
     TGRemoteAvatarMaximumVisibleDuration = 0.0;
 }
-#endif
 
 @implementation TGRemoteImageView
 
@@ -288,6 +284,11 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
     return _placeholderView.image;
 }
 
+- (void (^)(UIImage *))displayImagePrewarm
+{
+    return nil;
+}
+
 - (void)tryFillCache:(NSMutableDictionary *)dict
 {
     if (_currentUrl == nil)
@@ -343,8 +344,7 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
     NSString *cacheUrl = [TGRemoteImageView cacheKeyForUrl:url filter:filter];
     self.currentCacheUrl = cacheUrl;
     UIImage *image = [cache cachedImage:cacheUrl availability:TGCacheMemory];
-#if defined(ONEGRAM_DIAGNOSTICS)
-    if ([cache isRenderedAvatarKey:cacheUrl])
+    if (OGDiagnosticsEnabled() && [cache isRenderedAvatarKey:cacheUrl])
     {
         if (image != nil)
         {
@@ -354,7 +354,6 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
         else
             _avatarRequestedAt = CFAbsoluteTimeGetCurrent();
     }
-#endif
 
 #if defined(ONEGRAM_ARMV6)
     bool onegramPeerPhoto = [url hasPrefix:@"peerphoto:"];
@@ -414,9 +413,7 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
     
     if (image != nil)
     {
-#if defined(ONEGRAM_DIAGNOSTICS)
         [self recordAvatarReady];
-#endif
         if (_contentHints & TGRemoteImageContentHintSaveToGallery)
         {
             [ActionStageInstance() requestActor:[[NSString alloc] initWithFormat:@"/tg/checkImageStored/(%lu)", (unsigned long)[url hash]] options:[[NSDictionary alloc] initWithObjectsAndKeys:url, @"url", nil] watcher:self];
@@ -509,9 +506,12 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
             NSString *actorPath = self.path;
             NSUInteger generation = _loadGeneration;
             CFAbsoluteTime requestTime = CFAbsoluteTimeGetCurrent();
+            void (^prewarm)(UIImage *) = [self displayImagePrewarm];
             __weak TGRemoteImageView *weakSelf = self;
             [cache loadRenderedAvatar:cacheUrl completion:^(UIImage *renderedImage)
             {
+                if (renderedImage != nil && prewarm != nil)
+                    prewarm(renderedImage);
                 OGPlatformDispatchOnMainThread(^
                 {
                     __strong TGRemoteImageView *strongSelf = weakSelf;
@@ -535,7 +535,43 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
     }
 }
 
-#if defined(ONEGRAM_DIAGNOSTICS)
+- (void)loadCachedImage:(NSString *)url filter:(NSString *)filter placeholder:(UIImage *)placeholder
+{
+    TGCache *cache = _cache != nil ? _cache : [TGRemoteImageView sharedCache];
+    UIImage *image = [TGRemoteImageView imageFromCache:url filter:filter cache:cache];
+    [self loadImage:image != nil ? image : placeholder];
+    if (image != nil)
+    {
+        self.currentUrl = url;
+        self.currentFilter = filter;
+        return;
+    }
+
+    NSString *cacheUrl = [TGRemoteImageView cacheKeyForUrl:url filter:filter];
+    if (![cache isRenderedAvatarKey:cacheUrl])
+        return;
+
+    NSUInteger generation = _loadGeneration;
+    void (^prewarm)(UIImage *) = [self displayImagePrewarm];
+    __weak TGRemoteImageView *weakSelf = self;
+    [cache loadRenderedAvatar:cacheUrl completion:^(UIImage *renderedImage)
+    {
+        if (renderedImage == nil)
+            return;
+        if (prewarm != nil)
+            prewarm(renderedImage);
+        OGPlatformDispatchOnMainThread(^
+        {
+            __strong TGRemoteImageView *strongSelf = weakSelf;
+            if (strongSelf == nil || strongSelf->_loadGeneration != generation)
+                return;
+            strongSelf.currentUrl = url;
+            strongSelf.currentFilter = filter;
+            [strongSelf applyLoadedImage:renderedImage animated:false];
+        });
+    }];
+}
+
 - (void)recordAvatarReady
 {
     if (_avatarRequestedAt == 0.0)
@@ -547,14 +583,11 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
     TGRemoteAvatarMaximumVisibleDuration = MAX(TGRemoteAvatarMaximumVisibleDuration, duration);
     TGRemoteAvatarReportStatistics();
 }
-#endif
 
 - (void)applyLoadedImage:(UIImage *)image animated:(bool)animated
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     if (image != nil)
         [self recordAvatarReady];
-#endif
     self.image = image;
     
     if (_placeholderView != nil)
@@ -588,13 +621,11 @@ static NSUInteger TGRemoteImageLegacyLocationPrefixLength(NSString *url)
 
 - (void)cancelLoading
 {
-#if defined(ONEGRAM_DIAGNOSTICS)
     if (_avatarRequestedAt != 0.0)
     {
         _avatarRequestedAt = 0.0;
         TGRemoteAvatarCancelledLoads++;
     }
-#endif
     _loadGeneration++;
     if (self.path != nil)
     {

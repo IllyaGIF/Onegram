@@ -4,10 +4,7 @@
 #import "TGNetworkWorker.h"
 #import "TGCommon.h"
 
-#import "MultipartFetch.h"
-#import "TelegramMediaResources.h"
-
-#import "MediaBoxContexts.h"
+#import "OGMediaFetchSession.h"
 
 @implementation TGRemoteFileDataEvent
 
@@ -39,45 +36,6 @@
 
 @implementation TGRemoteFileSignal
 
-+ (SSignal *)partsForLocation:(TLInputFileLocation *)location datacenterId:(NSInteger)datacenterId size:(NSUInteger)size mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
-{
-    if (datacenterId <= 0) {
-        return [SSignal fail:nil];
-    }
-
-    TLRPCupload_getFile$upload_getFile *getFile = [[TLRPCupload_getFile$upload_getFile alloc] init];
-    getFile.location = location;
-    getFile.offset = 0;
-    
-    int32_t updatedLimit = (int32_t)size;
-    if (updatedLimit == 0) {
-        updatedLimit = 1 * 1024 * 1024;
-    }
-    while (updatedLimit % 4096 != 0 || 1048576 % updatedLimit != 0) {
-        updatedLimit++;
-    }
-    
-    getFile.limit = updatedLimit;
-    
-    return [[[TGTelegramNetworking instance] downloadWorkerForDatacenterId:datacenterId type:mediaTypeTag] mapToSignal:^SSignal *(TGNetworkWorkerGuard *worker)
-    {
-        return [[[TGTelegramNetworking instance] requestSignal:getFile worker:worker] map:^id (id next)
-        {
-            if ([next isKindOfClass:[TLupload_File class]])
-            {
-                TLupload_File *part = next;
-                if ([part isKindOfClass:[TLupload_File$upload_file class]]) {
-                    return [[TGRemoteFileDataEvent alloc] initWithData:((TLupload_File$upload_file *)part).bytes];
-                } else {
-                    return [[TGRemoteFileDataEvent alloc] initWithData:[NSData data]];
-                }
-            }
-            else
-                return [[TGRemoteFileProgressEvent alloc] initWithProgress:[next floatValue]];
-        }];
-    }];
-}
-
 + (SSignal *)partsForWebLocation:(TLInputWebFileLocation *)location datacenterId:(NSInteger)datacenterId size:(NSUInteger)size mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
     if (datacenterId <= 0) {
@@ -106,93 +64,20 @@
 
 + (SSignal *)multipartDownload:(TLInputFileLocation *)location datacenterId:(NSInteger)datacenterId originInfo:(TGMediaOriginInfo *)originInfo identifier:(int64_t)identifier size:(NSUInteger)size mediaTypeTag:(TGNetworkMediaTypeTag)mediaTypeTag
 {
-    if (datacenterId <= 0) {
+    if (datacenterId <= 0 || location == nil) {
         return [SSignal fail:nil];
     }
 
-    id resource = nil;
-    if ([location isKindOfClass:[TLInputFileLocation$inputFileLocation class]]) {
-        TLInputFileLocation$inputFileLocation *concreteLocation = (TLInputFileLocation$inputFileLocation *)location;
-        resource = [[CloudFileMediaResource alloc] initWithDatacenterId:(int32_t)datacenterId volumeId:concreteLocation.volume_id localId:concreteLocation.local_id secret:concreteLocation.secret size:size == 0 ? nil : @(size) legacyCacheUrl:nil legacyCachePath:nil mediaType:@(mediaTypeTag) originInfo:originInfo identifier:identifier];
-    } else if ([location isKindOfClass:[TLInputFileLocation$inputPhotoFileLocation class]]) {
-        TLInputFileLocation$inputPhotoFileLocation *concreteLocation = (TLInputFileLocation$inputPhotoFileLocation *)location;
-        resource = [[CloudPhotoMediaResource alloc] initWithDatacenterId:(int32_t)datacenterId fileId:concreteLocation.n_id accessHash:concreteLocation.access_hash fileReference:concreteLocation.file_reference thumbSize:concreteLocation.thumb_size size:size == 0 ? nil : @(size) mediaType:@(mediaTypeTag) originInfo:originInfo identifier:identifier];
-    } else if ([location isKindOfClass:[TLInputFileLocation$inputDocumentFileLocation class]]) {
-        TLInputFileLocation$inputDocumentFileLocation *concreteLocation = (TLInputFileLocation$inputDocumentFileLocation *)location;
-        resource = [[CloudDocumentMediaResource alloc] initWithDatacenterId:(int32_t)datacenterId fileId:concreteLocation.n_id accessHash:concreteLocation.access_hash fileReference:concreteLocation.file_reference thumbSize:concreteLocation.thumb_size size:size == 0 ? nil : @(size) mediaType:@(mediaTypeTag) originInfo:originInfo identifier:identifier];
-    } else if ([location isKindOfClass:[TLInputFileLocation$inputSecureFileLocation class]]) {
-        TLInputFileLocation$inputSecureFileLocation *concreteLocation = (TLInputFileLocation$inputSecureFileLocation *)location;
-        resource = [[CloudSecureMediaResource alloc] initWithDatacenterId:(int32_t)datacenterId fileId:concreteLocation.n_id accessHash:concreteLocation.access_hash size:size == 0 ? nil : @(size) fileHash:nil thumbnail:false mediaType:@(mediaTypeTag)];
-    }
-    
-    if (resource != nil) {
-        return [multipartFetch(resource, size == 0 ? nil : @(size), NSMakeRange(0, INT32_MAX), mediaTypeTag) map:^id(MediaResourceDataFetchResult *next) {
-            return [[TGRemoteFileDataEvent alloc] initWithData:next.data];
-        }];
-    }
-    
-    NSUInteger partSize = 0;
-    if (size >= 2 * 1024 * 1024)
-        partSize = 512 * 1024;
-    else
-        partSize = 16 * 1024;
-    
-    NSUInteger numberOfParts = size / partSize + (size % partSize == 0 ? 0 : 1);
-    
-    SSignal *downloadSignal = [[[TGTelegramNetworking instance] downloadWorkerForDatacenterId:datacenterId type:mediaTypeTag] mapToSignal:^SSignal *(TGNetworkWorkerGuard *worker) {
-        SSignal *parts = [SSignal complete];
-        for (NSUInteger index = 0; index < numberOfParts; index++) {
-            TLRPCupload_getFile$upload_getFile *getFile = [[TLRPCupload_getFile$upload_getFile alloc] init];
-            getFile.location = location;
-            getFile.offset = (int32_t)(index * partSize);
-            
-            int32_t updatedLimit = (int32_t)partSize;
-            while (updatedLimit % 4096 != 0 || 1048576 % updatedLimit != 0) {
-                updatedLimit++;
-            }
-            getFile.limit = updatedLimit;
-            
-            SSignal *part = [[[TGTelegramNetworking instance] requestSignal:getFile worker:worker] map:^id (id next) {
-                if ([next isKindOfClass:[TLupload_File class]]) {
-                    TLupload_File *part = next;
-                    if ([part isKindOfClass:[TLupload_File$upload_file class]]) {
-                        return [[TGRemoteFileDataEvent alloc] initWithData:((TLupload_File$upload_file *)part).bytes];
-                    } else {
-                        return [[TGRemoteFileDataEvent alloc] initWithData:[NSData data]];
-                    }
-                } else {
-                    float baseProgress = (float)(index * partSize) / (float)size;
-                    float partProgress = ([next floatValue] * partSize) / size;
-                    return [[TGRemoteFileProgressEvent alloc] initWithProgress:MIN(1.0f, baseProgress + partProgress)];
-                }
-            }];
-            
-            parts = [parts then:part];
-        }
-        
-        return parts;
-    }];
-    
-    return [[SSignal alloc] initWithGenerator:^id<SDisposable>(SSubscriber *subscriber) {
-        SAtomic *data = [[SAtomic alloc] initWithValue:[[NSMutableData alloc] init]];
-        return [downloadSignal startWithNext:^(id next) {
-            if ([next isKindOfClass:[TGRemoteFileProgressEvent class]]) {
-                [subscriber putNext:@(((TGRemoteFileProgressEvent *)next).progress)];
-            } else if ([next isKindOfClass:[TGRemoteFileDataEvent class]]) {
-                [data modify:^id(NSMutableData *data) {
-                    [data appendData:((TGRemoteFileDataEvent *)next).data];
-                    return data;
-                }];
-            }
-        } error:^(id error) {
-            [subscriber putError:error];
-        } completed:^{
-            NSData *result = [data with:^id(NSData *data) {
-                return data;
-            }];
-            [subscriber putNext:result];
-            [subscriber putCompletion];
-        }];
+    OGMediaFetchDescriptor *descriptor = [[OGMediaFetchDescriptor alloc] init];
+    descriptor.location = location;
+    descriptor.datacenterId = datacenterId;
+    descriptor.size = (int64_t)size;
+    descriptor.mediaTypeTag = mediaTypeTag;
+    descriptor.originInfo = originInfo;
+    descriptor.identifier = identifier;
+
+    return [OGMediaFetchSequentialSignal(descriptor, 0, INT64_MAX, nil) map:^id(NSData *data) {
+        return [[TGRemoteFileDataEvent alloc] initWithData:data];
     }];
 }
 

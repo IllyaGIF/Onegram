@@ -207,6 +207,11 @@
     }
 }
 
+- (bool)allowsStreaming
+{
+    return false;
+}
+
 - (bool)shouldLoopVideo:(NSUInteger)__unused currentLoopCount
 {
     _didLoop = true;

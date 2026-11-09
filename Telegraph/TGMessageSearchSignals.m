@@ -167,7 +167,7 @@
 
 + (TLInputPeer *)inputPeerWithPeerId:(int64_t)peerId {
     if (TGPeerIdIsUser(peerId)) {
-        TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)peerId];
+        TGUser *user = [TGDatabaseInstance() loadUser:peerId];
         if (user != nil) {
             TLInputPeer$inputPeerUser *inputPeerUser = [[TLInputPeer$inputPeerUser alloc] init];
             inputPeerUser.user_id = user.uid;

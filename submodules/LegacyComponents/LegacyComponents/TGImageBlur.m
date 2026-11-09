@@ -20,6 +20,58 @@ typedef struct
     size_t rowBytes;
 } TGImageBlurBuffer;
 
+static void TGImageBlurDrawImage(CGContextRef context, UIImage *image, CGRect rect, CGBlendMode blendMode, CGFloat alpha)
+{
+    CGImageRef cgImage = image.CGImage;
+    if (context == NULL || cgImage == NULL || CGRectIsEmpty(rect))
+        return;
+
+    CGFloat width = rect.size.width;
+    CGFloat height = rect.size.height;
+    UIImageOrientation orientation = image.imageOrientation;
+    CGAffineTransform transform = CGAffineTransformIdentity;
+    switch (orientation)
+    {
+        case UIImageOrientationDown:
+        case UIImageOrientationDownMirrored:
+            transform = CGAffineTransformRotate(CGAffineTransformTranslate(transform, width, height), (CGFloat)M_PI);
+            break;
+        case UIImageOrientationLeft:
+        case UIImageOrientationLeftMirrored:
+            transform = CGAffineTransformRotate(CGAffineTransformTranslate(transform, width, 0.0f), (CGFloat)M_PI_2);
+            break;
+        case UIImageOrientationRight:
+        case UIImageOrientationRightMirrored:
+            transform = CGAffineTransformRotate(CGAffineTransformTranslate(transform, 0.0f, height), (CGFloat)-M_PI_2);
+            break;
+        default:
+            break;
+    }
+    bool sideways = orientation == UIImageOrientationLeft || orientation == UIImageOrientationLeftMirrored || orientation == UIImageOrientationRight || orientation == UIImageOrientationRightMirrored;
+    switch (orientation)
+    {
+        case UIImageOrientationUpMirrored:
+        case UIImageOrientationDownMirrored:
+            transform = CGAffineTransformScale(CGAffineTransformTranslate(transform, width, 0.0f), -1.0f, 1.0f);
+            break;
+        case UIImageOrientationLeftMirrored:
+        case UIImageOrientationRightMirrored:
+            transform = CGAffineTransformScale(CGAffineTransformTranslate(transform, height, 0.0f), -1.0f, 1.0f);
+            break;
+        default:
+            break;
+    }
+
+    CGContextSaveGState(context);
+    CGContextSetBlendMode(context, blendMode);
+    CGContextSetAlpha(context, alpha);
+    CGContextTranslateCTM(context, rect.origin.x, CGRectGetMaxY(rect));
+    CGContextScaleCTM(context, 1.0f, -1.0f);
+    CGContextConcatCTM(context, transform);
+    CGContextDrawImage(context, sideways ? CGRectMake(0.0f, 0.0f, height, width) : CGRectMake(0.0f, 0.0f, width, height), cgImage);
+    CGContextRestoreGState(context);
+}
+
 #if defined(ONEGRAM_ARMV6)
 static void TGImageBoxConvolveARGB8888(const TGImageBlurBuffer *source, TGImageBlurBuffer *destination, NSUInteger kernelSize)
 {
@@ -527,39 +579,48 @@ typedef enum {
     TGAttachmentPositionBottom = 1 << 1,
     TGAttachmentPositionLeft = 1 << 2,
     TGAttachmentPositionRight = 1 << 3,
-    TGAttachmentPositionInside = 1 << 4,
-    TGAttachmentPositionSquareInnerCorners = 1 << 8
+    TGAttachmentPositionInside = 1 << 4
 } TGAttachmentPosition;
+
+typedef struct {
+    int topLeft;
+    int topRight;
+    int bottomLeft;
+    int bottomRight;
+} TGAttachmentCornerRadii;
+
+static TGAttachmentCornerRadii TGAttachmentRadiiForPosition(int smallRadius, int bigRadius, int position)
+{
+    bool squareTopCorners = (position & TGAttachmentSquareTopCorners) != 0;
+    if (position & TGAttachmentSquareInnerCorners)
+        smallRadius = 0;
+    position &= ~(TGAttachmentSquareInnerCorners | TGAttachmentSquareTopCorners);
+    TGAttachmentCornerRadii radii = {smallRadius, smallRadius, smallRadius, smallRadius};
+    if (position == TGAttachmentPositionNone)
+        radii.topLeft = radii.topRight = radii.bottomLeft = radii.bottomRight = bigRadius;
+    if (position & TGAttachmentPositionTop && position & TGAttachmentPositionLeft)
+        radii.topLeft = bigRadius;
+    if (position & TGAttachmentPositionTop && position & TGAttachmentPositionRight)
+        radii.topRight = bigRadius;
+    if (position & TGAttachmentPositionBottom && position & TGAttachmentPositionLeft)
+        radii.bottomLeft = bigRadius;
+    if (position & TGAttachmentPositionBottom && position & TGAttachmentPositionRight)
+        radii.bottomRight = bigRadius;
+    if (squareTopCorners)
+        radii.topLeft = radii.topRight = 0;
+    return radii;
+}
 
 static void addAttachmentImageCorners(void *memory, const unsigned int width, const unsigned int height, const unsigned int stride, int position, float fract)
 {
     const int scale = (int)TGScreenScaling();
-    const bool squareInnerCorners = (position & TGAttachmentPositionSquareInnerCorners) != 0;
-    position &= ~TGAttachmentPositionSquareInnerCorners;
-    
     const int shadowSize = 1;
     const int strokeWidth = scale;
-    const int smallRadius = squareInnerCorners ? 0 : floor(3 * scale * fract);
-    const int bigRadius = floor(16 * scale * fract);
-    
-    int topLeftRadius = smallRadius;
-    int topRightRadius = smallRadius;
-    int bottomLeftRadius = smallRadius;
-    int bottomRightRadius = smallRadius;
-    
-    if (position == TGAttachmentPositionNone)
-        topLeftRadius = topRightRadius = bottomLeftRadius = bottomRightRadius = bigRadius;
-    else if (position == TGAttachmentPositionInside)
-        topLeftRadius = topRightRadius = bottomLeftRadius = bottomRightRadius = smallRadius;
-    
-    if (position & TGAttachmentPositionTop && position & TGAttachmentPositionLeft)
-        topLeftRadius = bigRadius;
-    if (position & TGAttachmentPositionTop && position & TGAttachmentPositionRight)
-        topRightRadius = bigRadius;
-    if (position & TGAttachmentPositionBottom && position & TGAttachmentPositionLeft)
-        bottomLeftRadius = bigRadius;
-    if (position & TGAttachmentPositionBottom && position & TGAttachmentPositionRight)
-        bottomRightRadius = bigRadius;
+    TGAttachmentCornerRadii radii = TGAttachmentRadiiForPosition(floor(3 * scale * fract), floor(16 * scale * fract), position);
+    int topLeftRadius = radii.topLeft;
+    int topRightRadius = radii.topRight;
+    int bottomLeftRadius = radii.bottomLeft;
+    int bottomRightRadius = radii.bottomRight;
 
     if (topLeftRadius == 0 && topRightRadius == 0 && bottomLeftRadius == 0 && bottomRightRadius == 0)
         return;
@@ -842,30 +903,11 @@ static void addAttachmentImageCorners(void *memory, const unsigned int width, co
 void TGAddImageCorners(void *memory, const unsigned int width, const unsigned int height, const unsigned int stride, int radius, int position)
 {
     const int scale = TGScreenScaling();
-    const bool squareInnerCorners = (position & TGAttachmentPositionSquareInnerCorners) != 0;
-    position &= ~TGAttachmentPositionSquareInnerCorners;
-    
-    const int smallRadius = squareInnerCorners ? 0 : 3 * scale;
-    const int bigRadius = radius * scale;
-    
-    int topLeftRadius = smallRadius;
-    int topRightRadius = smallRadius;
-    int bottomLeftRadius = smallRadius;
-    int bottomRightRadius = smallRadius;
-    
-    if (position == TGAttachmentPositionNone)
-        topLeftRadius = topRightRadius = bottomLeftRadius = bottomRightRadius = bigRadius;
-    else if (position == TGAttachmentPositionInside)
-        topLeftRadius = topRightRadius = bottomLeftRadius = bottomRightRadius = smallRadius;
-    
-    if (position & TGAttachmentPositionTop && position & TGAttachmentPositionLeft)
-        topLeftRadius = bigRadius;
-    if (position & TGAttachmentPositionTop && position & TGAttachmentPositionRight)
-        topRightRadius = bigRadius;
-    if (position & TGAttachmentPositionBottom && position & TGAttachmentPositionLeft)
-        bottomLeftRadius = bigRadius;
-    if (position & TGAttachmentPositionBottom && position & TGAttachmentPositionRight)
-        bottomRightRadius = bigRadius;
+    TGAttachmentCornerRadii radii = TGAttachmentRadiiForPosition(3 * scale, radius * scale, position);
+    int topLeftRadius = radii.topLeft;
+    int topRightRadius = radii.topRight;
+    int bottomLeftRadius = radii.bottomLeft;
+    int bottomRightRadius = radii.bottomRight;
 
     if (topLeftRadius == 0 && topRightRadius == 0 && bottomLeftRadius == 0 && bottomRightRadius == 0)
         return;
@@ -1171,7 +1213,6 @@ UIImage *TGAverageColorAttachmentWithCornerRadiusImage(UIColor *color, bool atta
     
     CGContextRef targetContext = CGBitmapContextCreate(targetMemory, (int)targetContextSize.width, (int)targetContextSize.height, 8, targetBytesPerRow, colorSpace, bitmapInfo);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
@@ -1191,7 +1232,6 @@ UIImage *TGAverageColorAttachmentWithCornerRadiusImage(UIColor *color, bool atta
         TGAddImageCorners(targetMemory, targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, cornerRadius, position);
     }
     
-    UIGraphicsPopContext();
     
     CGImageRef bitmapImage = CGBitmapContextCreateImage(targetContext);
     UIImage *image = [[[UIImage alloc] initWithCGImage:bitmapImage scale:scale orientation:UIImageOrientationUp] stretchableImageWithLeftCapWidth:(int)(targetContextSize.width / scale / 2) topCapHeight:(int)(targetContextSize.height / scale / 2)];
@@ -1274,7 +1314,6 @@ TGStaticBackdropAreaData *createImageBackdropArea(uint8_t *sourceImageMemory, in
     CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Host;
     CGContextRef context = CGBitmapContextCreate(memory, (int)contextSize.width, (int)contextSize.height, 8, bytesPerRow, colorSpace, bitmapInfo);
     CGColorSpaceRelease(colorSpace);
-    UIGraphicsPushContext(context);
     
     CGContextTranslateCTM(context, contextSize.width / 2.0f, contextSize.height / 2.0f);
     CGContextScaleCTM(context, 1.0f, -1.0f);
@@ -1316,7 +1355,6 @@ TGStaticBackdropAreaData *createImageBackdropArea(uint8_t *sourceImageMemory, in
     UIImage *image = [[UIImage alloc] initWithCGImage:bitmapImage scale:scale orientation:UIImageOrientationUp];
     CGImageRelease(bitmapImage);
     
-    UIGraphicsPopContext();
     CFRelease(context);
     free(memory);
     
@@ -1408,13 +1446,11 @@ UIImage *TGBlurredAttachmentWithCornerRadiusImage(UIImage *source, CGSize size, 
         return nil;
     }
     
-    UIGraphicsPushContext(blurredContext);
     CGContextTranslateCTM(blurredContext, blurredContextSize.width / 2.0f, blurredContextSize.height / 2.0f);
     CGContextScaleCTM(blurredContext, 1.0f, -1.0f);
     CGContextTranslateCTM(blurredContext, -blurredContextSize.width / 2.0f, -blurredContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(blurredContext, kCGInterpolationLow);
-    [source drawInRect:CGRectMake(0, 0, blurredContextSize.width, blurredContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(blurredContext, source, CGRectMake(0, 0, blurredContextSize.width, blurredContextSize.height), kCGBlendModeCopy, 1.0f);
     
     fastBlur((int)blurredContextSize.width, (int)blurredContextSize.height, (int)blurredBytesPerRow, blurredMemory);
     
@@ -1440,7 +1476,6 @@ UIImage *TGBlurredAttachmentWithCornerRadiusImage(UIImage *source, CGSize size, 
     CGContextRelease(blurredContext);
     free(blurredMemory);
     
-    UIGraphicsPushContext(actionCircleContext);
     CGContextTranslateCTM(actionCircleContext, actionCircleContextSize.width / 2.0f, actionCircleContextSize.height / 2.0f);
     CGContextScaleCTM(actionCircleContext, 1.0f, -1.0f);
     CGContextTranslateCTM(actionCircleContext, -actionCircleContextSize.width / 2.0f, -actionCircleContextSize.height / 2.0f);
@@ -1448,8 +1483,7 @@ UIImage *TGBlurredAttachmentWithCornerRadiusImage(UIImage *source, CGSize size, 
     CGContextSetInterpolationQuality(actionCircleContext, kCGInterpolationLow);
     CGContextSetBlendMode(actionCircleContext, kCGBlendModeCopy);
     
-    [source drawInRect:CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(actionCircleContext, source, CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     brightenAndBlurImage(actionCircleMemory, actionCircleContextSize.width, actionCircleContextSize.height, (int)actionCircleBytesPerRow, scale < 2);
     
@@ -1564,13 +1598,11 @@ UIImage *TGSecretBlurredAttachmentWithCornerRadiusImage(UIImage *source, CGSize 
         return nil;
     }
     
-    UIGraphicsPushContext(blurredContext);
     CGContextTranslateCTM(blurredContext, blurredContextSize.width / 2.0f, blurredContextSize.height / 2.0f);
     CGContextScaleCTM(blurredContext, 1.0f, -1.0f);
     CGContextTranslateCTM(blurredContext, -blurredContextSize.width / 2.0f, -blurredContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(blurredContext, kCGInterpolationLow);
-    [source drawInRect:CGRectMake(0, 0, blurredContextSize.width, blurredContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(blurredContext, source, CGRectMake(0, 0, blurredContextSize.width, blurredContextSize.height), kCGBlendModeCopy, 1.0f);
     
     fastBlurMore((int)blurredContextSize.width, (int)blurredContextSize.height, (int)blurredBytesPerRow, blurredMemory);
     fastBlurMore((int)blurredContextSize.width, (int)blurredContextSize.height, (int)blurredBytesPerRow, blurredMemory);
@@ -1606,7 +1638,6 @@ UIImage *TGSecretBlurredAttachmentWithCornerRadiusImage(UIImage *source, CGSize 
     CGContextRelease(blurredContext);
     free(blurredMemory);
     
-    UIGraphicsPushContext(actionCircleContext);
     CGContextTranslateCTM(actionCircleContext, actionCircleContextSize.width / 2.0f, actionCircleContextSize.height / 2.0f);
     CGContextScaleCTM(actionCircleContext, 1.0f, -1.0f);
     CGContextTranslateCTM(actionCircleContext, -actionCircleContextSize.width / 2.0f, -actionCircleContextSize.height / 2.0f);
@@ -1614,8 +1645,7 @@ UIImage *TGSecretBlurredAttachmentWithCornerRadiusImage(UIImage *source, CGSize 
     CGContextSetInterpolationQuality(actionCircleContext, kCGInterpolationLow);
     CGContextSetBlendMode(actionCircleContext, kCGBlendModeCopy);
     
-    [source drawInRect:CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(actionCircleContext, source, CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     brightenAndBlurImage(actionCircleMemory, actionCircleContextSize.width, actionCircleContextSize.height, (int)actionCircleBytesPerRow, scale < 2);
     
@@ -1692,13 +1722,11 @@ UIImage *TGBlurredFileImage(UIImage *source, CGSize size, uint32_t *averageColor
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(blurredContext);
     CGContextTranslateCTM(blurredContext, blurredContextSize.width / 2.0f, blurredContextSize.height / 2.0f);
     CGContextScaleCTM(blurredContext, 1.0f, -1.0f);
     CGContextTranslateCTM(blurredContext, -blurredContextSize.width / 2.0f, -blurredContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(blurredContext, kCGInterpolationLow);
-    [source drawInRect:CGRectMake(0, 0, blurredContextSize.width, blurredContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(blurredContext, source, CGRectMake(0, 0, blurredContextSize.width, blurredContextSize.height), kCGBlendModeCopy, 1.0f);
     
     fastBlur((int)blurredContextSize.width, (int)blurredContextSize.height, (int)blurredBytesPerRow, blurredMemory);
     
@@ -1724,7 +1752,6 @@ UIImage *TGBlurredFileImage(UIImage *source, CGSize size, uint32_t *averageColor
     CGContextRelease(blurredContext);
     free(blurredMemory);
     
-    UIGraphicsPushContext(actionCircleContext);
     CGContextTranslateCTM(actionCircleContext, actionCircleContextSize.width / 2.0f, actionCircleContextSize.height / 2.0f);
     CGContextScaleCTM(actionCircleContext, 1.0f, -1.0f);
     CGContextTranslateCTM(actionCircleContext, -actionCircleContextSize.width / 2.0f, -actionCircleContextSize.height / 2.0f);
@@ -1732,8 +1759,7 @@ UIImage *TGBlurredFileImage(UIImage *source, CGSize size, uint32_t *averageColor
     CGContextSetInterpolationQuality(actionCircleContext, kCGInterpolationLow);
     CGContextSetBlendMode(actionCircleContext, kCGBlendModeCopy);
     
-    [source drawInRect:CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(actionCircleContext, source, CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     brightenAndBlurImage(actionCircleMemory, actionCircleContextSize.width, actionCircleContextSize.height, (int)actionCircleBytesPerRow, scale < 2);
     
@@ -1802,13 +1828,11 @@ UIImage *TGBlurredAlphaImage(UIImage *source, CGSize size)
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(blurredContext);
     CGContextTranslateCTM(blurredContext, blurredContextSize.width / 2.0f, blurredContextSize.height / 2.0f);
     CGContextScaleCTM(blurredContext, 1.0f, -1.0f);
     CGContextTranslateCTM(blurredContext, -blurredContextSize.width / 2.0f, -blurredContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(blurredContext, kCGInterpolationLow);
-    [source drawInRect:CGRectMake(6, 6, blurredContextSize.width - 12, blurredContextSize.height - 12) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(blurredContext, source, CGRectMake(6, 6, blurredContextSize.width - 12, blurredContextSize.height - 12), kCGBlendModeCopy, 1.0f);
     
     TGImageBlurBuffer srcBuffer;
     srcBuffer.width = blurredContextSize.width;
@@ -1910,13 +1934,11 @@ UIImage *TGBlurredRectangularImage(UIImage *source, CGSize size, CGSize renderSi
         return nil;
     }
     
-    UIGraphicsPushContext(blurredContext);
     CGContextTranslateCTM(blurredContext, blurredContextSize.width / 2.0f, blurredContextSize.height / 2.0f);
     CGContextScaleCTM(blurredContext, 1.0f, -1.0f);
     CGContextTranslateCTM(blurredContext, -blurredContextSize.width / 2.0f, -blurredContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(blurredContext, kCGInterpolationLow);
-    [source drawInRect:CGRectMake((blurredContextSize.width - fittedRenderSize.width) / 2.0f, (blurredContextSize.height - fittedRenderSize.height) / 2.0f, fittedRenderSize.width, fittedRenderSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(blurredContext, source, CGRectMake((blurredContextSize.width - fittedRenderSize.width) / 2.0f, (blurredContextSize.height - fittedRenderSize.height) / 2.0f, fittedRenderSize.width, fittedRenderSize.height), kCGBlendModeCopy, 1.0f);
     
     fastBlur((int)blurredContextSize.width, (int)blurredContextSize.height, (int)blurredBytesPerRow, blurredMemory);
     
@@ -2021,14 +2043,13 @@ UIImage *TGLoadedAttachmentWithCornerRadiusImage(UIImage *source, CGSize size, u
         return nil;
     }
     
-    UIGraphicsPushContext(actionCircleContext);
     CGContextTranslateCTM(actionCircleContext, actionCircleContextSize.width / 2.0f, actionCircleContextSize.height / 2.0f);
     CGContextScaleCTM(actionCircleContext, 1.0f, -1.0f);
     CGContextTranslateCTM(actionCircleContext, -actionCircleContextSize.width / 2.0f, -actionCircleContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(actionCircleContext, kCGInterpolationLow);
     CGContextSetBlendMode(actionCircleContext, kCGBlendModeCopy);
     
-    [source drawInRect:CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(actionCircleContext, source, CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     brightenAndBlurImage(actionCircleMemory, actionCircleContextSize.width, actionCircleContextSize.height, (int)actionCircleBytesPerRow, true);
     
     CGContextBeginPath(actionCircleContext);
@@ -2039,7 +2060,6 @@ UIImage *TGLoadedAttachmentWithCornerRadiusImage(UIImage *source, CGSize size, u
     CGContextSetFillColorWithColor(actionCircleContext, [UIColor clearColor].CGColor);
     CGContextEOFillPath(actionCircleContext);
     
-    UIGraphicsPopContext();
     
     CGImageRef actionCircleBitmapImage = CGBitmapContextCreateImage(actionCircleContext);
     UIImage *actionCircleImage = actionCircleBitmapImage == NULL ? nil : [[UIImage alloc] initWithCGImage:actionCircleBitmapImage scale:scale orientation:UIImageOrientationUp];
@@ -2049,12 +2069,10 @@ UIImage *TGLoadedAttachmentWithCornerRadiusImage(UIImage *source, CGSize size, u
     CGContextRelease(actionCircleContext);
     free(actionCircleMemory);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
-    [source drawInRect:CGRectMake(-inset, -inset, targetContextSize.width + inset * 2, targetContextSize.height + inset * 2) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(-inset, -inset, targetContextSize.width + inset * 2, targetContextSize.height + inset * 2), kCGBlendModeCopy, 1.0f);
     
     if (averageColor != NULL)
     {
@@ -2119,7 +2137,6 @@ UIImage *TGAnimationFrameAttachmentImage(UIImage *source, CGSize size, CGSize re
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
@@ -2127,8 +2144,7 @@ UIImage *TGAnimationFrameAttachmentImage(UIImage *source, CGSize size, CGSize re
     CGContextSetFillColorWithColor(targetContext, [UIColor blackColor].CGColor);
     CGContextFillRect(targetContext, CGRectMake(0, 0, targetContextSize.width, targetContextSize.height));
     CGRect imageRect = CGRectMake((targetContextSize.width - renderSize.width) / 2.0f, (targetContextSize.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height);
-    [source drawInRect:imageRect blendMode:kCGBlendModeNormal alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, imageRect, kCGBlendModeNormal, 1.0f);
     
     addAttachmentImageCorners(targetMemory, targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, 0, 1.0f);
     
@@ -2167,14 +2183,13 @@ UIImage *TGLoadedFileImage(UIImage *source, CGSize size, uint32_t *averageColor,
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(actionCircleContext);
     CGContextTranslateCTM(actionCircleContext, actionCircleContextSize.width / 2.0f, actionCircleContextSize.height / 2.0f);
     CGContextScaleCTM(actionCircleContext, 1.0f, -1.0f);
     CGContextTranslateCTM(actionCircleContext, -actionCircleContextSize.width / 2.0f, -actionCircleContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(actionCircleContext, kCGInterpolationLow);
     CGContextSetBlendMode(actionCircleContext, kCGBlendModeCopy);
     
-    [source drawInRect:CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(actionCircleContext, source, CGRectMake((actionCircleContextSize.width - targetContextSize.width) / 2.0f, (actionCircleContextSize.height - targetContextSize.height) / 2.0f, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     brightenAndBlurImage(actionCircleMemory, actionCircleContextSize.width, actionCircleContextSize.height, (int)actionCircleBytesPerRow, true);
     
     CGContextBeginPath(actionCircleContext);
@@ -2185,7 +2200,6 @@ UIImage *TGLoadedFileImage(UIImage *source, CGSize size, uint32_t *averageColor,
     CGContextSetFillColorWithColor(actionCircleContext, [UIColor clearColor].CGColor);
     CGContextEOFillPath(actionCircleContext);
     
-    UIGraphicsPopContext();
     
     CGImageRef actionCircleBitmapImage = CGBitmapContextCreateImage(actionCircleContext);
     UIImage *actionCircleImage = [[UIImage alloc] initWithCGImage:actionCircleBitmapImage scale:scale orientation:UIImageOrientationUp];
@@ -2194,12 +2208,10 @@ UIImage *TGLoadedFileImage(UIImage *source, CGSize size, uint32_t *averageColor,
     CGContextRelease(actionCircleContext);
     free(actionCircleMemory);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
-    [source drawInRect:CGRectMake(0, 0, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, 0, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     if (averageColor != NULL)
         *averageColor = TGImageAverageColor(targetMemory, targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow);
@@ -2403,7 +2415,6 @@ UIImage *TGReducedAttachmentWithCornerRadiusImage(UIImage *source, CGSize origin
         return nil;
     }
     
-    UIGraphicsPushContext(targetContext);
     
     CGContextSetInterpolationQuality(targetContext, kCGInterpolationMedium);
     
@@ -2416,48 +2427,47 @@ UIImage *TGReducedAttachmentWithCornerRadiusImage(UIImage *source, CGSize origin
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(0.0f, 0.0f, padding, padding));
-    [source drawInRect:CGRectMake(0, 0, targetContextOriginalSize.width, targetContextOriginalSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, 0, targetContextOriginalSize.width, targetContextOriginalSize.height), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
 
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(targetContextSize.width - padding, 0.0f, padding, padding));
-    [source drawInRect:CGRectMake(targetContextSize.width - targetContextOriginalSize.width, 0, targetContextOriginalSize.width, targetContextOriginalSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(targetContextSize.width - targetContextOriginalSize.width, 0, targetContextOriginalSize.width, targetContextOriginalSize.height), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(0.0f, targetContextSize.height - padding, padding, padding));
-    [source drawInRect:CGRectMake(0, targetContextSize.height - targetContextOriginalSize.height, targetContextOriginalSize.width, targetContextOriginalSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, targetContextSize.height - targetContextOriginalSize.height, targetContextOriginalSize.width, targetContextOriginalSize.height), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(targetContextSize.width - padding, targetContextSize.height - padding, padding, padding));
-    [source drawInRect:CGRectMake(targetContextSize.width - targetContextOriginalSize.width, targetContextSize.height - targetContextOriginalSize.height, targetContextOriginalSize.width, targetContextOriginalSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(targetContextSize.width - targetContextOriginalSize.width, targetContextSize.height - targetContextOriginalSize.height, targetContextOriginalSize.width, targetContextOriginalSize.height), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(padding, 0.0f, targetContextSize.width - padding * 2, padding));
-    [source drawInRect:CGRectMake((targetContextSize.width - scaledWidth) / 2.0f, 0, scaledWidth, targetContextOriginalSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((targetContextSize.width - scaledWidth) / 2.0f, 0, scaledWidth, targetContextOriginalSize.height), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(padding, targetContextSize.height - padding, targetContextSize.width - padding * 2, padding));
-    [source drawInRect:CGRectMake((targetContextSize.width - scaledWidth) / 2.0f, targetContextSize.height - targetContextOriginalSize.height, scaledWidth, targetContextOriginalSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((targetContextSize.width - scaledWidth) / 2.0f, targetContextSize.height - targetContextOriginalSize.height, scaledWidth, targetContextOriginalSize.height), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(0.0f, padding, padding, targetContextSize.height - padding * 2));
-    [source drawInRect:CGRectMake(0, (targetContextSize.height - scaledHeight) / 2.0f, targetContextOriginalSize.width, scaledHeight) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, (targetContextSize.height - scaledHeight) / 2.0f, targetContextOriginalSize.width, scaledHeight), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextSaveGState(targetContext);
     CGContextClipToRect(targetContext, CGRectMake(targetContextSize.width - padding, padding, padding, targetContextSize.height - padding * 2));
-    [source drawInRect:CGRectMake(targetContextSize.width - targetContextOriginalSize.width, (targetContextSize.height - scaledHeight) / 2.0f, targetContextOriginalSize.width, scaledHeight) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(targetContextSize.width - targetContextOriginalSize.width, (targetContextSize.height - scaledHeight) / 2.0f, targetContextOriginalSize.width, scaledHeight), kCGBlendModeCopy, 1.0f);
     CGContextRestoreGState(targetContext);
     
     CGContextClipToRect(targetContext, CGRectMake(padding, padding, targetContextSize.width - padding * 2, targetContextSize.height - padding * 2));
-    [source drawInRect:CGRectMake((targetContextSize.width - scaledWidth) / 2.0f, (targetContextSize.height - scaledHeight) / 2.0f, scaledWidth, scaledHeight) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((targetContextSize.width - scaledWidth) / 2.0f, (targetContextSize.height - scaledHeight) / 2.0f, scaledWidth, scaledHeight), kCGBlendModeCopy, 1.0f);
     
-    UIGraphicsPopContext();
     
     
     CGImageRef bitmapImage = CGBitmapContextCreateImage(targetContext);
@@ -2491,12 +2501,10 @@ UIImage *TGBlurredBackgroundImage(UIImage *source, CGSize size)
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
-    [source drawInRect:CGRectMake(0, 0, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, 0, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     brightenAndBlurImage(targetMemory, targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, false);
     
@@ -2527,7 +2535,6 @@ UIImage *TGRoundImage(UIImage *source, CGSize size)
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
@@ -2536,8 +2543,7 @@ UIImage *TGRoundImage(UIImage *source, CGSize size)
     CGContextAddEllipseInRect(targetContext, CGRectMake(0.0f, 0.0f, targetContextSize.width, targetContextSize.height));
     CGContextClip(targetContext);
     
-    [source drawInRect:CGRectMake(0, 0, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, 0, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     CGImageRef bitmapImage = CGBitmapContextCreateImage(targetContext);
     UIImage *image = [[UIImage alloc] initWithCGImage:bitmapImage scale:scale orientation:UIImageOrientationUp];
@@ -2567,12 +2573,10 @@ void TGPlainImageAverageColor(UIImage *source, uint32_t *averageColor)
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
-    [source drawInRect:CGRectMake(0, 0, targetContextSize.width, targetContextSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake(0, 0, targetContextSize.width, targetContextSize.height), kCGBlendModeCopy, 1.0f);
     
     if (averageColor != NULL)
         *averageColor = TGImageAverageColor(targetMemory, targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow);
@@ -2626,7 +2630,6 @@ UIImage *TGCropBackdropImage(UIImage *source, CGSize size)
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(targetContext);
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
@@ -2634,8 +2637,7 @@ UIImage *TGCropBackdropImage(UIImage *source, CGSize size)
     CGContextFillRect(targetContext, CGRectMake(0, 0, targetContextSize.width, targetContextSize.height));
     
     CGSize halfSize = CGSizeMake(CGFloor(size.width * scale / 2.0f), CGFloor(size.height * scale / 2.0f));
-    [source drawInRect:CGRectMake((targetContextSize.width - halfSize.width) / 2, (targetContextSize.height - halfSize.height) / 2, halfSize.width, halfSize.height) blendMode:kCGBlendModeNormal alpha:0.6f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((targetContextSize.width - halfSize.width) / 2, (targetContextSize.height - halfSize.height) / 2, halfSize.width, halfSize.height), kCGBlendModeNormal, 0.6f);
 
     lightBlurImage(targetMemory, targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow);
     
@@ -2692,14 +2694,12 @@ UIImage *TGScaleAndCropImageToPixelSize(UIImage *source, CGSize size, CGSize ren
         return nil;
     }
     
-    UIGraphicsPushContext(targetContext);
     
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(targetContext, kCGInterpolationMedium);
-    [source drawInRect:CGRectMake((size.width - renderSize.width) / 2.0f, (size.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
-    UIGraphicsPopContext();
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((size.width - renderSize.width) / 2.0f, (size.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height), kCGBlendModeCopy, 1.0f);
     
     if (averageColor != NULL)
     {
@@ -2743,14 +2743,13 @@ NSArray *TGBlurredBackgroundImages(UIImage *source, CGSize sourceSize)
     
     CGColorSpaceRelease(colorSpace);
     
-    UIGraphicsPushContext(targetContext);
     
     CGContextTranslateCTM(targetContext, targetContextSize.width / 2.0f, targetContextSize.height / 2.0f);
     CGContextScaleCTM(targetContext, 1.0f, -1.0f);
     CGContextTranslateCTM(targetContext, -targetContextSize.width / 2.0f, -targetContextSize.height / 2.0f);
     CGContextSetInterpolationQuality(targetContext, kCGInterpolationMedium);
     
-    [source drawInRect:CGRectMake((size.width - renderSize.width) / 2.0f, (size.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((size.width - renderSize.width) / 2.0f, (size.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height), kCGBlendModeCopy, 1.0f);
     
     fastBlurMore(targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, targetMemory);
     fastBlurMore(targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, targetMemory);
@@ -2762,7 +2761,7 @@ NSArray *TGBlurredBackgroundImages(UIImage *source, CGSize sourceSize)
     UIImage *foregroundImage = [[UIImage alloc] initWithCGImage:bitmapImage];
     CGImageRelease(bitmapImage);
     
-    [source drawInRect:CGRectMake((size.width - renderSize.width) / 2.0f, (size.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height) blendMode:kCGBlendModeCopy alpha:1.0f];
+    TGImageBlurDrawImage(targetContext, source, CGRectMake((size.width - renderSize.width) / 2.0f, (size.height - renderSize.height) / 2.0f, renderSize.width, renderSize.height), kCGBlendModeCopy, 1.0f);
     
     fastBlurMore(targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, targetMemory);
     fastBlurMore(targetContextSize.width, targetContextSize.height, (int)targetBytesPerRow, targetMemory);
@@ -2774,7 +2773,6 @@ NSArray *TGBlurredBackgroundImages(UIImage *source, CGSize sourceSize)
     UIImage *backgroundImage = [[UIImage alloc] initWithCGImage:bitmapImage];
     CGImageRelease(bitmapImage);
     
-    UIGraphicsPopContext();
     
     CGContextRelease(targetContext);
     free(targetMemory);

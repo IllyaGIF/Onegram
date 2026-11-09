@@ -322,7 +322,7 @@
             result = false;
         } else {
             __block bool hasHoles = false;
-            int64_t feedPeerId = TGPeerIdFromAdminLogId(feedId);
+            int64_t feedPeerId = TGPeerIdFromFeedId(feedId);
             [TGDatabaseInstance() feedMessages:feedId maxTransparentSortKey:TGMessageTransparentSortKeyMake(feedPeerId, TGMessageSortKeyTimestamp(messageSortKey), messageId, TGMessageSortKeySpace(messageSortKey)) count:30 mode:TGChannelHistoryRequestLater completion:^(NSArray *messages, __unused bool hasLater) {
                 for (TGMessage *message in messages) {
                     if (message.hole != nil) {
@@ -560,7 +560,7 @@
                     
                     NSMutableSet *peerIds = [[NSMutableSet alloc] init];
                     for (NSNumber *channelId in feedBroadcast.channels) {
-                        int64_t peerId = TGPeerIdFromChannelId(channelId.intValue);
+                        int64_t peerId = TGPeerIdFromChannelId(channelId.longLongValue);
                         [peerIds addObject:@(peerId)];
                         
                         channelToFeedMap[@(peerId)] = @(feedBroadcast.feed_id);
@@ -591,7 +591,7 @@
 
 + (SSignal *)pollFeedMessages {
     return [[TGDatabaseInstance() enqueuedFeedMessagesPolls] mapToSignal:^SSignal *(TGQueuedPeerPoll *poll) {
-        int32_t feedId = TGAdminLogIdFromPeerId(poll.peerId);
+        int32_t feedId = TGFeedIdFromPeerId(poll.peerId);
         return [[self preloadedFeedId:feedId aroundPosition:poll.feedPosition unread:poll.feedPosition == nil] mapToSignal:^SSignal *(NSDictionary *dict) {
             NSArray *removedImportantHoles = dict[@"hole"] == nil ? nil : @[dict[@"hole"]];
             
@@ -625,7 +625,7 @@
                 if (maxPosition != nil)
                     result[@"maxPosition"] = maxPosition;
                 
-                [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/conversation/(%lld)/feedMessages", TGPeerIdFromAdminLogId(feedId)] resource:result];
+                [ActionStageInstance() dispatchResource:[NSString stringWithFormat:@"/tg/conversation/(%lld)/feedMessages", TGPeerIdFromFeedId(feedId)] resource:result];
             }];
             return [SSignal complete];
         }];
@@ -634,8 +634,8 @@
 
 + (SSignal *)readFeedMessages {
     return [[TGDatabaseInstance() enqueuedReadFeedMessages] mapToQueue:^SSignal *(TGQueuedReadFeedMessages *queued) {
-        if (TGPeerIdIsAdminLog(queued.feedPeerId)) {
-            int32_t feedId = TGAdminLogIdFromPeerId(queued.feedPeerId);
+        if (TGPeerIdIsFeed(queued.feedPeerId)) {
+            int32_t feedId = TGFeedIdFromPeerId(queued.feedPeerId);
             
             TLRPCchannels_readFeed *readFeed = [[TLRPCchannels_readFeed alloc] init];
             readFeed.feed_id = feedId;

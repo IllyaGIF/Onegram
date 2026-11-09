@@ -7,6 +7,7 @@
  */
 
 #import "TGMessageViewModel.h"
+#import "../OnegramRuntime/OGPluginAvailability.h"
 
 @class TGActionMediaAttachment;
 
@@ -15,3 +16,17 @@
 - (instancetype)initWithMessage:(TGMessage *)message actionMedia:(TGActionMediaAttachment *)actionMedia authorPeer:(id)authorPeer additionalUsers:(NSArray *)additionalUsers context:(TGModernViewContext *)context;
 
 @end
+
+@interface TGStarGiftMessageViewModel : TGMessageViewModel
+
+- (instancetype)initWithMessage:(TGMessage *)message actionMedia:(TGActionMediaAttachment *)actionMedia authorPeer:(id)authorPeer context:(TGModernViewContext *)context;
+
+@end
+
+#if OG_PLUGINS_AVAILABLE
+@interface TGPluginServiceMessageViewModel : TGMessageViewModel
+
+- (instancetype)initWithMessage:(TGMessage *)message description:(NSDictionary *)description context:(TGModernViewContext *)context;
+
+@end
+#endif

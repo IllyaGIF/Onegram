@@ -24,6 +24,7 @@
 
 - (void)setFullSeparator:(bool)fullSeparator;
 - (void)setTitle:(NSString *)title;
+- (void)setDescriptionText:(NSString *)descriptionText;
 - (void)setIsOn:(bool)isOn animated:(bool)animated;
 - (void)setIsEnabled:(bool)isEnabled;
 - (void)setIsLocked:(bool)isLocked;

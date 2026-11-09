@@ -665,7 +665,7 @@
 {
     UIImage *image = [info objectForKey:UIImagePickerControllerOriginalImage];
     picker.delegate = nil;
-    [self dismissModalViewControllerAnimated:false];
+    [self dismissModalViewControllerAnimated:true];
     _qrPicker = nil;
     _sessionOperationInProgress = true;
     _sessionProgressWindow = [[TGProgressWindow alloc] init];

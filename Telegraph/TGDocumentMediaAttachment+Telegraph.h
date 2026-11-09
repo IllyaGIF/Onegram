@@ -10,6 +10,8 @@
 @interface TGDocumentMediaAttachment (Telegraph)
 
 + (NSArray *)parseAttribtues:(NSArray *)descs;
++ (NSString *)strippedThumbnailUrlForTelegraphDocumentDesc:(TLDocument *)desc;
++ (TGVideoInfo *)videoInfoForTelegraphDocumentDesc:(TLDocument *)desc alternativeDocuments:(NSArray *)alternativeDocuments alternativeFileReferences:(NSDictionary **)alternativeFileReferences;
 
 - (instancetype)initWithTelegraphDocumentDesc:(TLDocument *)desc;
 - (instancetype)initWithSecret23Desc:(Secret23_DecryptedMessageMedia_decryptedMessageMediaExternalDocument *)desc;

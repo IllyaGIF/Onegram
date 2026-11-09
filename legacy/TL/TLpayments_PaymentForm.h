@@ -14,9 +14,9 @@
 @interface TLpayments_PaymentForm : NSObject <TLObject>
 
 @property (nonatomic) int32_t flags;
-@property (nonatomic) int32_t bot_id;
+@property (nonatomic) int64_t bot_id;
 @property (nonatomic, retain) TLInvoice *invoice;
-@property (nonatomic) int32_t provider_id;
+@property (nonatomic) int64_t provider_id;
 @property (nonatomic, retain) NSString *url;
 @property (nonatomic, retain) NSString *native_provider;
 @property (nonatomic, retain) TLDataJSON *native_params;

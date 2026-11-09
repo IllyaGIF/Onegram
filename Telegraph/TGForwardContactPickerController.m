@@ -52,7 +52,7 @@
     int nativeId = -1;
     if (user.uid < 0)
     {
-        nativeId = -user.uid;
+        nativeId = (int)(-user.uid);
         contact = [TGDatabaseInstance() phonebookContactByNativeId:nativeId];
     }
     else

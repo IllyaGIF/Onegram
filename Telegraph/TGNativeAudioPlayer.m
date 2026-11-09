@@ -95,6 +95,26 @@ static void TGNativeAudioPlayerSetLegacyRate(AVAudioPlayer *player, CGFloat rate
     return self;
 }
 
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+- (instancetype)initWithURL:(NSURL *)url music:(bool)music controlAudioSession:(bool)controlAudioSession
+{
+    self = [super initWithMusic:music controlAudioSession:controlAudioSession];
+    if (self != nil)
+    {
+        _rate = 1.0f;
+        _currentItem = [[AVPlayerItem alloc] initWithURL:url];
+        if (_currentItem != nil)
+        {
+            _player = [[AVQueuePlayer alloc] initWithItems:@[_currentItem]];
+            _didPlayToEndObserver = [[TGObserverProxy alloc] initWithTarget:self targetSelector:@selector(playerItemDidPlayToEndTime:) name:AVPlayerItemDidPlayToEndTimeNotification object:_currentItem];
+        }
+        if (_player == nil)
+            [self cleanupWithError];
+    }
+    return self;
+}
+#endif
+
 - (bool)replaceWithPath:(NSString *)path
 {
     NSString *realPath = TGNativeAudioPlayerRealPath(path);

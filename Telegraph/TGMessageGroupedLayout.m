@@ -63,7 +63,7 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
         CGFloat spacing = [TGPresentation classicIOS6Style] ? 0.0f : 1.0f;
         
         NSString *proportions = @"";
-        CGFloat averageAspectRatio = 1.0f;
+        CGFloat averageAspectRatio = 0.0f;
         bool forceCalc = false;
         NSMutableArray *photos = [[NSMutableArray alloc] init];
         for (TGMessage *message in messages)
@@ -95,6 +95,9 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
             }
         }
         
+        if (photos.count < 2)
+            return nil;
+
         const CGFloat minWidth = 68.0f;
         CGFloat maxAspectRatio = maxSize.width / maxSize.height;
         if (photos.count > 0)
@@ -559,6 +562,8 @@ static TGMessageDiscussionContentProperty *TGMessageGroupedLayoutDiscussion(TGMe
     groupedLayout->_chosenReaction = [_chosenReaction copy];
     groupedLayout->_discussion = _discussion;
     groupedLayout->_discussionMessageId = _discussionMessageId;
+    groupedLayout->_headerVisible = _headerVisible;
+    groupedLayout->_topCornersHidden = _topCornersHidden;
     
     TGMessagePhotoInfo *info = newLayouts[@(previousMessage.mid)];
     if (info != nil)

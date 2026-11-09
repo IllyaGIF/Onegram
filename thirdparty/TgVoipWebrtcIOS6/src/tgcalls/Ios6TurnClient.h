@@ -80,6 +80,7 @@ struct Ios6RelayReceiveResult {
     bool timeout;
 
     std::string error;
+    int errorCode;
     std::string peerHost;
     uint16_t peerPort;
 
@@ -90,6 +91,7 @@ struct Ios6RelayReceiveResult {
     Ios6RelayReceiveResult()
     : kind(KindNone),
       timeout(false),
+      errorCode(0),
       peerPort(0),
       innerStunType(0) {
     }

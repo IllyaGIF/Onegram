@@ -42,7 +42,7 @@
         return;
     }
     
-    int ignoreUid = [[options objectForKey:@"ignoreUid"] intValue];
+    int64_t ignoreUid = [[options objectForKey:@"ignoreUid"] longLongValue];
     _onlyMy = [[options objectForKey:@"onlyMy"] boolValue];
     _ignoreMy = [[options objectForKey:@"ignoreMy"] boolValue];
     

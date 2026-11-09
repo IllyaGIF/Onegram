@@ -12,7 +12,7 @@
 - (NSArray *)topUsers;
 - (NSDictionary *)unreadCountsForUsers:(NSArray *)users;
 
-- (TGLegacyUser *)userWithIdSync:(int32_t)userId;
+- (TGLegacyUser *)userWithIdSync:(int64_t)userId;
 - (TGChatModel *)conversationWithIdSync:(int64_t)conversationId;
 
 - (NSData *)customPropertySync:(NSString *)name;

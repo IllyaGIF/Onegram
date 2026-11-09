@@ -179,7 +179,7 @@ int extractUserLinkFromUpdate(TLUpdate$updateContactLink *linkUpdate)
     self = [self init];
     if (self != nil)
     {
-        int32_t uid = 0;
+        int64_t uid = 0;
         NSString *userPhone = nil;
         if ([user isKindOfClass:[TLUser$modernUser class]])
         {
@@ -193,18 +193,6 @@ int extractUserLinkFromUpdate(TLUpdate$updateContactLink *linkUpdate)
             self.userName = concreteUser.username;
             userPhone = concreteUser.phone;
 	            extractUserPhoto(concreteUser.photo, self);
-	            if ([concreteUser.photo isKindOfClass:[TLUserProfilePhoto$userProfilePhoto class]])
-	            {
-	                TLUserProfilePhoto$userProfilePhoto *profilePhoto = (TLUserProfilePhoto$userProfilePhoto *)concreteUser.photo;
-	                int64_t peerPhotoUserId = concreteUser.n_id_long != 0 ? concreteUser.n_id_long : concreteUser.n_id;
-	                if (profilePhoto.photo_id != 0 && profilePhoto.dc_id != 0 && peerPhotoUserId != self.uid)
-	                {
-	                    self.photoUrlSmall = modernPeerPhotoUrl(profilePhoto.dc_id, 1, peerPhotoUserId, self.phoneNumberHash, profilePhoto.photo_id, false);
-	                    self.photoUrlMedium = nil;
-	                    self.photoUrlBig = modernPeerPhotoUrl(profilePhoto.dc_id, 1, peerPhotoUserId, self.phoneNumberHash, profilePhoto.photo_id, true);
-	                    OnegramCacheStrippedAvatar(profilePhoto, self.photoUrlSmall);
-	                }
-	            }
 	            self.presence = extractUserPresence(concreteUser.status);
             
             if (concreteUser.flags & (1 << 14))
@@ -223,7 +211,6 @@ int extractUserLinkFromUpdate(TLUpdate$updateContactLink *linkUpdate)
             self.minimalRepresentation = concreteUser.flags & (1 << 20);
             self.botInlineGeo = concreteUser.flags & (1 << 21);
             self.emojiStatusDocumentId = concreteUser.emojiStatusDocumentId;
-            self.modernUserId = concreteUser.n_id_long != 0 ? concreteUser.n_id_long : concreteUser.n_id;
             self.nameColorId = concreteUser.nameColorId;
         }
         else if ([user isKindOfClass:[TLUser$userEmpty class]])

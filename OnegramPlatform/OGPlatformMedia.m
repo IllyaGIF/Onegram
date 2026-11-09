@@ -3,6 +3,11 @@
 #import <UIKit/UIKit.h>
 #import <MediaPlayer/MediaPlayer.h>
 #import <dispatch/dispatch.h>
+#import <dlfcn.h>
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+#import <AVFoundation/AVAsset.h>
+#import <AVFoundation/AVAssetImageGenerator.h>
+#endif
 #include <math.h>
 #include <stdlib.h>
 
@@ -28,6 +33,20 @@ BOOL OGPlatformVideoPlaybackAvailable(void)
 BOOL OGPlatformAVPlayerAvailable(void)
 {
     return OGPlatformClassAvailable(@"AVPlayer") && OGPlatformClassAvailable(@"AVPlayerItem");
+}
+
+BOOL OGPlatformHEVCHardwareDecodeAvailable(void)
+{
+    static BOOL available = NO;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^
+    {
+        static const uint32_t OGPlatformVideoCodecTypeHEVC = 'hvc1';
+        void *handle = dlopen("/System/Library/Frameworks/VideoToolbox.framework/VideoToolbox", RTLD_LAZY | RTLD_LOCAL);
+        Boolean (*function)(uint32_t) = handle == NULL ? NULL : (Boolean (*)(uint32_t))dlsym(handle, "VTIsHardwareDecodeSupported");
+        available = function != NULL && function(OGPlatformVideoCodecTypeHEVC);
+    });
+    return available;
 }
 
 BOOL OGPlatformAVCaptureAvailable(void)
@@ -149,7 +168,7 @@ static UIImage *OGPlatformScaleVideoThumbnail(UIImage *image, CGSize maximumSize
     return result;
 }
 
-UIImage *OGPlatformVideoThumbnailAtURL(NSURL *url, NSTimeInterval time, CGSize maximumSize)
+static UIImage *OGPlatformLegacyVideoThumbnailAtURL(NSURL *url, NSTimeInterval time, CGSize maximumSize)
 {
     if (url == nil)
         return nil;
@@ -166,7 +185,7 @@ UIImage *OGPlatformVideoThumbnailAtURL(NSURL *url, NSTimeInterval time, CGSize m
         {
             @autoreleasepool
             {
-                image = OGPlatformVideoThumbnailAtURL(url, time, maximumSize);
+                image = OGPlatformLegacyVideoThumbnailAtURL(url, time, maximumSize);
             }
         });
         return image;
@@ -193,6 +212,30 @@ UIImage *OGPlatformVideoThumbnailAtURL(NSURL *url, NSTimeInterval time, CGSize m
     }
 
     return OGPlatformScaleVideoThumbnail(image, maximumSize);
+}
+
+UIImage *OGPlatformVideoThumbnailAtURL(NSURL *url, NSTimeInterval time, CGSize maximumSize)
+{
+    if (url == nil)
+        return nil;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 40000
+    if (NSClassFromString(@"AVAssetImageGenerator") != Nil)
+    {
+        AVURLAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
+        AVAssetImageGenerator *generator = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
+        generator.appliesPreferredTrackTransform = YES;
+        if (maximumSize.width > 0 && maximumSize.height > 0)
+            generator.maximumSize = maximumSize;
+        CGImageRef frame = [generator copyCGImageAtTime:CMTimeMakeWithSeconds(MAX(0.0, time), 600) actualTime:NULL error:NULL];
+        if (frame != NULL)
+        {
+            UIImage *image = [UIImage imageWithCGImage:frame];
+            CGImageRelease(frame);
+            return image;
+        }
+    }
+#endif
+    return OGPlatformLegacyVideoThumbnailAtURL(url, time, maximumSize);
 }
 
 

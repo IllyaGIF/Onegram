@@ -24,6 +24,7 @@
 - (SSignal *)callDuration;
 
 + (void)requestMicrophoneAccess:(void (^)(bool granted))resultBlock;
++ (void)requestCameraAccess:(void (^)(bool granted))resultBlock;
 
 + (void)presentRatingAlertView:(int64_t)callId accessHash:(int64_t)accessHash presentTabAlert:(bool)presentTabAlert;
 

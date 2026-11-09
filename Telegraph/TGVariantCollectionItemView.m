@@ -4,6 +4,7 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "TGPresentation.h"
+#import "TGCollectionItemDescription.h"
 #import "../OnegramUI/Lists/OGSettingsCell.h"
 #import "../OnegramUI/Core/OGTheme.h"
 
@@ -12,6 +13,7 @@
 {
     UILabel *_titleLabel;
     UILabel *_variantLabel;
+    UILabel *_descriptionLabel;
     TGSimpleImageView *_iconView;
     TGSimpleImageView *_variantIconView;
     TGSimpleImageView *_disclosureIndicator;
@@ -51,6 +53,18 @@
     return self;
 }
 
+- (void)setDisclosureImage:(UIImage *)image
+{
+    _disclosureIndicator.image = image;
+    if (image != nil)
+    {
+        CGRect frame = _disclosureIndicator.frame;
+        frame.size = image.size;
+        _disclosureIndicator.frame = frame;
+    }
+    [self setNeedsLayout];
+}
+
 - (void)setPresentation:(TGPresentation *)presentation
 {
     [super setPresentation:presentation];
@@ -59,12 +73,12 @@
     bool classicDarkStyle = classicIOS6Style && presentation.pallete.isDark;
     _titleLabel.textColor = _customTitleColor ?: (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x111111) : presentation.pallete.collectionMenuTextColor);
     _variantLabel.textColor = _customVariantColor ?: (classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor);
+    _descriptionLabel.textColor = classicIOS6Style && !classicDarkStyle ? UIColorRGB(0x7f7f7f) : presentation.pallete.collectionMenuVariantColor;
     UIImage *disclosureImage = classicIOS6Style ? [TGPresentation classicIOS6ResourceImage:@"MenuDisclosureIndicator"] : presentation.images.collectionMenuDisclosureIcon;
     if ([TGPresentation brandedIOS6Style])
         disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:[OGTheme brandedTheme]] ?: disclosureImage;
     else if (classicDarkStyle)
         disclosureImage = [TGPresentation classicIOS6ThemedImage:disclosureImage tintColor:presentation.pallete.collectionMenuAccessoryColor alpha:0.82f];
-    _disclosureIndicator.image = disclosureImage;
     if ([TGPresentation brandedIOS6Style] && _brandedSettingsStyle)
     {
         OGTheme *theme = [OGTheme brandedTheme];
@@ -73,14 +87,13 @@
         _iconView.image = _brandedSettingsIconName.length == 0 ? nil : [TGPresentation brandedIOS6ResourceImage:_brandedSettingsIconName];
         if (_iconView.image != nil)
             [OGSettingsCell applyLegacyBrandedIconStyleWithTheme:theme iconView:_iconView];
-        _disclosureIndicator.image = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme];
+        disclosureImage = [OGSettingsCell legacyBrandedDisclosureImageWithTheme:theme] ?: disclosureImage;
     }
     else
     {
         _variantLabel.hidden = false;
     }
-    if (disclosureImage != nil)
-        _disclosureIndicator.frame = CGRectMake(0.0f, 0.0f, disclosureImage.size.width, disclosureImage.size.height);
+    [self setDisclosureImage:disclosureImage];
 }
 
 - (void)setTitle:(NSString *)title
@@ -88,6 +101,27 @@
     _titleLabel.text = title;
     [self setNeedsLayout];
     [_titleLabel setNeedsDisplay];
+}
+
+- (void)setDescriptionText:(NSString *)descriptionText
+{
+    if (descriptionText.length == 0)
+    {
+        _descriptionLabel.hidden = true;
+        _descriptionLabel.text = nil;
+        [self setNeedsLayout];
+        return;
+    }
+    if (_descriptionLabel == nil)
+    {
+        _descriptionLabel = TGCollectionItemDescriptionLabel();
+        bool classicIOS6Style = [TGPresentation classicIOS6Style];
+        _descriptionLabel.textColor = classicIOS6Style && !self.presentation.pallete.isDark ? UIColorRGB(0x7f7f7f) : self.presentation.pallete.collectionMenuVariantColor;
+        [self addSubview:_descriptionLabel];
+    }
+    _descriptionLabel.hidden = false;
+    _descriptionLabel.text = descriptionText;
+    [self setNeedsLayout];
 }
 
 - (void)setTitleColor:(UIColor *)titleColor
@@ -189,6 +223,9 @@
         return;
     }
 
+    bool hasDescription = _descriptionLabel != nil && !_descriptionLabel.hidden;
+    if (hasDescription)
+        bounds.size.height = 44.0f;
     CGFloat classicInset = [TGPresentation classicIOS6Style] ? 10.0f : 0.0f;
     CGFloat width = bounds.size.width - self.safeAreaInset.left - self.safeAreaInset.right - classicInset * 2.0f;
     
@@ -260,7 +297,14 @@
     }
     
     if (_variantIconView.image != nil) {
-        _variantIconView.frame = CGRectMake(CGRectGetMinX(_variantLabel.frame) - 8.0 - _variantIconView.image.size.width, CGFloor(self.frame.size.height - _variantIconView.image.size.height) / 2, _variantIconView.image.size.width, _variantIconView.image.size.height);
+        _variantIconView.frame = CGRectMake(CGRectGetMinX(_variantLabel.frame) - 8.0 - _variantIconView.image.size.width, CGFloor(bounds.size.height - _variantIconView.image.size.height) / 2, _variantIconView.image.size.width, _variantIconView.image.size.height);
+    }
+    
+    if (hasDescription)
+    {
+        CGFloat descriptionX = startingX;
+        CGFloat descriptionWidth = MAX(0.0f, self.bounds.size.width - descriptionX - 15.0f - classicInset - self.safeAreaInset.right);
+        _descriptionLabel.frame = CGRectMake(descriptionX, TGCollectionItemDescriptionVariantTop, descriptionWidth, TGCollectionItemDescriptionTextHeight(_descriptionLabel.text, descriptionWidth));
     }
 }
 

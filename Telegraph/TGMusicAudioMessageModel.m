@@ -16,6 +16,7 @@
 #import "TGReplyHeaderModel.h"
 
 #import "TGMusicPlayer.h"
+#import "OGMediaFetchDescriptor+Telegraph.h"
 
 #import "TGReusableLabel.h"
 
@@ -32,6 +33,7 @@
     TGModernLabelViewModel *_performerModel;
     
     bool _mediaIsAvailable;
+    bool _streamable;
     bool _progressVisible;
     float _progress;
     
@@ -85,6 +87,7 @@ static CTFontRef textFontForSize(CGFloat size)
             if ([attachment isKindOfClass:[TGDocumentMediaAttachment class]])
             {
                 fileName = ((TGDocumentMediaAttachment *)attachment).fileName;
+                _streamable = !TGPeerIdIsSecretChat(message.cid) && [OGMediaFetchDescriptor isStreamableDocument:attachment];
                 
                 for (id attribute in ((TGDocumentMediaAttachment *)attachment).attributes)
                 {
@@ -157,12 +160,12 @@ static CTFontRef textFontForSize(CGFloat size)
 - (void)updateImageOverlay:(bool)animated
 {
     
-    if (_progressVisible || _deliveryState == TGMessageDeliveryStatePending)
+    if (_deliveryState == TGMessageDeliveryStatePending || (_progressVisible && !(_streamable && !_mediaIsAvailable)))
     {
         [_iconModel setOverlayType:TGMessageImageViewOverlayProgress animated:false];
         [_iconModel setProgress:_progress animated:animated];
     }
-    else if (!_mediaIsAvailable)
+    else if (!_mediaIsAvailable && !_streamable)
     {
         [_iconModel setOverlayType:TGMessageImageViewOverlayDownload animated:false];
         [_iconModel setProgress:0.0f animated:false];
@@ -336,7 +339,7 @@ static CTFontRef textFontForSize(CGFloat size)
 
 - (void)activateMedia
 {
-    if (_mediaIsAvailable)
+    if (_mediaIsAvailable || _streamable)
     {
         if (_isPlaying)
         {
@@ -678,7 +681,7 @@ static CTFontRef textFontForSize(CGFloat size)
                     [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             }
             else if (recognizer.doubleTapped) {
-                [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+                [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
             } else if (activateRoundMessage) {
                 [_webPageFooterModel activateMediaPlayback];
             } else if (activateVideo) {
@@ -711,17 +714,17 @@ static CTFontRef textFontForSize(CGFloat size)
                 [_context.companionHandle requestAction:@"openLinkRequested" options:@{@"url": linkCandidate, @"mid": @(_mid), @"hidden": @(hiddenLink)}];
             else if (_forwardedHeaderModel && CGRectContainsPoint(_forwardedHeaderModel.frame, point)) {
                 if (_viaUser != nil && [_forwardedHeaderModel linkAtPoint:CGPointMake(point.x - _forwardedHeaderModel.frame.origin.x, point.y - _forwardedHeaderModel.frame.origin.y) regionData:NULL]) {
-                    [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+                    [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
                 } else {
                     if (TGPeerIdIsChannel(_forwardedPeerId)) {
                         [_context.companionHandle requestAction:@"peerAvatarTapped" options:@{@"peerId": @(_forwardedPeerId), @"messageId": @(_forwardedMessageId)}];
                     } else {
-                        [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @((int32_t)_forwardedPeerId)}];
+                        [_context.companionHandle requestAction:@"userAvatarTapped" options:@{@"uid": @(_forwardedPeerId)}];
                     }
                 }
             }
             else if (_viaUserModel != nil && CGRectContainsPoint(_viaUserModel.frame, point)) {
-                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @((int32_t)_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
+                [_context.companionHandle requestAction:@"useContextBot" options:@{@"uid": @(_viaUser.uid), @"username": _viaUser.userName == nil ? @"" : _viaUser.userName}];
             }
             else if (_replyHeaderModel && CGRectContainsPoint(_replyHeaderModel.frame, point))
                 [_context.companionHandle requestAction:@"navigateToMessage" options:@{@"mid": @(_replyMessageId), @"sourceMid": @(_mid)}];

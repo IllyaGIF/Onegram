@@ -1,6 +1,7 @@
 #import "TGSharedMediaUtils.h"
 
 #import "TGMediaStoreContext.h"
+#import "../OnegramPlatform/OGMemoryCache.h"
 #import <sys/utsname.h>
 
 static bool TGIOS6SlowSharedMediaDevice()
@@ -26,7 +27,7 @@ static bool TGIOS6SlowSharedMediaDevice()
     dispatch_once(&onceToken, ^
     {
         float factor = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad ? 3.0f : 1.0f;
-        instance = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:(NSUInteger)(2 * 1024 * 1024 * factor) hardMemoryLimit:(NSUInteger)(3 * 1024 * 1024 * factor)];
+        instance = [[TGMemoryImageCache alloc] initWithSoftMemoryLimit:OGMemoryCacheBudget((NSUInteger)(2 * 1024 * 1024 * factor)) hardMemoryLimit:OGMemoryCacheBudget((NSUInteger)(3 * 1024 * 1024 * factor))];
     });
     return instance;
 }

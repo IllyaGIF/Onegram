@@ -1,3 +1,4 @@
+#import "TGOnegramSettings.h"
 #import "TGDialogListSearchCell.h"
 #import "OGPlatformText.h"
 
@@ -8,6 +9,7 @@
 #import "TGColor.h"
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "TGRichMessageInlineImageStore.h"
 
 @interface TGDialogListSearchCell ()
 {
@@ -78,8 +80,11 @@
 
         _premiumIcon = [[UIImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 14.0f, 14.0f)];
         _premiumIcon.image = [TGPresentationAssets premiumBadgeIcon:14.0f];
+        _premiumIcon.contentMode = UIViewContentModeScaleAspectFit;
         _premiumIcon.hidden = true;
         [self.contentView addSubview:_premiumIcon];
+
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(inlineImageLoaded:) name:TGRichMessageInlineImageLoadedNotification object:nil];
         
         _unreadCountBackgrond = [[UIImageView alloc] initWithFrame:CGRectMake(0.0f, 0.0f, 20.0f, 20.0f)];
         
@@ -98,7 +103,34 @@
 
 - (void)dealloc
 {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:TGRichMessageInlineImageLoadedNotification object:nil];
     [_channelDisposable dispose];
+}
+
+- (UIImage *)premiumBadgeImage
+{
+    if (_emojiStatusDocumentId == 0)
+        return [TGPresentationAssets premiumBadgeIcon:14.0f];
+    int64_t documentId = _emojiStatusDocumentId;
+    NSString *key = [TGRichMessageInlineImageStore customEmojiKey:documentId];
+    UIImage *image = [TGRichMessageInlineImageStore imageForKey:key];
+    if (image == nil)
+    {
+        [TGRichMessageInlineImageStore requestImageForKey:key signalGenerator:^SSignal *
+        {
+            return [TGRichMessageInlineImageStore customEmojiImageSignal:documentId];
+        }];
+    }
+    return image;
+}
+
+- (void)inlineImageLoaded:(NSNotification *)notification
+{
+    if (_emojiStatusDocumentId == 0 || _premiumIcon.hidden)
+        return;
+    if (![notification.userInfo[@"key"] isEqual:[TGRichMessageInlineImageStore customEmojiKey:_emojiStatusDocumentId]])
+        return;
+    _premiumIcon.image = [self premiumBadgeImage];
 }
 
 - (void)setPresentation:(TGPresentation *)presentation
@@ -119,7 +151,7 @@
     _unreadCountBackgrond.image = presentation.images.dialogBadgeImage;
     _unreadCountLabel.textColor = presentation.pallete.dialogBadgeTextColor;
     _verifiedIcon.image = presentation.images.dialogVerifiedIcon;
-    _premiumIcon.image = [TGPresentationAssets premiumBadgeIcon:14.0f];
+    _premiumIcon.image = [self premiumBadgeImage];
 }
 
 - (SMetaDisposable *)channelDisposable
@@ -186,7 +218,13 @@
     _avatarView.hidden = false;
     
     _verifiedIcon.hidden = !_isVerified;
-    _premiumIcon.hidden = !_isPremium || _isVerified || _isSavedMessages || _isChat;
+    _premiumIcon.hidden = !(_isPremium || _emojiStatusDocumentId != 0) || _isVerified || _isSavedMessages || _isChat;
+    if (!_premiumIcon.hidden)
+    {
+        CGFloat badgeSide = _emojiStatusDocumentId != 0 ? 18.0f : 14.0f;
+        _premiumIcon.bounds = CGRectMake(0.0f, 0.0f, badgeSide, badgeSide);
+        _premiumIcon.image = [self premiumBadgeImage];
+    }
     
     UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:40.0f];
     if (_isSavedMessages)
@@ -211,7 +249,7 @@
     {
         if (!_isChat || _isEncrypted)
         {
-            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(40.0f, 40.0f) uid:_isEncrypted ? _encryptedUserId : (int32_t)_conversationId firstName:_titleTextFirst lastName:_titleTextSecond placeholder:placeholder];
+            [_avatarView loadUserPlaceholderWithSize:CGSizeMake(40.0f, 40.0f) uid:_isEncrypted ? _encryptedUserId : _conversationId firstName:_titleTextFirst lastName:_titleTextSecond placeholder:placeholder];
         }
         else
         {
@@ -234,6 +272,8 @@
         {
             if (totalCount < 1000)
                 _unreadCountLabel.text = [[NSString alloc] initWithFormat:@"%d", totalCount];
+            else if (TGOnegramUsesExactNumbers())
+                _unreadCountLabel.text = TGOnegramExactCountString(totalCount);
             else
                 _unreadCountLabel.text = [[NSString alloc] initWithFormat:@"%dK", totalCount / 1000];
         }
@@ -341,7 +381,7 @@
     if (!_verifiedIcon.hidden) {
         _verifiedIcon.frame = CGRectOffset(_verifiedIcon.bounds, avatarWidth + 21 + leftPadding + titleWidth + 3.0f, titleLabelsY + 5.0f - TGScreenPixel);
     } else if (!_premiumIcon.hidden) {
-        _premiumIcon.frame = CGRectOffset(_premiumIcon.bounds, avatarWidth + 21 + leftPadding + titleWidth + 3.0f, titleLabelsY + 4.0f - TGScreenPixel);
+        _premiumIcon.frame = CGRectOffset(_premiumIcon.bounds, avatarWidth + 21 + leftPadding + titleWidth + 3.0f, titleLabelsY + 4.0f - TGScreenPixel - CGFloor((_premiumIcon.bounds.size.height - 14.0f) / 2.0f));
     }
 }
 

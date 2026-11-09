@@ -1,3 +1,4 @@
+#import "OGMediaBitrateIndicatorView.h"
 #import "TGBrandedMusicPlayerController.h"
 
 #import <QuartzCore/QuartzCore.h>
@@ -30,6 +31,7 @@ static NSString *TGBrandedMusicPlayerItemTitle(TGMusicPlayerItem *item)
     id<SDisposable> _playlistDisposable;
     SMetaDisposable *_actionsDisposable;
     TGMusicPlayerStatus *_status;
+    OGMediaBitrateIndicatorView *_bitrateView;
     TGMusicPlayerPlaylist *_playlist;
     NSArray *_orderedItems;
     bool _reversedOrder;
@@ -68,6 +70,10 @@ static NSString *TGBrandedMusicPlayerItemTitle(TGMusicPlayerItem *item)
     _screenView.title = TGLocalized(@"MusicPlayer.WindowTitle");
     _screenView.backTitle = TGLocalized(@"Common.Back");
     [self.view addSubview:_screenView];
+
+    _bitrateView = [[OGMediaBitrateIndicatorView alloc] init];
+    _bitrateView.font = [UIFont boldSystemFontOfSize:12.0f];
+    _screenView.progressAccessoryView = _bitrateView;
 
     __weak TGBrandedMusicPlayerController *weakSelf = self;
     _screenView.backPressed = ^
@@ -208,17 +214,24 @@ static NSString *TGBrandedMusicPlayerItemTitle(TGMusicPlayerItem *item)
     }
 
     if (![status.item.key isEqual:previousStatus.item.key])
+    {
         _screenView.trackTitle = TGBrandedMusicPlayerItemTitle(status.item);
+        _bitrateView.mediaBitrate = [TGMusicPlayer mediaBitrateForItem:status.item];
+        _bitrateView.rateProvider = ^double
+        {
+            return [TGTelegraphInstance.musicPlayer currentStreamDownloadRate];
+        };
+    }
 
     _screenView.paused = status.paused;
-    _screenView.controlsEnabled = status.downloadedStatus.downloaded;
+    _screenView.controlsEnabled = status.downloadedStatus.playable;
 
     switch (status.orderType)
     {
-        case TGMusicPlayerOrderTypeNewestFirst:
+        case TGMusicPlayerOrderTypeOldestFirst:
             _screenView.order = OGMusicPlayerScreenOrderNormal;
             break;
-        case TGMusicPlayerOrderTypeOldestFirst:
+        case TGMusicPlayerOrderTypeNewestFirst:
             _screenView.order = OGMusicPlayerScreenOrderReversed;
             break;
         case TGMusicPlayerOrderTypeShuffle:
@@ -293,8 +306,8 @@ static NSString *TGBrandedMusicPlayerItemTitle(TGMusicPlayerItem *item)
     if (!status.paused && status.duration > FLT_EPSILON)
         offset = MIN(1.0f, status.offset + (CGFloat)((CACurrentMediaTime() - status.timestamp) / status.duration));
 
-    bool downloaded = status.downloadedStatus.downloaded;
-    [_screenView setProgress:downloaded ? offset : status.downloadedStatus.progress knobVisible:downloaded];
+    bool playable = status.downloadedStatus.playable;
+    [_screenView setProgress:playable ? offset : status.downloadedStatus.progress knobVisible:playable];
     _screenView.trackSubtitle = [[NSString alloc] initWithFormat:TGLocalized(@"MusicPlayer.ElapsedTime"), TGBrandedMusicPlayerDurationText((int32_t)(offset * status.duration))];
 }
 

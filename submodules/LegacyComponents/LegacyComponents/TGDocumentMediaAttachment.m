@@ -59,7 +59,7 @@
         _localDocumentId = [aDecoder decodeInt64ForKey:@"localDocumentId"];
         _accessHash = [aDecoder decodeInt64ForKey:@"accessHash"];
         _datacenterId = [aDecoder decodeInt32ForKey:@"datacenterId"];
-        _userId = [aDecoder decodeInt32ForKey:@"userId"];
+        _userId = [aDecoder decodeInt64ForKey:@"userId"];
         _date = [aDecoder decodeInt32ForKey:@"date"];
         _mimeType = [aDecoder decodeObjectForKey:@"mimeType"];
         _size = [aDecoder decodeInt32ForKey:@"size"];
@@ -79,7 +79,7 @@
     [aCoder encodeInt64:_localDocumentId forKey:@"localDocumentId"];
     [aCoder encodeInt64:_accessHash forKey:@"accessHash"];
     [aCoder encodeInt32:_datacenterId forKey:@"datacenterId"];
-    [aCoder encodeInt32:_userId forKey:@"userId"];
+    [aCoder encodeInt64:_userId forKey:@"userId"];
     [aCoder encodeInt32:_date forKey:@"date"];
     [aCoder encodeInt32:_version forKey:@"version"];
     if (_mimeType != nil)
@@ -117,7 +117,7 @@
     int zero = 0;
     [data appendBytes:&zero length:4];
     
-    uint8_t version = 7;
+    uint8_t version = 8;
     [data appendBytes:&version length:sizeof(version)];
     
     [data appendBytes:&_localDocumentId length:sizeof(_localDocumentId)];
@@ -188,7 +188,7 @@
     
     uint8_t version = 0;
     [is read:&version maxLength:sizeof(version)];
-    if (version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7)
+    if (version < 1 || version > 8)
     {
         TGLegacyLog(@"Document serialized version mismatch");
         return nil;
@@ -202,7 +202,16 @@
     [is read:(uint8_t *)&documentAttachment->_documentId maxLength:sizeof(documentAttachment->_documentId)];
     [is read:(uint8_t *)&documentAttachment->_accessHash maxLength:sizeof(documentAttachment->_accessHash)];
     [is read:(uint8_t *)&documentAttachment->_datacenterId maxLength:sizeof(documentAttachment->_datacenterId)];
-    [is read:(uint8_t *)&documentAttachment->_userId maxLength:sizeof(documentAttachment->_userId)];
+    if (version >= 8)
+    {
+        [is read:(uint8_t *)&documentAttachment->_userId maxLength:sizeof(documentAttachment->_userId)];
+    }
+    else
+    {
+        int32_t legacyUserId = 0;
+        [is read:(uint8_t *)&legacyUserId maxLength:4];
+        documentAttachment->_userId = legacyUserId;
+    }
     [is read:(uint8_t *)&documentAttachment->_date maxLength:sizeof(documentAttachment->_date)];
     
     NSString *legacyFileName = @"file";

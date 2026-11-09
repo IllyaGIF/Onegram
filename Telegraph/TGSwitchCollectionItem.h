@@ -17,6 +17,7 @@
 @property (nonatomic, copy) void (^lockedPressed)(TGSwitchCollectionItem *item);
 
 @property (nonatomic, strong) NSString *title;
+@property (nonatomic, strong) NSString *descriptionText;
 @property (nonatomic) bool isOn;
 @property (nonatomic) bool isEnabled;
 @property (nonatomic) bool isLocked;

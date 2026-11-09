@@ -598,6 +598,16 @@
 #import "TLInputReplyTo.h"
 #import "TLhelp_PromoData.h"
 #import "TLRPChelp_getPromoData.h"
+#import "TLSavedDialog.h"
+#import "TLmessages_SavedDialogs.h"
+#import "TLRPCmessages_getSavedDialogs.h"
+#import "TLRPCmessages_getSavedHistory.h"
+#import "TLRPCmessages_readSavedHistory.h"
+#import "TLWallPaperSettings.h"
+#import "TLaccount_WallPapers.h"
+#import "TLPageListItem.h"
+#import "TLPageListOrderedItem.h"
+#import "TLGroupCall.h"
 
 #ifdef __cplusplus
 extern "C" {

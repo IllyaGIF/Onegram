@@ -502,7 +502,7 @@
              {
                  NSString *url = nil;
                  if ([strongSelf->_request.callbackUrl hasPrefix:@"tgbot"]) {
-                     url = [NSString stringWithFormat:@"tgbot%d://passport/error?error=%@", _request.botId, error];
+                     url = [NSString stringWithFormat:@"tgbot%lld://passport/error?error=%@", _request.botId, error];
                  } else {
                      url = [TGPassportRequestController urlString:_request.callbackUrl byAppendingQueryString:[NSString stringWithFormat:@"tg_passport=error&error=%@", error]];
                  }
@@ -1901,7 +1901,7 @@
             {
                 NSString *url = nil;
                 if ([strongSelf->_request.callbackUrl hasPrefix:@"tgbot"])
-                    url = [NSString stringWithFormat:@"tgbot%d://passport/success", strongSelf->_request.botId];
+                    url = [NSString stringWithFormat:@"tgbot%lld://passport/success", strongSelf->_request.botId];
                 else
                     url = [TGPassportRequestController urlString:strongSelf->_request.callbackUrl byAppendingQueryString:@"tg_passport=success"];
                 [(TGApplication *)[TGApplication sharedApplication] nativeOpenURL:[NSURL URLWithString:url]];
@@ -1916,7 +1916,7 @@
     {
         NSString *url = nil;
         if ([_request.callbackUrl hasPrefix:@"tgbot"])
-            url = [NSString stringWithFormat:@"tgbot%d://passport/cancel", _request.botId];
+            url = [NSString stringWithFormat:@"tgbot%lld://passport/cancel", _request.botId];
         else
             url = [TGPassportRequestController urlString:_request.callbackUrl byAppendingQueryString:@"tg_passport=cancel"];
         [(TGApplication *)[TGApplication sharedApplication] nativeOpenURL:[NSURL URLWithString:url]];
@@ -2144,7 +2144,7 @@
                     if (strongSelf != nil)
                     {
                         TGPasswordRecoveryController *controller = [[TGPasswordRecoveryController alloc] initWithEmailPattern:emailPattern];
-                        controller.completion = ^(bool success, __unused int32_t userId)
+                        controller.completion = ^(bool success, __unused int64_t userId)
                         {
                             __strong TGPassportRequestController *strongSelf = weakSelf;
                             if (strongSelf != nil)

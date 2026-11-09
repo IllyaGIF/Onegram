@@ -11,7 +11,29 @@
 
 @end
 
+static const CGFloat TGMusicAlbumArtworkThumbnailSide = 48.0f;
+
 @implementation TGMusicUtils
+
++ (CGSize)albumArtworkPixelSize:(bool)thumbnail
+{
+    CGSize screenSize = TGScreenSize();
+    CGFloat side = thumbnail ? TGMusicAlbumArtworkThumbnailSide : MIN(screenSize.width, screenSize.height);
+    side = CGCeil(side * TGScreenScaling());
+    return CGSizeMake(side, side);
+}
+
++ (UIImage *)albumArtwork:(UIImage *)image thumbnail:(bool)thumbnail
+{
+    if (image == nil)
+        return nil;
+    
+    CGSize imagePixelSize = CGSizeMake(image.size.width * image.scale, image.size.height * image.scale);
+    CGSize fittedPixelSize = TGFitSize(imagePixelSize, [self albumArtworkPixelSize:thumbnail]);
+    if (CGSizeEqualToSize(fittedPixelSize, imagePixelSize))
+        return image;
+    return TGScaleImageToPixelSize(image, fittedPixelSize);
+}
 
 + (void)albumArtworkForURL:(NSURL *)url completion:(void (^)(UIImage *))completion
 {
@@ -22,89 +44,49 @@
     AVAsset *asset = [AVURLAsset URLAssetWithURL:url options:nil];
     if (asset == nil)
     {
-        completion(nil);
+        completion([self albumArtwork:[TGMusicID3ArtworkReader albumArtworkForURL:url] thumbnail:false]);
         return;
     }
     
     [asset loadValuesAsynchronouslyForKeys:@[@"commonMetadata"] completionHandler:^
     {
-        NSArray *artworks = [AVMetadataItem metadataItemsFromArray:asset.commonMetadata withKey:AVMetadataCommonKeyArtwork keySpace:AVMetadataKeySpaceCommon];
-        if (artworks == nil)
+        UIImage *image = nil;
+        for (AVMetadataItem *item in [AVMetadataItem metadataItemsFromArray:asset.commonMetadata withKey:AVMetadataCommonKeyArtwork keySpace:AVMetadataKeySpaceCommon])
         {
-            completion(nil);
-            return;
-        }
-        else
-        {
-            UIImage *image = nil;
-            bool hasData = false;
-            for (AVMetadataItem *item in artworks)
-            {
-                if ([item.keySpace isEqualToString:AVMetadataKeySpaceID3])
-                {
-                    if ([item.value respondsToSelector:@selector(objectForKey:)])
-                    {
-                        image = [UIImage imageWithData:[(id)item.value objectForKey:@"data"]];
-                        hasData = true;
-                    }
-                    else if ([item.value isKindOfClass:[NSData class]])
-                    {
-                        image = [UIImage imageWithData:(id)item.value];
-                        hasData = true;
-                    }
-                }
-                else if ([item.keySpace isEqualToString:AVMetadataKeySpaceiTunes])
-                    image = [UIImage imageWithData:(id)item.value];
-            }
+            id value = item.value;
+            NSData *data = nil;
+            if ([value isKindOfClass:[NSData class]])
+                data = value;
+            else if ([value respondsToSelector:@selector(objectForKey:)])
+                data = [value objectForKey:@"data"];
             
+            if (data.length != 0)
+                image = [UIImage imageWithData:data];
             if (image != nil)
-            {
-                CGSize screenSize = TGScreenSize();
-                CGFloat screenSide = MIN(screenSize.width, screenSize.height);
-                CGFloat scale = TGIsRetina() ? 1.7f : 1.0f;
-                CGSize pixelSize = CGSizeMake(screenSide * scale, screenSide * scale);
-                image = TGScaleImageToPixelSize(image, TGFitSize(CGSizeMake(image.size.width * image.scale, image.size.height * image.scale), pixelSize));
-                completion(image);
-            }
-            else if (hasData)
-            {
-                image = [TGMusicID3ArtworkReader albumArtworkForURL:url];
-                completion(image);
-            }
-            else
-            {
-                completion(nil);
-            }
+                break;
         }
+        
+        if (image == nil)
+            image = [TGMusicID3ArtworkReader albumArtworkForURL:url];
+        completion([self albumArtwork:image thumbnail:false]);
     }];
 #else
-    UIImage *image = [TGMusicID3ArtworkReader albumArtworkForURL:url];
-    if (image != nil)
-    {
-        CGSize screenSize = TGScreenSize();
-        CGFloat screenSide = MIN(screenSize.width, screenSize.height);
-        CGFloat scale = TGIsRetina() ? 1.7f : 1.0f;
-        CGSize pixelSize = CGSizeMake(screenSide * scale, screenSide * scale);
-        image = TGScaleImageToPixelSize(image, TGFitSize(CGSizeMake(image.size.width * image.scale, image.size.height * image.scale), pixelSize));
-    }
-    completion(image);
+    completion([self albumArtwork:[TGMusicID3ArtworkReader albumArtworkForURL:url] thumbnail:false]);
 #endif
 }
 
 @end
 
-const uint8_t TGID3v2[5] = {0x49, 0x44, 0x33, 0x02, 0x00};
-const uint8_t TGID3v3[5] = {0x49, 0x44, 0x33, 0x03, 0x00};
-const NSUInteger TGID3VersionOffset = 3;
-const NSUInteger TGID3SizeOffset = 6;
-const NSUInteger TGID3TagOffset = 10;
-const NSUInteger TGID3ArtOffset = 12;
+static const uint8_t TGID3Magic[3] = {0x49, 0x44, 0x33};
+static const NSUInteger TGID3HeaderLength = 10;
+static const uint8_t TGID3UnsynchronisationFlag = 0x80;
+static const uint8_t TGID3ExtendedHeaderFlag = 0x40;
+static const uint8_t TGID3v23EncodedFrameFlags = 0x80 | 0x40;
+static const uint8_t TGID3v24EncodedFrameFlags = 0x08 | 0x04;
+static const uint8_t TGID3v24FrameUnsynchronisationFlag = 0x02;
 
-const NSUInteger TGID3v2FrameOffset = 6;
-const NSUInteger TGID3v3FrameOffset = 10;
-
-const uint8_t TGID3v2Artwork[3] = {0x50, 0x49, 0x43};
-const uint8_t TGID3v3Artwork[4] = {0x41, 0x50, 0x49, 0x43};
+static const uint8_t TGID3v2Artwork[3] = {0x50, 0x49, 0x43};
+static const uint8_t TGID3v3Artwork[4] = {0x41, 0x50, 0x49, 0x43};
 
 const uint8_t TGJPGMagic[3] = {0xff, 0xd8, 0xff};
 const uint8_t TGPNGMagic[4] = {0x89, 0x50, 0x4e, 0x47};
@@ -135,126 +117,105 @@ const uint8_t TGPNGMagic[4] = {0x89, 0x50, 0x4e, 0x47};
 + (UIImage *)albumArtworkForURL:(NSURL *)url
 {
     NSData *data = [NSData dataWithContentsOfMappedFile:url.path];
-    if (data.length < 4)
+    if (data.length < TGID3HeaderLength)
         return nil;
     
-    const uint8_t *bytes = data.bytes;
-    
-    if (!(memcmp(bytes, TGID3v2, 5) == 0 || memcmp(bytes, TGID3v3, 5) == 0))
+    const uint8_t *header = data.bytes;
+    uint8_t version = header[3];
+    uint8_t flags = header[5];
+    if (memcmp(header, TGID3Magic, 3) != 0 || version < 2 || version > 4)
         return nil;
     
-    uint8_t version = bytes[TGID3VersionOffset];
-    uint32_t size = [self getSize:bytes];
-    const uint8_t *ptr = data.bytes + TGID3TagOffset;
+    NSUInteger tagLength = MIN((NSUInteger)[self syncsafeInteger:header + 6], data.length - TGID3HeaderLength);
+    NSData *tag = [data subdataWithRange:NSMakeRange(TGID3HeaderLength, tagLength)];
+    if (version < 4 && (flags & TGID3UnsynchronisationFlag))
+        tag = [self resynchronisedData:tag];
     
-    uint32_t pos = 0;
-    while (pos < size)
+    const uint8_t *bytes = tag.bytes;
+    NSUInteger length = tag.length;
+    NSUInteger position = 0;
+    if (version > 2 && (flags & TGID3ExtendedHeaderFlag) && length >= 4)
+        position = version == 4 ? [self syncsafeInteger:bytes] : [self bigEndianInteger:bytes] + 4;
+    
+    NSUInteger frameHeaderLength = version == 2 ? 6 : 10;
+    while (position + frameHeaderLength <= length && bytes[position] != 0)
     {
-        const uint8_t * const frameBytes = ptr + pos;
-        uint32_t frameSize = [self frameSize:frameBytes version:version];
+        const uint8_t *frame = bytes + position;
+        NSUInteger frameLength = 0;
+        if (version == 2)
+            frameLength = ((NSUInteger)frame[3] << 16) | ((NSUInteger)frame[4] << 8) | frame[5];
+        else
+            frameLength = version == 4 ? [self syncsafeInteger:frame + 4] : [self bigEndianInteger:frame + 4];
         
-        if ([self isArtworkFrame:frameBytes version:version])
-        {
-            uint32_t frameOffset = [self frameOffsetForVersion:version];
-            const uint8_t *ptr = frameBytes + frameOffset;
-            
-            bool isJPEG = false;
-            uint32_t imageOffset = UINT32_MAX;
-            for (uint32_t i = 0; i < frameSize - 4; i++)
-            {
-                if (memcmp(ptr + i, TGJPGMagic, 3) == 0)
-                {
-                    imageOffset = i;
-                    isJPEG = true;
-                    break;
-                }
-                else if (memcmp(ptr + i, TGPNGMagic, 4) == 0)
-                {
-                    imageOffset = i;
-                    break;
-                }
-            }
-            
-            if (imageOffset != UINT32_MAX)
-            {
-                if (isJPEG)
-                {
-                    NSMutableData *jpegData = [[NSMutableData alloc] initWithCapacity:frameSize + 1024];
-                    
-                    uint8_t previousByte = 0xff;
-                    uint32_t skippedBytes = 0;
-                    
-                    for (NSUInteger i = 0; i < frameSize - imageOffset + skippedBytes; i++)
-                    {
-                        uint8_t byte = (uint8_t)ptr[imageOffset + i];
-                        
-                        if (byte == 0x00 && previousByte == 0xff)
-                            skippedBytes++;
-                        else
-                            [jpegData appendBytes:&byte length:1];
-                        
-                        if (byte == 0xd9 && previousByte == 0xff)
-                            break;
-                        
-                        previousByte = byte;
-                    }
-                    
-                    return [UIImage imageWithData:jpegData];
-                }
-                else
-                {
-                    NSData *artworkData = [[NSData alloc] initWithBytes:ptr + imageOffset length:frameSize - imageOffset];
-                    return [UIImage imageWithData:artworkData];
-                }
-            }
-        }
-        else if (frameBytes[0] == 0x00 && frameBytes[1] == 0x00 && frameBytes[2] == 0x00)
-        {
+        position += frameHeaderLength;
+        if (frameLength > length - position)
             break;
+        
+        if ([self isPictureFrame:frame version:version])
+        {
+            NSData *frameData = [tag subdataWithRange:NSMakeRange(position, frameLength)];
+            if (version == 4 && ((flags & TGID3UnsynchronisationFlag) || (frame[9] & TGID3v24FrameUnsynchronisationFlag)))
+                frameData = [self resynchronisedData:frameData];
+            
+            UIImage *image = [self imageInPictureFrameData:frameData];
+            if (image != nil)
+                return image;
         }
         
-        pos += frameSize;
+        position += frameLength;
     }
     
     return nil;
 }
 
-+ (uint32_t)getSize:(const uint8_t *)bytes
-{
-    uint32_t rawSize = 0;
-    memcpy(&rawSize, bytes + TGID3SizeOffset, sizeof(rawSize));
-    uint32_t size = CFSwapInt32HostToBig(rawSize);
-    uint32_t b1 = (size & 0x7F000000) >> 3;
-    uint32_t b2 = (size & 0x007F0000) >> 2;
-    uint32_t b3 = (size & 0x00007F00) >> 1;
-    uint32_t b4 =  size & 0x0000007F;
-    return b1 + b2 + b3 + b4;
-}
-
-+ (uint32_t)frameSize:(const uint8_t *)framePtr version:(uint8_t)version
-{
-    uint8_t offset = version == 2 ? 2 : 4;
-    uint32_t rawSize = 0;
-    memcpy(&rawSize, framePtr + offset, sizeof(rawSize));
-    uint32_t size = CFSwapInt32HostToBig(rawSize);
-    
-    if (version == 2)
-        size &= 0x00FFFFFF;
-    
-    return size + [self frameOffsetForVersion:version];
-}
-
-+ (bool)isArtworkFrame:(const uint8_t *)frame version:(uint8_t)version
++ (bool)isPictureFrame:(const uint8_t *)frame version:(uint8_t)version
 {
     if (version == 2)
         return memcmp(frame, TGID3v2Artwork, 3) == 0;
-        
-    return memcmp(frame, TGID3v3Artwork, 4) == 0;
+    
+    uint8_t encodedFlags = version == 4 ? TGID3v24EncodedFrameFlags : TGID3v23EncodedFrameFlags;
+    return memcmp(frame, TGID3v3Artwork, 4) == 0 && (frame[9] & encodedFlags) == 0;
 }
 
-+ (uint32_t)frameOffsetForVersion:(uint8_t)version
++ (UIImage *)imageInPictureFrameData:(NSData *)frameData
 {
-    return version == 2 ? TGID3v2FrameOffset : TGID3v3FrameOffset;
+    const uint8_t *bytes = frameData.bytes;
+    NSUInteger length = frameData.length;
+    for (NSUInteger i = 0; i + 4 <= length; i++)
+    {
+        if (memcmp(bytes + i, TGJPGMagic, 3) == 0 || memcmp(bytes + i, TGPNGMagic, 4) == 0)
+            return [UIImage imageWithData:[frameData subdataWithRange:NSMakeRange(i, length - i)]];
+    }
+    return nil;
+}
+
++ (NSData *)resynchronisedData:(NSData *)data
+{
+    const uint8_t *bytes = data.bytes;
+    NSUInteger length = data.length;
+    NSMutableData *result = [[NSMutableData alloc] initWithCapacity:length];
+    NSUInteger chunkStart = 0;
+    for (NSUInteger i = 1; i < length; i++)
+    {
+        if (bytes[i - 1] == 0xff && bytes[i] == 0x00)
+        {
+            [result appendBytes:bytes + chunkStart length:i - chunkStart];
+            chunkStart = i + 1;
+        }
+    }
+    if (chunkStart < length)
+        [result appendBytes:bytes + chunkStart length:length - chunkStart];
+    return result;
+}
+
++ (uint32_t)syncsafeInteger:(const uint8_t *)bytes
+{
+    return ((uint32_t)(bytes[0] & 0x7f) << 21) | ((uint32_t)(bytes[1] & 0x7f) << 14) | ((uint32_t)(bytes[2] & 0x7f) << 7) | (uint32_t)(bytes[3] & 0x7f);
+}
+
++ (uint32_t)bigEndianInteger:(const uint8_t *)bytes
+{
+    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) | ((uint32_t)bytes[2] << 8) | (uint32_t)bytes[3];
 }
 
 @end

@@ -26,6 +26,8 @@
 @property (nonatomic, retain) NSString *mime_type;
 @property (nonatomic) int32_t size;
 @property (nonatomic, retain) TLPhotoSize *thumb;
+@property (nonatomic, retain) NSArray *thumbs;
+@property (nonatomic, retain) NSArray *video_thumbs;
 @property (nonatomic) int32_t dc_id;
 @property (nonatomic) int32_t version;
 @property (nonatomic, retain) NSArray *attributes;

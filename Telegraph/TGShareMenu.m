@@ -78,10 +78,14 @@
             if (next == nil)
                 return;
             
+            NSArray *items = [next isKindOfClass:[NSArray class]] ? next : @[next];
+            if (items.count == 0)
+                return;
+            
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 32000
-            if ([next isKindOfClass:[NSURL class]] && [(NSURL *)next isFileURL])
+            if (items.count == 1 && [items[0] isKindOfClass:[NSURL class]] && [(NSURL *)items[0] isFileURL])
             {
-                UIDocumentInteractionController *interactionController = [UIDocumentInteractionController interactionControllerWithURL:next];
+                UIDocumentInteractionController *interactionController = [UIDocumentInteractionController interactionControllerWithURL:items[0]];
                 if (barButtonItem != nil)
                     [interactionController presentOptionsMenuFromBarButtonItem:barButtonItem animated:true];
                 else
@@ -92,7 +96,7 @@
             else
 #endif
             {
-                if (TGShareItemsViaLegacyPasteboard(@[next]))
+                if (TGShareItemsViaLegacyPasteboard(items))
                 {
                     [progressWindow dismiss:true];
                     return;
@@ -112,7 +116,7 @@
                             activitySourceRect = sourceRect();
                     }
                 }
-                OGPlatformPresentActivityItems(viewController, @[next], activitySourceView, activitySourceRect, activityBarButtonItem, UIPopoverArrowDirectionAny, nil);
+                OGPlatformPresentActivityItems(viewController, items, activitySourceView, activitySourceRect, activityBarButtonItem, UIPopoverArrowDirectionAny, nil);
             }
             
             [progressWindow dismiss:true];

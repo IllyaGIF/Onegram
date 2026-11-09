@@ -11,11 +11,14 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGIconSwitchView.h"
 
 #import "TGPresentation.h"
+#import "TGFlatControls.h"
+#import "TGCollectionItemDescription.h"
 
 @interface TGSwitchCollectionItemView ()
 {
     UILabel *_titleLabel;
-    UISwitch *_switchView;
+    UILabel *_descriptionLabel;
+    UIControl<TGSwitchControl> *_switchView;
     bool _isEnabled;
     bool _isLocked;
     UIImageView *_iconView;
@@ -41,7 +44,7 @@
         if ([self isKindOfClass:[TGPermissionSwitchCollectionItemView class]] && iosMajorVersion() >= 8) {
             _switchView = [[TGIconSwitchView alloc] init];
         } else {
-            _switchView = [[UISwitch alloc] init];
+            _switchView = TGSwitchControlCreate();
         }
         [_switchView addTarget:self action:@selector(switchValueChanged) forControlEvents:UIControlEventValueChanged];
         
@@ -55,6 +58,7 @@
     [super setPresentation:presentation];
     
     _titleLabel.textColor = presentation.pallete.collectionMenuTextColor;
+    _descriptionLabel.textColor = presentation.pallete.collectionMenuVariantColor;
     if (_brandedUserInfoStyle && [TGPresentation brandedIOS6Style])
     {
         OGSettingsAppearance *rowAppearance = [OGTheme brandedTheme].profileAppearance.actionRowAppearance;
@@ -71,7 +75,7 @@
         self.classicIOS6HorizontalInset = 9.0f;
     }
     [self updateIcon];
-    if (OGPlatformSetSwitchColors(_switchView, presentation.pallete.collectionMenuSwitchColor, presentation.pallete.collectionMenuSwitchColor != nil ? presentation.pallete.collectionMenuAccessoryColor : nil))
+    if ([_switchView setSwitchOnColor:presentation.pallete.collectionMenuSwitchColor offColor:presentation.pallete.collectionMenuSwitchColor != nil ? presentation.pallete.collectionMenuAccessoryColor : nil])
     {
         if ([_switchView isKindOfClass:[TGIconSwitchView class]])
             _switchView.backgroundColor = presentation.pallete.collectionMenuDestructiveColor;
@@ -87,6 +91,26 @@
 - (void)setTitle:(NSString *)title
 {
     _titleLabel.text = title;
+}
+
+- (void)setDescriptionText:(NSString *)descriptionText
+{
+    if (descriptionText.length == 0)
+    {
+        _descriptionLabel.hidden = true;
+        _descriptionLabel.text = nil;
+        [self setNeedsLayout];
+        return;
+    }
+    if (_descriptionLabel == nil)
+    {
+        _descriptionLabel = TGCollectionItemDescriptionLabel();
+        _descriptionLabel.textColor = self.presentation.pallete.collectionMenuVariantColor;
+        [self addSubview:_descriptionLabel];
+    }
+    _descriptionLabel.hidden = false;
+    _descriptionLabel.text = descriptionText;
+    [self setNeedsLayout];
 }
 
 - (void)setIsOn:(bool)isOn animated:(bool)animated
@@ -171,6 +195,13 @@
     CGFloat titleHeight = MAX(24.0f, ceilf(OGPlatformFontLineHeight(_titleLabel.font)));
     CGFloat titleY = CGFloor((bounds.size.height - titleHeight) / 2.0f);
     _titleLabel.frame = CGRectMake(titleX, titleY, MAX(0.0f, CGRectGetMinX(_switchView.frame) - titleX - 8.0f), titleHeight);
+    if (_descriptionLabel != nil && !_descriptionLabel.hidden)
+    {
+        CGFloat descriptionWidth = MAX(0.0f, CGRectGetMinX(_switchView.frame) - titleX - 8.0f);
+        CGFloat descriptionY = TGCollectionItemDescriptionTitleTop + TGCollectionItemDescriptionTitleHeight + TGCollectionItemDescriptionSpacing;
+        _titleLabel.frame = CGRectMake(titleX, TGCollectionItemDescriptionTitleTop, _titleLabel.frame.size.width, TGCollectionItemDescriptionTitleHeight);
+        _descriptionLabel.frame = CGRectMake(titleX, descriptionY, descriptionWidth, TGCollectionItemDescriptionTextHeight(_descriptionLabel.text, descriptionWidth));
+    }
 }
 
 @end

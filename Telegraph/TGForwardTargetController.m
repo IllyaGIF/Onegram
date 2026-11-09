@@ -648,14 +648,14 @@
                     [_watcherHandle requestAction:@"conversationSelected" options:conversation];
                 else
                 {
-                    TGUser *user = [TGDatabaseInstance() loadUser:(int32_t)conversation.conversationId];
+                    TGUser *user = [TGDatabaseInstance() loadUser:conversation.conversationId];
                     if (user != nil)
                         [_watcherHandle requestAction:@"userSelected" options:user];
                 }
             }
             else
             {
-                if ((conversation.isChat && conversation.conversationId > INT_MIN) || conversation.isChannel)
+                if ((conversation.isChat && !TGPeerIdIsSecretChat(conversation.conversationId)) || conversation.isChannel)
                 {
                     _selectedTarget = conversation;
                     
@@ -700,15 +700,15 @@
                 }
                 else
                 {
-                    int uid = 0;
+                    int64_t uid = 0;
                     
                     if (conversation.isChat)
                     {
                         if (conversation.chatParticipants.chatParticipantUids.count != 0)
-                            uid = [conversation.chatParticipants.chatParticipantUids[0] intValue];
+                            uid = [conversation.chatParticipants.chatParticipantUids[0] longLongValue];
                     }
                     else
-                        uid = (int)conversation.conversationId;
+                        uid = conversation.conversationId;
                     
                     TGUser *user = [TGDatabaseInstance() loadUser:uid];
                     if (user != nil)

@@ -17,6 +17,7 @@
 #import "TGTelegramNetworking.h"
 #import "TGPresentation.h"
 #import "../OnegramUI/Core/OGConversationAppearance.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
 
 typedef enum {
     TGPollDecorationRadio = 0,
@@ -348,7 +349,7 @@ static void TGPollDecorationDrawOperation(CGContextRef context, TGModernDrawingO
 
 - (int32_t)currentTime
 {
-    return (int32_t)[[TGTelegramNetworking instance] approximateRemoteTime];
+    return (int32_t)OGRemoteClockTime();
 }
 
 - (NSString *)displaySignature
@@ -794,8 +795,10 @@ static void TGPollDecorationDrawOperation(CGContextRef context, TGModernDrawingO
         return;
 
     TGPollHitRegion *region = [self hitRegionAtContainerPoint:[self containerPointFromContentPoint:[recognizer locationInView:[_contentModel boundView]]]];
-    if (recognizer.longTapped || recognizer.doubleTapped)
+    if (recognizer.longTapped)
         [_context.companionHandle requestAction:@"messageSelectionRequested" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
+    else if (recognizer.doubleTapped)
+        [_context.companionHandle requestAction:@"messageDoubleTapped" options:@{@"mid": @(_mid), @"peerId": @(_authorPeerId)}];
     else if (region != nil)
         [self activateRegion:region];
     else

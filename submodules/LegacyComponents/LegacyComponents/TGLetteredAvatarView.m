@@ -10,6 +10,8 @@
 #import "TGImageManager.h"
 #import "TGGradientLabel.h"
 
+#import <libkern/OSAtomic.h>
+
 @interface TGLetteredAvatarRoundedImageKey : NSObject <NSCopying>
 {
 @public
@@ -54,7 +56,7 @@ static UIImage *TGLetteredAvatarRoundedImage(UIImage *image, CGFloat radius, CGS
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^
     {
-        cache = [[OGMemoryCache alloc] initWithCountLimit:192 costLimit:4 * 1024 * 1024];
+        cache = [[OGMemoryCache alloc] initWithCountLimit:192 costLimit:OGMemoryCacheBudget(4 * 1024 * 1024)];
     });
     UIImage *rounded = [cache objectForKey:key];
     if (rounded != nil)
@@ -82,6 +84,9 @@ static UIImage *TGLetteredAvatarRoundedImage(UIImage *image, CGFloat radius, CGS
     return rounded;
 }
 
+static volatile CGFloat TGLetteredAvatarCornerRoundness = -1.0f;
+static volatile int32_t TGLetteredAvatarCornerRoundnessGeneration = 0;
+
 @interface TGLetteredAvatarView ()
 {
     TGGradientLabel *_label;
@@ -95,6 +100,7 @@ static UIImage *TGLetteredAvatarRoundedImage(UIImage *image, CGFloat radius, CGS
     bool _roundsImage;
     UIImage *_sourceImage;
     CGSize _roundedBoundsSize;
+    int32_t _roundedGeneration;
 }
 
 @end
@@ -246,7 +252,7 @@ static NSString *TGLetteredAvatarTitleLetters(NSString *title)
     _label.hidden = true;
 }
 
-- (void)loadUserPlaceholderWithSize:(CGSize)size uid:(int)uid firstName:(NSString *)firstName lastName:(NSString *)lastName placeholder:(UIImage *)placeholder
+- (void)loadUserPlaceholderWithSize:(CGSize)size uid:(int64_t)uid firstName:(NSString *)firstName lastName:(NSString *)lastName placeholder:(UIImage *)placeholder
 {
     _label.font = _doubleFont;
     _usingSingleFont = false;
@@ -258,7 +264,7 @@ static NSString *TGLetteredAvatarTitleLetters(NSString *title)
     [_label sizeToFit];
     [self setNeedsLayout];
     
-    NSString *placeholderUri = [[NSString alloc] initWithFormat:@"placeholder://?type=user-avatar&w=%d&h=%d&uid=%" PRId32 "", (int)size.width, (int)size.height, (int32_t)uid];
+    NSString *placeholderUri = [[NSString alloc] initWithFormat:@"placeholder://?type=user-avatar&w=%d&h=%d&uid=%" PRId64 "", (int)size.width, (int)size.height, uid];
     if (!TGStringCompare([self currentUrl], placeholderUri))
         [super loadImage:placeholderUri filter:nil placeholder:placeholder];
     
@@ -296,18 +302,54 @@ typedef struct
 
 + (void)prewarmImage:(UIImage *)image cornerRadius:(CGFloat)cornerRadius boundsSize:(CGSize)boundsSize
 {
-    TGLetteredAvatarRoundedImage(image, cornerRadius, boundsSize);
+    TGLetteredAvatarRoundedImage(image, [self effectiveCornerRadius:cornerRadius boundsSize:boundsSize], boundsSize);
+}
+
++ (void)setCornerRoundness:(CGFloat)roundness
+{
+    CGFloat value = roundness < 0.0f ? -1.0f : MIN(1.0f, roundness);
+    if (value == TGLetteredAvatarCornerRoundness)
+        return;
+    TGLetteredAvatarCornerRoundness = value;
+    OSAtomicIncrement32Barrier(&TGLetteredAvatarCornerRoundnessGeneration);
+}
+
++ (CGFloat)cornerRoundness
+{
+    return TGLetteredAvatarCornerRoundness;
+}
+
++ (CGFloat)effectiveCornerRadius:(CGFloat)cornerRadius boundsSize:(CGSize)boundsSize
+{
+    CGFloat roundness = TGLetteredAvatarCornerRoundness;
+    if (roundness < 0.0f || cornerRadius <= 0.0f)
+        return cornerRadius;
+    CGFloat side = MIN(boundsSize.width, boundsSize.height);
+    return side * roundness / 2.0f;
 }
 
 - (UIImage *)roundedImageForImage:(UIImage *)image
 {
-    return _roundsImage ? TGLetteredAvatarRoundedImage(image, self.layer.cornerRadius, self.bounds.size) : image;
+    return _roundsImage ? TGLetteredAvatarRoundedImage(image, [TGLetteredAvatarView effectiveCornerRadius:self.layer.cornerRadius boundsSize:self.bounds.size], self.bounds.size) : image;
+}
+
+- (void (^)(UIImage *))displayImagePrewarm
+{
+    if (!_roundsImage || iosMajorVersion() < 4)
+        return nil;
+    CGSize boundsSize = self.bounds.size;
+    CGFloat radius = [TGLetteredAvatarView effectiveCornerRadius:self.layer.cornerRadius boundsSize:boundsSize];
+    return ^(UIImage *image)
+    {
+        TGLetteredAvatarRoundedImage(image, radius, boundsSize);
+    };
 }
 
 - (void)setImage:(UIImage *)image
 {
     _sourceImage = image;
     _roundedBoundsSize = self.bounds.size;
+    _roundedGeneration = TGLetteredAvatarCornerRoundnessGeneration;
     [super setImage:[self roundedImageForImage:image]];
 }
 
@@ -321,7 +363,20 @@ typedef struct
     if (_sourceImage == nil)
         return;
     _roundedBoundsSize = self.bounds.size;
+    _roundedGeneration = TGLetteredAvatarCornerRoundnessGeneration;
     [super setImage:[self roundedImageForImage:_sourceImage]];
+}
+
+- (bool)roundedImageIsStale
+{
+    return _sourceImage != nil && (_roundedGeneration != TGLetteredAvatarCornerRoundnessGeneration || !CGSizeEqualToSize(_roundedBoundsSize, self.bounds.size));
+}
+
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+    if (self.window != nil && [self roundedImageIsStale])
+        [self refreshRoundedImage];
 }
 
 - (void)setClipsToBounds:(BOOL)clipsToBounds
@@ -338,7 +393,7 @@ typedef struct
 {
     [super layoutSubviews];
 
-    if (_sourceImage != nil && !CGSizeEqualToSize(_roundedBoundsSize, self.bounds.size))
+    if ([self roundedImageIsStale])
         [self refreshRoundedImage];
     
     CGSize labelSize = _label.frame.size;

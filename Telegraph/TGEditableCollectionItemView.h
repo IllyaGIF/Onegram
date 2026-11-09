@@ -23,6 +23,7 @@ typedef enum {
 @property (nonatomic) bool showsDeleteIndicator;
 
 @property (nonatomic) bool enableEditing;
+@property (nonatomic) bool revealsOptionsOnSwipe;
 @property (nonatomic, strong) NSString *optionText;
 
 @property (nonatomic) CGPoint optionsOffset;

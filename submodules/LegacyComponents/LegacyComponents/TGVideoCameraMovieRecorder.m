@@ -1,4 +1,5 @@
 #import "TGVideoCameraMovieRecorder.h"
+#import "LegacyComponentsInternal.h"
 #import <AVFoundation/AVFoundation.h>
 
 typedef enum {
@@ -160,7 +161,17 @@ typedef enum {
 	timingInfo.decodeTimeStamp = kCMTimeInvalid;
 	timingInfo.presentationTimeStamp = presentationTime;
 	
-    CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, true, NULL, NULL, _videoTrackSourceFormatDescription, &timingInfo, &sampleBuffer);
+    OSStatus result = CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, true, NULL, NULL, _videoTrackSourceFormatDescription, &timingInfo, &sampleBuffer);
+    if (result != noErr)
+    {
+        NSError *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:result userInfo:nil];
+        @synchronized (self)
+        {
+            if (_status == TGMovieRecorderStatusRecording)
+                [self transitionToStatus:TGMovieRecorderStatusFailed error:error];
+        }
+        return;
+    }
         
 	if (sampleBuffer)
     {
@@ -397,6 +408,8 @@ typedef enum {
 
 - (void)transitionToStatus:(TGMovieRecorderStatus)newStatus error:(NSError *)error
 {
+    if (newStatus == TGMovieRecorderStatusFailed)
+        TGLegacyLog(@"VIDEOMSG recorder_error %@ writer_error=%@", error, _assetWriter.error);
 	bool shouldNotifyDelegate = false;
 	
 	if (newStatus != _status)

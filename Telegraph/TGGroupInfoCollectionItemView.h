@@ -32,6 +32,8 @@
 - (void)setAvatarUri:(NSString *)avatarUri animated:(bool)animated;
 - (void)setAvatarImage:(UIImage *)avatarImage animated:(bool)animated;
 - (void)setTitle:(NSString *)title;
+- (void)setSubtitle:(NSString *)subtitle;
+- (void)setStoryRingState:(int)storyRingState;
 - (void)setUpdatingTitle:(bool)updatingTitle animated:(bool)animated;
 - (void)setUpdatingAvatar:(bool)updatingAvatar animated:(bool)animated;
 - (void)setEditing:(bool)editing animated:(bool)animated;

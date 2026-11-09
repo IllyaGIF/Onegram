@@ -287,22 +287,7 @@
     if ([desc isKindOfClass:[TLWallPaper$wallPaper class]])
     {
         TLWallPaper$wallPaper *wallpaper = (TLWallPaper$wallPaper *)desc;
-        
-        NSMutableDictionary *fileReferences = [[NSMutableDictionary alloc] init];
-        for (TLPhotoSize$photoSize *size in wallpaper.sizes)
-        {
-            if (![size respondsToSelector:@selector(location)])
-                continue;
-            
-            TLFileLocation *location = [size performSelector:@selector(location)];
-            if ([location isKindOfClass:[TLFileLocation$fileLocation class]])
-            {
-                TLFileLocation$fileLocation *fileLocation = (TLFileLocation$fileLocation *)location;
-                fileReferences[[NSString stringWithFormat:@"%lld_%d", fileLocation.volume_id, fileLocation.local_id]] = fileLocation.file_reference;
-            }
-        }
-        
-        return [TGMediaOriginInfo mediaOriginInfoWithFileReferences:fileReferences wallpaperId:wallpaper.n_id];
+        return [self mediaOriginInfoForDocument:wallpaper.document webpageUrl:nil];
     }
     
     return nil;

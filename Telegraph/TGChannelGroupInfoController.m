@@ -1,3 +1,5 @@
+#import "TGOnegramSettings.h"
+#import "TGOnegramPeerIdentity.h"
 #import "TGChannelGroupInfoController.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
@@ -27,6 +29,7 @@
 #import "TGButtonCollectionItem.h"
 #import "TGCommentCollectionItem.h"
 #import "TGGroupInfoCollectionItem.h"
+#import "TGProfileActionsCollectionItem.h"
 #import "TGGroupInfoUserCollectionItem.h"
 
 #import "TGTelegraphUserInfoController.h"
@@ -104,6 +107,9 @@
 #import "../submodules/LegacyComponents/SafariServices/SafariServices.h"
 #import "TGOpenInMenu.h"
 #import "TGPresentation.h"
+#import "../OnegramRuntime/OGRemoteClock.h"
+#import "TGPluginHost.h"
+#import "TGPluginMenuSection.h"
 
 static const NSUInteger keepCachedMemberCount = 200;
 static const NSUInteger loadMoreMemberCount = 100;
@@ -113,6 +119,9 @@ static const NSUInteger loadMoreMemberCount = 100;
     bool _editing;
     
     int64_t _peerId;
+#if OG_PLUGINS_AVAILABLE
+    TGPluginMenuSection *_pluginMenuSection;
+#endif
     TGConversation *_conversation;
     
     TGCollectionMenuSection *_groupInfoSection;
@@ -121,6 +130,9 @@ static const NSUInteger loadMoreMemberCount = 100;
     TGButtonCollectionItem *_setGroupPhotoItem;
     
     TGCollectionMenuSection *_leaveSection;
+
+    TGCollectionMenuSection *_modernActionsSection;
+    TGProfileActionsCollectionItem *_modernActionsItem;
     TGUserInfoButtonCollectionItem *_leaveItem;
     
     TGCollectionMenuSection *_adminInfoSection;
@@ -220,6 +232,9 @@ static const NSUInteger loadMoreMemberCount = 100;
         _actionHandle = [[ASHandle alloc] initWithDelegate:self releaseOnMainThread:true];
         
         _peerId = peerId;
+#if OG_PLUGINS_AVAILABLE
+        _pluginMenuSection = [[TGPluginMenuSection alloc] initWithMenuType:OGPluginMenuTypeProfileAction controller:self peerId:peerId];
+#endif
         _groupNotificationSettings = [[NSMutableDictionary alloc] initWithDictionary:@{@"muteUntil": @(0), @"soundId": @(1)}];
         
         TGConversation *conversation = [TGDatabaseInstance() loadConversationWithId:_peerId];
@@ -319,6 +334,9 @@ static const NSUInteger loadMoreMemberCount = 100;
         _sharedMediaItem = [[TGVariantCollectionItem alloc] initWithTitle:TGLocalized(@"GroupInfo.SharedMedia") variant:@"" action:@selector(sharedMediaPressed)];
         
         _notificationsAndMediaSection = [[TGCollectionMenuSection alloc] initWithItems:@[_notificationsItem, _sharedMediaItem]];
+
+        _modernActionsItem = [[TGProfileActionsCollectionItem alloc] initWithTarget:self];
+        _modernActionsSection = [[TGCollectionMenuSection alloc] initWithItems:@[_modernActionsItem]];
         UIEdgeInsets notificationsAndMediaSectionInsets = _notificationsAndMediaSection.insets;
         notificationsAndMediaSectionInsets.bottom = 18.0f;
         _notificationsAndMediaSection.insets = notificationsAndMediaSectionInsets;
@@ -348,8 +366,8 @@ static const NSUInteger loadMoreMemberCount = 100;
              [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", _peerId] watcher:self];
              [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ",cachedOnly)", _peerId] options:@{@"peerId": @(_peerId), @"accessHash": @(accessHash)} watcher:self];
              
-             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 ")", INT_MAX - 2] watcher:self];
-             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%d,cachedOnly)", INT_MAX - 2] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:INT_MAX - 2] forKey:@"peerId"] watcher:self];
+             [ActionStageInstance() watchForPath:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 ")", TGPeerIdNotificationDefaultsGroup] watcher:self];
+             [ActionStageInstance() requestActor:[NSString stringWithFormat:@"/tg/peerSettings/(%lld,cachedOnly)", TGPeerIdNotificationDefaultsGroup] options:[NSDictionary dictionaryWithObject:[NSNumber numberWithLongLong:TGPeerIdNotificationDefaultsGroup] forKey:@"peerId"] watcher:self];
              
              NSArray *changeTitleActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/conversation/@/changeTitle/@" prefix:[NSString stringWithFormat:@"/tg/conversation/(%" PRId64 ")", _peerId] watcher:self];
              NSArray *changeAvatarActions = [ActionStageInstance() rejoinActionsWithGenericPathNow:@"/tg/conversation/@/updateAvatar/@" prefix:[NSString stringWithFormat:@"/tg/conversation/(%" PRId64 ")", _peerId] watcher:self];
@@ -402,6 +420,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                 
                 int32_t memberCount = MAX(cachedData.memberCount, strongSelf->_conversation.chatParticipantCount);
                 [strongSelf->_usersHeaderItem setTitle:[strongSelf titleStringForMemberCount:memberCount]];
+                [strongSelf->_groupInfoItem setMemberCount:memberCount];
                 
                 strongSelf->_memberCount = memberCount;
                 
@@ -570,6 +589,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                 
                 NSInteger memberCount = [dict[@"count"] integerValue];
                 strongSelf->_memberCount = (int32_t)memberCount;
+                [strongSelf->_groupInfoItem setMemberCount:(int32_t)memberCount];
                 
                 bool sortUsersByPresence = memberCount != 0 && memberCount <= 200;
                 if (strongSelf->_sortUsersByPresence != sortUsersByPresence) {
@@ -586,6 +606,50 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (NSString *)titleStringForMemberCount:(NSUInteger)count {
     return [effectiveLocalization() getPluralized:@"GroupInfo.ParticipantCount" count:(int32_t)count];
+}
+
+- (bool)usesModernProfileLayout
+{
+    return !_editing && TGOnegramModernInterfaceEnabled();
+}
+
+- (bool)notificationsMuted
+{
+    NSNumber *muteUntil = _groupNotificationSettings[@"muteUntil"];
+    if (muteUntil == nil)
+        muteUntil = _defaultNotificationSettings[@"muteUntil"];
+    return muteUntil.intValue > OGRemoteClockTime();
+}
+
+- (void)unmuteNotificationsPressed
+{
+    [self _commitEnableNotifications:@true orMuteFor:0];
+}
+
+- (CGRect)sourceRectForModernAction:(SEL)action fallbackView:(UIView *)fallbackView
+{
+    UIView *sourceView = [_modernActionsItem sourceViewForActionWithSelector:action];
+    if (sourceView == nil)
+        sourceView = fallbackView;
+    if (sourceView == nil)
+        return CGRectZero;
+    return [sourceView convertRect:sourceView.bounds toView:self.view];
+}
+
+- (NSArray *)modernProfileActions
+{
+    if (![self usesModernProfileLayout])
+        return @[];
+    
+    NSMutableArray *actions = [[NSMutableArray alloc] init];
+    [actions addObject:[TGProfileAction notificationsActionMuted:[self notificationsMuted] muteAction:@selector(notificationsPressed) unmuteAction:@selector(unmuteNotificationsPressed)]];
+    if ([self canInviteToChannel])
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Add") icon:TGProfileActionIconAddMember action:@selector(addMemberPressed)]];
+    if (_conversation.username.length != 0)
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Share") icon:TGProfileActionIconShare action:@selector(sharePressed)]];
+    if (_conversation.kind == TGConversationKindPersistentChannel)
+        [actions addObject:[[TGProfileAction alloc] initWithTitle:TGLocalized(@"OnegramProfile.Action.Leave") icon:TGProfileActionIconLeave action:@selector(leaveGroupPressed) destructive:true]];
+    return actions;
 }
 
 - (void)_setupSections:(bool)editing {
@@ -670,6 +734,14 @@ static const NSUInteger loadMoreMemberCount = 100;
             _groupInfoSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, 18.0f, 0.0f);
         }
         
+        NSArray *modernActions = [self modernProfileActions];
+        _modernActionsItem.actions = modernActions;
+        if (modernActions.count != 0) {
+            _modernActionsSection.insets = UIEdgeInsetsMake(0.0f, 0.0f, _groupInfoSection.insets.bottom, 0.0f);
+            _groupInfoSection.insets = UIEdgeInsetsZero;
+            [self.menuSections addSection:_modernActionsSection];
+        }
+        
         if (_descriptionItem.text.length != 0) {
             [self.menuSections addSection:_descriptionSection];
         }
@@ -684,12 +756,20 @@ static const NSUInteger loadMoreMemberCount = 100;
             _linkSection.insets = linkSectionInsets;
             [self.menuSections addSection:_linkSection];
         }
+
+        if ([TGOnegramSettings boolForKey:TGOnegramSettingGeneralShowPeerIds] && ![TGPresentation brandedIOS6Style])
+        {
+            TGCollectionMenuSection *identitySection = [[TGCollectionMenuSection alloc] initWithItems:TGOnegramPeerIdentityItems(_conversation.conversationId, _conversation.chatPhotoSmall)];
+            identitySection.insets = UIEdgeInsetsMake(17.0f, 0.0f, 0.0f, 0.0f);
+            [self.menuSections addSection:identitySection];
+        }
         
         while (_notificationsAndMediaSection.items.count != 0) {
             [_notificationsAndMediaSection deleteItemAtIndex:0];
         }
         
-        [_notificationsAndMediaSection addItem:_notificationsItem];
+        if (![self usesModernProfileLayout])
+            [_notificationsAndMediaSection addItem:_notificationsItem];
         [_notificationsAndMediaSection addItem:_sharedMediaItem];
         
         {
@@ -717,6 +797,9 @@ static const NSUInteger loadMoreMemberCount = 100;
     
     [self.menuSections addSection:_usersSection];
     
+#if OG_PLUGINS_AVAILABLE
+    [_pluginMenuSection updateVisible:!editing beforeSection:_usersSection];
+#endif
     if (!_editing && ![self.navigationItem.rightBarButtonItem.title isEqualToString:TGLocalized(@"Common.Edit")]) {
         [self setRightBarButtonItems:@[[[UIBarButtonItem alloc] initWithTitle:TGLocalized(@"Common.Edit") style:UIBarButtonItemStylePlain target:self action:@selector(editPressed)]] animated:false];
     }
@@ -978,7 +1061,7 @@ static const NSUInteger loadMoreMemberCount = 100;
 {
     NSMutableArray *actions = [[NSMutableArray alloc] init];
     
-    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= [[TGTelegramNetworking instance] approximateRemoteTime];
+    bool defaultEnabled = [_defaultNotificationSettings[@"muteUntil"] intValue] <= OGRemoteClockTime();
     NSString *defaultTitle = defaultEnabled ? TGLocalized(@"UserInfo.NotificationsDefaultEnabled") : TGLocalized(@"UserInfo.NotificationsDefaultDisabled");
     
     [actions addObject:[[TGActionSheetAction alloc] initWithTitle:defaultTitle action:@"default"]];
@@ -1021,7 +1104,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     }
     else
     {
-        muteUntil = @((int)([[TGTelegramNetworking instance] approximateRemoteTime] + muteFor));
+        muteUntil = @((int)(OGRemoteClockTime() + muteFor));
     }
     
     if (!TGObjectCompare(muteUntil, _groupNotificationSettings[@"muteUntil"]))
@@ -1187,18 +1270,19 @@ static const NSUInteger loadMoreMemberCount = 100;
 {
     [_muteExpirationTimer invalidate];
     _muteExpirationTimer = nil;
+    _modernActionsItem.actions = [self modernProfileActions];
     
     NSNumber *muteUntil = _groupNotificationSettings[@"muteUntil"];
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
     
     bool enabled = false;
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime]) {
+    if (muteUntil.intValue <= OGRemoteClockTime()) {
         enabled = true;
     }
     else
     {
-        int muteExpiration = muteUntil.intValue - (int)[[TGTelegramNetworking instance] approximateRemoteTime];
+        int muteExpiration = muteUntil.intValue - (int)OGRemoteClockTime();
         if (muteExpiration >= 7 * 24 * 60 * 60) {
             
         } else {
@@ -1221,11 +1305,12 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (void)updateMuteExpiration
 {
+    _modernActionsItem.actions = [self modernProfileActions];
     bool enabled = false;
     NSNumber *muteUntil = _groupNotificationSettings[@"muteUntil"];
     if (muteUntil == nil)
         muteUntil = _defaultNotificationSettings[@"muteUntil"];
-    if (muteUntil.intValue <= [[TGTelegramNetworking instance] approximateRemoteTime]) {
+    if (muteUntil.intValue <= OGRemoteClockTime()) {
         enabled = true;
     }
     
@@ -1282,7 +1367,7 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (NSArray *)sortedUsers:(NSArray *)users {
     if (_sortUsersByPresence) {
-        int32_t selfUid = TGTelegraphInstance.clientUserId;
+        int64_t selfUid = TGTelegraphInstance.clientUserId;
         return [users sortedArrayUsingComparator:^NSComparisonResult(TGUser *user1, TGUser *user2) {
             if (user1.botKind != user2.botKind)
             {
@@ -1548,7 +1633,7 @@ static const NSUInteger loadMoreMemberCount = 100;
 {
     if ([action isEqualToString:@"openUser"])
     {
-        int32_t uid = [options[@"uid"] intValue];
+        int64_t uid = [options[@"uid"] longLongValue];
         if (uid != 0)
         {
             TGUser *user = [TGDatabaseInstance() loadUser:uid];
@@ -1566,7 +1651,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     }
     else if ([action isEqualToString:@"deleteUser"])
     {
-        int32_t uid = [options[@"uid"] intValue];
+        int64_t uid = [options[@"uid"] longLongValue];
         if (uid != 0)
             [self _commitDeleteParticipant:uid tryRestrict:false];
     }
@@ -1653,7 +1738,7 @@ static const NSUInteger loadMoreMemberCount = 100;
 
 - (void)actorCompleted:(int)status path:(NSString *)path result:(id)result
 {
-    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId32 "", INT_MAX - 2]])
+    if ([path hasPrefix:[NSString stringWithFormat:@"/tg/peerSettings/(%" PRId64 "", TGPeerIdNotificationDefaultsGroup]])
     {
         TGDispatchOnMainThread(^
         {
@@ -1751,7 +1836,7 @@ static const NSUInteger loadMoreMemberCount = 100;
             if (strongSelf == nil)
                 return CGRectZero;
             
-            return [strongSelf->_linkItem.view convertRect:strongSelf->_linkItem.view.bounds toView:strongSelf.view];
+            return [strongSelf sourceRectForModernAction:@selector(sharePressed) fallbackView:strongSelf->_linkItem.view];
         };
         
         [TGShareMenu presentInParentController:self menuController:nil buttonTitle:TGLocalized(@"ShareMenu.CopyShareLink") buttonAction:^
@@ -1896,7 +1981,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                     hasBots = true;
                 }
                 
-                updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:nil bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:0 adminInviterId:0 kickedById:0 adminCanManage:false];
+                updatedMemberDatas[@(user.uid)] = [[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:nil bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:0 adminInviterId:0 kickedById:0 adminCanManage:false];
                 [updatedUsers insertObject:user atIndex:0];
             }
             
@@ -1931,7 +2016,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     [self presentViewController:navigationController animated:true completion:nil];
 }
 
-- (void)updateParticipant:(int32_t)uid member:(TGCachedConversationMember *)member {
+- (void)updateParticipant:(int64_t)uid member:(TGCachedConversationMember *)member {
     NSMutableDictionary *updatedMemberDatas = [[NSMutableDictionary alloc] initWithDictionary:_memberDatas];
     
     if (member != nil) {
@@ -1992,7 +2077,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     _memberDatas = updatedMemberDatas;
 }
 
-- (void)removeParticipantFromList:(int32_t)uid {
+- (void)removeParticipantFromList:(int64_t)uid {
     TGChannelGroupInfoController *strongSelf = self;
     NSUInteger index = 0;
     for (TGUser *user in strongSelf->_users) {
@@ -2064,7 +2149,7 @@ static const NSUInteger loadMoreMemberCount = 100;
     }
 }
 
-- (void)_commitDeleteParticipant:(int32_t)uid tryRestrict:(bool)tryRestrict {
+- (void)_commitDeleteParticipant:(int64_t)uid tryRestrict:(bool)tryRestrict {
     for (id item in _usersSection.items)
     {
         if ([item isKindOfClass:[TGGroupInfoUserCollectionItem class]] && ((TGGroupInfoUserCollectionItem *)item).user.uid == uid)
@@ -2091,7 +2176,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                                             data = [[TGCachedConversationData alloc] init];
                                         }
                                         
-                                        return [data updateMemberBannedRights:uid rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
+                                        return [data updateMemberBannedRights:uid rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
                                     }];
                                     
                                     if (rights.banReadMessages) {
@@ -2138,7 +2223,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                                 data = [[TGCachedConversationData alloc] init];
                             }
                             
-                            return [data updateMemberBannedRights:uid rights:rights timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
+                            return [data updateMemberBannedRights:uid rights:rights timestamp:(int32_t)OGRemoteClockTime() isMember:updatedMember != nil kickedById:TGTelegraphInstance.clientUserId];
                         }];
                         
                         if (rights.banReadMessages) {
@@ -2342,7 +2427,7 @@ static const NSUInteger loadMoreMemberCount = 100;
                             }
                             
                             if (rights.hasAnyRights) {
-                                return [data addManagementMember:[[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)[[TGTelegramNetworking instance] approximateRemoteTime] inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true]];
+                                return [data addManagementMember:[[TGCachedConversationMember alloc] initWithUid:user.uid isCreator:false adminRights:rights bannedRights:nil timestamp:(int32_t)OGRemoteClockTime() inviterId:TGTelegraphInstance.clientUserId adminInviterId:TGTelegraphInstance.clientUserId kickedById:0 adminCanManage:true]];
                             } else {
                                 return [data removeManagementMember:user.uid];
                             }

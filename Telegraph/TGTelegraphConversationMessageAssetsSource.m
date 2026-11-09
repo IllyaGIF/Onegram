@@ -5,6 +5,8 @@
 #import "TGInterfaceAssets.h"
 
 #import "TGTelegraph.h"
+#import "TGWallpaperManager.h"
+#import "../submodules/LegacyComponents/LegacyComponents/TGWallpaperInfo.h"
 
 int TGBaseFontSize = 16;
 static int defaultMonochromeColor = 0x000000;
@@ -35,7 +37,39 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     return singleton;
 }
 
-- (int)currentUserId
+- (instancetype)init
+{
+    self = [super init];
+    if (self != nil)
+    {
+        [self applyWallpaperInfo:[[TGWallpaperManager instance] currentWallpaperInfo]];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(currentWallpaperChanged:) name:TGWallpaperManagerCurrentWallpaperDidChangeNotification object:nil];
+    }
+    return self;
+}
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)currentWallpaperChanged:(NSNotification *)notification
+{
+    [self applyWallpaperInfo:[(TGWallpaperManager *)notification.object currentWallpaperInfo]];
+}
+
+- (void)applyWallpaperInfo:(TGWallpaperInfo *)wallpaperInfo
+{
+    if (wallpaperInfo == nil)
+        return;
+    _monochromeColor = [wallpaperInfo tintColor];
+    _systemAlpha = [wallpaperInfo systemAlpha];
+    _buttonsAlpha = [wallpaperInfo buttonsAlpha];
+    _highlighteButtonAlpha = [wallpaperInfo highlightedButtonAlpha];
+    _progressAlpha = [wallpaperInfo progressAlpha];
+}
+
+- (int64_t)currentUserId
 {
     return TGTelegraphInstance.clientUserId;
 }
@@ -358,7 +392,7 @@ static UIColor *colorWithFactor(UIColor *baseColor, CGFloat factor, CGFloat alph
     return [UIImage imageNamed:@"InlineAvatarPlaceholder.png"];
 }
 
-- (UIImage *)messageInlineAvatarPlaceholder:(int)uid
+- (UIImage *)messageInlineAvatarPlaceholder:(int64_t)uid
 {
     return [[TGInterfaceAssets instance] smallAvatarPlaceholder:uid];
 }
@@ -937,53 +971,28 @@ static UIImage *generateDownloadButton(int baseColor, CGFloat alphaFactor, CGFlo
 
 - (UIImage *)messageLinkFull
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        UIImage *rawImage = [UIImage imageNamed:@"LinkFull.png"];
-        image = [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
-    }
-    return image;
+    UIImage *rawImage = [UIImage imageNamed:@"LinkFull.png"];
+    return [rawImage stretchableImageWithLeftCapWidth:(int)(rawImage.size.width / 2) topCapHeight:(int)(rawImage.size.height / 2)];
 }
 
 - (UIImage *)messageLinkCornerTB
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        image = [UIImage imageNamed:@"LinkCornerTB.png"];
-    }
-    return image;
+    return [UIImage imageNamed:@"LinkCornerTB.png"];
 }
 
 - (UIImage *)messageLinkCornerBT
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        image = [UIImage imageNamed:@"LinkCornerBT.png"];
-    }
-    return image;
+    return [UIImage imageNamed:@"LinkCornerBT.png"];
 }
 
 - (UIImage *)messageLinkCornerLR
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        image = [UIImage imageNamed:@"LinkCornerLR.png"];
-    }
-    return image;
+    return [UIImage imageNamed:@"LinkCornerLR.png"];
 }
 
 - (UIImage *)messageLinkCornerRL
 {
-    static UIImage *image = nil;
-    if (image == nil)
-    {
-        image = [UIImage imageNamed:@"LinkCornerRL.png"];
-    }
-    return image;
+    return [UIImage imageNamed:@"LinkCornerRL.png"];
 }
 
 - (UIImage *)systemMessageBackground

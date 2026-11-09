@@ -16,6 +16,9 @@
 
 #import "TGPresentation.h"
 #import "TGPresentationAssets.h"
+#import "TGOnegramSettings.h"
+#import "TGProfileHeaderLayout.h"
+#import "TGStoryRingView.h"
 #import "TGReusableLabel.h"
 #import "TGMarqueeLabel.h"
 #import "../submodules/LegacyComponents/LegacyComponents/TGDocumentMediaAttachment.h"
@@ -27,7 +30,7 @@ extern void TGIOS6LoadCustomEmojiThumbnail(int64_t documentId, void (^completion
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernGalleryTransitionView.h"
 
-static const int32_t TGMarkedUserId = 314366525;
+static const int64_t TGMarkedUserId = 314366525;
 
 @interface TGLetteredAvatarView (TGModernGalleryTransition) <TGModernGalleryTransitionView>
 
@@ -41,6 +44,113 @@ static const int32_t TGMarkedUserId = 314366525;
 }
 
 @end
+
+static CGRect TGUserInfoTextInkBounds(NSString *text, UIFont *font, CGSize textSize)
+{
+    const CGFloat scale = 4.0f;
+    size_t width = (size_t)CGCeil(textSize.width * scale);
+    size_t height = (size_t)CGCeil(textSize.height * scale);
+    CGRect fallback = CGRectMake(0.0f, 0.0f, textSize.width, textSize.height);
+    if (width == 0 || height == 0)
+        return fallback;
+    uint8_t *pixels = (uint8_t *)calloc(width * height, 1);
+    if (pixels == NULL)
+        return fallback;
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceGray();
+    CGContextRef context = CGBitmapContextCreate(pixels, width, height, 8, width, colorSpace, kCGImageAlphaNone);
+    CGColorSpaceRelease(colorSpace);
+    if (context == NULL)
+    {
+        free(pixels);
+        return fallback;
+    }
+    CGContextTranslateCTM(context, 0.0f, (CGFloat)height);
+    CGContextScaleCTM(context, scale, -scale);
+    UIGraphicsPushContext(context);
+    CGContextSetGrayFillColor(context, 1.0f, 1.0f);
+    [text drawAtPoint:CGPointZero withFont:font];
+    UIGraphicsPopContext();
+    CGContextRelease(context);
+
+    size_t minX = width, minY = height, maxX = 0, maxY = 0;
+    for (size_t y = 0; y < height; y++)
+    {
+        const uint8_t *row = pixels + y * width;
+        for (size_t x = 0; x < width; x++)
+        {
+            if (row[x] < 96)
+                continue;
+            if (x < minX)
+                minX = x;
+            if (x > maxX)
+                maxX = x;
+            if (y < minY)
+                minY = y;
+            if (y > maxY)
+                maxY = y;
+        }
+    }
+    free(pixels);
+    if (minX > maxX || minY > maxY)
+        return fallback;
+    return CGRectMake((CGFloat)minX / scale, (CGFloat)minY / scale, (CGFloat)(maxX - minX + 1) / scale, (CGFloat)(maxY - minY + 1) / scale);
+}
+
+static UIImage *TGUserInfoStarsRatingBadgeImage(int32_t level, UIColor *color)
+{
+    static NSMutableDictionary *cache = nil;
+    if (cache == nil)
+        cache = [[NSMutableDictionary alloc] init];
+    CGFloat red = 0.0f, green = 0.0f, blue = 0.0f, alpha = 0.0f;
+    const CGFloat *components = CGColorGetComponents(color.CGColor);
+    size_t componentCount = CGColorGetNumberOfComponents(color.CGColor);
+    if (componentCount >= 4)
+    {
+        red = components[0];
+        green = components[1];
+        blue = components[2];
+        alpha = components[3];
+    }
+    else if (componentCount == 2)
+    {
+        red = green = blue = components[0];
+        alpha = components[1];
+    }
+    NSString *key = [[NSString alloc] initWithFormat:@"%d:%.3f:%.3f:%.3f:%.3f", (int)level, red, green, blue, alpha];
+    UIImage *cachedImage = [cache objectForKey:key];
+    if (cachedImage != nil)
+        return cachedImage;
+
+    NSString *text = [[NSString alloc] initWithFormat:@"%d", (int)level];
+    UIFont *font = TGBoldSystemFontOfSize(text.length > 2 ? 7.0f : (text.length > 1 ? 8.0f : 9.0f));
+    CGSize size = CGSizeMake(14.0f, 16.0f);
+    UIGraphicsBeginImageContextWithOptions(size, false, 0.0f);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGMutablePathRef path = CGPathCreateMutable();
+    CGPathMoveToPoint(path, NULL, 7.0f, 0.8f);
+    CGPathAddLineToPoint(path, NULL, 13.2f, 3.0f);
+    CGPathAddLineToPoint(path, NULL, 13.2f, 7.6f);
+    CGPathAddCurveToPoint(path, NULL, 13.2f, 11.4f, 10.6f, 14.2f, 7.0f, 15.3f);
+    CGPathAddCurveToPoint(path, NULL, 3.4f, 14.2f, 0.8f, 11.4f, 0.8f, 7.6f);
+    CGPathAddLineToPoint(path, NULL, 0.8f, 3.0f);
+    CGPathCloseSubpath(path);
+    CGContextAddPath(context, path);
+    CGPathRelease(path);
+    CGContextSetStrokeColorWithColor(context, color.CGColor);
+    CGContextSetLineWidth(context, 1.3f);
+    CGContextSetLineJoin(context, kCGLineJoinRound);
+    CGContextStrokePath(context);
+    CGContextSetFillColorWithColor(context, color.CGColor);
+    CGSize textSize = [text sizeWithFont:font];
+    CGRect inkBounds = TGUserInfoTextInkBounds(text, font, textSize);
+    CGPoint origin = CGPointMake(7.0f - CGRectGetMidX(inkBounds), 7.7f - CGRectGetMidY(inkBounds));
+    [text drawAtPoint:origin withFont:font];
+    UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (image != nil)
+        [cache setObject:image forKey:key];
+    return image;
+}
 
 @interface TGUserInfoCollectionItemView () <UITextFieldDelegate>
 {
@@ -80,7 +190,7 @@ static const int32_t TGMarkedUserId = 314366525;
     UIActivityIndicatorView *_activityIndicator;
     bool _avatarPlaceholderDisabled;
     
-    int32_t _uidForPlaceholderCalculation;
+    int64_t _uidForPlaceholderCalculation;
     
     UIImageView *_verifiedIcon;
     UIImageView *_premiumIcon;
@@ -96,6 +206,18 @@ static const int32_t TGMarkedUserId = 314366525;
     UILabel *_profileMusicTextLabel;
     UIImageView *_profileMusicArrowView;
     CGFloat _brandedDetailsTextScale;
+
+    bool _modernSubtitleShowsContactDetails;
+    UILabel *_modernSubtitleLabel;
+    TGStoryRingView *_storyRingView;
+    UIView *_modernBackdropView;
+    UIColor *_modernHeaderColor;
+    NSNumber *_starsRatingLevel;
+    UIImageView *_starsRatingView;
+    NSString *_avatarUri;
+    NSString *_avatarFilter;
+    CGFloat _avatarDiameter;
+    bool _avatarShowsImage;
 }
 
 @end
@@ -239,7 +361,7 @@ static const int32_t TGMarkedUserId = 314366525;
     OGTheme *brandedTheme = [OGTheme brandedTheme];
     OGProfileAppearance *profileAppearance = brandedTheme.profileAppearance;
 
-    CGFloat avatarPlaceholderFontSize = brandedIOS6Style ? profileAppearance.avatarPlaceholderFontSize : 28.0f;
+    CGFloat avatarPlaceholderFontSize = [self avatarPlaceholderFontSizeForDiameter:[self currentAvatarDiameter]];
     [_avatarView setSingleFontSize:avatarPlaceholderFontSize doubleFontSize:avatarPlaceholderFontSize useBoldFont:false];
     _brandedBackgroundView.hidden = !brandedIOS6Style;
     _brandedAvatarOverlayView.hidden = !brandedIOS6Style;
@@ -471,7 +593,7 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     }
 }
 
-- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int32_t)uidForPlaceholderCalculation
+- (void)setFirstName:(NSString *)firstName lastName:(NSString *)lastName uidForPlaceholderCalculation:(int64_t)uidForPlaceholderCalculation
 {
     _uidForPlaceholderCalculation = uidForPlaceholderCalculation;
     [self updateMarkedUserBadge];
@@ -669,10 +791,80 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     }
 }
 
+- (bool)usesModernLayout
+{
+    return !_editing && TGOnegramModernInterfaceEnabled();
+}
+
+- (void)setModernHeaderColor:(UIColor *)modernHeaderColor
+{
+    _modernHeaderColor = modernHeaderColor;
+    if (modernHeaderColor != nil && _modernBackdropView == nil)
+    {
+        _modernBackdropView = [[UIView alloc] init];
+        _modernBackdropView.userInteractionEnabled = false;
+        [self insertSubview:_modernBackdropView atIndex:0];
+    }
+    _modernBackdropView.backgroundColor = modernHeaderColor;
+    [self setNeedsLayout];
+}
+
+- (void)setStarsRatingLevel:(NSNumber *)starsRatingLevel
+{
+    if (TGObjectCompare(_starsRatingLevel, starsRatingLevel))
+        return;
+    _starsRatingLevel = starsRatingLevel;
+    [self setNeedsLayout];
+}
+
+- (void)setStoryRingState:(int)storyRingState
+{
+    if (storyRingState != TGStoryRingStateNone && _storyRingView == nil)
+    {
+        _storyRingView = [[TGStoryRingView alloc] init];
+        _storyRingView.lineWidth = 3.0f;
+        [self insertSubview:_storyRingView belowSubview:_avatarView];
+    }
+    _storyRingView.state = (TGStoryRingState)storyRingState;
+    [self setNeedsLayout];
+}
+
+- (void)setModernSubtitleShowsContactDetails:(bool)showsContactDetails
+{
+    if (_modernSubtitleShowsContactDetails == showsContactDetails)
+        return;
+    _modernSubtitleShowsContactDetails = showsContactDetails;
+    [self setNeedsLayout];
+}
+
+- (CGFloat)avatarPlaceholderFontSizeForDiameter:(CGFloat)diameter
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [OGTheme brandedTheme].profileAppearance.avatarPlaceholderFontSize;
+    return diameter > 64.0f ? 42.0f : 28.0f;
+}
+
+- (CGFloat)currentAvatarDiameter
+{
+    if ([TGPresentation brandedIOS6Style])
+        return [OGTheme brandedTheme].profileAppearance.avatarSize;
+    return [self usesModernLayout] ? TGProfileHeaderAvatarSize : 64.0f;
+}
+
 - (void)setAvatarUri:(NSString *)avatarUri animated:(bool)animated synchronous:(bool)synchronous
 {
+    _avatarUri = avatarUri;
+    _avatarShowsImage = false;
     bool brandedIOS6Style = [TGPresentation brandedIOS6Style];
-    CGFloat avatarDiameter = brandedIOS6Style ? [OGTheme brandedTheme].profileAppearance.avatarSize : 64.0f;
+    bool modernLayout = [self usesModernLayout];
+    CGFloat avatarDiameter = [self currentAvatarDiameter];
+    if (fabs(_avatarDiameter - avatarDiameter) > FLT_EPSILON)
+    {
+        _avatarDiameter = avatarDiameter;
+        CGFloat fontSize = [self avatarPlaceholderFontSizeForDiameter:avatarDiameter];
+        [_avatarView setSingleFontSize:fontSize doubleFontSize:fontSize useBoldFont:false];
+        _avatarFilter = nil;
+    }
     UIImage *placeholder = [self.presentation.images avatarPlaceholderWithDiameter:avatarDiameter];
 
     UIImage *currentPlaceholder = [_avatarView currentImage];
@@ -681,22 +873,156 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
     
     if (avatarUri.length == 0)
     {
-        int uid = _avatarPlaceholderDisabled ? 0 : _uidForPlaceholderCalculation;
+        _avatarFilter = nil;
+        int64_t uid = _avatarPlaceholderDisabled ? 0 : _uidForPlaceholderCalculation;
         NSString *firstName = _avatarPlaceholderDisabled ? nil : _firstName;
         NSString *lastName = _avatarPlaceholderDisabled ? nil : _lastName;
         [_avatarView loadUserPlaceholderWithSize:CGSizeMake(avatarDiameter, avatarDiameter) uid:uid firstName:firstName lastName:lastName placeholder:placeholder];
     }
-    else if (!TGStringCompare([_avatarView currentUrl], avatarUri))
+    else
     {
-        _avatarView.fadeTransitionDuration = animated ? 0.3 : 0.1;
-        _avatarView.contentHints = synchronous ? TGRemoteImageContentHintLoadFromDiskSynchronously : 0;
-        NSString *filter = brandedIOS6Style ? [NSString stringWithFormat:@"scale:%.0fx%.0f", avatarDiameter, avatarDiameter] : @"circle:64x64";
-        [_avatarView loadImage:avatarUri filter:filter placeholder:currentPlaceholder forceFade:animated];
+        NSString *filter = brandedIOS6Style ? [NSString stringWithFormat:@"scale:%.0fx%.0f", avatarDiameter, avatarDiameter] : (modernLayout ? TGProfileHeaderAvatarFilter() : @"circle:64x64");
+        if (!TGStringCompare([_avatarView currentUrl], avatarUri) || !TGStringCompare(_avatarFilter, filter))
+        {
+            _avatarFilter = filter;
+            _avatarView.fadeTransitionDuration = animated ? 0.3 : 0.1;
+            _avatarView.contentHints = synchronous ? TGRemoteImageContentHintLoadFromDiskSynchronously : 0;
+            [_avatarView loadImage:avatarUri filter:filter placeholder:currentPlaceholder forceFade:animated];
+        }
     }
+}
+
+- (void)updateAvatarForCurrentLayout
+{
+    if (_avatarShowsImage || _avatarDiameter < FLT_EPSILON || fabs(_avatarDiameter - [self currentAvatarDiameter]) < FLT_EPSILON)
+        return;
+    [self setAvatarUri:_avatarUri animated:false synchronous:false];
+}
+
+- (NSString *)modernSubtitleText
+{
+    if (!_modernSubtitleShowsContactDetails)
+        return _statusLabel.text;
+    NSMutableArray *components = [[NSMutableArray alloc] init];
+    if (_phoneLabel.text.length != 0)
+        [components addObject:_phoneLabel.text];
+    if (_usernameLabel.text.length != 0)
+        [components addObject:_usernameLabel.text];
+    return components.count == 0 ? _statusLabel.text : [components componentsJoinedByString:@" \u2022 "];
+}
+
+- (void)layoutModernHeader
+{
+    CGRect bounds = self.bounds;
+    self.backgroundView.hidden = true;
+    self.selectedBackgroundView.hidden = true;
+    _callButton.hidden = true;
+    _disclosureIndicator.hidden = true;
+    _phoneLabel.hidden = true;
+    _usernameLabel.hidden = true;
+    _statusLabel.hidden = true;
+    _aboutTitleLabel.hidden = true;
+    _aboutLabel.hidden = true;
+    _brandedAvatarReflectionView.hidden = true;
+
+    _avatarView.frame = TGProfileHeaderAvatarFrame(bounds);
+    [self updateAvatarForCurrentLayout];
+    _storyRingView.hidden = _storyRingView.state == TGStoryRingStateNone;
+    [_storyRingView layoutAroundFrame:_avatarView.frame spacing:2.5f];
+    _modernBackdropView.hidden = _modernHeaderColor == nil;
+    _modernBackdropView.frame = CGRectMake(0.0f, -bounds.size.height, bounds.size.width, bounds.size.height * 2.0f);
+    _nameLabel.textColor = _modernHeaderColor != nil ? [UIColor whiteColor] : self.presentation.pallete.collectionMenuTextColor;
+
+    CGFloat horizontalInset = 15.0f;
+    CGFloat contentLeft = horizontalInset + self.safeAreaInset.left;
+    CGFloat contentWidth = MAX(0.0f, bounds.size.width - contentLeft - horizontalInset - self.safeAreaInset.right);
+
+    NSMutableArray *badges = [[NSMutableArray alloc] init];
+    if (_verifiedIcon.superview != nil && !_verifiedIcon.hidden)
+        [badges addObject:_verifiedIcon];
+    if (_premiumIcon.superview != nil && !_premiumIcon.hidden)
+        [badges addObject:_premiumIcon];
+    if (_emojiStatusView.superview != nil && !_emojiStatusView.hidden)
+        [badges addObject:_emojiStatusView];
+    if (_markedUserBadgeView.superview != nil && !_markedUserBadgeView.hidden)
+        [badges addObject:_markedUserBadgeView];
+    CGFloat badgesWidth = 0.0f;
+    for (UIView *badge in badges)
+        badgesWidth += 4.0f + badge.bounds.size.width;
+
+    if (_nameLabel.font != TGProfileHeaderTitleFont())
+        _nameLabel.font = TGProfileHeaderTitleFont();
+    _nameLabel.numberOfLines = 1;
+    CGFloat titleLineHeight = TGProfileHeaderTitleLineHeight();
+    CGFloat maxNameWidth = MAX(0.0f, contentWidth - badgesWidth);
+    CGSize nameSize = [_nameLabel sizeThatFits:CGSizeMake(maxNameWidth, titleLineHeight)];
+    nameSize.width = MIN(CGCeil(nameSize.width), maxNameWidth);
+    CGFloat titleX = contentLeft + CGFloor((contentWidth - nameSize.width - badgesWidth) / 2.0f);
+    CGFloat titleY = TGProfileHeaderTitleTop();
+    _nameLabel.frame = CGRectMake(titleX, titleY + CGFloor((titleLineHeight - nameSize.height) / 2.0f), nameSize.width, nameSize.height);
+
+    CGFloat badgeX = CGRectGetMaxX(_nameLabel.frame);
+    for (UIView *badge in badges)
+    {
+        CGSize badgeSize = badge.bounds.size;
+        badge.frame = CGRectMake(badgeX + 4.0f, titleY + CGFloor((titleLineHeight - badgeSize.height) / 2.0f), badgeSize.width, badgeSize.height);
+        badgeX = CGRectGetMaxX(badge.frame);
+    }
+
+    if (_modernSubtitleLabel == nil)
+    {
+        _modernSubtitleLabel = [[UILabel alloc] init];
+        _modernSubtitleLabel.backgroundColor = [UIColor clearColor];
+        _modernSubtitleLabel.font = TGProfileHeaderSubtitleFont();
+        _modernSubtitleLabel.textAlignment = NSTextAlignmentCenter;
+        _modernSubtitleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        [self addSubview:_modernSubtitleLabel];
+    }
+    _modernSubtitleLabel.hidden = false;
+    _modernSubtitleLabel.text = [self modernSubtitleText];
+    _modernSubtitleLabel.textColor = _modernHeaderColor != nil ? [UIColor colorWithWhite:1.0f alpha:0.8f] : (_modernSubtitleShowsContactDetails ? self.presentation.pallete.collectionMenuVariantColor : _statusLabel.textColor);
+    CGFloat subtitleTop = TGProfileHeaderSubtitleTop();
+    CGFloat subtitleLineHeight = TGProfileHeaderSubtitleLineHeight();
+    if (_starsRatingLevel != nil && !_modernSubtitleShowsContactDetails)
+    {
+        if (_starsRatingView == nil)
+        {
+            _starsRatingView = [[UIImageView alloc] init];
+            [self addSubview:_starsRatingView];
+        }
+        _starsRatingView.hidden = false;
+        _starsRatingView.image = TGUserInfoStarsRatingBadgeImage([_starsRatingLevel intValue], _modernHeaderColor != nil ? [UIColor colorWithWhite:1.0f alpha:0.8f] : self.presentation.pallete.collectionMenuVariantColor);
+        CGSize badgeSize = _starsRatingView.image.size;
+        CGFloat spacing = 4.0f;
+        CGFloat maxTextWidth = MAX(0.0f, contentWidth - badgeSize.width - spacing);
+        CGFloat textWidth = MIN(CGCeil([_modernSubtitleLabel sizeThatFits:CGSizeMake(maxTextWidth, subtitleLineHeight)].width), maxTextWidth);
+        CGFloat groupLeft = contentLeft + CGFloor((contentWidth - badgeSize.width - spacing - textWidth) / 2.0f);
+        _starsRatingView.frame = CGRectMake(groupLeft, subtitleTop + CGFloor((subtitleLineHeight - badgeSize.height) / 2.0f), badgeSize.width, badgeSize.height);
+        _modernSubtitleLabel.frame = CGRectMake(groupLeft + badgeSize.width + spacing, subtitleTop, textWidth, subtitleLineHeight);
+    }
+    else
+    {
+        _starsRatingView.hidden = true;
+        _modernSubtitleLabel.frame = CGRectMake(contentLeft, subtitleTop, contentWidth, subtitleLineHeight);
+    }
+
+    if (_profileMusicButton != nil)
+    {
+        _profileMusicButton.frame = CGRectMake(contentLeft, TGProfileHeaderAccessoryTop(), contentWidth, 36.0f);
+        _profileMusicIconLabel.hidden = false;
+        _profileMusicIconLabel.frame = CGRectMake(8.0f, 0.0f, 28.0f, 36.0f);
+        _profileMusicTextLabel.frame = CGRectMake(39.0f, 0.0f, MAX(0.0f, contentWidth - 49.0f), 36.0f);
+    }
+
+    _avatarOverlay.frame = _avatarView.frame;
+    _avatarIconView.center = CGPointMake(CGRectGetMidX(_avatarView.frame), CGRectGetMidY(_avatarView.frame));
+    if (_activityIndicator != nil)
+        _activityIndicator.center = _avatarIconView.center;
 }
 
 - (void)setAvatarImage:(UIImage *)avatarImage animated:(bool)__unused animated
 {
+    _avatarShowsImage = true;
     [_avatarView loadImage:avatarImage];
 }
 
@@ -828,6 +1154,30 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
 {
     [super layoutSubviews];
     
+    if ([self usesModernLayout])
+    {
+        [self layoutModernHeader];
+        return;
+    }
+
+    _modernSubtitleLabel.hidden = true;
+    _storyRingView.hidden = true;
+    _starsRatingView.hidden = true;
+    _modernBackdropView.hidden = true;
+    _statusLabel.hidden = false;
+    _phoneLabel.hidden = _phoneLabel.text.length == 0;
+    _usernameLabel.hidden = _usernameLabel.text.length == 0;
+    _callButton.hidden = !_showCall || [TGPresentation brandedIOS6Style];
+    _disclosureIndicator.hidden = false;
+    self.backgroundView.hidden = [TGPresentation brandedIOS6Style];
+    self.selectedBackgroundView.hidden = [TGPresentation brandedIOS6Style];
+    if (![TGPresentation brandedIOS6Style])
+    {
+        _nameLabel.font = TGMediumSystemFontOfSize(20.0f);
+        _nameLabel.numberOfLines = _multilineName ? 2 : 1;
+    }
+    [self updateAvatarForCurrentLayout];
+
     CGRect bounds = self.bounds;
     if ([TGPresentation brandedIOS6Style] && !_editing)
     {
@@ -1012,37 +1362,41 @@ static NSString *TGIOS6ProfileMusicTitle(TGDocumentMediaAttachment *document)
         _nameLabel.text = currentText;
     }
     
-    CGFloat nameY = (_statusLabel.text.length > 0 || _phoneLabel != nil || _usernameLabel != nil) ? 81.0f : 98.0f;
-    
-    nameSize.width = MIN(nameSize.width, maxNameWidth);
-    CGRect nameLabelFrame = CGRectMake(92 + classicInset + _nameOffset.width + self.safeAreaInset.left, floor((nameY - nameSize.height) / 2.0f) + _nameOffset.height, nameSize.width, nameSize.height);
-    _nameLabel.frame = nameLabelFrame;
-    
-    
-    CGSize statusLabelSize = [_statusLabel sizeThatFits:CGSizeMake(maxStatusWidth, 1000)];
-    statusLabelSize.width = MIN(statusLabelSize.width, maxStatusWidth);
-    CGRect statusLabelFrame = CGRectMake(92 + classicInset + _nameOffset.width + self.safeAreaInset.left, CGRectGetMaxY(nameLabelFrame) + 2.0f, statusLabelSize.width, statusLabelSize.height);
-    _statusLabel.frame = statusLabelFrame;
-    
-    if (_phoneLabel != nil)
+    CGFloat textX = 92 + classicInset + _nameOffset.width + self.safeAreaInset.left;
+    CGFloat lineSpacing = 2.0f;
+
+    NSMutableArray *secondaryLabels = [[NSMutableArray alloc] initWithCapacity:3];
+    if (_statusLabel.text.length != 0)
+        [secondaryLabels addObject:_statusLabel];
+    if (_phoneLabel.text.length != 0)
+        [secondaryLabels addObject:_phoneLabel];
+    if (_usernameLabel.text.length != 0)
+        [secondaryLabels addObject:_usernameLabel];
+
+    CGFloat textBlockHeight = nameSize.height;
+    NSMutableArray *secondarySizes = [[NSMutableArray alloc] initWithCapacity:secondaryLabels.count];
+    for (UILabel *label in secondaryLabels)
     {
-        CGSize phoneLabelSize = [_phoneLabel sizeThatFits:CGSizeMake(maxStatusWidth, 1000)];
-        phoneLabelSize.width = MIN(phoneLabelSize.width, maxStatusWidth);
-        CGRect phoneLabelFrame = CGRectMake(92 + classicInset + _nameOffset.width + self.safeAreaInset.left, 53 + _nameOffset.height, phoneLabelSize.width, phoneLabelSize.height);
-        _phoneLabel.frame = phoneLabelFrame;
+        CGSize labelSize = [label sizeThatFits:CGSizeMake(maxStatusWidth, 1000.0f)];
+        labelSize.width = MIN(labelSize.width, maxStatusWidth);
+        [secondarySizes addObject:[NSValue valueWithCGSize:labelSize]];
+        textBlockHeight += lineSpacing + labelSize.height;
     }
-    
-    if (_usernameLabel != nil)
+
+    CGFloat textCenterY = 16.0f + 33.0f + _nameOffset.height;
+    CGFloat lineY = CGFloor(textCenterY - textBlockHeight / 2.0f);
+
+    CGRect nameLabelFrame = CGRectMake(textX, lineY, nameSize.width, nameSize.height);
+    _nameLabel.frame = nameLabelFrame;
+    lineY = CGRectGetMaxY(nameLabelFrame);
+
+    for (NSUInteger index = 0; index < secondaryLabels.count; index++)
     {
-        CGSize usernameLabelSize = [_usernameLabel sizeThatFits:CGSizeMake(maxStatusWidth, 1000)];
-        usernameLabelSize.width = MIN(usernameLabelSize.width, maxStatusWidth);
-        
-        _nameLabel.frame = CGRectOffset(_nameLabel.frame, 0.0f, -11.0f);
-        _phoneLabel.frame = CGRectOffset(_phoneLabel.frame, 0.0f, -11.0f);
-        
-        CGRect usernameLabelFrame = CGRectMake(92 + classicInset + _nameOffset.width + self.safeAreaInset.left, 62 + _nameOffset.height + TGScreenPixel, usernameLabelSize.width, usernameLabelSize.height);
-        _usernameLabel.frame = usernameLabelFrame;
-        
+        UILabel *label = [secondaryLabels objectAtIndex:index];
+        CGSize labelSize = [[secondarySizes objectAtIndex:index] CGSizeValue];
+        lineY += lineSpacing;
+        label.frame = CGRectMake(textX, lineY, labelSize.width, labelSize.height);
+        lineY += labelSize.height;
     }
     
     CGFloat fieldLeftPadding = 100.0f + classicInset + self.safeAreaInset.left;

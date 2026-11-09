@@ -47,6 +47,7 @@
     
     SMetaDisposable *_requestRecoveryDisposable;
     bool _qrLogin;
+    bool _keepsPasswordFocus;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -143,13 +144,23 @@
 {
     [super viewWillAppear:animated];
     
+    _keepsPasswordFocus = true;
     [_view layoutSubviews];
     [_view setFirstReponder];
 }
 
+- (void)viewWillDisappear:(BOOL)animated
+{
+    _keepsPasswordFocus = false;
+    [_view clearFirstResponder];
+    
+    [super viewWillDisappear:animated];
+}
+
 - (void)viewDidLayoutSubviews
 {
-    [_view setFirstReponder];
+    if (_keepsPasswordFocus)
+        [_view setFirstReponder];
     
     [super viewDidLayoutSubviews];
 }
@@ -231,7 +242,7 @@
                 if (strongSelf != nil)
                 {
                     TGPasswordRecoveryController *controller = [[TGPasswordRecoveryController alloc] initWithEmailPattern:emailPattern];
-                    controller.completion = ^(bool success, int32_t userId)
+                    controller.completion = ^(bool success, int64_t userId)
                     {
                         __strong TGLoginPasswordController *strongSelf = weakSelf;
                         if (strongSelf != nil)
@@ -372,7 +383,7 @@
             
             if (status == ASStatusSuccess)
             {
-                [self _completedRestore:[result[@"userId"] intValue]];
+                [self _completedRestore:[result[@"userId"] longLongValue]];
             }
             else
             {
@@ -401,8 +412,9 @@
     }
 }
 
-- (void)_completedRestore:(int32_t)userId
+- (void)_completedRestore:(int64_t)userId
 {
+    _keepsPasswordFocus = false;
     [_view clearFirstResponder];
     
     [[[TGTelegramNetworking instance] context] updatePasswordInputRequiredForDatacenterWithId:[[TGTelegramNetworking instance] mtProto].datacenterId required:false];

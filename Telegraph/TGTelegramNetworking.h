@@ -1,4 +1,4 @@
-#import "../OnegramDante/OGOnegramCore.h"
+#import "../OnegramCore/OGOnegramCore.h"
 /*
  * This is the source code of Telegram for iOS v. 1.1
  * It is licensed under GNU GPL v. 2 or later.
@@ -37,10 +37,10 @@ FOUNDATION_EXPORT bool TGIOS6QRLoginFlowActive(void);
 #import "../submodules/MtProtoKit/MTProtoKit/MTRequest.h"
 
 typedef enum {
-    TGPushHelperApplicationStateReceiving,
-    TGPushHelperApplicationStateFinishing,
-    TGPushHelperApplicationStateSuspended
-} TGPushHelperApplicationState;
+    TGOnegramHelperApplicationStateReceiving,
+    TGOnegramHelperApplicationStateFinishing,
+    TGOnegramHelperApplicationStateSuspended
+} TGOnegramHelperApplicationState;
 
 @class MTContext;
 @class MTProto;
@@ -99,11 +99,16 @@ typedef enum {
     TGTelegramNetworkUsageKeyCallOutgoingOther = 27,
 } TGTelegramNetworkUsageKey;
 
+@class ASActor;
+
 @interface TGTelegramNetworking : NSObject
 
 + (TGTelegramNetworking *)instance;
 + (void)prepareInstanceWithCompletion:(dispatch_block_t)completion;
++ (void)prewarmInstance;
 + (TGTelegramNetworking *)maybeInstance;
++ (SSignal *)readyInstance;
++ (bool)deferActorUntilInstanceReady:(ASActor *)actor options:(NSDictionary *)options;
 + (void)suspendInstanceForAccountSwitch;
 + (void)resumeInstanceCreationAfterAccountSwitch;
 
@@ -120,8 +125,8 @@ typedef enum {
 - (void)exportHelperAuthInfo;
 - (void)removeHelperAuthInfo;
 + (NSString *)helperAuthInfoPath;
-+ (void)updatePushHelperApplicationState:(TGPushHelperApplicationState)state;
-+ (void)notifyPushHelperApplicationTerminating;
++ (void)updateOnegramHelperApplicationState:(TGOnegramHelperApplicationState)state;
++ (void)notifyOnegramHelperApplicationTerminating;
 + (bool)pushHelperAvailable;
 
 - (NSTimeInterval)globalTime;

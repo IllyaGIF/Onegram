@@ -174,7 +174,7 @@
                         unreadRange.firstDate = TGMessageSortKeyTimestamp(key);
                         unreadRange.firstPeerId = peerId;
                         unreadRange.firstMessageId = TGMessageSortKeyMid(key);
-                        unreadRange.lastPeerId = INT32_MAX;
+                        unreadRange.lastPeerId = INT64_MAX;
                         unreadRange.lastMessageId = INT32_MAX;
                         unreadRange.lastDate = INT32_MAX;
                         

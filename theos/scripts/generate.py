@@ -13,6 +13,22 @@ from xcode_graph import ROOT, Project, actual_path, graph
 
 OUT = ROOT / 'theos' / os.environ.get('ONEGRAM_GENERATED_DIR','generated')
 VARIABLE = re.compile(r'\$\(([^)]+)\)|\$\{([^}]+)\}')
+HOT_CLIENT_SOURCES = frozenset({
+    'TGDialogListCell.m',
+    'TGMessageModernConversationItem.mm',
+    'TGModernConversationCollectionView.mm',
+    'TGModernConversationViewLayout.mm',
+    'TGModernTextViewModel.mm',
+    'TGTextMessageModernViewModel.m',
+    'TGAnimatedStickerFrames.m',
+    'TGAnimatedStickerView.m',
+    'TGStickerKeyboardView.m',
+    'TGDatabase.mm',
+    'TGDialogListController.mm',
+    'TGImageDownloadActor.m',
+    'TGPhotoMessageViewModel.m',
+    'TGTelegramNetworking.m',
+})
 
 def write(path, contents):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -298,6 +314,8 @@ def generate(configuration):
                 local += ['-std='+t['settings'].get('CLANG_CXX_LANGUAGE_STANDARD','gnu++98'),
                           '-stdlib='+t['settings'].get('CLANG_CXX_LIBRARY','libstdc++')]
                 if 'OTHER_CPLUSPLUSFLAGS' in t['settings']: local += tokens('OTHER_CPLUSPLUSFLAGS')
+            if t['name'] == 'Telegraph' and Path(e['path']).name in HOT_CLIENT_SOURCES:
+                local += ['-O2']
             local += shlex.split(e['settings'].get('COMPILER_FLAGS',''))
             lines.append(rel+'_CFLAGS = '+shell_flags(local))
         lines.append(name+'_CFLAGS = '+shell_flags(flags))

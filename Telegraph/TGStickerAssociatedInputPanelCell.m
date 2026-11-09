@@ -3,10 +3,12 @@
 #import "../submodules/LegacyComponents/LegacyComponents/LegacyComponents.h"
 
 #import "../submodules/LegacyComponents/LegacyComponents/TGImageView.h"
+#import "TGAnimatedStickerView.h"
 
 @interface TGStickerAssociatedInputPanelCell ()
 {
     TGImageView *_imageView;
+    TGAnimatedStickerView *_animatedView;
     NSString *_previousUri;
     
     bool _highlighted;
@@ -34,6 +36,7 @@
     
     _previousUri = nil;
     [_imageView reset];
+    [_animatedView reset];
 }
 
 - (void)setDocument:(TGDocumentMediaAttachment *)document
@@ -71,7 +74,26 @@
         return;
     
     _previousUri = uri;
-    [_imageView loadUri:uri withOptions:nil];
+    if ([TGAnimatedStickerView isAnimatedStickerDocument:document])
+    {
+        [_imageView reset];
+        _imageView.hidden = true;
+        if (_animatedView == nil)
+        {
+            _animatedView = [[TGAnimatedStickerView alloc] initWithFrame:_imageView.frame];
+            _animatedView.playing = false;
+            [self.contentView addSubview:_animatedView];
+        }
+        _animatedView.hidden = false;
+        [_animatedView setDocument:document placeholderUri:uri];
+    }
+    else
+    {
+        [_animatedView reset];
+        _animatedView.hidden = true;
+        _imageView.hidden = false;
+        [_imageView loadUri:uri withOptions:nil];
+    }
 }
 
 - (void)setHighlighted:(bool)highlighted animated:(bool)__unused animated
@@ -84,10 +106,9 @@
         {
             [UIView animateWithDuration:0.6 delay:0.0 usingSpringWithDamping:0.6f initialSpringVelocity:0.0f options:UIViewAnimationOptionBeginFromCurrentState animations:^
             {
-                if (_highlighted)
-                    _imageView.transform = CGAffineTransformMakeScale(0.8f, 0.8f);
-                else
-                    _imageView.transform = CGAffineTransformIdentity;
+                CGAffineTransform transform = _highlighted ? CGAffineTransformMakeScale(0.8f, 0.8f) : CGAffineTransformIdentity;
+                _imageView.transform = transform;
+                _animatedView.transform = transform;
             } completion:nil];
         }
     }

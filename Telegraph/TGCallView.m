@@ -22,6 +22,10 @@
 #import "../submodules/LegacyComponents/LegacyComponents/TGModernGalleryZoomableScrollViewSwipeGestureRecognizer.h"
 
 #import "TGCallSession.h"
+#import "TGCallVideoView.h"
+#import "TGCallVideoCapturer.h"
+
+#include <syslog.h>
 
 const CGFloat TGCallSwipeMinimumVelocity = 600.0f;
 const CGFloat TGCallSwipeVelocityThreshold = 700.0f;
@@ -48,6 +52,18 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
     
     TGMenuContainerView *_tooltipContainerView;
     NSTimer *_tooltipTimer;
+    
+    TGCallVideoView *_remoteVideoView;
+    UIView *_localVideoContainer;
+    TGCallVideoView *_localVideoView;
+    TGCallVideoCapturer *_videoCapturer;
+    UITapGestureRecognizer *_videoTapGestureRecognizer;
+    bool _remoteVideoActive;
+    bool _remoteFrameRendered;
+    bool _localFrameRendered;
+    bool _localVideoActive;
+    bool _videoControlsHidden;
+    bool _callFinished;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -93,6 +109,42 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
             }
         };
         [_mainView addSubview:_backgroundView];
+        
+        _remoteVideoView = [[TGCallVideoView alloc] init];
+        _remoteVideoView.fillsBounds = true;
+        _remoteVideoView.hidden = true;
+        _remoteVideoView.userInteractionEnabled = false;
+        _remoteVideoView.firstFrameRendered = ^
+        {
+            __strong TGCallView *strongSelf = weakSelf;
+            if (strongSelf != nil)
+            {
+                strongSelf->_remoteFrameRendered = true;
+                [strongSelf _updateVideoAnimated:true];
+            }
+        };
+        [_mainView addSubview:_remoteVideoView];
+        
+        _localVideoContainer = [[UIView alloc] init];
+        _localVideoContainer.backgroundColor = [UIColor blackColor];
+        _localVideoContainer.clipsToBounds = true;
+        _localVideoContainer.hidden = true;
+        _localVideoContainer.userInteractionEnabled = false;
+        [_mainView addSubview:_localVideoContainer];
+        
+        _localVideoView = [[TGCallVideoView alloc] init];
+        _localVideoView.fillsBounds = true;
+        _localVideoView.userInteractionEnabled = false;
+        _localVideoView.firstFrameRendered = ^
+        {
+            __strong TGCallView *strongSelf = weakSelf;
+            if (strongSelf != nil)
+            {
+                strongSelf->_localFrameRendered = true;
+                [strongSelf _updateVideoAnimated:true];
+            }
+        };
+        [_localVideoContainer addSubview:_localVideoView];
         
         _wrapperView = [[UIView alloc] init];
         [_mainView addSubview:_wrapperView];
@@ -167,6 +219,18 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
             if (strongSelf != nil && strongSelf.messagePressed != nil)
                 strongSelf.messagePressed();
         };
+        _buttonsView.cameraPressed = ^
+        {
+            __strong TGCallView *strongSelf = weakSelf;
+            if (strongSelf != nil && strongSelf.cameraPressed != nil)
+                strongSelf.cameraPressed();
+        };
+        _buttonsView.flipCameraPressed = ^
+        {
+            __strong TGCallView *strongSelf = weakSelf;
+            if (strongSelf != nil && strongSelf.flipCameraPressed != nil)
+                strongSelf.flipCameraPressed();
+        };
         [_wrapperView addSubview:_buttonsView];
         
         _emojiLabel = [[UILabel alloc] init];
@@ -183,6 +247,12 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
         UITapGestureRecognizer *gestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleEmojiTap:)];
         [_emojiLabel addGestureRecognizer:gestureRecognizer];
         
+        _videoTapGestureRecognizer = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleVideoTap:)];
+        _videoTapGestureRecognizer.delegate = self;
+        _videoTapGestureRecognizer.cancelsTouchesInView = false;
+        _videoTapGestureRecognizer.enabled = false;
+        [self addGestureRecognizer:_videoTapGestureRecognizer];
+        
         if (!TGIsPad())
         {
             _panGestureRecognizer = [[TGModernGalleryZoomableScrollViewSwipeGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -198,6 +268,123 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
 - (void)dealloc
 {
     [_actionHandle reset];
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [_videoCapturer setPreviewView:nil];
+}
+
+- (TGCallVideoView *)remoteVideoView
+{
+    return _remoteVideoView;
+}
+
+- (void)setVideoCapturer:(TGCallVideoCapturer *)capturer
+{
+    if (_videoCapturer == capturer)
+        return;
+    
+    [_videoCapturer setPreviewView:nil];
+    _videoCapturer = capturer;
+    _localFrameRendered = false;
+    [_localVideoView resetFrames];
+    [capturer setPreviewView:_localVideoView];
+    [self _updateVideoAnimated:false];
+}
+
+- (void)_updateVideoAnimated:(bool)animated
+{
+    bool remoteVisible = _remoteVideoActive && _remoteFrameRendered && !_callFinished;
+    bool localVisible = _localVideoActive && _localFrameRendered && !_callFinished;
+    
+    _remoteVideoView.hidden = !remoteVisible;
+    _videoTapGestureRecognizer.enabled = remoteVisible;
+    
+    if (!remoteVisible && _videoControlsHidden)
+        [self _setVideoControlsHidden:false animated:animated];
+    else if (remoteVisible && !_videoControlsHidden)
+        [self _scheduleVideoControlsHiding];
+    
+    bool wasLocalHidden = _localVideoContainer.hidden;
+    _localVideoContainer.hidden = !localVisible;
+    if (wasLocalHidden != !localVisible || _remoteVideoView.hidden != !remoteVisible)
+        syslog(LOG_NOTICE, "IOS6MEDIA ui.video local=%d remote=%d localActive=%d localRendered=%d capturer=%d", localVisible ? 1 : 0, remoteVisible ? 1 : 0, _localVideoActive ? 1 : 0, _localFrameRendered ? 1 : 0, _videoCapturer != nil ? 1 : 0);
+    
+    void (^layoutBlock)(void) = ^
+    {
+        [self _layoutVideoViews];
+    };
+    
+    if (animated && !wasLocalHidden && localVisible)
+        [UIView animateWithDuration:0.3 delay:0.0 options:7 << 16 animations:layoutBlock completion:nil];
+    else
+        layoutBlock();
+}
+
+- (CGRect)_localVideoFrame
+{
+    if (!(_remoteVideoActive && _remoteFrameRendered))
+        return self.bounds;
+    
+    CGFloat width = floor(MIN(self.bounds.size.width, self.bounds.size.height) * 0.28f);
+    CGFloat height = floor(width * 4.0f / 3.0f);
+    CGFloat topOffset = self.safeAreaInset.top > FLT_EPSILON ? self.safeAreaInset.top : 20.0f;
+    return CGRectMake(self.bounds.size.width - width - 12.0f, topOffset + 44.0f, width, height);
+}
+
+- (void)_layoutVideoViews
+{
+    _remoteVideoView.frame = self.bounds;
+    
+    CGRect localFrame = [self _localVideoFrame];
+    _localVideoContainer.frame = localFrame;
+    _localVideoContainer.layer.cornerRadius = CGRectEqualToRect(localFrame, self.bounds) ? 0.0f : 8.0f;
+    _localVideoView.frame = _localVideoContainer.bounds;
+}
+
+- (void)_scheduleVideoControlsHiding
+{
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(_hideVideoControls) object:nil];
+    [self performSelector:@selector(_hideVideoControls) withObject:nil afterDelay:4.0];
+}
+
+- (void)_hideVideoControls
+{
+    if (_remoteVideoActive && _remoteFrameRendered && !_callFinished && _currentState == TGCallStateOngoing)
+        [self _setVideoControlsHidden:true animated:true];
+}
+
+- (void)_setVideoControlsHidden:(bool)hidden animated:(bool)animated
+{
+    if (_videoControlsHidden == hidden)
+        return;
+    
+    _videoControlsHidden = hidden;
+    if (!hidden)
+        [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(_hideVideoControls) object:nil];
+    
+    _wrapperView.userInteractionEnabled = !hidden && !_callFinished;
+    CGFloat alpha = hidden ? 0.0f : (_callFinished ? 0.5f : 1.0f);
+    if (animated)
+    {
+        [UIView animateWithDuration:0.25 animations:^
+        {
+            _wrapperView.alpha = alpha;
+        }];
+    }
+    else
+    {
+        _wrapperView.alpha = alpha;
+    }
+}
+
+- (void)handleVideoTap:(UITapGestureRecognizer *)gestureRecognizer
+{
+    if (gestureRecognizer.state != UIGestureRecognizerStateRecognized)
+        return;
+    
+    bool hidden = !_videoControlsHidden;
+    [self _setVideoControlsHidden:hidden animated:true];
+    if (!hidden)
+        [self _scheduleVideoControlsHiding];
 }
 
 - (void)setDebugPressed:(void (^)(void))debugPressed
@@ -215,6 +402,20 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
     TGCallState previousState = _currentState;
     _currentState = state.state;
     
+    bool finished = state.state == TGCallStateEnding || state.state == TGCallStateEnded || state.state == TGCallStateMissed || state.state == TGCallStateBusy || state.state == TGCallStateNoAnswer;
+    bool remoteActive = state.remoteVideoActive && !finished;
+    if (!remoteActive && _remoteVideoActive)
+    {
+        _remoteFrameRendered = false;
+        [_remoteVideoView resetFrames];
+    }
+    bool videoChanged = _remoteVideoActive != remoteActive || _localVideoActive != state.localVideoEnabled || _callFinished != finished;
+    _remoteVideoActive = remoteActive;
+    _localVideoActive = state.localVideoEnabled;
+    _callFinished = finished;
+    if (videoChanged)
+        [self _updateVideoAnimated:true];
+    
     if (previousState != _currentState)
     {
         bool animated = state.state == TGCallStateAccepting && previousState == TGCallStateReady;
@@ -222,8 +423,9 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
         bool backHidden = (_currentState == TGCallStateHandshake || _currentState == TGCallStateReady || _currentState == TGCallStateBusy || _currentState == TGCallStateNoAnswer) || ((_currentState == TGCallStateEnded || _currentState == TGCallStateEnding || _currentState == TGCallStateBusy || _currentState == TGCallStateMissed) && duration < DBL_EPSILON && !state.outgoing);
         [self setBackButtonHidden:backHidden];
         
-        if ((_currentState == TGCallStateEnding || _currentState == TGCallStateEnded || _currentState == TGCallStateMissed) && _wrapperView.alpha > 1.0f - FLT_EPSILON)
+        if ((_currentState == TGCallStateEnding || _currentState == TGCallStateEnded || _currentState == TGCallStateMissed) && (_wrapperView.alpha > 1.0f - FLT_EPSILON || _videoControlsHidden))
         {
+            _videoControlsHidden = false;
             _wrapperView.userInteractionEnabled = false;
             [UIView animateWithDuration:0.3 animations:^
             {
@@ -388,13 +590,18 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
     }
 }
 
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)__unused touch
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch
 {
     UIView *hitTest = [self hitTest:[touch locationInView:self] withEvent:nil];
     if (gestureRecognizer.state == UIGestureRecognizerStatePossible && [hitTest isKindOfClass:[UIButton class]])
         return false;
     
     return true;
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer
+{
+    return (gestureRecognizer == _videoTapGestureRecognizer && otherGestureRecognizer == _panGestureRecognizer) || (gestureRecognizer == _panGestureRecognizer && otherGestureRecognizer == _videoTapGestureRecognizer);
 }
 
 - (void)performMinimize
@@ -618,6 +825,7 @@ const CGFloat TGCallSwipeDistanceThreshold = 128.0f;
     
     _backgroundView.frame = self.bounds;
     _wrapperView.frame = self.bounds;
+    [self _layoutVideoViews];
     _keyView.frame = self.bounds;
     
     if (!_panning)

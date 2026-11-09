@@ -10,7 +10,7 @@
 @property (nonatomic, readonly) bool hasActiveCall;
 
 - (void)reset;
-- (SSignal *)requestCallWithPeerId:(int64_t)peerId;
+- (SSignal *)requestCallWithPeerId:(int64_t)peerId video:(bool)video;
 - (void)updateCallContextWithCallId:(int64_t)callId callContext:(id)callContext;
 - (void)handleSignalingDataForCallId:(int64_t)callId data:(NSData *)data;
 
@@ -22,7 +22,7 @@
 - (void)discardCallWithInternalId:(id)internalId reason:(TGCallDiscardReason)reason;
 
 - (TGCallSession *)sessionForIncomingCallWithInternalId:(id)internalId;
-- (TGCallSession *)sessionForOutgoingCallWithPeerId:(int64_t)peerId;
+- (TGCallSession *)sessionForOutgoingCallWithPeerId:(int64_t)peerId video:(bool)video;
 
 - (void)_dispatch:(dispatch_block_t)block;
 

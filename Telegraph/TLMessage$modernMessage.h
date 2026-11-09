@@ -10,6 +10,7 @@
 @property (nonatomic, strong) NSString *reactionSummary;
 @property (nonatomic, strong) NSString *chosenReaction;
 @property (nonatomic) int64_t senderPeerId;
+@property (nonatomic) int64_t saved_peer_id;
 
 @property (nonatomic) int32_t reply_to_top_id;
 @property (nonatomic) bool forum_topic;

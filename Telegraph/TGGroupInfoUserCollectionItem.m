@@ -77,7 +77,7 @@
         
         if (_user == nil)
         {
-            [view setFirstName:_conversation.chatTitle lastName:@"" uidForPlaceholderCalculation:(int32_t)_conversation.conversationId canPromote:_canPromote canRestrict:_canRestrict canBan:false canDelete:_canDelete];
+            [view setFirstName:_conversation.chatTitle lastName:@"" uidForPlaceholderCalculation:_conversation.conversationId canPromote:_canPromote canRestrict:_canRestrict canBan:false canDelete:_canDelete];
             [view setStatus:[self stringForMemberCount:_conversation.chatParticipantCount] active:false];
             [view setAvatarUri:_conversation.chatPhotoFullSmall];
         }
@@ -264,7 +264,7 @@
         
         if (_user == nil)
         {
-            [view setFirstName:_conversation.chatTitle lastName:@"" uidForPlaceholderCalculation:(int32_t)_conversation.conversationId canPromote:_canPromote canRestrict:_canRestrict canBan:false canDelete:_canDelete];
+            [view setFirstName:_conversation.chatTitle lastName:@"" uidForPlaceholderCalculation:_conversation.conversationId canPromote:_canPromote canRestrict:_canRestrict canBan:false canDelete:_canDelete];
             [view setStatus:[self stringForMemberCount:_conversation.chatParticipantCount] active:false];
             [view setAvatarUri:_conversation.chatPhotoFullSmall];
         }
